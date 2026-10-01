@@ -7,14 +7,16 @@
  */
 
 import { resolve } from "node:path";
+import { pins } from "../ci-images/spec.ts";
 import type { Dependency } from "../source.ts";
 
 /**
  * Node.js compat version — reported via process.version and used for the
- * headers download URL.
+ * headers download URL. It is the Node.js CI's images install, so the tests
+ * that compare against `node` compare against the same release.
  * Override via `--nodejs-version=X.Y.Z` to test a bump.
  */
-export const NODEJS_VERSION = "26.3.0";
+export const NODEJS_VERSION = pins.nodejs.version;
 
 /** Node.js NODE_MODULE_VERSION — for native addon ABI compat. */
 export const NODEJS_ABI_VERSION = "147";

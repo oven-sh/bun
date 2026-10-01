@@ -10,6 +10,15 @@
 // Driven by a scripted v3 backend so the exact wire bytes each path sees are
 // deterministic. A finite value is included in every case to show that Date
 // decoding for ordinary values is unaffected.
+//
+// The same scripted backends also pin how finite sub-millisecond values are
+// reduced to JS Date's millisecond precision by the two scalar decoders (the
+// "sub-ms" and "range boundaries" sections below): both must drop the extra
+// digits, so that a value arriving in binary decodes to the same instant as
+// its text rendering. Which decoder runs is selected by the format code the
+// scripted RowDescription declares per column (format: 1 below); against a
+// real server the binary decoder is reached when Bind requests binary results,
+// which sql-postgres-datetime-tz-fixture.ts covers.
 
 import { SQL } from "bun";
 import { afterAll, expect, test } from "bun:test";
@@ -105,9 +114,10 @@ async function runSimple(cols: PgRowDescriptionColumn[], row: (Buffer | null)[])
 }
 
 // Extended-protocol backend: answers Parse with the latched RowDescription,
-// answers Bind with the latched DataRow. The client requests binary result
-// format for timestamp/timestamptz, so the DataRow here carries DT_NOEND /
-// DT_NOBEGIN as raw i64.
+// answers Bind with the latched DataRow. The RowDescription's per-column
+// `format: 1` is what routes each cell to the binary decoder (the client's own
+// Bind for this parameterless query asks for text), so the DataRow here
+// carries raw big-endian i64 microseconds.
 let extReply!: { cols: PgRowDescriptionColumn[]; row: (Buffer | null)[] };
 const extended = await listeningServer(socket => {
   const reply = () => extReply;
@@ -205,6 +215,118 @@ test.each(["timestamp", "timestamptz"] as const)("scalar %s binary DT_NOEND/DT_N
   expect(row.neg).toBe(-Infinity);
   expect(row.fin).toBeInstanceOf(Date);
   expect((row.fin as Date).getTime()).toBe(Date.UTC(2000, 0, 2));
+});
+
+// --- sub-ms precision: binary must floor like text does --------------------
+// Each case is an instant at ms precision plus the sub-ms microseconds Postgres
+// stored on top of it. Decoding must yield the ms instant itself, i.e. drop the
+// extra digits, exactly as the text decoders (and Date.parse) do. The binary
+// decoder used to convert µs to a fractional f64 and let the Date constructor's
+// timeClip truncate it toward zero, which for instants before 1970 lands 1 ms
+// late (the first case came back as 1970-01-01T00:00:00.000Z). More than 2^53
+// µs from 2000-01-01 (about 285 years either side) the f64 conversion itself
+// was lossy as well, so large remainders rounded up to the next ms there even
+// after 1970; the 1000, 2300 and 3000 cases cover that.
+const SUB_MS_CASES = [
+  // [column, ms-precision instant, extra µs stored beyond the ms]
+  ["pre_1970_high_remainder", "1969-12-31T23:59:59.999Z", 999],
+  ["pre_1970_low_remainder", "1969-12-31T23:59:59.000Z", 1],
+  ["pre_1970_far", "1883-11-18T12:00:00.123Z", 456],
+  ["pre_1970_beyond_2p53_us", "1000-06-15T01:02:03.999Z", 999],
+  ["pre_1970_whole_ms", "1969-12-31T23:59:59.999Z", 0],
+  // Before the Postgres epoch (2000) but after 1970: negative on the wire,
+  // positive as unix ms. Already correct before; must stay so.
+  ["pre_2000", "1999-12-31T23:59:59.999Z", 600],
+  ["post_2000", "2024-06-01T12:00:00.123Z", 456],
+  ["post_2000_beyond_2p53_us", "2300-01-01T00:00:00.000Z", 999],
+  ["post_2000_far", "3000-06-01T12:00:00.123Z", 999],
+] as const;
+
+const SUB_MS_EXPECTED = Object.fromEntries(SUB_MS_CASES.map(([name, iso]) => [name, iso]));
+
+const POSTGRES_EPOCH_UNIX_MS = 946_684_800_000n;
+
+/** Postgres binary timestamp/timestamptz: µs since 2000-01-01T00:00:00Z. */
+function pgMicrosecondsFromUnixMs(unixMs: bigint, extraMicros: bigint): bigint {
+  return (unixMs - POSTGRES_EPOCH_UNIX_MS) * 1000n + extraMicros;
+}
+
+function pgMicroseconds(isoMs: string, extraMicros: number): bigint {
+  return pgMicrosecondsFromUnixMs(BigInt(Date.parse(isoMs)), BigInt(extraMicros));
+}
+
+/**
+ * The server's ISO DateStyle text for the same value, e.g.
+ * `1969-12-31 23:59:59.9996` (`+00` appended for timestamptz in a UTC session);
+ * Postgres strips trailing zeros from the fraction.
+ */
+function pgText(isoMs: string, extraMicros: number, withOffset: boolean): string {
+  const fraction = (isoMs.slice(-4, -1) + String(extraMicros).padStart(3, "0")).replace(/0+$/, "");
+  return `${isoMs.slice(0, 10)} ${isoMs.slice(11, 19)}${fraction && "." + fraction}${withOffset ? "+00" : ""}`;
+}
+
+/** Each named column rendered as its ISO instant, "Invalid Date", or its type tag if not a Date. */
+function isoStrings(row: Record<string, unknown>, columns: readonly string[]): Record<string, string> {
+  return Object.fromEntries(
+    columns.map(name => {
+      const v = row[name];
+      if (!(v instanceof Date)) return [name, Object.prototype.toString.call(v)];
+      return [name, Number.isNaN(v.getTime()) ? "Invalid Date" : v.toISOString()];
+    }),
+  );
+}
+
+const SUB_MS_COLUMNS = SUB_MS_CASES.map(([name]) => name);
+
+test.each(["timestamp", "timestamptz"] as const)("scalar %s binary sub-ms values floor to the ms instant", async t => {
+  const row = await runExtended(
+    SUB_MS_CASES.map(([name]) => ({ name, typeOid: OID[t], format: 1 })),
+    SUB_MS_CASES.map(([, iso, extra]) => be64(pgMicroseconds(iso, extra))),
+  );
+  expect(isoStrings(row, SUB_MS_COLUMNS)).toEqual(SUB_MS_EXPECTED);
+});
+
+test.each(["timestamp", "timestamptz"] as const)("scalar %s text sub-ms values floor to the ms instant", async t => {
+  const row = await runSimple(
+    SUB_MS_CASES.map(([name]) => ({ name, typeOid: OID[t] })),
+    SUB_MS_CASES.map(([, iso, extra]) => Buffer.from(pgText(iso, extra, t === "timestamptz"))),
+  );
+  expect(isoStrings(row, SUB_MS_COLUMNS)).toEqual(SUB_MS_EXPECTED);
+});
+
+// --- range boundaries (binary) ---------------------------------------------
+// The wire values next to the DT_NOEND / DT_NOBEGIN sentinels must divide
+// without overflowing and come out as Invalid Date (past JS Date's range), and
+// because the decoder floors to a whole ms before timeClip sees the value, a
+// sub-ms remainder on JS Date's extreme instants floors onto them: the maximum
+// plus 999 µs used to become Invalid Date, and 1 µs below the minimum floors
+// out of range.
+const JS_DATE_MAX_UNIX_MS = 8_640_000_000_000_000n;
+const JS_DATE_MAX_ISO = "+275760-09-13T00:00:00.000Z";
+const JS_DATE_MIN_ISO = "-271821-04-20T00:00:00.000Z";
+
+const BOUNDARY_CASES = [
+  // [column, wire value, decoded]
+  ["below_dt_noend", PG_INT64_MAX - 1n, "Invalid Date"],
+  ["above_dt_nobegin", PG_INT64_MIN + 1n, "Invalid Date"],
+  ["js_max", pgMicrosecondsFromUnixMs(JS_DATE_MAX_UNIX_MS, 0n), JS_DATE_MAX_ISO],
+  ["js_max_plus_999us", pgMicrosecondsFromUnixMs(JS_DATE_MAX_UNIX_MS, 999n), JS_DATE_MAX_ISO],
+  ["js_max_plus_1ms", pgMicrosecondsFromUnixMs(JS_DATE_MAX_UNIX_MS + 1n, 0n), "Invalid Date"],
+  ["js_min", pgMicrosecondsFromUnixMs(-JS_DATE_MAX_UNIX_MS, 0n), JS_DATE_MIN_ISO],
+  ["js_min_plus_999us", pgMicrosecondsFromUnixMs(-JS_DATE_MAX_UNIX_MS, 999n), JS_DATE_MIN_ISO],
+  ["js_min_minus_1us", pgMicrosecondsFromUnixMs(-JS_DATE_MAX_UNIX_MS, -1n), "Invalid Date"],
+] as const;
+
+const BOUNDARY_COLUMNS = BOUNDARY_CASES.map(([name]) => name);
+
+test.each(["timestamp", "timestamptz"] as const)("scalar %s binary values at the JS Date range boundaries", async t => {
+  const row = await runExtended(
+    BOUNDARY_CASES.map(([name]) => ({ name, typeOid: OID[t], format: 1 })),
+    BOUNDARY_CASES.map(([, wire]) => be64(wire)),
+  );
+  expect(isoStrings(row, BOUNDARY_COLUMNS)).toEqual(
+    Object.fromEntries(BOUNDARY_CASES.map(([name, , iso]) => [name, iso])),
+  );
 });
 
 // --- array text path -------------------------------------------------------

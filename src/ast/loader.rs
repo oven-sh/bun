@@ -256,8 +256,15 @@ pub enum SideEffects {
     HasSideEffects,
 
     /// This file was listed as not having side effects by a "package.json"
-    /// file in one of our containing directories with a "sideEffects" field.
+    /// file in one of our containing directories with `"sideEffects": false`.
     NoSideEffectsPackageJson,
+
+    /// This file does not match any entry of a "sideEffects" array in a
+    /// "package.json" file in one of our containing directories. Unused
+    /// imports of this file can still be removed, but other files in the
+    /// same package can be side-effectful, so the barrel optimization must
+    /// not defer this file's re-exports without resolving them.
+    NoSideEffectsPackageJsonArray,
 
     /// This file is considered to have no side effects because the AST was empty
     /// after parsing finished. This should be the case for ".d.ts" files.

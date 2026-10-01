@@ -11,8 +11,9 @@ export type Protocol = {
 
 export type Domain = {
   readonly domain: string;
+  readonly debuggableTypes?: readonly string[];
   readonly dependencies?: readonly string[];
-  readonly types: readonly Property[];
+  readonly types?: readonly Property[];
   readonly commands?: readonly Command[];
   readonly events?: readonly Event[];
 };
@@ -27,7 +28,7 @@ export type Command = {
 export type Event = {
   readonly name: string;
   readonly description?: string;
-  readonly parameters: readonly Property[];
+  readonly parameters?: readonly Property[];
 };
 
 export type Property = {

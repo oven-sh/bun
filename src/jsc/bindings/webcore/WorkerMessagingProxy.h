@@ -90,7 +90,6 @@ public:
     // workerGlobalScopeDestroyedInternal() would have released. Parent thread.
     void parentContextWillDestroy();
 
-    bool askedToTerminate() const { return m_askedToTerminate; }
     bool hasPendingActivity() const { return m_state.load() != State::Closed; }
     bool isOnline() const { return m_state.load() == State::Running; }
     bool isClosingOrClosed() const { return m_state.load() >= State::Closing; }
@@ -99,6 +98,9 @@ public:
     JSC::Strong<JSC::JSPromise> takeCrossVMRequest(uint64_t id);
 
     // -- WorkerObjectProxy / WorkerReportingProxy (worker thread) ---------------------------------
+    // Before the entry point loads: posts 'online' to the parent, as node does before user code.
+    void workerThreadStarted();
+    // The entry point has evaluated: Pending -> Running, queued tasks and messages are delivered.
     void workerGlobalScopeStarted(Zig::GlobalObject&);
     void postMessageToWorkerObject(MessageWithMessagePorts&&);
     void postErrorToWorkerObject(Zig::GlobalObject&, const String& message, JSC::JSValue error);
@@ -110,8 +112,6 @@ public:
     // -- Either thread ---------------------------------------------------------------------------
     WorkerOptions& options() { return m_options; }
     ScriptExecutionContextIdentifier workerContextIdentifier() const { return m_workerContextIdentifier; }
-    ScriptExecutionContextIdentifier loaderContextIdentifier() const { return m_loaderContextIdentifier; }
-    void* workerThread() const { return m_workerThread; }
 
     struct MessageInbox {
         Lock lock;
@@ -136,6 +136,9 @@ private:
     bool m_keepAliveReleased { false };
 
     const ScriptExecutionContextIdentifier m_loaderContextIdentifier;
+    // The parent loop that was current at `new Worker()`: a macro that creates a worker and awaits
+    // it is the one that hears from it.
+    const BunLoopKind m_loaderLoopKind;
     const ScriptExecutionContextIdentifier m_workerContextIdentifier;
     WorkerOptions m_options;
 

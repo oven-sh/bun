@@ -2,6 +2,7 @@
 #include "root.h"
 
 #include "BunString.h"
+#include "helpers.h"
 #include <wtf/text/WTFString.h>
 #include <wtf/SIMDHelpers.h>
 #include <wtf/SIMDUTF.h>
@@ -28,7 +29,7 @@ ALWAYS_INLINE static void appendLiteralRun(StringBuilder& result, std::span<cons
         result.append(chars);
         return;
     }
-    result.append(WTF::String::fromUTF8ReplacingInvalidSequences(chars));
+    result.append(Zig::convertUTF8ToString(chars));
 }
 
 WTF::String decodeURIComponentSIMD(std::span<const uint8_t> input)
@@ -63,7 +64,7 @@ WTF::String decodeURIComponentSIMD(std::span<const uint8_t> input)
 
     if (inputIsASCII)
         return String(lchar);
-    return String::fromUTF8ReplacingInvalidSequences(lchar);
+    return Zig::convertUTF8ToString(lchar);
 
 slow_path:
     while (cursor < end && *cursor != '%') {
@@ -295,8 +296,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDecodeURIComponentSIMD, (JSC::JSGlobalObject 
         RETURN_IF_EXCEPTION(scope, {});
 
         // decodeURIComponentSIMD consumes UTF-8 bytes, like the ServerRouteList and CookieMap callers.
-        UTF8View utf8View(string);
-        auto&& output = decodeURIComponentSIMD(utf8View.bytes());
+        auto utf8View = UTF8View::tryCreate(globalObject, scope, string);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto&& output = decodeURIComponentSIMD(utf8View->bytes());
         return JSC::JSValue::encode(JSC::jsString(vm, output));
     }
 

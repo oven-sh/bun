@@ -1,0 +1,31 @@
+class C { [k: string, l: number]: A }
+class C { [k: string,]: A }
+class C { [k?: string]: A }
+class C { [...k: string[]]: A }
+class C { [k: string] }
+class C { [k: string]; }
+class C { []: A }
+class C { [k, l]: A }
+class C { accessor [k: string]: A }
+class C { accessor a?: A }
+class C { readonly accessor a: A }
+class C { declare accessor a: A }
+class C { abstract accessor a: A }
+class C { a(public b: B) {} }
+class C { a(public private b: B) {} }
+class C { a(readonly readonly b: B) {} }
+declare class C { [k: string, l: number]: A }
+abstract class C { [k: string, l: number]: A }
+let v = class { [k: string, l: number]: A };
+declare class C { [k: string] }
+abstract class C { [k: string] }
+let v = class { [k: string] };
+declare class C { accessor a?: A }
+abstract class C { accessor a?: A }
+let v = class { accessor a?: A };
+declare class C { readonly accessor a: A }
+abstract class C { readonly accessor a: A }
+let v = class { readonly accessor a: A };
+declare class C { a(public private b: B) {} }
+abstract class C { a(public private b: B) {} }
+let v = class { a(public private b: B) {} };

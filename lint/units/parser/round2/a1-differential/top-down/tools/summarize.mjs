@@ -20,7 +20,9 @@ for (const block of blocks) {
   const m = new RegExp(`${api.replaceAll(".", "\\.")}: (A|R .*?)( ==| -> (A|R.*?))(  meta.*)?$`).exec(line.trim());
   const base = m[1][0];
   const head = m[2] === " ==" ? base : m[3][0];
-  rows.push({ src, valid: parse === "" && chk === "", base, head, parse, chk, oth, baseMsg: m[1], headMsg: m[2] === " ==" ? m[1] : m[3], meta: m[4] ?? "" });
+  const FORM = process.env.BROAD ? ["2369", "2371", "2499", "2500"] : [];
+  const form = oth.split(",").filter(c => FORM.includes(c));
+  rows.push({ src, valid: parse === "" && chk === "" && form.length === 0, base, head, parse, chk, oth, baseMsg: m[1], headMsg: m[2] === " ==" ? m[1] : m[3], meta: m[4] ?? "" });
 }
 const groups = {};
 for (const r of rows) (groups[`${r.base}>${r.head} tsc:${r.valid ? "valid" : "INVALID"}`] ??= []).push(r);

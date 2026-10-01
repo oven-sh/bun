@@ -14,7 +14,7 @@ const { Linter } = require(path.join(ESLINT, "lib/linter"));
 const tsParser = require("module").createRequire("/workspace/ref/tseslint/")("@typescript-eslint/parser");
 const linter = new Linter({ configType: "flat" });
 
-const count = { sources: 0, rejected: 0, properties: 0, propertiesScanned: 0, propertyDiffers: 0, defaults: 0, defaultDiffers: 0, cases: 0, caseDiffers: 0, colons: 0, colonDiffers: 0, uniform: 0, uniformDiffers: 0 };
+const count = { sources: 0, rejected: 0, properties: 0, propertiesScanned: 0, propertyDiffers: 0, defaults: 0, defaultDiffers: 0, cases: 0, caseDiffers: 0, colons: 0, colonDiffers: 0, uniform: 0, uniformDiffers: 0, uniformFromClause: 0 };
 let shown = 0;
 const show = (what, source, at) => { if (shown++ < 25) console.log(`${what} at ${at}: ${JSON.stringify(source.slice(Math.max(0, at - 40), at + 40))}`); };
 
@@ -108,8 +108,13 @@ function check(source, ts, jsx) {
 					const before = node.cases[index - 1];
 					let found = null;
 					if (before.consequent.length) {
+						// A `;` is a statement without a place in Bun's tree: the read starts at the last statement that has one,
+						// else at the clause before itself, past its own word.
+						const placed = before.consequent.filter(x => x.type !== "EmptyStatement").at(-1);
 						let depth = 0;
-						for (let j = indexAt(before.consequent.at(-1).range[0]); j < tokens.length; j++) {
+						let j = indexAt(placed ? placed.range[0] : before.range[0]);
+						if (!placed) { j++; count.uniformFromClause++; }
+						for (; j < tokens.length; j++) {
 							const t = tokens[j];
 							if (depth === 0 && t.type === "Keyword" && (t.value === "default" || t.value === "case") && !(j > 0 && (tokens[j - 1].value === "." || tokens[j - 1].value === "?."))) { found = t.range[0]; break; }
 							depth += level(t);

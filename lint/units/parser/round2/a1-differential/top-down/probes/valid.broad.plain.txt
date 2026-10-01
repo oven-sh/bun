@@ -1,0 +1,93 @@
+type X = ([a, , b]) => R;
+type X = { m([a, , b]): R };
+type X = new ([a, , b]) => R;
+type X = ({ 1n: a }) => R;
+type X = { m({ 1n: a }): R };
+type X = new ({ 1n: a }) => R;
+type X = ({ [a + b]: c }) => R;
+type X = { m({ [a + b]: c }): R };
+type X = new ({ [a + b]: c }) => R;
+type X = ({ [a]: c }) => R;
+type X = { m({ [a]: c }): R };
+type X = new ({ [a]: c }) => R;
+type X = [...class: A];
+type X = [...if: A];
+type X = [function];
+type X = [...if];
+type X = [...function];
+let v = x as [...class: A];
+f<[function]>(x);
+let f = (a): [function] => a;
+let v = x as [function];
+let v = x as [...if: A];
+type X = { [+1]: A };
+type X = { [a?.b]: A };
+type X = { [+1](): A };
+type X = { [+1]?: A };
+type X = { get [a + b](): A };
+type X = { get [+1](): A };
+type X = { get #a(): A };
+type X = { set #a(v) };
+type X = { 1n(): A };
+type X = { get 1n(): A };
+interface I { [+1]: A }
+let v = x as { [+1]: A };
+class K { @d p: { [+1]: A }; }
+interface I { get #a(): A }
+f<{ get #a(): A }>(x);
+let v = x as { get #a(): A };
+class K { @d p: { get #a(): A }; }
+class C implements a⏎<B> {}
+interface I extends a⏎<B> {}
+class C extends B implements a⏎<B> {}
+type X = extends;
+let x: [...extends];
+class C { [k: string]: A, }
+class C { [k: string]: A, [l: number]: B }
+declare class C { [k: string]: A, }
+abstract class C { [k: string]: A, }
+let v = class { [k: string]: A, };
+function f<out>() {}
+let f = <out>() => 1;
+class C { m<out>() {} }
+type X = { m<out>(): void };
+type X = <out>() => void;
+type X = new <out>() => A;
+let f = function<out>() {};
+type X = { <out>(): void };
+function f<out = A>() {}
+let f = <out = A>() => 1;
+class C { m<out = A>() {} }
+type X = { m<out = A>(): void };
+type X = <out = A>() => void;
+type X = new <out = A>() => A;
+let f = function<out = A>() {};
+type X = { <out = A>(): void };
+function f<out, T>() {}
+let f = <out, T>() => 1;
+class C { m<out, T>() {} }
+type X = { m<out, T>(): void };
+type X = <out, T>() => void;
+type X = new <out, T>() => A;
+let f = function<out, T>() {};
+type X = { <out, T>(): void };
+function f<T, out>() {}
+let f = <T, out>() => 1;
+class C { m<T, out>() {} }
+type X = { m<T, out>(): void };
+type X = <T, out>() => void;
+type X = new <T, out>() => A;
+let f = function<T, out>() {};
+type X = { <T, out>(): void };
+function f<const out>() {}
+let f = <const out>() => 1;
+class C { m<const out>() {} }
+type X = { m<const out>(): void };
+type X = <const out>() => void;
+type X = new <const out>() => A;
+let f = function<const out>() {};
+type X = { <const out>(): void };
+let f = <in>x;
+let f = <out.T>x;
+type X = ({ [a, b]: c }) => R;
+type X = { m({ [a, b]: c }): R };

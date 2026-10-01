@@ -1,0 +1,5 @@
+Results of the models of this directory, 2026-10-01. Corpus lists: /tmp/nuv/jsall.txt (7,299 files: lib, tests/lib and node_modules of /workspace/ref/eslint; test/js/node/test, test/js/third_party, src/js, bench of the worktree) and /tmp/nuv/tsall.txt (15,185 files: tests/cases/compiler, tests/cases/conformance and src of TypeScript at /workspace/ref/typescript-go/_submodules/TypeScript; packages/bun-types, src/js, test/js/bun, test/cli, test/bundler, test/regression, scripts of the worktree).
+core-model.cjs against ESLint no-unused-vars:
+  {"total":7299,"same":7181,"fatal":118,"differ":0,"reportsOfEslint":2456}
+ts-model.cjs against @typescript-eslint/no-unused-vars:
+  {"total":15185,"same":13888,"fatal":1297,"differ":0,"reportsOfTseslint":46074}

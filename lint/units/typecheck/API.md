@@ -237,9 +237,13 @@ codes are in both files): 2,206 messages, in the order of their codes. `generate
 
 ### What waits
 
-- A test that fails when the table and the generator disagree. The scratch has it as a `bun:test` file
-  (`diagnostics-scratch/test/diagnostics-generated.test.ts`, names still in mixed case); its place is
-  `test/cli/lint/typecheck/`. Until then: run the generator, then `git diff --exit-code src/typecheck/diagnostics`.
+- A test that fails when the table and the generator disagree, as `test/internal/typecheck-ast-generated.test.ts` is
+  for the node definitions. It is written for the tree's layout in
+  `diagnostics-scratch/test/typecheck-diagnostics-generated.test.ts` of the notes and was not run as a test (a script
+  that makes its comparison says equal, and unequal after one row is changed). Until it is in the tree: run the
+  generator, then `git diff --exit-code src/typecheck/diagnostics`.
+- The constants are `pub`, as the contract has them, and 589 of the 2,206 are named by the tree: what the `unused_pub`
+  count of `cargo mordant` makes of the others was not looked at.
 - `src/typecheck/UPSTREAM_PORTED` does not exist. The table names both upstream commits in its first line and the
   generator in `pinned`.
 

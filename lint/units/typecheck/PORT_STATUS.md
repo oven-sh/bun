@@ -104,9 +104,11 @@ of the contract byte for byte. Compared with `diagnostics_generated.go` by
 `bun diagnostics-scratch/data/table-against-upstream-go.mjs`: 2,206 of 2,206 equal in name (upper case), code,
 category, the three flags and text, in upstream's order; the numbers that `tests.rs` asserts (the bytes of the keys and
 their hash, the bytes of the texts, the counts by category, flag and argument count) are the ones that the script
-recomputes from that file. No test of the tree compares the table with what the generator writes: the scratch has one
-(`diagnostics-scratch/test/diagnostics-generated.test.ts`, names in mixed case), and until it is under
-`test/cli/lint/typecheck/` the check is the generator followed by `git diff --exit-code src/typecheck/diagnostics`.
+recomputes from that file. No test of the tree compares the table with what the generator writes, as
+`test/internal/typecheck-ast-generated.test.ts` does for the node definitions: that test is written for the tree's
+layout in `diagnostics-scratch/test/typecheck-diagnostics-generated.test.ts` (not run as a test; a script that makes its
+comparison says equal). Until it is in the tree the check is the generator followed by
+`git diff --exit-code src/typecheck/diagnostics`.
 
 | upstream file, lines | Rust module under `src/typecheck/` | state | not ported |
 | --- | --- | --- | --- |

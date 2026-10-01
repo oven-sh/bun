@@ -245,14 +245,26 @@ pub(crate) fn generate_files(
 
     // Normalize file paths
     let mut normalized_buf = bun_paths::path_buffer_pool::get();
-    let mut normalized_name: &[u8] = if bun_paths::is_absolute(entry_point) {
-        resolve_path::relative_normalized_buf::<path::platform::Loose, true>(
+    let normalized: Option<&[u8]> = if bun_paths::is_absolute(entry_point) {
+        resolve_path::relative_normalized_buf_checked::<path::platform::Loose, true>(
             &mut normalized_buf,
             FileSystem::instance().top_level_dir(),
             entry_point,
         )
     } else {
-        resolve_path::normalize_buf::<path::platform::Loose>(entry_point, &mut normalized_buf)
+        resolve_path::normalize_buf_checked::<path::platform::Loose>(
+            entry_point,
+            &mut normalized_buf,
+        )
+        .map(|normalized| &*normalized)
+    };
+    let Some(mut normalized_name) = normalized else {
+        Output::err(
+            "ENAMETOOLONG",
+            "the path from the current directory to {} is too long",
+            (bun_core::fmt::quote(entry_point),),
+        );
+        Global::crash();
     };
 
     if !extension.is_empty() {

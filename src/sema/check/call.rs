@@ -3258,9 +3258,61 @@ impl<'p> Checker<'p> {
                     holes
                 }
             };
+            ty = self.without_what_nothing_is_known_of(ty, holes, 0);
             ty = self.instantiate(ty, holes);
         }
         ty
+    }
+
+    /// `silentNeverType`, which a type parameter nothing is known of yet stands for (`InferenceFlagsNoDefault`), is no member of a
+    /// union: of `T | undefined` there is `undefined` left, and of `PromiseLike<T | undefined>` a `PromiseLike<undefined>`. Here such
+    /// a parameter is mapped to what is not known, which leaves nothing of a union it is in, so it is taken out first.
+    fn without_what_nothing_is_known_of(
+        &mut self,
+        ty: TypeId,
+        mapper: MapperId,
+        depth: usize,
+    ) -> TypeId {
+        if depth > 3 || !self.has_type_variables(ty) {
+            return ty;
+        }
+        match self.data(ty) {
+            TypeData::Union(members) => {
+                let is_hole =
+                    |c: &Self, m: TypeId| c.p.types.map(mapper, m) == Some(TypeId::UNRESOLVED);
+                let left: SmallVec<[TypeId; 8]> = members
+                    .iter()
+                    .copied()
+                    .filter(|&m| !is_hole(self, m))
+                    .collect();
+                // All of them: what is not known.
+                if left.is_empty() {
+                    return ty;
+                }
+                let left: SmallVec<[TypeId; 8]> = left
+                    .iter()
+                    .map(|&m| self.without_what_nothing_is_known_of(m, mapper, depth + 1))
+                    .collect();
+                if left[..] == members[..] {
+                    return ty;
+                }
+                self.union(&left)
+            }
+            TypeData::Ref { target, args } => {
+                let new: SmallVec<[TypeId; 8]> = args
+                    .iter()
+                    .map(|&a| self.without_what_nothing_is_known_of(a, mapper, depth + 1))
+                    .collect();
+                if new[..] == args[..] {
+                    return ty;
+                }
+                self.intern(TypeData::Ref {
+                    target: *target,
+                    args: Box::from(&new[..]),
+                })
+            }
+            _ => ty,
+        }
     }
 
     /// `createOuterReturnMapper`: every type parameter of a call being resolved, by what is expected of its result
@@ -3594,7 +3646,9 @@ impl<'p> Checker<'p> {
                     if !self.has_type_variables(expected) {
                         break;
                     }
-                    expected = self.instantiate(expected, self.resolving[i].so_far);
+                    let so_far = self.resolving[i].so_far;
+                    expected = self.without_what_nothing_is_known_of(expected, so_far, 0);
+                    expected = self.instantiate(expected, so_far);
                 }
                 let expected = self.instantiate_with_candidate_holes(expected);
                 // A generic function type that is expected stands with its own type parameters for type arguments, so that they

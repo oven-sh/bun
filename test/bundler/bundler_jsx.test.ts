@@ -1363,7 +1363,7 @@ describe("bundler", () => {
     });
   });
 
-  describe("a hook call in a method, with React Fast Refresh", () => {
+  describe.concurrent("a hook call in a method, with React Fast Refresh", () => {
     const prelude = /* js */ `
       globalThis.$RefreshSig$ = () => fn => fn;
       globalThis.$RefreshReg$ = () => {};

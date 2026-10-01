@@ -701,6 +701,9 @@ function expectBundled(
   if (ESBUILD && allowUnresolved !== undefined) {
     throw new UnsupportedOptionError("allowUnresolved not possible in esbuild backend");
   }
+  if (ESBUILD && reactFastRefresh) {
+    throw new UnsupportedOptionError("reactFastRefresh not possible in esbuild backend");
+  }
   if (dryRun) {
     return testRef(id, opts);
   }

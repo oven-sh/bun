@@ -1,0 +1,97 @@
+diff --git a/test/cli/lint/conformance.test.ts b/test/cli/lint/conformance.test.ts
+index 0f294fa055..7f4f8ddfe8 100644
+--- a/test/cli/lint/conformance.test.ts
++++ b/test/cli/lint/conformance.test.ts
+@@ -50,6 +50,8 @@ const corpusRoot = join(home, "corpus");
+ const small = isDebug || isASAN;
+ // A debug build needs more than the default time of a test for the processes that a test starts.
+ const spawnTimeout = small ? 60_000 : undefined;
++// It also needs seconds for the passes over the 14,915 lines of the list, which a release build makes in milliseconds.
++const listTimeout = small ? 30_000 : undefined;
+ 
+ // One of every n names, the same on every platform and without an order of the directory entries.
+ const sampled = (name: string, n: number) => Bun.hash.crc32(name) % n === 0;
+@@ -237,43 +239,47 @@ describe("reference", () => {
+     });
+   });
+ 
+-  test("the list has the instances of the reference's run: 14,915, of which 12,797 run and 2,118 are skipped", () => {
+-    expect(sha256(listText())).toBe(reference().instances.sha256);
+-    expect(new Set(listLines().map(nameOfLine)).size).toBe(listLines().length);
+-    expect(linesOfCase().get("") ?? []).toEqual([]);
+-    const kinds = { compiler: { E: 0, C: 0, skipped: 0 }, conformance: { E: 0, C: 0, skipped: 0 } };
+-    const reasons: Record<string, number> = {};
+-    for (const [path, lines] of linesOfCase()) {
+-      const suite = path.startsWith("compiler/") ? "compiler" : "conformance";
+-      for (const line of lines) {
+-        const [, kind, reason] = line.split("\t");
+-        kinds[suite][kind as "E" | "C" | "skipped"]++;
+-        if (kind !== "skipped") continue;
+-        const key = reason.replace(/^(unsupported (?:baseUrl|outFile)) .*/, "$1");
+-        reasons[key] = (reasons[key] ?? 0) + 1;
++  test(
++    "the list has the instances of the reference's run: 14,915, of which 12,797 run and 2,118 are skipped",
++    () => {
++      expect(sha256(listText())).toBe(reference().instances.sha256);
++      expect(new Set(listLines().map(nameOfLine)).size).toBe(listLines().length);
++      expect(linesOfCase().get("") ?? []).toEqual([]);
++      const kinds = { compiler: { E: 0, C: 0, skipped: 0 }, conformance: { E: 0, C: 0, skipped: 0 } };
++      const reasons: Record<string, number> = {};
++      for (const [path, lines] of linesOfCase()) {
++        const suite = path.startsWith("compiler/") ? "compiler" : "conformance";
++        for (const line of lines) {
++          const [, kind, reason] = line.split("\t");
++          kinds[suite][kind as "E" | "C" | "skipped"]++;
++          if (kind !== "skipped") continue;
++          const key = reason.replace(/^(unsupported (?:baseUrl|outFile)) .*/, "$1");
++          reasons[key] = (reasons[key] ?? 0) + 1;
++        }
+       }
+-    }
+-    const E = kinds.compiler.E + kinds.conformance.E;
+-    const C = kinds.compiler.C + kinds.conformance.C;
+-    expect({
+-      instances: listLines().length,
+-      run: E + C,
+-      skipped: kinds.compiler.skipped + kinds.conformance.skipped,
+-      E,
+-      compilerE: kinds.compiler.E,
+-      conformanceE: kinds.conformance.E,
+-      C,
+-    }).toEqual({
+-      instances: 14915,
+-      run: 12797,
+-      skipped: 2118,
+-      E: 7027,
+-      compilerE: 3187,
+-      conformanceE: 3840,
+-      C: 5770,
+-    });
+-    expect(reasons).toEqual(reference().instances.skippedBecause);
+-  });
++      const E = kinds.compiler.E + kinds.conformance.E;
++      const C = kinds.compiler.C + kinds.conformance.C;
++      expect({
++        instances: listLines().length,
++        run: E + C,
++        skipped: kinds.compiler.skipped + kinds.conformance.skipped,
++        E,
++        compilerE: kinds.compiler.E,
++        conformanceE: kinds.conformance.E,
++        C,
++      }).toEqual({
++        instances: 14915,
++        run: 12797,
++        skipped: 2118,
++        E: 7027,
++        compilerE: 3187,
++        conformanceE: 3840,
++        C: 5770,
++      });
++      expect(reasons).toEqual(reference().instances.skippedBecause);
++    },
++    listTimeout,
++  );
+ 
+   test("the case and space tables are those of Go", () => {
+     const parts: Record<string, string[]> = { lower: [], foldKey: [], space: [], white: [] };

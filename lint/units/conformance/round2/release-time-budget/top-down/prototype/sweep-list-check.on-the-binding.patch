@@ -1,0 +1,80 @@
+--- a/test/cli/lint/conformance/sweep.ts
++++ b/test/cli/lint/conformance/sweep.ts
+@@ -64,9 +64,12 @@
+   --corpus <directory>   the corpus (default: corpus beside this script)
+   -h, --help
+ 
+-Exit code 0: every listed instance of the selection passes and no name left a list that may hold it; with --round-trip,
+-every error baseline is written back with its bytes. 1: not so. 2: the command line is wrong, or the corpus, the lists,
+-the module of the check or the file of the report cannot be used.`;
++A sweep that reads every case of the corpus beside this script (no selector without --listed, or a selector with "*")
++also holds the instances against fixtures/instances.tsv, the list of the reference's run, line for line.
++
++Exit code 0: every listed instance of the selection passes, no name left a list that may hold it and no instance differs
++from the list of the reference's run; with --round-trip, every error baseline is written back with its bytes. 1: not so.
++2: the command line is wrong, or the corpus, the lists, the module of the check or the file of the report cannot be used.`;
+ 
+ const tags = ["accepted", "triaged"] as const;
+ type Tag = (typeof tags)[number];
+@@ -245,6 +248,24 @@
+ // What the lists need to know of an instance, with the instance: what --tag selects by and what a run takes.
+ type Fact = CorpusFacts;
+ 
++// The lines in which the instances of every case differ from fixtures/instances.tsv, the list of the reference's run of its suite; the reference fails no instance, so an invalid one has no line there.
++function linesOffTheList(facts: Iterable<Fact>): string[] {
++  const listPath = join(import.meta.dir, "fixtures", "instances.tsv");
++  let list: Set<string>;
++  try {
++    list = new Set(readFileSync(listPath, "utf8").split("\n").slice(0, -1));
++  } catch (error) {
++    throw new FileError(`${listPath}: ${messageOf(error)}`);
++  }
++  const lineOf = (fact: Fact) =>
++    fact.status === "run" ? `${fact.name}\t${fact.kind}` : `${fact.name}\t${fact.status}\t${fact.reason}`;
++  const lines = new Set([...facts].map(lineOf));
++  return [
++    ...[...lines].filter(line => !list.has(line)).map(line => `not in the list: ${line}`),
++    ...[...list].filter(line => !lines.has(line)).map(line => `not enumerated: ${line}`),
++  ];
++}
++
+ function matcher(selector: string): (fact: Fact) => boolean {
+   if (selector.includes("*")) {
+     const parts = selector.split("*").map(part => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+@@ -453,6 +474,9 @@
+   for (const casePath of reached) {
+     for (const instance of corpus.enumerateCase(casePath)) facts.set(instance.name, corpus.facts(instance));
+   }
++  // A sweep that read every case of the corpus beside it holds the enumerator against the list; the test file does so for one case in 40.
++  const ofTheList = reached.length === cases.length && corpusRoot === resolve(join(import.meta.dir, "corpus"));
++  const offTheList = ofTheList ? linesOffTheList(facts.values()) : [];
+   const selection = select(facts.values(), o, listed);
+   if (selection.empty.length > 0) {
+     const isDirectory = (selector: string) => cases.some(path => path.startsWith(`${selector}/`));
+@@ -481,6 +505,8 @@
+   if (invalid > 0) counts.push(`invalid ${invalid}`);
+   say(`instances ${selected.length}: ${counts.join(", ")}`);
+   for (const [reason, n] of mostFirst(notRun)) say(`  ${String(n).padStart(6)}  ${reason}`);
++  for (const line of offTheList.slice(0, 20)) say(`  FAIL fixtures/instances.tsv: ${line}`);
++  if (offTheList.length > 20) say(`  FAIL fixtures/instances.tsv: and ${offTheList.length - 20} more lines`);
+ 
+   // What needs no run: every listed name is an instance that runs, whose oracle is of the class of its list and whose files every platform of the test run holds.
+   const inScope = (name: string) => whole || read.has(caseOf(name) ?? "");
+@@ -510,7 +536,7 @@
+     say(`  since ${o.since}: ${l.name} ${l.went}; ${l.from} may not hold it: ${against.get(l.name)}`);
+   }
+   for (const loss of losses) say(`  FAIL since ${o.since}: ${loss}`);
+-  if (checked === undefined) return notInstances.length > 0 || losses.length > 0 ? 1 : 0;
++  if (checked === undefined) return notInstances.length > 0 || losses.length > 0 || offTheList.length > 0 ? 1 : 0;
+ 
+   say(`check ${checked.name}`);
+   const directory = o.files && ran.length > 0 ? makeTemporaryDirectory("bun-lint-sweep-") : undefined;
+@@ -711,7 +737,7 @@
+     throw new FileError(`--report ${reportPath}: ${messageOf(error)}`);
+   }
+   console.log(`report ${reportPath}`);
+-  return notInstances.length > 0 || losses.length > 0 || notPassing.length > 0 ? 1 : 0;
++  return notInstances.length > 0 || losses.length > 0 || notPassing.length > 0 || offTheList.length > 0 ? 1 : 0;
+ }
+ 
+ let exitCode: number;

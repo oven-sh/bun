@@ -1,0 +1,41 @@
+Files of the research "release-time-budget", pass 1b (top-down), 2026-10-01, worktree at 3110ce85cf. H is test/cli/lint/conformance.
+Nothing here is committed to the worktree: the patches were run in scratch clones (../../scratch.sh).
+
+prototype/
+  release-time-budget.patch               conformance.test.ts, H/sweep.ts and H/AFTER-SYNC.txt against the tree as committed
+                                          (git apply --check passes in the worktree at 3110ce85cf)
+  sweep-list-check.on-the-binding.patch   the same hunks of H/sweep.ts for a tree that has ../runner-corpus-binding/top-down laid
+                                          over it; there, apply the other two files of the first patch with
+                                          git apply --include='test/cli/lint/conformance.test.ts' --include='test/cli/lint/conformance/AFTER-SYNC.txt'
+  optional-P1-zero-options-literal.patch  runner/tsconfig.ts: not part of the change, measured only (tree "kp")
+  optional-P2-option-lookup.patch         runner/tsoptions.ts, harnessutil_options.ts, harnessutil_variations.ts: the same
+probes/
+  meter.ts            wall, user, system, time on a CPU and time waiting for a CPU of the main thread, bytes fetched from storage
+  e3.ts               bun e3.ts <H> [passes]: enumerateInstances with those meters and a digest over every field of every instance
+  body.ts             the body of the whole-corpus test and the describe-time work, phase by phase, outside the test runner
+  describe-time.ts    <bun> describe-time.ts <H>: what the file computes while its describe blocks are read
+  list-tests.ts       <bun> list-tests.ts <H>: the parts of the tests of the list
+  prof-sum.ts         bun prof-sum.ts <.cpuprofile> enumerateInstances: samples by function below a root
+  coverage.ts         bun coverage.ts <H>: the branches of the enumerator that one case in 40 reaches, in cases
+  sample-vs-list.ts   bun sample-vs-list.ts <runner directory> <H>: cases that are not their lines of the list, for one case in 40,
+                      for the named cases and for every case; given a copy of runner/ with one rule broken
+  named-cost.ts       <bun> named-cost.ts <H>: processor time of the sample and of the named cases
+  evict.py            python3 evict.py <directory>: puts the data pages of its files out of the page cache
+  gen.ts, bench2.ts, bench3.ts, bench4.ts   copies of an object of 131 properties by the way it was made
+  batch.sh, batch2.sh, batch3.sh, batch4.sh   what ran under /workspace/tools/lk; they name /tmp/rtb1b/{repo,kp,after,tb}
+observed/
+  batch1.txt .. batch4.txt        the lines that the batches printed: pass counts, the runner's seconds, wall, user, sys, load
+  after-warm1.log, before-cold1.log, *-broken-umd.log, debug-*-whole-file.log   whole outputs of single runs
+  coverage-of-one-case-in-40.txt  the output of coverage.ts
+
+The trees
+  bash ../../scratch.sh /tmp/x/repo --prototype                      the tree as committed, corpus in place, the glue of ../../prototype
+  bash ../../scratch.sh /tmp/x/after --prototype && git -C /tmp/x/after apply prototype/release-time-budget.patch
+  kp: repo with the two optional patches; tb: scratch.sh without --prototype, ../../runner-corpus-binding/top-down/apply.sh,
+  then the two patches as said above
+The commands
+  cd <tree> && /workspace/tools/lk bash -c 'time USE_SYSTEM_BUN=1 bun test test/cli/lint/conformance.test.ts'
+      (time goes inside the lock: outside it counts the wait for the lock, 28 minutes in one run of this pass)
+  cd <tree> && bun test/cli/lint/conformance/sweep.ts --no-run                                        exit code 0; 1 with a broken runner
+  cd <tree> && bun test/cli/lint/conformance/update-reference.ts --check --enumerate /workspace/ref/typescript-go    "nothing changes"
+  bun probes/e3.ts <tree>/test/cli/lint/conformance 3                  the digest of all fields: d0d50de63bcca2f7 in every tree

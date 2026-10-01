@@ -1,0 +1,48 @@
+bun test v1.4.3-canary.1 (367d939d9)
+
+test/cli/lint/conformance.test.ts:
+(pass) enumerator > the sample holds cases of both suites, the named cases, and an instance of every reason of a skip [79.03ms]
+(pass) enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 1 [35.45ms]
+528 |   test.each(groupsOf(sample, 40).map((g, k) => [k + 1, g] as const))(
+529 |     "the instances of one of 40 cases and of the named cases are their lines of the list: group %d",
+530 |     (_k, group) => {
+531 |       const got = group.flatMap(path => corpus().enumerateCase(path).map(lineOf));
+532 |       const want = group.flatMap(path => linesOfCase().get(path) ?? []);
+533 |       expect(got.sort()).toEqual(want.sort());
+                               ^
+error: expect(received).toEqual(expected)
+
+@@ -27,11 +27,11 @@
+    "emitHelpersWithLocalCollisions(module=node18).ts	C",
+    "emitHelpersWithLocalCollisions(module=node20).ts	C",
+    "emitHelpersWithLocalCollisions(module=nodenext).ts	C",
+    "emitHelpersWithLocalCollisions(module=preserve).ts	C",
+    "emitHelpersWithLocalCollisions(module=system).ts	skipped	unsupported module kind System",
+-   "emitHelpersWithLocalCollisions(module=umd).ts	skipped	unsupported module kind UMD",
++   "emitHelpersWithLocalCollisions(module=umd).ts	E",
+    "enumLiteralAssignableToEnumInsideUnion.ts	E",
+    "enumMemberReduction.ts	C",
+    "errorsWithInvokablesInUnions01.ts	E",
+    "es5-commonjs3(target=es2015).ts	E",
+    "es5-commonjs3(target=es5).ts	skipped	unsupported target ES5",
+
+- Expected  - 1
++ Received  + 1
+
+      at <anonymous> (/tmp/rtb1b/after/test/cli/lint/conformance.test.ts:533:26)
+(fail) enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 2 [23.00ms]
+(pass) enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 3 [13.84ms]
+(pass) enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 4 [11.88ms]
+(pass) enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 5 [7.63ms]
+(pass) enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 6 [7.29ms]
+(pass) enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 7 [8.85ms]
+(pass) enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 8 [12.58ms]
+(pass) enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 9 [5.10ms]
+(pass) enumerator > 45 cases are left out by name and 8 are run for their diagnostics alone [1.24ms]
+
+ 10 pass
+ 95 filtered out
+ 1 fail
+ 16 expect() calls
+Ran 11 tests across 1 file. [790.00ms]
+TIME wall 0.830 s user 0.212 s sys 0.087 s

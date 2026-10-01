@@ -834,8 +834,9 @@ edit(R, """                    if Self::IS_TYPESCRIPT_ENABLED && opts.is_class &
                         }
                     }
 """)
-edit(R, """                        if p.lexer.token == T::TColon && was_identifier && opts.is_class {""",
-     """                        // `[a!: T]: U` is no index signature for the reference: a lint parse asks for the "]".
+edit(R, """                        // Handle index signatures
+                        if p.lexer.token == T::TColon && was_identifier && opts.is_class {""",
+     """                        // Handle index signatures: `[a!: T]: U` is none for the reference, so a lint parse asks for the "]"
                         if p.lexer.token == T::TColon
                             && was_identifier
                             && opts.is_class

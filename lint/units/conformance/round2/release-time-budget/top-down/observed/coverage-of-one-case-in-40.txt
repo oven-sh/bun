@@ -1,0 +1,28 @@
+    50 cases,    2 in the sample  @currentDirectory
+     7 cases,    0 in the sample  UTF-16   <-- none, e.g. compiler/bom-utf16be.ts, compiler/bom-utf16le.ts, compiler/collisionCodeGenModuleWithUnicodeNames.ts
+   832 cases,   22 in the sample  UTF-8 byte order mark
+  9221 cases,  237 in the sample  a carriage return in the file
+   127 cases,    4 in the sample  a config unit (tsconfig.json or jsconfig.json)
+    57 cases,    3 in the sample  a config unit and a skip
+     1 cases,    0 in the sample  a config unit that extends a package   <-- none, e.g. compiler/tsconfigExtendsPackageJsonExportsWildcard.ts
+     4 cases,    0 in the sample  a config unit with extends   <-- none, e.g. compiler/configFileExtendsAsList.ts, compiler/pathMappingInheritedBaseUrl.ts, compiler/pathMappingWithoutBaseUrl2.ts
+    28 cases,    0 in the sample  a setting with *   <-- none, e.g. compiler/emitHelpersWithLocalCollisions.ts, compiler/isolatedDeclarationsStrictBuiltinIteratorReturn.ts, compiler/iterableTReturnTNext.ts
+     2 cases,    0 in the sample  a setting with an excluded value   <-- none, e.g. compiler/logicalNotExpression1.ts, conformance/expressions/optionalChaining/callChain/callChainWithSuper.ts
+ 12399 cases,  333 in the sample  any case with an instance
+     8 cases,    0 in the sample  emitOnly   <-- none, e.g. compiler/filesEmittingIntoSameOutput.ts, compiler/jsFileCompilationEmitBlockedCorrectly.ts, compiler/jsFileCompilationWithJsEmitPathSameAsInput.ts
+    22 cases,    0 in the sample  links (@link or @symlink)   <-- none, e.g. compiler/allowJsCrossMonorepoPackage.ts, compiler/declarationEmitCommonSourceDirectoryDoesNotContainAllFiles.ts, compiler/declarationEmitForGlobalishSpecifierSymlink.ts
+  1644 cases,   41 in the sample  more than one instance (variations)
+  2012 cases,   59 in the sample  more than one unit
+     7 cases,    0 in the sample  no setting at all   <-- none, e.g. compiler/bom-utf16be.ts, compiler/bom-utf16le.ts, compiler/bom-utf8.ts
+     1 cases,    0 in the sample  notes of the config reader   <-- none, e.g. compiler/tsconfigExtendsPackageJsonExportsWildcard.ts
+    52 cases,    1 in the sample  skip: alwaysStrict=false is unsupported
+    12 cases,    0 in the sample  skip: esModuleInterop=false is unsupported   <-- none, e.g. compiler/importHelpersWithExportStarAs.ts, compiler/importHelpersWithImportOrExportDefault.ts, compiler/importHelpersWithImportOrExportDefaultNoTslib.1.ts
+    30 cases,    1 in the sample  skip: unsupported baseUrl
+   273 cases,    9 in the sample  skip: unsupported module kind AMD
+   138 cases,    2 in the sample  skip: unsupported module kind System
+    46 cases,    0 in the sample  skip: unsupported module kind UMD   <-- none, e.g. compiler/declarationEmitAmdModuleNameDirective.ts, compiler/destructuringInVariableDeclarations5.ts, compiler/destructuringInVariableDeclarations6.ts
+    53 cases,    2 in the sample  skip: unsupported module resolution kind 1
+    23 cases,    0 in the sample  skip: unsupported module resolution kind 2   <-- none, e.g. compiler/moduleResolutionWithExtensions_withPaths.ts, compiler/moduleResolutionWithSuffixes_empty.ts, compiler/moduleResolutionWithSuffixes_notSpecified.ts
+    77 cases,    4 in the sample  skip: unsupported outFile
+  1180 cases,   32 in the sample  skip: unsupported target ES5
+    14 cases,    0 in the sample  ten instances or more   <-- none, e.g. compiler/commentsOnJSXExpressionsArePreserved.tsx, compiler/emitHelpersWithLocalCollisions.ts, compiler/exportEmptyArrayBindingPattern.ts

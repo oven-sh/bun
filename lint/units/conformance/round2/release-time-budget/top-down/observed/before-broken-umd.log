@@ -1,0 +1,84 @@
+bun test v1.4.3-canary.1 (367d939d9)
+
+test/cli/lint/conformance.test.ts:
+(pass) enumerator > the sample holds cases of both suites [0.56ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 1 [152.43ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 2 [14.26ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 3 [24.32ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 4 [10.21ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 5 [3.99ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 6 [4.21ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 7 [4.67ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 8 [4.47ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 9 [1.78ms]
+(pass) enumerator > 45 cases are left out by name and 8 are run for their diagnostics alone [2.32ms]
+467 |       const got = new Set(instances.map(lineOf));
+468 |       const want = new Set(listLines());
+469 |       expect({
+470 |         notInTheList: [...got].filter(l => !want.has(l)).slice(0, 20),
+471 |         notEnumerated: [...want].filter(l => !got.has(l)).slice(0, 20),
+472 |       }).toEqual({ notInTheList: [], notEnumerated: [] });
+               ^
+error: expect(received).toEqual(expected)
+
+  {
+-   "notEnumerated": [],
+-   "notInTheList": [],
++   "notEnumerated": [
++     "anonymousDefaultExportsUmd.ts	skipped	unsupported module kind UMD",
++     "arbitraryModuleNamespaceIdentifiers_module(module=umd).ts	skipped	unsupported module kind UMD",
++     "classStaticBlock24(module=umd).ts	skipped	unsupported module kind UMD",
++     "declarationEmitAmdModuleNameDirective.ts	skipped	unsupported module kind UMD",
++     "decoratedDefaultExportsGetExportedUmd.ts	skipped	unsupported module kind UMD",
++     "defaultExportInAwaitExpression01.ts	skipped	unsupported module kind UMD",
++     "defaultExportsGetExportedUmd.ts	skipped	unsupported module kind UMD",
++     "destructuringInVariableDeclarations5.ts	skipped	unsupported module kind UMD",
++     "destructuringInVariableDeclarations6.ts	skipped	unsupported module kind UMD",
++     "dynamicImportWithNestedThis_es2015.ts	skipped	unsupported module kind UMD",
++     "dynamicImportWithNestedThis_es5(target=es2015).ts	skipped	unsupported module kind UMD",
++     "dynamicImportWithNestedThis_es5(target=es5).ts	skipped	unsupported module kind UMD",
++     "emitHelpersWithLocalCollisions(module=umd).ts	skipped	unsupported module kind UMD",
++     "es5-umd(target=es2015).ts	skipped	unsupported module kind UMD",
++     "es5-umd(target=es5).ts	skipped	unsupported module kind UMD",
++     "es5-umd2(target=es2015).ts	skipped	unsupported module kind UMD",
++     "es5-umd2(target=es5).ts	skipped	unsupported module kind UMD",
++     "es5-umd3(target=es2015).ts	skipped	unsupported module kind UMD",
++     "es5-umd3(target=es5).ts	skipped	unsupported module kind UMD",
++     "es5-umd4(target=es2015).ts	skipped	unsupported module kind UMD",
++   ],
++   "notInTheList": [
++     "declarationEmitAmdModuleNameDirective.ts	E",
++     "destructuringInVariableDeclarations5.ts	E",
++     "destructuringInVariableDeclarations6.ts	E",
++     "dynamicImportWithNestedThis_es2015.ts	E",
++     "dynamicImportWithNestedThis_es5(target=es2015).ts	E",
++     "dynamicImportWithNestedThis_es5(target=es5).ts	skipped	unsupported target ES5",
++     "emitHelpersWithLocalCollisions(module=umd).ts	E",
++     "es5-umd(target=es2015).ts	E",
++     "es5-umd(target=es5).ts	skipped	unsupported target ES5",
++     "es5-umd2(target=es2015).ts	E",
++     "es5-umd2(target=es5).ts	skipped	unsupported target ES5",
++     "es5-umd3(target=es2015).ts	E",
++     "es5-umd3(target=es5).ts	skipped	unsupported target ES5",
++     "es5-umd4(target=es2015).ts	E",
++     "es5-umd4(target=es5).ts	skipped	unsupported target ES5",
++     "es6-umd.ts	E",
++     "es6-umd2.ts	E",
++     "exportEqualsUmd.ts	E",
++     "impliedNodeFormatEmit1(module=umd).ts	E",
++     "isolatedModulesPlainFile-UMD(target=es2015).ts	E",
++   ],
+  }
+
+- Expected  - 2
++ Received  + 44
+
+      at <anonymous> (/tmp/rtb1b/repo/test/cli/lint/conformance.test.ts:472:10)
+(fail) enumerator > every instance is its line of the list, and the counts are those of the reference [1369.86ms]
+
+ 11 pass
+ 93 filtered out
+ 1 fail
+ 16 expect() calls
+Ran 12 tests across 1 file. [2.24s]
+TIME wall 2.336 s user 1.402 s sys 0.262 s

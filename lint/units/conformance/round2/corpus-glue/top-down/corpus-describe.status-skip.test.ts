@@ -1,12 +1,9 @@
-// A candidate for test/cli/lint/conformance.test.ts, for the binding with the third status (../bottom-up/corpus.ts and run.ts.patch):
-// describe("corpus") below goes between the end of describe("listed instances") and describe("expectations.json") (after line 1130
-// of the file at 3110ce85cf), without these imports, which that file has.
-// Alone: copy this file to test/cli/lint/zz-corpus.test.ts of a tree with the binding and run `bun test ./test/cli/lint/zz-corpus.test.ts`.
+// The same candidate for the binding that keeps the two statuses of run.ts (../../runner-corpus-binding/top-down/corpus.ts): an
+// instance that the reference fails has the status "skip", a skipReason that says so, and its invalidReason.
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
-import type { Check } from "./conformance/runner";
 import * as runner from "./conformance/runner";
-import { runInstances } from "./conformance/runner";
+import { emptyCheck, runInstances } from "./conformance/runner";
 
 describe("corpus", () => {
   test("an instance that the reference fails is told from one that it skips, and neither runs", async () => {
@@ -28,8 +25,8 @@ describe("corpus", () => {
     const inBoth =
       "diff file compiler/both.errors.txt.diff is in both submoduleAccepted and submoduleTriaged; it should only be in one";
     expect(instances.map(i => [i.name, i.status, i.skipReason, i.invalidReason])).toEqual([
-      ["bad.ts", "invalid", undefined, unknown],
-      ["both.ts", "invalid", undefined, inBoth],
+      ["bad.ts", "skip", `the reference fails the instance: ${unknown}`, unknown],
+      ["both.ts", "skip", `the reference fails the instance: ${inBoth}`, inBoth],
       ["clean.ts", "run", undefined, undefined],
       ["skipped.ts", "skip", "unsupported target ES5", undefined],
     ]);
@@ -40,14 +37,12 @@ describe("corpus", () => {
       ["skipped", "unsupported target ES5", undefined],
     ]);
     expect(corpus.enumerateCase("compiler/both.ts")).toEqual([instances[1]]);
-    // A run calls its check for the instance that runs and for no other, and passes no other.
-    const checked: string[] = [];
-    const check: Check = async input => {
-      checked.push(input.instance.name);
-      return { diagnostics: [] };
-    };
-    const results = await runInstances(instances, check, { input: corpus.input, oracle: corpus.oracle });
-    expect(checked).toEqual(["clean.ts"]);
-    expect(results.filter(r => r.outcome === "pass").map(r => r.instance.name)).toEqual(["clean.ts"]);
+    const results = await runInstances(instances, emptyCheck, { input: corpus.input, oracle: corpus.oracle });
+    expect(results.map(r => [r.instance.name, r.outcome, r.reason])).toEqual([
+      ["bad.ts", "skip", `the reference fails the instance: ${unknown}`],
+      ["both.ts", "skip", `the reference fails the instance: ${inBoth}`],
+      ["clean.ts", "pass", ""],
+      ["skipped.ts", "skip", "unsupported target ES5"],
+    ]);
   });
 });

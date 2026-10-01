@@ -26,8 +26,8 @@ test.concurrent(
 );
 
 // A request that declares a body holds `body_read_ref` until its last chunk. In
-// each scenario the request ends without that chunk, and nothing that usually
-// releases the ref runs: no abort callback and no `maybe_stop_reading_body()`.
+// each scenario the request ends without that chunk, and the close of the
+// connection has to release the ref.
 test.concurrent(
   "a request that ends without the last chunk of its body releases body_read_ref",
   async () => {
@@ -42,8 +42,8 @@ test.concurrent(
         ["POST " + path + " HTTP/1.1", "Host: localhost", "Content-Length: 10", "", "hello"].join("\\r\\n");
 
       const scenarios = {
-        // A pipelined dispatch returns no promise and its response is still
-        // pending when the handler returns, so nothing follows the abort.
+        // The response is still pending when the handler returns, and the abort
+        // comes after it got the connection from the response ahead.
         "res.destroy() on a pipelined response": {
           request: "GET /first HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\n" + incompletePost("/second"),
           handler(req, res, state) {
@@ -56,8 +56,8 @@ test.concurrent(
             state.first.end("one");
           },
         },
-        // The handler's promise settles before the response ends. The close of
-        // the socket then finds the request complete and skips the abort callback.
+        // The event ends nothing: the response stays open, and the close of the
+        // socket runs the abort callback.
         "res.emit('close') before the client disconnects": {
           request: incompletePost("/"),
           handler(req, res, state) {

@@ -5,7 +5,7 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
-import { bunEnv, bunExe, exampleSite, isWindows, randomPort, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, exampleSite, isASAN, isCI, isDebug, isWindows, randomPort, tls as tlsCert } from "harness";
 import { createTest } from "node-harness";
 import { EventEmitter, once } from "node:events";
 import nodefs from "node:fs";
@@ -3407,6 +3407,183 @@ describe("a dispatch that throws while an earlier response on the connection is 
       exitCode: 0,
     });
   });
+});
+
+// User code emits 'close' on a ServerResponse that is open, or on the socket of its connection.
+// Node.js has no listener of its own on the 'close' of a response. Bun took that event as the end
+// of the response: native code ended the open response with a bare CRLF and a later res.end() sent
+// nothing, the next request on the connection threw ERR_HTTP_SOCKET_ASSIGNED, and an emit in the
+// listener let response 2 answer request 1. Each test spawns one fixture, which prints a line per
+// scenario.
+describe("a 'close' event that user code emits", () => {
+  // A local debug or ASAN build needs 4 s to start a fixture. CI has its own time for each test.
+  const timeout = (isASAN || isDebug) && !isCI ? 90_000 : undefined;
+
+  async function expectFixture(fixture: string, argument: string, expected: object[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, fixture), argument],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stderr = proc.stderr.text();
+    const results: object[] = [];
+    const decoder = new TextDecoder();
+    let buffered = "";
+    for await (const chunk of proc.stdout) {
+      const lines = (buffered + decoder.decode(chunk, { stream: true })).split("\n");
+      buffered = lines.pop()!;
+      for (const line of lines) results.push(JSON.parse(line));
+      if (results.length >= expected.length) break;
+    }
+    // With all of its lines printed, the process can still hold the event loop and never exit
+    // (a response that keeps its refs): its lines are compared before its exit is awaited.
+    if (results.length >= expected.length) expect(results).toEqual(expected);
+    expect({ results, stderr: await stderr, exitCode: await proc.exited, signalCode: proc.signalCode }).toEqual({
+      results: expected,
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  }
+
+  const keepAlive = "Connection: keep-alive\r\nKeep-Alive: timeout=5\r\n";
+  const ok = (headers: string, body = "") => `HTTP/1.1 200 OK\r\n${headers}\r\n${body}`;
+  const body = ok(`${keepAlive}Content-Length: 4\r\n`, "body");
+  const chunkedHead = ok(`${keepAlive}Transfer-Encoding: chunked\r\n`);
+  const sentinel = ok("Connection: close\r\nContent-Length: 8\r\n", "sentinel");
+  const firstThenSecond =
+    ok(`${keepAlive}Content-Length: 5\r\n`, "first") + ok(`${keepAlive}Content-Length: 6\r\n`, "second");
+
+  // [scenario, the bytes that the client has at the close, the events]. This is the output of
+  // Node.js v26.3.0 for node-http-emitted-close-fixture.js, which is plain node:http code.
+  const likeNode: [string, string, string[]?][] = [
+    ["end on a later turn", body + sentinel],
+    ["end in the same turn", body + sentinel],
+    ["end in a tick", body + sentinel],
+    ["end after an await", body + sentinel],
+    ["emitted twice", body + sentinel],
+    [
+      "emit() calls the listeners and returns true",
+      body + sentinel,
+      ["response 'close', writableEnded false", "emit returned true", "response 'close', writableEnded true"],
+    ],
+    [
+      "after writeHead()",
+      `HTTP/1.1 201 Created\r\nX-Custom: yes\r\n${keepAlive}Transfer-Encoding: chunked\r\n\r\n4\r\nbody\r\n0\r\n\r\n` +
+        sentinel,
+    ],
+    ["after write()", chunkedHead + "1\r\na\r\n4\r\nbody\r\n0\r\n\r\n" + sentinel],
+    ["after flushHeaders() with a Content-Length", ok(`Content-Length: 4\r\n${keepAlive}`, "body") + sentinel],
+    ["write() and no end()", chunkedHead + "1\r\na\r\n", ["the response of the sentinel is queued"]],
+    ["no end()", "", ["the response of the sentinel is queued"]],
+    ["then res.destroy()", chunkedHead + "1\r\na\r\n"],
+    [
+      "then the client leaves",
+      "",
+      ["response 'close'", "request 'aborted'", "response 'close'", "request 'error' ECONNRESET"],
+    ],
+    ["a 'checkContinue' listener", "HTTP/1.1 100 Continue\r\n\r\n" + body + sentinel],
+    ["a 'checkExpectation' listener", body + sentinel],
+    ["a subclass of ServerResponse", body + sentinel],
+    ["a request with Connection: close", ok("Connection: close\r\nContent-Length: 4\r\n", "body")],
+    ["an HTTP/1.0 request", ok("Connection: close\r\n", "body")],
+    ["emitted in the listener, then a second request", firstThenSecond + sentinel, ["the second response is queued"]],
+    [
+      "emitted while the body drains",
+      // 32 MB of body, and the two heads with their Date headers.
+      ok(`${keepAlive}Content-Length: 33554432\r\n`) + "<33554663 bytes in all>",
+      ["response 'close'", "emit returned true", "the client reads", "response 'finish'", "response 'close'"],
+    ],
+    [
+      "socket.emit('close') with an own assignSocket(), after flushHeaders()",
+      chunkedHead,
+      ["request 'aborted'", "response 'close'", "response destroyed true, closed true", "request 'error' ECONNRESET"],
+    ],
+    [
+      "socket.emit('close') with an own assignSocket(), after write()",
+      chunkedHead + "1\r\na\r\n",
+      ["request 'aborted'", "response 'close'", "request 'error' ECONNRESET"],
+    ],
+    [
+      "an unhandled rejection in a listener that leaves the response open",
+      firstThenSecond + sentinel,
+      ["request /first", "request /second", "unhandledRejection: rejected in the listener"],
+    ],
+  ];
+  // The fixture runs these on TCP only.
+  const tunnelsLikeNode: typeof likeNode = [
+    [
+      "socket.emit('close') in a CONNECT tunnel",
+      "HTTP/1.1 200 Connection Established\r\n\r\ntunnel-bytes",
+      ["'close' listeners of the socket: 0"],
+    ],
+    [
+      "socket.emit('close') after an upgrade",
+      "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: custom\r\n\r\ntunnel-bytes",
+      ["'close' listeners of the socket: 0"],
+    ],
+  ];
+
+  for (const transport of ["tcp", "tls"]) {
+    it.concurrent(
+      `does not end the response, and the connection goes on as in Node.js (${transport})`,
+      async () => {
+        const scenarios = transport === "tcp" ? [...likeNode, ...tunnelsLikeNode] : likeNode;
+        await expectFixture(
+          "node-http-emitted-close-fixture.js",
+          transport,
+          scenarios.map(([scenario, received, events = []]) => ({ scenario, received, events, errors: [] })),
+        );
+      },
+      timeout,
+    );
+  }
+
+  // Each way an exchange ends: the order of its events, the event loop refs that are left once the
+  // server closed, and the native responses that a full GC leaves.
+  const finished = (url = "/") => [`${url} finish`, `${url} close`];
+  const aborted = ["/ aborted", "/ close"];
+  const nothingLeft = { eventLoopRefsLeft: 0, nativeResponsesLeft: 0 };
+
+  // These need no help from user code, so they hold with and without a dispatch that waits for
+  // the 'close' of its response.
+  it.concurrent(
+    "every way an exchange ends releases its event loop refs and its native response",
+    async () => {
+      await expectFixture("node-http-completion-paths-fixture.js", "paths", [
+        { path: "end in the listener", events: finished(), ...nothingLeft },
+        { path: "end after an await", events: finished(), ...nothingLeft },
+        { path: "end in a later turn", events: finished(), ...nothingLeft },
+        { path: "a body that drains while the client does not read", events: finished(), ...nothingLeft },
+        { path: "the client leaves", events: aborted, ...nothingLeft },
+        { path: "res.destroy()", events: aborted, ...nothingLeft },
+        { path: "a body that nothing reads", events: finished(), ...nothingLeft },
+        { path: "half of a body, then the end of the response", events: finished(), ...nothingLeft },
+        { path: "half of a body, then the client leaves", events: aborted, ...nothingLeft },
+        { path: "two pipelined requests", events: [...finished("/first"), ...finished("/second")], ...nothingLeft },
+        { path: "a 'connect' listener takes the socket", events: ["socket close"], ...nothingLeft },
+        { path: "an 'upgrade' listener takes the socket", events: ["socket close"], ...nothingLeft },
+        { path: "ws takes the socket of an 'upgrade'", events: ["ws close"], ...nothingLeft },
+      ]);
+    },
+    timeout,
+  );
+
+  it.concurrent(
+    "an exchange ends in the same way after the event",
+    async () => {
+      await expectFixture("node-http-completion-paths-fixture.js", "emitted", [
+        { path: "res.emit('close'), then end()", events: finished(), ...nothingLeft },
+        { path: "res.emit('close'), then the client leaves", events: aborted, ...nothingLeft },
+        { path: "res.emit('close'), then res.destroy()", events: aborted, ...nothingLeft },
+        { path: "socket.emit('close') with an own assignSocket()", events: aborted, ...nothingLeft },
+        { path: "socket.emit('close') in a 'connect' tunnel", events: ["socket close"], ...nothingLeft },
+        { path: "socket.emit('close') in an 'upgrade' tunnel", events: ["socket close"], ...nothingLeft },
+      ]);
+    },
+    timeout,
+  );
 });
 
 it("requireHostHeader still rejects Upgrade-carrying requests that dispatch as normal requests", async () => {

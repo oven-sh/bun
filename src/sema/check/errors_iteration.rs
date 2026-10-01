@@ -269,8 +269,12 @@ impl Checker<'_> {
             if !self.is_known(given) || self.is_any(given) {
                 continue;
             }
-            // `getIteratedTypeOrElementType`: without `Iterable` a list is taken apart as it is.
+            // `getIteratedTypeOrElementType`: without `Iterable` a list is taken apart as it is. `getBindingElementTypeFromParentType`
+            // asks for the sake of an element: of `[]` nothing is asked.
             if has_iterable
+                && elems
+                    .iter()
+                    .any(|elem| !matches!(hir[hir[elem].pat].kind, PatKind::Missing))
                 && self
                     .check_iterated(given, false, hir[pat].pos, |c| c.end_of_pat(file, pat), out)
                     .is_none()

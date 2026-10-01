@@ -156,10 +156,15 @@ impl Checker<'_> {
                 note_assignment_pattern(self, file, pattern, input, &mut sites);
             }
         }
-        // `getBindingElementTypeFromParentType`: what an array pattern takes apart is gone through.
+        // `getBindingElementTypeFromParentType`: what an array pattern takes apart is gone through, for the sake of an element.
         for p in 0..hir.pats.len() {
-            if !matches!(hir.pats[p].kind, PatKind::Array(_))
-                || matches!(bound.pat_parent[p], PatParent::None)
+            let PatKind::Array(elems) = hir.pats[p].kind else {
+                continue;
+            };
+            if matches!(bound.pat_parent[p], PatParent::None)
+                || elems
+                    .iter()
+                    .all(|elem| matches!(hir[hir[elem].pat].kind, PatKind::Missing))
             {
                 continue;
             }

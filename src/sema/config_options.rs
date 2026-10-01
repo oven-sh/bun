@@ -206,6 +206,42 @@ pub struct Problem {
     pub span: Option<(u32, u32)>,
 }
 
+/// What `--name text` on a command line means: the option as it is spelled, whatever the case of `name`, and its value. `None`: there is
+/// no such option, it takes something that cannot be written in a word, or `text` is not the kind of thing it takes.
+pub fn from_text(name: &str, text: &str) -> Option<(&'static str, Json)> {
+    let &(name, kind) = OPTIONS
+        .iter()
+        .find(|option| option.0.eq_ignore_ascii_case(name))?;
+    let value = match kind {
+        Kind::Boolean if text.eq_ignore_ascii_case("true") => Json::Bool(true),
+        Kind::Boolean if text.eq_ignore_ascii_case("false") => Json::Bool(false),
+        Kind::Boolean | Kind::Object | Kind::List(Element::Object) => return None,
+        Kind::String | Kind::OneOf(..) => Json::String(text.to_owned()),
+        Kind::Number => Json::Number(text.trim().parse().ok()?),
+        Kind::List(Element::String) => Json::Array(
+            text.split(',')
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(|item| Json::String(item.to_owned()))
+                .collect(),
+        ),
+    };
+    Some((name, value))
+}
+
+/// Whether the option `name`, whatever its case, is one of a few words or yes or no, and the words it can be.
+pub fn choices(name: &str) -> Option<&'static [&'static str]> {
+    match OPTIONS
+        .iter()
+        .find(|option| option.0.eq_ignore_ascii_case(name))?
+        .1
+    {
+        Kind::Boolean => Some(&["true", "false"]),
+        Kind::OneOf(now, _) => Some(now),
+        _ => None,
+    }
+}
+
 fn kind_of(name: &str) -> Option<Kind> {
     OPTIONS
         .binary_search_by_key(&name, |option| option.0)

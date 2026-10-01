@@ -1,6 +1,7 @@
 //! `bun_sema` with Bun's parser in front of it and the file system underneath: what its tests and the `bun-sema`
 //! command line tool are made of. The bundler does not use this crate.
 
+pub mod baseline;
 pub mod compare;
 pub mod hir_dump;
 pub mod native;

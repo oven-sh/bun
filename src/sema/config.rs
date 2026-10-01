@@ -34,6 +34,8 @@ pub struct Project {
     /// `references`: the directory or the configuration file of each project this one refers to.
     pub references: Vec<String>,
     pub errors: Vec<ConfigError>,
+    /// `compilerOptions` as it comes out of all that was read, which `options` is made of.
+    pub compiler_options_as_written: Vec<(String, Json)>,
 }
 
 const CONFIG_DIR_TEMPLATE: &str = "${configDir}";
@@ -477,6 +479,14 @@ pub fn load(host: &dyn Host, path: &str) -> Project {
     project_from_raw(host, path, parent_dir(path), raw, errors)
 }
 
+/// The same, with `over` said after all the configuration file says: what a command line adds to it.
+pub fn load_overriding(host: &dyn Host, path: &str, over: Vec<(String, Json)>) -> Project {
+    let mut errors = Vec::new();
+    let mut raw = parse_config(host, path, &mut Vec::new(), &mut errors).unwrap_or_default();
+    merge_compiler_options(&mut raw.compiler, over);
+    project_from_raw(host, path, parent_dir(path), raw, errors)
+}
+
 /// The project of `files` alone, or of everything under `dir` if there are none, with `compiler` for `compilerOptions`: what is
 /// checked where there is no configuration file.
 pub fn without_config(host: &dyn Host, dir: &str, compiler: Json, files: Vec<String>) -> Project {
@@ -597,6 +607,10 @@ fn project_from_raw(
         files,
         references: raw.references.unwrap_or_default(),
         errors,
+        compiler_options_as_written: match compiler {
+            Json::Object(options) => options,
+            _ => Vec::new(),
+        },
     }
 }
 

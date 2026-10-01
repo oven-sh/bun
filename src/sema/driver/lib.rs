@@ -91,6 +91,8 @@ pub struct Request<'a> {
     pub ends_the_process: bool,
     /// Nothing is forgotten once it is checked: for whoever goes on to ask about the program. It takes several times the memory.
     pub keeps_everything: bool,
+    /// Word for word, where Bun would put it otherwise (`bun add -d` for `npm i --save-dev`). For comparing with TypeScript.
+    pub says_it_as_typescript_does: bool,
     /// Called with everything that was loaded, before any of it is checked.
     pub loaded: Option<&'a (dyn Fn(&Program) + Sync)>,
     /// Called with it again when all of it is checked.
@@ -365,12 +367,31 @@ pub fn check(request: &Request) -> Report {
             .errors
             .retain(|e| e.code != 18003 && e.code != 18002);
     }
+    let report = check_project(&disk, project, request, report, started);
+    if request.ends_the_process {
+        std::mem::forget(disk);
+    }
+    report
+}
+
+/// Checks `project`, which is read through `host`. `report` has what has been found wrong on the way to it, since `started`.
+pub fn check_project(
+    host: &dyn Host,
+    mut project: config::Project,
+    request: &Request,
+    mut report: Report,
+    started: Instant,
+) -> Report {
+    let threads = match request.threads {
+        0 => std::thread::available_parallelism().map_or(4, usize::from),
+        n => n,
+    };
     report
         .diagnostics
         .extend(project.errors.iter().map(|ConfigError { code, args, at }| {
             let said = global(*code, args);
             match at {
-                Some((path, from, to)) => match disk.read(path) {
+                Some((path, from, to)) => match host.read(path) {
                     Some(text) => located(path, &text, &line_starts(&text), *from, *to, said),
                     None => said,
                 },
@@ -380,7 +401,7 @@ pub fn check(request: &Request) -> Report {
     let lib_dir = match request.lib_dir {
         Some(dir) => Some(host::from_native(dir)),
         None => host::find_lib_dir(
-            &disk,
+            host,
             &project.options.base_dir,
             request
                 .global_node_modules
@@ -408,7 +429,7 @@ pub fn check(request: &Request) -> Report {
     );
 
     project.options.drops_what_nothing_refers_to = !request.keeps_everything;
-    let files = Files::load(&disk, project.options, &project.files);
+    let files = Files::load(host, project.options, &project.files);
     let program = Program::new(files);
     report.files_loaded = program.files.modules.len();
     report.load_time = started.elapsed();
@@ -477,7 +498,7 @@ pub fn check(request: &Request) -> Report {
     let check_one = |i: usize| {
         let file = to_check[i];
         // Dropped last, after all that was found out about the file.
-        let _at_hand = program.files.bring_in(&disk, file);
+        let _at_hand = program.files.bring_in(host, file);
         let module = &program.files.modules[file.idx()];
         let mut checker = program.checker();
         checker.set_stack_limit(STACK);
@@ -498,7 +519,11 @@ pub fn check(request: &Request) -> Report {
                 let said = Diagnostic {
                     code: e.code,
                     category: e.category,
-                    text: in_terms_of_bun(e.text),
+                    text: if request.says_it_as_typescript_does {
+                        e.text
+                    } else {
+                        in_terms_of_bun(e.text)
+                    },
                     ..global(0, &[])
                 };
                 located(&module.path, text, &starts, e.start, e.end, said)
@@ -553,6 +578,10 @@ pub fn check(request: &Request) -> Report {
     report.diagnostics.sort_by(|a, b| {
         (&a.path, a.start, a.end, a.code, &a.text).cmp(&(&b.path, b.start, b.end, b.code, &b.text))
     });
+    // `SortAndDeduplicateDiagnostics`
+    report.diagnostics.dedup_by(|a, b| {
+        (&a.path, a.start, a.end, a.code, &a.text) == (&b.path, b.start, b.end, b.code, &b.text)
+    });
     report.check_time = checking.elapsed();
     if let Some(checked) = request.checked {
         checked(&program);
@@ -560,7 +589,6 @@ pub fn check(request: &Request) -> Report {
     // Giving back millions of small pieces of memory one by one takes a while, and the system takes it all back at once.
     if request.ends_the_process {
         std::mem::forget(program);
-        std::mem::forget(disk);
     }
     report
 }

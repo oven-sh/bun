@@ -291,7 +291,7 @@ impl Disk {
         if real_parent == "/" {
             format!("/{written}")
         } else {
-            format!("{real_parent}/{written}")
+            bun_sema::resolve::inside(&real_parent, written)
         }
     }
 }

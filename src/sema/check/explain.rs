@@ -179,16 +179,25 @@ impl Checker<'_> {
         let errors = self.check_file(file);
         self.explains = explained_before;
         let notes = self.notes.take();
-        errors
-            .into_iter()
-            .map(|d| {
-                // The first one noted: TypeScript keeps the first of two errors that are the same.
-                let note = notes
-                    .iter()
-                    .find(|n| n.start == d.start && n.code == d.code);
-                self.explained(file, d, note)
-            })
-            .collect()
+        let mut explained: Vec<Explained> = Vec::with_capacity(errors.len());
+        for d in errors {
+            let from = explained.len();
+            // Errors are the same if they also reach as far: `(a, b, c)` has one about `a` and one about `a, b`. Of those that do, the
+            // first one noted: TypeScript keeps the first of two errors that are the same.
+            for note in notes
+                .iter()
+                .filter(|n| n.start == d.start && n.code == d.code)
+            {
+                let one = self.explained(file, d, Some(note));
+                if !explained[from..].iter().any(|e| e.end == one.end) {
+                    explained.push(one);
+                }
+            }
+            if explained.len() == from {
+                explained.push(self.explained(file, d, None));
+            }
+        }
+        explained
     }
 
     fn explained(&self, file: FileId, d: Diagnostic, note: Option<&Note>) -> Explained {

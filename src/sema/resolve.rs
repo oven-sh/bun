@@ -633,6 +633,11 @@ pub fn parent_dir(path: &str) -> &str {
     }
 }
 
+/// `name` in `dir`. The root ends in the `/` that other directories lack.
+pub fn inside(dir: &str, name: &str) -> String {
+    [if dir == "/" { "" } else { dir }, "/", name].concat()
+}
+
 /// `a/b/../c/./d` is `a/c/d`.
 pub fn normalize(path: &str) -> String {
     from_parts(path.split('/'), path.len() + 1)
@@ -821,7 +826,7 @@ impl<'h> Resolver<'h> {
         if let Some(known) = self.packages.read().unwrap().get(dir) {
             return known.clone();
         }
-        let path = [dir, "/package.json"].concat();
+        let path = inside(dir, "package.json");
         let package = if self.is_file(&path) {
             self.host
                 .read(&path)
@@ -1127,7 +1132,7 @@ impl<'h> Resolver<'h> {
     fn types_package(&self, name: &str, from_dir: &str, look: Look) -> Option<String> {
         let mut dir = from_dir;
         loop {
-            let candidate = format!("{dir}/node_modules/@types/{}", mangle_scoped(name));
+            let candidate = inside(dir, &format!("node_modules/@types/{}", mangle_scoped(name)));
             if self.is_dir(&candidate)
                 && let Some(found) = self.package_entry(&candidate, look)
             {
@@ -1486,7 +1491,7 @@ impl<'h> Resolver<'h> {
         if look.esm {
             None
         } else {
-            self.file(&[dir, "/index"].concat(), look)
+            self.file(&inside(dir, "index"), look)
         }
     }
 
@@ -1512,7 +1517,7 @@ impl<'h> Resolver<'h> {
         let mut dir = from_dir;
         loop {
             if !dir.ends_with("/node_modules") {
-                let modules = [dir, "/node_modules"].concat();
+                let modules = inside(dir, "node_modules");
                 if self.is_dir(&modules) {
                     match self.in_modules(&modules, spec, look) {
                         Found::No => {}

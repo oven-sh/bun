@@ -10626,9 +10626,9 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
     }
   }
 
-  async function install(root: string) {
+  async function install(root: string, ...args: string[]) {
     await using proc = spawn({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), "install", ...args],
       cwd: join(root, "project"),
       env: { ...env, BUN_INSTALL_CACHE_DIR: join(root, "cache") },
       stdout: "pipe",
@@ -10715,21 +10715,27 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
 
   // Peers are installed too, so the same refusal applies; unlike a regular
   // dependency, an unresolved peer is not reported a second time as
-  // "failed to resolve".
-  it("rejects the one a registry package declares as a peer dependency", async () => {
-    await withContext(defaultOpts, async ctx => {
-      using dir = tempDir("peer-local-tarball-of-registry-dep", {});
-      const root = String(dir);
-      await writeRegistryProject(ctx, root, { peerDependencies: { inside: "file:./inside.tgz" } });
-      await cp(planted, join(root, "project", "inside.tgz"));
+  // "failed to resolve". An unresolved peer is also not what fails the install,
+  // so `--lockfile-only`, which never reaches the linking step, has to fail on
+  // the error itself.
+  for (const args of [[], ["--lockfile-only"]]) {
+    it(`rejects the one a registry package declares as a peer dependency (${args.join(" ") || "install"})`, async () => {
+      await withContext(defaultOpts, async ctx => {
+        using dir = tempDir("peer-local-tarball-of-registry-dep", {});
+        const root = String(dir);
+        await writeRegistryProject(ctx, root, { peerDependencies: { inside: "file:./inside.tgz" } });
+        await cp(planted, join(root, "project", "inside.tgz"));
 
-      const { err, exitCode } = await install(root);
-      expect(diagnostics(err)).toEqual(refusal("inside", "file:./inside.tgz", "bar@0.0.2"));
-      expect(await exists(join(root, "project", "node_modules", "inside"))).toBe(false);
-      expect(await exists(join(root, "project", "bun.lock"))).toBe(false);
-      expect(exitCode).toBe(1);
+        const { err, out, exitCode } = await install(root, ...args);
+        expect(diagnostics(err)).toEqual(refusal("inside", "file:./inside.tgz", "bar@0.0.2"));
+        expect(err).not.toContain("Saved lockfile");
+        expect(out).not.toContain("Saved bun.lock");
+        expect(await exists(join(root, "project", "node_modules", "inside"))).toBe(false);
+        expect(await exists(join(root, "project", "bun.lock"))).toBe(false);
+        expect(exitCode).toBe(1);
+      });
     });
-  });
+  }
 
   // The remedy the note describes: a tarball the root package.json itself depends
   // on, under the same name, is the project's own, so a registry package asking

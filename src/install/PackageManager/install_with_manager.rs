@@ -839,6 +839,10 @@ pub fn install_with_manager(
     let save_format = load_result.save_format(&manager.options);
 
     if manager.options.lockfile_only {
+        // The same errors fail a full install below, after the packages are linked.
+        if had_errors_before_cleaning_lockfile {
+            Global::crash();
+        }
         // save the lockfile and exit. make sure metahash is generated for binary lockfile
         return save_lockfile_only(
             manager,

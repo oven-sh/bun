@@ -1709,9 +1709,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             if matches!(tarball.uri, dependency::tarball::Uri::Local(_))
                 && !version_was_replaced
                 && let Some(declarer) = this.lockfile.get_parent_pkg_of_dependency(id)
-                && !this.lockfile.packages.items_resolution()[declarer as usize]
-                    .tag
-                    .is_local_package()
+                && !this.lockfile.is_local_package_id(declarer)
                 && !this.lockfile.has_equal_root_dependency(dependency)
             {
                 if dependency.behavior.is_required() {

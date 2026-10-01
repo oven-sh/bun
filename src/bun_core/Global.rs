@@ -787,9 +787,7 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
     }
 }
 
-/// Die from `sig` with its default action. Async-signal-safe. `raise()` returns
-/// only as PID 1 of a pid namespace (the kernel discards the signal); then exit
-/// 128 + signo, the status a shell reports for that death.
+/// Die from `sig`, or exit 128 + signo when the kernel discards it (PID 1 of a pid namespace). Async-signal-safe.
 #[cfg(not(windows))]
 pub fn raise_default_action(sig: c_int) -> ! {
     // SAFETY: zeroed sigset + SIG_DFL handler is a valid Sigaction.

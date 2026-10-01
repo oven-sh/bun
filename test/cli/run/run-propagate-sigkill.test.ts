@@ -234,7 +234,7 @@ describe.concurrent.skipIf(!cc || !isGlibc)("exits 128 + signo when the re-raise
     await waitForOutput(proc, "y\n");
     proc.kill("SIGINT");
 
-    expect(await exitedSoon(proc)).toEqual({ exitCode: 128 + SIGINT, signalCode: null });
+    expect(await exited(proc)).toEqual({ exitCode: 128 + SIGINT, signalCode: null });
   });
 
   // The runtime's own SIGINT/SIGTERM handler (`onExitSignal`, installed when
@@ -247,7 +247,7 @@ describe.concurrent.skipIf(!cc || !isGlibc)("exits 128 + signo when the re-raise
     expect(bun).toBeDefined();
     process.kill(bun, "SIGTERM");
 
-    expect(await exitedSoon(proc)).toEqual({ exitCode: 128 + SIGTERM, signalCode: null });
+    expect(await exited(proc)).toEqual({ exitCode: 128 + SIGTERM, signalCode: null });
   });
 });
 
@@ -267,9 +267,9 @@ async function waitForOutput(proc: Proc, prefix: string) {
   reader.releaseLock();
 }
 
-/** The process's status, or `null`s if it is still running after a while (it is killed on scope exit). */
-async function exitedSoon(proc: Proc) {
-  for (let i = 0; i < 100 && proc.exitCode === null && proc.signalCode === null; i++) await Bun.sleep(20);
+/** How the process ended. A bun that survives its signal hangs here until the test times out. */
+async function exited(proc: Proc) {
+  await proc.exited;
   return { exitCode: proc.exitCode, signalCode: proc.signalCode };
 }
 
@@ -376,7 +376,7 @@ describe.concurrent.skipIf(!canBecomePid1)("as PID 1 of a pid namespace", () => 
     expect(bun).toBeDefined();
     process.kill(bun, "SIGINT");
 
-    expect(await exitedSoon(proc)).toEqual({ exitCode: 128 + SIGINT, signalCode: null });
+    expect(await exited(proc)).toEqual({ exitCode: 128 + SIGINT, signalCode: null });
   });
 
   // Nothing is forwarded to lifecycle scripts: this is the script itself being

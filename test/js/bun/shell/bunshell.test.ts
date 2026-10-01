@@ -4447,3 +4447,56 @@ test.skipIf(!isWindows)("a redirect to a name that begins like a device's makes 
   for (const name of names) await $`echo a > ${name}`.cwd(String(dir));
   expect(readdirSync(String(dir)).sort()).toEqual(names.toSorted());
 });
+
+// Win32 drops trailing dots and spaces, wants no separator behind a file's name, and reads a colon as a stream's.
+describe.skipIf(!isWindows)("a relative name is the file Win32 means by it", () => {
+  const before = { "a": "a\n", "log.txt": "old\n", "sub/keep.txt": "" };
+  // Through a \\?\ path, which lists names Win32 cannot spell.
+  const tree = (dir: string) => {
+    const files: Record<string, string> = {};
+    for (const name of readdirSync("\\\\?\\" + dir, { recursive: true }) as string[]) {
+      const path = "\\\\?\\" + join(dir, name);
+      if (statSync(path).isFile()) files[name.replaceAll("\\", "/")] = readFileSync(path, "utf8");
+    }
+    return files;
+  };
+
+  test.each([
+    ["out.", { out: "new\n" }],
+    ["out ", { out: "new\n" }],
+    ["out. .", { out: "new\n" }],
+    ["a.b.", { "a.b": "new\n" }],
+    ["log.txt.", { "log.txt": "new\n" }],
+    ["log.txt ", { "log.txt": "new\n" }],
+    ["sub./made", { "sub/made": "new\n" }],
+    ["sub/made.", { "sub/made": "new\n" }],
+    ["a:stream", {}],
+  ])("echo > %j", async (name, made) => {
+    using dir = tempDir("shell-redirect-win32-name", before);
+    const { exitCode, stderr } = await $`echo new > ${name}`.cwd(String(dir)).nothrow().quiet();
+    expect({ stderr: stderr.toString(), exitCode, tree: tree(String(dir)) }).toEqual({
+      stderr: "",
+      exitCode: 0,
+      tree: { ...before, ...made },
+    });
+  });
+
+  test("echo > a:stream writes the stream", async () => {
+    using dir = tempDir("shell-redirect-stream", before);
+    await $`echo new > a:stream`.cwd(String(dir));
+    expect(readFileSync(join(String(dir), "a:stream"), "utf8")).toBe("new\n");
+  });
+
+  test.each(["...", "new/", "new\\", "log.txt/", ":stream"])("echo > %j fails and makes nothing", async name => {
+    using dir = tempDir("shell-redirect-win32-refused", before);
+    const { exitCode } = await $`echo new > ${name}`.cwd(String(dir)).nothrow().quiet();
+    expect({ exitCode, tree: tree(String(dir)) }).toEqual({ exitCode: 1, tree: before });
+  });
+
+  test("cat and < read it", async () => {
+    using dir = tempDir("shell-read-win32-name", before);
+    expect(await $`cat log.txt.; cat ${"log.txt "}; cat < log.txt.; cat sub./../log.txt`.cwd(String(dir)).text()).toBe(
+      "old\n".repeat(4),
+    );
+  });
+});

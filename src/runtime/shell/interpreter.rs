@@ -2390,16 +2390,28 @@ pub(crate) fn shell_lstatat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<
 /// POSIX: `bun_sys::openat` with the error tagged `.with_path(path)`.
 /// Windows: for `O_DIRECTORY` opens, rewrite POSIX-absolute paths via
 /// `shell_get_path` and use `openDirAtWindowsA(.iterable=true)`; for file
-/// opens, a relative path is opened relative to `dir`, anything else is
-/// resolved via `shell_get_path` and then `bun_sys::open`.
-/// Whether Win32 may read the last component of `path` as a DOS device (`nul`,
-/// `Con`, `com1.txt`, `aux `). Which of these it does depends on the version
-/// of Windows, and it does so for a Win32 path only: `NtCreateFile` relative to
-/// a directory makes a file of that name.
+/// opens, a path Win32 would not rewrite is opened relative to `dir`, anything
+/// else is resolved via `shell_get_path` and then `bun_sys::open`.
+/// Whether `path` is relative and names the same file to Win32 as to
+/// `NtCreateFile` relative to a directory, which takes every name as written.
+/// Win32 drops trailing dots and spaces, resolves `.` and `..`, refuses a
+/// trailing separator on a file, and reads `a:s` as a stream or a drive.
 #[cfg(windows)]
-fn may_name_dos_device(path: &[u8]) -> bool {
-    let name = bun_paths::basename(path);
-    let stem = &name[..bun_core::strings::index_of_any(name, b".:").unwrap_or(name.len())];
+fn is_same_name_to_win32(path: &[u8]) -> bool {
+    !path
+        .iter()
+        .any(|&c| c < b' ' || matches!(c, b':' | b'<' | b'>' | b'"' | b'|' | b'?' | b'*'))
+        && bun_core::strings::split_any(path, b"/\\").all(|name| {
+            !matches!(name.last(), None | Some(b'.' | b' ')) && !may_name_dos_device(name)
+        })
+}
+
+/// Whether Win32 may read `name` as a DOS device (`nul`, `Con`, `com1.txt`,
+/// `aux .c`). Which of these it does depends on the version of Windows.
+#[cfg(windows)]
+fn may_name_dos_device(name: &[u8]) -> bool {
+    let stem =
+        &name[..bun_core::strings::index_of_char(name, b'.').map_or(name.len(), |i| i as usize)];
     let stem = stem.trim_ascii_end();
     let is = |device: &[u8]| stem.eq_ignore_ascii_case(device);
     // The digit may be a superscript one, two or three.
@@ -2453,10 +2465,7 @@ pub(crate) fn shell_openat(
             .map_err(|e| e.with_path(path.as_bytes()));
         }
         let bytes = path.as_bytes();
-        if !bun_paths::Platform::Posix.is_absolute(bytes)
-            && !bun_paths::Platform::Windows.is_absolute(bytes)
-            && !may_name_dos_device(bytes)
-        {
+        if is_same_name_to_win32(bytes) {
             return bun_sys::openat(dir, path, flags, perm).map_err(|e| e.with_path(bytes));
         }
         let mut buf = bun_paths::path_buffer_pool::get();

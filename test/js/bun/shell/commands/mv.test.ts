@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { canCreateVolumes, isPosix, tempVolume } from "harness";
+import { canCreateVolumes, isPosix, isWindows, tempDir, tempVolume } from "harness";
 import {
   accessSync,
   chmodSync,
@@ -88,6 +88,25 @@ describe("mv", async () => {
       for (const name of readdirSync(dir)) chmodSync(join(dir, name), 0o666);
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  // The device opens as a directory, is not on the source's volume, and takes whatever is copied to it.
+  test.skipIf(!isWindows).each([
+    ["file.txt", (dir: string) => join(dir, "nul")],
+    ["file", (dir: string) => join(dir, "nul")],
+    ["file.txt", (dir: string) => join(dir, "NUL")],
+    ["file.txt", () => "\\\\.\\nul"],
+    ["tree", (dir: string) => join(dir, "nul")],
+  ])("move %s -> the null device fails and keeps it", async (source, target) => {
+    using dir = tempDir("mv-to-nul", { "file.txt": "kept", "file": "kept", "tree/deep/file.txt": "kept" });
+    const { exitCode } = await $`mv ${source} ${target(String(dir))}`.cwd(String(dir)).nothrow().quiet();
+    expect({
+      failed: exitCode !== 0,
+      left: (readdirSync(String(dir), { recursive: true }) as string[]).sort(),
+    }).toEqual({
+      failed: true,
+      left: ["file", "file.txt", "tree", join("tree", "deep"), join("tree", "deep", "file.txt")],
+    });
   });
 
   // POSIX `mv` must fall back to copy+unlink when `rename()` returns EXDEV

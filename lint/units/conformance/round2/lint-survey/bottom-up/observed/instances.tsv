@@ -11014,6 +11014,1108 @@ symlinkedWorkspaceDependenciesNoDirectLinkOptionalGeneratesNonrelativeName.ts	C	
 symlinkedWorkspaceDependenciesNoDirectLinkPeerGeneratesNonrelativeName.ts	C	compiler/symlinkedWorkspaceDependenciesNoDirectLinkPeerGeneratesNonrelativeName.ts	pass	silent		
 syncIteratorHelpers.ts	C	conformance/es2025/syncIteratorHelpers.ts	pass	silent		
 syntaxErrors.ts	C	conformance/jsdoc/syntaxErrors.ts	pass	silent		
+taggedPrimitiveNarrowing.ts	C	compiler/taggedPrimitiveNarrowing.ts	pass	silent		
+taggedTemplateChain.ts	E	conformance/expressions/optionalChaining/taggedTemplateChain/taggedTemplateChain.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+taggedTemplateContextualTyping1.ts	E	conformance/expressions/contextualTyping/taggedTemplateContextualTyping1.ts	fail	silent		no diagnostic where the oracle has a baseline
+taggedTemplateContextualTyping2.ts	E	conformance/expressions/contextualTyping/taggedTemplateContextualTyping2.ts	fail	silent		no diagnostic where the oracle has a baseline
+taggedTemplateStringWithSymbolExpression01.ts	C	compiler/taggedTemplateStringWithSymbolExpression01.ts	pass	silent		
+taggedTemplateStringsHexadecimalEscapes.ts	C	compiler/taggedTemplateStringsHexadecimalEscapes.ts	pass	silent		
+taggedTemplateStringsHexadecimalEscapesES6.ts	C	compiler/taggedTemplateStringsHexadecimalEscapesES6.ts	pass	silent		
+taggedTemplateStringsPlainCharactersThatArePartsOfEscapes01.ts	C	conformance/es6/templates/taggedTemplateStringsPlainCharactersThatArePartsOfEscapes01.ts	pass	silent		
+taggedTemplateStringsPlainCharactersThatArePartsOfEscapes01_ES6.ts	C	conformance/es6/templates/taggedTemplateStringsPlainCharactersThatArePartsOfEscapes01_ES6.ts	pass	silent		
+taggedTemplateStringsPlainCharactersThatArePartsOfEscapes02.ts	C	conformance/es6/templates/taggedTemplateStringsPlainCharactersThatArePartsOfEscapes02.ts	pass	silent		
+taggedTemplateStringsPlainCharactersThatArePartsOfEscapes02_ES6.ts	C	conformance/es6/templates/taggedTemplateStringsPlainCharactersThatArePartsOfEscapes02_ES6.ts	pass	silent		
+taggedTemplateStringsTypeArgumentInference.ts	E	conformance/es6/templates/taggedTemplateStringsTypeArgumentInference.ts	fail	silent		no diagnostic where the oracle has a baseline
+taggedTemplateStringsTypeArgumentInferenceES6.ts	E	conformance/es6/templates/taggedTemplateStringsTypeArgumentInferenceES6.ts	fail	silent		no diagnostic where the oracle has a baseline
+taggedTemplateStringsWithCurriedFunction(target=es2015).ts	C	compiler/taggedTemplateStringsWithCurriedFunction.ts	pass	silent		
+taggedTemplateStringsWithIncompatibleTypedTags.ts	E	conformance/es6/templates/taggedTemplateStringsWithIncompatibleTypedTags.ts	fail	silent		no diagnostic where the oracle has a baseline
+taggedTemplateStringsWithIncompatibleTypedTagsES6.ts	E	conformance/es6/templates/taggedTemplateStringsWithIncompatibleTypedTagsES6.ts	fail	silent		no diagnostic where the oracle has a baseline
+taggedTemplateStringsWithManyCallAndMemberExpressions.ts	E	conformance/es6/templates/taggedTemplateStringsWithManyCallAndMemberExpressions.ts	fail	silent		no diagnostic where the oracle has a baseline
+taggedTemplateStringsWithManyCallAndMemberExpressionsES6.ts	E	conformance/es6/templates/taggedTemplateStringsWithManyCallAndMemberExpressionsES6.ts	fail	silent		no diagnostic where the oracle has a baseline
+taggedTemplateStringsWithMultilineTemplate.ts	C	compiler/taggedTemplateStringsWithMultilineTemplate.ts	pass	silent		
+taggedTemplateStringsWithMultilineTemplateES6.ts	C	compiler/taggedTemplateStringsWithMultilineTemplateES6.ts	pass	silent		
+taggedTemplateStringsWithOverloadResolution1.ts	E	conformance/es6/templates/taggedTemplateStringsWithOverloadResolution1.ts	fail	silent		no diagnostic where the oracle has a baseline
+taggedTemplateStringsWithOverloadResolution1_ES6.ts	E	conformance/es6/templates/taggedTemplateStringsWithOverloadResolution1_ES6.ts	fail	silent		no diagnostic where the oracle has a baseline
+taggedTemplateStringsWithOverloadResolution2.ts	C	conformance/es6/templates/taggedTemplateStringsWithOverloadResolution2.ts	pass	silent		
+taggedTemplateStringsWithOverloadResolution2_ES6.ts	C	conformance/es6/templates/taggedTemplateStringsWithOverloadResolution2_ES6.ts	pass	silent		
+taggedTemplateStringsWithOverloadResolution3.ts	E	conformance/es6/templates/taggedTemplateStringsWithOverloadResolution3.ts	fail	silent		no diagnostic where the oracle has a baseline
+taggedTemplateStringsWithOverloadResolution3_ES6.ts	E	conformance/es6/templates/taggedTemplateStringsWithOverloadResolution3_ES6.ts	fail	silent		no diagnostic where the oracle has a baseline
+taggedTemplateStringsWithTagNamedDeclare.ts	C	conformance/es6/templates/taggedTemplateStringsWithTagNamedDeclare.ts	pass	silent		
+taggedTemplateStringsWithTagNamedDeclareES6.ts	C	conformance/es6/templates/taggedTemplateStringsWithTagNamedDeclareES6.ts	pass	silent		
+taggedTemplateStringsWithTagsTypedAsAny.ts	C	conformance/es6/templates/taggedTemplateStringsWithTagsTypedAsAny.ts	pass	silent		
+taggedTemplateStringsWithTagsTypedAsAnyES6.ts	C	conformance/es6/templates/taggedTemplateStringsWithTagsTypedAsAnyES6.ts	pass	silent		
+taggedTemplateStringsWithTypeErrorInFunctionExpressionsInSubstitutionExpression.ts	E	conformance/es6/templates/taggedTemplateStringsWithTypeErrorInFunctionExpressionsInSubstitutionExpression.ts	fail	silent		no diagnostic where the oracle has a baseline
+taggedTemplateStringsWithTypeErrorInFunctionExpressionsInSubstitutionExpressionES6.ts	E	conformance/es6/templates/taggedTemplateStringsWithTypeErrorInFunctionExpressionsInSubstitutionExpressionES6.ts	fail	silent		no diagnostic where the oracle has a baseline
+taggedTemplateStringsWithTypedTags.ts	E	conformance/es6/templates/taggedTemplateStringsWithTypedTags.ts	fail	silent		no diagnostic where the oracle has a baseline
+taggedTemplateStringsWithTypedTagsES6.ts	E	conformance/es6/templates/taggedTemplateStringsWithTypedTagsES6.ts	fail	silent		no diagnostic where the oracle has a baseline
+taggedTemplateStringsWithUnicodeEscapes.ts	C	compiler/taggedTemplateStringsWithUnicodeEscapes.ts	pass	silent		
+taggedTemplateStringsWithUnicodeEscapesES6.ts	C	compiler/taggedTemplateStringsWithUnicodeEscapesES6.ts	pass	silent		
+taggedTemplateStringsWithWhitespaceEscapes.ts	C	compiler/taggedTemplateStringsWithWhitespaceEscapes.ts	pass	silent		
+taggedTemplateStringsWithWhitespaceEscapesES6.ts	C	compiler/taggedTemplateStringsWithWhitespaceEscapesES6.ts	pass	silent		
+taggedTemplateUntypedTagCall01.ts	E	conformance/es6/templates/taggedTemplateUntypedTagCall01.ts	fail	silent		no diagnostic where the oracle has a baseline
+taggedTemplateWithConstructableTag01.ts	E	conformance/es6/templates/taggedTemplateWithConstructableTag01.ts	fail	silent		no diagnostic where the oracle has a baseline
+taggedTemplateWithConstructableTag02.ts	E	conformance/es6/templates/taggedTemplateWithConstructableTag02.ts	fail	silent		no diagnostic where the oracle has a baseline
+taggedTemplateWithoutDeclaredHelper(target=es2015).ts	C	compiler/taggedTemplateWithoutDeclaredHelper.ts	pass	silent		
+taggedTemplatesInDifferentScopes.ts	C	compiler/taggedTemplatesInDifferentScopes.ts	pass	silent		
+taggedTemplatesInModuleAndGlobal(target=es2015).ts	C	compiler/taggedTemplatesInModuleAndGlobal.ts	pass	silent		
+taggedTemplatesWithIncompleteNoSubstitutionTemplate1.ts	E	compiler/taggedTemplatesWithIncompleteNoSubstitutionTemplate1.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+taggedTemplatesWithIncompleteNoSubstitutionTemplate2.ts	E	compiler/taggedTemplatesWithIncompleteNoSubstitutionTemplate2.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+taggedTemplatesWithIncompleteTemplateExpressions1.ts	E	compiler/taggedTemplatesWithIncompleteTemplateExpressions1.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+taggedTemplatesWithIncompleteTemplateExpressions2.ts	E	compiler/taggedTemplatesWithIncompleteTemplateExpressions2.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+taggedTemplatesWithIncompleteTemplateExpressions3.ts	E	compiler/taggedTemplatesWithIncompleteTemplateExpressions3.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+taggedTemplatesWithIncompleteTemplateExpressions4.ts	E	compiler/taggedTemplatesWithIncompleteTemplateExpressions4.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+taggedTemplatesWithIncompleteTemplateExpressions5.ts	E	compiler/taggedTemplatesWithIncompleteTemplateExpressions5.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+taggedTemplatesWithIncompleteTemplateExpressions6.ts	E	compiler/taggedTemplatesWithIncompleteTemplateExpressions6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+taggedTemplatesWithTypeArguments1.ts	C	conformance/es6/templates/taggedTemplatesWithTypeArguments1.ts	pass	silent		
+taggedTemplatesWithTypeArguments2.ts	E	conformance/es6/templates/taggedTemplatesWithTypeArguments2.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+tailRecursiveConditionalTypes.ts	C	compiler/tailRecursiveConditionalTypes.ts	pass	silent		
+targetEs6DecoratorMetadataImportNotElided(target=es2015).ts	E	compiler/targetEs6DecoratorMetadataImportNotElided.ts	fail	silent		no diagnostic where the oracle has a baseline
+targetTypeArgs.ts	C	compiler/targetTypeArgs.ts	pass	silent		
+targetTypeBaseCalls.ts	E	compiler/targetTypeBaseCalls.ts	fail	silent		no diagnostic where the oracle has a baseline
+targetTypeCalls.ts	C	compiler/targetTypeCalls.ts	pass	silent		
+targetTypeCastTest.ts	E	compiler/targetTypeCastTest.ts	fail	silent		no diagnostic where the oracle has a baseline
+targetTypeObjectLiteral.ts	C	compiler/targetTypeObjectLiteral.ts	pass	silent		
+targetTypeObjectLiteralToAny.ts	E	compiler/targetTypeObjectLiteralToAny.ts	fail	silent		no diagnostic where the oracle has a baseline
+targetTypeTest1.ts	E	compiler/targetTypeTest1.ts	fail	silent		no diagnostic where the oracle has a baseline
+targetTypeTest2.ts	C	compiler/targetTypeTest2.ts	pass	silent		
+targetTypeTest3.ts	E	compiler/targetTypeTest3.ts	fail	silent		no diagnostic where the oracle has a baseline
+targetTypeVoidFunc.ts	E	compiler/targetTypeVoidFunc.ts	fail	silent		no diagnostic where the oracle has a baseline
+targetTypingOnFunctions.ts	C	compiler/targetTypingOnFunctions.ts	pass	silent		
+templateExpressionAsPossiblyDiscriminantValue.ts	C	compiler/templateExpressionAsPossiblyDiscriminantValue.ts	pass	silent		
+templateExpressionNoInlininingOfConstantBindingWithInitializer.ts	C	compiler/templateExpressionNoInlininingOfConstantBindingWithInitializer.ts	pass	silent		
+templateInsideCallback.ts	E	conformance/jsdoc/templateInsideCallback.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateLiteralConstantEvaluation.ts	C	compiler/templateLiteralConstantEvaluation.ts	pass	silent		
+templateLiteralEscapeSequence.ts	E	compiler/templateLiteralEscapeSequence.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+templateLiteralIntersection.ts	C	compiler/templateLiteralIntersection.ts	pass	silent		
+templateLiteralIntersection2.ts	E	compiler/templateLiteralIntersection2.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateLiteralIntersection3.ts	C	compiler/templateLiteralIntersection3.ts	pass	silent		
+templateLiteralIntersection4.ts	C	compiler/templateLiteralIntersection4.ts	pass	silent		
+templateLiteralTypes1.ts	E	conformance/types/literal/templateLiteralTypes1.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateLiteralTypes2.ts	E	conformance/types/literal/templateLiteralTypes2.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateLiteralTypes3.ts	E	conformance/types/literal/templateLiteralTypes3.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateLiteralTypes4.ts	E	conformance/types/literal/templateLiteralTypes4.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateLiteralTypes5.ts	E	conformance/types/literal/templateLiteralTypes5.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateLiteralTypes6.ts	C	conformance/types/literal/templateLiteralTypes6.ts	pass	silent		
+templateLiteralTypes7.ts	E	conformance/types/literal/templateLiteralTypes7.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateLiteralTypes8.ts	C	conformance/types/literal/templateLiteralTypes8.ts	pass	silent		
+templateLiteralTypesPatterns.ts	E	conformance/types/literal/templateLiteralTypesPatterns.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateLiteralTypesPatternsPrefixSuffixAssignability.ts	E	conformance/types/literal/templateLiteralTypesPatternsPrefixSuffixAssignability.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateLiteralsAndDecoratorMetadata.ts	C	compiler/templateLiteralsAndDecoratorMetadata.ts	pass	silent		
+templateLiteralsInTypes.ts	E	compiler/templateLiteralsInTypes.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateLiteralsSourceMap.ts	C	compiler/templateLiteralsSourceMap.ts	pass	silent		
+templateStringBinaryOperations.ts	C	conformance/es6/templates/templateStringBinaryOperations.ts	pass	silent		
+templateStringBinaryOperationsES6.ts	C	conformance/es6/templates/templateStringBinaryOperationsES6.ts	pass	silent		
+templateStringBinaryOperationsES6Invalid.ts	E	conformance/es6/templates/templateStringBinaryOperationsES6Invalid.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringBinaryOperationsInvalid.ts	E	conformance/es6/templates/templateStringBinaryOperationsInvalid.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringControlCharacterEscapes01.ts	C	conformance/es6/templates/templateStringControlCharacterEscapes01.ts	pass	silent		
+templateStringControlCharacterEscapes01_ES6.ts	C	conformance/es6/templates/templateStringControlCharacterEscapes01_ES6.ts	pass	silent		
+templateStringControlCharacterEscapes02.ts	C	conformance/es6/templates/templateStringControlCharacterEscapes02.ts	pass	silent		
+templateStringControlCharacterEscapes02_ES6.ts	C	conformance/es6/templates/templateStringControlCharacterEscapes02_ES6.ts	pass	silent		
+templateStringControlCharacterEscapes03.ts	C	conformance/es6/templates/templateStringControlCharacterEscapes03.ts	pass	silent		
+templateStringControlCharacterEscapes03_ES6.ts	C	conformance/es6/templates/templateStringControlCharacterEscapes03_ES6.ts	pass	silent		
+templateStringControlCharacterEscapes04.ts	C	conformance/es6/templates/templateStringControlCharacterEscapes04.ts	pass	silent		
+templateStringControlCharacterEscapes04_ES6.ts	C	conformance/es6/templates/templateStringControlCharacterEscapes04_ES6.ts	pass	silent		
+templateStringInArray.ts	C	conformance/es6/templates/templateStringInArray.ts	pass	silent		
+templateStringInArrowFunction.ts	E	conformance/es6/templates/templateStringInArrowFunction.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringInArrowFunctionES6.ts	C	conformance/es6/templates/templateStringInArrowFunctionES6.ts	pass	silent		
+templateStringInCallExpression.ts	E	conformance/es6/templates/templateStringInCallExpression.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringInCallExpressionES6.ts	E	conformance/es6/templates/templateStringInCallExpressionES6.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringInConditional.ts	C	conformance/es6/templates/templateStringInConditional.ts	pass	silent		
+templateStringInConditionalES6.ts	C	conformance/es6/templates/templateStringInConditionalES6.ts	pass	silent		
+templateStringInDeleteExpression.ts	E	conformance/es6/templates/templateStringInDeleteExpression.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringInDeleteExpressionES6.ts	E	conformance/es6/templates/templateStringInDeleteExpressionES6.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringInDivision.ts	E	conformance/es6/templates/templateStringInDivision.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringInEqualityChecks.ts	E	conformance/es6/templates/templateStringInEqualityChecks.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringInEqualityChecksES6.ts	E	conformance/es6/templates/templateStringInEqualityChecksES6.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringInFunctionExpression.ts	C	conformance/es6/templates/templateStringInFunctionExpression.ts	pass	silent		
+templateStringInFunctionExpressionES6.ts	C	conformance/es6/templates/templateStringInFunctionExpressionES6.ts	pass	silent		
+templateStringInFunctionParameterType.ts	E	conformance/es6/templates/templateStringInFunctionParameterType.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+templateStringInFunctionParameterTypeES6.ts	E	conformance/es6/templates/templateStringInFunctionParameterTypeES6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+templateStringInInOperator.ts	C	conformance/es6/templates/templateStringInInOperator.ts	pass	silent		
+templateStringInInOperatorES6.ts	C	conformance/es6/templates/templateStringInInOperatorES6.ts	pass	silent		
+templateStringInIndexExpression.ts	C	conformance/es6/templates/templateStringInIndexExpression.ts	pass	silent		
+templateStringInIndexExpressionES6.ts	C	conformance/es6/templates/templateStringInIndexExpressionES6.ts	pass	silent		
+templateStringInInstanceOf.ts	E	conformance/es6/templates/templateStringInInstanceOf.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringInInstanceOfES6.ts	E	conformance/es6/templates/templateStringInInstanceOfES6.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringInModuleName.ts	E	conformance/es6/templates/templateStringInModuleName.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+templateStringInModuleNameES6.ts	E	conformance/es6/templates/templateStringInModuleNameES6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+templateStringInModulo.ts	E	conformance/es6/templates/templateStringInModulo.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringInModuloES6.ts	E	conformance/es6/templates/templateStringInModuloES6.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringInMultiplication.ts	E	conformance/es6/templates/templateStringInMultiplication.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringInMultiplicationES6.ts	E	conformance/es6/templates/templateStringInMultiplicationES6.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringInNewExpression.ts	E	conformance/es6/templates/templateStringInNewExpression.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringInNewExpressionES6.ts	E	conformance/es6/templates/templateStringInNewExpressionES6.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringInNewOperator.ts	E	conformance/es6/templates/templateStringInNewOperator.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringInNewOperatorES6.ts	E	conformance/es6/templates/templateStringInNewOperatorES6.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringInObjectLiteral.ts	E	conformance/es6/templates/templateStringInObjectLiteral.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+templateStringInObjectLiteralES6.ts	E	conformance/es6/templates/templateStringInObjectLiteralES6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+templateStringInParentheses.ts	C	conformance/es6/templates/templateStringInParentheses.ts	pass	silent		
+templateStringInParenthesesES6.ts	C	conformance/es6/templates/templateStringInParenthesesES6.ts	pass	silent		
+templateStringInPropertyAssignment.ts	C	conformance/es6/templates/templateStringInPropertyAssignment.ts	pass	silent		
+templateStringInPropertyAssignmentES6.ts	C	conformance/es6/templates/templateStringInPropertyAssignmentES6.ts	pass	silent		
+templateStringInPropertyName1.ts	E	conformance/es6/templates/templateStringInPropertyName1.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+templateStringInPropertyName2.ts	E	conformance/es6/templates/templateStringInPropertyName2.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+templateStringInPropertyNameES6_1.ts	E	conformance/es6/templates/templateStringInPropertyNameES6_1.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+templateStringInPropertyNameES6_2.ts	E	conformance/es6/templates/templateStringInPropertyNameES6_2.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+templateStringInSwitchAndCase.ts	E	conformance/es6/templates/templateStringInSwitchAndCase.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringInSwitchAndCaseES6.ts	E	conformance/es6/templates/templateStringInSwitchAndCaseES6.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringInTaggedTemplate.ts	E	conformance/es6/templates/templateStringInTaggedTemplate.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringInTaggedTemplateES6.ts	E	conformance/es6/templates/templateStringInTaggedTemplateES6.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringInTypeAssertion.ts	C	conformance/es6/templates/templateStringInTypeAssertion.ts	pass	silent		
+templateStringInTypeAssertionES6.ts	C	conformance/es6/templates/templateStringInTypeAssertionES6.ts	pass	silent		
+templateStringInTypeOf.ts	C	conformance/es6/templates/templateStringInTypeOf.ts	pass	silent		
+templateStringInTypeOfES6.ts	C	conformance/es6/templates/templateStringInTypeOfES6.ts	pass	silent		
+templateStringInUnaryPlus.ts	C	conformance/es6/templates/templateStringInUnaryPlus.ts	pass	silent		
+templateStringInUnaryPlusES6.ts	C	conformance/es6/templates/templateStringInUnaryPlusES6.ts	pass	silent		
+templateStringInWhile.ts	C	conformance/es6/templates/templateStringInWhile.ts	pass	silent		
+templateStringInWhileES6.ts	C	conformance/es6/templates/templateStringInWhileES6.ts	pass	silent		
+templateStringInYieldKeyword.ts	C	conformance/es6/templates/templateStringInYieldKeyword.ts	pass	silent		
+templateStringMultiline1.ts	C	conformance/es6/templates/templateStringMultiline1.ts	pass	silent		
+templateStringMultiline1_ES6.ts	C	conformance/es6/templates/templateStringMultiline1_ES6.ts	pass	silent		
+templateStringMultiline2.ts	C	conformance/es6/templates/templateStringMultiline2.ts	pass	silent		
+templateStringMultiline2_ES6.ts	C	conformance/es6/templates/templateStringMultiline2_ES6.ts	pass	silent		
+templateStringMultiline3.ts	C	conformance/es6/templates/templateStringMultiline3.ts	pass	silent		
+templateStringMultiline3_ES6.ts	C	conformance/es6/templates/templateStringMultiline3_ES6.ts	pass	silent		
+templateStringPlainCharactersThatArePartsOfEscapes01.ts	C	conformance/es6/templates/templateStringPlainCharactersThatArePartsOfEscapes01.ts	pass	silent		
+templateStringPlainCharactersThatArePartsOfEscapes01_ES6.ts	C	conformance/es6/templates/templateStringPlainCharactersThatArePartsOfEscapes01_ES6.ts	pass	silent		
+templateStringPlainCharactersThatArePartsOfEscapes02.ts	C	conformance/es6/templates/templateStringPlainCharactersThatArePartsOfEscapes02.ts	pass	silent		
+templateStringPlainCharactersThatArePartsOfEscapes02_ES6.ts	C	conformance/es6/templates/templateStringPlainCharactersThatArePartsOfEscapes02_ES6.ts	pass	silent		
+templateStringTermination1.ts	C	conformance/es6/templates/templateStringTermination1.ts	pass	silent		
+templateStringTermination1_ES6.ts	C	conformance/es6/templates/templateStringTermination1_ES6.ts	pass	silent		
+templateStringTermination2.ts	C	conformance/es6/templates/templateStringTermination2.ts	pass	silent		
+templateStringTermination2_ES6.ts	C	conformance/es6/templates/templateStringTermination2_ES6.ts	pass	silent		
+templateStringTermination3.ts	C	conformance/es6/templates/templateStringTermination3.ts	pass	silent		
+templateStringTermination3_ES6.ts	C	conformance/es6/templates/templateStringTermination3_ES6.ts	pass	silent		
+templateStringTermination4.ts	C	conformance/es6/templates/templateStringTermination4.ts	pass	silent		
+templateStringTermination4_ES6.ts	C	conformance/es6/templates/templateStringTermination4_ES6.ts	pass	silent		
+templateStringTermination5.ts	C	conformance/es6/templates/templateStringTermination5.ts	pass	silent		
+templateStringTermination5_ES6.ts	C	conformance/es6/templates/templateStringTermination5_ES6.ts	pass	silent		
+templateStringUnterminated1.ts	E	conformance/es6/templates/templateStringUnterminated1.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+templateStringUnterminated1_ES6.ts	E	conformance/es6/templates/templateStringUnterminated1_ES6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+templateStringUnterminated2.ts	E	conformance/es6/templates/templateStringUnterminated2.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+templateStringUnterminated2_ES6.ts	E	conformance/es6/templates/templateStringUnterminated2_ES6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+templateStringUnterminated3.ts	E	conformance/es6/templates/templateStringUnterminated3.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+templateStringUnterminated3_ES6.ts	E	conformance/es6/templates/templateStringUnterminated3_ES6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+templateStringUnterminated4.ts	E	conformance/es6/templates/templateStringUnterminated4.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+templateStringUnterminated4_ES6.ts	E	conformance/es6/templates/templateStringUnterminated4_ES6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+templateStringUnterminated5.ts	E	conformance/es6/templates/templateStringUnterminated5.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+templateStringUnterminated5_ES6.ts	E	conformance/es6/templates/templateStringUnterminated5_ES6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+templateStringWhitespaceEscapes1.ts	C	conformance/es6/templates/templateStringWhitespaceEscapes1.ts	pass	silent		
+templateStringWhitespaceEscapes1_ES6.ts	C	conformance/es6/templates/templateStringWhitespaceEscapes1_ES6.ts	pass	silent		
+templateStringWhitespaceEscapes2.ts	C	conformance/es6/templates/templateStringWhitespaceEscapes2.ts	pass	silent		
+templateStringWhitespaceEscapes2_ES6.ts	C	conformance/es6/templates/templateStringWhitespaceEscapes2_ES6.ts	pass	silent		
+templateStringWithBackslashEscapes01.ts	C	conformance/es6/templates/templateStringWithBackslashEscapes01.ts	pass	silent		
+templateStringWithBackslashEscapes01_ES6.ts	C	conformance/es6/templates/templateStringWithBackslashEscapes01_ES6.ts	pass	silent		
+templateStringWithCommentsInArrowFunction.ts	C	conformance/es6/templates/templateStringWithCommentsInArrowFunction.ts	pass	silent		
+templateStringWithEmbeddedAddition.ts	C	conformance/es6/templates/templateStringWithEmbeddedAddition.ts	pass	silent		
+templateStringWithEmbeddedAdditionES6.ts	C	conformance/es6/templates/templateStringWithEmbeddedAdditionES6.ts	pass	silent		
+templateStringWithEmbeddedArray.ts	C	conformance/es6/templates/templateStringWithEmbeddedArray.ts	pass	silent		
+templateStringWithEmbeddedArrayES6.ts	C	conformance/es6/templates/templateStringWithEmbeddedArrayES6.ts	pass	silent		
+templateStringWithEmbeddedArrowFunction.ts	E	conformance/es6/templates/templateStringWithEmbeddedArrowFunction.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringWithEmbeddedArrowFunctionES6.ts	C	conformance/es6/templates/templateStringWithEmbeddedArrowFunctionES6.ts	pass	silent		
+templateStringWithEmbeddedComments.ts	C	conformance/es6/templates/templateStringWithEmbeddedComments.ts	pass	silent		
+templateStringWithEmbeddedCommentsES6.ts	C	conformance/es6/templates/templateStringWithEmbeddedCommentsES6.ts	pass	silent		
+templateStringWithEmbeddedConditional.ts	C	conformance/es6/templates/templateStringWithEmbeddedConditional.ts	pass	silent		
+templateStringWithEmbeddedConditionalES6.ts	C	conformance/es6/templates/templateStringWithEmbeddedConditionalES6.ts	pass	silent		
+templateStringWithEmbeddedDivision.ts	C	conformance/es6/templates/templateStringWithEmbeddedDivision.ts	pass	silent		
+templateStringWithEmbeddedDivisionES6.ts	C	conformance/es6/templates/templateStringWithEmbeddedDivisionES6.ts	pass	silent		
+templateStringWithEmbeddedFunctionExpression.ts	C	conformance/es6/templates/templateStringWithEmbeddedFunctionExpression.ts	pass	silent		
+templateStringWithEmbeddedFunctionExpressionES6.ts	C	conformance/es6/templates/templateStringWithEmbeddedFunctionExpressionES6.ts	pass	silent		
+templateStringWithEmbeddedInOperator.ts	C	conformance/es6/templates/templateStringWithEmbeddedInOperator.ts	pass	silent		
+templateStringWithEmbeddedInOperatorES6.ts	C	conformance/es6/templates/templateStringWithEmbeddedInOperatorES6.ts	pass	silent		
+templateStringWithEmbeddedInstanceOf.ts	E	conformance/es6/templates/templateStringWithEmbeddedInstanceOf.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringWithEmbeddedInstanceOfES6.ts	E	conformance/es6/templates/templateStringWithEmbeddedInstanceOfES6.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringWithEmbeddedModulo.ts	C	conformance/es6/templates/templateStringWithEmbeddedModulo.ts	pass	silent		
+templateStringWithEmbeddedModuloES6.ts	C	conformance/es6/templates/templateStringWithEmbeddedModuloES6.ts	pass	silent		
+templateStringWithEmbeddedMultiplication.ts	C	conformance/es6/templates/templateStringWithEmbeddedMultiplication.ts	pass	silent		
+templateStringWithEmbeddedMultiplicationES6.ts	C	conformance/es6/templates/templateStringWithEmbeddedMultiplicationES6.ts	pass	silent		
+templateStringWithEmbeddedNewOperator.ts	C	conformance/es6/templates/templateStringWithEmbeddedNewOperator.ts	pass	silent		
+templateStringWithEmbeddedNewOperatorES6.ts	C	conformance/es6/templates/templateStringWithEmbeddedNewOperatorES6.ts	pass	silent		
+templateStringWithEmbeddedObjectLiteral.ts	C	conformance/es6/templates/templateStringWithEmbeddedObjectLiteral.ts	pass	silent		
+templateStringWithEmbeddedObjectLiteralES6.ts	C	conformance/es6/templates/templateStringWithEmbeddedObjectLiteralES6.ts	pass	silent		
+templateStringWithEmbeddedTemplateString.ts	C	conformance/es6/templates/templateStringWithEmbeddedTemplateString.ts	pass	silent		
+templateStringWithEmbeddedTemplateStringES6.ts	C	conformance/es6/templates/templateStringWithEmbeddedTemplateStringES6.ts	pass	silent		
+templateStringWithEmbeddedTypeAssertionOnAddition.ts	C	conformance/es6/templates/templateStringWithEmbeddedTypeAssertionOnAddition.ts	pass	silent		
+templateStringWithEmbeddedTypeAssertionOnAdditionES6.ts	C	conformance/es6/templates/templateStringWithEmbeddedTypeAssertionOnAdditionES6.ts	pass	silent		
+templateStringWithEmbeddedTypeOfOperator.ts	C	conformance/es6/templates/templateStringWithEmbeddedTypeOfOperator.ts	pass	silent		
+templateStringWithEmbeddedTypeOfOperatorES6.ts	C	conformance/es6/templates/templateStringWithEmbeddedTypeOfOperatorES6.ts	pass	silent		
+templateStringWithEmbeddedUnaryPlus.ts	C	conformance/es6/templates/templateStringWithEmbeddedUnaryPlus.ts	pass	silent		
+templateStringWithEmbeddedUnaryPlusES6.ts	C	conformance/es6/templates/templateStringWithEmbeddedUnaryPlusES6.ts	pass	silent		
+templateStringWithEmbeddedYieldKeyword.ts	E	conformance/es6/templates/templateStringWithEmbeddedYieldKeyword.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+templateStringWithEmbeddedYieldKeywordES6.ts	C	conformance/es6/templates/templateStringWithEmbeddedYieldKeywordES6.ts	pass	silent		
+templateStringWithEmptyLiteralPortions.ts	C	conformance/es6/templates/templateStringWithEmptyLiteralPortions.ts	pass	silent		
+templateStringWithEmptyLiteralPortionsES6.ts	C	conformance/es6/templates/templateStringWithEmptyLiteralPortionsES6.ts	pass	silent		
+templateStringWithOpenCommentInStringPortion.ts	C	conformance/es6/templates/templateStringWithOpenCommentInStringPortion.ts	pass	silent		
+templateStringWithOpenCommentInStringPortionES6.ts	C	conformance/es6/templates/templateStringWithOpenCommentInStringPortionES6.ts	pass	silent		
+templateStringWithPropertyAccess.ts	C	conformance/es6/templates/templateStringWithPropertyAccess.ts	pass	silent		
+templateStringWithPropertyAccessES6.ts	C	conformance/es6/templates/templateStringWithPropertyAccessES6.ts	pass	silent		
+templateStringsArrayTypeDefinedInES5Mode(target=es2015).ts	E	compiler/templateStringsArrayTypeDefinedInES5Mode.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringsArrayTypeNotDefinedES5Mode(target=es2015).ts	E	compiler/templateStringsArrayTypeNotDefinedES5Mode.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringsArrayTypeRedefinedInES6Mode.ts	E	compiler/templateStringsArrayTypeRedefinedInES6Mode.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringsWithTypeErrorInFunctionExpressionsInSubstitutionExpression.ts	E	conformance/es6/templates/templateStringsWithTypeErrorInFunctionExpressionsInSubstitutionExpression.ts	fail	silent		no diagnostic where the oracle has a baseline
+templateStringsWithTypeErrorInFunctionExpressionsInSubstitutionExpressionES6.ts	E	conformance/es6/templates/templateStringsWithTypeErrorInFunctionExpressionsInSubstitutionExpressionES6.ts	fail	silent		no diagnostic where the oracle has a baseline
+temporal.ts	E	compiler/temporal.ts	fail	silent		no diagnostic where the oracle has a baseline
+ternaryExpressionSourceMap.ts	C	compiler/ternaryExpressionSourceMap.ts	pass	silent		
+testContainerList.ts	C	compiler/testContainerList.ts	pass	silent		
+testTypings.ts	C	compiler/testTypings.ts	pass	silent		
+thisAndSuperInStaticMembers1(target=es2015).ts	C	conformance/classes/members/instanceAndStaticMembers/thisAndSuperInStaticMembers1.ts	pass	silent		
+thisAndSuperInStaticMembers1(target=es2022).ts	C	conformance/classes/members/instanceAndStaticMembers/thisAndSuperInStaticMembers1.ts	pass	silent		
+thisAndSuperInStaticMembers1(target=esnext).ts	C	conformance/classes/members/instanceAndStaticMembers/thisAndSuperInStaticMembers1.ts	pass	silent		
+thisAndSuperInStaticMembers2(target=es2015).ts	C	conformance/classes/members/instanceAndStaticMembers/thisAndSuperInStaticMembers2.ts	pass	silent		
+thisAndSuperInStaticMembers2(target=es2022).ts	C	conformance/classes/members/instanceAndStaticMembers/thisAndSuperInStaticMembers2.ts	pass	silent		
+thisAndSuperInStaticMembers2(target=esnext).ts	C	conformance/classes/members/instanceAndStaticMembers/thisAndSuperInStaticMembers2.ts	pass	silent		
+thisAndSuperInStaticMembers3(target=es2015).ts	C	conformance/classes/members/instanceAndStaticMembers/thisAndSuperInStaticMembers3.ts	pass	silent		
+thisAndSuperInStaticMembers4(target=es2015).ts	C	conformance/classes/members/instanceAndStaticMembers/thisAndSuperInStaticMembers4.ts	pass	silent		
+thisAssignmentInNamespaceDeclaration1.ts	E	compiler/thisAssignmentInNamespaceDeclaration1.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+thisBinding.ts	E	compiler/thisBinding.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisBinding2.ts	E	compiler/thisBinding2.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisCapture1.ts	C	compiler/thisCapture1.ts	pass	silent		
+thisConditionalOnMethodReturnOfGenericInstance.ts	C	compiler/thisConditionalOnMethodReturnOfGenericInstance.ts	pass	silent		
+thisExpressionInCallExpressionWithTypeArguments.ts	E	compiler/thisExpressionInCallExpressionWithTypeArguments.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisExpressionInIndexExpression.ts	C	compiler/thisExpressionInIndexExpression.ts	pass	silent		
+thisExpressionOfGenericObject.ts	E	compiler/thisExpressionOfGenericObject.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisInAccessors.ts	C	compiler/thisInAccessors.ts	pass	silent		
+thisInArrowFunctionInStaticInitializer1.ts	C	compiler/thisInArrowFunctionInStaticInitializer1.ts	pass	silent		
+thisInClassBodyStaticESNext.ts	E	compiler/thisInClassBodyStaticESNext.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisInConstructorParameter1.ts	C	compiler/thisInConstructorParameter1.ts	pass	silent		
+thisInConstructorParameter2.ts	C	compiler/thisInConstructorParameter2.ts	pass	silent		
+thisInFunctionCall.ts	E	compiler/thisInFunctionCall.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisInFunctionCallJs.ts	E	compiler/thisInFunctionCallJs.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisInGenericStaticMembers.ts	C	compiler/thisInGenericStaticMembers.ts	pass	silent		
+thisInInnerFunctions.ts	E	compiler/thisInInnerFunctions.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisInInstanceMemberInitializer.ts	E	conformance/classes/propertyMemberDeclarations/thisInInstanceMemberInitializer.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisInInvalidContexts.ts	E	conformance/expressions/thisKeyword/thisInInvalidContexts.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+thisInInvalidContextsExternalModule(target=es2015).ts	E	conformance/expressions/thisKeyword/thisInInvalidContextsExternalModule.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+thisInLambda.ts	C	compiler/thisInLambda.ts	pass	silent		
+thisInModule.ts	E	compiler/thisInModule.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+thisInModuleFunction1.ts	E	compiler/thisInModuleFunction1.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisInObjectJs.ts	C	compiler/thisInObjectJs.ts	pass	silent		
+thisInObjectLiterals.ts	E	conformance/expressions/thisKeyword/thisInObjectLiterals.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisInOuterClassBody.ts	E	compiler/thisInOuterClassBody.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisInPropertyBoundDeclarations.ts	E	compiler/thisInPropertyBoundDeclarations.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisInStaticMethod1.ts	C	compiler/thisInStaticMethod1.ts	pass	silent		
+thisInStatics.ts	C	compiler/thisInStatics.ts	pass	silent		
+thisInSuperCall.ts	E	compiler/thisInSuperCall.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisInSuperCall1.ts	E	compiler/thisInSuperCall1.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisInSuperCall2.ts	E	compiler/thisInSuperCall2.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisInSuperCall3.ts	E	compiler/thisInSuperCall3.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisInTupleTypeParameterConstraints.ts	E	compiler/thisInTupleTypeParameterConstraints.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisInTypeQuery.ts	C	compiler/thisInTypeQuery.ts	pass	silent		
+thisIndexOnExistingReadonlyFieldIsNotNever.ts	C	compiler/thisIndexOnExistingReadonlyFieldIsNotNever.ts	pass	silent		
+thisKeyword.ts	E	compiler/thisKeyword.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+thisMethodCall.ts	C	conformance/expressions/optionalChaining/callChain/thisMethodCall.ts	pass	silent		
+thisPredicateInObjectLiteral.ts	E	compiler/thisPredicateInObjectLiteral.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisPropertyAssignment.ts	E	conformance/salsa/thisPropertyAssignment.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisPropertyAssignmentCircular.ts	E	conformance/salsa/thisPropertyAssignmentCircular.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisPropertyAssignmentComputed.ts	E	conformance/salsa/thisPropertyAssignmentComputed.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisPropertyAssignmentInherited.ts	C	conformance/salsa/thisPropertyAssignmentInherited.ts	pass	silent		
+thisPropertyOverridesAccessors.ts	C	conformance/classes/propertyMemberDeclarations/thisPropertyOverridesAccessors.ts	pass	silent		
+thisPrototypeMethodCompoundAssignment.ts	C	conformance/jsdoc/thisPrototypeMethodCompoundAssignment.ts	pass	silent		
+thisPrototypeMethodCompoundAssignmentJs.ts	C	conformance/jsdoc/thisPrototypeMethodCompoundAssignmentJs.ts	pass	silent		
+thisReferencedInFunctionInsideArrowFunction1.ts	C	compiler/thisReferencedInFunctionInsideArrowFunction1.ts	pass	silent		
+thisShadowingErrorSpans.ts	E	compiler/thisShadowingErrorSpans.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisTag1.ts	C	conformance/jsdoc/thisTag1.ts	pass	silent		
+thisTag2.ts	C	conformance/jsdoc/thisTag2.ts	pass	silent		
+thisTag3.ts	E	conformance/jsdoc/thisTag3.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisTypeAccessibility.ts	E	conformance/types/thisType/thisTypeAccessibility.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisTypeAndConstraints.ts	C	conformance/types/thisType/thisTypeAndConstraints.ts	pass	silent		
+thisTypeAsConstraint.ts	C	compiler/thisTypeAsConstraint.ts	pass	silent		
+thisTypeErrors.ts	E	conformance/types/thisType/thisTypeErrors.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+thisTypeErrors2.ts	E	conformance/types/thisType/thisTypeErrors2.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisTypeInAccessors(target=es2015).ts	E	conformance/types/thisType/thisTypeInAccessors.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisTypeInAccessorsNegative(target=es2015).ts	E	conformance/types/thisType/thisTypeInAccessorsNegative.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisTypeInBasePropertyAndDerivedContainerOfBase01.ts	C	conformance/types/thisType/thisTypeInBasePropertyAndDerivedContainerOfBase01.ts	pass	silent		
+thisTypeInClasses.ts	E	conformance/types/thisType/thisTypeInClasses.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisTypeInFunctions.ts	E	conformance/types/thisType/thisTypeInFunctions.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisTypeInFunctions2.ts	E	conformance/types/thisType/thisTypeInFunctions2.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisTypeInFunctions3.ts	C	conformance/types/thisType/thisTypeInFunctions3.ts	pass	silent		
+thisTypeInFunctions4.ts	C	conformance/types/thisType/thisTypeInFunctions4.ts	pass	silent		
+thisTypeInFunctionsNegative.ts	E	conformance/types/thisType/thisTypeInFunctionsNegative.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+thisTypeInInterfaces.ts	C	conformance/types/thisType/thisTypeInInterfaces.ts	pass	silent		
+thisTypeInObjectLiterals.ts	C	conformance/types/thisType/thisTypeInObjectLiterals.ts	pass	silent		
+thisTypeInObjectLiterals2(target=es2015).ts	C	conformance/types/thisType/thisTypeInObjectLiterals2.ts	pass	silent		
+thisTypeInTaggedTemplateCall.ts	C	conformance/types/thisType/thisTypeInTaggedTemplateCall.ts	pass	silent		
+thisTypeInTuples.ts	C	conformance/types/thisType/thisTypeInTuples.ts	pass	silent		
+thisTypeInTypePredicate.ts	C	conformance/types/thisType/thisTypeInTypePredicate.ts	pass	silent		
+thisTypeOfConstructorFunctions.ts	E	conformance/salsa/thisTypeOfConstructorFunctions.ts	fail	silent		no diagnostic where the oracle has a baseline
+thisTypeOptionalCall.ts	C	conformance/types/thisType/thisTypeOptionalCall.ts	pass	silent		
+thisTypeSyntacticContext.ts	C	conformance/types/thisType/thisTypeSyntacticContext.ts	pass	silent		
+thisWhenTypeCheckFails.ts	E	compiler/thisWhenTypeCheckFails.ts	fail	silent		no diagnostic where the oracle has a baseline
+this_inside-enum-should-not-be-allowed.ts	E	compiler/this_inside-enum-should-not-be-allowed.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+this_inside-object-literal-getters-and-setters.ts	C	compiler/this_inside-object-literal-getters-and-setters.ts	pass	silent		
+thislessFunctionsNotContextSensitive1.ts	E	compiler/thislessFunctionsNotContextSensitive1.ts	fail	silent		no diagnostic where the oracle has a baseline
+thislessFunctionsNotContextSensitive2.ts	E	compiler/thislessFunctionsNotContextSensitive2.ts	fail	silent		no diagnostic where the oracle has a baseline
+thislessFunctionsNotContextSensitive3.ts	E	compiler/thislessFunctionsNotContextSensitive3.ts	fail	silent		no diagnostic where the oracle has a baseline
+throwInEnclosingStatements.ts	C	conformance/statements/throwStatements/throwInEnclosingStatements.ts	pass	silent		
+throwStatements.ts	C	conformance/statements/throwStatements/throwStatements.ts	pass	silent		
+throwWithoutNewLine1.ts	E	compiler/throwWithoutNewLine1.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+throwWithoutNewLine2.ts	E	compiler/throwWithoutNewLine2.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+toStringOnPrimitives.ts	C	compiler/toStringOnPrimitives.ts	pass	silent		
+tooFewArgumentsInGenericFunctionTypedArgument.ts	E	compiler/tooFewArgumentsInGenericFunctionTypedArgument.ts	fail	silent		no diagnostic where the oracle has a baseline
+tooManyTypeParameters1.ts	E	compiler/tooManyTypeParameters1.ts	fail	silent		no diagnostic where the oracle has a baseline
+topFunctionTypeNotCallable.ts	E	compiler/topFunctionTypeNotCallable.ts	fail	silent		no diagnostic where the oracle has a baseline
+topLevel.ts	C	compiler/topLevel.ts	pass	silent		
+topLevelAmbientModule.ts	C	conformance/externalModules/topLevelAmbientModule.ts	pass	silent		
+topLevelAwait.1(module=es2022,target=es2015).ts	E	conformance/externalModules/topLevelAwait.1.ts	fail	silent		no diagnostic where the oracle has a baseline
+topLevelAwait.1(module=es2022,target=es2017).ts	C	conformance/externalModules/topLevelAwait.1.ts	pass	silent		
+topLevelAwait.1(module=esnext,target=es2015).ts	E	conformance/externalModules/topLevelAwait.1.ts	fail	silent		no diagnostic where the oracle has a baseline
+topLevelAwait.1(module=esnext,target=es2017).ts	C	conformance/externalModules/topLevelAwait.1.ts	pass	silent		
+topLevelAwait.2(module=es2022).ts	C	conformance/externalModules/topLevelAwait.2.ts	pass	silent		
+topLevelAwait.2(module=esnext).ts	C	conformance/externalModules/topLevelAwait.2.ts	pass	silent		
+topLevelAwait.3(module=es2022).ts	C	conformance/externalModules/topLevelAwait.3.ts	pass	silent		
+topLevelAwait.3(module=esnext).ts	C	conformance/externalModules/topLevelAwait.3.ts	pass	silent		
+topLevelAwaitErrors.1(module=es2022).ts	E	conformance/externalModules/topLevelAwaitErrors.1.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+topLevelAwaitErrors.1(module=esnext).ts	E	conformance/externalModules/topLevelAwaitErrors.1.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+topLevelAwaitErrors.10(module=es2022).ts	E	conformance/externalModules/topLevelAwaitErrors.10.ts	fail	silent		no diagnostic where the oracle has a baseline
+topLevelAwaitErrors.10(module=esnext).ts	E	conformance/externalModules/topLevelAwaitErrors.10.ts	fail	silent		no diagnostic where the oracle has a baseline
+topLevelAwaitErrors.11.ts	E	conformance/externalModules/topLevelAwaitErrors.11.ts	fail	silent		no diagnostic where the oracle has a baseline
+topLevelAwaitErrors.12(module=es2022).ts	E	conformance/externalModules/topLevelAwaitErrors.12.ts	fail	silent		no diagnostic where the oracle has a baseline
+topLevelAwaitErrors.12(module=esnext).ts	E	conformance/externalModules/topLevelAwaitErrors.12.ts	fail	silent		no diagnostic where the oracle has a baseline
+topLevelAwaitErrors.2(module=es2022).ts	E	conformance/externalModules/topLevelAwaitErrors.2.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+topLevelAwaitErrors.2(module=esnext).ts	E	conformance/externalModules/topLevelAwaitErrors.2.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+topLevelAwaitErrors.3(module=es2022).ts	E	conformance/externalModules/topLevelAwaitErrors.3.ts	fail	silent		no diagnostic where the oracle has a baseline
+topLevelAwaitErrors.3(module=esnext).ts	E	conformance/externalModules/topLevelAwaitErrors.3.ts	fail	silent		no diagnostic where the oracle has a baseline
+topLevelAwaitErrors.4(module=es2022).ts	E	conformance/externalModules/topLevelAwaitErrors.4.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+topLevelAwaitErrors.4(module=esnext).ts	E	conformance/externalModules/topLevelAwaitErrors.4.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+topLevelAwaitErrors.5(module=es2022).ts	E	conformance/externalModules/topLevelAwaitErrors.5.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+topLevelAwaitErrors.5(module=esnext).ts	E	conformance/externalModules/topLevelAwaitErrors.5.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+topLevelAwaitErrors.6(module=es2022).ts	E	conformance/externalModules/topLevelAwaitErrors.6.ts	fail	silent		no diagnostic where the oracle has a baseline
+topLevelAwaitErrors.6(module=esnext).ts	E	conformance/externalModules/topLevelAwaitErrors.6.ts	fail	silent		no diagnostic where the oracle has a baseline
+topLevelAwaitErrors.7(module=es2022).ts	E	conformance/externalModules/topLevelAwaitErrors.7.ts	fail	silent		no diagnostic where the oracle has a baseline
+topLevelAwaitErrors.7(module=esnext).ts	E	conformance/externalModules/topLevelAwaitErrors.7.ts	fail	silent		no diagnostic where the oracle has a baseline
+topLevelAwaitErrors.8(module=es2022).ts	E	conformance/externalModules/topLevelAwaitErrors.8.ts	fail	silent		no diagnostic where the oracle has a baseline
+topLevelAwaitErrors.8(module=esnext).ts	E	conformance/externalModules/topLevelAwaitErrors.8.ts	fail	silent		no diagnostic where the oracle has a baseline
+topLevelAwaitErrors.9(module=es2022).ts	E	conformance/externalModules/topLevelAwaitErrors.9.ts	fail	silent		no diagnostic where the oracle has a baseline
+topLevelAwaitErrors.9(module=esnext).ts	E	conformance/externalModules/topLevelAwaitErrors.9.ts	fail	silent		no diagnostic where the oracle has a baseline
+topLevelAwaitNonModule(module=es2022).ts	E	conformance/externalModules/topLevelAwaitNonModule.ts	fail	silent		no diagnostic where the oracle has a baseline
+topLevelAwaitNonModule(module=esnext).ts	E	conformance/externalModules/topLevelAwaitNonModule.ts	fail	silent		no diagnostic where the oracle has a baseline
+topLevelBlockExpando.ts	C	compiler/topLevelBlockExpando.ts	pass	silent		
+topLevelFileModule.ts	C	conformance/externalModules/topLevelFileModule.ts	pass	silent		
+topLevelFileModuleMissing.ts	E	conformance/externalModules/topLevelFileModuleMissing.ts	fail	silent		no diagnostic where the oracle has a baseline
+topLevelLambda.ts	E	compiler/topLevelLambda.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+topLevelLambda2.ts	C	compiler/topLevelLambda2.ts	pass	silent		
+topLevelLambda3.ts	E	compiler/topLevelLambda3.ts	fail	silent		no diagnostic where the oracle has a baseline
+topLevelLambda4.ts	E	compiler/topLevelLambda4.ts	fail	silent		no diagnostic where the oracle has a baseline
+topLevelModuleDeclarationAndFile.ts	E	conformance/externalModules/topLevelModuleDeclarationAndFile.ts	fail	silent		no diagnostic where the oracle has a baseline
+topLevelVarHoistingCommonJS.ts	C	conformance/es6/moduleExportsSystem/topLevelVarHoistingCommonJS.ts	pass	silent		
+trackedSymbolsNoCrash.ts	C	compiler/trackedSymbolsNoCrash.ts	pass	silent		
+trailingCommaInHeterogenousArrayLiteral1.ts	E	compiler/trailingCommaInHeterogenousArrayLiteral1.ts	fail	silent		no diagnostic where the oracle has a baseline
+trailingCommasES5(target=es2015).ts	C	compiler/trailingCommasES5.ts	pass	silent		
+trailingCommasInBindingPatterns.ts	E	conformance/es7/trailingCommasInBindingPatterns.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+trailingCommasInFunctionParametersAndArguments(target=es2015).ts	E	conformance/es7/trailingCommasInFunctionParametersAndArguments.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+trailingCommasInGetter.ts	E	conformance/es7/trailingCommasInGetter.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+transferableArrayBuffer.ts	C	conformance/es2024/transferableArrayBuffer.ts	pass	silent		
+transformArrowInBlockScopedLoopVarInitializer(target=es2015).ts	C	compiler/transformArrowInBlockScopedLoopVarInitializer.ts	pass	silent		
+transformNestedGeneratorsWithTry(target=es2015).ts	C	compiler/transformNestedGeneratorsWithTry.ts	pass	silent		
+transformParenthesizesConditionalSubexpression(target=es2015).ts	C	compiler/transformParenthesizesConditionalSubexpression.ts	pass	silent		
+transformsElideNullUndefinedType.ts	C	compiler/transformsElideNullUndefinedType.ts	pass	silent		
+transitiveTypeArgumentInference1.ts	E	compiler/transitiveTypeArgumentInference1.ts	fail	silent		no diagnostic where the oracle has a baseline
+tripleSlashInCommentNotParsed.ts	C	compiler/tripleSlashInCommentNotParsed.ts	pass	silent		
+tripleSlashReferenceAbsoluteWindowsPath.ts	C	compiler/tripleSlashReferenceAbsoluteWindowsPath.ts	unsupported	not-laid-out		dos-root: C:; dos-root: C:/a; dos-root: C:/a/b; dos-root: C:/a/b/c.ts; dos-root: C:/a/b/d.ts; absolute-path-in-text: C:/a/b/d.ts: C:\a\b\c.ts
+tripleSlashTypesReferenceWithMissingExports(module=commonjs).ts	E	compiler/tripleSlashTypesReferenceWithMissingExports.ts	fail	silent		no diagnostic where the oracle has a baseline
+tripleSlashTypesReferenceWithMissingExports(module=node16).ts	E	compiler/tripleSlashTypesReferenceWithMissingExports.ts	fail	silent		no diagnostic where the oracle has a baseline
+tripleSlashTypesReferenceWithMissingExports(module=node18).ts	E	compiler/tripleSlashTypesReferenceWithMissingExports.ts	fail	silent		no diagnostic where the oracle has a baseline
+tripleSlashTypesReferenceWithMissingExports(module=node20).ts	E	compiler/tripleSlashTypesReferenceWithMissingExports.ts	fail	silent		no diagnostic where the oracle has a baseline
+tripleSlashTypesReferenceWithMissingExports(module=nodenext).ts	E	compiler/tripleSlashTypesReferenceWithMissingExports.ts	fail	silent		no diagnostic where the oracle has a baseline
+trivialSubtypeReductionNoStructuralCheck(target=es2015).ts	E	compiler/trivialSubtypeReductionNoStructuralCheck.ts	fail	silent		no diagnostic where the oracle has a baseline
+trivialSubtypeReductionNoStructuralCheck2(target=es2015).ts	C	compiler/trivialSubtypeReductionNoStructuralCheck2.ts	pass	silent		
+truthinessCallExpressionCoercion.ts	E	compiler/truthinessCallExpressionCoercion.ts	fail	silent		no diagnostic where the oracle has a baseline
+truthinessCallExpressionCoercion1.ts	E	compiler/truthinessCallExpressionCoercion1.ts	fail	silent		no diagnostic where the oracle has a baseline
+truthinessCallExpressionCoercion2.ts	E	compiler/truthinessCallExpressionCoercion2.ts	fail	silent		no diagnostic where the oracle has a baseline
+truthinessCallExpressionCoercion3.ts	C	compiler/truthinessCallExpressionCoercion3.ts	pass	silent		
+truthinessCallExpressionCoercion4.ts	C	compiler/truthinessCallExpressionCoercion4.ts	pass	silent		
+truthinessPromiseCoercion.ts	E	compiler/truthinessPromiseCoercion.ts	fail	silent		no diagnostic where the oracle has a baseline
+tryCatchFinally.ts	C	compiler/tryCatchFinally.ts	pass	silent		
+tryCatchFinallyControlFlow.ts	E	compiler/tryCatchFinallyControlFlow.ts	fail	silent		no diagnostic where the oracle has a baseline
+tryStatementInternalComments.ts	C	compiler/tryStatementInternalComments.ts	pass	silent		
+tryStatements.ts	C	conformance/statements/tryStatements/tryStatements.ts	pass	silent		
+ts-expect-error-js.ts	E	conformance/directives/ts-expect-error-js.ts	fail	silent		no diagnostic where the oracle has a baseline
+ts-expect-error-nocheck-js.ts	C	conformance/directives/ts-expect-error-nocheck-js.ts	pass	silent		
+ts-expect-error-nocheck.ts	C	conformance/directives/ts-expect-error-nocheck.ts	pass	silent		
+ts-expect-error.ts	E	conformance/directives/ts-expect-error.ts	fail	silent		no diagnostic where the oracle has a baseline
+ts-ignore.ts	E	conformance/directives/ts-ignore.ts	fail	silent		no diagnostic where the oracle has a baseline
+tsNoCheckForTypescript.ts	C	conformance/jsdoc/tsNoCheckForTypescript.ts	pass	silent		
+tsNoCheckForTypescriptComments1.ts	C	conformance/jsdoc/tsNoCheckForTypescriptComments1.ts	pass	silent		
+tsNoCheckForTypescriptComments2.ts	C	conformance/jsdoc/tsNoCheckForTypescriptComments2.ts	pass	silent		
+tsconfigExtendsPackageJsonExportsWildcard.ts	E	compiler/tsconfigExtendsPackageJsonExportsWildcard.ts	fail	silent		no diagnostic where the oracle has a baseline
+tslibInJs.ts	E	compiler/tslibInJs.ts	fail	silent		no diagnostic where the oracle has a baseline
+tslibMissingHelper.ts	E	compiler/tslibMissingHelper.ts	fail	silent		no diagnostic where the oracle has a baseline
+tslibMultipleMissingHelper.ts	E	compiler/tslibMultipleMissingHelper.ts	fail	silent		no diagnostic where the oracle has a baseline
+tslibNotFoundDifferentModules.ts	E	compiler/tslibNotFoundDifferentModules.ts	fail	silent		no diagnostic where the oracle has a baseline
+tslibReExportHelpers.ts	C	compiler/tslibReExportHelpers.ts	pass	silent		
+tslibReExportHelpers2.ts	C	compiler/tslibReExportHelpers2.ts	pass	silent		
+tsxAttributeErrors.tsx	E	conformance/jsx/tsxAttributeErrors.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxAttributeInvalidNames.tsx	E	conformance/jsx/tsxAttributeInvalidNames.tsx	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+tsxAttributeQuickinfoTypesSameAsObjectLiteral.tsx	C	compiler/tsxAttributeQuickinfoTypesSameAsObjectLiteral.tsx	pass	silent		
+tsxAttributeResolution.tsx	C	conformance/jsx/tsxAttributeResolution.tsx	pass	silent		
+tsxAttributeResolution1.tsx	E	conformance/jsx/tsxAttributeResolution1.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxAttributeResolution10.tsx	E	conformance/jsx/tsxAttributeResolution10.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxAttributeResolution11.tsx	E	conformance/jsx/tsxAttributeResolution11.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxAttributeResolution12.tsx	E	conformance/jsx/tsxAttributeResolution12.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxAttributeResolution13.tsx	C	conformance/jsx/tsxAttributeResolution13.tsx	pass	silent		
+tsxAttributeResolution14.tsx	E	conformance/jsx/tsxAttributeResolution14.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxAttributeResolution15.tsx	E	conformance/jsx/tsxAttributeResolution15.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxAttributeResolution16.tsx	C	conformance/jsx/tsxAttributeResolution16.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxAttributeResolution2.tsx	E	conformance/jsx/tsxAttributeResolution2.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxAttributeResolution3.tsx	E	conformance/jsx/tsxAttributeResolution3.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxAttributeResolution4.tsx	E	conformance/jsx/tsxAttributeResolution4.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxAttributeResolution5.tsx	E	conformance/jsx/tsxAttributeResolution5.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxAttributeResolution6.tsx	E	conformance/jsx/tsxAttributeResolution6.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxAttributeResolution7.tsx	E	conformance/jsx/tsxAttributeResolution7.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxAttributeResolution8.tsx	C	conformance/jsx/tsxAttributeResolution8.tsx	pass	silent		
+tsxAttributeResolution9.tsx	E	conformance/jsx/tsxAttributeResolution9.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxAttributesHasInferrableIndex.tsx	C	compiler/tsxAttributesHasInferrableIndex.tsx	pass	silent		
+tsxCorrectlyParseLessThanComparison1.tsx	E	conformance/jsx/tsxCorrectlyParseLessThanComparison1.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxDeepAttributeAssignabilityError.tsx	E	compiler/tsxDeepAttributeAssignabilityError.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/my-component.tsx: /.lib/react.d.ts
+tsxDefaultAttributesResolution1.tsx	C	conformance/jsx/tsxDefaultAttributesResolution1.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxDefaultAttributesResolution2.tsx	C	conformance/jsx/tsxDefaultAttributesResolution2.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxDefaultAttributesResolution3.tsx	E	conformance/jsx/tsxDefaultAttributesResolution3.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxDefaultImports.ts	C	compiler/tsxDefaultImports.ts	pass	silent		
+tsxDiscriminantPropertyInference.tsx	C	compiler/tsxDiscriminantPropertyInference.tsx	pass	silent		
+tsxDynamicTagName1.tsx	C	conformance/jsx/tsxDynamicTagName1.tsx	pass	silent		
+tsxDynamicTagName2.tsx	E	conformance/jsx/tsxDynamicTagName2.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxDynamicTagName3.tsx	E	conformance/jsx/tsxDynamicTagName3.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxDynamicTagName4.tsx	C	conformance/jsx/tsxDynamicTagName4.tsx	pass	silent		
+tsxDynamicTagName5.tsx	C	conformance/jsx/tsxDynamicTagName5.tsx	pass	silent		
+tsxDynamicTagName6.tsx	C	conformance/jsx/tsxDynamicTagName6.tsx	pass	silent		
+tsxDynamicTagName7.tsx	E	conformance/jsx/tsxDynamicTagName7.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxDynamicTagName8.tsx	C	conformance/jsx/tsxDynamicTagName8.tsx	pass	silent		
+tsxDynamicTagName9.tsx	C	conformance/jsx/tsxDynamicTagName9.tsx	pass	silent		
+tsxElementResolution.tsx	E	conformance/jsx/tsxElementResolution.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxElementResolution1.tsx	E	conformance/jsx/tsxElementResolution1.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxElementResolution10.tsx	E	conformance/jsx/tsxElementResolution10.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxElementResolution11.tsx	E	conformance/jsx/tsxElementResolution11.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxElementResolution12.tsx	E	conformance/jsx/tsxElementResolution12.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxElementResolution13.tsx	E	conformance/jsx/tsxElementResolution13.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxElementResolution14.tsx	E	conformance/jsx/tsxElementResolution14.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxElementResolution15.tsx	E	conformance/jsx/tsxElementResolution15.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxElementResolution16.tsx	E	conformance/jsx/tsxElementResolution16.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxElementResolution18.tsx	E	conformance/jsx/tsxElementResolution18.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxElementResolution19.tsx	C	conformance/jsx/tsxElementResolution19.tsx	pass	silent		
+tsxElementResolution2.tsx	C	conformance/jsx/tsxElementResolution2.tsx	pass	silent		
+tsxElementResolution3.tsx	E	conformance/jsx/tsxElementResolution3.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxElementResolution4.tsx	E	conformance/jsx/tsxElementResolution4.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxElementResolution5.tsx	E	conformance/jsx/tsxElementResolution5.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxElementResolution6.tsx	E	conformance/jsx/tsxElementResolution6.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxElementResolution7.tsx	E	conformance/jsx/tsxElementResolution7.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxElementResolution8.tsx	E	conformance/jsx/tsxElementResolution8.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxElementResolution9.tsx	E	conformance/jsx/tsxElementResolution9.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxEmit1.tsx	E	conformance/jsx/tsxEmit1.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxEmit2.tsx	C	conformance/jsx/tsxEmit2.tsx	pass	silent		
+tsxEmit3.tsx	E	conformance/jsx/tsxEmit3.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxEmitSpreadAttribute(target=es2015).ts	C	conformance/jsx/tsxEmitSpreadAttribute.ts	pass	silent		
+tsxEmitSpreadAttribute(target=es2018).ts	C	conformance/jsx/tsxEmitSpreadAttribute.ts	pass	silent		
+tsxEmitSpreadAttribute(target=esnext).ts	C	conformance/jsx/tsxEmitSpreadAttribute.ts	pass	silent		
+tsxErrorRecovery1.tsx	E	conformance/jsx/tsxErrorRecovery1.tsx	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+tsxErrorRecovery2.tsx	E	conformance/jsx/tsxErrorRecovery2.tsx	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+tsxErrorRecovery3.tsx	E	conformance/jsx/tsxErrorRecovery3.tsx	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+tsxExternalModuleEmit1.tsx	E	conformance/jsx/tsxExternalModuleEmit1.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxExternalModuleEmit2.tsx	E	conformance/jsx/tsxExternalModuleEmit2.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxFragmentChildrenCheck.ts	C	compiler/tsxFragmentChildrenCheck.ts	unsupported	not-laid-out		absolute-path-in-text: /.src/my-component.tsx: /.lib/react.d.ts
+tsxFragmentErrors.tsx	E	conformance/jsx/tsxFragmentErrors.tsx	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+tsxFragmentPreserveEmit.tsx	C	conformance/jsx/tsxFragmentPreserveEmit.tsx	pass	silent		
+tsxFragmentReactEmit.tsx	C	conformance/jsx/tsxFragmentReactEmit.tsx	pass	silent		
+tsxGenericArrowFunctionParsing.tsx	E	conformance/jsx/tsxGenericArrowFunctionParsing.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxGenericAttributesType1.tsx	E	conformance/jsx/tsxGenericAttributesType1.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxGenericAttributesType2.tsx	C	conformance/jsx/tsxGenericAttributesType2.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxGenericAttributesType3.tsx	C	conformance/jsx/tsxGenericAttributesType3.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxGenericAttributesType4.tsx	C	conformance/jsx/tsxGenericAttributesType4.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxGenericAttributesType5.tsx	E	conformance/jsx/tsxGenericAttributesType5.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxGenericAttributesType6.tsx	E	conformance/jsx/tsxGenericAttributesType6.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxGenericAttributesType7.tsx	E	conformance/jsx/tsxGenericAttributesType7.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxGenericAttributesType8.tsx	E	conformance/jsx/tsxGenericAttributesType8.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxGenericAttributesType9.tsx	C	conformance/jsx/tsxGenericAttributesType9.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxInArrowFunction.tsx	E	conformance/jsx/tsxInArrowFunction.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxInferenceShouldNotYieldAnyOnUnions.tsx	E	compiler/tsxInferenceShouldNotYieldAnyOnUnions.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxIntrinsicAttributeErrors.tsx	E	conformance/jsx/tsxIntrinsicAttributeErrors.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxInvokeComponentType.tsx	E	compiler/tsxInvokeComponentType.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/tsxInvokeComponentType.tsx: /.lib/react16.d.ts
+tsxLibraryManagedAttributes.tsx	E	conformance/jsx/tsxLibraryManagedAttributes.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxNamespacedAttributeName1.tsx	E	conformance/jsx/tsxNamespacedAttributeName1.tsx	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+tsxNamespacedAttributeName2.tsx	E	conformance/jsx/tsxNamespacedAttributeName2.tsx	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+tsxNamespacedTagName1.tsx	E	conformance/jsx/tsxNamespacedTagName1.tsx	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+tsxNamespacedTagName2.tsx	E	conformance/jsx/tsxNamespacedTagName2.tsx	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+tsxNoJsx.tsx	E	conformance/jsx/tsxNoJsx.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxNoTypeAnnotatedSFC.tsx	E	compiler/tsxNoTypeAnnotatedSFC.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxNotUsingApparentTypeOfSFC.tsx	E	compiler/tsxNotUsingApparentTypeOfSFC.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/tsxNotUsingApparentTypeOfSFC.tsx: /.lib/react16.d.ts
+tsxOpeningClosingNames.tsx	C	conformance/jsx/tsxOpeningClosingNames.tsx	pass	silent		
+tsxParseTests1.tsx	E	conformance/jsx/tsxParseTests1.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxParseTests2.tsx	E	conformance/jsx/tsxParseTests2.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxReactComponentWithDefaultTypeParameter1.tsx	C	conformance/jsx/tsxReactComponentWithDefaultTypeParameter1.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxReactComponentWithDefaultTypeParameter2.tsx	C	conformance/jsx/tsxReactComponentWithDefaultTypeParameter2.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxReactComponentWithDefaultTypeParameter3.tsx	E	conformance/jsx/tsxReactComponentWithDefaultTypeParameter3.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxReactEmit1.tsx	E	conformance/jsx/tsxReactEmit1.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxReactEmit2.tsx	C	conformance/jsx/tsxReactEmit2.tsx	pass	silent		
+tsxReactEmit3.tsx	E	conformance/jsx/tsxReactEmit3.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxReactEmit4.tsx	E	conformance/jsx/tsxReactEmit4.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxReactEmit5.tsx	E	conformance/jsx/tsxReactEmit5.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxReactEmit6.tsx	C	conformance/jsx/tsxReactEmit6.tsx	pass	silent		
+tsxReactEmit7.tsx	E	conformance/jsx/tsxReactEmit7.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxReactEmit8(jsx=react-jsx).tsx	C	conformance/jsx/tsxReactEmit8.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/tsxReactEmit8.tsx: /.lib/react16.d.ts
+tsxReactEmit8(jsx=react-jsxdev).tsx	C	conformance/jsx/tsxReactEmit8.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/tsxReactEmit8.tsx: /.lib/react16.d.ts
+tsxReactEmitEntities.tsx	C	conformance/jsx/tsxReactEmitEntities.tsx	pass	silent		
+tsxReactEmitNesting.tsx	E	conformance/jsx/tsxReactEmitNesting.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxReactEmitSpreadAttribute(target=es2015).ts	C	conformance/jsx/tsxReactEmitSpreadAttribute.ts	unsupported	not-laid-out		absolute-path-in-text: /.src/test.tsx: /.lib/react16.d.ts
+tsxReactEmitSpreadAttribute(target=es2018).ts	C	conformance/jsx/tsxReactEmitSpreadAttribute.ts	unsupported	not-laid-out		absolute-path-in-text: /.src/test.tsx: /.lib/react16.d.ts
+tsxReactEmitSpreadAttribute(target=esnext).ts	C	conformance/jsx/tsxReactEmitSpreadAttribute.ts	unsupported	not-laid-out		absolute-path-in-text: /.src/test.tsx: /.lib/react16.d.ts
+tsxReactEmitWhitespace.tsx	C	conformance/jsx/tsxReactEmitWhitespace.tsx	pass	silent		
+tsxReactEmitWhitespace2.tsx	C	conformance/jsx/tsxReactEmitWhitespace2.tsx	pass	silent		
+tsxReactPropsInferenceSucceedsOnIntersections.tsx	C	compiler/tsxReactPropsInferenceSucceedsOnIntersections.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/tsxReactPropsInferenceSucceedsOnIntersections.tsx: /.lib/react16.d.ts
+tsxResolveExternalModuleExportsTypes.ts	E	compiler/tsxResolveExternalModuleExportsTypes.ts	unsupported	not-laid-out		absolute-path-in-text: /.src/foo.tsx: /.lib/react.d.ts
+tsxSfcReturnUndefinedStrictNullChecks.tsx	E	conformance/jsx/tsxSfcReturnUndefinedStrictNullChecks.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxSpreadAttributesResolution1.tsx	C	conformance/jsx/tsxSpreadAttributesResolution1.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxSpreadAttributesResolution10.tsx	E	conformance/jsx/tsxSpreadAttributesResolution10.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxSpreadAttributesResolution11.tsx	E	conformance/jsx/tsxSpreadAttributesResolution11.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxSpreadAttributesResolution12.tsx	E	conformance/jsx/tsxSpreadAttributesResolution12.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxSpreadAttributesResolution13.tsx	E	conformance/jsx/tsxSpreadAttributesResolution13.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxSpreadAttributesResolution14.tsx	E	conformance/jsx/tsxSpreadAttributesResolution14.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxSpreadAttributesResolution15.tsx	C	conformance/jsx/tsxSpreadAttributesResolution15.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxSpreadAttributesResolution16.tsx	E	conformance/jsx/tsxSpreadAttributesResolution16.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxSpreadAttributesResolution17.tsx	E	conformance/jsx/tsxSpreadAttributesResolution17.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxSpreadAttributesResolution2.tsx	E	conformance/jsx/tsxSpreadAttributesResolution2.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxSpreadAttributesResolution3.tsx	C	conformance/jsx/tsxSpreadAttributesResolution3.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxSpreadAttributesResolution4.tsx	E	conformance/jsx/tsxSpreadAttributesResolution4.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxSpreadAttributesResolution5.tsx	E	conformance/jsx/tsxSpreadAttributesResolution5.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxSpreadAttributesResolution6.tsx	E	conformance/jsx/tsxSpreadAttributesResolution6.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxSpreadAttributesResolution7.tsx	C	conformance/jsx/tsxSpreadAttributesResolution7.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxSpreadAttributesResolution8.tsx	C	conformance/jsx/tsxSpreadAttributesResolution8.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxSpreadAttributesResolution9.tsx	C	conformance/jsx/tsxSpreadAttributesResolution9.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxSpreadChildren.tsx	E	conformance/jsx/tsxSpreadChildren.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxSpreadChildrenInvalidType(jsx=react,target=es2015).tsx	E	conformance/jsx/tsxSpreadChildrenInvalidType.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxSpreadChildrenInvalidType(jsx=react-jsx,target=es2015).tsx	E	conformance/jsx/tsxSpreadChildrenInvalidType.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxSpreadDoesNotReportExcessProps.tsx	C	compiler/tsxSpreadDoesNotReportExcessProps.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/tsxSpreadDoesNotReportExcessProps.tsx: /.lib/react16.d.ts
+tsxSpreadInvalidType.tsx	E	conformance/jsx/tsxSpreadInvalidType.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxStatelessComponentDefaultProps.tsx	C	compiler/tsxStatelessComponentDefaultProps.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/tsxStatelessComponentDefaultProps.tsx: /.lib/react16.d.ts
+tsxStatelessFunctionComponentOverload4.tsx	E	conformance/jsx/tsxStatelessFunctionComponentOverload4.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxStatelessFunctionComponentOverload5.tsx	E	conformance/jsx/tsxStatelessFunctionComponentOverload5.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxStatelessFunctionComponentOverload6.tsx	E	conformance/jsx/tsxStatelessFunctionComponentOverload6.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxStatelessFunctionComponents1.tsx	E	conformance/jsx/tsxStatelessFunctionComponents1.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxStatelessFunctionComponents2.tsx	E	conformance/jsx/tsxStatelessFunctionComponents2.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxStatelessFunctionComponentsWithTypeArguments4.tsx	E	conformance/jsx/tsxStatelessFunctionComponentsWithTypeArguments4.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxTypeArgumentPartialDefinitionStillErrors.ts	E	compiler/tsxTypeArgumentPartialDefinitionStillErrors.ts	fail	silent		no diagnostic where the oracle has a baseline
+tsxTypeArgumentResolution.tsx	E	conformance/jsx/tsxTypeArgumentResolution.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxTypeArgumentsJsxPreserveOutput.tsx	C	conformance/jsx/tsxTypeArgumentsJsxPreserveOutput.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/foo.tsx: /.lib/react.d.ts
+tsxTypeErrors.tsx	E	conformance/jsx/tsxTypeErrors.tsx	fail	silent		no diagnostic where the oracle has a baseline
+tsxUnionElementType1.tsx	E	conformance/jsx/tsxUnionElementType1.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxUnionElementType2.tsx	E	conformance/jsx/tsxUnionElementType2.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxUnionElementType3.tsx	E	conformance/jsx/tsxUnionElementType3.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxUnionElementType4.tsx	E	conformance/jsx/tsxUnionElementType4.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxUnionElementType5.tsx	C	conformance/jsx/tsxUnionElementType5.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxUnionElementType6.tsx	E	conformance/jsx/tsxUnionElementType6.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxUnionMemberChecksFilterDataProps.tsx	C	compiler/tsxUnionMemberChecksFilterDataProps.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/tsxUnionMemberChecksFilterDataProps.tsx: /.lib/react16.d.ts
+tsxUnionSpread.tsx	C	compiler/tsxUnionSpread.tsx	pass	silent		
+tsxUnionTypeComponent1.tsx	C	conformance/jsx/tsxUnionTypeComponent1.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tsxUnionTypeComponent2.tsx	E	conformance/jsx/tsxUnionTypeComponent2.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+tupleElementTypes1.ts	E	conformance/types/tuple/tupleElementTypes1.ts	fail	silent		no diagnostic where the oracle has a baseline
+tupleElementTypes2.ts	C	conformance/types/tuple/tupleElementTypes2.ts	pass	silent		
+tupleElementTypes3.ts	C	conformance/types/tuple/tupleElementTypes3.ts	pass	silent		
+tupleElementTypes4.ts	C	conformance/types/tuple/tupleElementTypes4.ts	pass	silent		
+tupleLengthCheck.ts	E	conformance/types/tuple/tupleLengthCheck.ts	fail	silent		no diagnostic where the oracle has a baseline
+tupleTypeInference.ts	C	compiler/tupleTypeInference.ts	pass	silent		
+tupleTypeInference2.ts	C	compiler/tupleTypeInference2.ts	pass	silent		
+tupleTypes.ts	E	compiler/tupleTypes.ts	fail	silent		no diagnostic where the oracle has a baseline
+twiceNestedKeyofIndexInference.ts	C	compiler/twiceNestedKeyofIndexInference.ts	pass	silent		
+twoAccessorsWithSameName(target=es2015).ts	E	conformance/classes/propertyMemberDeclarations/twoAccessorsWithSameName.ts	fail	silent		no diagnostic where the oracle has a baseline
+twoAccessorsWithSameName2.ts	E	conformance/classes/propertyMemberDeclarations/twoAccessorsWithSameName2.ts	fail	silent		no diagnostic where the oracle has a baseline
+twoGenericInterfacesDifferingByTypeParameterName.ts	E	conformance/interfaces/declarationMerging/twoGenericInterfacesDifferingByTypeParameterName.ts	fail	silent		no diagnostic where the oracle has a baseline
+twoGenericInterfacesDifferingByTypeParameterName2.ts	E	conformance/interfaces/declarationMerging/twoGenericInterfacesDifferingByTypeParameterName2.ts	fail	silent		no diagnostic where the oracle has a baseline
+twoGenericInterfacesWithDifferentConstraints.ts	E	conformance/interfaces/declarationMerging/twoGenericInterfacesWithDifferentConstraints.ts	fail	silent		no diagnostic where the oracle has a baseline
+twoGenericInterfacesWithTheSameNameButDifferentArity.ts	E	conformance/interfaces/declarationMerging/twoGenericInterfacesWithTheSameNameButDifferentArity.ts	fail	silent		no diagnostic where the oracle has a baseline
+twoInterfacesDifferentRootModule.ts	E	conformance/interfaces/declarationMerging/twoInterfacesDifferentRootModule.ts	fail	silent		no diagnostic where the oracle has a baseline
+twoInterfacesDifferentRootModule2.ts	E	conformance/interfaces/declarationMerging/twoInterfacesDifferentRootModule2.ts	fail	silent		no diagnostic where the oracle has a baseline
+twoMergedInterfacesWithDifferingOverloads.ts	E	conformance/interfaces/declarationMerging/twoMergedInterfacesWithDifferingOverloads.ts	fail	silent		no diagnostic where the oracle has a baseline
+twoMergedInterfacesWithDifferingOverloads2.ts	E	conformance/interfaces/declarationMerging/twoMergedInterfacesWithDifferingOverloads2.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeAliasDeclarationEmit(target=es2015).ts	E	compiler/typeAliasDeclarationEmit.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeAliasDeclarationEmit3.ts	E	compiler/typeAliasDeclarationEmit3.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeAliasDeclareKeyword01.d.ts	C	compiler/typeAliasDeclareKeyword01.d.ts	pass	silent		
+typeAliasDeclareKeywordNewlines.ts	E	compiler/typeAliasDeclareKeywordNewlines.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+typeAliasDoesntMakeModuleInstantiated.ts	C	compiler/typeAliasDoesntMakeModuleInstantiated.ts	pass	silent		
+typeAliasExport.ts	C	compiler/typeAliasExport.ts	pass	silent		
+typeAliasFunctionTypeSharedSymbol.ts	C	compiler/typeAliasFunctionTypeSharedSymbol.ts	pass	silent		
+typeAliasInstantiationNoLeak1.ts	C	compiler/typeAliasInstantiationNoLeak1.ts	pass	silent		
+typeAliases.ts	E	conformance/types/typeAliases/typeAliases.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeAliasesDoNotMerge.ts	E	conformance/types/typeAliases/typeAliasesDoNotMerge.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeAliasesForObjectTypes.ts	E	conformance/types/typeAliases/typeAliasesForObjectTypes.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeAndNamespaceExportMerge.ts	C	conformance/externalModules/typeAndNamespaceExportMerge.ts	pass	silent		
+typeAnnotationBestCommonTypeInArrayLiteral.ts	C	compiler/typeAnnotationBestCommonTypeInArrayLiteral.ts	pass	silent		
+typeArgInference.ts	E	compiler/typeArgInference.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeArgInference2.ts	E	compiler/typeArgInference2.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeArgInference2WithError.ts	E	compiler/typeArgInference2WithError.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeArgInferenceWithNull.ts	E	compiler/typeArgInferenceWithNull.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeArgumentConstraintResolution1.ts	E	compiler/typeArgumentConstraintResolution1.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeArgumentDefaultUsesConstraintOnCircularDefault.ts	E	compiler/typeArgumentDefaultUsesConstraintOnCircularDefault.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeArgumentInference.ts	E	conformance/expressions/functionCalls/typeArgumentInference.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeArgumentInferenceApparentType1.ts	E	compiler/typeArgumentInferenceApparentType1.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeArgumentInferenceApparentType2.ts	E	compiler/typeArgumentInferenceApparentType2.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeArgumentInferenceConstructSignatures.ts	E	conformance/expressions/functionCalls/typeArgumentInferenceConstructSignatures.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeArgumentInferenceErrors.ts	E	conformance/expressions/functionCalls/typeArgumentInferenceErrors.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeArgumentInferenceOrdering.ts	E	compiler/typeArgumentInferenceOrdering.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeArgumentInferenceTransitiveConstraints.ts	C	conformance/expressions/functionCalls/typeArgumentInferenceTransitiveConstraints.ts	pass	silent		
+typeArgumentInferenceWithClassExpression1.ts	E	conformance/es6/classExpressions/typeArgumentInferenceWithClassExpression1.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeArgumentInferenceWithClassExpression2.ts	E	conformance/es6/classExpressions/typeArgumentInferenceWithClassExpression2.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeArgumentInferenceWithClassExpression3.ts	E	conformance/es6/classExpressions/typeArgumentInferenceWithClassExpression3.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeArgumentInferenceWithConstraintAsCommonRoot.ts	E	compiler/typeArgumentInferenceWithConstraintAsCommonRoot.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeArgumentInferenceWithConstraints.ts	E	conformance/expressions/functionCalls/typeArgumentInferenceWithConstraints.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeArgumentInferenceWithObjectLiteral.ts	E	conformance/expressions/functionCalls/typeArgumentInferenceWithObjectLiteral.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeArgumentInferenceWithRecursivelyReferencedTypeAliasToTypeLiteral01.ts	E	compiler/typeArgumentInferenceWithRecursivelyReferencedTypeAliasToTypeLiteral01.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeArgumentInferenceWithRecursivelyReferencedTypeAliasToTypeLiteral02.ts	E	compiler/typeArgumentInferenceWithRecursivelyReferencedTypeAliasToTypeLiteral02.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeArgumentsInFunctionExpressions.ts	C	compiler/typeArgumentsInFunctionExpressions.ts	pass	silent		
+typeArgumentsOnFunctionsWithNoTypeParameters.ts	E	compiler/typeArgumentsOnFunctionsWithNoTypeParameters.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeArgumentsShouldDisallowNonGenericOverloads.ts	E	compiler/typeArgumentsShouldDisallowNonGenericOverloads.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeArgumentsWithStringLiteralTypes01.ts	E	conformance/types/stringLiteral/typeArgumentsWithStringLiteralTypes01.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeAssertionToGenericFunctionType.ts	E	compiler/typeAssertionToGenericFunctionType.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeAssertions.ts	E	conformance/expressions/typeAssertions/typeAssertions.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeAssertionsWithIntersectionTypes01.ts	E	conformance/types/typeRelationships/comparable/typeAssertionsWithIntersectionTypes01.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeAssertionsWithUnionTypes01.ts	E	conformance/types/typeRelationships/comparable/typeAssertionsWithUnionTypes01.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeAssignabilityErrorMessage.ts	E	compiler/typeAssignabilityErrorMessage.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeCheckExportsVariable.ts	E	compiler/typeCheckExportsVariable.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeCheckObjectCreationExpressionWithUndefinedCallResolutionData.ts	C	compiler/typeCheckObjectCreationExpressionWithUndefinedCallResolutionData.ts	pass	silent		
+typeCheckObjectLiteralMethodBody.ts	C	compiler/typeCheckObjectLiteralMethodBody.ts	pass	silent		
+typeCheckReturnExpression.ts	C	compiler/typeCheckReturnExpression.ts	pass	silent		
+typeCheckTypeArgument.ts	E	compiler/typeCheckTypeArgument.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeCheckingInsideFunctionExpressionInArray.ts	E	compiler/typeCheckingInsideFunctionExpressionInArray.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeComparisonCaching.ts	E	compiler/typeComparisonCaching.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeConstraintsWithConstructSignatures.ts	C	compiler/typeConstraintsWithConstructSignatures.ts	pass	silent		
+typeFromContextualThisType.ts	E	conformance/salsa/typeFromContextualThisType.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromJSConstructor.ts	E	conformance/salsa/typeFromJSConstructor.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromJSInitializer.ts	E	conformance/salsa/typeFromJSInitializer.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromJSInitializer2.ts	C	conformance/salsa/typeFromJSInitializer2.ts	pass	silent		
+typeFromJSInitializer3.ts	C	conformance/salsa/typeFromJSInitializer3.ts	pass	silent		
+typeFromJSInitializer4.ts	E	conformance/salsa/typeFromJSInitializer4.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromParamTagForFunction.ts	E	conformance/salsa/typeFromParamTagForFunction.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPrivatePropertyAssignment.ts	C	conformance/classes/members/privateNames/typeFromPrivatePropertyAssignment.ts	pass	silent		
+typeFromPrivatePropertyAssignmentJs.ts	C	conformance/classes/members/privateNames/typeFromPrivatePropertyAssignmentJs.ts	pass	silent		
+typeFromPropertyAssignment.ts	E	conformance/salsa/typeFromPropertyAssignment.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPropertyAssignment10.ts	E	conformance/salsa/typeFromPropertyAssignment10.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPropertyAssignment10_1.ts	E	conformance/salsa/typeFromPropertyAssignment10_1.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPropertyAssignment11.ts	C	conformance/salsa/typeFromPropertyAssignment11.ts	pass	silent		
+typeFromPropertyAssignment12.ts	E	conformance/salsa/typeFromPropertyAssignment12.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPropertyAssignment13.ts	C	conformance/salsa/typeFromPropertyAssignment13.ts	pass	silent		
+typeFromPropertyAssignment14.ts	E	conformance/salsa/typeFromPropertyAssignment14.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPropertyAssignment15.ts	E	conformance/salsa/typeFromPropertyAssignment15.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPropertyAssignment16.ts	E	conformance/salsa/typeFromPropertyAssignment16.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPropertyAssignment17.ts	C	conformance/salsa/typeFromPropertyAssignment17.ts	pass	silent		
+typeFromPropertyAssignment18.ts	C	conformance/salsa/typeFromPropertyAssignment18.ts	pass	silent		
+typeFromPropertyAssignment19.ts	C	conformance/salsa/typeFromPropertyAssignment19.ts	pass	silent		
+typeFromPropertyAssignment2.ts	E	conformance/salsa/typeFromPropertyAssignment2.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPropertyAssignment20.ts	C	conformance/salsa/typeFromPropertyAssignment20.ts	pass	silent		
+typeFromPropertyAssignment21.ts	E	conformance/salsa/typeFromPropertyAssignment21.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPropertyAssignment22.ts	E	conformance/salsa/typeFromPropertyAssignment22.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPropertyAssignment23.ts	E	conformance/salsa/typeFromPropertyAssignment23.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPropertyAssignment24.ts	E	conformance/salsa/typeFromPropertyAssignment24.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPropertyAssignment25.ts	C	conformance/salsa/typeFromPropertyAssignment25.ts	pass	silent		
+typeFromPropertyAssignment26.ts	E	conformance/salsa/typeFromPropertyAssignment26.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPropertyAssignment27.ts	C	conformance/salsa/typeFromPropertyAssignment27.ts	pass	silent		
+typeFromPropertyAssignment28.ts	E	conformance/salsa/typeFromPropertyAssignment28.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPropertyAssignment29.ts	E	conformance/salsa/typeFromPropertyAssignment29.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPropertyAssignment3.ts	E	conformance/salsa/typeFromPropertyAssignment3.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPropertyAssignment30.ts	C	conformance/salsa/typeFromPropertyAssignment30.ts	pass	silent		
+typeFromPropertyAssignment31.ts	E	conformance/salsa/typeFromPropertyAssignment31.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPropertyAssignment32.ts	E	conformance/salsa/typeFromPropertyAssignment32.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPropertyAssignment33.ts	E	conformance/salsa/typeFromPropertyAssignment33.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPropertyAssignment34.ts	C	conformance/salsa/typeFromPropertyAssignment34.ts	pass	silent		
+typeFromPropertyAssignment35.ts	E	conformance/salsa/typeFromPropertyAssignment35.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPropertyAssignment36.ts	E	conformance/salsa/typeFromPropertyAssignment36.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPropertyAssignment37.ts	C	conformance/salsa/typeFromPropertyAssignment37.ts	pass	silent		
+typeFromPropertyAssignment38.ts	C	conformance/salsa/typeFromPropertyAssignment38.ts	pass	silent		
+typeFromPropertyAssignment39.ts	C	conformance/salsa/typeFromPropertyAssignment39.ts	pass	silent		
+typeFromPropertyAssignment4.ts	E	conformance/salsa/typeFromPropertyAssignment4.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPropertyAssignment40.ts	E	conformance/salsa/typeFromPropertyAssignment40.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPropertyAssignment5.ts	E	conformance/salsa/typeFromPropertyAssignment5.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPropertyAssignment6.ts	E	conformance/salsa/typeFromPropertyAssignment6.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPropertyAssignment7.ts	C	conformance/salsa/typeFromPropertyAssignment7.ts	pass	silent		
+typeFromPropertyAssignment8.ts	C	conformance/salsa/typeFromPropertyAssignment8.ts	pass	silent		
+typeFromPropertyAssignment8_1.ts	C	conformance/salsa/typeFromPropertyAssignment8_1.ts	pass	silent		
+typeFromPropertyAssignment9.ts	E	conformance/salsa/typeFromPropertyAssignment9.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPropertyAssignment9_1.ts	E	conformance/salsa/typeFromPropertyAssignment9_1.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPropertyAssignmentOutOfOrder(target=es2015).ts	E	conformance/salsa/typeFromPropertyAssignmentOutOfOrder.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPropertyAssignmentWithExport.ts	C	conformance/salsa/typeFromPropertyAssignmentWithExport.ts	pass	silent		
+typeFromPrototypeAssignment.ts	E	conformance/salsa/typeFromPrototypeAssignment.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPrototypeAssignment2.ts	E	conformance/salsa/typeFromPrototypeAssignment2.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPrototypeAssignment3.ts	E	conformance/salsa/typeFromPrototypeAssignment3.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeFromPrototypeAssignment4.ts	C	conformance/salsa/typeFromPrototypeAssignment4.ts	pass	silent		
+typeGuardConstructorClassAndNumber.ts	E	compiler/typeGuardConstructorClassAndNumber.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardConstructorDerivedClass.ts	E	compiler/typeGuardConstructorDerivedClass.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardConstructorNarrowAny.ts	C	compiler/typeGuardConstructorNarrowAny.ts	pass	silent		
+typeGuardConstructorNarrowPrimitivesInUnion.ts	E	compiler/typeGuardConstructorNarrowPrimitivesInUnion.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardConstructorPrimitiveTypes.ts	E	compiler/typeGuardConstructorPrimitiveTypes.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardEnums.ts	E	conformance/expressions/typeGuards/typeGuardEnums.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardFunction.ts	C	conformance/expressions/typeGuards/typeGuardFunction.ts	pass	silent		
+typeGuardFunctionErrors.ts	E	conformance/expressions/typeGuards/typeGuardFunctionErrors.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+typeGuardFunctionGenerics.ts	C	conformance/expressions/typeGuards/typeGuardFunctionGenerics.ts	pass	silent		
+typeGuardFunctionOfFormThis.ts	C	conformance/expressions/typeGuards/typeGuardFunctionOfFormThis.ts	pass	silent		
+typeGuardFunctionOfFormThisErrors.ts	E	conformance/expressions/typeGuards/typeGuardFunctionOfFormThisErrors.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardInClass.ts	E	conformance/expressions/typeGuards/typeGuardInClass.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardIntersectionTypes.ts	C	conformance/expressions/typeGuards/typeGuardIntersectionTypes.ts	pass	silent		
+typeGuardNarrowByMutableUntypedField.ts	C	compiler/typeGuardNarrowByMutableUntypedField.ts	pass	silent		
+typeGuardNarrowByUntypedField.ts	C	compiler/typeGuardNarrowByUntypedField.ts	pass	silent		
+typeGuardNarrowsIndexedAccessOfKnownProperty1.ts	C	compiler/typeGuardNarrowsIndexedAccessOfKnownProperty1.ts	pass	silent		
+typeGuardNarrowsIndexedAccessOfKnownProperty10.ts	E	compiler/typeGuardNarrowsIndexedAccessOfKnownProperty10.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardNarrowsIndexedAccessOfKnownProperty11.ts	C	compiler/typeGuardNarrowsIndexedAccessOfKnownProperty11.ts	pass	silent		
+typeGuardNarrowsIndexedAccessOfKnownProperty12.ts	C	compiler/typeGuardNarrowsIndexedAccessOfKnownProperty12.ts	pass	silent		
+typeGuardNarrowsIndexedAccessOfKnownProperty2.ts	C	compiler/typeGuardNarrowsIndexedAccessOfKnownProperty2.ts	pass	silent		
+typeGuardNarrowsIndexedAccessOfKnownProperty3.ts	C	compiler/typeGuardNarrowsIndexedAccessOfKnownProperty3.ts	pass	silent		
+typeGuardNarrowsIndexedAccessOfKnownProperty4.ts	C	compiler/typeGuardNarrowsIndexedAccessOfKnownProperty4.ts	pass	silent		
+typeGuardNarrowsIndexedAccessOfKnownProperty5.ts	C	compiler/typeGuardNarrowsIndexedAccessOfKnownProperty5.ts	pass	silent		
+typeGuardNarrowsIndexedAccessOfKnownProperty6.ts	C	compiler/typeGuardNarrowsIndexedAccessOfKnownProperty6.ts	pass	silent		
+typeGuardNarrowsIndexedAccessOfKnownProperty7.ts	C	compiler/typeGuardNarrowsIndexedAccessOfKnownProperty7.ts	pass	silent		
+typeGuardNarrowsIndexedAccessOfKnownProperty8.ts	C	compiler/typeGuardNarrowsIndexedAccessOfKnownProperty8.ts	pass	silent		
+typeGuardNarrowsIndexedAccessOfKnownProperty9.ts	E	compiler/typeGuardNarrowsIndexedAccessOfKnownProperty9.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardNarrowsPrimitiveIntersection.ts	E	conformance/expressions/typeGuards/typeGuardNarrowsPrimitiveIntersection.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardNarrowsToLiteralType.ts	E	conformance/expressions/typeGuards/typeGuardNarrowsToLiteralType.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardNarrowsToLiteralTypeUnion.ts	E	conformance/expressions/typeGuards/typeGuardNarrowsToLiteralTypeUnion.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardNesting.ts	E	conformance/expressions/typeGuards/typeGuardNesting.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardOfFormExpr1AndExpr2.ts	C	conformance/expressions/typeGuards/typeGuardOfFormExpr1AndExpr2.ts	pass	silent		
+typeGuardOfFormExpr1OrExpr2.ts	C	conformance/expressions/typeGuards/typeGuardOfFormExpr1OrExpr2.ts	pass	silent		
+typeGuardOfFormFunctionEquality.ts	C	conformance/expressions/typeGuards/typeGuardOfFormFunctionEquality.ts	pass	silent		
+typeGuardOfFormInstanceOf.ts	E	conformance/expressions/typeGuards/typeGuardOfFormInstanceOf.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardOfFormInstanceOfOnInterface.ts	E	conformance/expressions/typeGuards/typeGuardOfFormInstanceOfOnInterface.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardOfFormIsType.ts	E	conformance/expressions/typeGuards/typeGuardOfFormIsType.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardOfFormIsTypeOnInterfaces.ts	E	conformance/expressions/typeGuards/typeGuardOfFormIsTypeOnInterfaces.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardOfFormNotExpr.ts	E	conformance/expressions/typeGuards/typeGuardOfFormNotExpr.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardOfFormThisMember(target=es2015).ts	E	conformance/expressions/typeGuards/typeGuardOfFormThisMember.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardOfFormThisMemberErrors(target=es2015).ts	E	conformance/expressions/typeGuards/typeGuardOfFormThisMemberErrors.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardOfFormTypeOfBoolean.ts	E	conformance/expressions/typeGuards/typeGuardOfFormTypeOfBoolean.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardOfFormTypeOfEqualEqualHasNoEffect.ts	E	conformance/expressions/typeGuards/typeGuardOfFormTypeOfEqualEqualHasNoEffect.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardOfFormTypeOfFunction.ts	C	conformance/expressions/typeGuards/typeGuardOfFormTypeOfFunction.ts	pass	silent		
+typeGuardOfFormTypeOfIsOrderIndependent.ts	E	conformance/expressions/typeGuards/typeGuardOfFormTypeOfIsOrderIndependent.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardOfFormTypeOfNotEqualHasNoEffect.ts	E	conformance/expressions/typeGuards/typeGuardOfFormTypeOfNotEqualHasNoEffect.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardOfFormTypeOfNumber.ts	E	conformance/expressions/typeGuards/typeGuardOfFormTypeOfNumber.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardOfFormTypeOfOther.ts	E	conformance/expressions/typeGuards/typeGuardOfFormTypeOfOther.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardOfFormTypeOfPrimitiveSubtype.ts	E	conformance/expressions/typeGuards/typeGuardOfFormTypeOfPrimitiveSubtype.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardOfFormTypeOfString.ts	E	conformance/expressions/typeGuards/typeGuardOfFormTypeOfString.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardOfFromPropNameInUnionType.ts	E	conformance/expressions/typeGuards/typeGuardOfFromPropNameInUnionType.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardOnContainerTypeNoHang.ts	C	compiler/typeGuardOnContainerTypeNoHang.ts	pass	silent		
+typeGuardRedundancy.ts	E	conformance/expressions/typeGuards/typeGuardRedundancy.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardTautologicalConsistiency.ts	E	conformance/expressions/typeGuards/typeGuardTautologicalConsistiency.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardTypeOfUndefined.ts	C	conformance/expressions/typeGuards/typeGuardTypeOfUndefined.ts	pass	silent		
+typeGuardsAsAssertions.ts	E	conformance/controlFlow/typeGuardsAsAssertions.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardsDefeat.ts	E	conformance/expressions/typeGuards/typeGuardsDefeat.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardsInClassAccessors(target=es2015).ts	E	conformance/expressions/typeGuards/typeGuardsInClassAccessors.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardsInClassMethods.ts	E	conformance/expressions/typeGuards/typeGuardsInClassMethods.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardsInConditionalExpression.ts	C	conformance/expressions/typeGuards/typeGuardsInConditionalExpression.ts	pass	silent		
+typeGuardsInDoStatement.ts	E	conformance/expressions/typeGuards/typeGuardsInDoStatement.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardsInExternalModule.ts	E	conformance/expressions/typeGuards/typeGuardsInExternalModule.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardsInForStatement.ts	E	conformance/expressions/typeGuards/typeGuardsInForStatement.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardsInFunction.ts	E	conformance/expressions/typeGuards/typeGuardsInFunction.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardsInFunctionAndModuleBlock.ts	C	conformance/expressions/typeGuards/typeGuardsInFunctionAndModuleBlock.ts	pass	silent		
+typeGuardsInGlobal.ts	E	conformance/expressions/typeGuards/typeGuardsInGlobal.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardsInIfStatement.ts	E	conformance/expressions/typeGuards/typeGuardsInIfStatement.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardsInModule.ts	E	conformance/expressions/typeGuards/typeGuardsInModule.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardsInProperties(target=es2015).ts	E	conformance/expressions/typeGuards/typeGuardsInProperties.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardsInRightOperandOfAndAndOperator.ts	C	conformance/expressions/typeGuards/typeGuardsInRightOperandOfAndAndOperator.ts	pass	silent		
+typeGuardsInRightOperandOfOrOrOperator.ts	E	conformance/expressions/typeGuards/typeGuardsInRightOperandOfOrOrOperator.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardsInWhileStatement.ts	E	conformance/expressions/typeGuards/typeGuardsInWhileStatement.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardsNestedAssignments.ts	C	conformance/controlFlow/typeGuardsNestedAssignments.ts	pass	silent		
+typeGuardsObjectMethods(target=es2015).ts	E	conformance/expressions/typeGuards/typeGuardsObjectMethods.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardsOnClassProperty.ts	E	conformance/expressions/typeGuards/typeGuardsOnClassProperty.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardsTypeParameters.ts	C	conformance/controlFlow/typeGuardsTypeParameters.ts	pass	silent		
+typeGuardsWithAny.ts	E	conformance/expressions/typeGuards/typeGuardsWithAny.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardsWithInstanceOf.ts	E	conformance/expressions/typeGuards/typeGuardsWithInstanceOf.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardsWithInstanceOfByConstructorSignature.ts	E	conformance/expressions/typeGuards/typeGuardsWithInstanceOfByConstructorSignature.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeGuardsWithInstanceOfBySymbolHasInstance.ts	E	conformance/expressions/typeGuards/typeGuardsWithInstanceOfBySymbolHasInstance.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeIdentityConsidersBrands.ts	E	compiler/typeIdentityConsidersBrands.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeInfer1.ts	E	compiler/typeInfer1.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeInferenceCacheInvalidation.ts	C	compiler/typeInferenceCacheInvalidation.ts	pass	silent		
+typeInferenceConflictingCandidates.ts	E	compiler/typeInferenceConflictingCandidates.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeInferenceFBoundedTypeParams.ts	C	compiler/typeInferenceFBoundedTypeParams.ts	pass	silent		
+typeInferenceFixEarly.ts	C	compiler/typeInferenceFixEarly.ts	pass	silent		
+typeInferenceLiteralUnion.ts	C	compiler/typeInferenceLiteralUnion.ts	pass	silent		
+typeInferenceReturnTypeCallback.ts	E	compiler/typeInferenceReturnTypeCallback.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeInferenceTypePredicate.ts	E	compiler/typeInferenceTypePredicate.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeInferenceTypePredicate2.ts	C	compiler/typeInferenceTypePredicate2.ts	pass	silent		
+typeInferenceWithExcessProperties.ts	C	compiler/typeInferenceWithExcessProperties.ts	pass	silent		
+typeInferenceWithExcessPropertiesJsx.tsx	C	compiler/typeInferenceWithExcessPropertiesJsx.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/typeInferenceWithExcessPropertiesJsx.tsx: /.lib/react16.d.ts
+typeInferenceWithTupleType.ts	E	conformance/types/tuple/typeInferenceWithTupleType.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeInferenceWithTypeAnnotation.ts	C	compiler/typeInferenceWithTypeAnnotation.ts	pass	silent		
+typeInterfaceDeclarationsInBlockStatements1.ts	E	compiler/typeInterfaceDeclarationsInBlockStatements1.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeLiteralCallback.ts	E	compiler/typeLiteralCallback.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeLookupInIIFE.ts	E	conformance/salsa/typeLookupInIIFE.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeMatch1.ts	E	compiler/typeMatch1.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeMatch2.ts	E	compiler/typeMatch2.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeName1.ts	E	compiler/typeName1.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeNamedUndefined1.ts	E	compiler/typeNamedUndefined1.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeNamedUndefined2.ts	E	compiler/typeNamedUndefined2.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeOfEnumAndVarRedeclarations.ts	E	compiler/typeOfEnumAndVarRedeclarations.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeOfOnTypeArg.ts	E	compiler/typeOfOnTypeArg.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeOfOperator1.ts	E	compiler/typeOfOperator1.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeOfPrototype.ts	E	compiler/typeOfPrototype.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeOfSuperCall.ts	C	compiler/typeOfSuperCall.ts	pass	silent		
+typeOfThisGeneral.ts	E	conformance/expressions/thisKeyword/typeOfThisGeneral.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeOfThisInAccessor.ts	E	conformance/classes/propertyMemberDeclarations/memberAccessorDeclarations/typeOfThisInAccessor.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeOfThisInConstructorParamList.ts	C	conformance/expressions/thisKeyword/typeOfThisInConstructorParamList.ts	pass	silent		
+typeOfThisInFunctionExpression.ts	E	conformance/expressions/functions/typeOfThisInFunctionExpression.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeOfThisInInstanceMember.ts	E	conformance/classes/members/instanceAndStaticMembers/typeOfThisInInstanceMember.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeOfThisInInstanceMember2.ts	E	conformance/classes/members/instanceAndStaticMembers/typeOfThisInInstanceMember2.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeOfThisInMemberFunctions.ts	E	conformance/classes/propertyMemberDeclarations/memberFunctionDeclarations/typeOfThisInMemberFunctions.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeOfThisInStaticMembers.ts	C	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers.ts	pass	silent		
+typeOfThisInStaticMembers10(target=es2022).ts	E	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers10.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeOfThisInStaticMembers10(target=es6).ts	E	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers10.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeOfThisInStaticMembers10(target=esnext).ts	E	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers10.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeOfThisInStaticMembers11(target=es2022).ts	E	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers11.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeOfThisInStaticMembers11(target=es6).ts	E	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers11.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeOfThisInStaticMembers11(target=esnext).ts	E	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers11.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeOfThisInStaticMembers12(target=es2022).ts	E	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers12.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeOfThisInStaticMembers12(target=es6).ts	E	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers12.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeOfThisInStaticMembers12(target=esnext).ts	E	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers12.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeOfThisInStaticMembers13(target=es2022).ts	E	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers13.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeOfThisInStaticMembers13(target=es6).ts	E	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers13.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeOfThisInStaticMembers13(target=esnext).ts	E	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers13.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeOfThisInStaticMembers2.ts	C	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers2.ts	pass	silent		
+typeOfThisInStaticMembers3(target=es2022).ts	C	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers3.ts	pass	silent		
+typeOfThisInStaticMembers3(target=es6).ts	C	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers3.ts	pass	silent		
+typeOfThisInStaticMembers3(target=esnext).ts	C	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers3.ts	pass	silent		
+typeOfThisInStaticMembers4(target=es2022).ts	C	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers4.ts	pass	silent		
+typeOfThisInStaticMembers4(target=es6).ts	C	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers4.ts	pass	silent		
+typeOfThisInStaticMembers4(target=esnext).ts	C	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers4.ts	pass	silent		
+typeOfThisInStaticMembers5(target=es2022).ts	C	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers5.ts	pass	silent		
+typeOfThisInStaticMembers5(target=es6).ts	C	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers5.ts	pass	silent		
+typeOfThisInStaticMembers5(target=esnext).ts	C	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers5.ts	pass	silent		
+typeOfThisInStaticMembers6.ts	E	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+typeOfThisInStaticMembers7(target=es2022).ts	C	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers7.ts	pass	silent		
+typeOfThisInStaticMembers7(target=es6).ts	C	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers7.ts	pass	silent		
+typeOfThisInStaticMembers7(target=esnext).ts	C	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers7.ts	pass	silent		
+typeOfThisInStaticMembers8(target=es2022).ts	E	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers8.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeOfThisInStaticMembers8(target=es6).ts	E	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers8.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeOfThisInStaticMembers8(target=esnext).ts	E	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers8.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeOfThisInStaticMembers9(target=es2022).ts	E	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers9.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+typeOfThisInStaticMembers9(target=es6).ts	E	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers9.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+typeOfThisInStaticMembers9(target=esnext).ts	E	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers9.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+typeOfThisInStatics.ts	C	compiler/typeOfThisInStatics.ts	pass	silent		
+typeOfThisInstanceMemberNarrowedWithLoopAntecedent.ts	E	conformance/classes/members/instanceAndStaticMembers/typeOfThisInstanceMemberNarrowedWithLoopAntecedent.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeOfYieldWithUnionInContextualReturnType.ts	C	compiler/typeOfYieldWithUnionInContextualReturnType.ts	pass	silent		
+typeOnlyESMImportFromCJS(module=node18).ts	E	conformance/externalModules/typeOnly/typeOnlyESMImportFromCJS.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeOnlyESMImportFromCJS(module=node20).ts	C	conformance/externalModules/typeOnly/typeOnlyESMImportFromCJS.ts	pass	silent		
+typeOnlyESMImportFromCJS(module=nodenext).ts	C	conformance/externalModules/typeOnly/typeOnlyESMImportFromCJS.ts	pass	silent		
+typeOnlyMerge1.ts	C	conformance/externalModules/typeOnlyMerge1.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+typeOnlyMerge2.ts	E	conformance/externalModules/typeOnlyMerge2.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeOnlyMerge3.ts	E	conformance/externalModules/typeOnlyMerge3.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+typeParamExtendsOtherTypeParam.ts	E	compiler/typeParamExtendsOtherTypeParam.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterAndArgumentOfSameName1.ts	E	compiler/typeParameterAndArgumentOfSameName1.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterArgumentEquivalence.ts	E	compiler/typeParameterArgumentEquivalence.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterArgumentEquivalence2.ts	E	compiler/typeParameterArgumentEquivalence2.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterArgumentEquivalence3.ts	E	compiler/typeParameterArgumentEquivalence3.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterArgumentEquivalence4.ts	E	compiler/typeParameterArgumentEquivalence4.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterArgumentEquivalence5.ts	E	compiler/typeParameterArgumentEquivalence5.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterAsBaseClass.ts	E	compiler/typeParameterAsBaseClass.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterAsBaseType.ts	E	conformance/types/typeParameters/typeParameterAsBaseType.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterAsElementType.ts	E	compiler/typeParameterAsElementType.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterAsTypeArgument.ts	E	conformance/types/objectTypeLiteral/callSignatures/typeParameterAsTypeArgument.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterAsTypeParameterConstraint.ts	E	conformance/types/typeParameters/typeArgumentLists/typeParameterAsTypeParameterConstraint.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterAsTypeParameterConstraint2.ts	E	conformance/types/typeParameters/typeArgumentLists/typeParameterAsTypeParameterConstraint2.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterAsTypeParameterConstraintTransitively.ts	C	conformance/types/typeParameters/typeArgumentLists/typeParameterAsTypeParameterConstraintTransitively.ts	pass	silent		
+typeParameterAsTypeParameterConstraintTransitively2.ts	C	conformance/types/typeParameters/typeArgumentLists/typeParameterAsTypeParameterConstraintTransitively2.ts	pass	silent		
+typeParameterAssignability.ts	E	conformance/types/typeRelationships/assignmentCompatibility/typeParameterAssignability.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterAssignability2.ts	E	conformance/types/typeRelationships/assignmentCompatibility/typeParameterAssignability2.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterAssignability3.ts	E	conformance/types/typeRelationships/assignmentCompatibility/typeParameterAssignability3.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterAssignmentCompat1.ts	E	compiler/typeParameterAssignmentCompat1.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterAssignmentWithConstraints.ts	E	compiler/typeParameterAssignmentWithConstraints.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterConstModifiers.ts	E	conformance/types/typeParameters/typeParameterLists/typeParameterConstModifiers.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+typeParameterConstModifiersReturnsAndYields.ts	C	conformance/types/typeParameters/typeParameterLists/typeParameterConstModifiersReturnsAndYields.ts	pass	silent		
+typeParameterConstModifiersReverseMappedTypes.ts	C	conformance/types/typeParameters/typeParameterLists/typeParameterConstModifiersReverseMappedTypes.ts	pass	silent		
+typeParameterConstModifiersWithIntersection.ts	C	conformance/types/typeParameters/typeParameterLists/typeParameterConstModifiersWithIntersection.ts	pass	silent		
+typeParameterConstrainedToOuterTypeParameter.ts	E	compiler/typeParameterConstrainedToOuterTypeParameter.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterConstrainedToOuterTypeParameter2.ts	C	compiler/typeParameterConstrainedToOuterTypeParameter2.ts	pass	silent		
+typeParameterConstraintInstantiation.ts	E	compiler/typeParameterConstraintInstantiation.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterConstraints1.ts	E	compiler/typeParameterConstraints1.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterDiamond1.ts	E	compiler/typeParameterDiamond1.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterDiamond2.ts	E	compiler/typeParameterDiamond2.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterDiamond3.ts	E	compiler/typeParameterDiamond3.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterDiamond4.ts	E	compiler/typeParameterDiamond4.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterDirectlyConstrainedToItself.ts	E	conformance/types/typeParameters/typeParameterLists/typeParameterDirectlyConstrainedToItself.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterDoesntBlockParameterLookup.ts	C	compiler/typeParameterDoesntBlockParameterLookup.ts	pass	silent		
+typeParameterEquality.ts	E	compiler/typeParameterEquality.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterExplicitlyExtendsAny.ts	E	compiler/typeParameterExplicitlyExtendsAny.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterExtendingUnion1.ts	C	compiler/typeParameterExtendingUnion1.ts	pass	silent		
+typeParameterExtendingUnion2.ts	C	compiler/typeParameterExtendingUnion2.ts	pass	silent		
+typeParameterExtendsPrimitive.ts	E	compiler/typeParameterExtendsPrimitive.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterExtendsUnionConstraintDistributed.ts	C	conformance/jsdoc/typeParameterExtendsUnionConstraintDistributed.ts	pass	silent		
+typeParameterFixingWithConstraints.ts	C	compiler/typeParameterFixingWithConstraints.ts	pass	silent		
+typeParameterFixingWithContextSensitiveArguments.ts	C	compiler/typeParameterFixingWithContextSensitiveArguments.ts	pass	silent		
+typeParameterFixingWithContextSensitiveArguments2.ts	E	compiler/typeParameterFixingWithContextSensitiveArguments2.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterFixingWithContextSensitiveArguments3.ts	E	compiler/typeParameterFixingWithContextSensitiveArguments3.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterFixingWithContextSensitiveArguments4.ts	C	compiler/typeParameterFixingWithContextSensitiveArguments4.ts	pass	silent		
+typeParameterFixingWithContextSensitiveArguments5.ts	C	compiler/typeParameterFixingWithContextSensitiveArguments5.ts	pass	silent		
+typeParameterHasSelfAsConstraint.ts	E	compiler/typeParameterHasSelfAsConstraint.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterInConstraint1.ts	C	compiler/typeParameterInConstraint1.ts	pass	silent		
+typeParameterIndirectlyConstrainedToItself.ts	E	conformance/types/typeParameters/typeParameterLists/typeParameterIndirectlyConstrainedToItself.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterLeak.ts	C	compiler/typeParameterLeak.ts	pass	silent		
+typeParameterListWithTrailingComma1.ts	C	compiler/typeParameterListWithTrailingComma1.ts	pass	silent		
+typeParameterOrderReversal.ts	E	compiler/typeParameterOrderReversal.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterUsedAsConstraint.ts	C	conformance/types/typeParameters/typeParameterLists/typeParameterUsedAsConstraint.ts	pass	silent		
+typeParameterUsedAsTypeParameterConstraint.ts	C	conformance/types/objectTypeLiteral/callSignatures/typeParameterUsedAsTypeParameterConstraint.ts	pass	silent		
+typeParameterUsedAsTypeParameterConstraint2.ts	C	conformance/types/objectTypeLiteral/callSignatures/typeParameterUsedAsTypeParameterConstraint2.ts	pass	silent		
+typeParameterUsedAsTypeParameterConstraint3.ts	C	conformance/types/objectTypeLiteral/callSignatures/typeParameterUsedAsTypeParameterConstraint3.ts	pass	silent		
+typeParameterUsedAsTypeParameterConstraint4.ts	E	conformance/types/objectTypeLiteral/callSignatures/typeParameterUsedAsTypeParameterConstraint4.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParameterWithInvalidConstraintType.ts	E	compiler/typeParameterWithInvalidConstraintType.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParametersAndParametersInComputedNames.ts	E	compiler/typeParametersAndParametersInComputedNames.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParametersAreIdenticalToThemselves.ts	C	conformance/types/typeRelationships/typeAndMemberIdentity/typeParametersAreIdenticalToThemselves.ts	pass	silent		
+typeParametersAvailableInNestedScope.ts	E	conformance/types/typeParameters/typeParameterLists/typeParametersAvailableInNestedScope.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParametersAvailableInNestedScope2.ts	C	conformance/types/typeParameters/typeParameterLists/typeParametersAvailableInNestedScope2.ts	pass	silent		
+typeParametersAvailableInNestedScope3.ts	C	conformance/types/typeParameters/typeParameterLists/typeParametersAvailableInNestedScope3.ts	pass	silent		
+typeParametersInStaticAccessors.ts	E	compiler/typeParametersInStaticAccessors.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParametersInStaticMethods.ts	E	compiler/typeParametersInStaticMethods.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParametersInStaticProperties.ts	E	compiler/typeParametersInStaticProperties.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParametersShouldNotBeEqual.ts	E	compiler/typeParametersShouldNotBeEqual.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParametersShouldNotBeEqual2.ts	E	compiler/typeParametersShouldNotBeEqual2.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeParametersShouldNotBeEqual3.ts	E	compiler/typeParametersShouldNotBeEqual3.ts	fail	silent		no diagnostic where the oracle has a baseline
+typePartameterConstraintInstantiatedWithDefaultWhenCheckingDefault.ts	C	compiler/typePartameterConstraintInstantiatedWithDefaultWhenCheckingDefault.ts	pass	silent		
+typePredicateASI.ts	C	conformance/expressions/typeGuards/typePredicateASI.ts	pass	silent		
+typePredicateAcceptingPartialOfRefinedType.ts	C	compiler/typePredicateAcceptingPartialOfRefinedType.ts	pass	silent		
+typePredicateFreshLiteralWidening.ts	C	compiler/typePredicateFreshLiteralWidening.ts	pass	silent		
+typePredicateInLoop.ts	E	compiler/typePredicateInLoop.ts	fail	silent		no diagnostic where the oracle has a baseline
+typePredicateInherit.ts	E	compiler/typePredicateInherit.ts	fail	silent		no diagnostic where the oracle has a baseline
+typePredicateOnVariableDeclaration01.ts	E	conformance/expressions/typeGuards/typePredicateOnVariableDeclaration01.ts	fail	silent		no diagnostic where the oracle has a baseline
+typePredicateOnVariableDeclaration02.ts	E	conformance/expressions/typeGuards/typePredicateOnVariableDeclaration02.ts	fail	silent		no diagnostic where the oracle has a baseline
+typePredicateStructuralMatch.ts	E	compiler/typePredicateStructuralMatch.ts	fail	silent		no diagnostic where the oracle has a baseline
+typePredicateTopLevelTypeParameter.ts	C	compiler/typePredicateTopLevelTypeParameter.ts	pass	silent		
+typePredicateWithThisParameter.ts	C	compiler/typePredicateWithThisParameter.ts	pass	silent		
+typePredicatesCanNarrowByDiscriminant.ts	C	compiler/typePredicatesCanNarrowByDiscriminant.ts	pass	silent		
+typePredicatesInUnion.ts	C	compiler/typePredicatesInUnion.ts	pass	silent		
+typePredicatesInUnion2.ts	C	compiler/typePredicatesInUnion2.ts	pass	silent		
+typePredicatesInUnion3.ts	E	compiler/typePredicatesInUnion3.ts	fail	silent		no diagnostic where the oracle has a baseline
+typePredicatesInUnion_noMatch.ts	C	compiler/typePredicatesInUnion_noMatch.ts	pass	silent		
+typePredicatesOptionalChaining1.ts	C	compiler/typePredicatesOptionalChaining1.ts	pass	silent		
+typePredicatesOptionalChaining2.ts	C	compiler/typePredicatesOptionalChaining2.ts	pass	silent		
+typePredicatesOptionalChaining3.ts	C	compiler/typePredicatesOptionalChaining3.ts	pass	silent		
+typeQuery.ts	C	conformance/externalModules/typeOnly/typeQuery.ts	pass	silent		
+typeQueryOnClass.ts	C	conformance/types/specifyingTypes/typeQueries/typeQueryOnClass.ts	pass	silent		
+typeQueryWithReservedWords.ts	C	conformance/types/specifyingTypes/typeQueries/typeQueryWithReservedWords.ts	pass	silent		
+typeReferenceDirectiveScopedPackageCustomTypeRoot.ts	E	compiler/typeReferenceDirectiveScopedPackageCustomTypeRoot.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeReferenceDirectiveWithFailedFromTypeRoot.ts	E	compiler/typeReferenceDirectiveWithFailedFromTypeRoot.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeReferenceDirectiveWithTypeAsFile.ts	C	compiler/typeReferenceDirectiveWithTypeAsFile.ts	pass	silent		
+typeReferenceDirectives1.ts	C	compiler/typeReferenceDirectives1.ts	pass	silent		
+typeReferenceDirectives10.ts	C	compiler/typeReferenceDirectives10.ts	pass	silent		
+typeReferenceDirectives13.ts	C	compiler/typeReferenceDirectives13.ts	pass	silent		
+typeReferenceDirectives2.ts	C	compiler/typeReferenceDirectives2.ts	pass	silent		
+typeReferenceDirectives3.ts	C	compiler/typeReferenceDirectives3.ts	pass	silent		
+typeReferenceDirectives4.ts	C	compiler/typeReferenceDirectives4.ts	pass	silent		
+typeReferenceDirectives5.ts	C	compiler/typeReferenceDirectives5.ts	pass	silent		
+typeReferenceDirectives6.ts	C	compiler/typeReferenceDirectives6.ts	pass	silent		
+typeReferenceDirectives7.ts	C	compiler/typeReferenceDirectives7.ts	pass	silent		
+typeReferenceDirectives8.ts	C	compiler/typeReferenceDirectives8.ts	pass	silent		
+typeReferenceDirectives9.ts	C	compiler/typeReferenceDirectives9.ts	pass	silent		
+typeReferenceRelatedFiles.ts	C	conformance/declarationEmit/typeReferenceRelatedFiles.ts	pass	silent		
+typeRelationships.ts	E	conformance/types/thisType/typeRelationships.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeRootsFromMultipleNodeModulesDirectories.ts	C	compiler/typeRootsFromMultipleNodeModulesDirectories.ts	pass	silent		
+typeRootsFromNodeModulesInParentDirectory.ts	C	compiler/typeRootsFromNodeModulesInParentDirectory.ts	pass	silent		
+typeSatisfaction.ts	E	conformance/expressions/typeSatisfaction/typeSatisfaction.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeSatisfactionWithDefaultExport.ts	E	conformance/expressions/typeSatisfaction/typeSatisfactionWithDefaultExport.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeSatisfaction_asConstArrays.ts	C	conformance/expressions/typeSatisfaction/typeSatisfaction_asConstArrays.ts	pass	silent		
+typeSatisfaction_contextualTyping1.ts	C	conformance/expressions/typeSatisfaction/typeSatisfaction_contextualTyping1.ts	pass	silent		
+typeSatisfaction_contextualTyping2.ts	E	conformance/expressions/typeSatisfaction/typeSatisfaction_contextualTyping2.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeSatisfaction_contextualTyping3.ts	C	conformance/expressions/typeSatisfaction/typeSatisfaction_contextualTyping3.ts	pass	silent		
+typeSatisfaction_ensureInterfaceImpl.ts	C	conformance/expressions/typeSatisfaction/typeSatisfaction_ensureInterfaceImpl.ts	pass	silent		
+typeSatisfaction_errorLocations1.ts	E	conformance/expressions/typeSatisfaction/typeSatisfaction_errorLocations1.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeSatisfaction_optionalMemberConformance.ts	E	conformance/expressions/typeSatisfaction/typeSatisfaction_optionalMemberConformance.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeSatisfaction_propNameConstraining.ts	E	conformance/expressions/typeSatisfaction/typeSatisfaction_propNameConstraining.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeSatisfaction_propertyNameFulfillment.ts	E	conformance/expressions/typeSatisfaction/typeSatisfaction_propertyNameFulfillment.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeSatisfaction_propertyValueConformance1(nopropertyaccessfromindexsignature=false).ts	E	conformance/expressions/typeSatisfaction/typeSatisfaction_propertyValueConformance1.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeSatisfaction_propertyValueConformance1(nopropertyaccessfromindexsignature=true).ts	E	conformance/expressions/typeSatisfaction/typeSatisfaction_propertyValueConformance1.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeSatisfaction_propertyValueConformance2(nouncheckedindexedaccess=false).ts	E	conformance/expressions/typeSatisfaction/typeSatisfaction_propertyValueConformance2.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeSatisfaction_propertyValueConformance2(nouncheckedindexedaccess=true).ts	E	conformance/expressions/typeSatisfaction/typeSatisfaction_propertyValueConformance2.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeSatisfaction_propertyValueConformance3.ts	E	conformance/expressions/typeSatisfaction/typeSatisfaction_propertyValueConformance3.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeSatisfaction_vacuousIntersectionOfContextualTypes.ts	E	conformance/expressions/typeSatisfaction/typeSatisfaction_vacuousIntersectionOfContextualTypes.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeTagCircularReferenceOnConstructorFunction.ts	E	conformance/jsdoc/typeTagCircularReferenceOnConstructorFunction.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeTagModuleExports.ts	E	conformance/jsdoc/typeTagModuleExports.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeTagNoErasure.ts	E	conformance/jsdoc/typeTagNoErasure.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeTagOnFunctionReferencesGeneric.ts	C	conformance/salsa/typeTagOnFunctionReferencesGeneric.ts	pass	silent		
+typeTagOnPropertyAssignment.ts	C	conformance/jsdoc/typeTagOnPropertyAssignment.ts	pass	silent		
+typeTagPrototypeAssignment.ts	E	conformance/jsdoc/typeTagPrototypeAssignment.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeTagWithGenericSignature.ts	C	conformance/jsdoc/typeTagWithGenericSignature.ts	pass	silent		
+typeUsedAsTypeLiteralIndex.ts	E	compiler/typeUsedAsTypeLiteralIndex.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeUsedAsValueError.ts	E	compiler/typeUsedAsValueError.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeUsedAsValueError2.ts	E	compiler/typeUsedAsValueError2.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeVal.ts	C	compiler/typeVal.ts	pass	silent		
+typeValueConflict1.ts	E	compiler/typeValueConflict1.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeValueConflict2.ts	E	compiler/typeValueConflict2.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeValueMerge1.ts	C	conformance/externalModules/typeValueMerge1.ts	pass	silent		
+typeVariableConstraintIntersections.ts	C	compiler/typeVariableConstraintIntersections.ts	pass	silent		
+typeVariableConstraintedToAliasNotAssignableToUnion.ts	E	compiler/typeVariableConstraintedToAliasNotAssignableToUnion.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeVariableTypeGuards.ts	C	compiler/typeVariableTypeGuards.ts	pass	silent		
+typecheckCommaExpression.ts	E	compiler/typecheckCommaExpression.ts	fail	silent		no diagnostic where the oracle has a baseline
+typecheckIfCondition.ts	E	compiler/typecheckIfCondition.ts	fail	silent		no diagnostic where the oracle has a baseline
+typedArrayConstructorOverloads.ts	C	compiler/typedArrayConstructorOverloads.ts	pass	silent		
+typedArrays-es5(target=es2015).ts	C	compiler/typedArrays-es5.ts	pass	silent		
+typedArrays-es6.ts	C	compiler/typedArrays-es6.ts	pass	silent		
+typedArrays.ts	C	compiler/typedArrays.ts	pass	silent		
+typedArraysCrossAssignability01.ts	E	compiler/typedArraysCrossAssignability01.ts	fail	silent		no diagnostic where the oracle has a baseline
+typedArraysSubarray.ts	C	compiler/typedArraysSubarray.ts	pass	silent		
+typedGenericPrototypeMember.ts	C	compiler/typedGenericPrototypeMember.ts	pass	silent		
+typedefCrossModule.ts	E	conformance/jsdoc/typedefCrossModule.ts	fail	silent		no diagnostic where the oracle has a baseline
+typedefCrossModule2.ts	E	conformance/jsdoc/typedefCrossModule2.ts	fail	silent		no diagnostic where the oracle has a baseline
+typedefCrossModule3.ts	C	conformance/jsdoc/typedefCrossModule3.ts	pass	silent		
+typedefCrossModule4.ts	C	conformance/jsdoc/typedefCrossModule4.ts	pass	silent		
+typedefCrossModule5.ts	E	conformance/jsdoc/typedefCrossModule5.ts	fail	silent		no diagnostic where the oracle has a baseline
+typedefDuplicateTypeDeclaration.ts	E	conformance/jsdoc/typedefDuplicateTypeDeclaration.ts	fail	silent		no diagnostic where the oracle has a baseline
+typedefInnerNamepaths.ts	E	conformance/jsdoc/typedefInnerNamepaths.ts	fail	silent		no diagnostic where the oracle has a baseline
+typedefMultipleTypeParameters.ts	E	conformance/jsdoc/typedefMultipleTypeParameters.ts	fail	silent		no diagnostic where the oracle has a baseline
+typedefOnSemicolonClassElement.ts	C	conformance/jsdoc/typedefOnSemicolonClassElement.ts	pass	silent		
+typedefOnStatements.ts	E	conformance/jsdoc/typedefOnStatements.ts	crash	diagnostic	no-debugger	the check threw: Error: stderr line 1 has the code no-debugger, which is no code of TypeScript
+typedefScope1.ts	E	conformance/jsdoc/typedefScope1.ts	fail	silent		no diagnostic where the oracle has a baseline
+typedefTagExtraneousProperty.ts	C	conformance/jsdoc/typedefTagExtraneousProperty.ts	pass	silent		
+typedefTagNested.ts	C	conformance/jsdoc/typedefTagNested.ts	pass	silent		
+typedefTagTypeResolution.ts	E	conformance/jsdoc/typedefTagTypeResolution.ts	fail	silent		no diagnostic where the oracle has a baseline
+typedefTagWrapping.ts	E	conformance/jsdoc/typedefTagWrapping.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeofANonExportedType.ts	E	conformance/types/specifyingTypes/typeQueries/typeofANonExportedType.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+typeofAmbientExternalModules.ts	E	compiler/typeofAmbientExternalModules.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeofAnExportedType.ts	E	conformance/types/specifyingTypes/typeQueries/typeofAnExportedType.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+typeofClass.ts	E	compiler/typeofClass.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeofClass2.ts	C	conformance/types/specifyingTypes/typeQueries/typeofClass2.ts	pass	silent		
+typeofClassWithPrivates.ts	E	conformance/types/specifyingTypes/typeQueries/typeofClassWithPrivates.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeofEnum.ts	E	compiler/typeofEnum.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeofExternalModules.ts	E	compiler/typeofExternalModules.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeofImportDefer.ts	E	conformance/importDefer/typeofImportDefer.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+typeofImportInstantiationExpression.ts	C	compiler/typeofImportInstantiationExpression.ts	pass	silent		
+typeofImportTypeOnlyExport.ts	C	conformance/declarationEmit/typeofImportTypeOnlyExport.ts	pass	silent		
+typeofInObjectLiteralType.ts	E	compiler/typeofInObjectLiteralType.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeofInterface.ts	C	compiler/typeofInterface.ts	pass	silent		
+typeofInternalModules.ts	E	compiler/typeofInternalModules.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeofModuleWithoutExports.ts	E	conformance/types/specifyingTypes/typeQueries/typeofModuleWithoutExports.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeofObjectInference.ts	C	compiler/typeofObjectInference.ts	pass	silent		
+typeofOperatorInvalidOperations.ts	E	conformance/expressions/unaryOperators/typeofOperator/typeofOperatorInvalidOperations.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+typeofOperatorWithAnyOtherType.ts	E	conformance/expressions/unaryOperators/typeofOperator/typeofOperatorWithAnyOtherType.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeofOperatorWithBooleanType.ts	E	conformance/expressions/unaryOperators/typeofOperator/typeofOperatorWithBooleanType.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeofOperatorWithEnumType.ts	E	conformance/expressions/unaryOperators/typeofOperator/typeofOperatorWithEnumType.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeofOperatorWithNumberType.ts	E	conformance/expressions/unaryOperators/typeofOperator/typeofOperatorWithNumberType.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeofOperatorWithStringType.ts	E	conformance/expressions/unaryOperators/typeofOperator/typeofOperatorWithStringType.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeofProperty.ts	E	compiler/typeofProperty.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeofSimple.ts	E	compiler/typeofSimple.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeofStrictNull.ts	C	compiler/typeofStrictNull.ts	pass	silent		
+typeofStripsFreshness.ts	C	compiler/typeofStripsFreshness.ts	pass	silent		
+typeofThis.ts	E	conformance/types/specifyingTypes/typeQueries/typeofThis.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeofThisInMethodSignature.ts	C	compiler/typeofThisInMethodSignature.ts	pass	silent		
+typeofThisWithImplicitThis.ts	C	conformance/types/specifyingTypes/typeQueries/typeofThisWithImplicitThis.ts	pass	silent		
+typeofTypeParameter.ts	E	conformance/types/specifyingTypes/typeQueries/typeofTypeParameter.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeofUndefined.ts	E	compiler/typeofUndefined.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeofUnknownSymbol.ts	E	compiler/typeofUnknownSymbol.ts	fail	silent		no diagnostic where the oracle has a baseline
+typeofUsedBeforeBlockScoped.ts	C	compiler/typeofUsedBeforeBlockScoped.ts	pass	silent		
+types.asyncGenerators.es2018.1.ts	C	conformance/types/asyncGenerators/types.asyncGenerators.es2018.1.ts	pass	silent		
+types.asyncGenerators.es2018.2.ts	E	conformance/types/asyncGenerators/types.asyncGenerators.es2018.2.ts	fail	silent		no diagnostic where the oracle has a baseline
+types.forAwait.es2018.1.ts	C	conformance/types/forAwait/types.forAwait.es2018.1.ts	pass	silent		
+types.forAwait.es2018.2.ts	E	conformance/types/forAwait/types.forAwait.es2018.2.ts	fail	silent		no diagnostic where the oracle has a baseline
+types.forAwait.es2018.3.ts	E	conformance/types/forAwait/types.forAwait.es2018.3.ts	fail	silent		no diagnostic where the oracle has a baseline
+typesOnlyExternalModuleStillHasInstance.ts	E	conformance/externalModules/typesOnlyExternalModuleStillHasInstance.ts	fail	silent		no diagnostic where the oracle has a baseline
+typesVersions.ambientModules.ts	C	conformance/moduleResolution/typesVersions.ambientModules.ts	pass	silent		
+typesVersions.multiFile.ts	C	conformance/moduleResolution/typesVersions.multiFile.ts	pass	silent		
+typesVersionsDeclarationEmit.ambient.ts	C	conformance/declarationEmit/typesVersionsDeclarationEmit.ambient.ts	pass	silent		
+typesVersionsDeclarationEmit.multiFile.ts	C	conformance/declarationEmit/typesVersionsDeclarationEmit.multiFile.ts	pass	silent		
+typesVersionsDeclarationEmit.multiFileBackReferenceToSelf.ts	E	conformance/declarationEmit/typesVersionsDeclarationEmit.multiFileBackReferenceToSelf.ts	fail	silent		no diagnostic where the oracle has a baseline
+typesVersionsDeclarationEmit.multiFileBackReferenceToUnmapped.ts	C	conformance/declarationEmit/typesVersionsDeclarationEmit.multiFileBackReferenceToUnmapped.ts	pass	silent		
+typesWithDuplicateTypeParameters.ts	E	conformance/types/typeParameters/typeParameterLists/typesWithDuplicateTypeParameters.ts	fail	silent		no diagnostic where the oracle has a baseline
+typesWithOptionalProperty.ts	C	conformance/types/members/typesWithOptionalProperty.ts	pass	silent		
+typesWithPrivateConstructor.ts	E	conformance/types/members/typesWithPrivateConstructor.ts	fail	silent		no diagnostic where the oracle has a baseline
+typesWithProtectedConstructor.ts	E	conformance/types/members/typesWithProtectedConstructor.ts	fail	silent		no diagnostic where the oracle has a baseline
+typesWithPublicConstructor.ts	E	conformance/types/members/typesWithPublicConstructor.ts	fail	silent		no diagnostic where the oracle has a baseline
+typesWithSpecializedCallSignatures.ts	C	conformance/types/members/typesWithSpecializedCallSignatures.ts	pass	silent		
+typesWithSpecializedConstructSignatures.ts	C	conformance/types/members/typesWithSpecializedConstructSignatures.ts	pass	silent		
+typingsLookup1.ts	E	conformance/typings/typingsLookup1.ts	fail	silent		no diagnostic where the oracle has a baseline
+typingsLookup2.ts	C	conformance/typings/typingsLookup2.ts	pass	silent		
+typingsLookup3.ts	E	conformance/typings/typingsLookup3.ts	fail	silent		no diagnostic where the oracle has a baseline
+typingsLookup4.ts	C	conformance/typings/typingsLookup4.ts	pass	silent		
+typingsSuggestion1.ts	E	conformance/typings/typingsSuggestion1.ts	fail	silent		no diagnostic where the oracle has a baseline
+typingsSuggestion2.ts	E	conformance/typings/typingsSuggestion2.ts	fail	silent		no diagnostic where the oracle has a baseline
+typingsSuggestionBun1.ts	E	conformance/typings/typingsSuggestionBun1.ts	fail	silent		no diagnostic where the oracle has a baseline
+typingsSuggestionBun2.ts	E	conformance/typings/typingsSuggestionBun2.ts	fail	silent		no diagnostic where the oracle has a baseline
 umd-augmentation-1.ts	C	conformance/externalModules/umd-augmentation-1.ts	pass	silent		
 umd-augmentation-2.ts	C	conformance/externalModules/umd-augmentation-2.ts	pass	silent		
 umd-augmentation-3.ts	C	conformance/externalModules/umd-augmentation-3.ts	pass	silent		

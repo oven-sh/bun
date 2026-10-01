@@ -1,0 +1,2 @@
+{"files":10608,"okA":9914,"okB":9914,"differ":0,"missing":0}
+A = /tmp/b3/plain/out/bun_js_parser (be1ebe5295 with zz_probe.rs), B = /tmp/b3/scratch/out/bun_js_parser (the same with the prototype of B3): the lint parse of every .ts .tsx .mts .cts .js .jsx .mjs .cjs file under test/ and src/js gives the same result in both.

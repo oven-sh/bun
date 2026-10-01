@@ -1,0 +1,36 @@
+RESEARCH "walk-order-code-paths" (cli, round 2, pass 1b): scripts and data. Nothing here is in the tree.
+The oracle is ESLint at the pin of src/lint/UPSTREAM_PORTED (/workspace/ref/eslint) and the parser of typescript-eslint
+(/workspace/ref/tseslint); sh ../tools/eslint-oracle-setup.sh restores both.
+
+probe/                 A copy of ../code-path-analysis-topdown/probe as it was when the numbers below were measured
+                       (src/main.rs md5 13cd4d6847fc9afcdd5a72d48cac1653). It is the walk of linter.rs as a program: Bun's
+                       tree as written (Parser::parse_for_lint) -> one line for each call on CodePathState, `F` for
+                       forwardCurrentToHead, `start <origin>` / `end` for a code path.
+                       Build: /workspace/tools/lk python3 probe/build.py /tmp/wocp/cpaprobe   (needs build/debug of /workspace/wt/cli)
+replay.cjs             Runs such a trace on upstream's own CodePath / CodePathState: arrows of each path and every event.
+oracle.cjs             What ESLint emits for a source: arrows and events.
+fixtures.cjs           node fixtures.cjs [--probe bin]   upstream's 243 fixtures through the probe against their /*expected blocks.
+diff.cjs               node diff.cjs --cases corpus.json | --files a.js b.ts ...  [--probe bin] [--show n] [--rejects]
+                       events and arrows of ESLint against those of the probe.
+where.cjs              node where.cjs <file>   the first event that differs, with ESLint's node.
+quirks.cjs             node quirks.cjs [--fixtures] [--cases corpus.json] [--files list.txt]
+                       counts, in upstream's own run: removeFromArray of a value the array does not hold, makeUnreachable()
+                       without arguments, replaceHead on an empty list, indexes out of range, merges of an odd list, the
+                       largest count of a fork context; every array of segments is frozen when it enters a list.
+find-quirk.cjs         the shortest sources of a corpus where removeFromArray removes the last element of a non-empty array.
+nest.cjs               node nest.cjs 1 2 4 8 12   `finally` inside `finally`: the count of the fork context doubles each level.
+fixtures-trace.txt     the trace of the probe for the 243 fixtures (9,782 lines).
+make-test-data.cjs, make-own-data.cjs -> code-path-analysis.txt
+                       251 entries (243 of upstream, 8 own: cases/own-code-paths.json): `== name`, `| ` source lines without
+                       the /*DOT blocks, `> ` lines of the expected arrows with `>>` after each code path, then the calls.
+                       Every trace gives the expected arrows on upstream's CodePathState (checked when the file is made).
+gr.cjs                 node gr.cjs [--ext ts] -e "src" ...   what ESLint's getter-return reports.
+gr-model.cjs           getter-return as the port plans it (getters are marked from above; a report that depends on Object or
+                       Reflect is dropped when the file declares the name anywhere), as an ESLint rule, against ESLint's rule.
+count-gr.cjs           how many reports ESLint's getter-return makes over a corpus.
+cases/make.cjs         -> cases/edge-getter-return.json (146), cases/ts-getter-return.json (53), answers/*.jsonl (ESLint's answers).
+                       The lists are in the form that ../round2-oracle/proto-1b/regen.cjs reads beside it (cases/*-<rule>.json).
+
+Corpora used (under /tmp, made by ../code-path-analysis-topdown): /tmp/cpa-1b/corpus.json (every case of ESLint's rule
+tests: 25,164 JavaScript, 2,733 TypeScript), files-js.txt (2,922 files), files-ts.txt (1,734 files), gen-js.json (20,000
+generated bodies).

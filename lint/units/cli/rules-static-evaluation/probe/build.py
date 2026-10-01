@@ -7,7 +7,7 @@ import glob, json, os, subprocess, sys
 
 WT = os.environ.get("WT", "/workspace/wt/cli")
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = sys.argv[1] if len(sys.argv) > 1 else "/tmp/rx/probe"
+OUT = sys.argv[1] if len(sys.argv) > 1 else "/tmp/rse/probe"
 EXTRA = sys.argv[2:]
 RT = f"{WT}/build/debug/rust-target"
 DEPS = f"{RT}/x86_64-unknown-linux-gnu/deps"
@@ -22,7 +22,7 @@ def rlib(name):
     assert len(outs) == 1, (name, outs)
     return outs[0]
 
-cmd = [unit["rustc"], "--crate-name", "rxprobe", "--edition=2024", f"{HERE}/src/main.rs", "--crate-type", "bin",
+cmd = [unit["rustc"], "--crate-name", "rseprobe", "--edition=2024", f"{HERE}/src/main.rs", "--crate-type", "bin",
        "--emit=link", "-o", OUT, "-C", "panic=abort", "-C", "debuginfo=1", "-A", "warnings"]
 i = args.index("--check-cfg")
 skip = 0

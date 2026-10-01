@@ -1,0 +1,30 @@
+The prototype of E5 as a mode of sweep.ts (top-down pass), as run on 2026-10-01 against 3110ce85cf. H is test/cli/lint/conformance.
+Nothing here is committed to the worktree: these files are what ran in scratch clones (/tmp/conf-it-1b/td with the top-down
+binding, /tmp/conf-it-1b/repo with the bottom-up one). The other pass (../bottom-up) made the same lines with a command of its own.
+
+Files
+  e5-lines.patch            H/runner/run.ts (FirstDifference, RunResult.first, linesOf, resultLine), H/runner/index.ts (two exports),
+                            H/runner/expectations.ts (--names in the copy of the valued options), H/sweep.ts (--lines, --names,
+                            the selection looked up, four instances in flight), conformance.test.ts (2 tests in describe("run"),
+                            describe("sweep --lines") with 2)
+  replay-check-fixture.ts   H/fixtures/, new: a check module that replays the oracle
+  empty-check-fixture.ts    H/fixtures/, new: a check module that reports nothing
+  apply.sh                  lays all of it over a tree with the top-down binding
+  probes/mutate-check.ts    a check that replays the oracle and changes it by the name of the instance: every form of a line
+  probes/parity.ts          the lines of --lines against the report of the sweep without --lines, instance by instance
+  probes/lines-unit.ts      resultLine of every kind of result of one unit, printed (it names the tree at its top)
+  probes/selectcost.ts      the cost of the selection of 3110ce85cf for a long list of names
+  probes/utf8.ts, ctl.ts, longlines.ts   what the 9,730 error baselines hold: encoding, control characters, long lines
+
+Reproduce
+  bash ../../scratch.sh /tmp/x/repo && bash ../../runner-corpus-binding/top-down/apply.sh /tmp/x/repo && bash apply.sh /tmp/x/repo
+  cd /tmp/x/repo && USE_SYSTEM_BUN=1 /workspace/tools/lk bun test test/cli/lint/conformance.test.ts          109 pass, 0 fail
+  the same with the debug build of the worktree, -t "sweep --lines|one line for an instance|a line of a baseline is shown"
+                                                     4 pass; a spawn test 14 to 20 s; with the leak check of CI 14 to 17 s
+  bun H/sweep.ts --lines --check H/fixtures/replay-check-fixture.ts --no-files --names H/fixtures/instances.tsv
+                                                     14,915 lines: pass 12,797, skip 2,118; exit 0; 9 s
+  H=$PWD/H bun H/sweep.ts --lines --check probes/mutate-check.ts --no-files > lines.txt          exit 1
+  H=$PWD/H bun H/sweep.ts --check probes/mutate-check.ts --no-files --report report.json
+  bun probes/parity.ts lines.txt report.json         12,797 of 12,797 the same outcome; 3,034 two-sided differences, 454 with the
+                                                     oracle's line alone, 2,212 with the baseline's alone, 2,382 reasons; no line
+                                                     with a control character

@@ -46,12 +46,12 @@ impl Ctx<'_, '_> {
     }
 
     /// `name` is no declaration of the file: a reference to it is one to the global.
-    fn is_global(&self, name: &[u8]) -> bool {
+    pub fn is_global(&self, name: &[u8]) -> bool {
         ES_GLOBALS.binary_search(&name).is_ok_and(|at| self.declared & (1u128 << at) == 0)
     }
 
     /// What ESLint has at the place of `place` is an identifier named one of `names`, and that name is the global.
-    fn is_global_identifier(&self, place: &Expr, names: &[&[u8]]) -> bool {
+    pub fn is_global_identifier(&self, place: &Expr, names: &[&[u8]]) -> bool {
         let Some(Expr { data: ExprData::EIdentifier(identifier), .. }) = self.plain(place) else {
             return false;
         };

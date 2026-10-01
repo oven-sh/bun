@@ -1,0 +1,706 @@
+--- a/test/cli/lint/conformance/runner/run.ts
++++ b/test/cli/lint/conformance/runner/run.ts
+@@ -80,11 +80,23 @@
+ // What a check gets besides the instance and the root, or why the instance cannot be run here.
+ export type InputResult = { ok: true; input: Omit<CheckInput, "instance" | "root"> } | { ok: false; reason: string };
+ 
++// The first line at which the baseline of the diagnostics and the oracle part. A line ends at CR LF, and a text that is not there has no line.
++export interface FirstDifference {
++  // Counted from 1.
++  line: number;
++  // The line of the oracle. Absent: the oracle ends before that line, or the instance has no error baseline.
++  expected?: string;
++  // The line of the baseline. Absent: the baseline ends before that line, or no diagnostic was reported.
++  actual?: string;
++}
++
+ export interface RunResult {
+   instance: Instance;
+   outcome: Outcome;
+   // One line; empty for a pass.
+   reason: string;
++  // Where two baselines were compared and differ, and where one of the two is not there; absent where nothing was compared.
++  first?: FirstDifference;
+   // The first lines that differ, the oracle's and then the baseline's, below the lines before them.
+   diff?: string;
+   // The baseline of the diagnostics, when it differs from the oracle.
+@@ -160,21 +172,83 @@
+   return text.length > 500 ? text.slice(0, 500) + "..." : text;
+ }
+ 
+-// Where a text parts from the oracle: the place, and the first lines that differ below the lines before them.
+-function difference(what: string, expected: Uint8Array, actual: Uint8Array): { reason: string; diff: string } {
++// The lines of a baseline as bytes: what CR LF parts, as split("\r\n") parts a string.
++function linesOf(bytes: Uint8Array): Uint8Array[] {
++  const all = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.length);
++  const out: Uint8Array[] = [];
++  let from = 0;
++  for (let at = all.indexOf("\r\n", from); at !== -1; at = all.indexOf("\r\n", from)) {
++    out.push(all.subarray(from, at));
++    from = at + 2;
++  }
++  out.push(all.subarray(from));
++  return out;
++}
++
++// Where a text parts from the oracle: the place, the first line that differs, and the first lines that differ below the lines before them.
++function difference(
++  what: string,
++  expected: Uint8Array,
++  actual: Uint8Array,
++): { reason: string; diff: string; first: FirstDifference } {
+   const context = 3;
+   const most = Math.min(expected.length, actual.length);
+   let byte = 0;
+   while (byte < most && expected[byte] === actual[byte]) byte++;
+-  const a = decoder.decode(expected).split("\r\n");
+-  const b = decoder.decode(actual).split("\r\n");
++  const a = linesOf(expected);
++  const b = linesOf(actual);
+   let line = 0;
+-  while (line < a.length && line < b.length && a[line] === b[line]) line++;
++  while (line < a.length && line < b.length && equalBytes(a[line], b[line])) line++;
++  const text = (l: Uint8Array) => decoder.decode(l);
+   const diff = [`@@ line ${line + 1} @@`];
+-  for (const l of a.slice(Math.max(0, line - context), line)) diff.push("  " + display(l));
+-  for (const l of a.slice(line, line + context)) diff.push("- " + display(l));
+-  for (const l of b.slice(line, line + context)) diff.push("+ " + display(l));
+-  return { reason: `${what} differs from the oracle at byte ${byte}, line ${line + 1}`, diff: diff.join("\n") };
++  for (const l of a.slice(Math.max(0, line - context), line)) diff.push("  " + display(text(l)));
++  for (const l of a.slice(line, line + context)) diff.push("- " + display(text(l)));
++  for (const l of b.slice(line, line + context)) diff.push("+ " + display(text(l)));
++  const first: FirstDifference = { line: line + 1 };
++  if (line < a.length) first.expected = text(a[line]);
++  if (line < b.length) first.actual = text(b[line]);
++  const reason = `${what} differs from the oracle at byte ${byte}, line ${line + 1}`;
++  return { reason, diff: diff.join("\n"), first };
++}
++
++// The most that a line of output shows of one line of a baseline.
++const shownLength = 500;
++
++// The escape of a character that would break a line of output or hide in it.
++function escaped(c: string): string {
++  return "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0");
++}
++
++// A line of a baseline from a place on, as a JSON string: one line that shows every space. "..." stands where the line was cut.
++function quoted(line: string, from: number): string {
++  const to = from + shownLength;
++  const text = JSON.stringify(line.slice(from, to)).replace(/[\x7f-\x9f\u2028\u2029]/g, escaped);
++  return `${from > 0 ? "..." : ""}${text}${to < line.length ? "..." : ""}`;
++}
++
++// One line for an instance, whatever its outcome: "pass <name>"; the first line that differs, "-" before the oracle's and "+" before the baseline's, a side that has no such line left out; or the reason.
++export function resultLine(result: RunResult): string {
++  const head = `${result.outcome} ${result.instance.name}`;
++  const first = result.first;
++  if (result.outcome !== "pass" && first !== undefined) {
++    const { expected, actual } = first;
++    let partsAt = 0;
++    if (expected !== undefined && actual !== undefined) {
++      while (partsAt < expected.length && expected[partsAt] === actual[partsAt]) partsAt++;
++    }
++    // Lines that are longer than what is shown are shown from a little before the place where they part.
++    const long = Math.max(expected?.length ?? 0, actual?.length ?? 0) > shownLength;
++    const from = long ? Math.max(0, partsAt - 60) : 0;
++    const sides = [
++      expected === undefined ? "" : ` - ${quoted(expected, from)}`,
++      actual === undefined ? "" : ` + ${quoted(actual, from)}`,
++    ];
++    // Two lines whose bytes differ and whose text does not say nothing side by side: the reason has the place.
++    if (expected !== actual) return `${head}: line ${first.line}:${sides.join("")}`;
++  }
++  return result.reason === ""
++    ? head
++    : `${head}: ${result.reason.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]/g, escaped)}`;
+ }
+ 
+ // error_baseline.go:166: the section of a unit takes the diagnostics whose file name compares equal to the name of the unit, both without the test prefixes and without case. toWriterInput takes the text of a file by the same rule, so a diagnostic is in a unit whose name is not its file name to the letter.
+@@ -219,29 +293,54 @@
+   return model.toBytes(top + "\r\n\r\n");
+ }
+ 
++// The first line of the baseline that the diagnostics make, where the oracle has none to hold it against; undefined where they make no first section.
++function firstLineOf(input: CheckInput, diagnostics: Diagnostic[], pretty: boolean): string | undefined {
++  try {
++    const inSection = sectionTest(input.units);
++    const whole = diagnostics.every(d => isComplete(d, pretty, inSection));
++    // The first section of the pretty form shows the lengths.
++    if (!whole && pretty) return undefined;
++    const written = toWriterInput(rules, input.units, diagnostics).diagnostics;
++    const sorted = whole ? written.sort((a, b) => compareDiagnostics(rules, a, b)) : written.sort(compareByStart);
++    return decoder.decode(linesOf(topOf(sorted, pretty))[0]);
++  } catch {
++    return undefined;
++  }
++}
++
+ // error_baseline.go DoErrorBaseline and baseline.go writeComparison: no diagnostic and no baseline, or the same bytes.
+ function compare(input: CheckInput, diagnostics: Diagnostic[], oracle: RunOptions["oracle"]): Ending {
+   // The reference fails a test with a diagnostic of the code -1, whatever its baseline is.
+   if (diagnostics.some(d => d?.code === -1)) return { outcome: "fail", reason: "a diagnostic has the code -1" };
+   const oracleClass = input.instance.oracle?.class;
++  const pretty = isPretty(input.options);
+   if (oracleClass === "C") {
+     if (diagnostics.length === 0) return { outcome: "pass", reason: "" };
+-    const first = diagnostics[0];
+-    const label = `TS${first?.code}: ${textOf(first?.messageText)}`;
+-    return {
+-      outcome: "fail",
+-      reason: `${diagnostics.length} diagnostics where the oracle has none, the first is ${label}`,
+-    };
++    const one = diagnostics[0];
++    const label = `TS${one?.code}: ${textOf(one?.messageText)}`;
++    const reason = `${diagnostics.length} diagnostics where the oracle has none, the first is ${label}`;
++    const actual = firstLineOf(input, diagnostics, pretty);
++    return actual === undefined ? { outcome: "fail", reason } : { outcome: "fail", reason, first: { line: 1, actual } };
+   }
+   if (oracleClass !== "E") return { outcome: "unsupported", reason: "the instance has no oracle" };
+-  if (diagnostics.length === 0) return { outcome: "fail", reason: "no diagnostic where the oracle has a baseline" };
++  if (diagnostics.length === 0) {
++    const reason = "no diagnostic where the oracle has a baseline";
++    try {
++      return {
++        outcome: "fail",
++        reason,
++        first: { line: 1, expected: decoder.decode(linesOf(oracle(input.instance))[0]) },
++      };
++    } catch {
++      return { outcome: "fail", reason };
++    }
++  }
+   let expected: Uint8Array;
+   try {
+     expected = oracle(input.instance);
+   } catch (error) {
+     return { outcome: "crash", reason: `the oracle cannot be read: ${textOf(error)}` };
+   }
+-  const pretty = isPretty(input.options);
+   try {
+     const inSection = sectionTest(input.units);
+     const whole = diagnostics.every(d => isComplete(d, pretty, inSection));
+--- a/test/cli/lint/conformance/runner/index.ts
++++ b/test/cli/lint/conformance/runner/index.ts
+@@ -29,11 +29,12 @@
+   Shrink,
+ } from "./expectations";
+ export { getFileBasedTestConfigurations } from "./harnessutil_variations";
+-export { emptyCheck, outcomes, replayCheck, runInstance, runInstances } from "./run";
++export { emptyCheck, outcomes, replayCheck, resultLine, runInstance, runInstances } from "./run";
+ export type {
+   Check,
+   CheckInput,
+   CheckResult,
++  FirstDifference,
+   InputResult,
+   Instance,
+   Outcome,
+--- a/test/cli/lint/conformance/runner/expectations.ts
++++ b/test/cli/lint/conformance/runner/expectations.ts
+@@ -292,6 +292,7 @@
+ 
+ // The options of sweep.ts that take a value: a copy of its set valued.
+ const valuedOptions: ReadonlySet<string> = new Set([
++  "--names",
+   "--bin",
+   "--check",
+   "--jobs",
+--- a/test/cli/lint/conformance/sweep.ts
++++ b/test/cli/lint/conformance/sweep.ts
+@@ -24,6 +24,7 @@
+   parseExpectations,
+   plan,
+   reportText,
++  resultLine,
+   runInstances,
+   updateCommand,
+   verify,
+@@ -44,11 +45,26 @@
+   "abstractProperty(target=es2015).ts"    the instance of that name
+   "abstract*"                             the instances whose name matches; "*" stands for any characters
+ 
++  --names <file>         more selectors, one on a line; "-" is the standard input. A line that --lines printed
++                         stands for the name in it, and of a line with a tab only what is before the tab is read.
++                         A list without a selector takes no instance
++  --lines                print on stdout one line for each instance of the selection and nothing else, in the
++                         order of the corpus whatever the order of the selectors:
++                           pass <name>
++                           fail <name>: line <n>: - <line of the oracle> + <line of the baseline>
++                           <outcome> <name>: <reason>
++                         The first is a pass. The second is the first line that differs, each line a JSON string;
++                         a side is left out where it has no such line: the check reports nothing ("- ..." alone,
++                         line 1 of the oracle), or the oracle has no error ("+ ..." alone, line 1 of the baseline).
++                         The third is every other outcome: skip, unsupported, unavailable, provisional, crash,
++                         timeout, and a fail without two lines to show. The counts and the progress go to stderr.
++                         No list is read but for --listed, and a report is written only where --report names it
+   --bin <path>           binary under test of the default check, which runs it with --lint and the files of an
+                          instance (default: the binary that runs this script)
+   --check <module>       module whose default export is a check; it replaces the default check
+   --no-files             write no instance to disk; with --check, for a check that reads the units of its input
+-  --jobs <n>             instances in flight (default: the number of processors)
++  --jobs <n>             instances in flight (default: 4, or the number of processors where that is less); the
++                         default check starts the binary for each, and takes 4 at most
+   --timeout <ms>         limit of one instance (default: 60000)
+   --listed               only the instances that expectations.json lists
+   --kind <E|C>           only the instances whose oracle has errors (E) or has none (C)
+@@ -65,14 +81,17 @@
+   -h, --help
+ 
+ Exit code 0: every listed instance of the selection passes and no name left a list that may hold it; with --round-trip,
+-every error baseline is written back with its bytes. 1: not so. 2: the command line is wrong, or the corpus, the lists,
+-the module of the check or the file of the report cannot be used.`;
++every error baseline is written back with its bytes; with --lines, every instance of the selection that the reference
++runs passes. 1: not so. 2: the command line is wrong, or the corpus, the lists, the module of the check, the file of
++--names or the file of the report cannot be used.`;
+ 
+ const tags = ["accepted", "triaged"] as const;
+ type Tag = (typeof tags)[number];
+ 
+ interface Options {
+   selectors: string[];
++  names: string | undefined;
++  lines: boolean;
+   bin: string | undefined;
+   check: string | undefined;
+   files: boolean;
+@@ -97,6 +116,7 @@
+ class FileError extends Error {}
+ 
+ const valued = new Set([
++  "--names",
+   "--bin",
+   "--check",
+   "--jobs",
+@@ -109,11 +129,15 @@
+   "--corpus",
+ ]);
+ // The options that say how instances are run and what becomes of their outcomes.
+-const ofARun = ["--bin", "--check", "--no-files", "--jobs", "--timeout", "--update", "--report"];
++const ofARun = ["--lines", "--bin", "--check", "--no-files", "--jobs", "--timeout", "--update", "--report"];
++// A check that starts a command keeps at most this many of them alive: a debug build of bun takes a quarter of a gigabyte each.
++const commandsAtATime = 4;
+ 
+ function parseArgs(argv: readonly string[]): Options {
+   const o: Options = {
+     selectors: [],
++    names: undefined,
++    lines: false,
+     bin: undefined,
+     check: undefined,
+     files: true,
+@@ -164,6 +188,12 @@
+       return n;
+     };
+     switch (name) {
++      case "--names":
++        o.names = value;
++        break;
++      case "--lines":
++        o.lines = true;
++        break;
+       case "--bin":
+         o.bin = value;
+         break;
+@@ -233,8 +263,17 @@
+   if (!o.files && o.check === undefined) {
+     throw new UsageError("--no-files needs --check: the default check starts a command, which reads files");
+   }
++  if (o.check === undefined && o.jobs !== undefined && o.jobs > commandsAtATime) {
++    throw new UsageError(`--jobs ${o.jobs}: the default check starts the binary, ${commandsAtATime} at a time at most`);
++  }
+   const useless = o.run ? [] : ofARun.filter(name => seen.has(name));
+   if (useless.length > 0) throw new UsageError(`--no-run runs no instance: ${useless.join(", ")} cannot go with it`);
++  const noLine = o.lines ? ["--update", "--since"].filter(name => seen.has(name)) : [];
++  if (noLine.length > 0) {
++    throw new UsageError(
++      `--lines prints the outcome of each instance and no more: ${noLine.join(", ")} cannot go with it`,
++    );
++  }
+   return o;
+ }
+ 
+@@ -245,15 +284,12 @@
+ // What the lists need to know of an instance, with the instance: what --tag selects by and what a run takes.
+ type Fact = CorpusFacts;
+ 
++// A selector that is tried on every instance: a pattern of names, or a directory of cases.
+ function matcher(selector: string): (fact: Fact) => boolean {
+-  if (selector.includes("*")) {
+-    const parts = selector.split("*").map(part => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+-    const pattern = new RegExp(`^${parts.join(".*")}$`, "s");
+-    return fact => pattern.test(fact.name);
+-  }
+-  if (selector.endsWith("/")) return fact => `${fact.directory}/`.startsWith(selector);
+-  if (selector.includes("/")) return fact => fact.casePath === selector;
+-  return fact => fact.name === selector || fact.casePath.endsWith(`/${selector}`);
++  if (selector.endsWith("/") && !selector.includes("*")) return fact => `${fact.directory}/`.startsWith(selector);
++  const parts = selector.split("*").map(part => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
++  const pattern = new RegExp(`^${parts.join(".*")}$`, "s");
++  return fact => pattern.test(fact.name);
+ }
+ 
+ interface Selection {
+@@ -263,13 +299,23 @@
+ }
+ 
+ function select(all: Iterable<Fact>, o: Options, listed: ReadonlySet<string>): Selection {
+-  const matchers = o.selectors.map(selector => ({ selector, matches: matcher(selector), taken: 0 }));
++  // Each selector once, with the number of instances that it took.
++  const hits = new Map<string, number>(o.selectors.map(selector => [selector, 0]));
++  const take = (selector: string) => hits.set(selector, hits.get(selector)! + 1);
++  // The other selectors take what is equal to them: the name of an instance, the file name of its case, the path of its case. A long list of them is looked up.
++  const tried = [...hits.keys()].filter(s => s.includes("*") || s.endsWith("/")).map(s => ({ s, matches: matcher(s) }));
+   const taken: Fact[] = [];
+   for (const fact of all) {
+-    let selected = matchers.length === 0;
+-    for (const m of matchers) {
+-      if (!m.matches(fact)) continue;
+-      m.taken++;
++    let selected = o.names === undefined && hits.size === 0;
++    const caseName = fact.casePath.slice(fact.casePath.lastIndexOf("/") + 1);
++    for (const key of new Set([fact.name, caseName, fact.casePath])) {
++      if (!hits.has(key)) continue;
++      take(key);
++      selected = true;
++    }
++    for (const { s, matches } of tried) {
++      if (!matches(fact)) continue;
++      take(s);
+       selected = true;
+     }
+     if (!selected) continue;
+@@ -278,7 +324,7 @@
+     if (o.tag !== undefined && !fact.instance[o.tag]) continue;
+     taken.push(fact);
+   }
+-  return { taken, empty: matchers.filter(m => m.taken === 0).map(m => m.selector) };
++  return { taken, empty: [...hits].filter(([, n]) => n === 0).map(([selector]) => selector) };
+ }
+ 
+ // Cuts a directory to the deepest level that leaves at most 60 groups: for the whole corpus, a suite and one directory below it.
+@@ -379,6 +425,70 @@
+   return { check: module.default as Check, name: path, binary: undefined };
+ }
+ 
++// A line that --lines printed: the outcome, the name of the instance, and what follows a colon.
++const printedLine = new RegExp(`^(?:${outcomes.join("|")}) ([^ :]+)(?::.*)?$`, "s");
++
++// The selectors of --names, one on a line. A line that --lines printed is the name in it; what follows a tab is not read, nor is a line that is empty or starts with "#".
++async function selectorsOf(path: string): Promise<string[]> {
++  let text: string;
++  try {
++    text = path === "-" ? await Bun.stdin.text() : readFileSync(resolve(path), "utf8");
++  } catch (error) {
++    throw new FileError(`--names ${path}: ${messageOf(error)}`);
++  }
++  const out: string[] = [];
++  for (const [k, whole] of text.split("\n").entries()) {
++    const line = whole.split("\t", 1)[0].trim();
++    if (line === "" || line.startsWith("#")) continue;
++    const name = line.includes(" ") ? printedLine.exec(line)?.[1] : line;
++    if (name === undefined) throw new FileError(`--names ${path}: line ${k + 1} is no selector: ${line.slice(0, 100)}`);
++    out.push(name);
++  }
++  return out;
++}
++
++// The selection through the check: the line of each instance on stdout in the order of the selection, a line as soon as the lines before it are printed. Progress goes to stderr.
++async function runLines(
++  o: Options,
++  corpus: Corpus,
++  selected: readonly Fact[],
++  check: Check,
++): Promise<{ results: RunResult[]; lines: string[] }> {
++  const instances = selected.map(fact => fact.instance);
++  // A corpus has one instance of a name.
++  const place = new Map(instances.map((instance, k) => [instance.name, k]));
++  const lines = new Array<string>(instances.length);
++  const progress = !process.stdout.isTTY && process.stderr.isTTY;
++  const written = o.files && instances.some(instance => instance.status === "run");
++  const directory = written ? makeTemporaryDirectory("bun-lint-sweep-") : undefined;
++  let printed = 0;
++  try {
++    const results = await runInstances(instances, check, {
++      input: corpus.input,
++      oracle: corpus.oracle,
++      directory,
++      concurrency: jobsOf(o),
++      timeoutMs: o.timeoutMs,
++      onResult(result) {
++        lines[place.get(result.instance.name)!] = resultLine(result);
++        const before = printed;
++        // console.log has written its line when it returns; what process.stdout still holds for a pipe is lost at process.exit.
++        while (printed < lines.length && lines[printed] !== undefined) console.log(lines[printed++]);
++        if (progress && printed !== before) process.stderr.write(`\r${printed} of ${lines.length}`);
++      },
++    });
++    return { results, lines };
++  } finally {
++    if (progress && printed > 0) process.stderr.write("\n");
++    if (directory !== undefined) rmSync(directory, { recursive: true, force: true });
++  }
++}
++
++// Instances in flight: what --jobs says, else as many as a check that starts a command may keep alive.
++function jobsOf(o: Options): number {
++  return o.jobs ?? Math.min(commandsAtATime, availableParallelism());
++}
++
+ async function main(argv: readonly string[]): Promise<number> {
+   const started = performance.now();
+   const o = parseArgs(argv);
+@@ -388,11 +498,13 @@
+   }
+   const corpusRoot = resolve(o.corpus ?? join(import.meta.dir, "corpus"));
+   if (o.roundTrip) return roundTripCorpus(corpusRoot);
++  if (o.names !== undefined) for (const selector of await selectorsOf(o.names)) o.selectors.push(selector);
+ 
+   const expectationsPath = resolve(o.expectations ?? join(import.meta.dir, "expectations.json"));
+-  let lists: Expectations;
++  let lists: Expectations = { level: "baseline", E: [], C: [] };
+   try {
+-    lists = parseExpectations(readFileSync(expectationsPath, "utf8"));
++    // --lines holds no instance against a list: it reads the lists for --listed alone.
++    if (!o.lines || o.listed) lists = parseExpectations(readFileSync(expectationsPath, "utf8"));
+   } catch (error) {
+     throw new FileError(`${expectationsPath}: ${messageOf(error)}`);
+   }
+@@ -410,11 +522,13 @@
+     return (old?.[list] ?? []).filter(name => !now.has(name));
+   });
+   const reportPath = resolve(o.report ?? join(tmpdir(), "lint-conformance-report.json"));
++  // --lines writes a report only where --report names it.
++  const reports = !o.lines || o.report !== undefined;
+   let checked: NamedCheck | undefined;
+   if (o.run) {
+     checked = await checkOf(o);
+     try {
+-      mkdirSync(dirname(reportPath), { recursive: true });
++      if (reports) mkdirSync(dirname(reportPath), { recursive: true });
+     } catch (error) {
+       throw new FileError(`--report ${reportPath}: ${messageOf(error)}`);
+     }
+@@ -438,7 +552,7 @@
+   const caseOf = (name: string) => byBaseName.get(name) ?? byBaseName.get(caseBaseName(name));
+ 
+   // Only the cases that a selector can take an instance of are read; a pattern is for the names of instances, which no case has before it is read.
+-  const whole = o.selectors.length === 0;
++  const whole = o.selectors.length === 0 && o.names === undefined;
+   let reached: readonly string[] = cases;
+   if (whole ? o.listed : !o.selectors.some(selector => selector.includes("*"))) {
+     const wanted = new Set<string | undefined>((whole ? [...listed, ...displaced] : displaced).map(caseOf));
+@@ -463,6 +577,39 @@
+   const ran = selected.filter(fact => fact.status === "run");
+   const ranE = ran.filter(fact => fact.kind === "E");
+   const ranC = ran.filter(fact => fact.kind === "C");
++  if (o.lines && checked !== undefined) {
++    const { results, lines } = await runLines(o, corpus, selected, checked.check);
++    const counted = countBy(results, r => r.outcome);
++    const said = outcomes.filter(outcome => counted.has(outcome)).map(outcome => `${outcome} ${counted.get(outcome)}`);
++    console.error(`instances ${results.length}${said.length === 0 ? "" : `: ${said.join(", ")}`}`);
++    if (reports) {
++      const report = {
++        version: 1,
++        lines: true,
++        check: checked.name,
++        corpus: corpusRoot,
++        selectors: o.selectors,
++        only: { listed: o.listed, kind: o.kind, tag: o.tag },
++        seconds: Math.round((performance.now() - started) / 100) / 10,
++        totals: { selected: selected.length, run: ran.length, outcomes: Object.fromEntries(counted) },
++        instances: Object.fromEntries(
++          selected.map(({ name, kind, casePath }, k) => {
++            const { outcome, reason, first, headerOnly, standIns, diff } = results[k];
++            return [name, { kind, casePath, outcome, reason, first, headerOnly, standIns, diff }];
++          }),
++        ),
++        text: lines,
++      };
++      try {
++        writeFileSync(reportPath, JSON.stringify(report, null, 1) + "\n");
++      } catch (error) {
++        throw new FileError(`--report ${reportPath}: ${messageOf(error)}`);
++      }
++      console.error(`report ${reportPath}`);
++    }
++    // An instance that the reference does not run has no outcome to hold against an oracle: it is a line and no failure.
++    return results.every(r => r.outcome === "pass" || r.outcome === "skip") ? 0 : 1;
++  }
+ 
+   const text: string[] = [];
+   // console.log has written its line when it returns; what process.stdout still holds for a pipe is lost at process.exit.
+@@ -524,7 +671,7 @@
+         input: (instance, root) => corpus.input(instance, root),
+         oracle: instance => corpus.oracle(instance),
+         directory,
+-        concurrency: o.jobs ?? availableParallelism(),
++        concurrency: jobsOf(o),
+         timeoutMs: o.timeoutMs,
+         onResult() {
+           done++;
+@@ -699,7 +846,7 @@
+     instances: Object.fromEntries(
+       ran.map(fact => {
+         const r = resultOf.get(fact.name)!;
+-        const more = { headerOnly: r.headerOnly, standIns: r.standIns, diff: r.diff };
++        const more = { first: r.first, headerOnly: r.headerOnly, standIns: r.standIns, diff: r.diff };
+         return [fact.name, { kind: fact.kind, casePath: fact.casePath, outcome: r.outcome, reason: r.reason, ...more }];
+       }),
+     ),
+--- a/test/cli/lint/conformance.test.ts
++++ b/test/cli/lint/conformance.test.ts
+@@ -14,7 +14,7 @@
+   Instance,
+ } from "./conformance/runner";
+ import * as runner from "./conformance/runner";
+-import { emptyCheck, replayCheck, runInstance, runInstances } from "./conformance/runner";
++import { emptyCheck, replayCheck, resultLine, runInstance, runInstances } from "./conformance/runner";
+ import { createSpawnCheck, probe } from "./conformance/runner/check_bun_lint";
+ import { tsgoRules } from "./conformance/runner/diagnosticwriter";
+ import { getErrorBaseline } from "./conformance/runner/error_baseline";
+@@ -663,6 +663,73 @@
+     });
+   });
+ 
++  test("one line for an instance: pass, the first line that differs, or the reason", async () => {
++    const line = async (instance: Instance, check: Check, more: Partial<typeof options> = {}) =>
++      resultLine(await runInstance(instance, check, { ...options, ...more }));
++    const header = `"a.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'."`;
++    const more: Diagnostic = {
++      ...known,
++      code: 2323,
++      messageText: "More.",
++      location: { ...known.location!, start: 18 },
++    };
++    const throws: Check = async () => {
++      throw new Error("the command ended by the signal SIGSEGV\r\n  at a line below");
++    };
++    const unread = () => {
++      throw new Error("no such file");
++    };
++    expect([
++      await line(E, replayCheck(options.oracle)),
++      await line(C, emptyCheck),
++      // One of the two has no baseline: its side is left out.
++      await line(E, emptyCheck),
++      await line(C, reports({ diagnostics: [known] })),
++      await line(C, reports({ diagnostics: [{ ...known, location: printed }] })),
++      // Both have the line: a diagnostic more is held against the empty line that ends the first section, a squiggle against a squiggle.
++      await line(E, reports({ diagnostics: [known, more] })),
++      await line(E, reports({ diagnostics: [{ ...known, location: { ...known.location!, length: 5 } }] })),
++      await line(E, reports({ diagnostics: [{ ...known, location: printed, messageText: "Other." }] })),
++      // No line was held against a line: the reason, on one line.
++      await line(E, reports({ diagnostics: [{ ...known, location: printed }] })),
++      await line(E, emptyCheck, { oracle: unread }),
++      await line({ ...C, status: "skip", skipReason: "unsupported target ES5" }, emptyCheck),
++      await line(C, reports({ diagnostics: [], unavailable: "the command is no linter" })),
++      await line(C, reports({ diagnostics: [], standIns: ["checker.getTypeOfExpression"] })),
++      await line(C, throws),
++    ]).toEqual([
++      "pass a.ts",
++      "pass a.ts",
++      `fail a.ts: line 1: - ${header}`,
++      `fail a.ts: line 1: + ${header}`,
++      `fail a.ts: line 1: + ${header}`,
++      'fail a.ts: line 2: - "" + "a.ts(1,19): error TS2323: More."',
++      'fail a.ts: line 6: - "          ~" + "          ~~~~~"',
++      `fail a.ts: line 1: - ${header} + "a.ts(1,7): error TS2322: Other."`,
++      "fail a.ts: the first section is the oracle's; a baseline needs the lengths and the related information",
++      "fail a.ts: no diagnostic where the oracle has a baseline",
++      "skip a.ts: unsupported target ES5",
++      "unavailable a.ts: the command is no linter",
++      "provisional a.ts: the check reached 1 stand-ins: checker.getTypeOfExpression",
++      "crash a.ts: the check threw: Error: the command ended by the signal SIGSEGV\\u000d",
++    ]);
++  });
++
++  test("a line of a baseline is shown as a JSON string, and a long one from a little before the place where the two part", () => {
++    const shown = (expected: string | undefined, actual: string | undefined) =>
++      resultLine({ instance: E, outcome: "fail", reason: "differs at byte 9", first: { line: 3, expected, actual } });
++    const same = "x".repeat(700);
++    expect(shown(same + "a" + "y".repeat(700), same + "b")).toBe(
++      `fail a.ts: line 3: - ..."${"x".repeat(60)}a${"y".repeat(439)}"... + ..."${"x".repeat(60)}b"`,
++    );
++    expect(shown(undefined, "z".repeat(501))).toBe(`fail a.ts: line 3: + "${"z".repeat(500)}"...`);
++    expect(shown('a\tb"\x1b[0m\n \u2028\x85\x00', undefined)).toBe(
++      'fail a.ts: line 3: - "a\\tb\\"\\u001b[0m\\n \\u2028\\u0085\\u0000"',
++    );
++    // Bytes that are no UTF-8 can differ where the text is the same.
++    expect(shown("same", "same")).toBe("fail a.ts: differs at byte 9");
++  });
++
+   const sample = [...cases().values()].filter(path => sampled(path, 250)).sort();
+   const seen = { E: 0, C: 0 };
+ 
+@@ -1129,6 +1196,70 @@
+   });
+ });
+ 
++describe("sweep --lines", () => {
++  // The selectors in another order than the lines: a case of the conformance suite, a case with two instances of which the reference skips one, and two cases of the compiler suite.
++  const selectors = ["castingTuple.ts", "abstractPropertyNegative.ts", "2dArrays.ts", "ArrowFunctionExpression1.ts"];
++  // The first line of each oracle, as a line of the output shows it.
++  const first = {
++    arrow:
++      '"ArrowFunctionExpression1.ts(1,10): error TS2369: A parameter property is only allowed in a constructor implementation."',
++    abstract:
++      "\"abstractPropertyNegative.ts(13,7): error TS2654: Non-abstract class 'C' is missing implementations for the following members of 'B': 'prop', 'readonlyProp', 'm', 'mismatch'.\"",
++    casting: "\"castingTuple.ts(3,24): error TS7008: Member 'c' implicitly has an 'any' type.\"",
++  };
++  const skipped = "skip abstractPropertyNegative(target=es5).ts: unsupported target ES5";
++
++  test.concurrent.each([
++    [
++      "a check that replays the oracle passes every instance that runs",
++      "replay-check-fixture.ts",
++      [
++        "pass 2dArrays.ts",
++        "pass ArrowFunctionExpression1.ts",
++        "pass abstractPropertyNegative(target=es2015).ts",
++        skipped,
++        "pass castingTuple.ts",
++      ],
++      0,
++    ],
++    [
++      "a check that reports nothing is held against the first line of each oracle",
++      "empty-check-fixture.ts",
++      [
++        "pass 2dArrays.ts",
++        `fail ArrowFunctionExpression1.ts: line 1: - ${first.arrow}`,
++        `fail abstractPropertyNegative(target=es2015).ts: line 1: - ${first.abstract}`,
++        skipped,
++        `fail castingTuple.ts: line 1: - ${first.casting}`,
++      ],
++      1,
++    ],
++  ] as [string, string, string[], number][])(
++    "one line for each instance in the order of the corpus, and the exit code: %s",
++    async (_label, fixture, lines, code) => {
++      await using proc = Bun.spawn({
++        cmd: [
++          bunExe(),
++          join(home, "sweep.ts"),
++          "--lines",
++          "--check",
++          join(fixtures, fixture),
++          "--no-files",
++          ...selectors,
++        ],
++        env: bunEnv,
++        stdout: "pipe",
++        stderr: "pipe",
++      });
++      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
++      expect(stdout).toBe(lines.map(line => line + "\n").join(""));
++      expect(stderr).toContain(`instances ${lines.length}: `);
++      expect(exitCode).toBe(code);
++    },
++    spawnTimeout,
++  );
++});
++
+ describe("expectations.json", () => {
+   const { formatExpectations, parseExpectations, sampleListed } = runner;
+   const text = readFileSync(join(home, "expectations.json"), "utf8");

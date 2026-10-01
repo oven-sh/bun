@@ -73,6 +73,10 @@ async function setupTest(linker: "hoisted" | "isolated" = "hoisted"): Promise<Te
       TMPDIR: join(packageDir, ".bun-tmp"),
       TEMP: join(packageDir, ".bun-tmp"),
     };
+    // `bun run` exports these to the test runner it starts (`bun bd test`). While they
+    // name a real `node`, an install with an empty PATH does not add bun's own `node`.
+    delete env.NODE;
+    delete env.npm_node_execpath;
     return {
       packageDir,
       packageJson,

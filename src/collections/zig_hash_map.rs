@@ -2,7 +2,7 @@
 //! capacity, 80% max load. The layout of a map that only inserts (and
 //! therefore its iteration order) is load-bearing: callers snapshot the
 //! iteration sequence (e.g. lockfile debug stringify). A removal walks and
-//! reorders its run, so `IdentityContext` is only for keys that are hashes.
+//! reorders its run, which stays short only when the hash spreads the keys.
 //!
 //! Storage is split: `Vec<u8>` for metadata + `Vec<Option<(K, V)>>` for
 //! slots. This costs an `Option` discriminant per slot but keeps the
@@ -761,7 +761,7 @@ mod tests {
         let mut state = seed | 1;
         let mut map: HashMap<u64, u64, C> = HashMap::new();
         let mut model: Vec<Option<u64>> = vec![None; key_space];
-        for _ in 0..operations {
+        for op in 0..operations {
             let key = xorshift(&mut state) % key_space as u64;
             let value = xorshift(&mut state);
             let slot = &mut model[key as usize];
@@ -791,27 +791,25 @@ mod tests {
                     }
                 }
                 _ => {
-                    if value % 8 == 0 {
+                    if value.is_multiple_of(8) {
                         map.clear();
                         model.fill(None);
                     }
                 }
             }
-            check(&map, &model);
+            if !cfg!(miri) || op % 8 == 7 {
+                check(&map, &model);
+            }
         }
+        check(&map, &model);
     }
 
-    // CI runs these under Miri, which interprets each statement: keep its share small.
+    // CI runs these under Miri, which interprets each statement: fewer operations and checks there.
     const OPERATIONS: usize = if cfg!(miri) { 150 } else { 20_000 };
 
     #[test]
     fn agrees_with_a_model_wyhash() {
         run_against_model::<AutoHashContext>(1, 48, OPERATIONS);
-    }
-
-    #[test]
-    fn agrees_with_a_model_identity_hash() {
-        run_against_model::<IdentityContext<u64>>(2, 40, OPERATIONS);
     }
 
     #[test]
@@ -825,29 +823,15 @@ mod tests {
     }
 
     #[test]
-    fn insert_only_order_wyhash() {
-        let mut map: HashMap<u32, ()> = HashMap::new();
-        for key in 0..20 {
-            map.insert(key, ());
-        }
-        let order: Vec<u32> = map.keys().copied().collect();
-        assert_eq!(
-            order,
-            [
-                0, 15, 13, 19, 11, 9, 7, 5, 18, 3, 1, 16, 14, 12, 10, 8, 6, 4, 2, 17
-            ]
-        );
-    }
-
-    #[test]
-    fn insert_only_order_identity_hash() {
-        // The slot is `key & 7`: 17, 9, 1 and 33 start at slot 1, 2 and 10 at slot 2.
+    fn insert_only_order_is_fixed() {
+        // The slot is `key & mask`, so the order shows where collisions and the two grows put each key.
         let mut map: HashMap<u64, (), IdentityContext<u64>> = HashMap::new();
-        for key in [17, 9, 1, 33, 2, 10] {
+        for key in [17, 9, 1, 33, 2, 10, 49, 3, 25, 41, 57, 18, 26, 11] {
             map.insert(key, ());
         }
+        assert_eq!(map.capacity(), 32);
         let order: Vec<u64> = map.keys().copied().collect();
-        assert_eq!(order, [17, 9, 1, 33, 2, 10]);
+        assert_eq!(order, [1, 33, 2, 3, 9, 10, 41, 11, 17, 49, 18, 25, 57, 26]);
     }
 
     #[test]

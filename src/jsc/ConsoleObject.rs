@@ -5918,9 +5918,8 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
 pub fn table_sizes_for_testing(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let (timer_entries, timer_capacity) =
         PENDING_TIME_LOGS.with_borrow(|map| (map.len(), map.capacity()));
-    // SAFETY: top-level JS-thread host call ⇒ exclusive access to the
-    // set-once `VirtualMachine.console` box.
-    let counts = unsafe { &vm_console_mut(global).counts };
+    // SAFETY: see [`vm_console`]. Nothing writes `counts` during this JS-thread read.
+    let counts = unsafe { &(*vm_console(global)).counts };
     let sizes = JSValue::create_empty_object(global, 4);
     sizes.put(
         global,

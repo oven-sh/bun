@@ -25,10 +25,14 @@ impl HashContext<u64> for CountingContext {
 
 const MISSES: u64 = 1000;
 
+fn count_argument(global: &JSGlobalObject, value: JSValue, max: u32) -> JsResult<u64> {
+    Ok(value.to_number(global)?.clamp(0.0, f64::from(max)) as u64)
+}
+
 /// Keeps `live` keys, replaces the oldest `cycles` times, then looks up 1,000 absent keys.
 pub(crate) fn churn_probe(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let live = frame.argument(0).coerce_to_i32(global)?.clamp(0, 1 << 20) as u64;
-    let cycles = frame.argument(1).coerce_to_i32(global)?.clamp(0, 1 << 24) as u64;
+    let live = count_argument(global, frame.argument(0), 1 << 20)?;
+    let cycles = count_argument(global, frame.argument(1), 1 << 24)?;
 
     let mut map: HashMap<u64, (), CountingContext> = HashMap::new();
     for key in 0..live {

@@ -4,11 +4,14 @@ use bun_collections::VecExt;
 use crate::js_lexer;
 use crate::js_lexer::T;
 use crate::p::P;
+use crate::parse::attached::Owner;
+use crate::parse::erased;
 use crate::parser::{
     ARGUMENTS_STR as arguments_str, AwaitOrYield, FnOrArrowDataParse, LexicalDecl,
     ParseStatementOptions, TypeParameterFlag,
 };
 use bun_ast as js_ast;
+use bun_ast::expr::EFlags;
 use bun_ast::op::Level;
 use bun_ast::{E, Expr, Flags, G, S, Stmt};
 
@@ -64,8 +67,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // Even anonymous functions can have TypeScript type parameters
-        if Self::IS_TYPESCRIPT_ENABLED {
-            let _ = p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
+        if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TLessThan {
+            if p.starts_for_parse_only.is_some() {
+                p.lint_type_parameters(None)?;
+            } else {
+                let _ =
+                    p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
+            }
         }
 
         // Introduce a fake block scope for function declarations inside if statements
@@ -121,6 +129,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.has_non_local_export_declare_inside_namespace = true;
                 }
 
+                if let Some(starts) = &mut p.starts_for_parse_only {
+                    let mut flags = erased::ErasedFlags::ambient(opts.is_typescript_declare);
+                    if func.flags.contains(Flags::Function::IsForwardDeclaration) {
+                        flags |= erased::ErasedFlags::NO_BODY;
+                    }
+                    // `export async function`: the statement starts at `loc`, before `async`.
+                    let exported =
+                        if opts.is_export && async_range.is_some_and(|range| range.loc != loc) {
+                            erased::Exported::Here
+                        } else {
+                            erased::Exported::before(opts.is_export)
+                        };
+                    starts.erased.statement(
+                        erased::Cursor::at(&p.lexer),
+                        loc,
+                        flags,
+                        exported,
+                        erased::ErasedData::Declaration(Stmt::alloc(S::Function { func }, loc)),
+                    );
+                }
                 return Ok(p.s(S::TypeScript {}, loc));
             }
         }
@@ -208,15 +236,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.fn_or_arrow_data_parse.allow_super_property = opts.allow_super_property;
 
         let mut rest_arg: bool = false;
+        let mut rest_comma = bun_ast::Range::NONE;
         let mut arg_has_decorators: bool = false;
         let mut args = bun_alloc::ArenaVec::<G::Arg>::new_in(p.arena);
         while p.lexer.token != T::TCloseParen {
             // Skip over "this" type annotations
             if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TThis {
-                p.lexer.next()?;
-                if p.lexer.token == T::TColon {
+                if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+                    p.lint_this_parameter(Owner::function(func.open_parens_loc), args.len())?;
+                } else {
                     p.lexer.next()?;
-                    p.skip_type_script_type(Level::Lowest)?;
+                    if p.lexer.token == T::TColon {
+                        p.lexer.next()?;
+                        p.skip_type_script_type(Level::Lowest)?;
+                    }
                 }
                 if p.lexer.token != T::TComma {
                     break;
@@ -248,7 +281,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut ts_metadata = bun_ast::ts::Metadata::default();
 
             if Self::IS_TYPESCRIPT_ENABLED {
-                if is_identifier && opts.is_constructor {
+                if is_identifier && (opts.is_constructor || !rest_arg) {
                     // Skip over TypeScript accessibility modifiers, which turn this argument
                     // into a class field when used inside a class constructor. This is known
                     // as a "parameter property" in TypeScript.
@@ -259,7 +292,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     break;
                                 }
 
-                                is_typescript_ctor_field = true;
+                                // Outside a constructor a modifier stands before a name on its line and is dropped.
+                                if !opts.is_constructor
+                                    && (p.lexer.token != T::TIdentifier
+                                        || p.lexer.has_newline_before)
+                                {
+                                    break;
+                                }
+
+                                is_typescript_ctor_field = opts.is_constructor;
 
                                 // TypeScript requires an identifier binding
                                 if p.lexer.token != T::TIdentifier {
@@ -292,10 +333,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 || opts.has_decorators
                                 || arg_has_decorators)
                         {
-                            ts_metadata = p.skip_type_script_type_with_metadata(Level::Lowest)?;
+                            if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+                                ts_metadata = p.lint_type_metadata(false)?;
+                                p.lint_type_annotation(arg.loc)?;
+                            } else {
+                                ts_metadata =
+                                    p.skip_type_script_type_with_metadata(Level::Lowest)?;
+                            }
+                        } else if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+                            p.lint_type_annotation(arg.loc)?;
                         } else {
                             p.skip_type_script_type(Level::Lowest)?;
                         }
+                    } else if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+                        p.lint_type_annotation(arg.loc)?;
                     } else {
                         // rest parameter is always object, leave metadata as m_none
                         p.skip_type_script_type(Level::Lowest)?;
@@ -332,6 +383,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // JavaScript does not allow a comma after a rest argument
                 if opts.is_typescript_declare {
                     // TypeScript does allow a comma after a rest argument in a "declare" context
+                    p.lexer.next()?;
+                } else if opts.allow_missing_body_for_type_script && p.next_token_is_close_paren() {
+                    // A member of a "declare class" or an overload: the comma is an error once a body follows
+                    rest_comma = p.lexer.range();
                     p.lexer.next()?;
                 } else {
                     p.lexer.expect(T::TCloseParen)?;
@@ -376,7 +431,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && opts.allow_ts_decorators
                     && (opts.has_argument_decorators || opts.has_decorators)
                 {
-                    func.return_ts_metadata = p.skip_typescript_return_type_with_metadata()?;
+                    if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+                        func.return_ts_metadata = p.lint_type_metadata(true)?;
+                        p.lint_return_type(Owner::function(func.open_parens_loc))?;
+                    } else {
+                        func.return_ts_metadata = p.skip_typescript_return_type_with_metadata()?;
+                    }
+                } else if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+                    p.lint_return_type(Owner::function(func.open_parens_loc))?;
                 } else {
                     p.skip_typescript_return_type()?;
                 }
@@ -398,6 +460,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             func.flags.insert(Flags::Function::IsForwardDeclaration);
             return Ok(func);
         }
+        if rest_comma.len > 0 {
+            p.log().add_range_error(
+                Some(p.source),
+                rest_comma,
+                b"Expected \")\" but found \",\"",
+            );
+        }
         let mut temp_opts = opts;
         func.body = p.parse_fn_body(&mut temp_opts)?;
         if p.lexer.has_react_hooks_suppression_before || p.lexer.has_react_hooks_block_suppression {
@@ -410,6 +479,50 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         Ok(func)
+    }
+
+    /// Whether ")" is the token after the current one.
+    fn next_token_is_close_paren(&mut self) -> bool {
+        let old_lexer = self.lexer.snapshot();
+        let old_log_disabled = self.lexer.is_log_disabled;
+        self.lexer.is_log_disabled = true;
+        let is_close_paren = self.lexer.next().is_ok() && self.lexer.token == T::TCloseParen;
+        self.lexer.restore(&old_lexer);
+        self.lexer.is_log_disabled = old_log_disabled;
+        is_close_paren
+    }
+
+    /// The tag of decorator metadata of the type the lexer is on, in a lint parse: the lexer goes back to the type, which is read again for its node.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn lint_type_metadata(
+        &mut self,
+        is_return_type: bool,
+    ) -> Result<bun_ast::ts::Metadata, Error> {
+        let start = self.lexer.snapshot();
+        let logged = {
+            let log = self.log();
+            (log.msgs.len(), log.errors, log.warnings)
+        };
+        let read = if is_return_type {
+            self.skip_typescript_return_type_with_metadata()
+        } else {
+            self.skip_type_script_type_with_metadata(Level::Lowest)
+        };
+        let metadata = match read {
+            Ok(metadata) => metadata,
+            Err(err @ (Error::StackOverflow | Error::Alloc(_))) => return Err(err),
+            Err(_) => {
+                // The reading for the node says what is no type: the messages of this one go.
+                let log = self.log();
+                log.msgs.truncate(logged.0);
+                log.errors = logged.1;
+                log.warnings = logged.2;
+                bun_ast::ts::Metadata::default()
+            }
+        };
+        self.lexer.restore(&start);
+        Ok(metadata)
     }
 
     pub(crate) fn parse_fn_expr(
@@ -453,8 +566,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // Even anonymous functions can have TypeScript type parameters
-        if Self::IS_TYPESCRIPT_ENABLED {
-            let _ = p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
+        if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TLessThan {
+            if p.starts_for_parse_only.is_some() {
+                p.lint_type_parameters(None)?;
+            } else {
+                let _ =
+                    p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
+            }
         }
 
         let func = p.parse_fn(
@@ -522,6 +640,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         args: &'a mut [G::Arg],
         data: &mut FnOrArrowDataParse,
     ) -> Result<E::Arrow, Error> {
+        self.parse_arrow_body_with_flags(args, data, EFlags::None)
+    }
+
+    /// `parse_arrow_body`, where a body that is an expression is read with `flags`.
+    pub(crate) fn parse_arrow_body_with_flags(
+        &mut self,
+        args: &'a mut [G::Arg],
+        data: &mut FnOrArrowDataParse,
+        flags: EFlags,
+    ) -> Result<E::Arrow, Error> {
         let p = self;
         let arrow_loc = p.lexer.loc();
 
@@ -576,7 +704,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
 
         p.fn_or_arrow_data_parse = data.clone();
-        let expr = match p.parse_expr(Level::Comma) {
+        let expr = match p.parse_expr_flagged(Level::Comma, flags) {
             Ok(e) => e,
             Err(err) => {
                 // The error path returns without restoring fn_or_arrow_data_parse;

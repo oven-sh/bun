@@ -974,6 +974,12 @@ dependencies = [
 [[package]]
 name = "bun_lint"
 version = "0.0.0"
+dependencies = [
+ "bun_alloc",
+ "bun_ast",
+ "bun_core",
+ "bun_js_parser",
+]
 
 [[package]]
 name = "bun_lsquic_sys"

@@ -97,6 +97,27 @@ describe("fake node cli", () => {
     );
   });
 
+  // `node` parses its flags with the table of `bun run`, where `--lint` checks the files and runs none.
+  // `node` does not read that flag: the script runs, whether the variable that turns `--lint` on is set or not.
+  test.each<[string, string | undefined]>([
+    ["set to 1", "1"],
+    ["not set", undefined],
+  ])("--lint is ignored and the script runs, with BUN_FEATURE_FLAG_EXPERIMENTAL_LINT %s", (_, variable) => {
+    using temp = tempDir("fake-node", {
+      "index.js": `console.log(JSON.stringify({
+        execArgv: process.execArgv,
+        args: process.argv.slice(2),
+        variable: process.env.BUN_FEATURE_FLAG_EXPERIMENTAL_LINT ?? null,
+      }));`,
+    });
+    // `fakeNodeRun` spreads this over `bunEnv`, where `undefined` takes the variable out of the environment.
+    const env: { BUN_FEATURE_FLAG_EXPERIMENTAL_LINT?: string } = { BUN_FEATURE_FLAG_EXPERIMENTAL_LINT: variable };
+    expect(fakeNodeRun(temp, ["--lint", "index.js"], env)).toEqual({
+      stdout: JSON.stringify({ execArgv: ["--lint"], args: [], variable: variable ?? null }),
+      stderr: "",
+    });
+  });
+
   // Bare `node` now matches Node.js: a TTY stdin enters the REPL, a
   // non-TTY stdin (pipe) prints "Missing script". fakeNodeRun's default
   // stdin is platform-dependent (Windows may inherit a console), so pin

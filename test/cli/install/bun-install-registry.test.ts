@@ -5238,6 +5238,23 @@ describe("hoisting", async () => {
         `warn: incorrect peer dependency "no-deps@2.0.0" (peer-deps-fixed@1.0.0 requires "^1.0.0")`,
       ]);
     });
+
+    test("--dry-run writes nothing and reports what the install will report", async () => {
+      const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker } });
+      await write(
+        packageJson,
+        JSON.stringify({ name: "foo", dependencies: { "no-deps": "2.0.0", "peer-deps-fixed": "1.0.0" } }),
+      );
+      const expected = [`warn: incorrect peer dependency "no-deps@2.0.0" (peer-deps-fixed@1.0.0 requires "^1.0.0")`];
+
+      expect(peerWarnings((await install(packageDir, "--dry-run")).err)).toEqual(expected);
+      expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
+      expect(await exists(join(packageDir, "bun.lock"))).toBeFalse();
+
+      expect(peerWarnings((await install(packageDir)).err)).toEqual(expected);
+      // Nothing is resolved this time; the preview still reports it.
+      expect(peerWarnings((await install(packageDir, "--dry-run")).err)).toEqual(expected);
+    });
   });
 
   describe("devDependencies", () => {

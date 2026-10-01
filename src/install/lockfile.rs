@@ -1521,6 +1521,28 @@ impl Lockfile {
         Ok(())
     }
 
+    /// `filter` for a dry run: reports the same peers, then puts the saved tree back.
+    pub(crate) fn filter_dry_run(
+        &mut self,
+        log: &mut bun_ast::Log,
+        manager: &mut PackageManager,
+        install_root_dependencies: bool,
+        workspace_filters: &[WorkspaceFilter],
+    ) -> Result<(), tree::SubtreeError> {
+        let trees = core::mem::take(&mut self.buffers.trees);
+        let hoisted_dependencies = core::mem::take(&mut self.buffers.hoisted_dependencies);
+        let result = self.filter(
+            log,
+            manager,
+            install_root_dependencies,
+            workspace_filters,
+            None,
+        );
+        self.buffers.trees = trees;
+        self.buffers.hoisted_dependencies = hoisted_dependencies;
+        result
+    }
+
     /// Sets `buffers.trees`/`hoisted_dependencies`; returns `Builder::late_bound_optional_peer`.
     pub(crate) fn hoist<const METHOD: tree::BuilderMethod>(
         &mut self,

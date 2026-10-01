@@ -417,13 +417,16 @@ describe("certificate authority", () => {
     const nameFor = (delta: number) =>
       Buffer.alloc(maxPathBytes + delta - Buffer.byteLength(packageDir + "/"), "a").toString();
 
+    // `--silent` keeps the main thread's "Resolving dependencies" line off stderr. Each thread
+    // writes to stderr on its own, so that line can otherwise land inside the HTTP thread's
+    // error message when the path is longer than the write buffer.
     async function install(args: string[]) {
       await write(
         packageJson,
         JSON.stringify({ name: "foo", version: "1.0.0", "dependencies": { "no-deps": "1.1.1" } }),
       );
       const { stdout, stderr, exited } = spawn({
-        cmd: [bunExe(), "install", ...args],
+        cmd: [bunExe(), "install", "--silent", ...args],
         cwd: packageDir,
         stderr: "pipe",
         stdout: "pipe",

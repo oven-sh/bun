@@ -1,0 +1,8 @@
+class C { @d p: X extends Y ? C : C; }
+class C { @d p: X extends Y ? C : never; }
+class C { @d p: X extends Y ? K : K; }
+class C { @d p: X extends Y ? C : K; }
+class C { @d p: X extends Y ? C.D : C.D; }
+class C { @d p: X extends Y ? (C) : C | C; }
+class C { @d m(): X extends Y ? C : C { throw 0 } }
+class C {} class K { @d p: X extends Y ? C : null; }

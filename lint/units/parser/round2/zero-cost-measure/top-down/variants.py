@@ -16,7 +16,9 @@ Build one with paren-expr-seam/run.py (OUT=/tmp/zcm-td/seam/out RELAX=1), link i
            the head reads. The trigger is incomplete: the grammar of the base logs most errors and returns Ok.
   vold2    vold with the trigger `read.is_err() | (log.errors != mark.errors)`: two jumps in the assembly. For reading only.
   vold3    vold with the trigger as a wrapping sum of the two conditions: one jump. The one to measure and to run the harness on.
-  f3       head with the named-like cast recognised at the word of the cast (one jump per cast) instead of before every statement."""
+  f3       head with the named-like cast recognised at the word of the cast (one jump per cast) instead of before every statement.
+           Its rule never runs (wrong call site): it measures the bare deletion of the check. Use f3b.
+  f3b      f3 with the statement handed down through a copy of parse_expr_common (parse_expr_of_statement)."""
 import os, re, shutil, sys
 
 SRC = '/workspace/wt/parser/src/js_parser'
@@ -656,12 +658,57 @@ def f3(t):
     }""")
     return {}
 
+STATEMENT_EXPR = """
+    /// `parse_expr(Level::Lowest)` for the expression that starts the statement of `opts`: its suffixes know that statement.
+    pub(crate) fn parse_expr_of_statement(
+        &mut self,
+        opts: &ParseStatementOptions<'a>,
+    ) -> Result<Expr, Error> {
+        if !self.stack_check.is_safe_to_recurse() {
+            return Err(crate::Error::StackOverflow);
+        }
+        let had_pure_comment_before =
+            self.lexer.has_pure_comment_before && !self.options.ignore_dce_annotations;
+        let mut expr = self.parse_prefix(Level::Lowest, None, EFlags::None)?;
+        if had_pure_comment_before {
+            self.parse_suffix(&mut expr, Level::Call.sub(1), None, EFlags::None)?;
+            match &mut expr.data {
+                js_ast::expr::Data::ECall(ex) => {
+                    ex.can_be_unwrapped_if_unused = js_ast::CanBeUnwrapped::IfUnused;
+                }
+                js_ast::expr::Data::ENew(ex) => {
+                    ex.can_be_unwrapped_if_unused = js_ast::CanBeUnwrapped::IfUnused;
+                }
+                _ => {}
+            }
+        }
+        self.parse_suffix_of(&mut expr, Level::Lowest, None, EFlags::None, Some(opts))?;
+        Ok(expr)
+    }
+"""
+
+def f3b(t):
+    """f3, with the statement handed down on the path that a statement starting with a name really takes: the `else` of
+    parse_expr_or_let_stmt calls parse_expr(Level::Lowest) (parse/mod.rs:1603), not the tail at :1621, so f3 never ran its rule."""
+    c = f3(t)
+    M, PS = 'parse/mod.rs', 'parse/parse_suffix.rs'
+    s = t.read(M)
+    old = "                stmt_or_expr: js_ast::StmtOrExpr::Expr(p.parse_expr(Level::Lowest)?),\n"
+    assert s.count(old) == 2, s.count(old)
+    i = s.index(old); j = s.index(old, i + 1)
+    s = s[:j] + "                stmt_or_expr: js_ast::StmtOrExpr::Expr(p.parse_expr_of_statement(opts)?),\n" + s[j + len(old):]
+    k = s.index('    pub(crate) fn parse_expr_common(')
+    s = s[:k] + STATEMENT_EXPR.lstrip('\n') + s[k:]
+    t.write(M, s)
+    t.rep(PS, "    fn parse_suffix_of(\n", "    pub(crate) fn parse_suffix_of(\n")
+    return c
+
 def v0(t): return {}
 def v_nolint(t): return nolint(t)
 def v_nolintbt(t):
     c = nolint(t); bt(t); return c
 
-V = {'v0': v0, 'nolint': v_nolint, 'nolintbt': v_nolintbt, 'f1': f1, 'f1b': f1b, 'vold': vold, 'vold2': vold2, 'vold3': vold3, 'f3': f3}
+V = {'v0': v0, 'nolint': v_nolint, 'nolintbt': v_nolintbt, 'f1': f1, 'f1b': f1b, 'vold': vold, 'vold2': vold2, 'vold3': vold3, 'f3': f3, 'f3b': f3b}
 if __name__ == '__main__':
     if '--list' in sys.argv: print(' '.join(V)); sys.exit(0)
     for tag in sys.argv[1:]:

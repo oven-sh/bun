@@ -3496,6 +3496,65 @@ describe("the response body is framed by the value of Transfer-Encoding", () => 
     });
   });
 
+  // A header value's toString() runs while the head is rendered. A framing header that it adds then is not a line of
+  // this head, so the body is framed by the lines that the head has.
+  test.concurrent.each([
+    [
+      "Content-Length, write() + end()",
+      "Content-Length",
+      "2",
+      (res: any) => {
+        res.write("ok");
+        res.end();
+      },
+      "HTTP/1.1 200 OK\r\nX-A: a\r\nDate: <D>\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n",
+    ],
+    [
+      "Content-Length, end(data)",
+      "Content-Length",
+      "2",
+      (res: any) => res.end("ok"),
+      "HTTP/1.1 200 OK\r\nX-A: a\r\nDate: <D>\r\nConnection: close\r\nContent-Length: 2\r\n\r\nok",
+    ],
+    [
+      "Transfer-Encoding: identity, write() + end()",
+      "Transfer-Encoding",
+      "identity",
+      (res: any) => {
+        res.write("ok");
+        res.end();
+      },
+      "HTTP/1.1 200 OK\r\nX-A: a\r\nDate: <D>\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n",
+    ],
+    [
+      "Transfer-Encoding: identity, end(data)",
+      "Transfer-Encoding",
+      "identity",
+      (res: any) => res.end("ok"),
+      "HTTP/1.1 200 OK\r\nX-A: a\r\nDate: <D>\r\nConnection: close\r\nContent-Length: 2\r\n\r\nok",
+    ],
+  ] as [string, string, string, (res: any) => void, string][])(
+    "a header that a toString() adds while the head is rendered does not frame the body: %s",
+    async (_, name, value, send, expected) => {
+      const sent = await wire((req, res) => {
+        let armed = false;
+        res.setHeader("X-A", {
+          toString() {
+            if (armed) {
+              armed = false;
+              res.setHeader(name, value);
+            }
+            return "a";
+          },
+        });
+        // setHeader() called toString() to validate the value. The next call is the one of the render.
+        armed = true;
+        send(res);
+      });
+      expect(sent).toBe(expected);
+    },
+  );
+
   // A ServerResponse with no native handle writes through _storeHeader, which decides the framing and validates the
   // Trailer header as in Node. Each expected value but the last is what node v26.3.0 writes to the socket.
   describe("a ServerResponse that has no native handle", () => {

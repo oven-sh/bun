@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { access, appendFile, exists, mkdir, readFile, rm, writeFile } from "fs/promises";
+import { access, appendFile, cp, exists, mkdir, readFile, rm, writeFile } from "fs/promises";
 import { VerdaccioRegistry, bunExe, bunEnv as env, pack, readdirSorted, toBeValidBin, toHaveBins } from "harness";
 import { basename, dirname, join } from "path";
 import {
@@ -542,8 +542,12 @@ it("--filter updates only matching workspaces, leaving siblings and root untouch
   expect(root.dependencies.baz).toBe("~0.0.3");
 });
 
-// The exact pin is installed first, then widened to a range its locked resolution satisfies, so the nested copy stays.
-async function nestedBazRepo(rootRange: string, pkgARange: string, rewrite: { root?: string; pkgA?: string }) {
+// The exact pin is installed first, then widened to a range. `install: false` leaves bun.lock and node_modules at the pin.
+async function nestedBazRepo(
+  rootRange: string,
+  pkgARange: string,
+  rewrite: { root?: string; pkgA?: string; install?: boolean },
+) {
   setHandler(dummyRegistry([], { "0.0.3": {}, "0.0.5": {}, latest: "0.0.5" }));
   const rootJson = (range: string) =>
     JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"], dependencies: { baz: range } });
@@ -554,7 +558,7 @@ async function nestedBazRepo(rootRange: string, pkgARange: string, rewrite: { ro
   await runInstall();
   if (rewrite.root) await writeFile(join(package_dir, "package.json"), rootJson(rewrite.root));
   if (rewrite.pkgA) await writeFile(join(package_dir, "packages", "pkg-a", "package.json"), pkgAJson(rewrite.pkgA));
-  await runInstall();
+  if (rewrite.install ?? true) await runInstall();
 }
 
 const rootBazVersion = async () =>
@@ -562,8 +566,18 @@ const rootBazVersion = async () =>
 const pkgABazDir = () => join(package_dir, "packages", "pkg-a", "node_modules", "baz");
 const pkgABazVersion = async () => (await file(join(pkgABazDir(), "package.json")).json()).version;
 
+// pkg-a's range now accepts the root's version, so bun.lock stops placing a copy in pkg-a.
+it("a plain install removes the nested copy whose row it collapsed", async () => {
+  await nestedBazRepo("0.0.5", "0.0.3", { pkgA: "~0.0.3", install: false });
+  expect(await pkgABazVersion()).toBe("0.0.3");
+
+  await runInstall();
+  expect(await exists(pkgABazDir())).toBeFalse();
+  expect(await rootBazVersion()).toBe("0.0.5");
+});
+
 it("--filter pkg-a removes the nested copy whose row it collapsed", async () => {
-  await nestedBazRepo("0.0.5", "0.0.3", { pkgA: "~0.0.3" });
+  await nestedBazRepo("0.0.5", "0.0.3", { pkgA: "~0.0.3", install: false });
   expect(await rootBazVersion()).toBe("0.0.5");
   expect(await pkgABazVersion()).toBe("0.0.3");
 
@@ -582,6 +596,65 @@ it("--filter pkg-a removes the nested copy whose row it collapsed", async () => 
   expect(await exists(pkgABazDir())).toBeFalse();
   expect(await rootBazVersion()).toBe("0.0.5");
   expect(code).toBe(0);
+});
+
+// A nested copy that no bun.lock in memory places any more: an install before this pass existed left it.
+// It is found when the version it hides is installed again.
+it("removes a leftover nested copy that hides the version the update installs", async () => {
+  setHandler(
+    dummyRegistry([], { "0.0.2": { dependencies: { baz: "~0.0.3" } }, "0.0.3": {}, "0.0.5": {}, latest: "0.0.5" }),
+  );
+  const rootJson = (range: string) => JSON.stringify({ name: "root", dependencies: { bar: "0.0.2", baz: range } });
+  await writeFile(join(package_dir, "package.json"), rootJson("0.0.3"));
+  await runInstall();
+  const leftover = join(package_dir, "node_modules", "bar", "node_modules", "baz");
+  expect(await rootBazVersion()).toBe("0.0.3");
+  expect(await exists(leftover)).toBeFalse();
+  await cp(join(package_dir, "node_modules", "baz"), leftover, { recursive: true });
+
+  await writeFile(join(package_dir, "package.json"), rootJson("~0.0.3"));
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "update", "--linker=hoisted"],
+    cwd: package_dir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const [err, code] = await Promise.all([stderr.text(), exited]);
+  expect(err).not.toContain("error:");
+  expect(await rootBazVersion()).toBe("0.0.5");
+  expect(await exists(leftover)).toBeFalse();
+  expect(code).toBe(0);
+});
+
+// The update collapses pkg-a's row, and the download of another package fails. A run that fails removes nothing.
+it("keeps the nested copy whose row it collapsed when the run fails", async () => {
+  await nestedBazRepo("0.0.5", "0.0.3", { pkgA: "~0.0.3", install: false });
+  const registry = dummyRegistry([], { "0.0.2": {}, "0.0.3": {}, "0.0.5": {}, latest: "0.0.5" });
+  setHandler(request =>
+    request.url.endsWith("bar-0.0.2.tgz") ? new Response("not found", { status: 404 }) : registry(request),
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "root",
+      private: true,
+      workspaces: ["packages/*"],
+      dependencies: { bar: "0.0.2", baz: "0.0.5" },
+    }),
+  );
+
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "update", "--linker=hoisted"],
+    cwd: package_dir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const [err, code] = await Promise.all([stderr.text(), exited]);
+  expect(err).toContain("404");
+  expect(await pkgABazVersion()).toBe("0.0.3");
+  expect(code).toBe(1);
 });
 
 // The collapsed-copy pass compares node_modules with a tree of every dependency type, so a copy

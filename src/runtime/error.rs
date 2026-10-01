@@ -48,8 +48,10 @@ pub(crate) enum Error {
     ConnectionFailed,
     #[error("InvalidOptions")]
     InvalidOptions,
+    #[cfg(windows)]
     #[error("FailedToInitPipe")]
     FailedToInitPipe,
+    #[cfg(windows)]
     #[error("FailedToBindPipe")]
     FailedToBindPipe,
     #[error("HTTPForbidden")]
@@ -138,14 +140,10 @@ pub(crate) enum Error {
     InvalidRoutePattern,
     #[error("InvalidRequest")]
     InvalidRequest,
+    #[cfg(target_os = "macos")]
     #[error("FailedToCreateCoreFoudationSourceLoop")]
     FailedToCreateCoreFoudationSourceLoop,
-    #[error("eol")]
-    eol,
-    #[error("fmt")]
-    fmt,
-    #[error("InvalidCharacter")]
-    InvalidCharacter,
+    #[cfg(target_os = "macos")]
     #[error("FailedToSpawnFSEventsThread")]
     FailedToSpawnFSEventsThread,
     #[error("CompilationError")]
@@ -156,6 +154,7 @@ pub(crate) enum Error {
     TCCMissing,
     #[error("ChromeNotFound")]
     ChromeNotFound,
+    #[cfg(not(windows))]
     #[error("WatchFailed")]
     WatchFailed,
     #[error("UnsupportedAlgorithm")]
@@ -368,7 +367,9 @@ impl Error {
             Self::InvalidValue => "InvalidValue",
             Self::ConnectionFailed => "ConnectionFailed",
             Self::InvalidOptions => "InvalidOptions",
+            #[cfg(windows)]
             Self::FailedToInitPipe => "FailedToInitPipe",
+            #[cfg(windows)]
             Self::FailedToBindPipe => "FailedToBindPipe",
             Self::HTTPForbidden => "HTTPForbidden",
             Self::ExampleNotFound => "ExampleNotFound",
@@ -415,15 +416,15 @@ impl Error {
             Self::BlobNotFound => "BlobNotFound",
             Self::InvalidRoutePattern => "InvalidRoutePattern",
             Self::InvalidRequest => "InvalidRequest",
+            #[cfg(target_os = "macos")]
             Self::FailedToCreateCoreFoudationSourceLoop => "FailedToCreateCoreFoudationSourceLoop",
-            Self::eol => "eol",
-            Self::fmt => "fmt",
-            Self::InvalidCharacter => "InvalidCharacter",
+            #[cfg(target_os = "macos")]
             Self::FailedToSpawnFSEventsThread => "FailedToSpawnFSEventsThread",
             Self::CompilationError => "CompilationError",
             Self::DeferredErrors => "DeferredErrors",
             Self::TCCMissing => "TCCMissing",
             Self::ChromeNotFound => "ChromeNotFound",
+            #[cfg(not(windows))]
             Self::WatchFailed => "WatchFailed",
             Self::UnsupportedAlgorithm => "UnsupportedAlgorithm",
             Self::PasswordVerificationFailed => "PasswordVerificationFailed",

@@ -748,7 +748,6 @@ impl FileReader {
             } else if pending_buf.len() >= buffered.len() {
                 pending_buf[..buffered.len()].copy_from_slice(&buffered);
                 streams::Result::IntoArrayAndDone(streams::IntoArray {
-                    value: self.pending_value.get().get().unwrap_or_default(),
                     len: buffered.len() as u64,
                 })
             } else {
@@ -760,7 +759,6 @@ impl FileReader {
             let result = if pending_buf.len() >= chunk.len() {
                 pending_buf[..chunk.len()].copy_from_slice(&chunk);
                 let into = streams::IntoArray {
-                    value: self.pending_value.get().get().unwrap_or_default(),
                     len: chunk.len() as u64,
                 };
                 if was_done {
@@ -816,12 +814,10 @@ impl FileReader {
 
                 if self.reader_finished() {
                     return streams::Result::IntoArrayAndDone(streams::IntoArray {
-                        value: array,
                         len: drained_len as u64,
                     });
                 } else {
                     return streams::Result::IntoArray(streams::IntoArray {
-                        value: array,
                         len: drained_len as u64,
                     });
                 }
@@ -848,7 +844,6 @@ impl FileReader {
             let done = state == ReadState::Eof || self.reader_finished();
             if amount_read > 0 {
                 let into = streams::IntoArray {
-                    value: array,
                     len: amount_read as u64,
                 };
                 return if done {

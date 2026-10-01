@@ -828,6 +828,7 @@ fn spawn_maybe_sync(
                                     TerminalInitError::DupFailed => cx.global().throw(
                                         format_args!("Failed to duplicate PTY file descriptor"),
                                     ),
+                                    #[cfg(not(windows))]
                                     TerminalInitError::NotSupported => cx
                                         .global()
                                         .throw(format_args!("PTY not supported on this platform")),

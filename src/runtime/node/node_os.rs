@@ -48,8 +48,8 @@ mod _impl {
     // ─── local shims for upstream API gaps (Phase D) ──────────────────────────
 
     /// Unified error for `cpus_impl_*` so `?` works on both `JsResult` and
-    /// `crate::Error`/`bun_sys::Error`. The variant payload is discarded by
-    /// `cpus()`, which throws a `SystemError`.
+    /// `bun_sys::Error`. The variant payload is discarded by `cpus()`, which
+    /// throws a `SystemError`.
     pub(crate) enum OsError {
         Js,
         Any,
@@ -57,11 +57,6 @@ mod _impl {
     impl From<bun_jsc::JsError> for OsError {
         fn from(_: bun_jsc::JsError) -> Self {
             Self::Js
-        }
-    }
-    impl From<crate::Error> for OsError {
-        fn from(_: crate::Error) -> Self {
-            Self::Any
         }
     }
     impl From<bun_sys::Error> for OsError {
@@ -303,13 +298,13 @@ mod _impl {
                 let scale: u64 = 10;
 
                 let times = CPUTimes {
-                    user: scale * parse_u64(toks.next().ok_or(crate::Error::eol)?)?,
-                    nice: scale * parse_u64(toks.next().ok_or(crate::Error::eol)?)?,
-                    sys: scale * parse_u64(toks.next().ok_or(crate::Error::eol)?)?,
-                    idle: scale * parse_u64(toks.next().ok_or(crate::Error::eol)?)?,
+                    user: scale * parse_u64(toks.next().ok_or(OsError::Any)?)?,
+                    nice: scale * parse_u64(toks.next().ok_or(OsError::Any)?)?,
+                    sys: scale * parse_u64(toks.next().ok_or(OsError::Any)?)?,
+                    idle: scale * parse_u64(toks.next().ok_or(OsError::Any)?)?,
                     irq: {
-                        let _ = toks.next().ok_or(crate::Error::eol)?; // skip iowait
-                        scale * parse_u64(toks.next().ok_or(crate::Error::eol)?)?
+                        let _ = toks.next().ok_or(OsError::Any)?; // skip iowait
+                        scale * parse_u64(toks.next().ok_or(OsError::Any)?)?
                     },
                 };
 
@@ -403,7 +398,7 @@ mod _impl {
                     "/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq\0",
                     cpu_index
                 )
-                .map_err(|_| crate::Error::fmt)?;
+                .map_err(|_| OsError::Any)?;
                 let remaining = cursor.len();
                 let written = path_buf.len() - remaining;
                 // SAFETY: we wrote a NUL terminator at path_buf[written-1]
@@ -1597,13 +1592,13 @@ impl NetmaskInt for u128 {
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 #[inline]
-fn parse_u64(s: &[u8]) -> crate::Result<u64> {
-    bun_core::fmt::parse_int(s, 10).map_err(|_| crate::Error::InvalidCharacter)
+fn parse_u64(s: &[u8]) -> Result<u64, _impl::OsError> {
+    bun_core::fmt::parse_int(s, 10).map_err(|_| _impl::OsError::Any)
 }
 #[cfg(any(target_os = "linux", target_os = "android"))]
 #[inline]
-fn parse_u32(s: &[u8]) -> crate::Result<u32> {
-    bun_core::fmt::parse_int(s, 10).map_err(|_| crate::Error::InvalidCharacter)
+fn parse_u32(s: &[u8]) -> Result<u32, _impl::OsError> {
+    bun_core::fmt::parse_int(s, 10).map_err(|_| _impl::OsError::Any)
 }
 
 #[cfg(windows)]

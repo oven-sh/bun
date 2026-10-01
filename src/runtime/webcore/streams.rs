@@ -498,7 +498,6 @@ impl Writable {
 
 #[derive(Copy, Clone)]
 pub(crate) struct IntoArray {
-    pub value: JSValue,
     pub(crate) len: BlobSizeType,
 }
 
@@ -995,6 +994,7 @@ pub(crate) enum SourceHandle {
     /// The `'static` bound erases the `&JSGlobalObject` borrow carried in
     /// `Subprocess<'a>`; the pointed-at allocation outlives this handle.
     Subprocess(BackRef<crate::api::bun::subprocess::Subprocess<'static>>),
+    #[cfg(windows)]
     ShellWritable(BackRef<crate::shell::subproc::Writable, bun_ptr::Mut>),
     FetchResponseBody(BackRef<crate::webcore::fetch::fetch_tasklet::FetchTasklet, bun_ptr::Mut>),
     ServerRequestBody(crate::server::AnyRequestContext),
@@ -1039,6 +1039,7 @@ impl SourceHandle {
             SourceHandle::FileReader(p) => p.on_close(err),
             SourceHandle::Subprocess(p) => p.on_close(err),
             // SAFETY: live backref; cleared before the pointee is freed.
+            #[cfg(windows)]
             SourceHandle::ShellWritable(mut p) => unsafe { p.get_mut() }.on_close(err),
             SourceHandle::FetchResponseBody(p) => p.on_stream_cancelled(),
             SourceHandle::S3DownloadBody(p) => p.on_stream_cancelled(),
@@ -1104,7 +1105,9 @@ impl SourceHandle {
                 p.on_cancel();
             }
             // Remaining variants leave `on_ready` at the trait default (no-op).
-            SourceHandle::Subprocess(_) | SourceHandle::ShellWritable(_) => {}
+            SourceHandle::Subprocess(_) => {}
+            #[cfg(windows)]
+            SourceHandle::ShellWritable(_) => {}
         }
     }
 
@@ -1121,9 +1124,10 @@ impl SourceHandle {
             | SourceHandle::ByteStream(_)
             | SourceHandle::FileReader(_)
             | SourceHandle::Subprocess(_)
-            | SourceHandle::ShellWritable(_)
             | SourceHandle::HTMLRewriter(_)
             | SourceHandle::TestingCancelOnDrain(_) => {}
+            #[cfg(windows)]
+            SourceHandle::ShellWritable(_) => {}
         }
     }
 
@@ -1138,9 +1142,10 @@ impl SourceHandle {
             | SourceHandle::ByteStream(_)
             | SourceHandle::FileReader(_)
             | SourceHandle::Subprocess(_)
-            | SourceHandle::ShellWritable(_)
             | SourceHandle::HTMLRewriter(_)
             | SourceHandle::TestingCancelOnDrain(_) => {}
+            #[cfg(windows)]
+            SourceHandle::ShellWritable(_) => {}
         }
     }
 }

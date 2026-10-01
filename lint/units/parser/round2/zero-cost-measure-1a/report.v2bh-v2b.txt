@@ -1,0 +1,64 @@
+== bun-types: base program Bc 94,907,118 parser Bc 46,594,583
+   head   program dIr   +34,254,720 dBc   +5,492,386 dBi  -278,962 | parser dIr   +33,600,630 dBc   +5,416,920 dBi  -279,880
+   v2bh   program dIr   +10,892,148 dBc   +2,069,256 dBi  -131,040 | parser dIr   +10,281,970 dBc   +2,033,940 dBi  -131,920
+   v2b    program dIr    +2,769,301 dBc   +1,084,691 dBi  -179,707 | parser dIr    +2,129,930 dBc   +1,005,540 dBi  -180,580
+   dBc against the base, by cause:                head         v2bh          v2b
+     a1 type grammar                          +4,312,860     +942,520     +943,600
+     a2 statement named like a cast (lookah     +149,840     +149,840           +0
+     a3 class index signature lookahead           +1,440       +1,440           +0
+     a4 lexer (tokens read again)               +800,540     +788,260      +18,220
+     b parse pass outside the type grammar      +128,120     +128,120      +45,620
+     d backtracker (attempt wrappers, log t      +30,960      +30,600       +4,940
+     f visit pass, symbols, drop glue             -6,840       -6,840       -6,840
+     x memcpy/memmove/memset/memcmp               -3,671      -42,531       +1,665
+     y allocator (mimalloc, AstAlloc)            +78,103      +78,336      +78,300
+== typescript-lib: base program Bc 330,701,877 parser Bc 167,000,043
+   head   program dIr  +162,481,236 dBc  +25,969,334 dBi  -390,831 | parser dIr  +162,422,643 dBc  +25,994,060 dBi  -388,582
+   v2bh   program dIr   +48,383,760 dBc   +9,399,517 dBi  +349,763 | parser dIr   +48,526,963 dBc   +9,471,860 dBi  +352,778
+   v2b    program dIr    +4,042,885 dBc   +3,556,269 dBi  +110,400 | parser dIr    +4,654,463 dBc   +3,655,020 dBi  +112,838
+   dBc against the base, by cause:                head         v2bh          v2b
+     a1 type grammar                         +20,514,480   +4,001,080   +4,001,080
+     a2 statement named like a cast (lookah     +771,540     +771,540           +0
+     a4 lexer (tokens read again)             +4,405,011   +4,396,211     -116,489
+     b parse pass outside the type grammar      +265,014     +265,014     -205,246
+     d backtracker (attempt wrappers, log t      +73,360      +73,360      +11,020
+     f visit pass, symbols, drop glue            -30,955      -30,955      -30,955
+     x memcpy/memmove/memset/memcmp              -34,755      -56,592      -31,079
+     y allocator (mimalloc, AstAlloc)            +65,625      +47,655      +51,400
+== src-js: base program Bc 1,120,533,278 parser Bc 565,356,671
+   head   program dIr   +23,496,991 dBc   +4,723,345 dBi   -72,217 | parser dIr   +18,478,690 dBc   +3,976,440 dBi   -84,600
+   v2bh   program dIr    +1,443,066 dBc   +1,502,189 dBi    +9,459 | parser dIr      -846,750 dBc   +1,188,960 dBi    +8,400
+   v2b    program dIr    -7,178,236 dBc     +503,544 dBi  -177,940 | parser dIr   -10,240,850 dBc      +51,020 dBi  -178,980
+   dBc against the base, by cause:                head         v2bh          v2b
+     a1 type grammar                          +2,858,080     +109,720     +229,360
+     a2 statement named like a cast (lookah      +85,880      +85,880           +0
+     a3 class index signature lookahead          +30,940      +30,940           +0
+     a4 lexer (tokens read again)               +409,740     +398,960      -17,740
+     b parse pass outside the type grammar      +333,480     +333,280     -140,200
+     d backtracker (attempt wrappers, log t     +280,440     +252,300       +1,720
+     f visit pass, symbols, drop glue            -22,520      -22,520      -22,520
+     x memcpy/memmove/memset/memcmp             -242,581     -262,378     -265,894
+     y allocator (mimalloc, AstAlloc)           +898,733     +696,365     +757,274
+== tsx: base program Bc 333,948,498 parser Bc 156,419,646
+   head   program dIr   +50,542,774 dBc   +9,042,932 dBi  -488,599 | parser dIr   +45,335,990 dBc   +8,248,000 dBi  -500,000
+   v2bh   program dIr   +10,550,048 dBc   +3,223,254 dBi   -65,741 | parser dIr    +6,535,990 dBc   +2,578,000 dBi   -76,000
+   v2b    program dIr    +1,280,914 dBc   +2,229,376 dBi  -150,750 | parser dIr    -2,814,010 dBc   +1,570,000 dBi  -162,000
+   dBc against the base, by cause:                head         v2bh          v2b
+     a1 type grammar                          +6,816,000   +1,216,000   +1,340,000
+     a2 statement named like a cast (lookah     +200,000     +200,000           +0
+     a3 class index signature lookahead          +16,000      +16,000           +0
+     a4 lexer (tokens read again)               +666,000     +666,000      +64,000
+     b parse pass outside the type grammar      +404,000     +374,000     +328,000
+     d backtracker (attempt wrappers, log t     +310,000     +270,000       +2,000
+     f visit pass, symbols, drop glue            -74,000      -74,000      -74,000
+     x memcpy/memmove/memset/memcmp               +4,006      +13,476      +13,478
+     y allocator (mimalloc, AstAlloc)           +691,034     +697,885     +695,196
+== js-control: base program Bc 706,344,757 parser Bc 343,415,262
+   head   program dIr    -4,137,431 dBc      -60,895 dBi      +822 | parser dIr    -2,547,530 dBc     +163,520 dBi        +0
+   v2bh   program dIr    -5,758,702 dBc     -322,934 dBi    -6,732 | parser dIr    -2,547,530 dBc     +163,520 dBi        +0
+   v2b    program dIr    -5,148,832 dBc     -522,582 dBi    -7,311 | parser dIr    -1,907,610 dBc      -28,840 dBi        +0
+   dBc against the base, by cause:                head         v2bh          v2b
+     b parse pass outside the type grammar       +92,680      +92,680      -99,680
+     f visit pass, symbols, drop glue            +70,840      +70,840      +70,840
+     x memcpy/memmove/memset/memcmp             -224,585     -218,158     -217,661
+     y allocator (mimalloc, AstAlloc)            -84,388     -102,588      -97,550

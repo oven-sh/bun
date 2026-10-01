@@ -69,3 +69,13 @@ node rec/nodes-all.cjs rec/cases.json | diff - rec/nodes-all.txt
 
 # 9. Rows for a Rust table from the inputs that tsc and the lint parse read the same way (test-rows.txt).
 node make-test-rows.cjs b1-extra.json "$S/in/all.tsc.tsv" "$S/in/all.lint.tsv" b1_extra > "$S/in/test-rows.txt"
+
+# 10. One pair for each place where the parser goes back (b1-pairs.json): the attempt fails in the first source and is kept in
+#     the second, and the comments stand at the same offsets. Both lists must be the one of tsc (pair-rows.txt): `same 34`.
+node oracle.cjs "$S/in/pairs" b1-pairs.json
+B1_INPUTS="$S/in/pairs.hex" B1_OUT="$S/in/pairs.lint.tsv" "$S/out/bun_js_parser" zz_probe > /dev/null
+node compare.cjs "$S/in/pairs.tsc.tsv" "$S/in/pairs.lint.tsv"
+
+# 11. B1_DISABLE=8 leaves the lint parse as it is at be1ebe5295 (no comment tracked): what the records were before.
+B1_DISABLE=8 "$S/out/bun_js_parser" zz_b1_print --nocapture --test-threads=1 > "$S/in/prints-before.txt" 2>&1 || true
+

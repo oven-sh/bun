@@ -615,17 +615,18 @@ async function runWorkers() {
 
 const during = await runWorkers();
 
-// Bounded poll: finalization may need a few event-loop idles, while a
-// Strong-rooted Subprocess never goes away no matter how long we wait.
-// The count includes the shared Subprocess prototype object (same class
-// name, lives as long as the process), so 1 means no instance is live.
+// Poll with a deadline: the wrapper stays strongly held until the IPC pipe
+// handle has finished closing, which on Windows takes a timer-driven loop
+// turn, while a Strong-rooted Subprocess never goes away no matter how long
+// we wait. The count includes the shared Subprocess prototype object (same
+// class name, lives as long as the process), so 1 means no instance is live.
 let liveSubprocess = Infinity;
-for (let i = 0; i < 20; i++) {
-  await new Promise(r => setImmediate(r));
+const deadline = performance.now() + 3000;
+do {
+  await new Promise(r => setTimeout(r, 1));
   Bun.gc(true);
   liveSubprocess = heapStats().objectTypeCounts.Subprocess ?? 0;
-  if (liveSubprocess <= 1) break;
-}
+} while (liveSubprocess > 1 && performance.now() < deadline);
 
 console.log(JSON.stringify({ N, before, during, liveSubprocess }));
 process.exit(0);

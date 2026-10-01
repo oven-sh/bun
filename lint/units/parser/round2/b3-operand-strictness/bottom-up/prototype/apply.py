@@ -58,19 +58,7 @@ edit(
 )
 edit("parse/syntax_errors.rs", "    fn code_syntax_error(\n", "    pub(crate) fn code_syntax_error(\n")
 
-# H1: a type assertion is no left side of an assignment
-edit(
-    "parse/parse_prefix.rs",
-    "                .type_assertion(value, loc, greater_than, type_node);\n        }\n        Ok(value)\n",
-    "                .type_assertion(value, loc, greater_than, type_node);\n        }\n"
-    "        // parseAssignmentExpressionOrHigher: a type assertion is no left-hand side expression.\n"
-    "        if p.lexer.token.is_assign() {\n"
-    "            p.forbid_suffix_after_as_loc = p.lexer.loc();\n"
-    "        }\n"
-    "        Ok(value)\n",
-)
-
-# H2: no non-null "!" after a postfix update or a JSX element
+# H2: no non-null "!" after what is no left-hand side expression
 edit(
     "parse/parse_suffix.rs",
     "        if let Some(starts) = &mut p.starts_for_parse_only {\n            starts.wrappers.non_null(*left, p.lexer.loc());\n        }\n",
@@ -85,7 +73,7 @@ edit(
     "    #[cold]\n"
     "    #[inline(never)]\n"
     "    fn sfx_non_null_for_lint(p: &mut Self, left: &Expr) -> bool {\n"
-    "        if p.is_bare_chain_end(left) {\n"
+    "        if p.ends_member_chain(left, false) {\n"
     "            return true;\n"
     "        }\n"
     "        if let Some(starts) = &mut p.starts_for_parse_only {\n"
@@ -96,12 +84,12 @@ edit(
     "    fn sfx_t_minus_minus(p: &mut Self, level: Level, left: &mut Expr) -> CResult {\n",
 )
 
-# H3: no type arguments after a postfix update or a JSX element
+# H3: no type arguments after what is no left-hand side expression
 edit(
     "parse/parse_suffix.rs",
     "        if p.starts_for_parse_only.is_some() {\n            return p.lint_type_arguments_in_expression(*left);\n        }\n",
     "        if p.starts_for_parse_only.is_some() {\n"
-    "            return !p.is_bare_chain_end(left) && p.lint_type_arguments_in_expression(*left);\n"
+    "            return !p.ends_member_chain(left, true) && p.lint_type_arguments_in_expression(*left);\n"
     "        }\n",
 )
 print("applied")

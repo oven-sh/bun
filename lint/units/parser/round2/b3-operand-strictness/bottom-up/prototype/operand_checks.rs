@@ -420,14 +420,36 @@ impl<'s, 'a> Checker<'s, 'a> {
         }
     }
 
+    /// Whether the last token of `expr` is the "}" of the body of a function expression.
+    fn ends_in_function_block(&mut self, expr: &Expr) -> bool {
+        let mut node = *expr;
+        let mut steps = 0u32;
+        loop {
+            steps += 1;
+            if steps > 1_000_000 || self.outer(&node).is_some() {
+                return false;
+            }
+            node = match &node.data {
+                ExprData::EFunction(_) => return true,
+                ExprData::EUnary(e) if !is_postfix(e.op) => e.value,
+                ExprData::EAwait(e) => e.value,
+                ExprData::ESpread(e) => e.value,
+                ExprData::EBinary(e) => e.right,
+                ExprData::EIf(e) => e.no,
+                ExprData::EYield(e) => match e.value {
+                    Some(value) => value,
+                    None => return false,
+                },
+                _ => return false,
+            };
+        }
+    }
+
     /// parseAssignmentExpressionOrHigher reads an assignment after a left-hand side expression only.
     fn assignment(&mut self, node: &E::Binary, loc: Loc) {
         let left = node.left;
         let id = id_of_binary(node, loc);
-        let report = if node.op == OpCode::BinAssign
-            && matches!(left.data, ExprData::EFunction(_))
-            && self.outer(&left).is_none()
-        {
+        let report = if node.op == OpCode::BinAssign && self.ends_in_function_block(&left) {
             // parseBlock: "=" after the block of a function expression
             Report::AfterBlock
         } else if !self.is_left_hand_side(&left) {
@@ -506,29 +528,40 @@ impl<'s, 'a> Checker<'s, 'a> {
             });
             return;
         }
-        if !self.ends_the_chain(&value) {
-            return;
-        }
-        // "++a++": the reference reads "++a" and ends before the postfix operator that follows the innermost operand.
-        if let ExprData::EUnary(inner) = &value.data
-            && is_postfix(inner.op)
-        {
-            let mut operand = inner.value;
-            loop {
-                let ExprData::EUnary(deeper) = &operand.data else {
-                    break;
-                };
-                if !is_postfix(deeper.op) || self.is_made_left_hand_side(&operand) {
-                    break;
-                }
-                operand = deeper.value;
+        // "++a++", "++a++.b": the reference reads "++a" and ends before the first postfix operator on the left spine of the operand.
+        let mut node = value;
+        let mut innermost: Option<Expr> = None;
+        let mut steps = 0u32;
+        loop {
+            steps += 1;
+            if steps > 1_000_000 || self.is_made_left_hand_side(&node) {
+                break;
             }
+            node = match &node.data {
+                ExprData::EUnary(e) if is_postfix(e.op) => {
+                    innermost = Some(e.value);
+                    e.value
+                }
+                ExprData::EDot(e) => e.target,
+                ExprData::EIndex(e) => e.target,
+                ExprData::ECall(e) => e.target,
+                ExprData::ETemplate(e) => match e.tag {
+                    Some(tag) => tag,
+                    None => break,
+                },
+                _ => break,
+            };
+        }
+        if let Some(operand) = innermost {
             match self.token_after(&operand) {
                 Some(token) if matches!(token.token, T::TPlusPlus | T::TMinusMinus) => {
                     self.keep(Self::at_token(&token, Report::Ends, id));
                 }
                 _ => self.keep(Self::at_node(id, Report::Ends)),
             }
+            return;
+        }
+        if !self.ends_the_chain(&value) {
             return;
         }
         // The operand starts with a token that starts no left-hand side expression.
@@ -1088,29 +1121,24 @@ fn diagnostic(found: &Found, context: Context) -> (codes::Message, &'static [u8]
 }
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    /// A postfix update or a JSX element that neither parentheses nor "!" hold: the reference ends its member chain there.
+    /// Whether the reference ends its member chain at `expr`, which the parser just read: it is no left-hand side expression. `after_assertion`: so is what `as`, `satisfies` or `<T>` was read around.
     #[cold]
     #[inline(never)]
-    pub(crate) fn is_bare_chain_end(&self, expr: &Expr) -> bool {
-        let is_kind = match &expr.data {
-            ExprData::EUnary(unary) => is_postfix(unary.op),
-            ExprData::EJsxElement(_) => true,
-            _ => false,
-        };
-        if !is_kind {
-            return false;
-        }
+    pub(crate) fn ends_member_chain(&self, expr: &Expr, after_assertion: bool) -> bool {
         let last = self
             .starts_for_parse_only
             .as_deref()
-            .and_then(|starts| starts.wrappers.records.last());
-        !last.is_some_and(|record| {
-            record.wraps(expr)
-                && matches!(
-                    record.data,
-                    WrapperData::Parenthesized | WrapperData::NonNull
-                )
-        })
+            .and_then(|starts| starts.wrappers.records.last())
+            .filter(|record| record.wraps(expr));
+        match last.map(|record| record.data) {
+            Some(WrapperData::Parenthesized | WrapperData::NonNull) => false,
+            Some(
+                WrapperData::As(_) | WrapperData::Satisfies(_) | WrapperData::TypeAssertion(_),
+            ) => after_assertion,
+            None => {
+                is_no_left_hand_side_kind(expr) || matches!(expr.data, ExprData::EJsxElement(_))
+            }
+        }
     }
 
     /// After a lint parse that logged nothing: fails where the reference reads the tree another way, with its first diagnostic.

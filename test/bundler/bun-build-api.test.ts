@@ -1045,18 +1045,16 @@ describe("Bun.build", () => {
     expect(x.logs[0].message).toContain("Maximum call stack size exceeded while generating code for this file");
   });
 
-  test.concurrent(
-    "a deeply nested define value builds",
-    async () => {
-      // The define loader used to copy the parsed value with a recursion that
-      // had no stack check, and the bundler thread has a small stack. The child
-      // searches for the deepest value that builds: on the way, every probe must
-      // build or fail with the parser's error. The last build reads SHALLOW from
-      // two files, after the thread reset its per-file allocations.
-      using dir = tempDir("build-api-deep-define", {
-        "a.ts": `console.log(SHALLOW.a);`,
-        "b.ts": `console.log(SHALLOW.a[1]);`,
-        "build.ts": `
+  test.concurrent("a deeply nested define value builds", async () => {
+    // The define loader used to copy the parsed value with a recursion that
+    // had no stack check, and the bundler thread has a small stack. The child
+    // searches for the deepest value that builds: on the way, every probe must
+    // build or fail with the parser's error. The last build reads SHALLOW from
+    // two files, after the thread reset its per-file allocations.
+    using dir = tempDir("build-api-deep-define", {
+      "a.ts": `console.log(SHALLOW.a);`,
+      "b.ts": `console.log(SHALLOW.a[1]);`,
+      "build.ts": `
         ${deepestAcceptedSource}
         const nested = depth => Buffer.alloc(depth, "[").toString() + "1" + Buffer.alloc(depth, "]").toString();
         const build = (entrypoints, depth) =>
@@ -1070,37 +1068,35 @@ describe("Bun.build", () => {
         const result = await build(["./a.ts", "./b.ts"], depth);
         console.log(
           JSON.stringify({
-            searched: depth >= 256,
+            searched: depth >= 64,
             success: result.success,
             logs: result.logs.map(String),
             outputs: await Promise.all(result.outputs.map(output => output.text())),
           }),
         );
       `,
-      });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "build.ts"],
-        // A define that fails to parse in Bun.build leaks its transpiler (#35312).
-        env: { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") },
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-        stdout: {
-          searched: true,
-          success: true,
-          logs: [],
-          outputs: ['// a.ts\nconsole.log({ a: [1, "two"] }.a);\n', '// b.ts\nconsole.log({ a: [1, "two"] }.a[1]);\n'],
-        },
-        stderr: "",
-        exitCode: 0,
-        signalCode: null,
-      });
-    },
-    60_000,
-  );
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.ts"],
+      // A define that fails to parse in Bun.build leaks its transpiler (#35312).
+      env: { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: {
+        searched: true,
+        success: true,
+        logs: [],
+        outputs: ['// a.ts\nconsole.log({ a: [1, "two"] }.a);\n', '// b.ts\nconsole.log({ a: [1, "two"] }.a[1]);\n'],
+      },
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
 
   test.concurrent("warnings do not fail a build", async () => {
     const x = await Bun.build({

@@ -362,10 +362,10 @@ pub fn parse_utf8_impl<const CHECK_LEN: bool>(
     if source.contents.is_empty() {
         return Ok(empty_object_expr::<InStore>(bump));
     }
-    Ok(parse_classic(source, log, bump, JSON_OPTS, CHECK_LEN)?.root)
+    Ok(parse_classic::<InStore>(source, log, bump, JSON_OPTS, CHECK_LEN)?.root)
 }
 
-fn parse_classic(
+fn parse_classic<D: Dest>(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     bump: &Bump,
@@ -377,55 +377,22 @@ fn parse_classic(
         ..opts
     };
     let mut out = parse_impl(source, log, opts, check_len)?;
-    out.root = match materialize_impl::<InStore>(&out.root, source, bump, opts.was_originally_macro)
-    {
+    out.root = match materialize_impl::<D>(&out.root, source, bump, opts.was_originally_macro) {
         Ok(root) => root,
         Err(e) => {
-            add_too_deeply_nested_error(log, source, out.root.loc);
+            log.add_error_fmt_opts(
+                format_args!("JSON document is too deeply nested"),
+                bun_ast::AddErrorOptions {
+                    source: Some(source),
+                    loc: out.root.loc,
+                    ..Default::default()
+                },
+            );
             return Err(e);
         }
     };
     out.tape = None;
     Ok(out)
-}
-
-/// [`parse_classic`] with the nodes built in `arena`.
-fn parse_classic_into_arena<D: Dest>(
-    source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
-    arena: &Bump,
-    opts: JSONOptions,
-) -> crate::Result<ParseOutput> {
-    let opts = JSONOptions {
-        record_value_locs: true,
-        ..opts
-    };
-    let mut out = parse_impl(source, log, opts, false)?;
-    out.root = match materialize_impl::<D>(&out.root, source, arena, opts.was_originally_macro) {
-        Ok(root) => root,
-        Err(e) => {
-            add_too_deeply_nested_error(log, source, out.root.loc);
-            return Err(e);
-        }
-    };
-    out.tape = None;
-    Ok(out)
-}
-
-#[cold]
-fn add_too_deeply_nested_error(
-    log: &mut bun_ast::Log,
-    source: &bun_ast::Source,
-    loc: bun_ast::Loc,
-) {
-    log.add_error_fmt_opts(
-        format_args!("JSON document is too deeply nested"),
-        bun_ast::AddErrorOptions {
-            source: Some(source),
-            loc,
-            ..Default::default()
-        },
-    );
 }
 
 impl ParsedJson {
@@ -537,7 +504,7 @@ pub fn parse_package_json_utf8(
     if source.contents.is_empty() {
         return Ok(empty_object_expr::<InStore>(bump));
     }
-    Ok(parse_classic(source, log, bump, PACKAGE_JSON_OPTS, false)?.root)
+    Ok(parse_classic::<InStore>(source, log, bump, PACKAGE_JSON_OPTS, false)?.root)
 }
 
 #[derive(Default)]
@@ -559,7 +526,7 @@ pub fn parse_package_json_utf8_with_opts(
             ..Default::default()
         });
     }
-    let out = parse_classic(source, log, bump, opts, false)?;
+    let out = parse_classic::<InStore>(source, log, bump, opts, false)?;
     Ok(JsonResult {
         root: out.root,
         indentation: out.indentation,
@@ -580,7 +547,7 @@ pub fn parse_package_json_utf8_with_opts_into_arena(
         });
     }
     let _global_lists = bun_alloc::ast_alloc::DetachAstHeap::new();
-    let out = parse_classic_into_arena::<NodesInArena>(source, log, arena, opts)?;
+    let out = parse_classic::<NodesInArena>(source, log, arena, opts, false)?;
     Ok(JsonResult {
         root: out.root,
         indentation: out.indentation,
@@ -595,7 +562,7 @@ pub fn parse_for_macro(
     if source.contents.is_empty() {
         return Ok(empty_object_expr::<InStore>(bump));
     }
-    Ok(parse_classic(source, log, bump, MACRO_JSON_OPTS, false)?.root)
+    Ok(parse_classic::<InStore>(source, log, bump, MACRO_JSON_OPTS, false)?.root)
 }
 
 /// `tsconfig.json` / `.jsonc` (comments, trailing commas) into the classic `E::Object` AST.
@@ -608,7 +575,7 @@ pub fn parse_ts_config(
     if source.contents.is_empty() {
         return Ok(empty_object_expr::<InStore>(bump));
     }
-    Ok(parse_classic(source, log, bump, TSCONFIG_OPTS, false)?.root)
+    Ok(parse_classic::<InStore>(source, log, bump, TSCONFIG_OPTS, false)?.root)
 }
 
 /// `.env` / `--define` values: JSON, keywords, or an implicitly-quoted string.
@@ -633,17 +600,15 @@ pub fn parse_env_json(
         }
         let rewritten: &[u8] = bump.alloc_slice_copy(&unescaped);
         let rw_source = bun_ast::Source::init_path_string("", rewritten);
-        return Ok(
-            parse_classic_into_arena::<InArena>(&rw_source, log, bump, DOTENV_JSON_OPTS)?.root,
-        );
+        return Ok(parse_classic::<InArena>(&rw_source, log, bump, DOTENV_JSON_OPTS, false)?.root);
     }
 
     match contents[0] {
         b'{' | b'[' | b'0'..=b'9' | b'"' | b'\'' => {
-            Ok(parse_classic_into_arena::<InArena>(source, log, bump, DOTENV_JSON_OPTS)?.root)
+            Ok(parse_classic::<InArena>(source, log, bump, DOTENV_JSON_OPTS, false)?.root)
         }
         b'-' | b'.' if leads_a_number(contents) => {
-            Ok(parse_classic_into_arena::<InArena>(source, log, bump, DOTENV_JSON_OPTS)?.root)
+            Ok(parse_classic::<InArena>(source, log, bump, DOTENV_JSON_OPTS, false)?.root)
         }
         _ => {
             let word_len = contents

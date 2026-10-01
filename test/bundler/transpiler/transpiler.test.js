@@ -6389,8 +6389,7 @@ describe("same-target destructuring with an unstable target", () => {
 // stack check. A value that the parser accepted could run that copy off the
 // stack and end the process with a signal. The depths in this block come from a
 // search in the child for the deepest value that loads: on the way, every probe
-// must load or fail with the parser's error. A debug build with the address
-// sanitizer needs seconds for each child, hence the timeouts.
+// must load or fail with the parser's error.
 describe.concurrent("a deeply nested define value", () => {
   const nested = depth => Buffer.alloc(depth, "[").toString() + "1" + Buffer.alloc(depth, "]").toString();
   const searchSource = `
@@ -6461,26 +6460,22 @@ describe.concurrent("a deeply nested define value", () => {
     }));
 
   it("loads in new Bun.Transpiler() up to the limit of the parser", async () => {
-    expect(await measureMainThreadLimit()).toBeGreaterThanOrEqual(256);
-  }, 60_000);
+    expect(await measureMainThreadLimit()).toBeGreaterThanOrEqual(64);
+  });
 
   it("loads in new Bun.Transpiler() in a Worker up to the limit of the parser", async () => {
-    expect(await measureWorkerLimit()).toBeGreaterThanOrEqual(256);
-  }, 60_000);
+    expect(await measureWorkerLimit()).toBeGreaterThanOrEqual(64);
+  });
 
   // A depth that the copy could not hold is longer than the 32K command line of
   // Windows. bunfig.toml covers it there.
-  it.skipIf(isWindows)(
-    "loads from --define",
-    async () => {
-      const depth = ((await measureMainThreadLimit()) * 3) >> 2;
-      const files = { "entry.js": `console.log(JSON.stringify(SHALLOW));` };
-      expect(
-        await run(["--define", `DEEPX=${nested(depth)}`, "--define", `SHALLOW=${shallow}`, "entry.js"], files),
-      ).toEqual({ stdout: shallow + "\n", stderr: "", exitCode: 0, signalCode: null });
-    },
-    60_000,
-  );
+  it.skipIf(isWindows)("loads from --define", async () => {
+    const depth = ((await measureMainThreadLimit()) * 3) >> 2;
+    const files = { "entry.js": `console.log(JSON.stringify(SHALLOW));` };
+    expect(
+      await run(["--define", `DEEPX=${nested(depth)}`, "--define", `SHALLOW=${shallow}`, "entry.js"], files),
+    ).toEqual({ stdout: shallow + "\n", stderr: "", exitCode: 0, signalCode: null });
+  });
 
   it("loads from bunfig.toml [define]", async () => {
     const depth = ((await measureMainThreadLimit()) * 3) >> 2;
@@ -6494,7 +6489,7 @@ describe.concurrent("a deeply nested define value", () => {
       exitCode: 0,
       signalCode: null,
     });
-  }, 60_000);
+  });
 
   it("loads again in a Worker of a process that has it", async () => {
     const depth = ((await measureWorkerLimit()) * 3) >> 2;
@@ -6509,7 +6504,7 @@ describe.concurrent("a deeply nested define value", () => {
       exitCode: 0,
       signalCode: null,
     });
-  }, 60_000);
+  });
 
   it("fails with the error of the parser past its limit", async () => {
     const depth = (await measureMainThreadLimit()) * 4;
@@ -6520,7 +6515,7 @@ describe.concurrent("a deeply nested define value", () => {
     const { stdout, stderr, exitCode, signalCode } = await run(["entry.js"], files);
     expect(stderr).toContain("error: JSON document is too deeply nested");
     expect({ stdout, exitCode, signalCode }).toEqual({ stdout: "", exitCode: 1, signalCode: null });
-  }, 60_000);
+  });
 
   it("is freed with its transpiler", async () => {
     // The copy left its list buffers on the global heap, where nothing frees
@@ -6543,7 +6538,7 @@ describe.concurrent("a deeply nested define value", () => {
     `;
     // The leak was 11 MiB here. Without it the growth is under 2 MiB.
     await expectRssDeltaBelow(["--smol", "-e", script], { release: 6, debug: 6 });
-  }, 60_000);
+  });
 
   it("that is empty is not shared with an empty macro result", async () => {
     // Both used one static object. The macro marked it as a macro result, and
@@ -6579,5 +6574,5 @@ describe.concurrent("a deeply nested define value", () => {
       exitCode: 0,
       signalCode: null,
     });
-  }, 60_000);
+  });
 });

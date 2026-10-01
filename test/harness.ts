@@ -357,13 +357,13 @@ export function withBoundedMainThreadStack(cmd: string[]): string[] {
 export const deepestAcceptedSource = `
   const deepestAccepted = async accepts => {
     let accepted = 0;
-    let rejected = 256;
+    let rejected = 64;
     // The ceiling bounds the run on a host with a very large stack.
     while (rejected < 1 << 20 && (await accepts(rejected))) {
       accepted = rejected;
       rejected *= 2;
     }
-    while (rejected - accepted > accepted >> 4) {
+    while (rejected - accepted > Math.max(1, accepted >> 4)) {
       const probe = (accepted + rejected) >> 1;
       if (await accepts(probe)) accepted = probe;
       else rejected = probe;

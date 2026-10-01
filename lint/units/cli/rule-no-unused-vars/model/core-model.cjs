@@ -135,6 +135,8 @@ module.exports = {
 			return false;
 		};
 
+		// Where the variable is first defined as a parameter: the parameters of a function in the order ESLint's getDeclaredVariables has them. -1: no parameter.
+		const parameterAt = variable => { const d = variable.defs.find(x => x.type === "Parameter"); return d ? d.name.range[0] : -1; };
 		const isPlainParameter = def => def.node.params.some(p => p.type === "Identifier" && p.range[0] === def.name.range[0]);
 		const isExported = def => {
 			if (def.type === "Parameter") return false;
@@ -152,7 +154,7 @@ module.exports = {
 						if (scope.type === "class" && scope.block.id === variable.identifiers[0]) return;
 						if (def.type === "Parameter") {
 							if (setters.has(def.node)) return;
-							if (isPlainParameter(def) && scope.variables.slice(index + 1).some(v => v.defs.some(d => d.type === "Parameter") && v.references.length > 0)) return;
+							if (isPlainParameter(def) && scope.variables.some(v => parameterAt(v) > parameterAt(variable) && v.references.length > 0)) return;
 						}
 						if (isUsed(variable) || isExported(def)) return;
 						const writes = variable.references.filter(ref => ref.isWrite() && ref.from.variableScope === scope.variableScope);

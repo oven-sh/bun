@@ -13,22 +13,27 @@ nuv-sim.cjs       node nuv-sim.cjs [--type t] [--source-order] [--show N] <file.
                   --source-order numbers the references by where they stand: also no difference (23,063 runs of real files).
 nuv-sim-ts.cjs    node nuv-sim-ts.cjs [--show N] <file.ts | list.json | --list files.txt | --code "...">...
                   The TypeScript side as planned (the marks M1 to M11 restated as facts of definitions, scopes and references), on
-                  typescript-eslint's scopes, compared with @typescript-eslint/no-unused-vars. Run: cases/ts-*.json 330 cases,
+                  typescript-eslint's scopes, compared with @typescript-eslint/no-unused-vars. Run: the case lists 655 cases,
                   TypeScript's tests/cases 11143 files that parse (44,260 reports), bun's .ts/.tsx 3436, 668 .d.ts: no difference.
                   --unbuilt: the fallback for what the parser does not build (members and heritage of an interface, the type of an
                   alias, a class index signature: X4.3, X4.4): no reference and no variable inside, every identifier token a read by
                   name. --token-marks: the names under the parameters of a setter or signature read from the tokens of the list.
-                  Both only lose reports: `extra` stays 0 (the numbers are in the findings of the unit).
+                  Both only lose reports: `extra` 0 on the three corpora; lost 571 of 44,260 (TypeScript's tests), 2 of 2940 (bun), 21 of 116 (.d.ts).
+                  For that, a token is a read of the nearest TYPE variable and of the nearest VALUE variable of its name, and a name
+                  declared inside the parameter list of a signature is marked itself (without either, one extra report each).
 probe/            sitesprobe: the site facts (assign target, update operand, unused value, in a loop, for-in/of exception, storable
                   function) on bun's tree of Parser::parse_for_lint by one top-down walk, as the Referencer is to compute them.
                   build:  /workspace/tools/lk python3 probe/build.py /tmp/nuv/sitesprobe
 sites-estree.cjs  node sites-estree.cjs [--probe /tmp/nuv/sitesprobe] [--list files.txt] <file>... : those facts against the same
                   facts read off ESLint's tree with parent pointers (espree; typescript-eslint's parser for TypeScript).
+sites-context.cjs node sites-context.cjs [--list files.txt] <file>... : the three context values of the probe (unused value, loop depth, what a
+                  function found here is) computed top-down on ESLint's tree, against the parent walks of ESLint's rule. No bun needed.
+                  Run: ESLint's files, bun's .js and .ts files, TypeScript's tests: 2,977,967 identifiers, no difference.
 expected-differences.json   cases where bun is to be silent and ESLint reports, each with the reason.
 extract-default-cases.cjs   the cases of ESLint's own test that run with options equal to the defaults ("all" and an object that
                   restates defaults included): 376, 368 of them distinct. All parse with bun's parser.
 make-seed.cjs     node make-seed.cjs > seed/no-unused-vars.json : those cases and cases/*.json with ESLint's answer as `expect`
-                  (922 cases: 623 js, 32 jsx, 251 ts, 16 tsx; 599 reports). It is the seed of test/cli/lint/rules/no-unused-vars.json:
+                  (941 cases: 623 js, 32 jsx, 251 ts, 16 tsx, 19 declaration files; 609 reports; bun's parser takes all). It is the seed of test/cli/lint/rules/no-unused-vars.json:
                   `expect` becomes what bun prints, and a case where that is not ESLint's answer gets `differs` and `eslint`.
 real.cjs          BUN_LINT_EXE=<bun-debug> node real.cjs [--list files.txt] <file>... : no-unused-vars of `bun --lint` over real files
                   against ESLint. `extra` (a report of bun on a name ESLint calls used) has to be 0. For the build that has the rule.

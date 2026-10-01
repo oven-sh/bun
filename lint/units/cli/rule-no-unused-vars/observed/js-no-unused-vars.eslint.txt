@@ -252,3 +252,8 @@
     1:12 'y' is assigned a value but never used.
 [cjs] "function f() { 'use strict'; var a; } f();"
     1:34 'a' is defined but never used.
+[cjs] "function f(a, arguments) { return arguments } f();"
+[cjs] "function f(arguments, a) { return a } f();"
+[cjs] "function f(a, b, a) { return a } f();"
+    1:15 'b' is defined but never used.
+[cjs] "function f(b, a, a) { return a } f();"

@@ -171,6 +171,10 @@ const cjs = [
 	"var a; return;",
 	"x = 1; var y = x;",
 	"function f() { 'use strict'; var a; } f();",
+	"function f(a, arguments) { return arguments } f();",
+	"function f(arguments, a) { return a } f();",
+	"function f(a, b, a) { return a } f();",
+	"function f(b, a, a) { return a } f();",
 ].map(code => ({ code, ext: "cjs" }));
 
 const ts = `

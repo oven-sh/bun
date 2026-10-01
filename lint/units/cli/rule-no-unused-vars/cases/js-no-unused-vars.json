@@ -153,5 +153,9 @@
 	{"code":"function f() { var arguments; } f();","ext":"cjs"},
 	{"code":"var a; return;","ext":"cjs"},
 	{"code":"x = 1; var y = x;","ext":"cjs"},
-	{"code":"function f() { 'use strict'; var a; } f();","ext":"cjs"}
+	{"code":"function f() { 'use strict'; var a; } f();","ext":"cjs"},
+	{"code":"function f(a, arguments) { return arguments } f();","ext":"cjs"},
+	{"code":"function f(arguments, a) { return a } f();","ext":"cjs"},
+	{"code":"function f(a, b, a) { return a } f();","ext":"cjs"},
+	{"code":"function f(b, a, a) { return a } f();","ext":"cjs"}
 ]

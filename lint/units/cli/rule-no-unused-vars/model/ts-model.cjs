@@ -175,6 +175,7 @@ module.exports = {
 			void def;
 			return variable.defs.some(d => d.name && d.name.range && marked.has(d.name.range[0]));
 		};
+		const parameterAt = variable => { const d = variable.defs.find(x => x.type === "Parameter"); return d ? d.name.range[0] : -1; };
 		const isPlainParameter = def => (def.node.params || []).some(p => p.type === "Identifier" && p.range[0] === def.name.range[0]);
 
 		return {
@@ -232,7 +233,7 @@ module.exports = {
 						if (variable.defs.some(d => d.type !== "Parameter" && exported.has(d.name.range[0]))) return;
 						if (isUsed(variable)) return;
 						if (def.type === "Parameter" && isPlainParameter(def) &&
-							scope.variables.slice(index + 1).some(v => v.defs.some(d => d.type === "Parameter") && (refsOf(v).length > 0 || quirk.has(v) || isMarked(v, scope)))) return;
+							scope.variables.some(v => parameterAt(v) > parameterAt(variable) && (refsOf(v).length > 0 || quirk.has(v) || isMarked(v, scope)))) return;
 						const asType = refsOf(variable).some(onlyAsType);
 						if (asType && variable.defs.some(d => d.type === "ImportBinding")) return;
 						const writes = refsOf(variable).filter(ref => ref.isWrite() && ref.from.variableScope === scope.variableScope);

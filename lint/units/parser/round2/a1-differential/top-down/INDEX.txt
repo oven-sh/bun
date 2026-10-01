@@ -18,16 +18,17 @@ runs/SHA256SUMS.runs.txt    sha256 of the run files that stayed in /tmp/a1td/run
 tools/                 forms.mjs, heritage.mjs, rr.mjs, decompose.mjs, table.mjs read a diff.jsonl;
                        probe.sh <sources.txt> [apis] runs side.mjs with base and head and merge.mjs with tsc;
                        summarize.mjs <probe.out> [api] groups a probe by base>head and validity for tsc; collect.mjs joins probes
-probes/t1..t16.txt     probe inputs, one source per line (U+23CE is a line break); .out is what probe.sh printed
+probes/t1..t17.txt     probe inputs, one source per line (U+23CE is a line break); .out is what probe.sh printed
                        t2 parameter modifiers, t3 parameters of signatures, t4 tuple elements, t5 type members,
                        t6 heritage entries, t7 instantiation expressions, t8 reserved words as type names by context,
                        t9 extends as a list element, t10 class members (four configurations), t11 metadata of conditional types,
                        t12 and witness.pairs.txt witnesses, t14 type parameter lists, t15 cast of an arrow function,
-                       t16 function types without a return type
+                       t16 function types without a return type, t17 commas in computed names and more parameter forms
 probes/restore.plain.txt    393 sources: base rejects, head accepts, tsc rejects (loader ts, default options)
 probes/restore.exp.txt      30 sources: the same with experimentalDecorators
 probes/valid.plain.txt      153 sources: base rejects, head accepts, tsc as a whole reports nothing
 probes/witness.pairs.txt    24 pairs (source, witness), checked in witness.out
 
 blind-spots/           harness.extra-apis.mjs (loader js and jsx, minify.identifiers, minify: true, scan and scanImports of js),
-                       corpus.comments.json (122 sources with a comment inside a construct), diff.*.txt of the three small corpora
+                       corpus.comments.json (122 sources with a comment inside a construct),
+                       summary.txt: the counts by configuration and class for comments, testrows, targeted and small (six parts)

@@ -246,6 +246,8 @@ impl Checker<'_> {
         }
         // `GetDeclarationDiagnostics`: nor these.
         self.check_module_exports_assignments(file, &mut out);
+        // `GetDeclarationDiagnostics`: no comment directive takes these back, and plain JavaScript has them too.
+        pass!(check_isolated_declarations);
         // `GetSyntacticDiagnostics`: no comment directive takes these back.
         out.append(&mut syntactic);
         out.sort_unstable();

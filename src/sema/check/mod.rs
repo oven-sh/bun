@@ -20,6 +20,7 @@ mod errors_flow;
 mod errors_grammar;
 mod errors_heritage;
 mod errors_implicit;
+mod errors_isolated_declarations;
 mod errors_iteration;
 mod errors_js;
 mod errors_jsx;

@@ -261,6 +261,8 @@ pub struct Options {
     pub no_emit_is_set: bool,
     /// `erasableSyntaxOnly`
     pub erasable_syntax_only: bool,
+    /// `isolatedDeclarations`, where declaration files are written (`GetEmitDeclarations`): its errors come of writing them.
+    pub isolated_declarations: bool,
     /// `GetEmitDeclarations`: `declaration`, or `composite`.
     pub emits_declarations: bool,
     /// `noErrorTruncation`
@@ -443,6 +445,8 @@ impl Options {
         options.allow_unreachable_code = flag("allowUnreachableCode");
         options.allow_umd_global_access = flag("allowUmdGlobalAccess");
         options.erasable_syntax_only = flag("erasableSyntaxOnly");
+        options.isolated_declarations =
+            flag("isolatedDeclarations") && (flag("declaration") || flag("composite"));
         options.emits_declarations = flag("declaration") || flag("composite");
         options.no_error_truncation = flag("noErrorTruncation");
         options.emit_decorator_metadata = flag("emitDecoratorMetadata");

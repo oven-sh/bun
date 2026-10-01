@@ -1,0 +1,5 @@
+["Math.E; Math.LN10; Math.LN2; Math.LOG10E; Math.LOG2E; Math.PI; Math.SQRT1_2; Math.SQRT2; Number.EPSILON; Number.MAX_SAFE_INTEGER; Number.MAX_VALUE; Number.MIN_SAFE_INTEGER; Number.MIN_VALUE; Number.NaN; Number.NEGATIVE_INFINITY; Number.POSITIVE_INFINITY;",
+ "Math['PI']; Math[`E`]; Math?.PI; (Math).PI; Math.PI * 2; -Math.PI; Math.abs; Math.foo; Math.abs(1); Number.parseInt; Number.length; Number.name; Number['MAX_' + 'VALUE']; Math[0]; Number.prototype; (0, Math).PI; Math.PI.x; `${Math.PI}`; Math.PI + ''; Number.MAX_VALUE + 1; Number.MIN_VALUE / 2;",
+ "var Math; Math.PI; Number.MAX_VALUE;",
+ "function f(Number) {} Number.MAX_VALUE; Math.E;"
+]

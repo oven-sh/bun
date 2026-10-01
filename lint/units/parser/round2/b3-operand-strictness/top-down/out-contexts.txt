@@ -1,0 +1,588 @@
+## assign: a + b = c
+"a + b = c;" [ts]
+    go : TS1005@6+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @0+0 Invalid assignment target
+"function f() { return a + b = c; }" [ts]
+    go : TS1005@28+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @22+0 Invalid assignment target
+"throw a + b = c;" [ts]
+    go : TS1005@12+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @6+0 Invalid assignment target
+"let x = a + b = c;" [ts]
+    go : TS1005@14+1 "',' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @8+0 Invalid assignment target
+"let w = 1, x = a + b = c, y;" [ts]
+    go : TS1005@21+1 "',' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @15+0 Invalid assignment target
+"(a + b = c);" [ts]
+    go : TS1005@7+1 "')' expected." <<=>> | TS1005@10+1 "';' expected." <<)>>   [tsc first: same]
+    bun: parse ok, visit ERR @1+0 Invalid assignment target
+"f(a + b = c);" [ts]
+    go : TS1005@8+1 "',' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @2+0 Invalid assignment target
+"f(x, a + b = c, y);" [ts]
+    go : TS1005@11+1 "',' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @5+0 Invalid assignment target
+"new F(a + b = c);" [ts]
+    go : TS1005@12+1 "',' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @6+0 Invalid assignment target
+"[a + b = c];" [ts]
+    go : TS1005@7+1 "',' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @1+0 Invalid assignment target
+"({ k: a + b = c });" [ts]
+    go : TS1005@12+1 "',' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @6+0 Invalid assignment target
+"({ [a + b = c]: 1 });" [ts]
+    go : TS1005@10+1 "']' expected." <<=>> | TS1005@13+1 "',' expected." <<]>>   [tsc first: same]
+    bun: parse ok, visit ERR @4+0 Invalid assignment target
+"({ k = a + b = c } = o);" [ts]
+    go : TS1005@13+1 "',' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @7+0 Invalid assignment target
+"o[a + b = c];" [ts]
+    go : TS1005@8+1 "']' expected." <<=>> | TS1005@11+1 "';' expected." <<]>>   [tsc first: same]
+    bun: parse ok, visit ERR @2+0 Invalid assignment target
+"o?.[a + b = c];" [ts]
+    go : TS1005@10+1 "']' expected." <<=>> | TS1005@13+1 "';' expected." <<]>>   [tsc first: same]
+    bun: parse ok, visit ERR @4+0 Invalid assignment target
+"`x${a + b = c}y`;" [ts]
+    go : TS1005@10+1 "'}' expected." <<=>> | TS1128@13+1 "Declaration or statement expected." <<}>>   [tsc first: same]
+    bun: parse ok, visit ERR @4+0 Invalid assignment target
+"t`x${a + b = c}y`;" [ts]
+    go : TS1005@11+1 "'}' expected." <<=>> | TS1128@14+1 "Declaration or statement expected." <<}>>   [tsc first: same]
+    bun: parse ok, visit ERR @5+0 Invalid assignment target
+"x ? a + b = c : y;" [ts]
+    go : TS1005@10+1 "':' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @4+0 Invalid assignment target
+"x ? y : a + b = c;" [ts]
+    go : TS1005@14+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @8+0 Invalid assignment target
+"f(x ? y : a + b = c);" [ts]
+    go : TS1005@16+1 "',' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @10+0 Invalid assignment target
+"x => a + b = c;" [ts]
+    go : TS1005@11+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @5+0 Invalid assignment target
+"f(x => a + b = c);" [ts]
+    go : TS1005@13+1 "',' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @7+0 Invalid assignment target
+"x = a + b = c;" [ts]
+    go : TS1005@10+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @4+0 Invalid assignment target
+"x, a + b = c;" [ts]
+    go : TS1005@9+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @3+0 Invalid assignment target
+"x || a + b = c;" [ts]
+    go : TS1005@11+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @0+0 Invalid assignment target
+"!a + b = c;" [ts]
+    go : TS1005@7+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @0+0 Invalid assignment target
+"for (a + b = c;;) {}" [ts]
+    go : TS1005@11+1 "';' expected." <<=>> | TS1109@15+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @5+0 Invalid assignment target
+"for (;a + b = c;) {}" [ts]
+    go : TS1005@12+1 "';' expected." <<=>> | TS1005@15+1 "')' expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @6+0 Invalid assignment target
+"for (;;a + b = c) {}" [ts]
+    go : TS1005@13+1 "')' expected." <<=>> | TS1005@16+1 "';' expected." <<)>>   [tsc first: same]
+    bun: parse ok, visit ERR @7+0 Invalid assignment target
+"for (x of a + b = c) {}" [ts]
+    go : TS1005@16+1 "')' expected." <<=>> | TS1005@19+1 "';' expected." <<)>>   [tsc first: same]
+    bun: parse ok, visit ERR @10+0 Invalid assignment target
+"for (x in a + b = c) {}" [ts]
+    go : TS1005@16+1 "')' expected." <<=>> | TS1005@19+1 "';' expected." <<)>>   [tsc first: same]
+    bun: parse ok, visit ERR @10+0 Invalid assignment target
+"if (a + b = c) {}" [ts]
+    go : TS1005@10+1 "')' expected." <<=>> | TS1005@13+1 "';' expected." <<)>>   [tsc first: same]
+    bun: parse ok, visit ERR @4+0 Invalid assignment target
+"while (a + b = c) {}" [ts]
+    go : TS1005@13+1 "')' expected." <<=>> | TS1005@16+1 "';' expected." <<)>>   [tsc first: same]
+    bun: parse ok, visit ERR @7+0 Invalid assignment target
+"do {} while (a + b = c);" [ts]
+    go : TS1005@19+1 "')' expected." <<=>> | TS1434@21+1 "Unexpected keyword or identifier." <<c>>   [tsc first: same]
+    bun: parse ok, visit ERR @13+0 Invalid assignment target
+"switch (a + b = c) {}" [ts]
+    go : TS1005@14+1 "')' expected." <<=>> | TS1130@16+1 "'case' or 'default' expected." <<c>>   [tsc first: same]
+    bun: parse ok, visit ERR @8+0 Invalid assignment target
+"with (a + b = c) {}" [js]
+    go : TS1005@12+1 "')' expected." <<=>> | TS1005@15+1 "';' expected." <<)>>   [tsc first: same]
+    bun: parse ok, visit ERR @6+0 Invalid assignment target
+"switch (x) { case a + b = c: break; }" [ts]
+    go : TS1005@24+1 "':' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @18+0 Invalid assignment target
+"switch (x) { case 1: a + b = c; }" [ts]
+    go : TS1005@27+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @21+0 Invalid assignment target
+"export default a + b = c;" [ts]
+    go : TS1005@21+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @15+0 Invalid assignment target
+"export = a + b = c;" [ts]
+    go : TS1005@15+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @9+0 Invalid assignment target
+"enum E { A = a + b = c }" [ts]
+    go : TS1357@19+1 "An enum member name must be followed by a ',', '=', or '}'." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @13+0 Invalid assignment target
+"class C { x = a + b = c; }" [ts]
+    go : TS1005@20+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @14+0 Invalid assignment target
+"class C { static x = a + b = c; }" [ts]
+    go : TS1005@27+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @21+0 Invalid assignment target
+"class C { [a + b = c]() {} }" [ts]
+    go : TS1005@17+1 "']' expected." <<=>> | TS1005@20+1 "';' expected." <<]>>   [tsc first: same]
+    bun: parse ok, visit ERR @11+0 Invalid assignment target
+"class C extends a + b = c {}" [ts]
+    go : TS1005@18+1 "',' expected." <<+>> | TS1005@22+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ERR @18+1 Expected "{" but found "+"
+"function f(x = a + b = c) {}" [ts]
+    go : TS1005@21+1 "',' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @15+0 Invalid assignment target
+"((x = a + b = c) => x);" [ts]
+    go : TS1005@12+1 "',' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @6+0 Invalid assignment target
+"let [p = a + b = c] = y;" [ts]
+    go : TS1005@15+1 "',' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @9+0 Invalid assignment target
+"let { p = a + b = c } = y;" [ts]
+    go : TS1005@16+1 "',' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @10+0 Invalid assignment target
+"f(...a + b = c);" [ts]
+    go : TS1005@11+1 "',' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @5+0 Invalid assignment target
+"[...a + b = c];" [ts]
+    go : TS1005@10+1 "',' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @4+0 Invalid assignment target
+"function* g() { yield a + b = c; }" [ts]
+    go : TS1005@28+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @22+0 Invalid assignment target
+"async function g() { await a + b = c; }" [ts]
+    go : TS1005@33+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @21+0 Invalid assignment target
+"import(a + b = c);" [ts]
+    go : TS1005@13+1 "',' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @7+0 Invalid assignment target
+"@d(a + b = c) class C {}" [ts]
+    go : TS1005@9+1 "',' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @3+0 Invalid assignment target
+"<div x={a + b = c} />;" [tsx]
+    go : TS1005@14+1 "'}' expected." <<=>> | TS1003@17+1 "Identifier expected." <<}>>   [tsc first: same]
+    bun: parse ok, visit ERR @8+0 Invalid assignment target
+"<div>{a + b = c}</div>;" [tsx]
+    go : TS1005@12+1 "'}' expected." <<=>> | TS1381@15+1 "Unexpected token. Did you mean `{'}'}` or `&rbrace;`?" <<}>>   [tsc first: same]
+    bun: parse ok, visit ERR @6+0 Invalid assignment target
+"<div {...a + b = c} />;" [tsx]
+    go : TS1005@15+1 "'}' expected." <<=>> | TS1003@18+1 "Identifier expected." <<}>>   [tsc first: same]
+    bun: parse ok, visit ERR @9+0 Invalid assignment target
+"(a + b = c as T);" [ts]
+    go : TS1005@7+1 "')' expected." <<=>> | TS1005@15+1 "';' expected." <<)>>   [tsc first: same]
+    bun: parse ok, visit ERR @1+0 Invalid assignment target
+"f((a + b = c)!);" [ts]
+    go : TS1005@9+1 "')' expected." <<=>> | TS1005@14+1 "';' expected." <<)>>   [tsc first: same]
+    bun: parse ok, visit ERR @3+0 Invalid assignment target
+"{ a + b = c; }" [ts]
+    go : TS1005@8+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @2+0 Invalid assignment target
+"f(function () { a + b = c; });" [ts]
+    go : TS1005@22+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @16+0 Invalid assignment target
+"l: a + b = c;" [ts]
+    go : TS1005@9+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @3+0 Invalid assignment target
+"if (x) a + b = c;" [ts]
+    go : TS1005@13+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @7+0 Invalid assignment target
+"namespace N { a + b = c; }" [ts]
+    go : TS1005@20+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @14+0 Invalid assignment target
+## post2: a++ ++
+"a++ ++;" [ts]
+    go : TS1005@4+2 "';' expected." <<++>> | TS1109@6+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @0+0 Invalid assignment target
+"function f() { return a++ ++; }" [ts]
+    go : TS1005@26+2 "';' expected." <<++>> | TS1109@28+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @22+0 Invalid assignment target
+"throw a++ ++;" [ts]
+    go : TS1005@10+2 "';' expected." <<++>> | TS1109@12+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @6+0 Invalid assignment target
+"let x = a++ ++;" [ts]
+    go : TS1005@12+2 "',' expected." <<++>> | TS1109@14+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @8+0 Invalid assignment target
+"let w = 1, x = a++ ++, y;" [ts]
+    go : TS1005@19+2 "',' expected." <<++>> | TS1109@21+1 "Expression expected." <<,>>   [tsc first: same]
+    bun: parse ok, visit ERR @15+0 Invalid assignment target
+"(a++ ++);" [ts]
+    go : TS1005@5+2 "')' expected." <<++>> | TS1005@7+1 "';' expected." <<)>>   [tsc first: same]
+    bun: parse ok, visit ERR @1+0 Invalid assignment target
+"f(a++ ++);" [ts]
+    go : TS1005@6+2 "',' expected." <<++>> | TS1109@8+1 "Expression expected." <<)>>   [tsc first: same]
+    bun: parse ok, visit ERR @2+0 Invalid assignment target
+"f(x, a++ ++, y);" [ts]
+    go : TS1005@9+2 "',' expected." <<++>> | TS1109@11+1 "Expression expected." <<,>>   [tsc first: same]
+    bun: parse ok, visit ERR @5+0 Invalid assignment target
+"new F(a++ ++);" [ts]
+    go : TS1005@10+2 "',' expected." <<++>> | TS1109@12+1 "Expression expected." <<)>>   [tsc first: same]
+    bun: parse ok, visit ERR @6+0 Invalid assignment target
+"[a++ ++];" [ts]
+    go : TS1005@5+2 "',' expected." <<++>> | TS1109@7+1 "Expression expected." <<]>>   [tsc first: same]
+    bun: parse ok, visit ERR @1+0 Invalid assignment target
+"({ k: a++ ++ });" [ts]
+    go : TS1005@10+2 "',' expected." <<++>> | TS1005@13+1 "')' expected." <<}>>   [tsc first: same]
+    bun: parse ok, visit ERR @6+0 Invalid assignment target
+"({ [a++ ++]: 1 });" [ts]
+    go : TS1005@8+2 "']' expected." <<++>> | TS1109@10+1 "Expression expected." <<]>>   [tsc first: same]
+    bun: parse ok, visit ERR @4+0 Invalid assignment target
+"({ k = a++ ++ } = o);" [ts]
+    go : TS1005@11+2 "',' expected." <<++>> | TS1005@14+1 "')' expected." <<}>>   [tsc first: same]
+    bun: parse ok, visit ERR @7+0 Invalid assignment target
+"o[a++ ++];" [ts]
+    go : TS1005@6+2 "']' expected." <<++>> | TS1005@8+1 "';' expected." <<]>>   [tsc first: same]
+    bun: parse ok, visit ERR @2+0 Invalid assignment target
+"o?.[a++ ++];" [ts]
+    go : TS1005@8+2 "']' expected." <<++>> | TS1005@10+1 "';' expected." <<]>>   [tsc first: same]
+    bun: parse ok, visit ERR @4+0 Invalid assignment target
+"`x${a++ ++}y`;" [ts]
+    go : TS1005@8+2 "'}' expected." <<++>> | TS1128@10+1 "Declaration or statement expected." <<}>>   [tsc first: same]
+    bun: parse ok, visit ERR @4+0 Invalid assignment target
+"t`x${a++ ++}y`;" [ts]
+    go : TS1005@9+2 "'}' expected." <<++>> | TS1128@11+1 "Declaration or statement expected." <<}>>   [tsc first: same]
+    bun: parse ok, visit ERR @5+0 Invalid assignment target
+"x ? a++ ++ : y;" [ts]
+    go : TS1005@8+2 "':' expected." <<++>> | TS1109@11+1 "Expression expected." <<:>>   [tsc first: same]
+    bun: parse ok, visit ERR @4+0 Invalid assignment target
+"x ? y : a++ ++;" [ts]
+    go : TS1005@12+2 "';' expected." <<++>> | TS1109@14+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @8+0 Invalid assignment target
+"f(x ? y : a++ ++);" [ts]
+    go : TS1005@14+2 "',' expected." <<++>> | TS1109@16+1 "Expression expected." <<)>>   [tsc first: same]
+    bun: parse ok, visit ERR @10+0 Invalid assignment target
+"x => a++ ++;" [ts]
+    go : TS1005@9+2 "';' expected." <<++>> | TS1109@11+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @5+0 Invalid assignment target
+"f(x => a++ ++);" [ts]
+    go : TS1005@11+2 "',' expected." <<++>> | TS1109@13+1 "Expression expected." <<)>>   [tsc first: same]
+    bun: parse ok, visit ERR @7+0 Invalid assignment target
+"x = a++ ++;" [ts]
+    go : TS1005@8+2 "';' expected." <<++>> | TS1109@10+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @4+0 Invalid assignment target
+"x, a++ ++;" [ts]
+    go : TS1005@7+2 "';' expected." <<++>> | TS1109@9+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @3+0 Invalid assignment target
+"x || a++ ++;" [ts]
+    go : TS1005@9+2 "';' expected." <<++>> | TS1109@11+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @5+0 Invalid assignment target
+"!a++ ++;" [ts]
+    go : TS1005@5+2 "';' expected." <<++>> | TS1109@7+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @1+0 Invalid assignment target
+"for (a++ ++;;) {}" [ts]
+    go : TS1005@9+2 "';' expected." <<++>> | TS1109@11+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @5+0 Invalid assignment target
+"for (;a++ ++;) {}" [ts]
+    go : TS1005@10+2 "';' expected." <<++>> | TS1109@12+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @6+0 Invalid assignment target
+"for (;;a++ ++) {}" [ts]
+    go : TS1005@11+2 "')' expected." <<++>> | TS1109@13+1 "Expression expected." <<)>>   [tsc first: same]
+    bun: parse ok, visit ERR @7+0 Invalid assignment target
+"for (x of a++ ++) {}" [ts]
+    go : TS1005@14+2 "')' expected." <<++>> | TS1109@16+1 "Expression expected." <<)>>   [tsc first: same]
+    bun: parse ok, visit ERR @10+0 Invalid assignment target
+"for (x in a++ ++) {}" [ts]
+    go : TS1005@14+2 "')' expected." <<++>> | TS1109@16+1 "Expression expected." <<)>>   [tsc first: same]
+    bun: parse ok, visit ERR @10+0 Invalid assignment target
+"if (a++ ++) {}" [ts]
+    go : TS1005@8+2 "')' expected." <<++>> | TS1109@10+1 "Expression expected." <<)>>   [tsc first: same]
+    bun: parse ok, visit ERR @4+0 Invalid assignment target
+"while (a++ ++) {}" [ts]
+    go : TS1005@11+2 "')' expected." <<++>> | TS1109@13+1 "Expression expected." <<)>>   [tsc first: same]
+    bun: parse ok, visit ERR @7+0 Invalid assignment target
+"do {} while (a++ ++);" [ts]
+    go : TS1005@17+2 "')' expected." <<++>> | TS1109@19+1 "Expression expected." <<)>>   [tsc first: same]
+    bun: parse ok, visit ERR @13+0 Invalid assignment target
+"switch (a++ ++) {}" [ts]
+    go : TS1005@12+2 "')' expected." <<++>> | TS1109@14+1 "Expression expected." <<)>>   [tsc first: same]
+    bun: parse ok, visit ERR @8+0 Invalid assignment target
+"with (a++ ++) {}" [js]
+    go : TS1005@10+2 "')' expected." <<++>> | TS1109@12+1 "Expression expected." <<)>>   [tsc first: same]
+    bun: parse ok, visit ERR @6+0 Invalid assignment target
+"switch (x) { case a++ ++: break; }" [ts]
+    go : TS1005@22+2 "':' expected." <<++>> | TS1109@24+1 "Expression expected." <<:>>   [tsc first: same]
+    bun: parse ok, visit ERR @18+0 Invalid assignment target
+"switch (x) { case 1: a++ ++; }" [ts]
+    go : TS1005@25+2 "';' expected." <<++>> | TS1109@27+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @21+0 Invalid assignment target
+"export default a++ ++;" [ts]
+    go : TS1005@19+2 "';' expected." <<++>> | TS1109@21+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @15+0 Invalid assignment target
+"export = a++ ++;" [ts]
+    go : TS1005@13+2 "';' expected." <<++>> | TS1109@15+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @9+0 Invalid assignment target
+"enum E { A = a++ ++ }" [ts]
+    go : TS1357@17+2 "An enum member name must be followed by a ',', '=', or '}'." <<++>> | TS1109@20+1 "Expression expected." <<}>>   [tsc first: same]
+    bun: parse ok, visit ERR @13+0 Invalid assignment target
+"class C { x = a++ ++; }" [ts]
+    go : TS1005@18+2 "';' expected." <<++>> | TS1109@20+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @14+0 Invalid assignment target
+"class C { static x = a++ ++; }" [ts]
+    go : TS1005@25+2 "';' expected." <<++>> | TS1109@27+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @21+0 Invalid assignment target
+"class C { [a++ ++]() {} }" [ts]
+    go : TS1005@15+2 "']' expected." <<++>> | TS1109@17+1 "Expression expected." <<]>>   [tsc first: same]
+    bun: parse ok, visit ERR @11+0 Invalid assignment target
+"class C extends a++ ++ {}" [ts]
+    go : TS1005@17+2 "',' expected." <<++>> | TS1109@20+2 "Expression expected." <<++>>   [tsc first: same]
+    bun: parse ERR @17+2 Expected "{" but found "++"
+"function f(x = a++ ++) {}" [ts]
+    go : TS1005@19+2 "',' expected." <<++>> | TS1109@21+1 "Expression expected." <<)>>   [tsc first: same]
+    bun: parse ok, visit ERR @15+0 Invalid assignment target
+"((x = a++ ++) => x);" [ts]
+    go : TS1005@10+2 "')' expected." <<++>> | TS1005@14+2 "';' expected." <<=>>>   [tsc first: same]
+    bun: parse ok, visit ERR @6+0 Invalid assignment target
+"let [p = a++ ++] = y;" [ts]
+    go : TS1005@13+2 "',' expected." <<++>> | TS1109@15+1 "Expression expected." <<]>>   [tsc first: same]
+    bun: parse ok, visit ERR @9+0 Invalid assignment target
+"let { p = a++ ++ } = y;" [ts]
+    go : TS1005@14+2 "',' expected." <<++>> | TS1109@17+1 "Expression expected." <<}>>   [tsc first: same]
+    bun: parse ok, visit ERR @10+0 Invalid assignment target
+"f(...a++ ++);" [ts]
+    go : TS1005@9+2 "',' expected." <<++>> | TS1109@11+1 "Expression expected." <<)>>   [tsc first: same]
+    bun: parse ok, visit ERR @5+0 Invalid assignment target
+"[...a++ ++];" [ts]
+    go : TS1005@8+2 "',' expected." <<++>> | TS1109@10+1 "Expression expected." <<]>>   [tsc first: same]
+    bun: parse ok, visit ERR @4+0 Invalid assignment target
+"function* g() { yield a++ ++; }" [ts]
+    go : TS1005@26+2 "';' expected." <<++>> | TS1109@28+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @22+0 Invalid assignment target
+"async function g() { await a++ ++; }" [ts]
+    go : TS1005@31+2 "';' expected." <<++>> | TS1109@33+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @27+0 Invalid assignment target
+"import(a++ ++);" [ts]
+    go : TS1005@11+2 "',' expected." <<++>> | TS1109@13+1 "Expression expected." <<)>>   [tsc first: same]
+    bun: parse ok, visit ERR @7+0 Invalid assignment target
+"@d(a++ ++) class C {}" [ts]
+    go : TS1005@7+2 "',' expected." <<++>> | TS1109@9+1 "Expression expected." <<)>>   [tsc first: same]
+    bun: parse ok, visit ERR @3+0 Invalid assignment target
+"<div x={a++ ++} />;" [tsx]
+    go : TS1005@12+2 "'}' expected." <<++>> | TS1109@14+1 "Expression expected." <<}>>   [tsc first: same]
+    bun: parse ok, visit ERR @8+0 Invalid assignment target
+"<div>{a++ ++}</div>;" [tsx]
+    go : TS1005@10+2 "'}' expected." <<++>> | TS1381@12+1 "Unexpected token. Did you mean `{'}'}` or `&rbrace;`?" <<}>>   [tsc first: same]
+    bun: parse ok, visit ERR @6+0 Invalid assignment target
+"<div {...a++ ++} />;" [tsx]
+    go : TS1005@13+2 "'}' expected." <<++>> | TS1109@15+1 "Expression expected." <<}>>   [tsc first: same]
+    bun: parse ok, visit ERR @9+0 Invalid assignment target
+"(a++ ++ as T);" [ts]
+    go : TS1005@5+2 "')' expected." <<++>> | TS1005@12+1 "';' expected." <<)>>   [tsc first: same]
+    bun: parse ok, visit ERR @1+0 Invalid assignment target
+"f((a++ ++)!);" [ts]
+    go : TS1005@7+2 "')' expected." <<++>> | TS1005@11+1 "';' expected." <<)>>   [tsc first: same]
+    bun: parse ok, visit ERR @3+0 Invalid assignment target
+"{ a++ ++; }" [ts]
+    go : TS1005@6+2 "';' expected." <<++>> | TS1109@8+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @2+0 Invalid assignment target
+"f(function () { a++ ++; });" [ts]
+    go : TS1005@20+2 "';' expected." <<++>> | TS1109@22+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @16+0 Invalid assignment target
+"l: a++ ++;" [ts]
+    go : TS1005@7+2 "';' expected." <<++>> | TS1109@9+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @3+0 Invalid assignment target
+"if (x) a++ ++;" [ts]
+    go : TS1005@11+2 "';' expected." <<++>> | TS1109@13+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @7+0 Invalid assignment target
+"namespace N { a++ ++; }" [ts]
+    go : TS1005@18+2 "';' expected." <<++>> | TS1109@20+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @14+0 Invalid assignment target
+## member: a--.b
+"a--.b;" [ts]
+    go : TS1005@3+1 "';' expected." <<.>>   [tsc first: same]
+    bun: accepts => "(a--).b;\n"
+"function f() { return a--.b; }" [ts]
+    go : TS1005@25+1 "';' expected." <<.>>   [tsc first: same]
+    bun: accepts => "function f() {\n  return (a--).b;\n}\n"
+"throw a--.b;" [ts]
+    go : TS1005@9+1 "';' expected." <<.>>   [tsc first: same]
+    bun: accepts => "throw (a--).b;\n"
+"let x = a--.b;" [ts]
+    go : TS1005@11+1 "',' expected." <<.>>   [tsc first: same]
+    bun: accepts => "let x = (a--).b;\n"
+"let w = 1, x = a--.b, y;" [ts]
+    go : TS1005@18+1 "',' expected." <<.>>   [tsc first: same]
+    bun: accepts => "let w = 1, x = (a--).b, y;\n"
+"(a--.b);" [ts]
+    go : TS1005@4+1 "')' expected." <<.>> | TS1005@6+1 "';' expected." <<)>>   [tsc first: same]
+    bun: accepts => "(a--).b;\n"
+"f(a--.b);" [ts]
+    go : TS1005@5+1 "',' expected." <<.>>   [tsc first: same]
+    bun: accepts => "f((a--).b);\n"
+"f(x, a--.b, y);" [ts]
+    go : TS1005@8+1 "',' expected." <<.>>   [tsc first: same]
+    bun: accepts => "f(x, (a--).b, y);\n"
+"new F(a--.b);" [ts]
+    go : TS1005@9+1 "',' expected." <<.>>   [tsc first: same]
+    bun: accepts => "new F((a--).b);\n"
+"[a--.b];" [ts]
+    go : TS1005@4+1 "',' expected." <<.>>   [tsc first: same]
+    bun: accepts => "(a--).b;\n"
+"({ k: a--.b });" [ts]
+    go : TS1005@9+1 "',' expected." <<.>>   [tsc first: same]
+    bun: accepts => "(a--).b;\n"
+"({ [a--.b]: 1 });" [ts]
+    go : TS1005@7+1 "']' expected." <<.>> | TS1005@9+1 "',' expected." <<]>>   [tsc first: same]
+    bun: accepts => "(a--).b + \"\";\n"
+"({ k = a--.b } = o);" [ts]
+    go : TS1005@10+1 "',' expected." <<.>>   [tsc first: same]
+    bun: accepts => "({ k = (a--).b } = o);\n"
+"o[a--.b];" [ts]
+    go : TS1005@5+1 "']' expected." <<.>> | TS1005@7+1 "';' expected." <<]>>   [tsc first: same]
+    bun: accepts => "o[(a--).b];\n"
+"o?.[a--.b];" [ts]
+    go : TS1005@7+1 "']' expected." <<.>> | TS1005@9+1 "';' expected." <<]>>   [tsc first: same]
+    bun: accepts => "o?.[(a--).b];\n"
+"`x${a--.b}y`;" [ts]
+    go : TS1005@7+1 "'}' expected." <<.>> | TS1128@9+1 "Declaration or statement expected." <<}>>   [tsc first: same]
+    bun: accepts => "`x${(a--).b}y`;\n"
+"t`x${a--.b}y`;" [ts]
+    go : TS1005@8+1 "'}' expected." <<.>> | TS1128@10+1 "Declaration or statement expected." <<}>>   [tsc first: same]
+    bun: accepts => "t`x${(a--).b}y`;\n"
+"x ? a--.b : y;" [ts]
+    go : TS1005@7+1 "':' expected." <<.>>   [tsc first: same]
+    bun: accepts => "x ? (a--).b : y;\n"
+"x ? y : a--.b;" [ts]
+    go : TS1005@11+1 "';' expected." <<.>>   [tsc first: same]
+    bun: accepts => "x ? y : (a--).b;\n"
+"f(x ? y : a--.b);" [ts]
+    go : TS1005@13+1 "',' expected." <<.>>   [tsc first: same]
+    bun: accepts => "f(x ? y : (a--).b);\n"
+"x => a--.b;" [ts]
+    go : TS1005@8+1 "';' expected." <<.>>   [tsc first: same]
+    bun: accepts => ""
+"f(x => a--.b);" [ts]
+    go : TS1005@10+1 "',' expected." <<.>>   [tsc first: same]
+    bun: accepts => "f((x) => (a--).b);\n"
+"x = a--.b;" [ts]
+    go : TS1005@7+1 "';' expected." <<.>>   [tsc first: same]
+    bun: accepts => "x = (a--).b;\n"
+"x, a--.b;" [ts]
+    go : TS1005@6+1 "';' expected." <<.>>   [tsc first: same]
+    bun: accepts => "x, (a--).b;\n"
+"x || a--.b;" [ts]
+    go : TS1005@8+1 "';' expected." <<.>>   [tsc first: same]
+    bun: accepts => "x || (a--).b;\n"
+"!a--.b;" [ts]
+    go : TS1005@4+1 "';' expected." <<.>>   [tsc first: same]
+    bun: accepts => "(a--).b;\n"
+"for (a--.b;;) {}" [ts]
+    go : TS1005@8+1 "';' expected." <<.>> | TS1109@11+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: accepts => "for ((a--).b;; ) {}\n"
+"for (;a--.b;) {}" [ts]
+    go : TS1005@9+1 "';' expected." <<.>> | TS1005@11+1 "')' expected." <<;>>   [tsc first: same]
+    bun: accepts => "for (;(a--).b; ) {}\n"
+"for (;;a--.b) {}" [ts]
+    go : TS1005@10+1 "')' expected." <<.>> | TS1005@12+1 "';' expected." <<)>>   [tsc first: same]
+    bun: accepts => "for (;; (a--).b) {}\n"
+"for (x of a--.b) {}" [ts]
+    go : TS1005@13+1 "')' expected." <<.>> | TS1005@15+1 "';' expected." <<)>>   [tsc first: same]
+    bun: accepts => "for (x of (a--).b) {}\n"
+"for (x in a--.b) {}" [ts]
+    go : TS1005@13+1 "')' expected." <<.>> | TS1005@15+1 "';' expected." <<)>>   [tsc first: same]
+    bun: accepts => "for (x in (a--).b) {}\n"
+"if (a--.b) {}" [ts]
+    go : TS1005@7+1 "')' expected." <<.>> | TS1005@9+1 "';' expected." <<)>>   [tsc first: same]
+    bun: accepts => "if ((a--).b) {}\n"
+"while (a--.b) {}" [ts]
+    go : TS1005@10+1 "')' expected." <<.>> | TS1005@12+1 "';' expected." <<)>>   [tsc first: same]
+    bun: accepts => "while ((a--).b) {}\n"
+"do {} while (a--.b);" [ts]
+    go : TS1005@16+1 "')' expected." <<.>> | TS1434@17+1 "Unexpected keyword or identifier." <<b>>   [tsc first: same]
+    bun: accepts => "do {} while ((a--).b);\n"
+"switch (a--.b) {}" [ts]
+    go : TS1005@11+1 "')' expected." <<.>> | TS1130@12+1 "'case' or 'default' expected." <<b>>   [tsc first: same]
+    bun: accepts => "switch ((a--).b) {\n}\n"
+"with (a--.b) {}" [js]
+    go : TS1005@9+1 "')' expected." <<.>> | TS1005@11+1 "';' expected." <<)>>   [tsc first: same]
+    bun: accepts => "with ((a--).b) {}\n"
+"switch (x) { case a--.b: break; }" [ts]
+    go : TS1005@21+1 "':' expected." <<.>>   [tsc first: same]
+    bun: accepts => "switch (x) {\n  case (a--).b:\n    break;\n}\n"
+"switch (x) { case 1: a--.b; }" [ts]
+    go : TS1005@24+1 "';' expected." <<.>>   [tsc first: same]
+    bun: accepts => "switch (x) {\n  case 1:\n    (a--).b;\n}\n"
+"export default a--.b;" [ts]
+    go : TS1005@18+1 "';' expected." <<.>>   [tsc first: same]
+    bun: accepts => "export default (a--).b;\n"
+"export = a--.b;" [ts]
+    go : TS1005@12+1 "';' expected." <<.>>   [tsc first: same]
+    bun: accepts => "module.exports = (a--).b;\n"
+"enum E { A = a--.b }" [ts]
+    go : TS1357@16+1 "An enum member name must be followed by a ',', '=', or '}'." <<.>>   [tsc first: same]
+    bun: accepts => "var E;\n((E) => {\n  E[E[\"A\"] = (a--).b] = \"A\";\n})(E ||= {});\n"
+"class C { x = a--.b; }" [ts]
+    go : TS1005@17+1 "';' expected." <<.>>   [tsc first: same]
+    bun: accepts => "class C {\n  x = (a--).b;\n}\n"
+"class C { static x = a--.b; }" [ts]
+    go : TS1005@24+1 "';' expected." <<.>>   [tsc first: same]
+    bun: accepts => "class C {\n  static x = (a--).b;\n}\n"
+"class C { [a--.b]() {} }" [ts]
+    go : TS1005@14+1 "']' expected." <<.>> | TS1434@15+1 "Unexpected keyword or identifier." <<b>>   [tsc first: same]
+    bun: accepts => "class C {\n  [(a--).b]() {}\n}\n"
+"class C extends a--.b {}" [ts]
+    go : TS1005@17+2 "',' expected." <<-->> | TS1109@19+1 "Expression expected." <<.>>   [tsc first: same]
+    bun: parse ERR @17+2 Expected "{" but found "--"
+"function f(x = a--.b) {}" [ts]
+    go : TS1005@18+1 "',' expected." <<.>>   [tsc first: same]
+    bun: accepts => "function f(x = (a--).b) {}\n"
+"((x = a--.b) => x);" [ts]
+    go : TS1005@9+1 "',' expected." <<.>>   [tsc first: same]
+    bun: accepts => ""
+"let [p = a--.b] = y;" [ts]
+    go : TS1005@12+1 "',' expected." <<.>>   [tsc first: same]
+    bun: accepts => "let [p = (a--).b] = y;\n"
+"let { p = a--.b } = y;" [ts]
+    go : TS1005@13+1 "',' expected." <<.>>   [tsc first: same]
+    bun: accepts => "let { p = (a--).b } = y;\n"
+"f(...a--.b);" [ts]
+    go : TS1005@8+1 "',' expected." <<.>>   [tsc first: same]
+    bun: accepts => "f(...(a--).b);\n"
+"[...a--.b];" [ts]
+    go : TS1005@7+1 "',' expected." <<.>>   [tsc first: same]
+    bun: accepts => "[...(a--).b];\n"
+"function* g() { yield a--.b; }" [ts]
+    go : TS1005@25+1 "';' expected." <<.>>   [tsc first: same]
+    bun: accepts => "function* g() {\n  yield (a--).b;\n}\n"
+"async function g() { await a--.b; }" [ts]
+    go : TS1005@30+1 "';' expected." <<.>>   [tsc first: same]
+    bun: accepts => "async function g() {\n  await (a--).b;\n}\n"
+"import(a--.b);" [ts]
+    go : TS1005@10+1 "',' expected." <<.>>   [tsc first: same]
+    bun: accepts => "import((a--).b);\n"
+"@d(a--.b) class C {}" [ts]
+    go : TS1005@6+1 "',' expected." <<.>>   [tsc first: same]
+    bun: accepts => "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorS"
+"<div x={a--.b} />;" [tsx]
+    go : TS1005@11+1 "'}' expected." <<.>> | TS1003@13+1 "Identifier expected." <<}>>   [tsc first: same]
+    bun: accepts => "(a--).b;\n"
+"<div>{a--.b}</div>;" [tsx]
+    go : TS1005@9+1 "'}' expected." <<.>> | TS1381@11+1 "Unexpected token. Did you mean `{'}'}` or `&rbrace;`?" <<}>>   [tsc first: same]
+    bun: accepts => "(a--).b;\n"
+"<div {...a--.b} />;" [tsx]
+    go : TS1005@12+1 "'}' expected." <<.>> | TS1003@14+1 "Identifier expected." <<}>>   [tsc first: same]
+    bun: accepts => "({\n  ...(a--).b\n});\n"
+"(a--.b as T);" [ts]
+    go : TS1005@4+1 "')' expected." <<.>> | TS1005@11+1 "';' expected." <<)>>   [tsc first: same]
+    bun: accepts => "(a--).b;\n"
+"f((a--.b)!);" [ts]
+    go : TS1005@6+1 "')' expected." <<.>> | TS1005@10+1 "';' expected." <<)>>   [tsc first: same]
+    bun: accepts => "f((a--).b);\n"
+"{ a--.b; }" [ts]
+    go : TS1005@5+1 "';' expected." <<.>>   [tsc first: same]
+    bun: accepts => "{\n  (a--).b;\n}\n"
+"f(function () { a--.b; });" [ts]
+    go : TS1005@19+1 "';' expected." <<.>>   [tsc first: same]
+    bun: accepts => "f(function() {\n  (a--).b;\n});\n"
+"l: a--.b;" [ts]
+    go : TS1005@6+1 "';' expected." <<.>>   [tsc first: same]
+    bun: accepts => "l:\n  (a--).b;\n"
+"if (x) a--.b;" [ts]
+    go : TS1005@10+1 "';' expected." <<.>>   [tsc first: same]
+    bun: accepts => "if (x)\n  (a--).b;\n"
+"namespace N { a--.b; }" [ts]
+    go : TS1005@17+1 "';' expected." <<.>>   [tsc first: same]
+    bun: accepts => "var N;\n((N) => {\n  (a--).b;\n})(N ||= {});\n"

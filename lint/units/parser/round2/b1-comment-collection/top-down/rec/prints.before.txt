@@ -29,7 +29,7 @@ Some(
     (
         1,
         [
-            "interface [6,42) module#0 name=I@[16,17)",
+            "interface [6,48) module#0 name=I@[16,17)",
         ],
     ),
 )
@@ -38,8 +38,8 @@ Some(
     (
         1,
         [
-            "type-alias [0,34) module#0 name=A@[5,6)",
-            "type-alias [41,51) module#0 name=B@[46,47)",
+            "type-alias [0,40) module#0 name=A@[5,6)",
+            "type-alias [41,57) module#0 name=B@[46,47)",
         ],
     ),
 )
@@ -49,7 +49,7 @@ Some(
         1,
         [
             "var [0,37) module#0 declare ambient",
-            "function [38,64) module#0 declare ambient no-body name=f@[55,56)",
+            "function [38,70) module#0 declare ambient no-body name=f@[55,56)",
         ],
     ),
 )
@@ -59,7 +59,7 @@ Some(
         1,
         [
             "member method [25,51) scope@17#0 abstract",
-            "member method [52,61) scope@17#0",
+            "member method [52,67) scope@17#0",
             "member index-signature [76,100) scope@17#1",
         ],
     ),
@@ -69,8 +69,8 @@ Some(
     (
         0,
         [
-            "var [6,75) module#0 export declare ambient",
-            "interface [82,110) module#0 name=I@[98,99)",
+            "var [19,81) module#0 declare ambient",
+            "interface [82,117) module#0 name=I@[98,99)",
             "type-alias [118,158) module#0 name=T@[130,131)",
         ],
     ),
@@ -80,7 +80,7 @@ Some(
     (
         0,
         [
-            "interface [0,31) module#0 export name=I@[27,28)",
+            "interface [10,41) module#0 export name=I@[27,28)",
             "var [42,66) module#0 declare ambient",
         ],
     ),
@@ -90,8 +90,8 @@ Some(
     (
         0,
         [
-            "class [6,58) module#0 declare ambient name=C@[54,55)",
-            "class [59,124) module#0 export declare ambient name=D@[120,121)",
+            "class [14,58) module#0 declare ambient name=C@[54,55)",
+            "class [88,124) module#0 declare ambient name=D@[120,121)",
         ],
     ),
 )
@@ -100,8 +100,8 @@ Some(
     (
         1,
         [
-            "module [0,40) module#0 declare ambient name=\"m\"@[27,30)",
-            "module [47,77) module#0 declare ambient name=global@[61,67)",
+            "module [0,46) module#0 declare ambient name=\"m\"@[27,30)",
+            "module [47,83) module#0 declare ambient name=global@[61,67)",
             "module [84,130) module#0 declare ambient name=A@[102,103)",
             "module [118,130) in-tree@110 ambient nested name=B@[118,119)",
         ],
@@ -131,7 +131,7 @@ Some(
     [
         "extends B /*a*/ <T> of the class at 0: ExpressionWithTypeArguments",
         "implements I /*c*/ , J<K> of the class at 0: TypeReference, TypeReference",
-        "implements a /*e*/ [ /*f*/ 0 /*g*/ ] of the class at 69: ExpressionWithTypeArguments",
+        "implements a /*e*/ [ /*f*/ 0 /*g*/ ] /*h*/ of the class at 69: ExpressionWithTypeArguments",
     ],
 )
 B1 generics "const e = <Foo /*a*/ < /*b*/ T /*c*/ > /*d*/ a=\"1\" /*e*/ />;"
@@ -151,8 +151,8 @@ Some(
 B1 generics "/*a*/ interface I /*b*/ <T> /*c*/ { a: 1 } /*d*/ type A /*e*/ <T> /*f*/ = T;"
 Some(
     [
-        "type-parameters <T> after the name that ends at 17",
-        "type-parameters <T> after the name that ends at 55",
+        "type-parameters <T> after the name that ends at 23",
+        "type-parameters <T> after the name that ends at 61",
     ],
 )
 B1 generics "class E extends f /*1*/ ( /*2*/ ) /*3*/ < /*4*/ T /*5*/ > /*6*/ {}"
@@ -170,16 +170,16 @@ Some(
 B1 generics "class E extends f /*1*/ ( /*2*/ ) /*3*/ {} class F extends g /*4*/ {}"
 Some(
     [
-        "extends f /*1*/ ( /*2*/ ) of the class at 0: ExpressionWithTypeArguments",
-        "extends g of the class at 43: ExpressionWithTypeArguments",
+        "extends f /*1*/ ( /*2*/ ) /*3*/ of the class at 0: ExpressionWithTypeArguments",
+        "extends g /*4*/ of the class at 43: ExpressionWithTypeArguments",
     ],
 )
 ok
-test parse::syntax_errors::tests::zz_b1_print ... B1 syntax_errors "f< /*2*/ >();" None
-B1 syntax_errors "let x: A< /*1*/ >; let y: B<C, /*3*/ >;" None
-B1 syntax_errors "let x: A | /*c*/ () => void;" Some((1385, 10, 27, "Function type notation must be parenthesized when used in a union type."))
+test parse::syntax_errors::tests::zz_b1_print ... B1 syntax_errors "f< /*2*/ >();" Some((1110, 9, 10, "Type expected."))
+B1 syntax_errors "let x: A< /*1*/ >; let y: B<C, /*3*/ >;" Some((1110, 16, 17, "Type expected."))
+B1 syntax_errors "let x: A | /*c*/ () => void;" Some((1385, 16, 27, "Function type notation must be parenthesized when used in a union type."))
 B1 syntax_errors "let x: A |    () => void;" Some((1385, 10, 24, "Function type notation must be parenthesized when used in a union type."))
-B1 syntax_errors "let x: A & /*c*/ new () => void;" Some((1388, 10, 31, "Constructor type notation must be parenthesized when used in an intersection type."))
+B1 syntax_errors "let x: A & /*c*/ new () => void;" Some((1388, 16, 31, "Constructor type notation must be parenthesized when used in an intersection type."))
 B1 syntax_errors "let f = (a): /*c*/ => a;" Some((1005, 11, 12, "';' expected."))
 B1 syntax_errors "let f = (a): /*c*/ ;" Some((1005, 11, 12, "';' expected."))
 B1 syntax_errors "let x: /*c*/ ;" Some((1110, 13, 14, "Type expected."))
@@ -195,14 +195,14 @@ B1 wrappers "y = x /*a*/ ! /*b*/ ; y = (x /*c*/) /*d*/ ; y = <T> /*e*/ x /*f*/ ;
 Some(
     [
         "NonNullExpression [12,13) of e_identifier@4",
-        "ParenthesizedExpression [26,35) of e_identifier@27",
+        "ParenthesizedExpression [26,41) of e_identifier@27",
         "TypeAssertionExpression [48,51) TypeReference(T)[49,50) of e_identifier@58",
     ],
 )
 B1 wrappers "let v = ( /*1*/ a /*2*/ ) /*3*/ as /*4*/ T /*5*/ ; let w = b /*6*/ ! /*7*/ . c; let u = < /*8*/ T /*9*/ > /*10*/ d /*11*/ ; let s = e /*12*/ satisfies /*13*/ S /*14*/ ;"
 Some(
     [
-        "ParenthesizedExpression [8,25) of e_identifier@16",
+        "ParenthesizedExpression [8,31) of e_identifier@16",
         "AsExpression [32,42) TypeReference(T)[41,42) of e_identifier@16",
         "NonNullExpression [67,68) of e_identifier@59",
         "TypeAssertionExpression [88,105) TypeReference(T)[96,97) of e_identifier@113",
@@ -212,14 +212,14 @@ Some(
 B1 wrappers "let u = < /*1*/ T /*2*/ > /*3*/ ( /*4*/ d /*5*/ ) /*6*/ ; let f = < /*7*/ T /*8*/ >( /*9*/ x /*10*/ ) /*11*/ => x;"
 Some(
     [
-        "ParenthesizedExpression [32,49) of e_identifier@40",
+        "ParenthesizedExpression [32,55) of e_identifier@40",
         "TypeAssertionExpression [8,25) TypeReference(T)[16,17) of e_identifier@40",
     ],
 )
 B1 wrappers "const e = <div /*1*/ >{( /*2*/ a /*3*/ ) /*4*/ as T}</div /*5*/ >;"
 Some(
     [
-        "ParenthesizedExpression [23,40) of e_identifier@31",
+        "ParenthesizedExpression [23,46) of e_identifier@31",
         "AsExpression [47,51) TypeReference(T)[50,51) of e_identifier@31",
     ],
 )
@@ -237,7 +237,7 @@ Some(
             ],
             0,
             47,
-            5,
+            0,
         ),
     ),
 )
@@ -254,7 +254,7 @@ Some(
             ],
             0,
             21,
-            1,
+            0,
         ),
     ),
 )
@@ -265,12 +265,12 @@ Some(
             [
                 "FunctionType[0,69)",
                 "parameters<1,47>",
-                "parameter[1,34)",
+                "parameter[1,40)",
                 "parameter[43,47)",
             ],
             0,
             69,
-            7,
+            0,
         ),
     ),
 )
@@ -280,12 +280,12 @@ Some(
         (
             [
                 "FunctionType[0,22)",
-                "parameters<1,6>",
-                "parameter[1,6)",
+                "parameters<1,12>",
+                "parameter[1,12)",
             ],
             0,
             22,
-            1,
+            0,
         ),
     ),
 )
@@ -303,7 +303,7 @@ Some(
             ],
             0,
             43,
-            3,
+            0,
         ),
     ),
 )
@@ -317,7 +317,7 @@ Some(
             ],
             0,
             73,
-            6,
+            0,
         ),
     ),
 )
@@ -331,7 +331,7 @@ Some(
             ],
             0,
             30,
-            1,
+            0,
         ),
     ),
 )
@@ -344,7 +344,7 @@ Some(
             ],
             0,
             71,
-            5,
+            0,
         ),
     ),
 )
@@ -357,11 +357,11 @@ Some(
             ],
             1,
             43,
-            4,
+            0,
         ),
     ),
 )
 ok
 
-test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 72 filtered out; finished in 1.38s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 72 filtered out; finished in 0.43s
 

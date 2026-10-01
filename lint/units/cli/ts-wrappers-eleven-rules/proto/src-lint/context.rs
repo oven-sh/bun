@@ -1,5 +1,6 @@
 //! What a rule handler is given: the text, the names, the reports, and what the side table of the parse knows of a node.
 
+use core::cell::RefCell;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
@@ -154,7 +155,7 @@ pub(crate) struct Context<'p, 'a> {
     /// The class members that leave no node and are fields with `declare`, by the body of their class.
     declared_fields: Vec<(u32, u32)>,
     /// By the first token of a chain of first operands: a start, and the nodes of the chain that have it, those whose own token is after the first offset and not after the second.
-    chain_starts: BTreeMap<i32, (u32, u32, Loc)>,
+    chain_starts: RefCell<BTreeMap<i32, (u32, u32, Loc)>>,
 }
 
 impl<'p, 'a> Context<'p, 'a> {
@@ -210,7 +211,7 @@ impl<'p, 'a> Context<'p, 'a> {
             wrappers,
             type_arguments,
             declared_fields,
-            chain_starts: BTreeMap::new(),
+            chain_starts: RefCell::new(BTreeMap::new()),
         }
     }
 
@@ -324,8 +325,8 @@ impl<'p, 'a> Context<'p, 'a> {
         self.reports
     }
 
-    /// What stands around `expr` in its place and leaves no node, an inner piece first. `callee`: type arguments that stand last are those of the call, of the `new` or of the template that `expr` is the target of.
-    fn around(&self, expr: &Expr, callee: bool) -> Vec<Around> {
+    /// What stands around `expr` in its place and leaves no node, an inner piece first.
+    fn around(&self, expr: &Expr) -> Vec<Around> {
         if self.wrappers.is_empty() && self.type_arguments.is_empty() {
             return Vec::new();
         }
@@ -349,6 +350,16 @@ impl<'p, 'a> Context<'p, 'a> {
             let Some(record) = sidecar.generics.type_arguments.get(at) else {
                 continue;
             };
+            // Before the arguments of a call and before a template they are those of the call: no node of their own.
+            if matches!(
+                self.next_token(record.end),
+                Some(Token {
+                    t: T::TOpenParen | T::TNoSubstitutionTemplateLiteral | T::TTemplateHead,
+                    ..
+                })
+            ) {
+                continue;
+            }
             // They stand after what ends before their `<`: a `!`, other type arguments, or parentheses that close there.
             let inside = around
                 .iter()
@@ -367,40 +378,26 @@ impl<'p, 'a> Context<'p, 'a> {
                 },
             );
         }
-        if callee
-            && matches!(
-                around.last(),
-                Some(Around {
-                    kind: Some(TsWrapper::Instantiation),
-                    ..
-                })
-            )
-        {
-            around.pop();
-        }
         around
+    }
+
+    /// After the type arguments of `expr` whose `<` is at `at` or after it, which a `new` or a template takes; `at` without them.
+    fn after_type_arguments(&self, expr: &Expr, at: u32) -> u32 {
+        entries(&self.type_arguments, key_of(expr))
+            .filter_map(|index| self.parsed.sidecar.generics.type_arguments.get(index))
+            .find(|record| record.lt >= at)
+            .map_or(at, |record| record.end)
     }
 
     /// The TypeScript node that ESLint has in the place of `expr`: the outermost `as`, `satisfies`, `!`, `<T>` or instantiation on it. Parentheses are no node.
     pub(crate) fn ts_wrapper(&self, expr: &Expr) -> Option<TsWrapper> {
-        self.around(expr, false)
-            .iter()
-            .rev()
-            .find_map(|piece| piece.kind)
-    }
-
-    /// `ts_wrapper` for the target of a call or of `new` and for the tag of a template: type arguments that stand last are those of the call.
-    pub(crate) fn ts_wrapper_of_callee(&self, expr: &Expr) -> Option<TsWrapper> {
-        self.around(expr, true)
-            .iter()
-            .rev()
-            .find_map(|piece| piece.kind)
+        self.around(expr).iter().rev().find_map(|piece| piece.kind)
     }
 
     /// How many pairs of parentheses stand directly around what ESLint has in the place of `expr`.
     pub(crate) fn paren_count(&self, expr: &Expr) -> u32 {
         let count = self
-            .around(expr, false)
+            .around(expr)
             .iter()
             .rev()
             .take_while(|piece| piece.kind.is_none())
@@ -410,12 +407,12 @@ impl<'p, 'a> Context<'p, 'a> {
 
     /// Whether parentheses or a TypeScript node stand around `expr` in its place: a literal there is no pattern.
     pub(crate) fn is_wrapped(&self, expr: &Expr) -> bool {
-        !self.around(expr, false).is_empty()
+        !self.around(expr).is_empty()
     }
 
     /// Where the node that ESLint has in the place of `expr` starts: at the `(` or `<` of its first operand. Parentheses around the node itself are no part of it.
-    pub(crate) fn node_start(&mut self, expr: &Expr) -> Loc {
-        let around = self.around(expr, false);
+    pub(crate) fn node_start(&self, expr: &Expr) -> Loc {
+        let around = self.around(expr);
         let outermost = around.iter().rposition(|piece| piece.kind.is_some());
         let open = outermost
             .and_then(|outermost| around.get(..=outermost))
@@ -427,25 +424,20 @@ impl<'p, 'a> Context<'p, 'a> {
     }
 
     /// Where the binary expression `node` starts, whose first own token is at `own`: `node_start` for a node that a handler has without its `Expr`.
-    pub(crate) fn binary_start(&mut self, node: &E::Binary, own: Loc) -> Loc {
+    pub(crate) fn binary_start(&self, node: &E::Binary, own: Loc) -> Loc {
         self.chain_start(&node.left, own, offset_of(node.right.loc))
     }
 
     /// Where the text in the place of `expr` starts, every `(` and `<T>` around it included.
-    fn full_start(&mut self, expr: &Expr) -> Loc {
-        match self
-            .around(expr, false)
-            .iter()
-            .rev()
-            .find(|piece| piece.opens())
-        {
+    fn full_start(&self, expr: &Expr) -> Loc {
+        match self.around(expr).iter().rev().find(|piece| piece.opens()) {
             Some(piece) => loc_at(piece.op),
             None => self.own_start(expr),
         }
     }
 
     /// Where `expr` itself starts: where its first operand does, else at its first own token.
-    fn own_start(&mut self, expr: &Expr) -> Loc {
+    fn own_start(&self, expr: &Expr) -> Loc {
         match first_operand(expr) {
             Some(first) => self.chain_start(first, expr.loc, own_token(expr)),
             None => self.leaf_start(expr),
@@ -453,22 +445,17 @@ impl<'p, 'a> Context<'p, 'a> {
     }
 
     /// `full_start` of `first`, the first operand of a node whose first token is at `own` and whose own token is at `token`. What is found is kept for the nodes of the chain inside that node: a long chain is gone down once.
-    fn chain_start(&mut self, first: &Expr, own: Loc, token: Option<u32>) -> Loc {
+    fn chain_start(&self, first: &Expr, own: Loc, token: Option<u32>) -> Loc {
         if let (Some(token), Some((below, upto, start))) =
-            (token, self.chain_starts.get(&own.start))
-            && *below < token
-            && token <= *upto
+            (token, self.chain_starts.borrow().get(&own.start).copied())
+            && below < token
+            && token <= upto
         {
-            return *start;
+            return start;
         }
         let mut expr = first;
         let (below, start) = loop {
-            if let Some(piece) = self
-                .around(expr, false)
-                .iter()
-                .rev()
-                .find(|piece| piece.opens())
-            {
+            if let Some(piece) = self.around(expr).iter().rev().find(|piece| piece.opens()) {
                 // A node without a token of its own is not told from the nodes inside it: nothing is kept then.
                 let below = match first_operand(expr) {
                     Some(_) => own_token(expr),
@@ -482,13 +469,15 @@ impl<'p, 'a> Context<'p, 'a> {
             }
         };
         if let (Some(below), Some(upto)) = (below, token) {
-            self.chain_starts.insert(own.start, (below, upto, start));
+            self.chain_starts
+                .borrow_mut()
+                .insert(own.start, (below, upto, start));
         }
         start
     }
 
     /// Where a node without a first operand starts: at its first token, which for a class is the `@` of its first decorator.
-    fn leaf_start(&mut self, expr: &Expr) -> Loc {
+    fn leaf_start(&self, expr: &Expr) -> Loc {
         let ExprData::EClass(class) = &expr.data else {
             return expr.loc;
         };
@@ -514,7 +503,7 @@ impl<'p, 'a> Context<'p, 'a> {
     /// After the last token of the node that ESLint has in the place of `expr`. `None`: the tree and the text do not say where.
     pub(crate) fn node_end(&self, expr: &Expr) -> Option<u32> {
         let own = self.own_end(expr)?;
-        let around = self.around(expr, false);
+        let around = self.around(expr);
         let Some(outermost) = around.iter().rposition(|piece| piece.kind.is_some()) else {
             return Some(own);
         };
@@ -531,7 +520,7 @@ impl<'p, 'a> Context<'p, 'a> {
     fn full_end(&self, expr: &Expr) -> Option<u32> {
         let own = self.own_end(expr)?;
         Some(
-            self.around(expr, false)
+            self.around(expr)
                 .iter()
                 .filter(|piece| piece.kind != Some(TsWrapper::TypeAssertion))
                 .fold(own, |end, piece| end.max(piece.end)),
@@ -574,7 +563,7 @@ impl<'p, 'a> Context<'p, 'a> {
                 if new.close_parens_loc.start >= 0 {
                     after(new.close_parens_loc)
                 } else {
-                    self.full_end(&new.target)
+                    Some(self.after_type_arguments(&new.target, self.full_end(&new.target)?))
                 }
             }
             ExprData::EArray(array) => after(array.close_bracket_loc),
@@ -602,7 +591,9 @@ impl<'p, 'a> Context<'p, 'a> {
                     }
                 }
                 None => {
-                    let text = self.next_token(self.full_end(template.tag.as_ref()?)?)?;
+                    let tag = template.tag.as_ref()?;
+                    let text =
+                        self.next_token(self.after_type_arguments(tag, self.full_end(tag)?))?;
                     (text.t == T::TNoSubstitutionTemplateLiteral).then_some(text.end)
                 }
             },
@@ -657,7 +648,7 @@ impl<'p, 'a> Context<'p, 'a> {
     }
 
     /// What ESLint compares of the node in the place of `expr`: its tokens, as bytes. `None`: its end is not known, or its text does not read as the tree says.
-    pub(crate) fn tokens_of(&mut self, expr: &Expr) -> Option<Vec<u8>> {
+    pub(crate) fn tokens_of(&self, expr: &Expr) -> Option<Vec<u8>> {
         let start = offset_of(self.node_start(expr))?;
         let end = self.node_end(expr)?;
         let spans = tokens::spans_under(self.text(), &[expr], self.stack_check)?;
@@ -668,7 +659,7 @@ impl<'p, 'a> Context<'p, 'a> {
     }
 
     /// Where the clause at `index` of `node` starts: at its `case`. Where no `case` is found, at the first token of its test.
-    pub(crate) fn case_start(&mut self, node: &S::Switch, index: usize) -> Loc {
+    pub(crate) fn case_start(&self, node: &S::Switch, index: usize) -> Loc {
         let cases = node.cases.slice();
         let Some(case) = cases.get(index) else {
             return Loc::EMPTY;

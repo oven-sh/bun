@@ -529,10 +529,7 @@ impl<'a> RouteLoader<'a> {
         }
     }
 
-    /// `public_dir` is the path of `dir_info` below the routes directory, one
-    /// `SEP` + name per level (empty for the routes directory itself). It is
-    /// built from the walk, so it does not depend on how the resolver spelled
-    /// the cached directory paths.
+    /// `public_dir` comes from the walk, not from `entry.dir()`: a cached path's spelling varies.
     fn load<R: ResolverLike>(
         &mut self,
         resolver: &mut R,
@@ -687,9 +684,6 @@ pub struct Route {
 impl Route {
     pub(crate) const INDEX_ROUTE_NAME: &'static [u8] = b"/";
 
-    /// `public_dir_` is the file's directory below the routes directory,
-    /// empty for a file in the routes directory itself.
-    ///
     /// # Safety
     /// `entry` must point to a live `Fs::Entry` (EntryStore-owned) with no
     /// other active `&mut` borrow for the duration of the call. `base_` and

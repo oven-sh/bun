@@ -146,8 +146,7 @@ impl FileSystemRouter {
             }
             let root_dir_path_ = dir.to_utf8(global_this)?;
             if !(root_dir_path_.slice().is_empty() || root_dir_path_.slice() == b".") {
-                // An absolute path is normalized too, the way the resolver spells the
-                // directories it caches.
+                // An absolute path is normalized too, like the paths the resolver caches.
                 let Some(joined) =
                     path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
                         Fs::FileSystem::instance().top_level_dir,

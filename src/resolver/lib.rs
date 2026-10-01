@@ -2352,9 +2352,7 @@ pub mod cache {
 
             let open_at = |dir: Fd, path: &[u8], flags: i32| match non_regular_file {
                 NonRegularFile::Read => bun_sys::File::openat(dir, path, flags, 0),
-                NonRegularFile::Reject => {
-                    bun_sys::File::open_regular_at(dir, path).map(|(file, _size)| file)
-                }
+                NonRegularFile::Reject => bun_sys::File::open_regular_at(dir, path),
             };
             let open_path =
                 |path: &[u8]| open_at(Fd::cwd(), path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC);
@@ -2391,13 +2389,6 @@ pub mod cache {
                 raw
             };
             let file_handle = bun_sys::File::borrow(&fd);
-
-            // A caller's handle did not go through `open_regular_at`.
-            if _file_handle.is_some() && non_regular_file == NonRegularFile::Reject {
-                file_handle
-                    .ensure_regular(path)
-                    .map_err(crate::Error::from)?;
-            }
 
             #[cfg(not(windows))] // skip on Windows because NTCreateFile will do it.
             bun_core::scoped_log!(

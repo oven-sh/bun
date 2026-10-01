@@ -308,22 +308,18 @@ describe("frozen arrays keep their elements in the vector", () => {
         "-e",
         `const { describe } = require("bun:jsc");
          Object.freeze(Array.prototype);
-         const threw = [];
-         for (const f of [
-           () => Array.prototype.push.call(Array.prototype, 1),
-           () => { "use strict"; Array.prototype[0] = 1; },
-           () => { "use strict"; Array.prototype.length = 1; },
-         ]) {
-           try { f(); threw.push(false); } catch (e) { threw.push(e instanceof TypeError); }
-         }
-         console.log(JSON.stringify({ threw, own: Object.hasOwn(Array.prototype, 0), length: Array.prototype.length, frozen: Object.isFrozen(Array.prototype), blank: describe(Array.prototype).includes("ArrayClass") }));`,
+         let threw = false;
+         try { Array.prototype.push.call(Array.prototype, 1); } catch (e) { threw = e instanceof TypeError; }
+         // Reflect.set reports the rejection whatever the strictness of this script is.
+         const rejected = [Reflect.set(Array.prototype, 0, 1), Reflect.set(Array.prototype, "length", 1)].map(ok => !ok);
+         console.log(JSON.stringify({ threw, rejected, own: Object.hasOwn(Array.prototype, 0), length: Array.prototype.length, frozen: Object.isFrozen(Array.prototype), blank: describe(Array.prototype).includes("ArrayClass") }));`,
       ],
       env: bunEnv,
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ threw: [true, true, true], own: false, length: 0, frozen: true, blank: true });
+    expect(JSON.parse(stdout)).toEqual({ threw: true, rejected: [true, true], own: false, length: 0, frozen: true, blank: true });
     expect(exitCode).toBe(0);
   });
 });

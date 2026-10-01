@@ -119,7 +119,9 @@ function planned(c) {
 	};
 	const mk = (type, range, extra) => ({ type, range, loc: { start: locOf(range[0]), end: locOf(range[1]) }, ...extra });
 	const sites = c.sites;
-	const seam = sites.find(s => s.k === "seam");
+	const found = sites.find(s => s.k === "seam");
+	// D3: a name is the global when the file declares it nowhere and assigns to it nowhere.
+	const seam = { RegExp: found.RegExp && !(found.written & 1), globalThis: found.globalThis && !(found.written & 2) };
 	const X = { type: "X" };
 	const lits = new Map();
 	for (const s of sites) {

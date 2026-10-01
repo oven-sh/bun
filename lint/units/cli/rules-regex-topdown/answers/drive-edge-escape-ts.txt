@@ -1,0 +1,87 @@
+[no-useless-escape missing] ts "type A = \"a\\d\";"
+    eslint:  1:12 Unnecessary escape character: \d.
+    planned: (none)
+[no-useless-escape missing] ts "type A = `a\\d`;"
+    eslint:  1:12 Unnecessary escape character: \d.
+    planned: (none)
+[no-useless-escape missing] ts "type A = `a\\d${B}\\e`;"
+    eslint:  1:12 Unnecessary escape character: \d. | 1:18 Unnecessary escape character: \e.
+    planned: (none)
+[no-useless-escape missing] ts "let a: \"b\\d\";"
+    eslint:  1:10 Unnecessary escape character: \d.
+    planned: (none)
+[no-useless-escape missing] ts "function f(a: \"b\\d\"): 'c\\e' {}"
+    eslint:  1:17 Unnecessary escape character: \d. | 1:25 Unnecessary escape character: \e.
+    planned: (none)
+[no-useless-escape missing] ts "a as \"b\\d\";"
+    eslint:  1:8 Unnecessary escape character: \d.
+    planned: (none)
+[no-useless-escape missing] ts "<\"b\\d\">a;"
+    eslint:  1:4 Unnecessary escape character: \d.
+    planned: (none)
+[no-useless-escape missing] ts "a satisfies \"b\\d\";"
+    eslint:  1:15 Unnecessary escape character: \d.
+    planned: (none)
+[no-useless-escape missing] ts "type A = { \"b\\d\": 1 };"
+    eslint:  1:14 Unnecessary escape character: \d.
+    planned: (none)
+[no-useless-escape missing] ts "interface A { \"b\\d\": 1; 'c\\e'(): void }"
+    eslint:  1:17 Unnecessary escape character: \d. | 1:27 Unnecessary escape character: \e.
+    planned: (none)
+[no-useless-escape missing] ts "type A = B[\"c\\d\"];"
+    eslint:  1:14 Unnecessary escape character: \d.
+    planned: (none)
+[no-useless-escape missing] ts "declare module \"m\\d\" { const a: \"b\\e\"; }"
+    eslint:  1:18 Unnecessary escape character: \d. | 1:35 Unnecessary escape character: \e.
+    planned: 1:18 Unnecessary escape character: \d.
+[only Bun rejects] ts "module \"m\\d\" {}"
+[no-useless-escape missing] ts "let a: import(\"m\\d\").B;"
+    eslint:  1:17 Unnecessary escape character: \d.
+    planned: (none)
+[no-useless-escape missing] ts "type A = typeof import(\"m\\d\");"
+    eslint:  1:26 Unnecessary escape character: \d.
+    planned: (none)
+[no-useless-escape missing] ts "declare function f(a?: \"b\\d\"): void;"
+    eslint:  1:26 Unnecessary escape character: \d.
+    planned: (none)
+[no-useless-escape missing] ts "<string>\"a\\d\";"
+    eslint:  1:11 Unnecessary escape character: \d.
+    planned: (none)
+[no-useless-escape missing] ts "function f(this: \"a\\d\") {}"
+    eslint:  1:20 Unnecessary escape character: \d.
+    planned: (none)
+[no-useless-escape missing] ts "let a: { [k: string]: \"b\\d\" };"
+    eslint:  1:25 Unnecessary escape character: \d.
+    planned: (none)
+[no-useless-escape missing] ts "type A<T = \"b\\d\"> = T;"
+    eslint:  1:14 Unnecessary escape character: \d.
+    planned: (none)
+[no-useless-escape missing] ts "f<\"a\\d\">(\"b\\e\");"
+    eslint:  1:12 Unnecessary escape character: \e. | 1:5 Unnecessary escape character: \d.
+    planned: 1:12 Unnecessary escape character: \e.
+[no-useless-escape missing] ts "new A<\"a\\d\">(\"b\\e\");"
+    eslint:  1:16 Unnecessary escape character: \e. | 1:9 Unnecessary escape character: \d.
+    planned: 1:16 Unnecessary escape character: \e.
+[no-useless-escape missing] ts "tag<\"a\\d\">`\\e`;"
+    eslint:  1:7 Unnecessary escape character: \d.
+    planned: (none)
+[no-useless-escape missing] ts "let a = \"b\\d\" as \"c\\e\";"
+    eslint:  1:11 Unnecessary escape character: \d. | 1:20 Unnecessary escape character: \e.
+    planned: 1:11 Unnecessary escape character: \d.
+[no-useless-escape missing] ts "type A = B extends \"c\\d\" ? 'e\\f' : never;"
+    eslint:  1:22 Unnecessary escape character: \d.
+    planned: (none)
+[no-useless-escape missing] tsx "const a = <B<\"c\\d\"> e=\"f\\g\">{\"h\\i\"}</B>;"
+    eslint:  1:16 Unnecessary escape character: \d. | 1:32 Unnecessary escape character: \i.
+    planned: 1:32 Unnecessary escape character: \i.
+[no-useless-escape missing] tsx "const a = <b c=\"d\\e\" />; type F = \"g\\h\";"
+    eslint:  1:37 Unnecessary escape character: \h.
+    planned: (none)
+67 cases
+  66	no-control-regex same
+  66	no-misleading-character-class same
+  66	no-regex-spaces same
+  66	no-useless-backreference same
+  26	no-useless-escape missing
+  40	no-useless-escape same
+  1	only Bun rejects

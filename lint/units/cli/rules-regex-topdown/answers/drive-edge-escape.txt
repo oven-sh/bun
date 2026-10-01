@@ -1,0 +1,59 @@
+[both reject] js "a?.b`\\d`;"  1:5 Parsing error: Optional chaining cannot appear in the tag of tagged template expressions
+[no-useless-escape missing] js "\"use\\ strict\";"
+    eslint:  1:5 Unnecessary escape character: \ .
+    planned: (none)
+[no-useless-escape missing] js "'use\\ strict'; \"a\\d\";"
+    eslint:  1:18 Unnecessary escape character: \d. | 1:5 Unnecessary escape character: \ .
+    planned: 1:18 Unnecessary escape character: \d.
+[no-useless-escape missing] js "function f() { \"use\\ strict\"; \"b\\d\"; }"
+    eslint:  1:20 Unnecessary escape character: \ . | 1:33 Unnecessary escape character: \d.
+    planned: 1:33 Unnecessary escape character: \d.
+[no-useless-escape missing] js "\"use\\ asm\";"
+    eslint:  1:5 Unnecessary escape character: \ .
+    planned: (none)
+[no-useless-escape missing] js "(\"use\\ strict\");"
+    eslint:  1:6 Unnecessary escape character: \ .
+    planned: (none)
+[no-useless-escape missing] js "import a from \"m\" with { type: \"js\\on\" };"
+    eslint:  1:35 Unnecessary escape character: \o.
+    planned: (none)
+[no-useless-escape missing] js "import a from \"m\" with { \"ty\\pe\": \"json\" };"
+    eslint:  1:29 Unnecessary escape character: \p.
+    planned: (none)
+[no-useless-escape missing] js "import { \"a\\d\" as b } from \"m\";"
+    eslint:  1:12 Unnecessary escape character: \d.
+    planned: (none)
+[no-useless-escape missing] js "export { b as \"a\\d\" }; var b;"
+    eslint:  1:17 Unnecessary escape character: \d.
+    planned: (none)
+[no-useless-escape missing] js "export { \"a\\d\" as \"b\\e\" } from \"m\";"
+    eslint:  1:12 Unnecessary escape character: \d. | 1:21 Unnecessary escape character: \e.
+    planned: (none)
+[no-useless-escape missing] js "export * as \"a\\d\" from \"m\";"
+    eslint:  1:15 Unnecessary escape character: \d.
+    planned: (none)
+[only ESLint rejects] js "/\\👍/u;"  1:2 Parsing error: Invalid regular expression: /\👍/: Invalid escape
+[only ESLint rejects] js "/👍\\a/u;"  1:2 Parsing error: Invalid regular expression: /👍\a/: Invalid escape
+[only ESLint rejects] js "/[👍\\a]/v;"  1:2 Parsing error: Invalid regular expression: /[👍\a]/: Unterminated character class
+[only ESLint rejects] js "/(/;"  1:2 Parsing error: Invalid regular expression: /(/: Unterminated group
+[only ESLint rejects] js "/\\a(/;"  1:2 Parsing error: Invalid regular expression: /\a(/: Unterminated group
+[both reject] js "/[/;"  1:2 Parsing error: Unterminated regular expression
+[only ESLint rejects] js "/a/uv;"  1:2 Parsing error: Invalid regular expression flag
+[only ESLint rejects] js "/\\a/uv;"  1:2 Parsing error: Invalid regular expression flag
+[only ESLint rejects] js "/\\a{/u;"  1:2 Parsing error: Invalid regular expression: /\a{/: Invalid escape
+[only ESLint rejects] js "/\\p{L}\\a/u;"  1:2 Parsing error: Invalid regular expression: /\p{L}\a/: Invalid escape
+[both reject] js "a = b / c; d = e /\\a/ f;"  1:20 Parsing error: Expecting Unicode escape sequence \uXXXX
+[both reject] js "a++ /\\a/ b;"  1:7 Parsing error: Expecting Unicode escape sequence \uXXXX
+[both reject] js "(a) /\\a/ b;"  1:7 Parsing error: Expecting Unicode escape sequence \uXXXX
+[only Bun rejects] jsx "<a b=<c d=\"e\\f\" /> />;"
+[both reject] jsx "<a b=\"c\\\"d\" />;"  1:11 Parsing error: Unterminated string constant
+197 cases
+  6	both reject
+  181	no-control-regex same
+  181	no-misleading-character-class same
+  181	no-regex-spaces same
+  181	no-useless-backreference same
+  11	no-useless-escape missing
+  170	no-useless-escape same
+  1	only Bun rejects
+  9	only ESLint rejects

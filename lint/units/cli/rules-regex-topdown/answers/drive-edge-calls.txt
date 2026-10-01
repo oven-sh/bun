@@ -142,60 +142,54 @@
 [no-misleading-character-class missing] js "for (const RegExp of x); RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
     eslint:  1:43 Unexpected surrogate pair in character class. Use 'u' flag. | 1:82 Unexpected surrogate pair in character class. Use 'u' flag.
     planned: 1:82 Unexpected surrogate pair in character class. Use 'u' flag.
-[no-useless-backreference extra] js "({ RegExp } = x); RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
-    eslint:  1:47 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern.
-    planned: 1:19 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern. | 1:47 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern. | 1:86 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern.
-[no-misleading-character-class extra] js "({ RegExp } = x); RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
-    eslint:  1:75 Unexpected surrogate pair in character class. Use 'u' flag.
-    planned: 1:36 Unexpected surrogate pair in character class. Use 'u' flag. | 1:75 Unexpected surrogate pair in character class. Use 'u' flag.
-[no-useless-backreference extra] js "RegExp = x; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
-    eslint:  1:41 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern.
-    planned: 1:13 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern. | 1:41 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern. | 1:80 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern.
-[no-misleading-character-class extra] js "RegExp = x; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
-    eslint:  1:69 Unexpected surrogate pair in character class. Use 'u' flag.
-    planned: 1:30 Unexpected surrogate pair in character class. Use 'u' flag. | 1:69 Unexpected surrogate pair in character class. Use 'u' flag.
-[no-useless-backreference extra] js "RegExp++; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
-    eslint:  1:39 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern.
-    planned: 1:11 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern. | 1:39 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern. | 1:78 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern.
-[no-misleading-character-class extra] js "RegExp++; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
-    eslint:  1:67 Unexpected surrogate pair in character class. Use 'u' flag.
-    planned: 1:28 Unexpected surrogate pair in character class. Use 'u' flag. | 1:67 Unexpected surrogate pair in character class. Use 'u' flag.
-[no-useless-backreference extra] js "[RegExp] = x; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
-    eslint:  1:43 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern.
-    planned: 1:15 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern. | 1:43 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern. | 1:82 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern.
-[no-misleading-character-class extra] js "[RegExp] = x; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
-    eslint:  1:71 Unexpected surrogate pair in character class. Use 'u' flag.
-    planned: 1:32 Unexpected surrogate pair in character class. Use 'u' flag. | 1:71 Unexpected surrogate pair in character class. Use 'u' flag.
-[no-useless-backreference extra] js "({ a: RegExp } = x); RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
-    eslint:  1:50 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern.
-    planned: 1:22 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern. | 1:50 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern. | 1:89 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern.
-[no-misleading-character-class extra] js "({ a: RegExp } = x); RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
-    eslint:  1:78 Unexpected surrogate pair in character class. Use 'u' flag.
-    planned: 1:39 Unexpected surrogate pair in character class. Use 'u' flag. | 1:78 Unexpected surrogate pair in character class. Use 'u' flag.
-[no-useless-backreference extra] js "for (RegExp of x); RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
-    eslint:  1:48 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern.
-    planned: 1:20 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern. | 1:48 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern. | 1:87 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern.
-[no-misleading-character-class extra] js "for (RegExp of x); RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
-    eslint:  1:76 Unexpected surrogate pair in character class. Use 'u' flag.
-    planned: 1:37 Unexpected surrogate pair in character class. Use 'u' flag. | 1:76 Unexpected surrogate pair in character class. Use 'u' flag.
-[no-useless-backreference extra] js "for (RegExp in x); RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
-    eslint:  1:48 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern.
-    planned: 1:20 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern. | 1:48 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern. | 1:87 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern.
-[no-misleading-character-class extra] js "for (RegExp in x); RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
-    eslint:  1:76 Unexpected surrogate pair in character class. Use 'u' flag.
-    planned: 1:37 Unexpected surrogate pair in character class. Use 'u' flag. | 1:76 Unexpected surrogate pair in character class. Use 'u' flag.
-[no-useless-backreference extra] js "RegExp ||= x; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
-    eslint:  1:43 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern.
-    planned: 1:15 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern. | 1:43 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern. | 1:82 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern.
-[no-misleading-character-class extra] js "RegExp ||= x; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
-    eslint:  1:71 Unexpected surrogate pair in character class. Use 'u' flag.
-    planned: 1:32 Unexpected surrogate pair in character class. Use 'u' flag. | 1:71 Unexpected surrogate pair in character class. Use 'u' flag.
-[no-useless-backreference extra] js "globalThis = x; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
-    eslint:  1:17 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern. | 1:84 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern.
-    planned: 1:17 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern. | 1:45 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern. | 1:84 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern.
-[no-misleading-character-class extra] js "globalThis = x; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
-    eslint:  1:34 Unexpected surrogate pair in character class. Use 'u' flag.
-    planned: 1:34 Unexpected surrogate pair in character class. Use 'u' flag. | 1:73 Unexpected surrogate pair in character class. Use 'u' flag.
+[no-control-regex missing] js "({ RegExp } = x); RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+    eslint:  1:26 Unexpected control character(s) in regular expression: \x1f. | 1:93 Unexpected control character(s) in regular expression: \x1f.
+    planned: (none)
+[no-regex-spaces missing] js "({ RegExp } = x); RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+    eslint:  1:19 Spaces are hard to count. Use {2}.
+    planned: (none)
+[no-control-regex missing] js "RegExp = x; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+    eslint:  1:20 Unexpected control character(s) in regular expression: \x1f. | 1:87 Unexpected control character(s) in regular expression: \x1f.
+    planned: (none)
+[no-regex-spaces missing] js "RegExp = x; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+    eslint:  1:13 Spaces are hard to count. Use {2}.
+    planned: (none)
+[no-control-regex missing] js "RegExp++; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+    eslint:  1:18 Unexpected control character(s) in regular expression: \x1f. | 1:85 Unexpected control character(s) in regular expression: \x1f.
+    planned: (none)
+[no-regex-spaces missing] js "RegExp++; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+    eslint:  1:11 Spaces are hard to count. Use {2}.
+    planned: (none)
+[no-control-regex missing] js "[RegExp] = x; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+    eslint:  1:22 Unexpected control character(s) in regular expression: \x1f. | 1:89 Unexpected control character(s) in regular expression: \x1f.
+    planned: (none)
+[no-regex-spaces missing] js "[RegExp] = x; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+    eslint:  1:15 Spaces are hard to count. Use {2}.
+    planned: (none)
+[no-control-regex missing] js "({ a: RegExp } = x); RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+    eslint:  1:29 Unexpected control character(s) in regular expression: \x1f. | 1:96 Unexpected control character(s) in regular expression: \x1f.
+    planned: (none)
+[no-regex-spaces missing] js "({ a: RegExp } = x); RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+    eslint:  1:22 Spaces are hard to count. Use {2}.
+    planned: (none)
+[no-control-regex missing] js "for (RegExp of x); RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+    eslint:  1:27 Unexpected control character(s) in regular expression: \x1f. | 1:94 Unexpected control character(s) in regular expression: \x1f.
+    planned: (none)
+[no-regex-spaces missing] js "for (RegExp of x); RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+    eslint:  1:20 Spaces are hard to count. Use {2}.
+    planned: (none)
+[no-control-regex missing] js "for (RegExp in x); RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+    eslint:  1:27 Unexpected control character(s) in regular expression: \x1f. | 1:94 Unexpected control character(s) in regular expression: \x1f.
+    planned: (none)
+[no-regex-spaces missing] js "for (RegExp in x); RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+    eslint:  1:20 Spaces are hard to count. Use {2}.
+    planned: (none)
+[no-control-regex missing] js "RegExp ||= x; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+    eslint:  1:22 Unexpected control character(s) in regular expression: \x1f. | 1:89 Unexpected control character(s) in regular expression: \x1f.
+    planned: (none)
+[no-regex-spaces missing] js "RegExp ||= x; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+    eslint:  1:15 Spaces are hard to count. Use {2}.
+    planned: (none)
 [no-useless-backreference missing] js "function f(globalThis) {} RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
     eslint:  1:27 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern. | 1:55 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern. | 1:94 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern.
     planned: 1:27 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern. | 1:94 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern.
@@ -272,14 +266,12 @@
     eslint:  1:12 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern. | 1:31 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern.
     planned: 1:12 Backreference '\1' will be ignored. It references group '(a)' which appears later in the pattern.
 227 cases
-  8	no-control-regex missing
-  219	no-control-regex same
-  9	no-misleading-character-class extra
+  16	no-control-regex missing
+  211	no-control-regex same
   20	no-misleading-character-class missing
-  198	no-misleading-character-class same
-  8	no-regex-spaces missing
-  219	no-regex-spaces same
-  9	no-useless-backreference extra
+  207	no-misleading-character-class same
+  16	no-regex-spaces missing
+  211	no-regex-spaces same
   37	no-useless-backreference missing
-  181	no-useless-backreference same
+  190	no-useless-backreference same
   227	no-useless-escape same

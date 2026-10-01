@@ -1323,7 +1323,7 @@ impl<'p> Checker<'p> {
         let narrowed = self.flow_type(&mut walk, flow);
         self.walk_declared = outer;
         self.flow_depth -= 1;
-        if walk.steps >= MAX_STEPS || narrowed == parent_ty {
+        if walk.steps >= MAX_STEPS {
             return declared;
         }
         if narrowed == TypeId::NEVER {
@@ -3148,9 +3148,6 @@ impl<'p> Checker<'p> {
             return declared;
         }
         let declared = self.narrowable_type(file, e, declared);
-        if matches!(self.data(declared), TypeData::Fns { .. }) {
-            return declared;
-        }
         // `checkIdentifier`: a variable that is not known to hold anything where its flow starts may be `undefined` there.
         let assume_initialized = self.assumes_initialized(file, e, declared);
         self.starts_unassigned = !assume_initialized;
@@ -3173,10 +3170,7 @@ impl<'p> Checker<'p> {
 
     /// The type of the property or element access `e`, whose property is declared as `declared`.
     pub(super) fn narrow_access(&mut self, file: FileId, e: ExprId, declared: TypeId) -> TypeId {
-        if declared == TypeId::UNRESOLVED
-            || declared == TypeId::NEVER
-            || matches!(self.data(declared), TypeData::Fns { .. })
-        {
+        if declared == TypeId::UNRESOLVED || declared == TypeId::NEVER {
             return declared;
         }
         if self.is_assignment_target(file, e) {

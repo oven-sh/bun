@@ -120,33 +120,43 @@ impl<'p, 'a> Walker<'p, 'a> {
     }
 
     /// What ESLint collects of one member: a `PropertyDefinition` or a `MethodDefinition` with a private key.
-    fn declared(&self, property: &G::Property, flags: ErasedFlags) -> Option<(&'a [u8], i32, bool)> {
+    /// `Err`: a private key of another node (`AccessorProperty`, `TSAbstract...`), which ESLint takes for a use of the name.
+    fn declared(&self, property: &G::Property, flags: ErasedFlags) -> Option<Result<(&'a [u8], i32, bool), (&'a [u8], i32)>> {
         let key = property.key.as_ref()?;
         let ExprData::EPrivateIdentifier(private) = &key.data else {
             return None;
         };
-        // `TSAbstractPropertyDefinition`, `TSAbstractMethodDefinition` and `AccessorProperty` are other nodes.
-        if flags.contains(ErasedFlags::ABSTRACT) {
-            return None;
-        }
+        let name = self.parsed.name_of(private.ref_);
         let is_accessor = match property.kind {
             G::PropertyKind::Normal | G::PropertyKind::Declare => false,
             G::PropertyKind::Get | G::PropertyKind::Set => true,
-            _ => return None,
+            _ => return Some(Err((name, key.loc.start))),
         };
-        Some((self.parsed.name_of(private.ref_), key.loc.start, is_accessor))
+        if flags.contains(ErasedFlags::ABSTRACT) {
+            return Some(Err((name, key.loc.start)));
+        }
+        Some(Ok((name, key.loc.start, is_accessor)))
     }
 
     fn class<'ast>(&mut self, class: &'ast G::Class, walk: impl FnOnce(&mut Self)) {
         let mut found: Vec<(&'a [u8], i32, bool)> = Vec::new();
+        let mut keys_only: Vec<(&'a [u8], i32)> = Vec::new();
         for property in class.properties.slice() {
-            found.extend(self.declared(property, ErasedFlags::empty()));
+            match self.declared(property, ErasedFlags::empty()) {
+                Some(Ok(member)) => found.push(member),
+                Some(Err(key)) => keys_only.push(key),
+                None => {}
+            }
         }
         let erased = &self.parsed.sidecar.erased.members;
         let own: Vec<usize> = self.erased_members.get(&(class.body_loc.start as u32)).cloned().unwrap_or_default();
         for index in &own {
             if let ErasedMemberData::Property(property) = &erased[*index].data {
-                found.extend(self.declared(property, erased[*index].flags));
+                match self.declared(property, erased[*index].flags) {
+                    Some(Ok(member)) => found.push(member),
+                    Some(Err(key)) => keys_only.push(key),
+                    None => {}
+                }
             }
         }
         // The last declaration of a name is the one ESLint keeps.
@@ -167,6 +177,10 @@ impl<'p, 'a> Walker<'p, 'a> {
             }
         }
         self.classes.push(Frame { body: class.body_loc.start, members });
+        // ESLint's handler skips a key only under a `PropertyDefinition` or a `MethodDefinition`: any other private key reads the name.
+        for (name, at) in keys_only {
+            self.reference(name, at, true);
+        }
         walk(self);
         // What a member that leaves no node holds is inside the body of the class all the same.
         for index in &own {

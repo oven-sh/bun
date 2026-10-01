@@ -70,6 +70,8 @@ module.exports = {
 						}
 					}
 					frames.push(members);
+					// ESLint skips a private key only under a PropertyDefinition or a MethodDefinition: under any other member it is a use of the name.
+					for (const m of node.body) if (m.key && m.key.type === "PrivateIdentifier" && m.type !== "PropertyDefinition" && m.type !== "MethodDefinition") reference(m.key.name, true);
 					children(node);
 					frames.pop();
 					for (const [name, member] of members) if (!member.used) context.report({ node: member.at, messageId: "unusedPrivateClassMember", data: { classMemberName: `#${name}` } });

@@ -1,0 +1,23 @@
+RESEARCH OF D4, "rules-unused" (pass 1a, from the code): the tools. Nothing here is in the tree.
+Rules: no-unused-private-class-members (all of it) and no-unused-vars (what ../rule-no-unused-vars/ had not run: the site facts on bun's
+tree, the cases of typescript-eslint's own tests). Read at be1ebe5295 of /workspace/wt/cli. ESLint 4618052e, typescript-eslint 8.58.2
+(/workspace/ref/eslint, /workspace/ref/tseslint; its tests: /workspace/ref/typescript-eslint at v8.58.2, 90c2803a).
+
+probe/                   nupcm: no-unused-private-class-members AS PLANNED FOR src/lint, in Rust, on the tree of Parser::parse_for_lint
+                         (one top-down walk, no parent is read; erased members and erased declarations included).
+                         build:  /workspace/tools/lk python3 probe/build.py /tmp/ru/nupcm      (rustc against the rlibs of the debug build)
+                         run:    ASAN_OPTIONS=detect_leaks=0 /tmp/ru/nupcm [--dump] <file>...   `line:column message` per report;
+                                 --dump also lists the erased members of the file and the members each class declares.
+oracle/nupcm-oracle.cjs  node nupcm-oracle.cjs [--ext js|ts|...] [--ts-rule] [--ast] <code | list.json>...   ESLint's CORE rule (on
+                         typescript-eslint's tree for a TypeScript extension); --ts-rule adds @typescript-eslint/no-unused-private-class-members.
+oracle/compare.cjs       node compare.cjs [--probe /tmp/ru/nupcm] [--show N] <list.json | --files files.txt | file>...   the probe against the oracle.
+oracle/make-nupcm-seed.cjs   node make-nupcm-seed.cjs > seed/no-unused-private-class-members.json   the seed of the fixture: ESLint's 61
+                         cases, the edge lists, typescript-eslint's 99 cases, each with the CORE rule's answer as `expect`.
+model/nupcm-model.cjs, check-nupcm-model.cjs   the same walk as an ESLint rule without parent pointers, beside ESLint's rule (needs no build).
+cases/make-nupcm-lists.cjs   writes cases/nupcm-edge-js.json (315) and cases/nupcm-edge-ts.json (264).
+cases/upstream-no-unused-private-class-members.json   ESLint's own 61 cases (../rules-bindings/oracle/extract.cjs).
+oracle/extract-tseslint.cjs  node extract-tseslint.cjs <test file under packages/eslint-plugin/tests/rules>   the cases of a test of typescript-eslint
+                         -> cases/tseslint-no-unused-vars.json (248), tseslint-no-unused-vars-eslint.json (312), tseslint-no-unused-private-class-members.json (99).
+oracle/classify-tseslint-nuv.cjs   node classify-tseslint-nuv.cjs cases/tseslint-no-unused-vars.json --out cases/tseslint-nuv-carried.json
+                         the cases with default options under the configuration of a lint run, with the answer of @typescript-eslint/no-unused-vars
+                         as `expect` (237 and 224 cases; `own: differs` where that is not what the test itself expects: jsxPragma, comments that configure).

@@ -2,6 +2,7 @@
 import { plugin } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { totalmem } from "node:os";
 import { resolve } from "path";
 
 declare global {
@@ -1063,4 +1064,103 @@ it("object loader: an error thrown by a getter on the exports object rejects the
     },
   });
   expect(() => require("object-loader-throwing-esmodule")).toThrow(boom);
+});
+
+describe("namespace characters", () => {
+  const hooks = ["onLoad", "onResolve"] as const;
+  const accepted = "azAZ09_-@/";
+  const refused = ["a$b", "a.b", "yaml:", "two words", "é", "名前"];
+  const neverMatches = /(?!)/;
+
+  // Calls each hook with each namespace and reports what the call did.
+  function register(build: import("bun").PluginBuilder) {
+    return hooks.flatMap(hook =>
+      [accepted, ...refused].map(namespace => {
+        try {
+          build[hook]({ filter: neverMatches, namespace }, () => undefined);
+          return `${hook} ${namespace}: accepted`;
+        } catch (error: any) {
+          return `${hook} ${namespace}: ${error.name}: ${error.message}`;
+        }
+      }),
+    );
+  }
+
+  const expected = (errorName: string) =>
+    hooks.flatMap(hook => [
+      `${hook} ${accepted}: accepted`,
+      ...refused.map(
+        namespace =>
+          `${hook} ${namespace}: ${errorName}: namespace "${namespace}" can only contain ASCII letters, digits, "_", "-", "@" and "/"`,
+      ),
+    ]);
+
+  it("Bun.plugin and Bun.build refuse a namespace with one message, which names every accepted character", async () => {
+    let fromPlugin: string[] | undefined;
+    plugin({
+      name: "namespace characters",
+      setup(build) {
+        fromPlugin = register(build);
+      },
+    });
+
+    using dir = tempDir("plugin-namespace-characters", { "entry.js": "" });
+    let fromBuild: string[] | undefined;
+    const { success } = await Bun.build({
+      entrypoints: [resolve(String(dir), "entry.js")],
+      plugins: [
+        {
+          name: "namespace characters",
+          setup(build) {
+            fromBuild = register(build);
+          },
+        },
+      ],
+    });
+
+    expect({ plugin: fromPlugin, build: fromBuild, success }).toEqual({
+      plugin: expected("Error"),
+      build: expected("TypeError"),
+      success: true,
+    });
+  });
+
+  // The message quotes the namespace, so no message fits for a namespace near the string length limit
+  // (2**31 - 1 characters). The child needs a string of about 2 GiB, so the test skips on small machines.
+  // `repeat` of one character allocates that string once. The child takes 2 to 3 seconds in a debug ASAN
+  // build, which is too close to the default 5 second limit, so this one test carries its own ceiling.
+  const memory = Math.min(totalmem(), process.constrainedMemory() || Infinity);
+  it.skipIf(memory < 10 * 1024 ** 3)(
+    "Bun.plugin throws a RangeError for a refused namespace that is too long to quote",
+    async () => {
+      const fixture = `
+        const namespace = "!".repeat(2 ** 31 - 10);
+        Bun.plugin({
+          setup(build) {
+            for (const hook of ["onLoad", "onResolve"]) {
+              try {
+                build[hook]({ filter: /(?!)/, namespace }, () => undefined);
+                console.log(hook + ": accepted");
+              } catch (error) {
+                console.log(hook + ": " + error.name + ": " + error.message);
+              }
+            }
+          },
+        });
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+        stdout: ["onLoad: RangeError: Out of memory", "onResolve: RangeError: Out of memory"],
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    30_000,
+  );
 });

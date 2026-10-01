@@ -312,7 +312,7 @@ private:
             rebuildLookup(lookup.size() * 2);
         }
         /* A node, a name and a child list are found by a 32-bit index */
-        RELEASE_ASSERT(nodes.size() < NONE && names.size() + child.size() < NONE);
+        RELEASE_ASSERT(nodes.size() < NONE && child.size() < STATIC_RUN && names.size() + child.size() < NONE);
         if (stored == NONE) {
             stored = (uint32_t) names.size();
             names.insert(names.end(), child.begin(), child.end());
@@ -730,7 +730,7 @@ private:
     }
 
     /* Lazily parse or read from cache */
-    std::pair<std::string_view, bool> getUrlSegment(int urlSegment) {
+    ALWAYS_INLINE std::pair<std::string_view, bool> getUrlSegment(int urlSegment) {
         if (urlSegment > urlSegmentTop) {
             /* Signal as STOP when we have no more URL or stack space */
             if (!currentUrl.length() || urlSegment > int(MAX_URL_SEGMENTS - 1)) {
@@ -763,31 +763,40 @@ private:
         return {urlSegmentVector[urlSegment], false};
     }
 
-    /* Continues the match at a node that the URL reached: its handlers when
-     * the URL ends there, its children when it does not */
-    ALWAYS_INLINE bool executeHandlers(uint32_t node, int urlSegment) {
-        auto [segment, isStop] = getUrlSegment(urlSegment);
-        if (!isStop) {
-            return executeChildren(node, urlSegment, segment);
-        }
-        /* We have reached accross the entire URL with no stoppage, execute */
-        for (uint32_t link = nodes[node].firstHandler; link != NONE; link = handlerLinks[link].next) {
-            step();
-            ASSERT(handlers[handlerLinks[link].handler & HANDLER_MASK]);
-            if (handlers[handlerLinks[link].handler & HANDLER_MASK](this)) {
-                return true;
-            }
-        }
-        /* We reached the end, so go back */
-        return false;
+    /* One copy of the parse for the calls that walk a pattern */
+    NEVER_INLINE std::pair<std::string_view, bool> getPatternSegment(int segment) {
+        return getUrlSegment(segment);
     }
 
     /* Executes as many handlers it can */
-    bool executeChildren(uint32_t parent, int urlSegment, std::string_view segment) {
+    bool executeHandlers(uint32_t parent, int urlSegment) {
+        auto [segment, isStop] = getUrlSegment(urlSegment);
+        if (isStop) {
+            /* We have reached accross the entire URL with no stoppage, execute */
+            for (uint32_t link = nodes[parent].firstHandler; link != NONE; link = handlerLinks[link].next) {
+                step();
+                ASSERT(handlers[handlerLinks[link].handler & HANDLER_MASK]);
+                if (handlers[handlerLinks[link].handler & HANDLER_MASK](this)) {
+                    return true;
+                }
+            }
+            /* We reached the end, so go back */
+            return false;
+        }
+
         const uint32_t *item = edges.data() + nodes[parent].childList + 1;
         for (const uint32_t *end = item + item[-1]; item != end;) {
             uint32_t word = *item++;
-            if (word & WILDCARD) {
+            uint32_t child;
+            if (word & STATIC) {
+                /* Static match */
+                step();
+                item += 2;
+                if (nameAt(item[-2], word & ~STATIC) != segment) {
+                    continue;
+                }
+                child = item[-1];
+            } else if (word & WILDCARD) {
                 /* Wildcard match (can be seen as a shortcut). The item has one handler or more. */
                 const uint32_t *last = item + (word & ~WILDCARD);
                 do {
@@ -798,16 +807,6 @@ private:
                     }
                 } while (item != last);
                 continue;
-            }
-            uint32_t child;
-            if (word & STATIC) {
-                /* Static match */
-                step();
-                item += 2;
-                if (nameAt(item[-2], word & ~STATIC) != segment) {
-                    continue;
-                }
-                child = item[-1];
             } else if (!word) {
                 /* Parameter match */
                 step();
@@ -839,8 +838,8 @@ private:
     /* Walks the pattern down from a method node */
     uint32_t findPattern(uint32_t node, std::string_view pattern, bool isHighPriority) {
         setUrl(pattern);
-        for (int i = 0; node != NONE && !getUrlSegment(i).second; i++) {
-            std::string_view segment = getUrlSegment(i).first;
+        for (int i = 0; node != NONE && !getPatternSegment(i).second; i++) {
+            std::string_view segment = getPatternSegment(i).first;
             if (segment.starts_with(':')) {
                 /* Parameter routes are named only : */
                 segment = segment.substr(0, 1);
@@ -983,8 +982,8 @@ public:
             uint32_t node = getNode(ROOT, method, false, storedMethod);
             /* Iterate over all segments */
             setUrl(pattern);
-            for (int i = 0; !getUrlSegment(i).second; i++) {
-                std::string_view segment = getUrlSegment(i).first;
+            for (int i = 0; !getPatternSegment(i).second; i++) {
+                std::string_view segment = getPatternSegment(i).first;
                 if (segment.length() > 1 && segment[0] == ':') {
                     /* Parameter routes must be named only : */
                     segment = segment.substr(0, 1);

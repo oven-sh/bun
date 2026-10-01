@@ -1282,9 +1282,9 @@ impl NodeHTTPResponse {
         Ok(JSValue::UNDEFINED)
     }
 
-    // Writes a caller-built 1xx informational response block through the
-    // AsyncSocket buffer writeStatus/end use, so it stays ordered with the
-    // final response bytes, and sends it before it returns (node:http _writeRaw).
+    // Writes a caller-built 1xx informational response block to the same
+    // AsyncSocket buffer writeStatus/end use, so a pipelined replay stays
+    // ordered ahead of the final response bytes (node:http _writeRaw).
     pub(crate) fn write_informational(
         &self,
         global_object: &JSGlobalObject,

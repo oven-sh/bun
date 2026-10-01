@@ -3315,9 +3315,9 @@ ServerResponse.prototype._writeRaw = function (chunk, encoding, callback) {
   // Node keeps a 1xx for a socket that ended in outputData: no bytes, and the callback never runs.
   const socket = this[fakeSocketSymbol];
   if (socket && !socket.writable) return true;
-  // The response handle writes the 1xx through its AsyncSocket buffer (the path of
-  // writeHead/end), so it keeps its order with the final response bytes, and sends
-  // it before it returns. socket.write() would land in the socket handle's separate stream buffer.
+  // Write through the response handle's AsyncSocket buffer (same path as
+  // writeHead/end) so 1xx lines share ordering with the final response bytes;
+  // socket.write() would land in the socket handle's separate stream buffer.
   handle.writeInformational(chunk, encoding);
   if (typeof callback === "function") process.nextTick(callback, null);
   return true;

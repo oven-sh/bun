@@ -6,8 +6,7 @@
 use crate::atom::Atom;
 use crate::hir::{ExprId, FnId, TypeNodeId, TypeParamId};
 use crate::program::{FileId, Sym};
-use crate::util::{AppendVec, FxHashMap, fx_hash};
-use std::sync::RwLock;
+use crate::util::{AppendVec, GrowingPlaces, SHARDS, shard_of, spread_hash};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
@@ -389,42 +388,56 @@ pub struct TypeRecord {
     manifest: AtomicBool,
 }
 
-const SHARDS: usize = 64;
-
-struct Interned<K, V> {
-    shards: Box<[RwLock<FxHashMap<K, u32>>]>,
+/// Equal things get equal numbers. What is interned is kept once, in `items`, and found again through tables that are read without a
+/// lock.
+struct Interned<V> {
+    shards: Box<[GrowingPlaces]>,
     items: AppendVec<V>,
 }
 
-impl<K: std::hash::Hash + Eq + Clone, V> Interned<K, V> {
+impl<V> Interned<V> {
     fn new() -> Self {
         Interned {
-            shards: (0..SHARDS).map(|_| Default::default()).collect(),
+            shards: (0..SHARDS).map(|_| GrowingPlaces::default()).collect(),
             items: AppendVec::new(),
         }
     }
 
-    fn intern(&self, key: K, make: impl FnOnce(&K, u32) -> V) -> u32 {
-        let shard = &self.shards[(fx_hash(&key) >> 58) as usize % SHARDS];
-        if let Some(&id) = shard.read().unwrap().get(&key) {
+    /// `key_of`: what an item was interned by. `make`: the item for `key`, which it takes over, and the number it gets.
+    fn intern<K: std::hash::Hash + Eq>(
+        &self,
+        key: K,
+        key_of: impl Fn(&V) -> &K,
+        make: impl FnOnce(K, u32) -> V,
+    ) -> u32 {
+        let spread = spread_hash(&key);
+        let shard = &self.shards[shard_of(spread)];
+        if let Some(id) = shard.find(spread, |i| *key_of(self.items.get(i)) == key) {
             return id;
         }
-        let mut map = shard.write().unwrap();
-        if let Some(&id) = map.get(&key) {
-            return id;
-        }
-        let id = self.items.push_with(|id| make(&key, id));
-        map.insert(key, id);
-        id
+        let key = std::cell::RefCell::new(Some(key));
+        shard.find_or_add(
+            spread,
+            |i| {
+                key.borrow()
+                    .as_ref()
+                    .is_some_and(|key| key_of(self.items.get(i)) == key)
+            },
+            || {
+                self.items
+                    .push_with(|id| make(key.borrow_mut().take().unwrap(), id))
+            },
+            |i| spread_hash(key_of(self.items.get(i))),
+        )
     }
 }
 
 pub type Mapping = Box<[(TypeId, TypeId)]>;
 
 pub struct TypeStore {
-    types: Interned<TypeData, TypeRecord>,
-    sigs: Interned<SigData, SigData>,
-    mappers: Interned<Mapping, (Mapping, TypeFlags)>,
+    types: Interned<TypeRecord>,
+    sigs: Interned<SigData>,
+    mappers: Interned<(Mapping, TypeFlags)>,
 }
 
 macro_rules! well_known {
@@ -636,12 +649,16 @@ impl TypeStore {
     }
 
     pub fn intern(&self, data: TypeData) -> TypeId {
-        TypeId(self.types.intern(data, |data, id| TypeRecord {
-            flags: self.flags_of(data),
-            data: data.clone(),
-            id: TypeId(id),
-            manifest: AtomicBool::new(false),
-        }))
+        TypeId(self.types.intern(
+            data,
+            |record| &record.data,
+            |data, id| TypeRecord {
+                flags: self.flags_of(&data),
+                data,
+                id: TypeId(id),
+                manifest: AtomicBool::new(false),
+            },
+        ))
     }
 
     /// `ObjectFlagsFromTypeNode`, `ObjectFlagsArrayLiteral`: `id` was made by a type node or an array literal, not by
@@ -685,7 +702,7 @@ impl TypeStore {
         {
             *sig = *inner;
         }
-        SigId(self.sigs.intern(data, |data, _| data.clone()))
+        SigId(self.sigs.intern(data, |data| data, |data, _| data))
     }
 
     /// `pairs` need not be sorted. A parameter mapped to itself stays: it says that the origin depends on it.
@@ -693,12 +710,16 @@ impl TypeStore {
         pairs.sort_unstable_by_key(|p| p.0);
         pairs.dedup_by_key(|p| p.0);
         let key: Mapping = pairs.into_boxed_slice();
-        MapperId(self.mappers.intern(key, |key, _| {
-            let flags = key
-                .iter()
-                .fold(TypeFlags::empty(), |f, p| f | self.flags(p.1));
-            (key.clone(), flags)
-        }))
+        MapperId(self.mappers.intern(
+            key,
+            |mapper| &mapper.0,
+            |key, _| {
+                let flags = key
+                    .iter()
+                    .fold(TypeFlags::empty(), |f, p| f | self.flags(p.1));
+                (key, flags)
+            },
+        ))
     }
 
     #[inline]

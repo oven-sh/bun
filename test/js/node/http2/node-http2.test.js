@@ -6414,91 +6414,238 @@ describe.concurrent("write() after end()", () => {
       });
       expect(result).toEqual([lateWriteEvents, 4]);
     });
+  });
+});
 
-    // The peer is a raw HTTP/2 endpoint over a JS Duplex. It answers the request with HEADERS
-    // (:status 200), `body` as one DATA frame with END_STREAM, and RST_STREAM, all in one read.
-    // Resolves with the request's events once it has closed.
-    async function resetInSameReadAsResponse(rstCode, body, onResponse) {
-      function frame(type, flags, streamId, payload = Buffer.alloc(0)) {
-        const header = Buffer.alloc(9);
-        header.writeUIntBE(payload.length, 0, 3);
-        header[3] = type;
-        header[4] = flags;
-        header.writeUInt32BE(streamId, 5);
-        return Buffer.concat([header, payload]);
-      }
-      const code = Buffer.alloc(4);
-      code.writeUInt32BE(rstCode);
-      const answer = [frame(1, 4, 1, Buffer.from([0x88]))];
-      if (body !== undefined) answer.push(frame(0, 1, 1, Buffer.from(body)));
-      answer.push(frame(3, 0, 1, code));
-      let received = Buffer.alloc(0);
-      let sawPreface = false;
-      const transport = new Duplex({
-        read() {},
-        write(chunk, encoding, callback) {
-          received = Buffer.concat([received, chunk]);
-          if (!sawPreface && received.length >= 24) {
-            received = received.subarray(24);
-            sawPreface = true;
-          }
-          while (sawPreface && received.length >= 9) {
-            const length = received.readUIntBE(0, 3);
-            if (received.length < 9 + length) break;
-            const type = received[3];
-            const flags = received[4];
-            received = received.subarray(9 + length);
-            if (type === 4 && (flags & 1) === 0) this.push(frame(4, 1, 0));
-            if (type === 1) this.push(Buffer.concat(answer));
-          }
-          callback();
-        },
-      });
-      const session = http2.connect("http://localhost", { createConnection: () => transport });
-      try {
-        const closed = Promise.withResolvers();
-        const events = [];
-        session.on("error", closed.reject);
-        session.on("connect", () => transport.push(frame(4, 0, 0)));
-        const req = session.request({ ":method": "POST", ":path": "/" }, { endStream: false });
-        for (const name of ["aborted", "finish", "end"]) req.on(name, () => events.push(name));
-        req.on("error", err => events.push(`error:${err.code}`));
-        req.on("close", () => closed.resolve(events.concat("close")));
-        req.on("response", () => {
-          events.push(req.destroyed ? "response on a destroyed stream" : "response on a live stream");
-          onResponse(req, events);
-        });
-        return await closed.promise;
-      } finally {
-        session.destroy();
-      }
+describe.concurrent("RST_STREAM from the peer", () => {
+  const { NGHTTP2_NO_ERROR, NGHTTP2_INTERNAL_ERROR, NGHTTP2_CANCEL } = http2.constants;
+  const FRAME_DATA = 0;
+  const FRAME_HEADERS = 1;
+
+  // A request over a JS Duplex whose other end is a raw HTTP/2 peer. The peer answers the first
+  // `answerTo` frame with HEADERS (:status 200), `body` as one DATA frame with END_STREAM, and
+  // RST_STREAM, all in one read. With `thenPing`, a PING follows as a second read on the next
+  // tick. `drive` gets the request right after it is created. Resolves with the request's events
+  // once it has closed.
+  async function resetByRawPeer({ rstCode, body, answerTo = FRAME_HEADERS, thenPing = false }, drive) {
+    function frame(type, flags, streamId, payload = Buffer.alloc(0)) {
+      const header = Buffer.alloc(9);
+      header.writeUIntBE(payload.length, 0, 3);
+      header[3] = type;
+      header[4] = flags;
+      header.writeUInt32BE(streamId, 5);
+      return Buffer.concat([header, payload]);
     }
+    const code = Buffer.alloc(4);
+    code.writeUInt32BE(rstCode);
+    const answer = [frame(FRAME_HEADERS, 4, 1, Buffer.from([0x88]))];
+    if (body !== undefined) answer.push(frame(FRAME_DATA, 1, 1, Buffer.from(body)));
+    answer.push(frame(3, 0, 1, code));
+    let received = Buffer.alloc(0);
+    let sawPreface = false;
+    let answered = false;
+    const transport = new Duplex({
+      read() {},
+      write(chunk, encoding, callback) {
+        received = Buffer.concat([received, chunk]);
+        if (!sawPreface && received.length >= 24) {
+          received = received.subarray(24);
+          sawPreface = true;
+        }
+        while (sawPreface && received.length >= 9) {
+          const length = received.readUIntBE(0, 3);
+          if (received.length < 9 + length) break;
+          const type = received[3];
+          const flags = received[4];
+          received = received.subarray(9 + length);
+          if (type === 4 && (flags & 1) === 0) this.push(frame(4, 1, 0));
+          if (type === answerTo && !answered) {
+            answered = true;
+            this.push(Buffer.concat(answer));
+            if (thenPing) process.nextTick(() => this.push(frame(6, 0, 0, Buffer.alloc(8))));
+          }
+        }
+        callback();
+      },
+    });
+    const session = http2.connect("http://localhost", { createConnection: () => transport });
+    try {
+      const closed = Promise.withResolvers();
+      const events = [];
+      session.on("error", closed.reject);
+      session.on("connect", () => transport.push(frame(4, 0, 0)));
+      const req = session.request({ ":method": "POST", ":path": "/" }, { endStream: false });
+      for (const name of ["aborted", "finish", "end"]) req.on(name, () => events.push(name));
+      req.on("error", err => events.push(`error:${err.code}`));
+      req.on("close", () => closed.resolve(events.concat("close")));
+      req.on("response", () => {
+        events.push(req.destroyed ? "response on a destroyed stream" : "response on a live stream");
+      });
+      drive(req);
+      return await closed.promise;
+    } finally {
+      session.destroy();
+    }
+  }
 
-    // node handles the RST_STREAM inside the read and emits 'response' one tick later, so the
-    // writes in 'response' reach a stream that is already destroyed.
-    it("peer reset with an error code in the same read as the response", async () => {
-      const lateWrite = Promise.withResolvers();
-      const events = await resetInSameReadAsResponse(http2.constants.NGHTTP2_INTERNAL_ERROR, undefined, req => {
+  // node handles the RST_STREAM inside the read and emits 'response' one tick later, so the
+  // writes in 'response' reach a stream that is already destroyed.
+  it.each([
+    ["an error code", NGHTTP2_INTERNAL_ERROR, ["finish", "error:ERR_HTTP2_STREAM_ERROR", "close"]],
+    ["CANCEL", NGHTTP2_CANCEL, ["finish", "close"]],
+  ])("%s in the same read as the response headers", async (_, rstCode, rest) => {
+    const lateWrite = Promise.withResolvers();
+    const events = await resetByRawPeer({ rstCode }, req => {
+      req.on("response", () => {
         req.write("body");
         req.end();
         req.write("late", err => lateWrite.resolve(err.code));
       });
-      expect([events, await lateWrite.promise]).toEqual([
-        ["aborted", "response on a destroyed stream", "finish", "error:ERR_HTTP2_STREAM_ERROR", "close"],
-        "ERR_STREAM_WRITE_AFTER_END",
-      ]);
     });
+    expect([events, await lateWrite.promise]).toEqual([
+      ["aborted", "response on a destroyed stream", ...rest],
+      "ERR_STREAM_WRITE_AFTER_END",
+    ]);
+  });
 
-    // A reset with NO_ERROR closes the stream like END_STREAM: the body is still delivered and
-    // the stream is destroyed after 'end'.
-    it("peer reset with NO_ERROR in the same read as the whole response", async () => {
-      let body = "";
-      const events = await resetInSameReadAsResponse(http2.constants.NGHTTP2_NO_ERROR, "hello", req => {
+  // A reset with NO_ERROR closes the stream like END_STREAM: the body stays readable and the
+  // stream is destroyed after 'end'.
+  it.each([
+    ["in 'response'", false],
+    ["a microtask after 'response'", true],
+  ])("NO_ERROR in the same read as the whole response, body read %s", async (_, later) => {
+    let body = "";
+    const events = await resetByRawPeer({ rstCode: NGHTTP2_NO_ERROR, body: "hello" }, req => {
+      req.on("response", async () => {
+        if (later) await null;
         req.setEncoding("utf8");
         req.on("data", chunk => (body += chunk));
       });
-      expect([events, body]).toEqual([["aborted", "response on a live stream", "finish", "end", "close"], "hello"]);
     });
+    expect([events, body]).toEqual([["aborted", "response on a live stream", "finish", "end", "close"], "hello"]);
+  });
+
+  // The second read makes the native side drop the stream. The two writes complete after that,
+  // and then the stream has to finish without another call into the native stream.
+  it("NO_ERROR while writes are in flight, native stream dropped before they complete", async () => {
+    const writes = [];
+    let body = "";
+    const events = await resetByRawPeer(
+      { rstCode: NGHTTP2_NO_ERROR, body: "hello", answerTo: FRAME_DATA, thenPing: true },
+      req => {
+        const upload = () => {
+          req.write("first", err => writes.push(err?.message ?? null));
+          req.write("second", err => writes.push(err?.message ?? null));
+        };
+        if (req.pending) req.once("ready", upload);
+        else upload();
+        req.on("finish", () => {
+          req.setEncoding("utf8");
+          req.on("data", chunk => (body += chunk));
+        });
+      },
+    );
+    expect([events, writes, body]).toEqual([
+      ["aborted", "response on a live stream", "finish", "end", "close"],
+      [null, null],
+      "hello",
+    ]);
+  });
+
+  it.each([
+    ["an error code", NGHTTP2_INTERNAL_ERROR, ["aborted", "finish", "error:ERR_HTTP2_STREAM_ERROR", "close"]],
+    ["NO_ERROR", NGHTTP2_NO_ERROR, ["aborted", "finish", "close"]],
+    ["CANCEL", NGHTTP2_CANCEL, ["aborted", "finish", "close"]],
+  ])("a server stream that waits for trailers does not ask for them after %s", async (_, rstCode, expected) => {
+    const server = http2.createServer();
+    let client;
+    try {
+      const closed = Promise.withResolvers();
+      server.on("stream", stream => {
+        const events = [];
+        for (const name of ["aborted", "wantTrailers", "finish"]) stream.on(name, () => events.push(name));
+        stream.on("error", err => events.push(`error:${err.code}`));
+        stream.on("close", () => closed.resolve(events.concat("close")));
+        stream.respond({ ":status": 200 }, { waitForTrailers: true });
+        stream.write("partial");
+      });
+      const port = await new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
+      client = http2.connect(`http://127.0.0.1:${port}`);
+      client.on("error", closed.reject);
+      const req = client.request({ ":path": "/" });
+      // close(code) with an error code also gives the request itself an ERR_HTTP2_STREAM_ERROR.
+      req.on("error", () => {});
+      req.on("response", () => req.close(rstCode));
+      req.resume();
+      expect(await closed.promise).toEqual(expected);
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+});
+
+// Guards, they pass without the change above too: the native side reports these stream errors
+// through the same handlers as a peer RST_STREAM, and they must keep their own timing.
+describe.concurrent("stream errors that are not a RST_STREAM from the peer", () => {
+  // Runs `drive(client, req)` against a server that answers with headers and half a body.
+  // Resolves once the request has closed, with its events and a promise for the server stream's.
+  async function bothEnds(requestOptions, drive) {
+    const server = http2.createServer();
+    let client;
+    try {
+      const serverClosed = Promise.withResolvers();
+      const clientClosed = Promise.withResolvers();
+      server.on("stream", stream => {
+        const events = [];
+        stream.on("error", err => events.push(`error:${err.code}`));
+        stream.on("close", () => serverClosed.resolve(events.concat("close")));
+        stream.respond({ ":status": 200 });
+        stream.write("partial");
+      });
+      const port = await new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
+      client = http2.connect(`http://127.0.0.1:${port}`);
+      // Each case tears the session down on purpose, which can surface here too.
+      client.on("error", () => {});
+      await new Promise((resolve, reject) => {
+        client.once("connect", resolve);
+        client.once("close", () => reject(new Error("closed before 'connect'")));
+      });
+      const req = client.request({ ":path": "/" }, requestOptions);
+      const destroyedAtReturn = req.destroyed;
+      const events = [];
+      req.on("error", err => events.push(`error:${err.code ?? err.message}`));
+      req.on("close", () => clientClosed.resolve(events.concat("close")));
+      req.resume();
+      drive(client, req);
+      return { destroyedAtReturn, request: await clientClosed.promise, serverStream: serverClosed.promise };
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  }
+
+  it("session.destroy(err, NO_ERROR) gives a request in flight the error", async () => {
+    const { request } = await bothEnds(undefined, (client, req) => {
+      req.on("response", () => client.destroy(new Error("boom"), http2.constants.NGHTTP2_NO_ERROR));
+    });
+    expect(request).toEqual(["error:boom", "close"]);
+  });
+
+  it.each([
+    ["PROTOCOL_ERROR", http2.constants.NGHTTP2_PROTOCOL_ERROR],
+    ["CANCEL", http2.constants.NGHTTP2_CANCEL],
+  ])("GOAWAY(%s) from the peer gives the server's open stream the session error", async (_, code) => {
+    const { serverStream } = await bothEnds(undefined, (client, req) => {
+      req.on("response", () => client.goaway(code));
+    });
+    expect(await serverStream).toEqual(["error:ERR_HTTP2_SESSION_ERROR", "close"]);
+  });
+
+  // The native side rejects `parent: 0` inside request(), before any listener can exist.
+  it("an error that request() reports before it returns reaches a later 'error' listener", async () => {
+    const { destroyedAtReturn, request } = await bothEnds({ parent: 0 }, () => {});
+    expect([destroyedAtReturn, request]).toEqual([false, ["error:ERR_HTTP2_STREAM_ERROR", "close"]]);
   });
 });
 

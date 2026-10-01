@@ -15,3 +15,32 @@ all: cases 895, same 895, differ 0 {}; reports of ESLint 9
 all: cases 5923, same 5923, differ 0 {}; reports of ESLint 10830
 # node oracle/native.cjs <the eleven fixtures of test/cli/lint/rules>
 all: cases 3341, same 3307, differ 34 {"missing":34}; reports of ESLint 166
+# node oracle/native.cjs cases/edge-no-*.json cases/edge2-no-constant-condition.json cases/ts-no-*.json   (the lists of the other pass)
+edge-no-cond-assign.json: cases 90, same 90, differ 0
+DIFFER missing "function f(Map) { return a === new Map(); } a === new Map();"
+edge-no-constant-binary-expression.json: cases 252, same 251, differ 1
+DIFFER missing "function f() { var Boolean; } if (Boolean(1)) {}"
+edge-no-constant-condition.json: cases 230, same 229, differ 1
+DIFFER missing "if (<a/>) {} else if (<a />) {}"
+edge-no-dupe-else-if.json: cases 113, same 112, differ 1
+DIFFER missing "function f(Boolean) { if (Boolean(a)) {} } if (Boolean(b)) {}"
+DIFFER missing "var a = function Boolean() { if (Boolean(b)) {} }; if (Boolean(c)) {}"
+DIFFER missing "var a = class Boolean { m() { if (Boolean(b)) {} } }; if (Boolean(c)) {}"
+DIFFER missing "(Boolean) => { if (Boolean(a)) {} }; if (Boolean(c)) {}"
+edge-no-extra-boolean-cast.json: cases 107, same 103, differ 4
+edge-no-unsafe-optional-chaining.json: cases 145, same 145, differ 0
+edge2-no-constant-condition.json: cases 80, same 80, differ 0
+ts-no-cond-assign.json: cases 32, same 32, differ 0
+ts-no-constant-binary-expression.json: cases 78, same 78, differ 0
+ts-no-constant-condition.json: cases 70, same 70, differ 0
+DIFFER missing "declare const a: any, b: any; if (a as Array<Array<number>>) {} else if (a as Array<Array<number> >) {}"
+DIFFER missing "declare const a: any, b: any; if (<a/>) {} else if (<a />) {}"
+DIFFER missing "declare const a: any, b: any; if (<a>{b}</a>) {} else if (<a>{ b }</a>) {}"
+ts-no-dupe-else-if.json: cases 38, same 35, differ 3
+DIFFER missing "declare const x: any; namespace N { export const Boolean = 1; } if (Boolean(x)) {}"
+DIFFER extra "declare const x: any; declare const Boolean: any; if (Boolean(x)) {}"
+DIFFER extra "import type { Boolean } from 'x'; declare const x: any; if (Boolean(x)) {}"
+DIFFER extra "import { type Boolean } from 'x'; declare const x: any; if (Boolean(x)) {}"
+ts-no-extra-boolean-cast.json: cases 61, same 57, differ 4
+ts-no-unsafe-optional-chaining.json: cases 69, same 69, differ 0
+all: cases 1365, same 1351, differ 14 {"missing":11,"extra":3}; reports of ESLint 925

@@ -1,5 +1,10 @@
-RESEARCH OF D3, "rules-expressions": six rules on expression shape. Nothing here is in the tree.
+RESEARCH OF D3, "rules-expressions", the pass that starts from the goal: six rules on expression shape. Nothing here is in the tree.
 no-cond-assign, no-constant-binary-expression, no-constant-condition, no-dupe-else-if, no-extra-boolean-cast, no-unsafe-optional-chaining.
+This directory is shared with the other pass of the same research (HOWTO-bottomup.txt). Its files keep their names: cases/edge-*,
+cases/edge2-*, cases/ts-*, cases/upstream-*, oracle/extract.cjs, oracle.cjs, ts.cjs, bun-parse.cjs, probe-all.cjs, proto-bunshape.cjs,
+proto-dupe-else-if.cjs, answers/edge*, answers/ts-*, answers/upstream-*. The lists and the three scripts of this pass that had the
+same names are td-*: this pass wrote over them once, and they are back as the other pass last saved them (notes commits 621ab3fc8e,
+011de1c09d, 2afb160cb0, 1f996509a8, f24e49e0ba).
 
 The oracle is ESLint at the pin of src/lint/UPSTREAM_PORTED (/workspace/ref/eslint) and, for a case with `ext`, the parser of
 typescript-eslint (/workspace/ref/tseslint); sh ../tools/eslint-oracle-setup.sh restores both.
@@ -24,24 +29,25 @@ oracle/native.cjs    node native.cjs [--show] <list.json>...   the probe against
                      A list: codes, or { code, jsx?, ext?, file? }, or { valid, invalid } of extract.cjs. No comment configures ESLint.
 oracle/proto.cjs     node proto.cjs <list.json | --code <code>...> [--ts] [--show]   the same rules in JavaScript, on ESLint's tree
                      turned into what Bun's parse pass keeps; it was written first and the probe follows it.
-oracle/extract.cjs   node extract.cjs <rule>   ESLint's own cases of the rule that run with its default options and ESLint's parser.
+oracle/td-extract.cjs   node td-extract.cjs <rule>   ESLint's own cases of the rule that run with its default options and ESLint's
+                     parser, the languageOptions of the RuleTester merged into each case.
 oracle/cross.cjs     node cross.cjs existing|upstream [--json]   which cases make which other rule report (ESLint): the cases of the
                      eleven fixtures of the tree for the six rules, and ESLint's cases of the six for the other sixteen.
-oracle/cross-own.cjs node cross-own.cjs [--json]   the same for cases/edge-*.json and cases/ts-*.json.
+oracle/cross-own.cjs node cross-own.cjs [--json]   the same for cases/td-edge-*.json and cases/td-ts-*.json.
 oracle/gen-random.cjs, fuzz.cjs   random expressions: node gen-random.cjs 7000 777 > list.json; node fuzz.cjs 4000 7 (prototype).
-oracle/run.cjs, ts.cjs   ESLint over snippets: node run.cjs <rule[,rule]> <code>...; node ts.cjs <rule[,rule]> <code>... (typescript-eslint).
-oracle/bun-parse.cjs, probe-parse.cjs   which cases the debug build (bun --lint) and Parser::parse_for_lint (the probe) reject.
+oracle/run.cjs, td-ts.cjs   ESLint over snippets: node run.cjs <rule[,rule]> <code>...; node td-ts.cjs <rule[,rule]> <code>... (typescript-eslint).
+oracle/td-bun-parse.cjs, probe-parse.cjs   which cases the debug build (bun --lint) and Parser::parse_for_lint (the probe) reject.
 oracle/native-dupe.cjs   the first comparison, of `probe dupe` alone.
 
-cases/upstream-<rule>.json   extract.cjs: ESLint's cases with the default options. Without those that set globals:
+cases/td-upstream-<rule>.json   td-extract.cjs: ESLint's cases with the default options. Without those that set globals:
                              no-cond-assign 18+7, no-constant-binary-expression 50+233, no-constant-condition 145+135,
                              no-dupe-else-if 34+55, no-extra-boolean-cast 28+218, no-unsafe-optional-chaining 58+64 (valid+invalid).
-cases/edge-<rule>.json       JavaScript cases written for this research (65, 185, 155, 91, 97, 107).
-cases/ts-<rule>.json         TypeScript cases, `ext` ts or tsx (37, 63, 64, 43, 51, 65).
-cases/ts-globals.json        26 TypeScript cases about which names a file declares and about syntax that leaves no node.
-answers/native-lists.txt     native.cjs over all of cases/: 2064 cases of the six rules, 2052 the same; ts-globals 26, 12 the same.
+cases/td-edge-<rule>.json    JavaScript cases written for this pass (65, 185, 155, 91, 97, 107).
+cases/td-ts-<rule>.json      TypeScript cases, `ext` ts or tsx (37, 63, 64, 43, 51, 65).
+cases/td-ts-globals.json     26 TypeScript cases about which names a file declares and about syntax that leaves no node.
+answers/native-lists.txt     native.cjs over cases/td-*: 2064 cases of the six rules, 2052 the same; td-ts-globals 26, 12 the same.
 answers/native-corpora.txt   native.cjs over 3593 real JavaScript files, 895 real TypeScript files, 5923 random cases: all the same;
-                             over the eleven fixtures of the tree: 3341 cases, 34 missing (a name declared elsewhere in the file).
-answers/upstream-<rule>.jsonl   ../rules-statements/oracle/oracle.cjs over ESLint's cases.
+                             over the eleven fixtures of the tree: 3341 cases, 34 missing (a name declared elsewhere in the file);
+                             over the lists of the other pass: 1365 cases, 1351 the same, 14 of the kinds that are known.
 answers/cross-existing-fixtures.jsonl   cross.cjs existing --json: 159 cases of the eleven fixtures on which one of the six reports.
-answers/cross-upstream.jsonl, cross-own-lists.jsonl   144 and 60 cases of the lists on which another rule reports.
+answers/cross-upstream.jsonl, cross-own-lists.jsonl   144 and 60 cases of the td- lists on which another rule reports.

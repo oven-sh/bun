@@ -31,6 +31,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { mkdir, rename, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { locations, pins } from "./ci-images/spec.ts";
 import { BuildError } from "./error.ts";
 
 /**
@@ -39,9 +40,9 @@ import { BuildError } from "./error.ts";
  * stop being served — so when the build fails saying the release is gone, run
  * `bun scripts/build/xmac.mjs list` and bump both pins to the newest entry.
  */
-export const MACOS_SDK_VERSION = "26.5";
+export const MACOS_SDK_VERSION = pins.macosSdk.sdk;
 /** The Command Line Tools release whose package contains MACOS_SDK_VERSION. */
-export const MACOS_SDK_CLT_RELEASE = "26.5";
+export const MACOS_SDK_CLT_RELEASE = pins.macosSdk.commandLineTools;
 
 /** The vendored xmac bundle (see the header of that file for provenance). */
 export const XMAC_PATH = join(import.meta.dirname, "xmac.mjs");
@@ -95,9 +96,9 @@ export function resolveMacosSdkPath(explicit: string | undefined, cacheDir: stri
     return abs;
   }
 
-  // 2. Well-known install locations: /opt/MacOSX*.sdk (what CI images /
-  //    bootstrap install) or an osxcross tree.
-  for (const candidate of [newestSdkIn("/opt"), newestSdkIn("/opt/macos-sdk"), newestSdkIn("/opt/osxcross/SDK")]) {
+  // 2. Well-known install locations: /opt, where CI's build image puts it
+  //    (`locations.macosSdk`), or an osxcross tree.
+  for (const candidate of [newestSdkIn("/opt"), newestSdkIn(locations.macosSdk), newestSdkIn("/opt/osxcross/SDK")]) {
     if (candidate !== undefined) return candidate;
   }
 
@@ -184,7 +185,7 @@ export async function ensureMacosSdk(cfg: {
           hint:
             `Apple's software-update catalog is a rolling window; if Command Line Tools ` +
             `${MACOS_SDK_CLT_RELEASE} is no longer served, run \`bun ${relativeXmac()} list\` and bump ` +
-            `MACOS_SDK_VERSION / MACOS_SDK_CLT_RELEASE in scripts/build/macos-sdk.ts. ` +
+            `pins.macosSdk in scripts/build/ci-images/spec.ts. ` +
             `Extraction also needs \`xz\` on PATH (apt install xz-utils).`,
         },
       );

@@ -57,11 +57,6 @@ export type Field =
       length?: number;
       passThis?: boolean;
       invalidThisBehavior?: InvalidThisBehavior;
-      DOMJIT?: {
-        returns: string;
-        args?: [string, string] | [string, string, string] | [string] | [];
-        pure?: boolean;
-      };
     } & PropertyAttribute)
   | { internal: true }
   | {
@@ -267,21 +262,7 @@ export function define(
     estimatedSize,
     structuredClone,
     values,
-    klass: Object.fromEntries(
-      Object.entries(klass)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([k, v]) => {
-          v["DOMJIT"] = undefined;
-          return [k, v];
-        }),
-    ),
-    proto: Object.fromEntries(
-      Object.entries(proto)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([k, v]) => {
-          v["DOMJIT"] = undefined;
-          return [k, v];
-        }),
-    ),
+    klass: Object.fromEntries(Object.entries(klass).sort(([a], [b]) => a.localeCompare(b))),
+    proto: Object.fromEntries(Object.entries(proto).sort(([a], [b]) => a.localeCompare(b))),
   });
 }

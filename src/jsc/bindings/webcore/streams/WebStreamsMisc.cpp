@@ -95,10 +95,16 @@ static size_t incompleteTrailingUTF8(std::span<const uint8_t> data)
 
 JSC::JSString* streamingUTF8Decode(JSGlobalObject* globalObject, std::span<const uint8_t> chunk, StreamingUTF8DecodeState& state, bool flush)
 {
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     WTF::Vector<uint8_t> joinedStorage;
     std::span<const uint8_t> joined = chunk;
     if (unsigned pendingLen = state.pendingLen()) {
-        joinedStorage.reserveInitialCapacity(pendingLen + chunk.size());
+        // Script picks the chunk length, and reserveInitialCapacity CRASH()es past INT32_MAX bytes.
+        if (!joinedStorage.tryReserveInitialCapacity(pendingLen + chunk.size())) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return nullptr;
+        }
         joinedStorage.append(std::span<const uint8_t> { state.pending, pendingLen });
         joinedStorage.append(chunk);
         joined = joinedStorage.span();
@@ -125,8 +131,6 @@ JSC::JSString* streamingUTF8Decode(JSGlobalObject* globalObject, std::span<const
     if (toDecode.empty())
         return nullptr;
 
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     if (exceedsStringLimit(toDecode.size())) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return nullptr;
@@ -424,20 +428,6 @@ JSPromise* invokeCallbackReturningPromiseFast(JSGlobalObject* globalObject, JSOb
             return resultPromise;
         RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
     });
-}
-
-bool errorCodeIs(VM& vm, JSValue error, ASCIILiteral code)
-{
-    // Own or inherited *data* property only (Bun's coded errors keep `code` on a per-code
-    // prototype); structures' stored prototypes are followed, so no getter or proxy trap runs.
-    JSValue codeValue;
-    for (JSObject* object = error ? error.getObject() : nullptr; object && !codeValue; object = object->getPrototypeDirect().getObject())
-        codeValue = object->getDirect(vm, WebCore::builtinNames(vm).codePublicName());
-    auto* codeString = codeValue ? dynamicDowncast<JSString>(codeValue) : nullptr;
-    if (!codeString)
-        return false;
-    auto value = codeString->tryGetValue();
-    return WTF::equal(value.data, StringView(code));
 }
 
 // Shared [bound-convention] wrapper: target(contextCell, ...callArgs).

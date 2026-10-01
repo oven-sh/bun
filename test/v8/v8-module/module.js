@@ -1,7 +1,79 @@
+const path = require("node:path");
+
 module.exports = debugMode => {
   const nativeModule = require(`./build/${debugMode ? "Debug" : "Release"}/v8tests`);
   return {
     ...nativeModule,
+
+    test_v8_function_script_origin() {
+      function namedFunction(a, b) {
+        return a + b;
+      }
+      const arrowFunction = (a, b) => a + b;
+      class DefaultConstructor {
+        method() {}
+      }
+      class ExplicitConstructor {
+        constructor() {}
+      }
+      class Derived extends DefaultConstructor {}
+      const AnonymousClass = class {};
+      const cases = [
+        ["named function", namedFunction],
+        ["arrow function", arrowFunction],
+        ["class with default constructor", DefaultConstructor],
+        ["class with explicit constructor", ExplicitConstructor],
+        ["derived class with default constructor", Derived],
+        ["anonymous class expression", AnonymousClass],
+        ["class method", DefaultConstructor.prototype.method],
+        ["builtin function", Array.prototype.map],
+        ["bound function", namedFunction.bind(null)],
+        ["native addon function", nativeModule.get_function_script_origin],
+      ];
+      for (const [description, fn] of cases) {
+        console.log(`====== ${description}`);
+        const { file, line, column } = nativeModule.get_function_script_origin(fn);
+        console.log("file:", typeof file === "string" ? path.basename(file) : file);
+        console.log("file is absolute:", typeof file === "string" && path.isAbsolute(file));
+        console.log("line:", line, "column:", column);
+      }
+    },
+
+    test_v8_value_to_int32() {
+      const cases = [
+        ["int", 42],
+        ["negative int", -7],
+        ["fraction", 3.99],
+        ["negative fraction", -3.99],
+        ["INT32_MAX + 1", 2 ** 31],
+        ["UINT32_MAX + 6", 2 ** 32 + 5],
+        ["INT32_MIN - 1", -(2 ** 31) - 1],
+        ["NaN", NaN],
+        ["Infinity", Infinity],
+        ["numeric string", "123"],
+        ["hex string", "0x10"],
+        ["true", true],
+        ["null", null],
+        ["undefined", undefined],
+        ["object with valueOf", { valueOf: () => 77.5 }],
+        [
+          "object with throwing valueOf",
+          {
+            valueOf() {
+              throw new Error("valueOf threw");
+            },
+          },
+        ],
+      ];
+      for (const [description, value] of cases) {
+        console.log(`====== ${description}`);
+        try {
+          console.log("result:", nativeModule.perform_to_int32(value));
+        } catch (e) {
+          console.log("threw:", e.message);
+        }
+      }
+    },
 
     // Bun only: 48k collected instances with 128 internal fields each. Their
     // field storage is about 2 KB per instance, 100 MiB if none of it is freed.

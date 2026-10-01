@@ -221,6 +221,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // read fields before move (G::Property is not Copy).
                 let prop_kind = property.kind;
                 let prop_key = property.key;
+                if let Some(starts) = &mut p.starts_for_parse_only {
+                    let named_at = match property.class_static_block_ref() {
+                        Some(block) => Some(block.loc),
+                        None => prop_key.map(|key| key.loc),
+                    };
+                    if let Some(named_at) = named_at {
+                        starts
+                            .class_elements
+                            .insert(named_at.start, first_decorator_loc.start);
+                    }
+                }
                 properties.push(property);
                 has_auto_accessor =
                     has_auto_accessor || prop_kind == js_ast::g::PropertyKind::AutoAccessor;
@@ -1580,6 +1591,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         flags: EFlags,
     ) -> Result<Expr, Error> {
         let p = self;
+        if let Some(starts) = &mut p.starts_for_parse_only {
+            starts
+                .async_arrow_parameters
+                .insert(async_range.loc.start, p.lexer.loc().start);
+        }
         // "async function() {}"
         if !p.lexer.has_newline_before && p.lexer.token == T::TFunction {
             return p.parse_fn_expr(async_range.loc, true);

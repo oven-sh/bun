@@ -329,9 +329,8 @@ pub fn on_parent_exit(_this: &mut ParentDeathWatchdog) {
     bun_core::exit(EXIT_CODE as u32);
 }
 
-/// Registered with `Global.addExitCallback` so it runs from `Bun__onExit`
-/// (atexit on macOS, at_quick_exit on Linux, and the explicit `Global.exit`
-/// path). C calling convention because that's the exit-callback ABI.
+/// Registered with `Global.addExitCallback` so it runs from `Bun__onExit`,
+/// the `at_quick_exit()` handler. C calling convention because that's the exit-callback ABI.
 extern "C" fn on_process_exit() {
     kill_sync_pgroups_and_descendants();
 }

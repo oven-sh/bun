@@ -658,6 +658,44 @@ fn run_exit_callbacks() {
     }
 }
 
+/// C11's `at_quick_exit()` and `quick_exit()`, where Bun does not use libc's. macOS has them
+/// only since 15 and its header does not say so: linked, they keep Bun from starting on an
+/// older one. Windows' also run the C runtime's terminators, and end in an `ExitProcess()`
+/// of their own, which Bun takes a lock before.
+#[cfg(any(target_os = "macos", windows))]
+static QUICK_EXIT_HANDLERS: crate::Mutex<Vec<ExitFn>> = crate::Mutex::new(Vec::new());
+
+#[cfg(any(target_os = "macos", windows))]
+#[unsafe(no_mangle)]
+extern "C" fn Bun__at_quick_exit(function: ExitFn) -> c_int {
+    QUICK_EXIT_HANDLERS.lock().push(function);
+    0
+}
+
+#[cfg(any(target_os = "macos", windows))]
+fn quick_exit(code: c_int) -> ! {
+    // Last registered, first called. Unlocked for the call, which may register another.
+    loop {
+        let Some(handler) = QUICK_EXIT_HANDLERS.lock().pop() else {
+            break;
+        };
+        handler();
+    }
+    #[cfg(target_os = "macos")]
+    libc_exit_now(code);
+    #[cfg(windows)]
+    {
+        // c-bindings.cpp: no WTF thread may hold this one suspended when ExitProcess
+        // kills it. No args, no preconditions: `safe fn`.
+        unsafe extern "C" {
+            safe fn Bun__lockThreadSuspensionForExit();
+        }
+        Bun__lockThreadSuspensionForExit();
+        // `ExitProcess` is `safe fn` (no preconditions; never returns).
+        crate::windows_sys::kernel32::ExitProcess(code as u32)
+    }
+}
+
 static IS_EXITING: AtomicBool = AtomicBool::new(false);
 
 #[unsafe(no_mangle)]
@@ -703,34 +741,14 @@ pub fn exit(code: u32) -> ! {
     // Flush output before exiting to ensure all messages are visible
     Output::flush();
 
-    #[cfg(windows)]
-    {
-        // c-bindings.cpp: no WTF thread may hold this one suspended when ExitProcess
-        // kills it. No args, no preconditions: `safe fn`.
-        unsafe extern "C" {
-            safe fn Bun__lockThreadSuspensionForExit();
-        }
-        Bun__onExit();
-        Bun__lockThreadSuspensionForExit();
-        // `ExitProcess` is `safe fn` (no preconditions; never returns).
-        crate::windows_sys::kernel32::ExitProcess(code)
+    // For the leak check.
+    #[cfg(unix)]
+    if env::ENABLE_ASAN {
+        libc_exit(code as i32);
     }
     // Not exit(): it runs the static destructors and atexit() handlers of every loaded
     // addon, on a process whose other threads are still running.
-    #[cfg(not(windows))]
-    {
-        if env::ENABLE_ASAN {
-            libc_exit(code as i32);
-        }
-        #[cfg(not(target_os = "macos"))]
-        quick_exit(code as c_int);
-        // macOS has no quick_exit(). `Bun__onExit` is the one at_quick_exit() handler.
-        #[cfg(target_os = "macos")]
-        {
-            Bun__onExit();
-            libc_exit_now(code as c_int)
-        }
-    }
+    quick_exit(code as c_int)
 }
 
 pub fn raise_ignoring_panic_handler(sig: crate::SignalCode) -> ! {

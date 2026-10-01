@@ -572,6 +572,9 @@ extern "C" ssize_t pwritev2(int fd, const struct iovec* iov, int iovcnt,
 #endif
 
 extern "C" void Bun__onExit();
+#if OS(DARWIN) || OS(WINDOWS)
+extern "C" int Bun__at_quick_exit(void (*)(void));
+#endif
 extern "C" int32_t bun_stdio_tty[3];
 #if !OS(WINDOWS)
 static termios termios_to_restore_later[3];
@@ -680,11 +683,6 @@ extern "C" void Bun__lockThreadSuspensionForExit()
 #endif
 
 extern "C" int32_t bun_is_stdio_null[3] = { 0, 0, 0 };
-
-#if OS(DARWIN)
-extern "C" int __cxa_atexit(void (*)(void*), void*, void*);
-extern "C" struct mach_header __dso_handle;
-#endif
 
 extern "C" void bun_initialize_process()
 {
@@ -808,14 +806,11 @@ extern "C" void bun_initialize_process()
     Bun__setCTRLHandler(1);
 #endif
 
-#if OS(DARWIN)
-    // atexit() on macOS dladdr()s the handler, a linear walk of this executable's
-    // symbol table (~0.5ms with symbols). __cxa_atexit lands on the same LIFO
-    // list without the lookup, as the compiler does for static destructors.
-    __cxa_atexit([](void*) { Bun__onExit(); }, nullptr, &__dso_handle);
-#elif ASAN_ENABLED
+#if ASAN_ENABLED && !OS(WINDOWS)
     atexit(Bun__onExit);
-#elif !OS(WINDOWS)
+#elif OS(DARWIN) || OS(WINDOWS)
+    Bun__at_quick_exit(Bun__onExit);
+#else
     at_quick_exit(Bun__onExit);
 #endif
 }

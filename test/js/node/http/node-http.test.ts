@@ -3544,11 +3544,10 @@ describe("a 'close' event that user code emits", () => {
   }
 
   // Each way an exchange ends: the order of its events, the event loop refs that are left once the
-  // server closed, and the native responses that a full GC leaves.
+  // server closed, and the native responses that something still holds.
   const finished = (url = "/") => [`${url} finish`, `${url} close`];
   const aborted = ["/ aborted", "/ close"];
-  // The fixture counts the native responses on POSIX only.
-  const nothingLeft = isWindows ? { eventLoopRefsLeft: 0 } : { eventLoopRefsLeft: 0, nativeResponsesLeft: 0 };
+  const nothingLeft = { eventLoopRefsLeft: 0, nativeResponsesLeft: 0 };
 
   // These need no help from user code, so they hold with and without a dispatch that waits for
   // the 'close' of its response.

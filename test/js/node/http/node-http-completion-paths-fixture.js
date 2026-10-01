@@ -1,6 +1,6 @@
 // The ways a node:http exchange ends. For each one: the order of the 'finish', 'close' and
 // 'aborted' events, the event loop refs that are left once the server closed, and the native
-// responses that a full GC leaves.
+// responses that something still holds.
 //
 // usage: <paths|emitted>. Prints one JSON line per path.
 //   paths:   the ways that need no help from user code.
@@ -10,7 +10,7 @@ const { once } = require("node:events");
 const http = require("node:http");
 const net = require("node:net");
 const { getEventLoopStats } = require("bun:internal-for-testing");
-const { heapStats } = require("bun:jsc");
+const { generateHeapSnapshotForDebugging, heapStats } = require("bun:jsc");
 const { WebSocketServer } = require("ws");
 
 const turn = () => new Promise(resolve => setImmediate(resolve));
@@ -18,16 +18,70 @@ const closeOf = emitter => new Promise(resolve => emitter.once("close", resolve)
 const activeTasks = () => getEventLoopStats().activeTasks;
 // heapStats() counts the prototype object of the class under the same name.
 const prototypeObjects = 1;
-// A closed connection frees its native objects some turns of the event loop later. Resolves
-// with the native responses that a full GC leaves, at once when it leaves none.
+// The native responses that something holds. A count after a full GC does not say that:
+// JavaScriptCore also marks what a word on the native stack happens to point at, and a slot that a
+// live native frame never writes can still hold the listener of an earlier 'close' event, which
+// holds the response. The debugging heap snapshot has every edge and every root, and no entry for
+// such words. It is slow on a debug build, so it is taken only for a response that stays counted.
 async function nativeResponsesLeft() {
-  let left = Infinity;
-  for (let i = 0; i < 64 && left > 0; i++) {
-    await turn();
-    Bun.gc(true);
-    left = Math.min(left, Math.max(0, (heapStats().objectTypeCounts.NodeHTTPResponse ?? 0) - prototypeObjects));
+  let held = [];
+  for (let attempt = 0; attempt < 2; attempt++) {
+    for (let i = 0; i < 8; i++) {
+      await turn();
+      Bun.gc(true);
+      if ((heapStats().objectTypeCounts.NodeHTTPResponse ?? 0) <= prototypeObjects) return 0;
+    }
+    held = nativeResponsesARootReaches();
+    if (held.length === 0) return 0;
   }
-  return left;
+  // The test expects an empty stderr, so its failure shows what holds each response.
+  for (const path of held) console.error(path);
+  return held.length;
+}
+// For each native response that a root reaches: a shortest path from that root.
+function nativeResponsesARootReaches() {
+  const { nodes, nodeClassNames, edges, edgeTypes, edgeNames, roots, labels } = generateHeapSnapshotForDebugging();
+  const className = new Map();
+  const nativeResponses = new Set();
+  for (let i = 0; i < nodes.length; i += 7) {
+    className.set(nodes[i], nodeClassNames[nodes[i + 2]]);
+    // The prototype object has the same class name and wraps no native object.
+    if (className.get(nodes[i]) === "NodeHTTPResponse" && BigInt(nodes[i + 6]) !== 0n) nativeResponses.add(nodes[i]);
+  }
+  const outgoing = new Map();
+  for (let i = 0; i < edges.length; i += 4) {
+    const type = edgeTypes[edges[i + 2]];
+    const name = type === "Property" || type === "Variable" ? edgeNames[edges[i + 3]] : edges[i + 3];
+    if (!outgoing.has(edges[i])) outgoing.set(edges[i], []);
+    outgoing.get(edges[i]).push([edges[i + 1], `${type}:${name}`]);
+  }
+  // For each cell that a root reaches: the reason of that root, or the cell before it and the edge.
+  const reachedFrom = new Map();
+  const queue = [];
+  for (let i = 0; i < roots.length; i += 3) {
+    const reason = String(labels[roots[i + 1]] ?? roots[i + 1]);
+    // What an output constraint appends is recorded as a root, but only follows from its owner being marked.
+    if (reachedFrom.has(roots[i]) || reason.includes("DOMGCOutput")) continue;
+    reachedFrom.set(roots[i], reason);
+    queue.push(roots[i]);
+  }
+  for (let i = 0; i < queue.length; i++) {
+    for (const [to, edge] of outgoing.get(queue[i]) ?? []) {
+      if (reachedFrom.has(to)) continue;
+      reachedFrom.set(to, [queue[i], edge]);
+      queue.push(to);
+    }
+  }
+  return queue
+    .filter(cell => nativeResponses.has(cell))
+    .map(cell => {
+      const path = [];
+      let step = reachedFrom.get(cell);
+      for (; typeof step !== "string"; cell = step[0], step = reachedFrom.get(cell)) {
+        path.unshift(`-${step[1]}-> ${className.get(cell)}`);
+      }
+      return [`root(${step}) ${className.get(cell)}`, ...path].join(" ");
+    });
 }
 
 const get = (url, headers = "") => `GET ${url} HTTP/1.1\r\nHost: localhost\r\n${headers}\r\n`;
@@ -344,9 +398,7 @@ async function measure(path, entry) {
   let leaked = false;
   for (const [path, entry] of Object.entries(table)) {
     const result = await measure(path, entry);
-    // Not on Windows: on the aarch64 machines of CI, the native response of a connection that the
-    // client destroyed was still counted after these turns. A later connection freed it.
-    if (process.platform !== "win32") result.nativeResponsesLeft = await nativeResponsesLeft();
+    result.nativeResponsesLeft = await nativeResponsesLeft();
     leaked ||= result.eventLoopRefsLeft !== 0;
     console.log(JSON.stringify(result));
   }

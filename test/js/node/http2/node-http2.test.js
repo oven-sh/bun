@@ -6225,8 +6225,9 @@ describe.concurrent("write() after end()", () => {
     const server = http2.createServer();
     let client;
     try {
+      const clientClosed = Promise.withResolvers();
       server.on("stream", stream => {
-        stream.on("error", () => {});
+        stream.on("error", clientClosed.reject);
         stream.resume();
         stream.on("end", () => {
           stream.respond({ ":status": 200 });
@@ -6235,7 +6236,6 @@ describe.concurrent("write() after end()", () => {
       });
       const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
       client = http2.connect(`http://127.0.0.1:${port}`);
-      const clientClosed = Promise.withResolvers();
       client.on("error", clientClosed.reject);
       const req = client.request({ ":path": "/", ":method": "POST" });
       drive(client, req, record(req, clientClosed));

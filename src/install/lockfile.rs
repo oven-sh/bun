@@ -886,8 +886,7 @@ impl Lockfile {
         false
     }
 
-    /// Is package `id` the root, a workspace, or a `file:` folder one of them
-    /// depends on directly? A migrated lockfile can hold a folder a registry package shipped.
+    /// Is package `id` the root, a workspace, or a `file:` folder one of them depends on directly?
     pub(crate) fn is_local_package_id(&self, id: PackageID) -> bool {
         match self.packages.items_resolution()[id as usize].tag {
             ResolutionTag::Root | ResolutionTag::Workspace => true,

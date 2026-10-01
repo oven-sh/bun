@@ -1,0 +1,84 @@
+diff -ru /tmp/zc1a/seam/root/v2bh/src/js_parser/parse/parse_fn.rs seam/root/r1/src/js_parser/parse/parse_fn.rs
+--- /tmp/zc1a/seam/root/v2bh/src/js_parser/parse/parse_fn.rs	2026-10-01 19:32:47.713774925 +0000
++++ seam/root/r1/src/js_parser/parse/parse_fn.rs	2026-10-01 19:54:54.567509161 +0000
+@@ -281,7 +281,11 @@
+             let mut ts_metadata = bun_ast::ts::Metadata::default();
+ 
+             if Self::IS_TYPESCRIPT_ENABLED {
+-                if is_identifier && (opts.is_constructor || !rest_arg) {
++                if p.lexer.token != T::TColon
++                    && p.lexer.token != T::TQuestion
++                    && is_identifier
++                    && (opts.is_constructor || !rest_arg)
++                {
+                     // Skip over TypeScript accessibility modifiers, which turn this argument
+                     // into a class field when used inside a class constructor. This is known
+                     // as a "parameter property" in TypeScript.
+@@ -455,17 +459,20 @@
+         }
+ 
+         // "function foo(): any;"
+-        if opts.allow_missing_body_for_type_script && p.lexer.token != T::TOpenBrace {
+-            p.lexer.expect_or_insert_semicolon()?;
+-            func.flags.insert(Flags::Function::IsForwardDeclaration);
+-            return Ok(func);
+-        }
+-        if rest_comma.len > 0 {
+-            p.log().add_range_error(
+-                Some(p.source),
+-                rest_comma,
+-                b"Expected \")\" but found \",\"",
+-            );
++        if opts.allow_missing_body_for_type_script {
++            if p.lexer.token != T::TOpenBrace {
++                p.lexer.expect_or_insert_semicolon()?;
++                func.flags.insert(Flags::Function::IsForwardDeclaration);
++                return Ok(func);
++            }
++            // Only a signature that may lack its body read a comma after a rest argument.
++            if rest_comma.len > 0 {
++                p.log().add_range_error(
++                    Some(p.source),
++                    rest_comma,
++                    b"Expected \")\" but found \",\"",
++                );
++            }
+         }
+         let mut temp_opts = opts;
+         func.body = p.parse_fn_body(&mut temp_opts)?;
+diff -ru /tmp/zc1a/seam/root/v2bh/src/js_parser/parse/parse_stmt.rs seam/root/r1/src/js_parser/parse/parse_stmt.rs
+--- /tmp/zc1a/seam/root/v2bh/src/js_parser/parse/parse_stmt.rs	2026-10-01 19:32:47.714185917 +0000
++++ seam/root/r1/src/js_parser/parse/parse_stmt.rs	2026-10-01 19:54:54.566164291 +0000
+@@ -1939,6 +1939,10 @@
+             | js_lexer::TypescriptStmtKeyword::TsStmtGlobal
+             | js_lexer::TypescriptStmtKeyword::TsStmtDeclare => return Ok(None),
+         }
++        // The bytes after the keyword tell without a token that no cast follows.
++        if !p.may_be_followed_by_cast_word() {
++            return Ok(None);
++        }
+         let is_named_like_cast = p.next_token_matches(|p| {
+             !p.lexer.has_newline_before
+                 && (p.lexer.is_contextual_keyword(b"as")
+@@ -1961,6 +1965,21 @@
+         Err(crate::Error::SyntaxError)
+     }
+ 
++    /// Whether "as" or "satisfies" may be the token after the current one on its line: false where the first byte past blanks starts neither word and no comment.
++    #[inline]
++    fn may_be_followed_by_cast_word(&self) -> bool {
++        let contents = self.lexer.contents;
++        let mut i = self.lexer.end;
++        while matches!(contents.get(i), Some(b' ' | b'\t')) {
++            i += 1;
++        }
++        match contents.get(i) {
++            Some(b'a' | b's' | b'/' | b'\\' | 0x0B | 0x0C) => true,
++            Some(byte) => *byte >= 0x80,
++            None => false,
++        }
++    }
++
+     /// Whether a parse without lint reads that declaration too: it keeps the cast of the keyword where the declaration, or what follows it, is none for the reference.
+     fn is_declaration_named_like_cast(
+         p: &mut Self,

@@ -386,7 +386,7 @@ pub mod ssl_wrapper {
 
     /// What `trigger_handshake_callback` reports.
     #[derive(Clone, Copy)]
-    enum HandshakeOutcome<'a> {
+    enum HandshakeOutcome {
         /// A handshake or a renegotiation finished.
         Established,
         /// `set_inline_reject` stopped the handshake on the peer's chain.
@@ -395,8 +395,8 @@ pub mod ssl_wrapper {
         HandshakeError,
         /// Closed before the handshake finished, or a renegotiation was refused.
         Aborted,
-        /// A renegotiation refused while our write side is open: a protocol failure with this reason.
-        RenegotiationRefused(&'a core::ffi::CStr),
+        /// A renegotiation refused while our write side is open: a protocol failure.
+        RenegotiationRefused,
     }
 
     #[derive(Clone, Copy)]
@@ -932,7 +932,7 @@ pub mod ssl_wrapper {
             self.ctx.set(None);
         }
 
-        fn trigger_handshake_callback(&self, outcome: HandshakeOutcome<'_>) {
+        fn trigger_handshake_callback(&self, outcome: HandshakeOutcome) {
             if self.flags.closed_notified() {
                 return;
             }
@@ -943,13 +943,12 @@ pub mod ssl_wrapper {
                 }
                 // node:tls reads a failure with no error after end() as its own close.
                 HandshakeOutcome::Aborted => (false, us_bun_verify_error_t::default()),
-                // The owner copies `reason` before this borrow ends.
-                HandshakeOutcome::RenegotiationRefused(reason) => (
+                HandshakeOutcome::RenegotiationRefused => (
                     false,
                     us_bun_verify_error_t {
                         error_no: -71,
                         code: c"EPROTO".as_ptr(),
-                        reason: reason.as_ptr(),
+                        reason: c"TLS renegotiation limit exceeded".as_ptr(),
                     },
                 ),
             };
@@ -1123,6 +1122,33 @@ pub mod ssl_wrapper {
             }
         }
 
+        /// Reports the refusal, then closes. `decrypted` came before the request, so it goes first.
+        #[cold]
+        fn refuse_renegotiation(&self, decrypted: &[u8]) {
+            // Taken now: the callbacks below run JS, which can end the socket.
+            let was_shut_down = self.is_shutdown();
+            boring_sys::ERR_clear_error();
+            self.flags
+                .set_handshake_state(HandshakeState::HandshakeCompleted);
+            if !decrypted.is_empty() {
+                self.trigger_data_callback(decrypted);
+                if self.ssl.get().is_none() || self.flags.closed_notified() {
+                    return;
+                }
+            }
+            self.flush_pending_events();
+            if self.ssl.get().is_none() || self.flags.closed_notified() {
+                return;
+            }
+            // After our own close_notify the request has no answer.
+            self.trigger_handshake_callback(if was_shut_down {
+                HandshakeOutcome::Aborted
+            } else {
+                HandshakeOutcome::RenegotiationRefused
+            });
+            self.trigger_close_callback();
+        }
+
         /// Handle reading data. Returns true if we can call handle_writing.
         fn handle_reading(&self, buffer: &mut IoBuffer) -> bool {
             let mut read: usize = 0;
@@ -1177,29 +1203,8 @@ pub mod ssl_wrapper {
                             let renegotiated = renegotiation_allowed
                                 && unsafe { boring_sys::SSL_renegotiate(ssl.as_ptr()) } != 0;
                             if !renegotiated {
-                                self.flags
-                                    .set_handshake_state(HandshakeState::HandshakeCompleted);
-                                if self.is_shutdown() {
-                                    // After our own close_notify the request has no answer.
-                                    self.trigger_handshake_callback(HandshakeOutcome::Aborted);
-                                } else {
-                                    let mut reason = [0 as c_char; 256];
-                                    // SAFETY: `reason` is writable for its length. The C side NUL-terminates within it.
-                                    unsafe {
-                                        us_ssl_refused_renegotiation_reason(
-                                            c_int::from(!renegotiation_allowed),
-                                            reason.as_mut_ptr(),
-                                            reason.len(),
-                                        )
-                                    };
-                                    // SAFETY: NUL-terminated above, and `reason` outlives the report.
-                                    let reason =
-                                        unsafe { core::ffi::CStr::from_ptr(reason.as_ptr()) };
-                                    self.trigger_handshake_callback(
-                                        HandshakeOutcome::RenegotiationRefused(reason),
-                                    );
-                                }
-                                self.trigger_close_callback();
+                                // SAFETY: the SSL_read calls above wrote `[0..read]` contiguously.
+                                self.refuse_renegotiation(unsafe { buffer.filled(read) });
                                 return false;
                             }
                             // ok, we are done here, we need to call SSL_read again
@@ -1529,8 +1534,6 @@ pub mod ssl_wrapper {
         fn SSL_SESSION_up_ref(session: *mut boring_sys::SSL_SESSION) -> c_int;
         /// openssl.c: 1 when the verify step of this handshake asked the owner for the server's name.
         fn us_ssl_identity_checked(ssl: *mut boring_sys::SSL) -> c_int;
-        /// openssl.c: writes why a client refuses a renegotiation into `reason` and drains the thread's error queue.
-        fn us_ssl_refused_renegotiation_reason(over_limit: c_int, reason: *mut c_char, size: usize);
         /// openssl.c: makes the callbacks of `ssl` go to `wrapper`. `wrapper` must outlive `ssl`.
         fn us_ssl_set_wrapper(ssl: *mut boring_sys::SSL, wrapper: *mut c_void);
         /// openssl.c: the pointer `us_ssl_set_wrapper` stored on the `SSL` that `ctx` verifies, or null.

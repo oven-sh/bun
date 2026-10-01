@@ -1950,30 +1950,35 @@ static inline int ssl_gone(struct us_socket_t *s) {
   return us_socket_is_closed(s) || s->ssl == NULL;
 }
 
-void us_ssl_refused_renegotiation_reason(int over_limit, char *reason, size_t size) {
-  unsigned long queued = over_limit ? 0 : ERR_peek_error();
-  if (queued) {
-    ERR_error_string_n(queued, reason, size);
-  } else {
-    const char *text = over_limit ? "TLS renegotiation limit exceeded" : "TLS renegotiation refused";
-    size_t length = strlen(text) < size ? strlen(text) : size - 1;
-    memcpy(reason, text, length);
-    reason[length] = 0;
-  }
-  ERR_clear_error();
-}
-
-/* A refusal is a protocol failure, not the X509 verdict of the session. After
- * our own close_notify or FIN the request has no answer, so nothing is parked. */
-static void ssl_park_refused_renegotiation(struct us_socket_t *s, int over_limit) {
+/* The `read` bytes came before the request, so they go first, as at a close_notify. Returns NULL when a callback closed the socket. */
+static struct us_socket_t *ssl_refuse_renegotiation(struct us_socket_t *s, int over_limit, int read) {
   struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
-  if (!loop_ssl_data || us_internal_ssl_is_shut_down(s)) return;
-  us_ssl_refused_renegotiation_reason(over_limit, loop_ssl_data->ssl_last_fatal_error,
-                                      sizeof(loop_ssl_data->ssl_last_fatal_error));
-  loop_ssl_data->ssl_last_fatal_error_owner = s;
+  /* Both taken now: the callbacks below run JS, which can change the queue and end the socket. */
+  uint32_t queued = ERR_peek_error();
+  int was_shut_down = us_internal_ssl_is_shut_down(s);
+  ERR_clear_error();
+  s->ssl_handshake_state = HANDSHAKE_COMPLETED;
+  ssl_flush_pending_events(s);
+  if (ssl_gone(s)) return NULL;
+  if (read) {
+    s = us_dispatch_data(s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
+    if (!s || ssl_gone(s)) return NULL;
+  }
+  /* A protocol failure, not the X509 verdict of the session. After our own close_notify or FIN the request has no answer. */
+  if (!was_shut_down) {
+    static const char over_limit_reason[] = "TLS renegotiation limit exceeded";
+    if (over_limit) {
+      memcpy(loop_ssl_data->ssl_last_fatal_error, over_limit_reason, sizeof(over_limit_reason));
+    } else {
+      ERR_error_string_n(queued, loop_ssl_data->ssl_last_fatal_error, sizeof(loop_ssl_data->ssl_last_fatal_error));
+    }
+    loop_ssl_data->ssl_last_fatal_error_owner = s;
+  }
+  ssl_trigger_handshake(s, 0);
+  return ssl_gone(s) ? NULL : s;
 }
 
-static int ssl_renegotiate(struct us_socket_t *s) {
+static int ssl_renegotiate(struct us_socket_t *s, int *over_limit) {
   /* Server-forced renegotiation (HelloRequest -> SSL_ERROR_WANT_RENEGOTIATE).
    * Enforce the per-context policy (default 3 per 600s, Node's
    * CLIENT_RENEG_LIMIT/CLIENT_RENEG_WINDOW) before re-entering a full
@@ -1995,18 +2000,10 @@ static int ssl_renegotiate(struct us_socket_t *s) {
     st->reneg_window_start_ms = now_ms;
     st->reneg_count = 0;
   }
-  if (st->reneg_count >= limit) {
-    ssl_park_refused_renegotiation(s, 1);
-    ssl_trigger_handshake(s, 0);
-    return 0;
-  }
+  *over_limit = st->reneg_count >= limit;
+  if (*over_limit) return 0;
   st->reneg_count++;
-  if (!SSL_renegotiate(s_ssl(s))) {
-    ssl_park_refused_renegotiation(s, 0);
-    ssl_trigger_handshake(s, 0);
-    return 0;
-  }
-  return 1;
+  return SSL_renegotiate(s_ssl(s));
 }
 
 /* Returns 1 if shutdown is complete (or impossible) and the TCP socket may be
@@ -2505,8 +2502,10 @@ restart:
       if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE &&
           err != SSL_ERROR_PENDING_CERTIFICATE) {
         if (err == SSL_ERROR_WANT_RENEGOTIATE) {
-          if (ssl_renegotiate(s)) continue;
-          if (ssl_gone(s)) return NULL;
+          int over_limit;
+          if (ssl_renegotiate(s, &over_limit)) continue;
+          s = ssl_refuse_renegotiation(s, over_limit, read);
+          if (!s) return NULL;
           err = SSL_ERROR_SSL;
         } else if (err == SSL_ERROR_ZERO_RETURN) {
           /* Remote close_notify. A NewSessionTicket that rode in ahead of the

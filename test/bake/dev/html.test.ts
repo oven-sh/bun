@@ -154,6 +154,41 @@ devTest("import then create", {
     await c.expectMessage("data");
   },
 });
+devTest("a file whose import failed to resolve is imported by a second file", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["/entry.ts"],
+    }),
+    "entry.ts": `
+      import "./broken";
+      import "./first";
+    `,
+    "broken.ts": `
+      import "not-installed-pkg";
+      export const value = "value";
+    `,
+    // broken.ts has failed by the time the bundler gets to its second importer.
+    "first.ts": `
+      import "./second";
+    `,
+    "second.ts": `
+      import "./third";
+    `,
+    "third.ts": `
+      import { value } from "./broken";
+      console.log(value);
+    `,
+  },
+  async test(dev) {
+    const c = await dev.client("/", {
+      errors: ['broken.ts:1:8: error: Could not resolve: "not-installed-pkg". Maybe you need to "bun install"?'],
+    });
+    await c.expectReload(async () => {
+      await dev.write("broken.ts", `export const value = "value";`);
+    });
+    await c.expectMessage("value");
+  },
+});
 devTest("external links", {
   files: {
     "index.html": `

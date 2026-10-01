@@ -1,0 +1,1206 @@
+{
+	"valid": [
+		{
+			"code": "var foo;",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "class Foo {}",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "!!obj?.foo",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "obj?.foo();",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "obj?.foo?.();",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "(obj?.foo ?? bar)();",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "(obj?.foo)?.()",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "(obj?.foo ?? bar?.baz)?.()",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "(obj.foo)?.();",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "obj?.foo.bar;",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "obj?.foo?.bar;",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "(obj?.foo)?.bar;",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "(obj?.foo)?.bar.baz;",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "(obj?.foo)?.().bar",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "(obj?.foo ?? bar).baz;",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "(obj?.foo ?? val)`template`",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "new (obj?.foo ?? val)()",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "new bar();",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "obj?.foo?.()();",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "const {foo} = obj?.baz || {};",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "const foo = obj?.bar",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "foo = obj?.bar",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "foo.bar = obj?.bar",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "bar(...obj?.foo ?? []);",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "var bar = {...foo?.bar};",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "foo?.bar in {};",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "foo?.bar < foo?.baz;",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "foo?.bar <= foo?.baz;",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "foo?.bar > foo?.baz;",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "foo?.bar >= foo?.baz;",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "[foo = obj?.bar] = [];",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "[foo.bar = obj?.bar] = [];",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "({foo = obj?.bar} = obj);",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "({foo: obj.bar = obj?.baz} = obj);",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "(foo?.bar, bar)();",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "(foo?.bar ? baz : qux)();",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "\n        async function func() {\n          await obj?.foo();\n          await obj?.foo?.();\n          (await obj?.foo)?.();\n          (await obj?.foo)?.bar;\n          await bar?.baz;\n          await (foo ?? obj?.foo.baz);\n          (await bar?.baz ?? bar).baz;\n          (await bar?.baz ?? await bar).baz;\n          await (foo?.bar ? baz : qux);\n        }\n        ",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "(obj?.foo ?? bar?.baz ?? qux)();",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "((obj?.foo ?? bar?.baz) || qux)();",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "((obj?.foo || bar?.baz) || qux)();",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "((obj?.foo && bar?.baz) || qux)();",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "obj?.foo - bar;",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "obj?.foo + bar;",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "obj?.foo * bar;",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "obj?.foo / bar;",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "obj?.foo % bar;",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "obj?.foo ** bar;",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "+obj?.foo;",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "-obj?.foo;",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "bar += obj?.foo;",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "bar -= obj?.foo;",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "bar %= obj?.foo;",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "bar **= obj?.foo;",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "bar *= obj?.boo",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "bar /= obj?.boo",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "async function func() {\n            await obj?.foo + await obj?.bar;\n            await obj?.foo - await obj?.bar;\n            await obj?.foo * await obj?.bar;\n            +await obj?.foo;\n            -await obj?.foo;\n            bar += await obj?.foo;\n            bar -= await obj?.foo;\n            bar %= await obj?.foo;\n            bar **= await obj?.foo;\n            bar *= await obj?.boo;\n            bar /= await obj?.boo;\n        }\n        ",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "obj?.foo - bar;",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "obj?.foo - bar;",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			}
+		}
+	],
+	"invalid": [
+		{
+			"code": "(obj?.foo)();",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "(obj.foo ?? bar?.baz)();",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "(obj.foo || bar?.baz)();",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "(obj?.foo && bar)();",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "(bar && obj?.foo)();",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "(obj?.foo?.())();",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "(obj?.foo).bar",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "(obj?.foo)[1];",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "(obj?.foo)`template`",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "new (obj?.foo)();",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "new (obj?.foo?.())()",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "new (obj?.foo?.() || obj?.bar)()",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "async function foo() {\n              (await obj?.foo)();\n            }",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "async function foo() {\n              (await obj?.foo).bar;\n            }",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "async function foo() {\n              (bar?.baz ?? await obj?.foo)();\n            }",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "async function foo() {\n              (bar && await obj?.foo)();\n            }",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "async function foo() {\n              (await (bar && obj?.foo))();\n            }",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "[...obj?.foo];",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "bar(...obj?.foo);",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "new Bar(...obj?.foo);",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "const {foo} = obj?.bar;",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "const {foo} = obj?.bar();",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "const {foo: bar} = obj?.bar();",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "const [foo] = obj?.bar;",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "const [foo] = obj?.bar || obj?.foo;",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "([foo] = obj?.bar);",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "const [foo] = obj?.bar?.();",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "[{ foo } = obj?.bar] = [];",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "({bar: [ foo ] = obj?.prop} = {});",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "[[ foo ] = obj?.bar] = [];",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "async function foo() { const {foo} = await obj?.bar; }",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "async function foo() { const {foo} = await obj?.bar(); }",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "async function foo() { const [foo] = await obj?.bar || await obj?.foo; }",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "async function foo() { ([foo] = await obj?.bar); }",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "class A extends obj?.foo {}",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "async function foo() { class A extends (await obj?.foo) {}}",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "var a = class A extends obj?.foo {}",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "async function foo() { var a = class A extends (await obj?.foo) {}}",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "foo instanceof obj?.prop",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "async function foo() { foo instanceof await obj?.prop }",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "1 in foo?.bar;",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "async function foo() { 1 in await foo?.bar; }",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "for (foo of obj?.bar);",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "async function foo() { for (foo of await obj?.bar);}",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "(foo, obj?.foo)();",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "(foo, obj?.foo)[1];",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "async function foo() { (await (foo, obj?.foo))(); }",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "async function foo() { ((foo, await obj?.foo))(); }",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "async function foo() { (foo, await obj?.foo)[1]; }",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "async function foo() { (await (foo, obj?.foo)) [1]; }",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "(a ? obj?.foo : b)();",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "(a ? b : obj?.foo)();",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "(a ? obj?.foo : b)[1];",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "(a ? b : obj?.foo).bar;",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "async function foo() { (await (a ? obj?.foo : b))(); }",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "async function foo() { (a ? await obj?.foo : b)(); }",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "async function foo() { (await (a ? b : obj?.foo))(); }",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "async function foo() { (await (a ? obj?.foo : b))[1]; }",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "async function foo() { (await (a ? b : obj?.foo)).bar; }",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "async function foo() { (a ? b : await obj?.foo).bar; }",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain"
+				}
+			]
+		},
+		{
+			"code": "(obj?.foo && obj?.baz).bar",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain",
+					"line": 1,
+					"column": 2
+				},
+				{
+					"messageId": "unsafeOptionalChain",
+					"line": 1,
+					"column": 14
+				}
+			]
+		},
+		{
+			"code": "with (obj?.foo) {};",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain",
+					"line": 1,
+					"column": 7
+				}
+			]
+		},
+		{
+			"code": "async function foo() { with ( await obj?.foo) {}; }",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain",
+					"line": 1,
+					"column": 37
+				}
+			]
+		},
+		{
+			"code": "(foo ? obj?.foo : obj?.bar).bar",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "module"
+			},
+			"errors": [
+				{
+					"messageId": "unsafeOptionalChain",
+					"line": 1,
+					"column": 8
+				},
+				{
+					"messageId": "unsafeOptionalChain",
+					"line": 1,
+					"column": 19
+				}
+			]
+		}
+	],
+	"skipped": 65,
+	"tester": {
+		"languageOptions": {
+			"ecmaVersion": 2021,
+			"sourceType": "module"
+		}
+	},
+	"runs": 1
+}

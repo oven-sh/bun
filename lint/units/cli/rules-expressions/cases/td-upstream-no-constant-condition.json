@@ -1,0 +1,2386 @@
+{
+	"valid": [
+		{
+			"code": "if(a);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a == 0);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a = f());",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a += 1);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a |= 1);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a |= true);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a |= false);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a &= 1);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a &= true);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a &= false);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a >>= 1);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a >>= true);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a >>= false);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a >>>= 1);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a ??= 1);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a ??= true);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a ??= false);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a ||= b);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a ||= false);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a ||= 0);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a ||= void 0);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(+(a ||= 1));",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(f(a ||= true));",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if((a ||= 1) + 2);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(1 + (a ||= true));",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a ||= '' || false);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a ||= void 0 || null);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if((a ||= false) || b);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a || (b ||= false));",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if((a ||= true) && b);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a && (b ||= true));",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a &&= b);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a &&= true);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a &&= 1);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a &&= 'foo');",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if((a &&= '') + false);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if('' + (a &&= null));",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a &&= 1 && 2);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if((a &&= true) && b);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a && (b &&= true));",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if((a &&= false) || b);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a || (b &&= false));",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a ||= b ||= false);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a &&= b &&= true);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a ||= b &&= false);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a ||= b &&= true);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a &&= b ||= false);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a &&= b ||= true);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(1, a);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if ('every' in []);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if (`\\\n${a}`) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if (`${a}`);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if (`${foo()}`);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if (`${a === 'b' && b==='a'}`);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if (`foo${a}` === 'fooa');",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if (tag`a`);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if (tag`${a}`);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if (+(a || true));",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if (-(a || true));",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if (~(a || 1));",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if (+(a && 0) === +(b && 0));",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "while(~!a);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "while(a = b);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "while(`${a}`);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "for(;x < 10;);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "for(;;);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "for(;`${a}`;);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "do{ }while(x)",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "q > 0 ? 1 : 2;",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "`${a}` === a ? 1 : 2",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "`foo${a}` === a ? 1 : 2",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "tag`a` === a ? 1 : 2",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "tag`${a}` === a ? 1 : 2",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "while(x += 3) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "while(tag`a`) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "while(tag`${a}`) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "while(`\\\n${a}`) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(typeof x === 'undefined'){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(`${typeof x}` === 'undefined'){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a === 'str' && typeof b){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "typeof a == typeof b",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "typeof 'a' === 'string'|| typeof b === 'string'",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "`${typeof 'a'}` === 'string'|| `${typeof b}` === 'string'",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if (void a || a);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if (a || void a);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(xyz === 'str1' && abc==='str2'){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(xyz === 'str1' || abc==='str2'){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(xyz === 'str1' || abc==='str2' && pqr === 5){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(typeof abc === 'string' && abc==='str2'){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(false || abc==='str'){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(true && abc==='str'){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(typeof 'str' && abc==='str'){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(abc==='str' || false || def ==='str'){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(true && abc==='str' || def ==='str'){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(true && typeof abc==='string'){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if('str1' && a){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if(a && 'str'){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if ((foo || true) === 'baz') {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if ((foo || 'bar') === 'baz') {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if ((foo || 'bar') !== 'baz') {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if ((foo || 'bar') == 'baz') {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if ((foo || 'bar') != 'baz') {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if ((foo || 233) > 666) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if ((foo || 233) < 666) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if ((foo || 233) >= 666) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if ((foo || 233) <= 666) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if ((key || 'k') in obj) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if ((foo || {}) instanceof obj) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if ((foo || 'bar' || 'bar') === 'bar');",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if ((foo || 1n) === 'baz') {}",
+			"languageOptions": {
+				"ecmaVersion": 11
+			}
+		},
+		{
+			"code": "if (a && 0n || b);",
+			"languageOptions": {
+				"ecmaVersion": 11
+			}
+		},
+		{
+			"code": "if(1n && a){};",
+			"languageOptions": {
+				"ecmaVersion": 11
+			}
+		},
+		{
+			"code": "if ('' + [y] === '' + [ty]) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if ('a' === '' + [ty]) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if ('' + [y, m, d] === 'a') {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if ('' + [y, 'm'] === '' + [ty, 'tm']) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if ('' + [y, 'm'] === '' + ['ty']) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if ([,] in\n\n($2))\n ;\nelse\n ;",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if ([...x]+'' === 'y'){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "while(true);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "while(true);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "function* foo(){while(true){yield 'foo';}}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "function* foo(){for(;true;){yield 'foo';}}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "function* foo(){do{yield 'foo';}while(true)}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "function* foo(){while (true) { while(true) {yield;}}}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "function* foo() {for (; yield; ) {}}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "function* foo() {for (; ; yield) {}}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "function* foo() {while (true) {function* foo() {yield;}yield;}}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "function* foo() { for (let x = yield; x < 10; x++) {yield;}yield;}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "function* foo() { for (let x = yield; ; x++) { yield; }}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if (new Number(x) + 1 === 2) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if([a]==[b]) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if (+[...a]) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if (+[...[...a]]) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if (`${[...a]}`) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if (`${[a]}`) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if (+[a]) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if (0 - [a]) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if (1 * [a]) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if (Boolean(a)) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if (Boolean(...args)) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if (foo.Boolean(1)) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "function foo(Boolean) { if (Boolean(1)) {} }",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "const Boolean = () => {}; if (Boolean(1)) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if (Boolean()) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"globals": {
+					"Boolean": "off"
+				}
+			}
+		},
+		{
+			"code": "const undefined = 'lol'; if (undefined) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "if (undefined) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"globals": {
+					"undefined": "off"
+				}
+			}
+		}
+	],
+	"invalid": [
+		{
+			"code": "for(;true;);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "for(;``;);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "for(;`foo`;);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "for(;`foo${bar}`;);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "do{}while(true)",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "do{}while('1')",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "do{}while(0)",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "do{}while(t = -2)",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "do{}while(``)",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "do{}while(`foo`)",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "do{}while(`foo${bar}`)",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "true ? 1 : 2;",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "1 ? 1 : 2;",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "q = 0 ? 1 : 2;",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "(q = 0) ? 1 : 2;",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "`` ? 1 : 2;",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "`foo` ? 1 : 2;",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "`foo${bar}` ? 1 : 2;",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(-2);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(true);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(1);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if({});",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(0 < 1);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(0 || 1);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(a, 1);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(`foo`);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(``);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(`\\\n`);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(`${'bar'}`);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(`${'bar' + `foo`}`);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(`foo${false || true}`);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(`foo${0 || 1}`);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(`foo${bar}`);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(`${bar}foo`);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(!(true || a));",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(!(a && void b && c));",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(0 || !(a && null));",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(1 + !(a || true));",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(!(null && a) > 1);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(+(!(a && 0)));",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(!typeof a === 'string');",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(-('foo' || a));",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(+(void a && b) === ~(1 || c));",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(a ||= true);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(a ||= 5);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(a ||= 'foo' || b);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(a ||= b || /regex/);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(a ||= b ||= true);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(a ||= b ||= c || 1);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(!(a ||= true));",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(!(a ||= 'foo') === true);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(!(a ||= 'foo') === false);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(a || (b ||= true));",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if((a ||= 1) || b);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if((a ||= true) && true);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(true && (a ||= true));",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(a &&= false);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(a &&= null);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(a &&= void b);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(a &&= 0 && b);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(a &&= b && '');",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(a &&= b &&= false);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(a &&= b &&= c && false);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(!(a &&= false));",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(!(a &&= 0) + 1);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(a && (b &&= false));",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if((a &&= null) && b);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(false || (a &&= false));",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if((a &&= false) || false);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "while([]);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "while(~!0);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "while(x = 1);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "while(function(){});",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "while(1);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "while(() => {});",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "while(`foo`);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "while(``);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "while(`${'foo'}`);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "while(`${'foo' + 'bar'}`);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(typeof x){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(typeof 'abc' === 'string'){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(a = typeof b){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(a, typeof b){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(typeof 'a' == 'string' || typeof 'b' == 'string'){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "while(typeof x){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(1 || void x);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(void x);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(y = void x);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(x, void x);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(void x === void y);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(void x && a);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(a && void x);",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(false && abc==='str'){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(true || abc==='str'){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(1 || abc==='str'){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(abc==='str' || true){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(abc==='str' || true || def ==='str'){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(false || true){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(typeof abc==='str' || true){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if('str' || a){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if('str' || abc==='str'){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if('str1' || 'str2'){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if('str1' && 'str2'){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(abc==='str' || 'str'){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(a || 'str'){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "function* foo(){if (true) {yield 'foo';}}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "function* foo() {for (let foo = yield; true;) {}}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "function* foo() {for (foo = yield; true;) {}}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "function* foo() { for (let foo = 1 + 2 + 3 + (yield); true; baz) {}}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if([a]) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if([]) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(''+['a']) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(''+[]) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(+1) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if ([,] + ''){}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(/foo/ui);",
+			"languageOptions": {
+				"ecmaVersion": 11
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(0n);",
+			"languageOptions": {
+				"ecmaVersion": 11
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(0b0n);",
+			"languageOptions": {
+				"ecmaVersion": 11
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(0o0n);",
+			"languageOptions": {
+				"ecmaVersion": 11
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(0x0n);",
+			"languageOptions": {
+				"ecmaVersion": 11
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(0b1n);",
+			"languageOptions": {
+				"ecmaVersion": 11
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(0o1n);",
+			"languageOptions": {
+				"ecmaVersion": 11
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(0x1n);",
+			"languageOptions": {
+				"ecmaVersion": 11
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(0x1n || foo);",
+			"languageOptions": {
+				"ecmaVersion": 11
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(class {}) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(new Foo()) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(new Boolean(foo)) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(new String(foo)) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(new Number(foo)) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if(`${[...['a']]}`) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if (undefined) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if (Boolean(1)) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if (Boolean()) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if (Boolean([a])) {}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		},
+		{
+			"code": "if (Boolean(1)) { function Boolean() {}}",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			},
+			"errors": [
+				{
+					"messageId": "unexpected"
+				}
+			]
+		}
+	],
+	"skipped": 25,
+	"tester": {
+		"languageOptions": {
+			"ecmaVersion": 2021
+		}
+	},
+	"runs": 1
+}

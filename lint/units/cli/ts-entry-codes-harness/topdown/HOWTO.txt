@@ -1,0 +1,36 @@
+Research unit "ts-entry-codes-harness", top-down pass (D2: the command side and the test harness). Index of this directory.
+Nothing here is part of the tree. Read at be1ebe5295 of /workspace/wt/cli, debug build of 2026-10-01 07:11.
+
+planned/
+  lint_command.rs.diff      the planned edit of src/runtime/cli/lint_command.rs (every loader through Parser::parse_for_lint_with_codes)
+  src-lint.diff             the planned edit of src/lint/lib.rs, context.rs, diagnostic.rs (ParsedForLint, Diagnostic::from_syntax_error)
+  planned_cmd.rs            the planned `parse` as a crate of its own (what the checks below compile)
+  from_syntax_error.rs.txt  the new method of `impl Diagnostic`
+  new_test.rs.txt           a test for src/lint/tests.rs (needs `use bun_js_parser::parse::syntax_errors::SyntaxError;` there)
+probe/
+  make3.py                  /workspace/tools/lk python3 make3.py [out]   default /tmp/td-probe/out3, 10 s once it has the lock
+                            A rustc and B clippy-driver: a copy of src/lint with the planned edits, as the library, with the lint
+                            flags of the real unit. C rustc and clippy-driver: planned_cmd.rs against that library.
+                            D the probe <out>/tsentry: the same sources as one binary, with the stand-ins of the parser's tests.
+  probe_main.rs             the main of the probe (from ../../probe/, the other pass): `tsentry [--lint] <files>` writes what the
+                            planned command writes. PROBE_FRAMES=1 frames; PROBE_RAW=1 every message with its entry;
+                            PROBE_COMPARE=1 parse_only against the lint parse per JavaScript file; PROBE_CODES=all|none;
+                            PROBE_RUN_TEST=1 runs the new test of new_test.rs.txt and a_message_of_the_log_becomes_a_diagnostic.
+tests/
+  rules.test.ts.draft             the planned test/cli/lint/rules.test.ts: `ext`, the file names, the lines of other rules, one
+                                  file with several rules
+  new-lint.test.ts.draft          what lint.test.ts gets (describe "bun --lint operands") and the one test that changes
+  new-diagnostics.test.ts.draft   what diagnostics.test.ts gets; its lintOnTerminal is the scratch one (PROBE_FRAMES)
+  harness.stub.ts                 to run a draft against the probe with the installed bun: copy the draft beside it as
+                                  x.test.ts with `from "./harness"`, lint-helpers.ts likewise, then
+                                  LINT_PROBE=<out>/tsentry bun test ./x.test.ts --max-concurrency 4
+tools/                      drafts for /workspace/notes/lint/units/cli/tools/ (the oracle; each file says what it does)
+  eslint-side.cjs bun-side.cjs recommended.cjs extract.cjs diff.cjs regen.cjs cross.cjs cross-eslint.cjs check-fixtures-eslint.cjs
+  node regen.cjs <rule> --bun <bun-debug or tsentry> --cases ../../../round2-oracle/proto-1b/cases     writes out/<rule>.json
+  node cross.cjs --bun <bun-debug or tsentry>          every (case, rule) pair of the fixtures against ESLint; exit 1 on a difference
+  node check-fixtures-eslint.cjs                       needs no build: 31 cases of the tree are `.js` files that ESLint takes as `.cjs`
+scratch/
+  srctype.cjs        the cases of the fixtures by the source type that ESLint parses them with
+  map-srctype.cjs    ESLint's own cases of the 64 recommended rules by the extension that carries them
+  faithful.cjs       where the oracle's configuration does not give what ESLint's own test expects of a case
+  all-rules.cjs      node all-rules.cjs <file>...   ESLint with every recommended rule over files, in the plain format

@@ -186,10 +186,19 @@ mod tests {
 
     #[test]
     fn an_unterminated_string_ends_with_its_line() {
-        assert_eq!(end_of_unterminated_string(b"x = \"abc", 4), 8);
-        assert_eq!(end_of_unterminated_string(b"x = \"abc\ny", 4), 8);
-        assert_eq!(end_of_unterminated_string(b"x = 'a\\\nb\nc", 4), 9);
-        assert_eq!(end_of_unterminated_string(b"x = 'a\\", 4), 7);
+        let end = |text: &[u8]| end_of_unterminated_string(text, 4, false);
+        assert_eq!(end(b"x = \"abc"), (8, false));
+        assert_eq!(end(b"x = \"abc\ny"), (8, false));
+        assert_eq!(end(b"x = 'a\\\nb\nc"), (9, false));
+        assert_eq!(end(b"x = 'a\\\r\n"), (9, false));
+        assert_eq!(end(b"x = 'a\\\\"), (8, false));
+        // A backslash before the end of the file escapes nothing.
+        assert_eq!(end(b"x = 'a\\"), (7, true));
+        assert_eq!(end(b"x = 'a\nb\\"), (6, false));
+        // A template ends with the file.
+        let end = |text: &[u8]| end_of_unterminated_string(text, 4, true);
+        assert_eq!(end(b"x = `a\nb"), (8, false));
+        assert_eq!(end(b"x = `a\nb\\"), (9, true));
     }
 
     #[test]
@@ -437,6 +446,26 @@ mod tests {
             assert!(count > 0, "{}", bstr::BStr::new(text));
             assert!(
                 !codes.is_empty() && codes.iter().all(Option::is_none),
+                "{}",
+                bstr::BStr::new(text)
+            );
+        }
+    }
+
+    #[test]
+    fn a_backslash_before_the_end_of_the_file_is_the_error_of_the_reference() {
+        let cases: [(&'static [u8], u32, u32, u32, &str); 6] = [
+            (b"x = '\\", 1126, 6, 6, "Unexpected end of text."),
+            (b"x = `a\\", 1126, 7, 7, "Unexpected end of text."),
+            (b"x = `a${b}c\\", 1126, 12, 12, "Unexpected end of text."),
+            (b"'\\", 1126, 2, 2, "Unexpected end of text."),
+            (b"x = 'a\\\\", 1002, 8, 8, "Unterminated string literal."),
+            (b"x = \"a\\\r\n", 1002, 9, 9, "Unterminated string literal."),
+        ];
+        for (text, code, start, end, message) in cases {
+            assert_eq!(
+                first_error(b"/a.ts", text, Loader::Ts),
+                Some((code, start, end, message.as_bytes().to_vec())),
                 "{}",
                 bstr::BStr::new(text)
             );

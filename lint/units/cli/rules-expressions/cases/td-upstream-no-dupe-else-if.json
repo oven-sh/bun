@@ -1,5 +1,4 @@
 {
-	"base": null,
 	"valid": [
 		{
 			"code": "if (a) {} else if (b) {}"
@@ -107,224 +106,517 @@
 	"invalid": [
 		{
 			"code": "if (a) {} else if (a) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 20
+				}
+			]
 		},
 		{
 			"code": "if (a); else if (a);",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 18
+				}
+			]
 		},
 		{
 			"code": "if (a) {} else if (a) {} else {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 20
+				}
+			]
 		},
 		{
 			"code": "if (a) {} else if (b) {} else if (a) {} else if (c) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 35
+				}
+			]
 		},
 		{
 			"code": "if (a) {} else if (b) {} else if (a) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 35
+				}
+			]
 		},
 		{
 			"code": "if (a) {} else if (b) {} else if (c) {} else if (a) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 50
+				}
+			]
 		},
 		{
 			"code": "if (a) {} else if (b) {} else if (b) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 35
+				}
+			]
 		},
 		{
 			"code": "if (a) {} else if (b) {} else if (b) {} else {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 35
+				}
+			]
 		},
 		{
 			"code": "if (a) {} else if (b) {} else if (c) {} else if (b) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 50
+				}
+			]
 		},
 		{
 			"code": "if (a); else if (b); else if (c); else if (b); else if (d); else;",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 44
+				}
+			]
 		},
 		{
 			"code": "if (a); else if (b); else if (c); else if (d); else if (b); else if (e);",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 57
+				}
+			]
 		},
 		{
 			"code": "if (a) {} else if (a) {} else if (a) {}",
-			"errors": 2
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 20
+				},
+				{
+					"messageId": "unexpected",
+					"column": 35
+				}
+			]
 		},
 		{
 			"code": "if (a) {} else if (b) {} else if (a) {} else if (b) {} else if (a) {}",
-			"errors": 3
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 35
+				},
+				{
+					"messageId": "unexpected",
+					"column": 50
+				},
+				{
+					"messageId": "unexpected",
+					"column": 65
+				}
+			]
 		},
 		{
 			"code": "if (a) { if (b) {} } else if (a) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 31
+				}
+			]
 		},
 		{
 			"code": "if (a === 1) {} else if (a === 1) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 26
+				}
+			]
 		},
 		{
 			"code": "if (1 < a) {} else if (1 < a) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 24
+				}
+			]
 		},
 		{
 			"code": "if (true) {} else if (true) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 23
+				}
+			]
 		},
 		{
 			"code": "if (a && b) {} else if (a && b) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 25
+				}
+			]
 		},
 		{
 			"code": "if (a && b || c)  {} else if (a && b || c) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 31
+				}
+			]
 		},
 		{
 			"code": "if (f(a)) {} else if (f(a)) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 23
+				}
+			]
 		},
 		{
 			"code": "if (a === 1) {} else if (a===1) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 26
+				}
+			]
 		},
 		{
 			"code": "if (a === 1) {} else if (a === /* comment */ 1) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 26
+				}
+			]
 		},
 		{
 			"code": "if (a === 1) {} else if ((a === 1)) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 27
+				}
+			]
 		},
 		{
 			"code": "if (a || b) {} else if (a) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 25
+				}
+			]
 		},
 		{
 			"code": "if (a || b) {} else if (a) {} else if (b) {}",
-			"errors": 2
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 25
+				},
+				{
+					"messageId": "unexpected",
+					"column": 40
+				}
+			]
 		},
 		{
 			"code": "if (a || b) {} else if (b || a) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 25
+				}
+			]
 		},
 		{
 			"code": "if (a) {} else if (b) {} else if (a || b) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 35
+				}
+			]
 		},
 		{
 			"code": "if (a || b) {} else if (c || d) {} else if (a || d) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 45
+				}
+			]
 		},
 		{
 			"code": "if ((a === b && fn(c)) || d) {} else if (fn(c) && a === b) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 42
+				}
+			]
 		},
 		{
 			"code": "if (a) {} else if (a && b) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 20
+				}
+			]
 		},
 		{
 			"code": "if (a && b) {} else if (b && a) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 25
+				}
+			]
 		},
 		{
 			"code": "if (a && b) {} else if (a && b && c) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 25
+				}
+			]
 		},
 		{
 			"code": "if (a || c) {} else if (a && b || c) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 25
+				}
+			]
 		},
 		{
 			"code": "if (a) {} else if (b) {} else if (c && a || b) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 35
+				}
+			]
 		},
 		{
 			"code": "if (a) {} else if (b) {} else if (c && (a || b)) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 35
+				}
+			]
 		},
 		{
 			"code": "if (a) {} else if (b && c) {} else if (d && (a || e && c && b)) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 40
+				}
+			]
 		},
 		{
 			"code": "if (a || b && c) {} else if (b && c && d) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 30
+				}
+			]
 		},
 		{
 			"code": "if (a || b) {} else if (b && c) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 25
+				}
+			]
 		},
 		{
 			"code": "if (a) {} else if (b) {} else if ((a || b) && c) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 35
+				}
+			]
 		},
 		{
 			"code": "if ((a && (b || c)) || d) {} else if ((c || b) && e && a) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 39
+				}
+			]
 		},
 		{
 			"code": "if (a && b || b && c) {} else if (a && b && c) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 35
+				}
+			]
 		},
 		{
 			"code": "if (a) {} else if (b && c) {} else if (d && (c && e && b || a)) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 40
+				}
+			]
 		},
 		{
 			"code": "if (a || (b && (c || d))) {} else if ((d || c) && b) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 39
+				}
+			]
 		},
 		{
 			"code": "if (a || b) {} else if ((b || a) && c) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 25
+				}
+			]
 		},
 		{
 			"code": "if (a || b) {} else if (c) {} else if (d) {} else if (b && (a || c)) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 55
+				}
+			]
 		},
 		{
 			"code": "if (a || b || c) {} else if (a || (b && d) || (c && e)) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 30
+				}
+			]
 		},
 		{
 			"code": "if (a || (b || c)) {} else if (a || (b && c)) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 32
+				}
+			]
 		},
 		{
 			"code": "if (a || b) {} else if (c) {} else if (d) {} else if ((a || c) && (b || d)) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 55
+				}
+			]
 		},
 		{
 			"code": "if (a) {} else if (b) {} else if (c && (a || d && b)) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 35
+				}
+			]
 		},
 		{
 			"code": "if (a) {} else if (a || a) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 20
+				}
+			]
 		},
 		{
 			"code": "if (a || a) {} else if (a || a) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 25
+				}
+			]
 		},
 		{
 			"code": "if (a || a) {} else if (a) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 25
+				}
+			]
 		},
 		{
 			"code": "if (a) {} else if (a && a) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 20
+				}
+			]
 		},
 		{
 			"code": "if (a && a) {} else if (a && a) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 25
+				}
+			]
 		},
 		{
 			"code": "if (a && a) {} else if (a) {}",
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "unexpected",
+					"column": 25
+				}
+			]
 		}
 	],
-	"skipped": []
+	"skipped": 0,
+	"tester": null,
+	"runs": 1
 }

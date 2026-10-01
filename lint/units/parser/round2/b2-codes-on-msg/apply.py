@@ -400,18 +400,22 @@ fn of_lexer_message(msg: &Msg, source: &[u8]) -> Option<(u32, Reference)> {
     let end = start + location.length;
     let text: &[u8] = &msg.data.text;
     if text == b"Unterminated string literal" {
-        // The scanner of the reference reports where the line or the file ends.
-        return match source.get(start) {
-            Some(b'"' | b'\\'') => {
-                let at = end_of_unterminated_string(source, start);
-                Some(diagnostic(UNTERMINATED_STRING_LITERAL, b"", at, at))
-            }
-            Some(b'`' | b'}') => {
-                let at = source.len();
-                Some(diagnostic(UNTERMINATED_TEMPLATE_LITERAL, b"", at, at))
-            }
-            _ => None,
+        let is_template = match source.get(start) {
+            Some(b'"' | b'\\'') => false,
+            Some(b'`' | b'}') => true,
+            _ => return None,
         };
+        // The scanner of the reference reports where the line or the file ends.
+        let (at, is_in_escape) = end_of_unterminated_string(source, start, is_template);
+        let message = if is_in_escape {
+            // scanEscapeSequence reports the end of the text before the literal is found to have no end.
+            UNEXPECTED_END_OF_TEXT
+        } else if is_template {
+            UNTERMINATED_TEMPLATE_LITERAL
+        } else {
+            UNTERMINATED_STRING_LITERAL
+        };
+        return Some(diagnostic(message, b"", at, at));
     }
     if text == b"Expected \\"*/\\" to terminate multi-line comment" {
         return Some(diagnostic(ASTERISK_SLASH_EXPECTED, b"", start, end));
@@ -432,6 +436,49 @@ fn of_lexer_message(msg: &Msg, source: &[u8]) -> Option<(u32, Reference)> {
     // parseExpected
     let token = unquote(expected)?;
     Some(diagnostic(X_0_EXPECTED, token, start, end))
+}
+'''),
+# TS1126, and where a string or a template without an end ends
+('''/// `Declaration_or_statement_expected`
+const DECLARATION_OR_STATEMENT_EXPECTED: Message =
+''',
+'''/// `Unexpected_end_of_text`
+const UNEXPECTED_END_OF_TEXT: Message = Message::new(1126, b"Unexpected end of text.");
+/// `Declaration_or_statement_expected`
+const DECLARATION_OR_STATEMENT_EXPECTED: Message =
+'''),
+('''/// Where the string that starts at `start` and has no closing quote ends: at the end of its line or of `source`.
+fn end_of_unterminated_string(source: &[u8], start: usize) -> usize {
+    let mut at = start + 1;
+    while let Some(&byte) = source.get(at) {
+        match byte {
+            b'\\n' | b'\\r' => break,
+            // An escaped line break continues the string.
+            b'\\\\' if source.get(at + 1) == Some(&b'\\r') && source.get(at + 2) == Some(&b'\\n') => {
+                at += 3;
+            }
+            b'\\\\' => at += 2,
+            _ => at += 1,
+        }
+    }
+    at.min(source.len())
+}
+''',
+'''/// Where the string or template that starts at `start` and has no end ends: a string at the end of its line or of `source`, a template at the end of `source`. True: a backslash is the last byte of `source` there.
+fn end_of_unterminated_string(source: &[u8], start: usize, is_template: bool) -> (usize, bool) {
+    let mut at = start + 1;
+    while let Some(&byte) = source.get(at) {
+        match byte {
+            b'\\n' | b'\\r' if !is_template => break,
+            // An escaped line break continues the string.
+            b'\\\\' if source.get(at + 1) == Some(&b'\\r') && source.get(at + 2) == Some(&b'\\n') => {
+                at += 3;
+            }
+            b'\\\\' => at += 2,
+            _ => at += 1,
+        }
+    }
+    (at.min(source.len()), at > source.len())
 }
 '''),
 # the helper for a new error, after unexpected_as

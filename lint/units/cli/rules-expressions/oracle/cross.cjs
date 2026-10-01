@@ -1,6 +1,6 @@
 // Research scratch. Which cases of which list make which other rule report, by ESLint at the pin.
 // usage: node cross.cjs existing   the cases of test/cli/lint/rules/*.json of the worktree on which one of the six rules reports
-//        node cross.cjs upstream   the cases of ../cases/upstream-<rule>.json on which another of the 17 rules reports (11 of the tree + the six)
+//        node cross.cjs upstream   the cases of ../cases/td-upstream-<rule>.json on which another of the 17 rules reports (11 of the tree + the six)
 //        add --json for one line per case and rule: { rule, from, code, jsx?, expect }
 "use strict";
 const path = require("path");
@@ -40,7 +40,7 @@ if (mode === "existing") {
 } else {
 	const rules = Object.fromEntries([...six, ...eleven].map(r => [r, "error"]));
 	for (const r of six) {
-		const d = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "cases", `upstream-${r}.json`), "utf8"));
+		const d = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "cases", `td-upstream-${r}.json`), "utf8"));
 		const cases = [...d.valid, ...d.invalid].filter(c => !(c.languageOptions && c.languageOptions.globals)).map(c => ({ code: c.code, jsx: !!(c.languageOptions && c.languageOptions.parserOptions && c.languageOptions.parserOptions.ecmaFeatures && c.languageOptions.parserOptions.ecmaFeatures.jsx) }));
 		each(r, cases, rules);
 	}

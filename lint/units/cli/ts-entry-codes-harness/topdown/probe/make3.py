@@ -34,8 +34,8 @@ edit("lib.rs", [
 edit("context.rs", [
     ("use bun_js_parser::parse::parse_entry::ParsedOnly;", "use bun_js_parser::parse::parse_entry::ParsedForLint;"),
     ("    parsed: &'p ParsedOnly<'p, 'a>,\n    source: &'a Source,\n    arena: &'a bun_alloc::Arena,\n    pub(crate) stack_check", "    parsed: &'p ParsedForLint<'p, 'a>,\n    source: &'a Source,\n    arena: &'a bun_alloc::Arena,\n    pub(crate) stack_check"),
-    ("        parsed: &'p ParsedOnly<'p, 'a>,\n        source: &'a Source,\n        arena: &'a bun_alloc::Arena,\n    ) -> Self {\n        Context {\n            file,\n            parsed,\n            source,\n            arena,\n",
-     "        parsed: &'p ParsedForLint<'p, 'a>,\n        source: &'a Source,\n    ) -> Self {\n        Context {\n            file,\n            parsed,\n            source,\n            arena: parsed.arena,\n"),
+    ("    pub(crate) fn new(\n        file: FileId,\n        parsed: &'p ParsedOnly<'p, 'a>,\n        source: &'a Source,\n        arena: &'a bun_alloc::Arena,\n    ) -> Self {\n        Context {\n            file,\n            parsed,\n            source,\n            arena,\n",
+     "    pub(crate) fn new(file: FileId, parsed: &'p ParsedForLint<'p, 'a>, source: &'a Source) -> Self {\n        Context {\n            file,\n            parsed,\n            source,\n            arena: parsed.arena,\n"),
 ])
 edit("diagnostic.rs", [
     ("use std::sync::OnceLock;\n", "use std::sync::OnceLock;\n\nuse bun_js_parser::parse::syntax_errors::SyntaxError;\n"),

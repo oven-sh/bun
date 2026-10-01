@@ -80,3 +80,8 @@ a runner whose skip rule forgets the module kind UMD (probes/sample-check.ts on 
 the prototype as it is in conformance-test-prototype.patch, without a preload (observed/batch4), load average 428 to 456
   page cache warm: 106 pass, 2.47 4.24 2.45 s, user+sys 1.09 1.13 1.14       page cache of the corpus dropped: 106 pass, 3.47 s, user+sys 1.15
   bun test/cli/lint/conformance/update-reference.ts --enumerate --check /workspace/ref/typescript-go in that tree: "nothing changes", exit code 0
+
+the tests of "reference" and "enumerator" under the debug build of the worktree (bun-debug 1.4.3 3110ce85c, -t "^(reference|enumerator) " --timeout 180000; observed/batch5), one run each, load average 558 to 570
+  V0   15 pass, 1 skip, 0 fail   26.62 s   user 22.72 sys 0.42   the nine groups of the sample 8,236 ms in all   the list test 3,562 ms   the tables of Go 1,359 ms
+  V3   15 pass, 2 skip, 0 fail   26.53 s   user 23.50 sys 0.43   the nine groups of the sample 9,724 ms in all (the first one 3,696 ms)   the list test 3,784 ms   the tables of Go 1,803 ms
+  one run each shows no difference between the two; the single processes above show 0.6 s less CPU for the sample with the changed runner

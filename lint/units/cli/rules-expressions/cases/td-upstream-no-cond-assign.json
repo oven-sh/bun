@@ -1,0 +1,124 @@
+{
+	"valid": [
+		{
+			"code": "var x = 0; if (x == 0) { var b = 1; }"
+		},
+		{
+			"code": "var x = 5; while (x < 5) { x = x + 1; }"
+		},
+		{
+			"code": "if ((someNode = someNode.parentNode) !== null) { }"
+		},
+		{
+			"code": "if ((someNode = someNode.parentNode) !== null) { }"
+		},
+		{
+			"code": "if ((a = b));"
+		},
+		{
+			"code": "while ((a = b));"
+		},
+		{
+			"code": "do {} while ((a = b));"
+		},
+		{
+			"code": "for (;(a = b););"
+		},
+		{
+			"code": "for (;;) {}"
+		},
+		{
+			"code": "if (someNode || (someNode = parentNode)) { }"
+		},
+		{
+			"code": "while (someNode || (someNode = parentNode)) { }"
+		},
+		{
+			"code": "do { } while (someNode || (someNode = parentNode));"
+		},
+		{
+			"code": "for (;someNode || (someNode = parentNode););"
+		},
+		{
+			"code": "if ((function(node) { return node = parentNode; })(someNode)) { }"
+		},
+		{
+			"code": "if ((node => node = parentNode)(someNode)) { }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "if (function(node) { return node = parentNode; }) { }"
+		},
+		{
+			"code": "var x; var b = (x === 0) ? 1 : 0;"
+		},
+		{
+			"code": "switch (foo) { case a = b: bar(); }"
+		}
+	],
+	"invalid": [
+		{
+			"code": "var x; if (x = 0) { var b = 1; }",
+			"errors": [
+				{
+					"messageId": "missing",
+					"line": 1,
+					"column": 12
+				}
+			]
+		},
+		{
+			"code": "var x; while (x = 0) { var b = 1; }",
+			"errors": [
+				{
+					"messageId": "missing"
+				}
+			]
+		},
+		{
+			"code": "var x = 0, y; do { y = x; } while (x = x + 1);",
+			"errors": [
+				{
+					"messageId": "missing"
+				}
+			]
+		},
+		{
+			"code": "var x; for(; x+=1 ;){};",
+			"errors": [
+				{
+					"messageId": "missing"
+				}
+			]
+		},
+		{
+			"code": "var x; if ((x) = (0));",
+			"errors": [
+				{
+					"messageId": "missing"
+				}
+			]
+		},
+		{
+			"code": "var x; var b = (x = 0) ? 1 : 0;",
+			"errors": [
+				{
+					"messageId": "missing"
+				}
+			]
+		},
+		{
+			"code": "(((3496.29)).bkufyydt = 2e308) ? foo : bar;",
+			"errors": [
+				{
+					"messageId": "missing"
+				}
+			]
+		}
+	],
+	"skipped": 20,
+	"tester": null,
+	"runs": 1
+}

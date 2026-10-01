@@ -1,0 +1,39 @@
+--- root/base/src/js_parser/parse/parse_entry.rs	2026-10-01 12:00:47.663231096 +0000
++++ root/final3/src/js_parser/parse/parse_entry.rs	2026-10-01 13:10:19.451262043 +0000
+@@ -140,6 +140,13 @@
+     }
+ }
+ 
++/// What a lint parse sets before its parse pass: the side table, and where the table of the codes starts in the log.
++#[cold]
++fn start_lint_parse_pass<const TS: bool>(p: &mut P<'_, TS, false>, orig_error_count: u32) {
++    p.starts_for_parse_only = Some(crate::p::StartsForParseOnly::for_lint());
++    p.start_syntax_errors(orig_error_count);
++}
++
+ /// `tspath.IsDeclarationFileName`: the base name ends in `.d.ts`, `.d.cts` or `.d.mts`, or in `.ts` after a `.d.`.
+ fn is_declaration_file_name(file_name: &[u8]) -> bool {
+     let base = bun_paths::resolve_path::basename(file_name);
+@@ -565,8 +572,7 @@
+             bump, log, source, define, lexer, options);
+         // SAFETY: `init_p!` only yields after `init` succeeded.
+         let p: &mut P<'_, TS, false> = unsafe { __p.assume_init_mut() };
+-        p.starts_for_parse_only = Some(crate::p::StartsForParseOnly::for_lint());
+-        p.start_syntax_errors(orig_error_count);
++        start_lint_parse_pass(p, orig_error_count);
+         let parsed: Result<_, Error> = 'parse: {
+             if p.lexer.token == js_lexer::T::THashbang
+                 && let Err(err) = p.lexer.next()
+@@ -1007,6 +1013,12 @@
+         // SAFETY: `init_p!` only yields after `init` succeeded.
+         let p: &mut P<'_, TS, false> = unsafe { __p.assume_init_mut() };
+ 
++        // With debug assertions, this variable makes the parse pass that of a lint parse: what the visit pass then prints is compared with a parse without it.
++        #[cfg(debug_assertions)]
++        if bun_core::getenv_z(bun_core::zstr!("BUN_DEBUG_TEST_LINT_PARSE_THEN_VISIT")).is_some() {
++            start_lint_parse_pass(p, orig_error_count);
++        }
++
+         if p.options.features.hot_module_reloading {
+             debug_assert!(!p.options.tree_shaking);
+         }

@@ -1,0 +1,29 @@
+loadavg 558.10 524.15 526.63 330/23379 586455
+bun test v1.4.3 (3110ce85c)
+
+test/cli/lint/conformance.test.ts:
+(pass) reference > the pinned answers are those of the commits that UPSTREAM names [13.31ms]
+(pass) reference > the corpus holds the cases, the baselines and the lists of the pinned commits [321.44ms]
+(pass) reference > the list has the instances of the reference's run: 14,915, of which 12,797 run and 2,118 are skipped [3783.80ms]
+(skip) reference > the list is the run of the reference that is recorded: its subtests and the reasons of its skips
+(skip) reference > the corpus gives every instance of the list that runs the oracle of its class, and the counts are those of the reference
+(pass) reference > the case and space tables are those of Go [1802.93ms]
+(pass) enumerator > the sample holds cases of both suites, and an instance of every reason of a skip [141.84ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 1 [3695.58ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 2 [1495.83ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 3 [545.67ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 4 [1012.21ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 5 [807.20ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 6 [582.40ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 7 [498.45ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 8 [626.44ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 9 [460.88ms]
+(pass) enumerator > 45 cases are left out by name and 8 are run for their diagnostics alone [520.74ms]
+
+ 15 pass
+ 2 skip
+ 0 fail
+ 26 expect() calls
+Ran 17 tests across 1 file. [26.53s]
+TIME real 26.738 user 23.502 sys 0.427
+exit 0

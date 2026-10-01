@@ -1,15 +1,15 @@
-# node oracle/native.cjs cases/upstream-*.json cases/edge-*.json cases/ts-*.json   (probe of probe/, debug build of /workspace/wt/cli at be1ebe5295)
-upstream-no-cond-assign.json: cases 25, same 25, differ 0
-upstream-no-constant-binary-expression.json: cases 283, same 283, differ 0
+# node oracle/native.cjs cases/td-upstream-*.json cases/td-edge-*.json cases/td-ts-*.json   (probe of probe/, debug build of /workspace/wt/cli at be1ebe5295)
+td-upstream-no-cond-assign.json: cases 25, same 25, differ 0
+td-upstream-no-constant-binary-expression.json: cases 283, same 283, differ 0
 DIFFER missing "if (Boolean(1)) { function Boolean() {}}"
     eslint: no-constant-condition 1:5 Unexpected constant condition. | no-extra-boolean-cast 1:5 Redundant Boolean call.
     native: (none)
-upstream-no-constant-condition.json: cases 280, same 279, differ 1
-upstream-no-dupe-else-if.json: cases 89, same 89, differ 0
-upstream-no-extra-boolean-cast.json: cases 246, same 246, differ 0
-upstream-no-unsafe-optional-chaining.json: cases 122, same 122, differ 0
+td-upstream-no-constant-condition.json: cases 280, same 279, differ 1
+td-upstream-no-dupe-else-if.json: cases 89, same 89, differ 0
+td-upstream-no-extra-boolean-cast.json: cases 246, same 246, differ 0
+td-upstream-no-unsafe-optional-chaining.json: cases 122, same 122, differ 0
 left out (ESLint rejects): "for (a = b in c) {}"
-edge-no-cond-assign.json: cases 64, same 64, differ 0
+td-edge-no-cond-assign.json: cases 64, same 64, differ 0
 DIFFER missing "x = new Map === y; function g() { var Map; }"
     eslint: no-constant-binary-expression 1:5 Unexpected comparison to newly constructed object. These two values can never be equal.
     native: (none)
@@ -19,7 +19,7 @@ DIFFER extra "switch (undefined ?? a) {}"
 DIFFER extra "with (new Boolean(1) === y) {}"
     eslint: (none)
     native: no-constant-binary-expression 1:7 Unexpected comparison to newly constructed object. These two values can never be equal.
-edge-no-constant-binary-expression.json: cases 185, same 182, differ 3
+td-edge-no-constant-binary-expression.json: cases 185, same 182, differ 3
 DIFFER missing "function f() { var undefined; } if (undefined) {}"
     eslint: no-constant-condition 1:37 Unexpected constant condition.
     native: (none)
@@ -32,22 +32,22 @@ DIFFER extra "switch (undefined ? a : b) {}"
 DIFFER extra "with (undefined ? a : b) {}"
     eslint: (none)
     native: no-constant-condition 1:7 Unexpected constant condition.
-edge-no-constant-condition.json: cases 155, same 151, differ 4
+td-edge-no-constant-condition.json: cases 155, same 151, differ 4
 DIFFER missing "if (<a/>) {} else if (<a />) {}"
     eslint: no-dupe-else-if 1:23 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.
     native: (none)
-edge-no-dupe-else-if.json: cases 91, same 90, differ 1
+td-edge-no-dupe-else-if.json: cases 91, same 90, differ 1
 DIFFER missing "function f() { var Boolean; } if (Boolean(a)) {}"
     eslint: no-extra-boolean-cast 1:35 Redundant Boolean call.
     native: (none)
 DIFFER missing "if (Boolean(a)) { let Boolean; }"
     eslint: no-extra-boolean-cast 1:5 Redundant Boolean call.
     native: (none)
-edge-no-extra-boolean-cast.json: cases 97, same 95, differ 2
+td-edge-no-extra-boolean-cast.json: cases 97, same 95, differ 2
 left out (ESLint rejects): "(a?.b)++"
 left out (ESLint rejects): "({a: b?.c} = d)"
 left out (ESLint rejects): "x = <a b={(c?.d).e} {...f?.g}>{...h?.i}{(j?.k)()}</a>;"
-edge-no-unsafe-optional-chaining.json: cases 104, same 104, differ 0
+td-edge-no-unsafe-optional-chaining.json: cases 104, same 104, differ 0
 DIFFER missing "enum Kind { Boolean, String } if (Boolean(a)) {}"
     eslint: no-extra-boolean-cast 1:35 Redundant Boolean call.
     native: (none)
@@ -90,14 +90,14 @@ DIFFER missing "declare namespace D { let z = 1 ? 2 : 3 }"
 DIFFER missing "declare enum E { A = 1 ? 2 : 3 }"
     eslint: no-constant-condition 1:22 Unexpected constant condition.
     native: (none)
-ts-globals.json: cases 26, same 12, differ 14
-ts-no-cond-assign.json: cases 37, same 37, differ 0
-ts-no-constant-binary-expression.json: cases 63, same 63, differ 0
-ts-no-constant-condition.json: cases 64, same 64, differ 0
+td-ts-globals.json: cases 26, same 12, differ 14
+td-ts-no-cond-assign.json: cases 37, same 37, differ 0
+td-ts-no-constant-binary-expression.json: cases 63, same 63, differ 0
+td-ts-no-constant-condition.json: cases 64, same 64, differ 0
 DIFFER missing "if (a as Foo<Bar<Baz>>) {} else if (a as Foo<Bar<Baz> >) {}"
     eslint: no-dupe-else-if 1:37 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.
     native: (none)
-ts-no-dupe-else-if.json: cases 43, same 42, differ 1
-ts-no-extra-boolean-cast.json: cases 51, same 51, differ 0
-ts-no-unsafe-optional-chaining.json: cases 65, same 65, differ 0
+td-ts-no-dupe-else-if.json: cases 43, same 42, differ 1
+td-ts-no-extra-boolean-cast.json: cases 51, same 51, differ 0
+td-ts-no-unsafe-optional-chaining.json: cases 65, same 65, differ 0
 all: cases 2090, same 2064, differ 26 {"missing":12,"extra":14}; reports of ESLint 1582

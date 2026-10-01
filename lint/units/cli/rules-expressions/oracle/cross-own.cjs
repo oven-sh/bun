@@ -1,4 +1,4 @@
-// Research scratch. The cases of ../cases/{edge,ts}-<rule>.json on which another of the 17 rules reports, by ESLint at the pin
+// Research scratch. The cases of ../cases/td-{edge,ts}-<rule>.json on which another of the 17 rules reports, by ESLint at the pin
 // (typescript-eslint's parser for a case with `ext`). usage: node cross-own.cjs [--json]
 "use strict";
 const path = require("path");
@@ -25,7 +25,7 @@ function verify(c) {
 }
 for (const kind of ["edge", "ts"])
 	for (const from of six) {
-		const file = path.join(__dirname, "..", "cases", `${kind}-${from}.json`);
+		const file = path.join(__dirname, "..", "cases", `td-${kind}-${from}.json`);
 		if (!fs.existsSync(file)) continue;
 		for (const raw of JSON.parse(fs.readFileSync(file, "utf8"))) {
 			const c = typeof raw === "string" ? { code: raw } : raw;

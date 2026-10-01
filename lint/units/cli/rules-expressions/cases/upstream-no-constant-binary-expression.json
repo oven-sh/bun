@@ -1,5885 +1,1258 @@
 {
+	"base": {
+		"ecmaVersion": 2021,
+		"sourceType": "script",
+		"parserOptions": {
+			"ecmaFeatures": {
+				"jsx": true
+			}
+		}
+	},
 	"valid": [
 		{
-			"code": "<p /> && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "<p /> && foo"
 		},
 		{
-			"code": "<></> && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "<></> && foo"
 		},
 		{
-			"code": "<p /> ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "<p /> ?? foo"
 		},
 		{
-			"code": "<></> ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "<></> ?? foo"
 		},
 		{
-			"code": "arbitraryFunction(n) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "arbitraryFunction(n) ?? foo"
 		},
 		{
-			"code": "foo.Boolean(n) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "foo.Boolean(n) ?? foo"
 		},
 		{
-			"code": "(x += 1) && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "(x += 1) && foo"
 		},
 		{
-			"code": "`${bar}` && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "`${bar}` && foo"
 		},
 		{
-			"code": "bar && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "bar && foo"
 		},
 		{
-			"code": "delete bar.baz && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "delete bar.baz && foo"
 		},
 		{
-			"code": "true ? foo : bar",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "true ? foo : bar"
 		},
 		{
-			"code": "new Foo() == true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "new Foo() == true"
 		},
 		{
-			"code": "foo == true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "foo == true"
 		},
 		{
-			"code": "`${foo}` == true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "`${foo}` == true"
 		},
 		{
-			"code": "`${foo}${bar}` == true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "`${foo}${bar}` == true"
 		},
 		{
-			"code": "`0${foo}` == true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "`0${foo}` == true"
 		},
 		{
-			"code": "`00000000${foo}` == true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "`00000000${foo}` == true"
 		},
 		{
-			"code": "`0${foo}.000` == true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "`0${foo}.000` == true"
 		},
 		{
-			"code": "[n] == true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "[n] == true"
 		},
 		{
-			"code": "delete bar.baz === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "delete bar.baz === true"
 		},
 		{
-			"code": "foo.Boolean(true) && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "foo.Boolean(true) && foo"
 		},
 		{
-			"code": "function Boolean(n) { return n; }; Boolean(x) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "function Boolean(n) { return n; }; Boolean(x) ?? foo"
 		},
 		{
-			"code": "function String(n) { return n; }; String(x) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "function String(n) { return n; }; String(x) ?? foo"
 		},
 		{
-			"code": "function Number(n) { return n; }; Number(x) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "function Number(n) { return n; }; Number(x) ?? foo"
 		},
 		{
-			"code": "function Symbol(n) { return n; }; Symbol(x) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "function Symbol(n) { return n; }; Symbol(x) ?? foo"
 		},
 		{
-			"code": "function BigInt(n) { return n; }; BigInt(x) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "function BigInt(n) { return n; }; BigInt(x) ?? foo"
 		},
 		{
-			"code": "function Boolean(n) { return Math.random(); }; Boolean(x) === 1",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "function Boolean(n) { return Math.random(); }; Boolean(x) === 1"
 		},
 		{
-			"code": "function Boolean(n) { return Math.random(); }; Boolean(1) == true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "function Boolean(n) { return Math.random(); }; Boolean(1) == true"
 		},
 		{
-			"code": "new Foo() === x",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "new Foo() === x"
 		},
 		{
-			"code": "x === new someObj.Promise()",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "x === new someObj.Promise()"
 		},
 		{
-			"code": "Boolean(foo) === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "Boolean(foo) === true"
 		},
 		{
-			"code": "function foo(undefined) { undefined ?? bar;}",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "function foo(undefined) { undefined ?? bar;}"
 		},
 		{
-			"code": "function foo(undefined) { undefined == true;}",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "function foo(undefined) { undefined == true;}"
 		},
 		{
-			"code": "function foo(undefined) { undefined === true;}",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "function foo(undefined) { undefined === true;}"
 		},
 		{
-			"code": "[...arr, 1] == true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "[...arr, 1] == true"
 		},
 		{
-			"code": "[,,,] == true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "[,,,] == true"
 		},
 		{
 			"code": "new Foo() === bar;",
 			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				},
 				"globals": {
 					"Foo": "writable"
 				}
 			}
 		},
 		{
-			"code": "(foo && true) ?? bar",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "(foo && true) ?? bar"
 		},
 		{
-			"code": "foo ?? null ?? bar",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "foo ?? null ?? bar"
 		},
 		{
-			"code": "a ?? (doSomething(), undefined) ?? b",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "a ?? (doSomething(), undefined) ?? b"
 		},
 		{
-			"code": "a ?? (something = null) ?? b",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "a ?? (something = null) ?? b"
 		},
 		{
-			"code": "5 < 10",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "5 < 10"
 		},
 		{
-			"code": "5 <= 10",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "5 <= 10"
 		},
 		{
-			"code": "10 > 5",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "10 > 5"
 		},
 		{
-			"code": "10 >= 5",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "10 >= 5"
 		},
 		{
-			"code": "'a' < 'b'",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "'a' < 'b'"
 		},
 		{
-			"code": "undefined >= 5",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "undefined >= 5"
 		},
 		{
-			"code": "`` < ``",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "`` < ``"
 		},
 		{
-			"code": "1n < 2n",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "1n < 2n"
 		},
 		{
-			"code": "null >= 5",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "null >= 5"
 		},
 		{
-			"code": "5 < 10",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			}
+			"code": "5 < 10"
 		}
 	],
 	"invalid": [
 		{
 			"code": "[] && greeting",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"line": 1,
-					"column": 1
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "[] || greeting",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"line": 1,
-					"column": 1
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "[] ?? greeting",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"line": 1,
-					"column": 1
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "[] == true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"line": 1,
-					"column": 1
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "true == []",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"line": 1,
-					"column": 9
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "[] != true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"line": 1,
-					"column": 1
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "[] === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"line": 1,
-					"column": 1
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "[] !== true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"line": 1,
-					"column": 1
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "!foo == null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "=="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "!foo ?? bar",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a + b) / 2 ?? bar",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "String(foo.bar) ?? baz",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "\"hello\" + name ?? \"\"",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "[foo?.bar ?? \"\"] ?? []",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "true && hello",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "truthiness",
-						"operator": "&&"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "true || hello",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "truthiness",
-						"operator": "||"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "true && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "truthiness",
-						"operator": "&&"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "'' && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "truthiness",
-						"operator": "&&"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "100 && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "truthiness",
-						"operator": "&&"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "+100 && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "truthiness",
-						"operator": "&&"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "-100 && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "truthiness",
-						"operator": "&&"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "~100 && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "truthiness",
-						"operator": "&&"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "/[a-z]/ && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "truthiness",
-						"operator": "&&"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "Boolean([]) && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "truthiness",
-						"operator": "&&"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "Boolean() && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "truthiness",
-						"operator": "&&"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "Boolean([], n) && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "truthiness",
-						"operator": "&&"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "({}) && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "truthiness",
-						"operator": "&&"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "[] && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "truthiness",
-						"operator": "&&"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(() => {}) && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "truthiness",
-						"operator": "&&"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(function() {}) && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "truthiness",
-						"operator": "&&"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(class {}) && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "truthiness",
-						"operator": "&&"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(class { valueOf() { return x; } }) && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "truthiness",
-						"operator": "&&"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(class { [x]() { return x; } }) && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "truthiness",
-						"operator": "&&"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "new Foo() && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "truthiness",
-						"operator": "&&"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "new Boolean(unknown) && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "truthiness",
-						"operator": "&&"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(bar = false) && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "truthiness",
-						"operator": "&&"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(bar.baz = false) && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "truthiness",
-						"operator": "&&"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(bar[0] = false) && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "truthiness",
-						"operator": "&&"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "`hello ${hello}` && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "truthiness",
-						"operator": "&&"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "void bar && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "truthiness",
-						"operator": "&&"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "!true && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "truthiness",
-						"operator": "&&"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "typeof bar && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "truthiness",
-						"operator": "&&"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(bar, baz, true) && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "truthiness",
-						"operator": "&&"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "undefined && foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "truthiness",
-						"operator": "&&"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "({}) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "([]) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(() => {}) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(function() {}) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(class {}) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "new Foo() ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "1 ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "/[a-z]/ ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "`${''}` ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a = true) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a += 1) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a -= 1) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a *= 1) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a /= 1) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a %= 1) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a <<= 1) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a >>= 1) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a >>>= 1) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a |= 1) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a ^= 1) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a &= 1) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "undefined ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "!bar ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "void bar ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "typeof bar ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "+bar ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "-bar ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "~bar ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "++bar ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "bar++ ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "--bar ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "bar-- ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(x == y) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(x + y) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(x / y) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(x instanceof String) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(x in y) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "Boolean(x) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "String(x) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "Number(x) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "Symbol(x) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "BigInt(x) ?? foo",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "({}) != null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "!="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "({}) == null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "=="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "null == ({})",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 10,
-					"data": {
-						"otherSide": "left",
-						"operator": "=="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "({}) == undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "=="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "undefined == ({})",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 15,
-					"data": {
-						"otherSide": "left",
-						"operator": "=="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "Symbol(x) != null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "!="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "Symbol(x) != undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "!="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "BigInt(x) != null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "!="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "BigInt(x) != undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "!="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "({}) != true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "!="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "({}) == true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "=="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "([]) == true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "=="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "([a, b]) == true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "=="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(() => {}) == true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "=="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(function() {}) == true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "=="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "void foo == true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 13,
-					"data": {
-						"otherSide": "left",
-						"operator": "=="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "typeof foo == true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "=="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "![] == true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 8,
-					"data": {
-						"otherSide": "left",
-						"operator": "=="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "true == class {}",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 9,
-					"data": {
-						"otherSide": "left",
-						"operator": "=="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "true == 1",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 9,
-					"data": {
-						"otherSide": "left",
-						"operator": "=="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "undefined == true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 14,
-					"data": {
-						"otherSide": "left",
-						"operator": "=="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "true == undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 9,
-					"data": {
-						"otherSide": "left",
-						"operator": "=="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "`hello` == true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "=="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "/[a-z]/ == true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "=="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "({}) == Boolean({})",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "=="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "({}) == Boolean()",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "=="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "({}) == Boolean(() => {}, foo)",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "=="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "({}) !== true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "!=="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "({}) == !({})",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "=="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "({}) === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "([]) === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(function() {}) === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(() => {}) === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "!{} === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 9,
-					"data": {
-						"otherSide": "left",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "typeof n === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "void n === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 12,
-					"data": {
-						"otherSide": "left",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "+n === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "-n === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "~n === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "true === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 10,
-					"data": {
-						"otherSide": "left",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "1 === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "'hello' === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "/[a-z]/ === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "undefined === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 15,
-					"data": {
-						"otherSide": "left",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a = {}) === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a += 1) === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a -= 1) === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a *= 1) === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a %= 1) === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a ** b) === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a << b) === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a >> b) === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a >>> b) === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "--a === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "a-- === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "++a === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "a++ === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a + b) === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a - b) === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a * b) === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a / b) === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a % b) === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a | b) === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a ^ b) === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a & b) === true",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "Boolean(0) === Boolean(1)",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 16,
-					"data": {
-						"otherSide": "left",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "true === String(x)",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 10,
-					"data": {
-						"otherSide": "left",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "true === Number(x)",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 10,
-					"data": {
-						"otherSide": "left",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "true === Symbol(x)",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 10,
-					"data": {
-						"otherSide": "left",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "true === BigInt(x)",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 10,
-					"data": {
-						"otherSide": "left",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "Boolean(0) == !({})",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 15,
-					"data": {
-						"otherSide": "left",
-						"operator": "=="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "({}) !== null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "!=="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "({}) === null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "([]) === null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(() => {}) === null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(function() {}) === null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(class {}) === null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "new Foo() === null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "`` === null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "1 === null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "'hello' === null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "/[a-z]/ === null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "true === null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 10,
-					"data": {
-						"otherSide": "left",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "null === null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 10,
-					"data": {
-						"otherSide": "left",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "a++ === null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "++a === null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "--a === null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "a-- === null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "!a === null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "typeof a === null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "delete a === null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "void a === null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 12,
-					"data": {
-						"otherSide": "left",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "undefined === null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 15,
-					"data": {
-						"otherSide": "left",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(x = {}) === null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(x += y) === null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(x -= y) === null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a, b, {}) === null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "Symbol(x) === null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "BigInt(x) === null",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "({}) !== undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "!=="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "({}) === undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "([]) === undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(() => {}) === undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(function() {}) === undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(class {}) === undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "new Foo() === undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "`` === undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "1 === undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "'hello' === undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "/[a-z]/ === undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "true === undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 10,
-					"data": {
-						"otherSide": "left",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "null === undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 10,
-					"data": {
-						"otherSide": "left",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "a++ === undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "++a === undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "--a === undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "a-- === undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "!a === undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "typeof a === undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "delete a === undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "void a === undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 12,
-					"data": {
-						"otherSide": "left",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "undefined === undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 15,
-					"data": {
-						"otherSide": "left",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(x = {}) === undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(x += y) === undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(x -= y) === undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "(a, b, {}) === undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 2,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "Symbol(x) === undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "BigInt(x) === undefined",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantBinaryOperand",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"otherSide": "right",
-						"operator": "==="
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "[a] == [a]",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "bothAlwaysNew",
-					"line": 1,
-					"column": 1
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "[a] != [a]",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "bothAlwaysNew",
-					"line": 1,
-					"column": 1
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "({}) == []",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "bothAlwaysNew",
-					"line": 1,
-					"column": 2
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "x === {}",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "alwaysNew",
-					"line": 1,
-					"column": 7
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "x !== {}",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "alwaysNew",
-					"line": 1,
-					"column": 7
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "x === []",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "alwaysNew",
-					"line": 1,
-					"column": 7
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "x === (() => {})",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "alwaysNew",
-					"line": 1,
-					"column": 8
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "x === (function() {})",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "alwaysNew",
-					"line": 1,
-					"column": 8
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "x === (class {})",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "alwaysNew",
-					"line": 1,
-					"column": 8
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "x === new Boolean()",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "alwaysNew",
-					"line": 1,
-					"column": 7
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "x === new Promise()",
 			"languageOptions": {
-				"ecmaVersion": 6,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
+				"ecmaVersion": 6
 			},
-			"errors": [
-				{
-					"messageId": "alwaysNew",
-					"line": 1,
-					"column": 7
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "x === new WeakSet()",
 			"languageOptions": {
-				"ecmaVersion": 6,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
+				"ecmaVersion": 6
 			},
-			"errors": [
-				{
-					"messageId": "alwaysNew",
-					"line": 1,
-					"column": 7
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "x === (foo, {})",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "alwaysNew",
-					"line": 1,
-					"column": 8
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "x === (y = {})",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "alwaysNew",
-					"line": 1,
-					"column": 8
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "x === (y ? {} : [])",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "alwaysNew",
-					"line": 1,
-					"column": 8
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "x === /[a-z]/",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "alwaysNew",
-					"line": 1,
-					"column": 7
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "x === (x = {})",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "alwaysNew",
-					"line": 1,
-					"column": 8
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "window.abc && false && anything",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "truthiness",
-						"operator": "&&"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "window.abc || true || anything",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "truthiness",
-						"operator": "||"
-					}
-				}
-			]
+			"errors": 1
 		},
 		{
 			"code": "window.abc ?? 'non-nullish' ?? anything",
-			"languageOptions": {
-				"ecmaVersion": 2021,
-				"sourceType": "script",
-				"parserOptions": {
-					"ecmaFeatures": {
-						"jsx": true
-					}
-				}
-			},
-			"errors": [
-				{
-					"messageId": "constantShortCircuit",
-					"line": 1,
-					"column": 1,
-					"data": {
-						"property": "nullishness",
-						"operator": "??"
-					}
-				}
-			]
+			"errors": 1
 		}
 	],
-	"skipped": 29,
-	"tester": {
-		"languageOptions": {
-			"ecmaVersion": 2021,
-			"sourceType": "script",
-			"parserOptions": {
-				"ecmaFeatures": {
-					"jsx": true
-				}
-			}
+	"skipped": [
+		{
+			"kind": "valid",
+			"code": "x < 5",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "5 < x",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "x > y",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "x >= undefined",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "`${x}` < 5",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "5 > `${x}`",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "~x < 10",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "-x >= 5",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "x < /a/",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "/a/ >= x",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "5 < 10",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "5 <= 10",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "10 > 5",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "10 >= 5",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "'a' < 'b'",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "true >= false",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "undefined < 5",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "5 > undefined",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "`` < ``",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "`` >= 5",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "`foo` < `bar`",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "1n < 2n",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "null >= 5",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "-5 < 10",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "10 >= +5",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "~5 <= 10",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "~1 > ~2",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "/a/ < /b/",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "/a/ >= /b/",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
 		}
-	},
-	"runs": 1
+	]
 }

@@ -1,0 +1,28 @@
+loadavg 569.84 522.81 526.26 347/25596 586270
+bun test v1.4.3 (3110ce85c)
+
+test/cli/lint/conformance.test.ts:
+(pass) reference > the pinned answers are those of the commits that UPSTREAM names [36.61ms]
+(pass) reference > the corpus holds the cases, the baselines and the lists of the pinned commits [388.75ms]
+(pass) reference > the list has the instances of the reference's run: 14,915, of which 12,797 run and 2,118 are skipped [3561.60ms]
+(pass) reference > the case and space tables are those of Go [1359.06ms]
+(pass) enumerator > the sample holds cases of both suites [36.56ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 1 [1659.23ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 2 [1037.98ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 3 [805.63ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 4 [1158.56ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 5 [960.82ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 6 [800.75ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 7 [590.88ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 8 [825.54ms]
+(pass) enumerator > the instances of one of 40 cases are their lines of the list: group 9 [394.59ms]
+(pass) enumerator > 45 cases are left out by name and 8 are run for their diagnostics alone [216.26ms]
+(skip) enumerator > every instance is its line of the list, and the counts are those of the reference
+
+ 15 pass
+ 1 skip
+ 0 fail
+ 25 expect() calls
+Ran 16 tests across 1 file. [26.62s]
+TIME real 27.068 user 22.720 sys 0.418
+exit 0

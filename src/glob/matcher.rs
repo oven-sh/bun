@@ -627,6 +627,11 @@ fn rune_len_at(bytes: &[u8], idx: usize) -> u8 {
 /// its maximal subpart, and `byte_len` never passes the end of `bytes`.
 #[inline(always)]
 fn decode_rune_at(bytes: &[u8], idx: usize) -> (u32, u8) {
+    // Runs per path character: ASCII must not pay for the out-of-line decoder.
+    let lead = bytes[idx];
+    if lead < 0x80 {
+        return (u32::from(lead), 1);
+    }
     let r = strings::utf8_codepoint_with_fffd(&bytes[idx..]);
     (r.code_point, r.len)
 }

@@ -1,0 +1,11 @@
+(fail) default check > the binary under test: a case of the corpus without errors passes, and one with a syntax error of the parser fails and is no crash [938.70ms]
+(fail) default check > the binary under test: a file without errors passes an instance without errors, and nothing was printed [939.03ms]
+(fail) default check > the binary under test: a syntax error of its parser is a difference from the oracle, and no crash [938.81ms]
+(fail) default check > the binary under test: the probe takes it for a linter, and it ends both runs as the test run asks of a child [1076.34ms]
+(fail) default check > the binary under test: a syntax error of its parser is a difference from the oracle, and no crash [938.81ms]
+(fail) default check > the binary under test: a case of the corpus without errors passes, and one with a syntax error of the parser fails and is no crash [938.70ms]
+
+ 124 pass
+ 4 fail
+ 210 expect() calls
+Ran 128 tests across 1 file. [37.97s]

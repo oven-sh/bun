@@ -1,0 +1,78 @@
+probe lints-fixture.ts: {"ok":true,"reason":""}
+probe runs-fixture.ts: {"ok":false,"reason":"the command ran the file that it was to check"}
+probe silent-fixture.ts: {"ok":false,"reason":"a file with a syntax error gave no error in it (exit code 0)"}
+probe crashes-fixture.ts: {"ok":false,"reason":"a file without an error: the command ended by the signal SIGKILL"}
+probe of no file: {"ok":false,"reason":"a file without an error: the command did not start: Error: ENOENT: no such file or directory, posix_spawn '/tmp/dccbu/no-such-command'"}
+C, a clean unit
+    {"outcome":"pass","reason":""}
+E, first section
+    {"outcome":"fail","cause":"lengths","reason":"the first section is the oracle's; a baseline needs the lengths and the related information","headerOnly":true}
+an exit code that is none of 0, 1 and 2
+    {"outcome":"crash","cause":"exit code 7","reason":"the command ended with the exit code 7","death":{"exitCode":7,"signal":null,"stderr":"","stdout":""}}
+the exit code of a refusal
+    {"outcome":"unsupported","cause":"refusal","reason":"the command refused: error: no"}
+the exit code 1 and the report of a sanitizer
+    {"outcome":"crash","cause":"exit code 1","reason":"the command ended with the exit code 1, and what it wrote is no refusal: ==7==ERROR: AddressSanitizer: SEGV on unknown address 0x000000000008","death":{"exitCode":1,"signal":null,"stderr":"==7==ERROR: AddressSanitizer: SEGV on unknown address 0x000000000008\nSUMMARY: AddressSanitizer: SEGV in parse\n","stdout":""}}
+the exit code 1 and nothing on stderr
+    {"outcome":"crash","cause":"exit code 1","reason":"the command ended with the exit code 1, and what it wrote is no refusal","death":{"exitCode":1,"signal":null,"stderr":"","stdout":""}}
+the exit code 1, one line and text on stdout
+    {"outcome":"crash","cause":"exit code 1","reason":"the command ended with the exit code 1, and what it wrote is no refusal: error: no","death":{"exitCode":1,"signal":null,"stderr":"error: no\n","stdout":"usage\n"}}
+a line of no form
+    {"outcome":"crash","cause":"stderr","reason":"stderr line 1 is neither a diagnostic nor a line of a message chain: Bun has crashed","death":{"exitCode":0,"signal":null,"stderr":"Bun has crashed\n","stdout":""}}
+a panic and the exit code 0
+    {"outcome":"crash","cause":"stderr","reason":"stderr line 1 is neither a diagnostic nor a line of a message chain: panic(main thread): index out of bounds","death":{"exitCode":0,"signal":null,"stderr":"panic(main thread): index out of bounds\n","stdout":""}}
+an error and the exit code 0
+    {"outcome":"crash","cause":"exit code and errors","reason":"the exit code is 0 and stderr has 1 errors","death":{"exitCode":0,"signal":null,"stderr":"/.src/a.ts(1,1): error TS1: x\n","stdout":""}}
+no error and the exit code 2
+    {"outcome":"crash","cause":"exit code and errors","reason":"the exit code is 2 and stderr has no error","death":{"exitCode":2,"signal":null,"stderr":"","stdout":""}}
+text on stdout
+    {"outcome":"crash","cause":"stdout","reason":"the command wrote to stdout: hello","death":{"exitCode":0,"signal":null,"stderr":"","stdout":"hello\n"}}
+a signal
+    {"outcome":"crash","cause":"signal SIGKILL","reason":"the command ended by the signal SIGKILL","death":{"exitCode":null,"signal":"SIGKILL","stderr":"","stdout":""}}
+a signal after a panic
+    {"outcome":"crash","cause":"signal SIGKILL","reason":"the command ended by the signal SIGKILL: panic(main thread): index out of bounds","death":{"exitCode":null,"signal":"SIGKILL","stderr":"============================================================\nBun Debug v1.4.3 (3110ce85c) Linux x64\nArgs: \"bun-debug\" \"--lint\" \"/.src/a.ts\"\npanic(main thread): index out of bounds\n","stdout":"bun_js_parser::parse\n"}}
+a file that is not of the instance
+    {"outcome":"fail","cause":"file outside the instance","reason":"a diagnostic in a file that is not of the instance: /etc/passwd(1,1): error TS1: x"}
+an error of the command
+    {"outcome":"fail","cause":"internal-error","reason":"the command reports an error of its own: error internal-error: an assertion of the checker"}
+an error of the command in a file
+    {"outcome":"fail","cause":"internal-error","reason":"the command reports an error of its own: /.src/a.ts(3,9): error internal-error: This file is nested too deeply to check all of it."}
+a syntax error
+    {"outcome":"fail","cause":"syntax","reason":"the code syntax is a name of the command and no code of TypeScript: /.src/a.ts(1,7): error syntax: Expected identifier but found \"=\", and 1 more"}
+a warning of the parser
+    {"outcome":"fail","cause":"syntax","reason":"the code syntax is a name of the command and no code of TypeScript: /.src/a.ts(9,22): warning syntax: Reading from setter-only property \"#value\" will throw"}
+an operand that cannot be read
+    {"outcome":"fail","cause":"cannot-read-file","reason":"the code cannot-read-file is a name of the command and no code of TypeScript: error cannot-read-file: File '/.src/a.ts' not found."}
+an operand with an unsupported extension (printed)
+    {"outcome":"fail","cause":"unsupported-extension","reason":"the code unsupported-extension is a name of the command and no code of TypeScript: error unsupported-extension: File '/.src/a.ts' has an unsupported extension. The only supported extensions are '.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'."}
+an operand with an unsupported extension (real)
+    {"outcome":"fail","cause":"unsupported-extension","reason":"the code unsupported-extension is a name of the command and no code of TypeScript: error unsupported-extension: File '/.src/b.js.map' has an unsupported extension. The only supported extensions are '.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'."}
+a name that is no rule, without a file
+    {"outcome":"fail","cause":"unknown code","reason":"a code that is no code of TypeScript, no name of the command and, without a file, no rule: error made-up-name: x"}
+a report of a rule, C
+    {"outcome":"pass","reason":"","rules":{"no-debugger":1}}
+a report of a rule, E
+    {"outcome":"fail","cause":"nothing","reason":"no diagnostic where the oracle has a baseline","rules":{"no-debugger":1}}
+two reports of rules and a syntax warning
+    {"outcome":"fail","cause":"syntax","reason":"the code syntax is a name of the command and no code of TypeScript: /.src/a.ts(3,1): warning syntax: w","rules":{"no-debugger":1,"use-isnan":1}}
+a report of a rule beside a TypeScript error, C
+    {"outcome":"fail","cause":"diagnostics","reason":"1 diagnostics where the oracle has none, the first is TS2322: x","rules":{"no-debugger":1}}
+a stand-in
+    {"outcome":"provisional","cause":"stand-ins","reason":"the check reached 1 stand-ins: checker.getTypeOfExpression","standIns":["checker.getTypeOfExpression"]}
+a stand-in and a rule
+    {"outcome":"provisional","cause":"stand-ins","reason":"the check reached 1 stand-ins: checker.getTypeOfExpression","standIns":["checker.getTypeOfExpression"],"rules":{"no-debugger":1}}
+a stand-in and a syntax error
+    {"outcome":"fail","cause":"syntax","reason":"the code syntax is a name of the command and no code of TypeScript: /.src/a.ts(1,1): error syntax: x","standIns":["checker.getTypeOfExpression"]}
+the code -1
+    {"outcome":"fail","cause":"code -1","reason":"a diagnostic has the code -1"}
+a real syntax error of the fixture's parser
+    {"outcome":"fail","cause":"syntax","reason":"the code syntax is a name of the command and no code of TypeScript: /.src/a.ts(1,7): error syntax: Expected identifier but found \"=\", and 1 more"}
+a declaration file with a syntax error
+    {"outcome":"pass","reason":""}
+a command that hangs
+    {"outcome":"timeout","cause":"timeout","reason":"the check did not end within 1500 ms"}
+a command that runs its operand
+    {"outcome":"unavailable","cause":"unavailable","reason":"the command is no linter: the command ran the file that it was to check"}
+    left: [ "probe" ]
+a verdict of the caller
+    {"outcome":"unavailable","cause":"unavailable","reason":"the command is no linter: given by the caller"}

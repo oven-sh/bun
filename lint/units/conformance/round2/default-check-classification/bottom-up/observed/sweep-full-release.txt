@@ -1,0 +1,110 @@
+instances 14915: run 12797 (E 7027, C 5770), skipped 2118
+    1244  skipped: unsupported target ES5
+     321  skipped: unsupported module kind AMD
+     222  skipped: unsupported module kind System
+      87  skipped: unsupported outFile
+      57  skipped: unsupported module kind UMD
+      57  skipped: unsupported module resolution kind 1
+      52  skipped: alwaysStrict=false is unsupported
+      31  skipped: unsupported baseUrl
+      24  skipped: esModuleInterop=false is unsupported
+      23  skipped: unsupported module resolution kind 2
+check /workspace/wt/parser/build/release/bun --lint
+pass: E 0 of 7027, C 5650 of 5770
+by outcome, E: fail 6934, unsupported 93
+by outcome, C: pass 5650, fail 27, unsupported 93
+by cause, E: fail: nothing 5628, fail: syntax 1299, unsupported: layout 93, fail: unsupported-extension 7
+by cause, C: unsupported: layout 93, fail: syntax 27
+reports of rules left out of the comparison, and the instances that had them: no-self-assign 3 in 1, no-debugger 1 in 1, no-empty-pattern 1 in 1
+
+by directory: instances that pass, of those whose oracle has errors (E) and of those whose oracle has none (C)
+  compiler                      E     0 of 3187   C  3040 of 3095
+  conformance                   E     0 of 1      C     1 of 1
+  conformance/Symbols           E     0 of 5      C     3 of 3
+  conformance/additionalChecks  E     0 of 1      C     0 of 0
+  conformance/ambient           E     0 of 9      C    11 of 11
+  conformance/async             E     0 of 94     C    85 of 92
+  conformance/asyncGenerators   E     0 of 3      C     2 of 2
+  conformance/classes           E     0 of 357    C   234 of 234
+  conformance/constEnums        E     0 of 6      C     3 of 3
+  conformance/controlFlow       E     0 of 27     C    31 of 31
+  conformance/declarationEmit   E     0 of 3      C    18 of 18
+  conformance/decorators        E     0 of 44     C    44 of 44
+  conformance/directives        E     0 of 4      C     2 of 2
+  conformance/dynamicImport     E     0 of 14     C    24 of 24
+  conformance/emitter           E     0 of 0      C    13 of 13
+  conformance/enums             E     0 of 8      C     6 of 6
+  conformance/es2016            E     0 of 1      C     0 of 0
+  conformance/es2017            E     0 of 6      C     6 of 6
+  conformance/es2018            E     0 of 3      C     2 of 2
+  conformance/es2019            E     0 of 11     C     4 of 4
+  conformance/es2020            E     0 of 14     C     9 of 9
+  conformance/es2021            E     0 of 20     C    19 of 19
+  conformance/es2022            E     0 of 14     C     2 of 2
+  conformance/es2023            E     0 of 1      C     1 of 1
+  conformance/es2024            E     0 of 0      C     3 of 3
+  conformance/es2025            E     0 of 0      C     4 of 4
+  conformance/es5               E     0 of 1      C     0 of 0
+  conformance/es6               E     0 of 513    C   515 of 515
+  conformance/es7               E     0 of 29     C    16 of 16
+  conformance/esDecorators      E     0 of 32     C   129 of 129
+  conformance/esnext            E     0 of 0      C     4 of 4
+  conformance/expressions       E     0 of 275    C   125 of 125
+  conformance/externalModules   E     0 of 148    C    84 of 86
+  conformance/functions         E     0 of 12     C     8 of 8
+  conformance/generators        E     0 of 8      C     7 of 7
+  conformance/importAssertion   E     0 of 9      C     1 of 1
+  conformance/importAttributes  E     0 of 14     C     4 of 4
+  conformance/importDefer       E     0 of 19     C     6 of 8
+  conformance/interfaces        E     0 of 61     C     5 of 5
+  conformance/internalModules   E     0 of 46     C    30 of 30
+  conformance/jsdoc             E     0 of 179    C   151 of 154
+  conformance/jsx               E     0 of 141    C    29 of 71
+  conformance/moduleResolution  E     0 of 50     C    22 of 22
+  conformance/node              E     0 of 229    C   105 of 105
+  conformance/nonjsExtensions   E     0 of 7      C     5 of 7
+  conformance/override          E     0 of 27     C    11 of 11
+  conformance/parser            E     0 of 599    C   219 of 221
+  conformance/pedantic          E     0 of 2      C     0 of 0
+  conformance/references        E     0 of 2      C    12 of 13
+  conformance/salsa             E     0 of 124    C    60 of 62
+  conformance/scanner           E     0 of 25     C    10 of 10
+  conformance/statements        E     0 of 112    C   206 of 206
+  conformance/types             E     0 of 524    C   317 of 319
+  conformance/typings           E     0 of 6      C     2 of 2
+
+by diagnostic code: 959 codes; instances that pass, of those whose oracle has the code
+  TS2322       0 of 1014
+  TS2304       0 of 670
+  TS2564       0 of 599
+  TS2339       0 of 471
+  TS2454       0 of 445
+  TS1005       0 of 301
+  TS2345       0 of 277
+  TS2307       0 of 165
+  TS2300       0 of 156
+  TS1109       0 of 147
+  TS2741       0 of 138
+  TS7006       0 of 118
+  TS6133       0 of 105
+  TS2353       0 of 92
+  TS2554       0 of 90
+  TS2683       0 of 87
+  TS1128       0 of 79
+  TS2403       0 of 77
+  TS1003       0 of 65
+  TS7026       0 of 64
+  TS2552       0 of 63
+  TS2411       0 of 60
+  TS2769       0 of 60
+  TS1212       0 of 58
+  TS2695       0 of 58
+  and 934 more codes in the report
+
+listed: E 0, C 0; of them run 0, not passing 0
+5650 instances pass and may not enter a list: platform-limited 2, quota 5648
+report /tmp/dccbu/rep-full-release.json
+
+real	29m23.653s
+user	0m24.855s
+sys	0m31.144s

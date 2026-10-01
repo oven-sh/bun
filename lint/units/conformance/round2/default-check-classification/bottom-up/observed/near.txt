@@ -1,0 +1,27 @@
+{
+ "E": 7027,
+ "unread": 0,
+ "pretty": 14,
+ "oneDiag": 2673,
+ "allTable": 161,
+ "oneDiagTable": 121,
+ "oracleHasTable": 497,
+ "oracleHasTableBunSilent": 68,
+ "bunSyntax": 1290,
+ "firstSamePlace": 809,
+ "firstSamePlaceTable": 259,
+ "candidates": 105,
+ "candidatesOne": 54
+}
+near:
+  arrowFunctionMissingCurlyWithSemicolon.ts: oracle arrowFunctionMissingCurlyWithSemicolon.ts(2,15) TS1109 Expression expected. | bun Unexpected ;
+  assertInWrapSomeTypeParameter.ts: oracle assertInWrapSomeTypeParameter.ts(2,26) TS1005 '>' expected. | bun Expected ">" but found "("
+  fatarrowfunctionsOptionalArgsErrors3.ts: oracle fatarrowfunctionsOptionalArgsErrors3.ts(1,5) TS1003 Identifier expected. | bun Unexpected )
+  for.ts: oracle for.ts(29,6) TS1109 Expression expected. | bun Unexpected )
+  missingCloseBrace.ts: oracle missingCloseBrace.ts(9,1) TS1005 '}' expected. | bun Unexpected end of file
+far:
+  accessorWithoutBody1(target=es2015).ts: oracle accessorWithoutBody1.ts(1,19) TS1005 | bun 2x first accessorWithoutBody1.ts(1,21) Expected "{" but found "}"
+  accessorWithoutBody2(target=es2015).ts: oracle accessorWithoutBody2.ts(1,20) TS1005 | bun 2x first accessorWithoutBody2.ts(1,22) Expected "{" but found "}"
+  emptyMemberAccess.ts: oracle emptyMemberAccess.ts(3,5) TS1109 | bun 1x first emptyMemberAccess.ts(3,6) Expected "=>" but found "."
+  enumWithParenthesizedInitializer1.ts: oracle enumWithParenthesizedInitializer1.ts(3,1) TS1005 | bun 2x first enumWithParenthesizedInitializer1.ts(3,1) Expected ")" but found "}"
+  es6ImportParseErrors.ts: oracle es6ImportParseErrors.ts(1,1) TS1128 | bun 1x first es6ImportParseErrors.ts(1,8) Unexpected 10

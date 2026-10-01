@@ -33,3 +33,11 @@ the export lists of runner/index.ts, and they move layOut out of sweep.ts. This 
 operands of a crash or a timeout for the report): with that change, take the root files from the input of the corpus
 binding for a root that is undefined. Apply one by hand over the other; the hunks of check_bun_lint.ts, run.ts, the
 fixture and the test file do not meet theirs.
+
+observed/
+  sweep-full-release.txt   the whole corpus through the scratch clone with this patch, --bin a release build of be1ebe5295
+                           (the src of 3110ce85cf), --jobs 4 --timeout 60000, 1,144 s: pass E 0 of 7,027, C 5,650 of 5,770;
+                           no crash, no timeout
+  classify-raw-release.txt the same counts from the raw runs of /tmp/dcc/raw-release.jsonl (12,797 processes of that build)
+  head-vs-new.txt          the rules of 3110ce85cf over the same runs: 1,336 instances would be "crash"
+  near.txt, drive.txt      the output of probes/near.ts and probes/drive.ts

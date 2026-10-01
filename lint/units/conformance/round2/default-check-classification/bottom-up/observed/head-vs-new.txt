@@ -1,0 +1,35 @@
+rules: C declarationEmitClassSetAccessorParamNameInJs2.ts (compiler/declarationEmitClassSetAccessorParamNameInJs2.ts) -> pass [] {"no-empty-pattern":1} roots=["/.src/foo.js"]
+   foo.js(7,13): error no-empty-pattern: Unexpected empty object pattern.
+rules: E jsdocTypeTagCast.ts (conformance/jsdoc/jsdocTypeTagCast.ts) -> fail [nothing] {"no-self-assign":3} roots=["/.src/a.ts","/.src/b.js"]
+   b.js(44,36): error no-self-assign: 'someBase' is assigned to itself.
+   b.js(47,42): error no-self-assign: 'someDerived' is assigned to itself.
+   b.js(53,38): error no-self-assign: 'someOther' is assigned to itself.
+rules: E typedefOnStatements.ts (conformance/jsdoc/typedefOnStatements.ts) -> fail [nothing] {"no-debugger":1} roots=["/.src/typedefOnStatements.js"]
+   typedefOnStatements.js(4,1): error no-debugger: Unexpected 'debugger' statement.
+HEAD rules on the same runs: crash {"E":1308,"C":28} C pass 5649 E fail nothing 5626 unsupported 186
+warnings only: 7
+   E privateNameAccessors.ts: privateNameAccessors.ts(9,14): warning syntax: Writing to getter-only property "#roProp" will throw
+   E privateNameMethodAssignment.ts: privateNameMethodAssignment.ts(4,14): warning syntax: Writing to read-only method "#method" will throw
+   E privateNameReadonly.ts: privateNameReadonly.ts(4,14): warning syntax: Writing to read-only method "#bar" will throw
+   E privateNameSetterNoGetter.ts: privateNameSetterNoGetter.ts(4,14): warning syntax: Reading from setter-only property "#x" will throw
+   E privateNameStaticAccessors.ts: privateNameStaticAccessors.ts(9,12): warning syntax: Writing to getter-only property "#roProp" will throw
+   E privateNameStaticMethodAssignment.ts: privateNameStaticMethodAssignment.ts(4,12): warning syntax: Writing to read-only method "#method" will throw
+   E privateWriteOnlyAccessorRead.ts: privateWriteOnlyAccessorRead.ts(9,22): warning syntax: Reading from setter-only property "#value" will throw
+{"compiler":{"run":6282,"result":6203,"crash":0,"timeout":0,"Cpass":3040,"C":3095,"Epass":0,"E":3187,"syntax":454},"conformance":{"run":6515,"result":6408,"crash":0,"timeout":0,"Cpass":2610,"C":2675,"Epass":0,"E":3840,"syntax":872}}
+[
+  [ "exit 0 signal null stdout empty", 11282 ], [ "exit 2 signal null stdout empty",
+    1329
+  ], [ "exit undefined signal undefined stdout empty notLaid", 186 ]
+]
+slower than 2 s: [
+  "mixinAbstractClasses.ts 2072ms", "mixinAbstractClassesReturnTypeInference.ts 2068ms",
+  "mixinAccessModifiers.ts 2075ms", "decoratorOnClassConstructor4(target=es2015).ts 2263ms",
+  "decoratorOnClassConstructorParameter1(target=es2015).ts 2230ms",
+  "templateStringInCallExpression.ts 2088ms",
+  "jsDeclarationsExportDefinePropertyEmit.ts 2384ms",
+  "jsDeclarationsExportDoubleAssignmentInClosure.ts 2529ms",
+  "jsDeclarationsExportForms(target=es2015).ts 2297ms",
+  "jsdocTypeReferenceToMergedClass.ts 2468ms",
+  "tsxElementResolution6.tsx 2349ms", "tsxElementResolution7.tsx 2171ms",
+  "usingDeclarationsWithLegacyClassDecorators.5(module=esnext,target=esnext).ts 3102ms"
+]

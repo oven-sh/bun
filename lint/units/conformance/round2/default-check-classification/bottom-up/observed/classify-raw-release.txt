@@ -1,0 +1,13 @@
+records 12797: E 7027, C 5770
+    27  C fail [syntax]
+  5650  C pass
+    93  C unsupported [layout]
+  5628  E fail [nothing]
+  1299  E fail [syntax]
+     7  E fail [unsupported-extension]
+    93  E unsupported [layout]
+rules left out: no-empty-pattern 1 reports in 1 instances; no-self-assign 3 reports in 1 instances; no-debugger 1 reports in 1 instances
+class C passes that had reports of rules left out: 1
+syntax failures by categories present: E error: 1292; C error: 27; E warning: 7
+ms per process: median 139, p99 1339, max 3102
+stderr bytes: max 5067

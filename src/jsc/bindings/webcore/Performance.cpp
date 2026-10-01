@@ -33,12 +33,8 @@
 #include "config.h"
 #include "Performance.h"
 
-// #include "Document.h"
-// #include "DocumentLoader.h"
 #include "Event.h"
-// #include "EventLoop.h"
 #include "EventNames.h"
-// #include "LocalFrame.h"
 #include "PerformanceEntry.h"
 #include "PerformanceMarkOptions.h"
 #include "PerformanceMeasureOptions.h"

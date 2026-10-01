@@ -343,8 +343,6 @@ void JSURLSearchParams::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-
-    // static_assert(!std::is_base_of<ActiveDOMObject, URLSearchParams>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
 }
 
 JSObject* JSURLSearchParams::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -758,8 +756,6 @@ void JSURLSearchParams::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
     auto* thisObject = uncheckedDowncast<JSURLSearchParams>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
-    // if (thisObject->scriptExecutionContext())
-    //     analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
 }
 

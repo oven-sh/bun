@@ -35,20 +35,16 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
-// #include <JavaScriptCore/JSTypedArrays.h>
 
 #include "GCDefferalContext.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "JSDOMAttribute.h"
-// #include "JSDOMBinding.h"
 #include "JSDOMConstructor.h"
 #include "JSDOMConvertBufferSource.h"
 #include "JSDOMConvertInterface.h"
 #include "JSDOMConvertNumbers.h"
 #include "JSDOMConvertStrings.h"
-// #include "JSDOMExceptionHandling.h"
-// #include "JSDOMGlobalObject.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMOperation.h"
 #include "JSDOMWrapperCache.h"
@@ -168,8 +164,6 @@ void JSTextEncoder::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-
-    // static_assert(!std::is_base_of<ActiveDOMObject, TextEncoder>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
 }
 
 JSObject* JSTextEncoder::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)

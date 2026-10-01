@@ -69,13 +69,12 @@ public:
     // NOT enable drains. No-op if already attached/registered/closed.
     void registerCloseContext(uint8_t side, ScriptExecutionContext&, ThreadSafeWeakPtr<MessagePort>);
     void detach(uint8_t side);
-    // Explicit == a real, permanent close: close(), context teardown, or an orphaned
-    // transferred endpoint; sets ClosedByRequest and always notifies the peer.
-    // Collected == the wrapper was GC'd while entangled (node never collects an
-    // entangled port), or the port sat in that wrapper's inbox; notifies only a
-    // peer on a different context than closingCtx,
-    // matching node: a collection never closes a channel, and a worker-side close
-    // node fires at worker exit has no later trigger here once the port is gone.
+    // Explicit == close(), context teardown, or an orphaned transferred endpoint;
+    // sets ClosedByRequest and always notifies the peer.
+    // Collected == the wrapper was GC'd while entangled, or the port sat in that
+    // wrapper's inbox; notifies only a peer on a context other than closingCtx.
+    // Node never collects an entangled port, so a same-context peer keeps its hold;
+    // a worker-side port's close (node fires it at worker exit) has no later trigger.
     enum class CloseKind : uint8_t { Explicit,
         Collected };
     void close(uint8_t side, CloseKind = CloseKind::Collected, ScriptExecutionContextIdentifier closingCtx = 0);

@@ -27,9 +27,7 @@ mod pseudo {
     pub(super) const UNKNOWN: u8 = 64;
 }
 
-/// nghttp2 (`parse_status_code`, `http_response_on_header`): a `:status` value is three ASCII
-/// digits from 100 to 999 and is never 101, which HTTP/2 removed (RFC 9113 §8.6). Any other value
-/// makes the block malformed.
+/// nghttp2's `parse_status_code`: three digits from 100 to 999, never 101 (RFC 9113 §8.6).
 fn is_valid_status(value: &[u8]) -> bool {
     matches!(value, [b'1'..=b'9', b'0'..=b'9', b'0'..=b'9']) && value != b"101"
 }

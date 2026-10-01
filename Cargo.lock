@@ -1646,6 +1646,10 @@ dependencies = [
 [[package]]
 name = "bun_typecheck"
 version = "0.0.0"
+dependencies = [
+ "bun_collections",
+ "bun_core",
+]
 
 [[package]]
 name = "bun_url"

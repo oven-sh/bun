@@ -5688,31 +5688,28 @@ impl VirtualMachine {
     /// own inbound IPC included) and the test-parallel channel.
     fn is_test_runner_socket_group(&self, group: *const uws::SocketGroup) -> bool {
         self.rare_data.as_deref().is_some_and(|rare| {
-            core::ptr::eq(group, &rare.spawn_ipc_group)
-                || core::ptr::eq(group, &rare.test_parallel_ipc_group)
+            core::ptr::eq(group, &raw const rare.spawn_ipc_group)
+                || core::ptr::eq(group, &raw const rare.test_parallel_ipc_group)
         })
     }
 
     /// One sweep over the sockets a test file opened. What a close handler opens meanwhile stays open.
     fn close_test_file_sockets(&self) {
         // SAFETY: process-global usockets loop is live.
-        let loop_ = unsafe { &mut *uws::Loop::get() };
-        let mut maybe_group = loop_.internal_loop_data.head;
-        while let Some(group) = NonNull::new(maybe_group) {
-            // SAFETY: `group` is a live `us_socket_group_t` linked in the loop.
-            let next = unsafe { (*group.as_ptr()).next };
-            let g = group.as_ptr();
-            if !self.is_test_runner_socket_group(g) {
-                // SAFETY: see above.
-                unsafe { (*g).close_all() };
+        let data = unsafe { &raw mut (*uws::Loop::get()).internal_loop_data };
+        // The next group is parked in the loop's iterator, which unlinking a group advances past
+        // it: a close handler may unlink any group, and its owner then free it. One it links goes
+        // to the head, behind the walk.
+        // SAFETY: as above; no reference into the loop is held across a close handler.
+        unsafe {
+            (*data).iterator = (*data).head;
+            while let Some(group) = NonNull::new((*data).iterator) {
+                let group = group.as_ptr();
+                (*data).iterator = (*group).next;
+                if !self.is_test_runner_socket_group(group) {
+                    (*group).close_all();
+                }
             }
-            // SAFETY: `next` may have been unlinked by an on_close JS
-            // callback; restart from head if so (mirrors loop.c).
-            maybe_group = if !next.is_null() && unsafe { (*next).linked } == 0 {
-                loop_.internal_loop_data.head
-            } else {
-                next
-            };
         }
     }
 

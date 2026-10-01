@@ -1,8 +1,9 @@
-// internal/core: one module per upstream file, re-exported as the package's namespace.
+// internal/core: one module per upstream file and `golang` for the values of Go itself, re-exported as the package's namespace.
 pub mod arena;
 pub mod binarysearch;
 pub mod compileroptions;
 pub mod core;
+pub mod golang;
 pub mod languagevariant;
 pub mod languagevariant_stringer_generated;
 pub mod linkstore;
@@ -21,6 +22,7 @@ pub use self::core::*;
 pub use arena::*;
 pub use binarysearch::*;
 pub use compileroptions::*;
+pub use golang::*;
 pub use languagevariant::*;
 pub use linkstore::*;
 pub use nodemodules::*;

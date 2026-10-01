@@ -7,10 +7,12 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isDebug,
   isWindows,
   tempDir,
   withoutAggressiveGC,
 } from "harness";
+import { mkfifo } from "mkfifo";
 import { once } from "node:events";
 import http from "node:http";
 import { finished } from "node:stream/promises";
@@ -1576,5 +1578,71 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(stdout).toBe("caught EISDIR\n");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+  });
+});
+
+// A fixture process holds both ends of a FIFO and gives Bun.write its write
+// end, so the write meets a full pipe. Nothing reads the FIFO before the
+// write is under way.
+(isWindows ? describe.skip : describe.concurrent)("Bun.write to a full pipe", () => {
+  async function run(mode, { fifos = 1, env = {} } = {}) {
+    using dir = tempDir(`bun-write-${mode}`, {});
+    const paths = [];
+    for (let i = 0; i < fifos; i++) {
+      paths.push(join(String(dir), `fifo${i}`));
+      mkfifo(paths[i], 0o666);
+    }
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "bun-write-blocked-pipe-fixture.js"), mode, ...paths],
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const printed = result => ({ stdout: JSON.stringify(result) + "\n", stderr: "", exitCode: 0 });
+  // Each test starts a bun process, which takes seconds in a debug build.
+  const timeout = isDebug || isASAN ? 60_000 : undefined;
+
+  // Bun.write tries a string or a buffer under 256 KiB at once, on the JS
+  // thread. When the pipe fills in the middle, the work pool gets what is
+  // left: no byte is written twice, and the count is that of the whole write.
+  describe("after its first try filled the pipe", () => {
+    it(
+      "writes every byte once, for each kind of destination",
+      async () => {
+        const { stdout, stderr, exitCode } = await run("destinations");
+        const result = JSON.parse(stdout || "{}");
+        const names = Object.keys(result);
+        expect({ result, stderr, exitCode }).toEqual({
+          result: Object.fromEntries(names.map(name => [name, "exact"])),
+          stderr: "",
+          exitCode: 0,
+        });
+        expect(names).toHaveLength(18);
+      },
+      timeout,
+    );
+
+    it(
+      "writes every byte once to Bun.stdout after process.stdout was used",
+      async () => {
+        expect(await run("stdout")).toEqual(
+          printed({ stderr: "pending, under way\n", write: "exact", exitCode: 0 }),
+        );
+      },
+      timeout,
+    );
+
+    it(
+      "keeps the path it opened open until the write ends",
+      async () => {
+        expect(await run("soleWriter", { fifos: 3, env: { UV_THREADPOOL_SIZE: "2" } })).toEqual(
+          printed({ writeEnd: "open", write: "exact" }),
+        );
+      },
+      timeout,
+    );
   });
 });

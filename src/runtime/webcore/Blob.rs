@@ -4675,7 +4675,7 @@ pub(crate) fn write_file_internal(
     // except if you're on Windows. Windows I/O is slower. Let's not even try.
     #[cfg(not(windows))]
     {
-        let mut needs_async = false;
+        let mut deferred: Option<Deferred> = None;
         let fast_path_ok = matches!(*path_or_blob, PathOrBlob::Path(_))
             || (matches!(*path_or_blob, PathOrBlob::Blob(ref b)
                 if b.offset.get() == 0 && !b.is_s3()
@@ -4702,18 +4702,27 @@ pub(crate) fn write_file_internal(
                             cx.global(),
                             pathlike,
                             &str,
-                            &mut needs_async,
+                            &mut deferred,
                         )
                     } else {
                         write_string_to_file_fast::<false>(
                             cx.global(),
                             pathlike,
                             &str,
-                            &mut needs_async,
+                            &mut deferred,
                         )
                     };
-                    if !needs_async {
-                        return Ok(result);
+                    match deferred {
+                        None => return Ok(result),
+                        Some(Deferred::WouldBlock(resume)) => {
+                            return write_file_after_would_block(
+                                cx,
+                                path_or_blob,
+                                resume,
+                                &options,
+                            );
+                        }
+                        Some(Deferred::NotOpened) => {}
                     }
                 }
             } else if let Some(buffer_view) = data.as_array_buffer(cx.global()) {
@@ -4733,18 +4742,27 @@ pub(crate) fn write_file_internal(
                             cx.global(),
                             pathlike,
                             buffer_view.byte_slice(),
-                            &mut needs_async,
+                            &mut deferred,
                         )
                     } else {
                         write_bytes_to_file_fast::<false>(
                             cx.global(),
                             pathlike,
                             buffer_view.byte_slice(),
-                            &mut needs_async,
+                            &mut deferred,
                         )
                     };
-                    if !needs_async {
-                        return Ok(result);
+                    match deferred {
+                        None => return Ok(result),
+                        Some(Deferred::WouldBlock(resume)) => {
+                            return write_file_after_would_block(
+                                cx,
+                                path_or_blob,
+                                resume,
+                                &options,
+                            );
+                        }
+                        Some(Deferred::NotOpened) => {}
                     }
                 }
             }
@@ -5135,12 +5153,66 @@ pub(crate) fn write_file(global_this: &JSGlobalObject, callframe: &CallFrame) ->
 
 const WRITE_PERMISSIONS: bun_sys::Mode = 0o664;
 
+/// Why the synchronous attempt of `Bun.write` left the write to the async path.
+#[cfg(not(windows))]
+enum Deferred {
+    /// The path does not exist yet. Nothing is open and nothing was written.
+    NotOpened,
+    /// A write returned `EAGAIN`.
+    WouldBlock(Resume),
+}
+
+/// Where the synchronous attempt stopped. The async path continues from here
+/// and never sees the bytes that are already written.
+#[cfg(not(windows))]
+struct Resume {
+    /// How many bytes are written.
+    written: usize,
+    /// The bytes that are not written yet.
+    tail: Vec<u8>,
+    /// The fd the attempt opened, if the destination is a path. It stays open
+    /// for the rest: to a FIFO, a close would be the end of the data for its
+    /// reader.
+    fd: Option<bun_sys::CloseOnDrop>,
+}
+
+/// Schedules a [`write_file_mod::WriteFile`] for `resume.tail`. Its promise
+/// resolves with the byte count of the whole write.
+#[cfg(not(windows))]
+fn write_file_after_would_block(
+    cx: &bun_jsc::JsThread<'_>,
+    path_or_blob: &mut PathOrBlob,
+    resume: Resume,
+    options: &WriteFileOptions,
+) -> JsResult<JSValue> {
+    let destination_blob = match path_or_blob {
+        // A local file: the synchronous attempt opened it.
+        PathOrBlob::Path(path) => Blob::find_or_create_file_from_path(path, cx.global(), false),
+        PathOrBlob::Blob(blob) => blob.dupe(),
+    };
+    let mut write_file = write_file_mod::WriteFile::create(
+        destination_blob,
+        Blob::init(resume.tail, cx.global()),
+        options.mkdirp_if_not_exists.unwrap_or(true),
+    )
+    .expect("unreachable");
+    write_file.resume_from(resume.written, resume.fd);
+    let promise = Box::new(WriteFilePromise {
+        promise: jsc::JSPromiseStrong::init(cx.global()),
+        global_this: cx.global(),
+    });
+    let promise_value = promise.promise.value();
+    promise_value.ensure_still_alive();
+    write_file_mod::WriteFile::schedule(write_file, promise, cx);
+    Ok(promise_value)
+}
+
 #[cfg(not(windows))]
 fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     global_this: &JSGlobalObject,
     pathlike: &PathOrFileDescriptor,
     str: &BunString,
-    needs_async: &mut bool,
+    deferred: &mut Option<Deferred>,
 ) -> JSValue {
     let fd: Fd = if !NEEDS_OPEN {
         pathlike.fd()
@@ -5156,7 +5228,7 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
             bun_sys::Result::Ok(result) => result,
             bun_sys::Result::Err(err) => {
                 if err.get_errno() == bun_sys::E::ENOENT {
-                    *needs_async = true;
+                    *deferred = Some(Deferred::NotOpened);
                     return JSValue::ZERO;
                 }
                 return JSPromise::rejected_promise(
@@ -5169,7 +5241,7 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     };
 
     // Declared before the truncate guard so it drops *after* it (close runs last).
-    let _close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));
+    let mut close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));
 
     // scopeguard's closure captures borrows at construction, conflicting
     // with later `written += ...` / `truncate = false`. Route through `Cell`
@@ -5200,7 +5272,11 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
                 bun_sys::Result::Err(err) => {
                     truncate.set(false);
                     if err.get_errno() == bun_sys::E::EAGAIN {
-                        *needs_async = true;
+                        *deferred = Some(Deferred::WouldBlock(Resume {
+                            written: written.get(),
+                            tail: remain.to_vec(),
+                            fd: close.take(),
+                        }));
                         return JSValue::ZERO;
                     }
                     let err_js = if !NEEDS_OPEN {
@@ -5222,7 +5298,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     global_this: &JSGlobalObject,
     pathlike: &PathOrFileDescriptor,
     bytes: &[u8],
-    needs_async: &mut bool,
+    deferred: &mut Option<Deferred>,
 ) -> JSValue {
     let fd: Fd = if !NEEDS_OPEN {
         pathlike.fd()
@@ -5241,7 +5317,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
             bun_sys::Result::Ok(result) => result,
             bun_sys::Result::Err(err) => {
                 if err.get_errno() == bun_sys::E::ENOENT {
-                    *needs_async = true;
+                    *deferred = Some(Deferred::NotOpened);
                     return JSValue::ZERO;
                 }
                 return JSPromise::rejected_promise(
@@ -5257,7 +5333,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
 
     let truncate = NEEDS_OPEN || bytes.is_empty();
     let mut written: usize = 0;
-    let _close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));
+    let mut close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));
 
     let mut remain = bytes;
     while !remain.is_empty() {
@@ -5271,7 +5347,11 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
             }
             bun_sys::Result::Err(err) => {
                 if err.get_errno() == bun_sys::E::EAGAIN {
-                    *needs_async = true;
+                    *deferred = Some(Deferred::WouldBlock(Resume {
+                        written,
+                        tail: remain.to_vec(),
+                        fd: close.take(),
+                    }));
                     return JSValue::ZERO;
                 }
                 let err_js = if !NEEDS_OPEN {

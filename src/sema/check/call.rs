@@ -2291,6 +2291,49 @@ impl<'p> Checker<'p> {
         said
     }
 
+    /// A function type with the annotated parameters of the function expression `e` and the return type of the signature that
+    /// `expected` has, so that inferring from it to `expected` yields the contravariant candidates and nothing for the return type.
+    /// `None` unless every parameter is annotated and `expected` mentions type parameters.
+    fn function_type_from_parameter_annotations(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        expected: TypeId,
+    ) -> Option<TypeId> {
+        let ExprKind::Fn(func) = self.hir(file)[e].kind else {
+            return None;
+        };
+        if self.hir(file)[func].params.is_empty()
+            || !self.hir(file)[func].type_params.is_empty()
+            || !self.has_type_variables(expected)
+            || self.is_context_sensitive(file, e)
+        {
+            return None;
+        }
+        let non_null = self.non_nullable(expected);
+        let contextual = self.single_call_signature(non_null, true)?;
+        if !self.sig_type_params(contextual).is_empty() {
+            return None;
+        }
+        let own = self.sig_of_fn(file, func);
+        let (params, this, ret) = (
+            self.sig_params(own),
+            self.sig_this_type(own),
+            self.sig_return(contextual),
+        );
+        let sig = self.p.types.intern_sig(SigData::Synth {
+            type_params: Box::new([]),
+            params: params.into(),
+            ret,
+            this,
+            of: Box::new([]),
+        });
+        Some(self.synth(Shape {
+            call: vec![sig],
+            ..Shape::default()
+        }))
+    }
+
     /// `plain_arguments_say`, with `candidate` there to be asked what it expects.
     fn plain_arguments_say_as_told(
         &mut self,
@@ -2322,13 +2365,26 @@ impl<'p> Checker<'p> {
                 plain.push((i, ty));
             }
         }
+        // Parameter annotations of a function expression are context independent too, unlike its return type.
+        let mut annotated: SmallVec<[(TypeId, TypeId); 4]> = SmallVec::new();
+        for (i, &a) in args.iter().enumerate() {
+            if let Arg::Expr(e) = a
+                && let Some(param) = self.param_type_at(params, i)
+                && let Some(ty) = self.function_type_from_parameter_annotations(file, e, param)
+            {
+                annotated.push((ty, param));
+            }
+        }
         // No argument to go by: nothing is said, and nothing is ruled out.
-        if plain.is_empty() {
+        if plain.is_empty() && annotated.is_empty() {
             return (true, MapperId::IDENTITY, MapperId::IDENTITY);
         }
         let type_params = self.sig_type_params(candidate);
         let mut inference = Inference::for_params(&type_params, Some(candidate));
         inference.any_default = self.hir(file).is_js;
+        for &(ty, param) in &annotated {
+            self.infer(&mut inference, ty, param, 0);
+        }
         for &(i, ty) in &plain {
             if let Some(param) = self.param_type_at(params, i)
                 && self.has_type_variables(param)

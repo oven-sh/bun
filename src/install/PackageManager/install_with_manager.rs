@@ -1535,10 +1535,11 @@ fn report_lockfile_load_error(
             manager
                 .log_mut()
                 .print(std::ptr::from_mut(Output::error_writer()))?;
-            manager.log_mut().reset();
         }
         Output::flush();
     }
+    // The lockfile is ignored from here on. Its parse errors must not fail the install.
+    manager.log_mut().reset();
 
     if manager.options.enable.fail_early() {
         Global::crash();

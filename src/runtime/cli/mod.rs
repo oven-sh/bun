@@ -500,10 +500,7 @@ fn cli_dupe_z(s: &[u8]) -> *const core::ffi::c_char {
 /// flag (`RunCommand::create_fake_temporary_node_executable` lives there).
 pub(crate) use bun_install::PRETEND_TO_BE_NODE;
 
-/// This is set `true` during `Command.which()` if argv0 is "bunx"
-static IS_BUNX_EXE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-
-pub use bun_install::SUBCOMMAND_ARGV_INDEX;
+pub(crate) use bun_install::SUBCOMMAND_ARGV_INDEX;
 
 bun_core::declare_scope!(CLI, hidden);
 
@@ -787,25 +784,59 @@ pub(crate) mod command {
         bun_install::subcommand_argv_index()
     }
 
+    /// The leading flag at `argv[i]` and whether it consumed `argv[i + 1]`.
+    fn leading_flag_at(i: usize) -> (arguments::LeadingFlag, bool) {
+        let argv = bun::argv();
+        let arg = argv.get(i).map(|z| z.as_bytes()).unwrap_or(b"");
+        // Only a short flag yields to a keyword, so only a short flag looks.
+        let next_is_keyword = !arg.starts_with(b"--")
+            && argv
+                .get(i + 1)
+                .is_some_and(|next| keyword_tag(next).is_some());
+        let flag = arguments::LeadingFlag::classify(arg, next_is_keyword);
+        let consumed = matches!(
+            flag,
+            arguments::LeadingFlag::Flag {
+                consumes_value: true,
+                ..
+            }
+        );
+        (flag, consumed)
+    }
+
+    /// The flags in front of the keyword, each with the value it consumed.
+    /// The same walk `which()` did, for handlers that read raw argv.
+    pub(crate) fn leading_flags() -> impl Iterator<Item = (&'static [u8], Option<&'static [u8]>)> {
+        let argv = bun::argv();
+        let end = subcommand_argv_index().min(argv.len());
+        let mut i = 1;
+        core::iter::from_fn(move || {
+            if i >= end {
+                return None;
+            }
+            let (_, consumed) = leading_flag_at(i);
+            let flag = argv.get(i).map(|z| z.as_bytes()).unwrap_or(b"");
+            let value = if consumed {
+                argv.get(i + 1).map(|z| z.as_bytes())
+            } else {
+                None
+            };
+            i += 1 + consumed as usize;
+            Some((flag, value))
+        })
+    }
+
     /// Apply a `--cwd` that preceded the keyword, for handlers that do not
     /// run a clap parse. The last occurrence wins, as in clap.
     #[cold]
     pub(crate) fn apply_leading_cwd() {
-        let argv = bun::argv();
-        let end = subcommand_argv_index().min(argv.len());
         let mut last: Option<&[u8]> = None;
-        let mut i = 1;
-        while i < end {
-            let a = argv.get(i).map(|z| z.as_bytes()).unwrap_or(b"");
-            if a == b"--cwd" {
-                if let Some(dir) = argv.get(i + 1).filter(|_| i + 1 < end) {
-                    last = Some(dir.as_bytes());
-                    i += 1;
-                }
-            } else if let Some(dir) = a.strip_prefix(b"--cwd=") {
+        for (flag, value) in leading_flags() {
+            if flag == b"--cwd" {
+                last = value;
+            } else if let Some(dir) = flag.strip_prefix(b"--cwd=") {
                 last = Some(dir);
             }
-            i += 1;
         }
         if let Some(dir) = last {
             let dir_z = bun_core::ZBox::from_bytes(dir);
@@ -930,8 +961,7 @@ pub(crate) mod command {
     #[inline(never)]
     fn which() -> Tag {
         let argv = bun::argv();
-        let mut iter = argv.iter();
-        let Some(argv0) = iter.next() else {
+        let Some(argv0) = argv.get(0) else {
             return Tag::HelpCommand;
         };
 
@@ -951,8 +981,7 @@ pub(crate) mod command {
                     return Tag::ExecCommand;
                 }
             }
-            // SAFETY: single-threaded startup
-            IS_BUNX_EXE.store(true, core::sync::atomic::Ordering::Relaxed);
+            // argv[0] (`bunx`) plays the part of the `x` keyword.
             SUBCOMMAND_ARGV_INDEX.store(0, core::sync::atomic::Ordering::Relaxed);
             return Tag::BunxCommand;
         }
@@ -967,41 +996,26 @@ pub(crate) mod command {
         }
 
         let mut idx: usize = 1;
-        let Some(mut first_arg_name) = iter.next() else {
-            return Tag::AutoCommand;
-        };
         // `--filter`/`--workspaces` before `test` or `build` name a script.
         let mut saw_filter_flag = false;
-        while !first_arg_name.is_empty() && first_arg_name[0] == b'-' {
+        let first_arg_name = loop {
+            let Some(arg) = argv.get(idx) else {
+                return Tag::AutoCommand;
+            };
+            if arg.is_empty() || arg[0] != b'-' {
+                break arg;
+            }
             // `--interactive` stays on AutoCommand: Arguments.rs parses it and the no-target check
             // routes to RunCommand::exec_node_repl. An early ReplCommand return here would bypass
             // that and boot the legacy `bun repl` implementation instead.
-            let next_is_keyword = argv
-                .get(idx + 1)
-                .is_some_and(|next| keyword_tag(next).is_some());
-            match arguments::LeadingFlag::classify(first_arg_name, next_is_keyword) {
-                arguments::LeadingFlag::Program => return Tag::AutoCommand,
-                arguments::LeadingFlag::Flag {
-                    consumes_value,
-                    filter,
-                } => {
+            match leading_flag_at(idx) {
+                (arguments::LeadingFlag::Program, _) => return Tag::AutoCommand,
+                (arguments::LeadingFlag::Flag { filter, .. }, consumed) => {
                     saw_filter_flag |= filter;
-                    if consumes_value {
-                        if iter.next().is_none() {
-                            return Tag::AutoCommand;
-                        }
-                        idx += 1;
-                    }
+                    idx += 1 + consumed as usize;
                 }
             }
-            match iter.next() {
-                Some(n) => {
-                    idx += 1;
-                    first_arg_name = n;
-                }
-                None => return Tag::AutoCommand,
-            }
-        }
+        };
         SUBCOMMAND_ARGV_INDEX.store(idx, core::sync::atomic::Ordering::Relaxed);
 
         let keyword = RootCommandMatcher::r#match(first_arg_name);
@@ -1277,7 +1291,7 @@ pub(crate) mod command {
         //    must still fall through to `which()` so `node --version` reports
         //    Node's version, `bunx --version` is parsed by bunx, etc. Only
         //    the *predicates* are read here; `which()` performs the matching
-        //    `PRETEND_TO_BE_NODE` / `IS_BUNX_EXE` side effects.
+        //    `PRETEND_TO_BE_NODE` / `SUBCOMMAND_ARGV_INDEX` side effects.
         //  * the standalone-graph probe above already ran, so a compiled
         //    executable's `--version` / `-e ''` is still passed through to
         //    user code (it returned via `boot_standalone`).
@@ -1587,14 +1601,14 @@ pub(crate) mod command {
     fn exec_bunx(log: &mut bun_ast::Log) -> CmdResult {
         apply_leading_cwd();
         let ctx = init(Tag::BunxCommand, log)?;
-        let start_idx = if IS_BUNX_EXE.load(core::sync::atomic::Ordering::Relaxed) {
-            0
-        } else {
-            1
-        };
-        let argv = argv_zslice();
-        let keyword_index = subcommand_argv_index().saturating_sub(start_idx);
-        super::bunx_command::BunxCommand::exec(ctx, &argv[start_idx..], keyword_index)
+        // The flags in front of `x` (`bun --bun x probe`), then `x` and the
+        // rest. For the `bunx` executable argv[0] plays the part of `x`.
+        let argv = bun::argv();
+        let mut tokens: Vec<&'static [u8]> = leading_flags().map(|(flag, _)| flag).collect();
+        tokens.extend(
+            (subcommand_argv_index()..argv.len()).filter_map(|i| argv.get(i).map(|z| z.as_bytes())),
+        );
+        super::bunx_command::BunxCommand::exec(ctx, &tokens)
     }
 
     #[cold]
@@ -1827,7 +1841,6 @@ pub(crate) mod command {
     fn bun_create(log: &mut bun_ast::Log) -> crate::Result<()> {
         use super::bunx_command::BunxCommand;
         use super::create_command::{CreateCommand, ExampleTag};
-        use bun_core::ZStr;
 
         // These are templates from the legacy `bun create`
         // most of them aren't useful but these few are kinda nice.
@@ -1843,7 +1856,7 @@ pub(crate) mod command {
         let args = argv_zslice();
         let cmd_idx = subcommand_argv_index();
 
-        if args.len() <= cmd_idx + 1 {
+        if args.len() <= 2 {
             tag_print_help(Tag::CreateCommand, false);
             Global::exit(1);
         }
@@ -1854,32 +1867,23 @@ pub(crate) mod command {
         let mut dash_dash_bun = false;
         let mut print_help = false;
 
-        {
-            let remainder = &args[1..];
+        for (flag, _) in leading_flags() {
+            if flag == b"--bun" {
+                dash_dash_bun = true;
+            } else if flag == b"--help" || flag == b"-h" {
+                print_help = true;
+            }
+        }
+
+        if args.len() > 2 {
+            let remainder = &args[cmd_idx..];
             let mut remainder_i: usize = 0;
             while remainder_i < remainder.len() && positional_i < positionals.len() {
                 let slice = strings::trim(remainder[remainder_i].as_bytes(), b" \t\n");
-                // A global flag in front of `create` is not the template.
-                if remainder_i + 1 < cmd_idx {
-                    if slice == b"--bun" {
-                        dash_dash_bun = true;
-                    } else if slice == b"--help" || slice == b"-h" {
-                        print_help = true;
-                    } else if let arguments::LeadingFlag::Flag {
-                        consumes_value: true,
-                        ..
-                    } =
-                        arguments::LeadingFlag::classify(slice, remainder_i + 2 == cmd_idx)
-                    {
-                        remainder_i += 1;
-                    }
-                    remainder_i += 1;
-                    continue;
-                }
                 if !slice.is_empty() {
                     if !strings::has_prefix(slice, b"--") {
                         if positional_i == 1 {
-                            template_name_start = remainder_i + 2;
+                            template_name_start = cmd_idx + remainder_i + 1;
                         }
                         positionals[positional_i] = slice;
                         positional_i += 1;
@@ -1941,11 +1945,11 @@ To create a project with the official Next.js scaffolding tool, run\n\
             && example_tag != ExampleTag::LocalFolder;
 
         if use_bunx {
-            let mut bunx_args: Vec<&ZStr> =
+            let mut bunx_args: Vec<&[u8]> =
                 Vec::with_capacity(2 + args.len() - template_name_start + (dash_dash_bun as usize));
-            bunx_args.push(bun_core::zstr!("bunx"));
+            bunx_args.push(b"bunx");
             if dash_dash_bun {
-                bunx_args.push(bun_core::zstr!("--bun"));
+                bunx_args.push(b"--bun");
             }
             // `add_create_prefix` returns an owned NUL-terminated buffer.
             // `bun create` is a one-shot CLI subcommand (ends in exec/exit), so
@@ -1954,11 +1958,11 @@ To create a project with the official Next.js scaffolding tool, run\n\
             // without leaking (PORTING.md §Forbidden patterns).
             static CREATE_PREFIX: std::sync::OnceLock<bun_core::ZBox> = std::sync::OnceLock::new();
             let prefixed = BunxCommand::add_create_prefix(template_name)?;
-            bunx_args.push(CREATE_PREFIX.get_or_init(|| prefixed).as_zstr());
+            bunx_args.push(CREATE_PREFIX.get_or_init(|| prefixed).as_bytes());
             for src in &args[template_name_start..] {
-                bunx_args.push(*src);
+                bunx_args.push(src.as_bytes());
             }
-            return BunxCommand::exec(ctx, &bunx_args, 0);
+            return BunxCommand::exec(ctx, &bunx_args);
         }
 
         CreateCommand::exec(&ctx, example_tag, template)

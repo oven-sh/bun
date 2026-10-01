@@ -593,6 +593,13 @@ describe.concurrent("global flag before subcommand", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("bun --help create prints the create help and exits 0", async () => {
+    using dir = tempDir("which-help-create", files);
+    const { stdout, exitCode } = await run(String(dir), ["--help", "create"]);
+    expect(stdout).toContain("bun create");
+    expect(exitCode).toBe(0);
+  });
+
   test("bun --cwd . exec <cmd> dispatches ExecCommand", async () => {
     using dir = tempDir("which-exec", files);
     const { stdout, stderr, exitCode } = await run(String(dir), ["--cwd", ".", "exec", "echo from-exec"]);
@@ -708,8 +715,8 @@ describe.concurrent("global flag before subcommand", () => {
     expect(exitCode).toBe(0);
   });
 
-  // `-`, `--`, `-e` and `-p` end the flag scan: the rest of argv belongs to
-  // the program, even when a token spells a subcommand.
+  // `-` and the eval flags end the flag scan: the rest of argv belongs to the
+  // program, even when a token spells a subcommand.
   for (const argv of [["i"], ["a"], ["x"], ["test"], ["init"], ["pm", "ls"], ["help"]]) {
     test(`bun - ${argv.join(" ")} runs the stdin program`, async () => {
       using dir = tempDir("which-stdin", valueFlags);
@@ -734,6 +741,39 @@ describe.concurrent("global flag before subcommand", () => {
       expect({ stdout, stderr, exitCode }).toEqual({ stdout: "2\n", stderr: "", exitCode: 0 });
     });
   }
+
+  // The code is attached to the flag: the next token is a program argument.
+  for (const flag of ["--eval=console.log(1+1)", "-e=console.log(1+1)", "--print=1+1"]) {
+    test(`bun ${flag} test evaluates the code`, async () => {
+      using dir = tempDir("which-eval-attached", valueFlags);
+      const { stdout, stderr, exitCode } = await run(String(dir), [flag, "test"]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "2\n", stderr: "", exitCode: 0 });
+    });
+  }
+
+  test("bun --print x evaluates x", async () => {
+    using dir = tempDir("which-print-x", valueFlags);
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--print", "x"]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("x is not defined");
+    expect(exitCode).toBe(1);
+  });
+
+  // Shorts are reused per command, so a short flag leaves a keyword alone:
+  // `-p=<pkg>` in front of `x` is bunx's `--package`.
+  test("bun -p=<pkg> x is bunx --package", async () => {
+    using dir = tempDir("which-p-package", valueFlags);
+    const { stderr, exitCode } = await run(String(dir), ["-p=some-pkg", "x"]);
+    expect(stderr).toContain("When using --package, you must specify the binary to run");
+    expect(exitCode).toBe(1);
+  });
+
+  test("bun -- test <file> still runs the test runner", async () => {
+    using dir = tempDir("which-dashdash-test", valueFlags);
+    const { stderr, exitCode } = await run(String(dir), ["--", "test", "pass.test.ts"]);
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
 
   test("bun -- <file> test runs the file", async () => {
     using dir = tempDir("which-dashdash", valueFlags);

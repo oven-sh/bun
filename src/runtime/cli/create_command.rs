@@ -221,8 +221,7 @@ impl CreateOptions {
             // clap positionals borrow from process argv; dupe each
             // entry into the process-lifetime CLI arena to obtain
             // `&'static [u8]`.
-            positionals: args
-                .positionals()
+            positionals: bun_install::positionals_from_keyword(args.positionals())
                 .iter()
                 .map(|p| crate::cli::cli_dupe(p))
                 .collect::<Vec<&'static [u8]>>()
@@ -230,13 +229,11 @@ impl CreateOptions {
             ..Default::default()
         };
 
-        if let Some(i) = opts
-            .positionals
-            .iter()
-            .position(|&p| p == b"c" || p == b"create")
+        if opts.positionals.len() >= 1
+            && (opts.positionals[0] == b"c" || opts.positionals[0] == b"create")
         {
             let mut v = core::mem::take(&mut opts.positionals).into_vec();
-            v.drain(..=i);
+            v.remove(0);
             opts.positionals = v.into_boxed_slice();
         }
 

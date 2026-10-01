@@ -6399,6 +6399,36 @@ describe.concurrent("write() after end()", () => {
       expect(result).toEqual([lateWriteEvents, 4]);
     });
 
+    // With trailers pending, END_STREAM rides the trailers, and node leaves this stream open too.
+    // The write completes before the late write's callback and 'error', so a 'wantTrailers'
+    // from the completion would be the first event.
+    it("respond({ waitForTrailers: true }) is not asked for trailers", async () => {
+      const server = http2.createServer();
+      let client;
+      try {
+        const errored = Promise.withResolvers();
+        server.on("stream", stream => {
+          const events = [];
+          stream.on("wantTrailers", () => events.push("wantTrailers"));
+          stream.on("error", err => errored.resolve(events.concat(`error:${err.code}`)));
+          stream.respond({ ":status": 200 }, { waitForTrailers: true });
+          stream.write("done");
+          stream.end();
+          stream.write("late", err => events.push(`write:${err.code}`));
+        });
+        const port = await new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
+        client = http2.connect(`http://127.0.0.1:${port}`);
+        client.on("error", errored.reject);
+        const req = client.request({ ":path": "/" });
+        req.on("error", errored.reject);
+        req.resume();
+        expect(await errored.promise).toEqual(["write:ERR_STREAM_WRITE_AFTER_END", "error:ERR_STREAM_WRITE_AFTER_END"]);
+      } finally {
+        client?.destroy();
+        server.close();
+      }
+    });
+
     // END_STREAM goes out when the write completes, before 'error' is emitted (node submits it
     // before 'error' too), so a reset from the 'error' listener comes after a clean end.
     it.each([

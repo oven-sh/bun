@@ -2060,6 +2060,8 @@ enum StreamState {
   // callback). Until then no 'error' listener can exist, so stream errors must not be emitted:
   // node never constructs the JS stream object before a complete header block arrives.
   Delivered = 1 << 8, // 100000000 = 256
+  // The native side closed the stream and reported it through streamError. The destroy is queued.
+  NativeErrored = 1 << 9, // 1000000000 = 512
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2115,19 +2117,17 @@ function onStreamWriteDone(this: Http2Stream, err?: Error | null) {
   const state = this._writableState;
   // A chunk still queued behind this one carries END_STREAM itself (isFinalWrite).
   if (err || !state.ending || !state.errored || state.destroyed || state.finalCalled || state.length !== 0) return;
-  if ((this[bunHTTP2StreamStatus] & (StreamState.EndStreamSent | StreamState.NativeClosed)) !== 0) return;
+  // The native side drops a closed stream at the next read, and writeStream throws on an id it dropped.
+  const sentOrGone = StreamState.EndStreamSent | StreamState.NativeClosed | StreamState.NativeErrored;
+  if ((this[bunHTTP2StreamStatus] & sentOrGone) !== 0) return;
   // Pending trailers carry END_STREAM themselves. A pending reset must not follow a clean end.
   if (this[bunHTTP2WaitForTrailers] || this.rstCode) return;
   const native = this[bunHTTP2Session]?.[bunHTTP2Native];
   if (!native) return;
   this[bunHTTP2StreamStatus] |= StreamState.EndStreamSent;
-  try {
-    const settled = native.writeStream(this.id, "", "ascii", true);
-    native.flush();
-    if (settled === 5) onEndStreamSettled(this);
-  } catch {
-    // A peer reset made the native side drop the stream before JS handled it: nothing is left to end.
-  }
+  const settled = native.writeStream(this.id, "", "ascii", true);
+  native.flush();
+  if (settled === 5) onEndStreamSettled(this);
 }
 
 function markWritableDone(stream: Http2Stream) {
@@ -4129,6 +4129,7 @@ class ServerHttp2Session extends Http2Session {
     },
     streamError(self: ServerHttp2Session, stream: ServerHttp2Stream, error: number) {
       if (!self || typeof stream !== "object") return;
+      stream[bunHTTP2StreamStatus] |= StreamState.NativeErrored;
       self.#connections--;
       if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
@@ -5134,6 +5135,7 @@ class ClientHttp2Session extends Http2Session {
     streamError: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, error: number) => {
       if (!self || typeof stream !== "object") return;
 
+      stream[bunHTTP2StreamStatus] |= StreamState.NativeErrored;
       self.#connections--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     }),

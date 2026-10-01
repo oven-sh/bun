@@ -3880,10 +3880,15 @@ impl Checker<'_> {
     fn compared_in_place_of(&mut self, source: TypeId, target: TypeId) -> (TypeId, TypeId) {
         let (source, target) = (self.force(source), self.force(target));
         let (source, target) = (self.regular(source), self.regular(target));
-        let (source, target) = (
-            self.simplified(source, false),
-            self.simplified(target, true),
-        );
+        // `getNormalizedType` simplifies until nothing changes.
+        let simplify = |c: &mut Self, mut t: TypeId, writing: bool| loop {
+            let simpler = c.simplified(t, writing);
+            if simpler == t {
+                break t;
+            }
+            t = simpler;
+        };
+        let (source, target) = (simplify(self, source, false), simplify(self, target, true));
         let has_primitive_flag =
             self.is_primitive(source) || source == TypeId::BOOLEAN || self.is_whole_enum(source);
         // `TypeFlagsDefinitelyNonNullable`

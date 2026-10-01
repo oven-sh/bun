@@ -17,7 +17,10 @@ pub struct Predicate {
 /// What a piece of type syntax may refer to, of the type parameters around it.
 #[derive(Default)]
 struct Mentioned {
-    names: Vec<Atom>,
+    /// The names of the type parameters around it. A type reference by another name is not resolved.
+    candidates: SmallVec<[Atom; 8]>,
+    /// What the type references by those names resolve to, and what the `infer`s declare.
+    type_params: SmallVec<[Sym; 8]>,
     this: bool,
     /// The scopes that declare the values asked about with `typeof`: their types can involve the type parameters seen from there.
     values_in: Vec<(FileId, ScopeId)>,
@@ -201,9 +204,10 @@ impl<'p> Checker<'p> {
             .filter(|&(i, p)| {
                 i < taken
                     || match *self.data(p) {
-                        TypeData::TypeParam(f, tp, _) => {
-                            mentioned.names.contains(&self.hir(f)[tp].name)
-                        }
+                        TypeData::TypeParam(f, tp, _) => mentioned.type_params.contains(&Sym {
+                            file: f,
+                            id: self.bound(f).type_param_symbol[tp.idx()],
+                        }),
                         TypeData::ThisParam(_) => mentioned.this,
                         _ => true,
                     }
@@ -215,6 +219,14 @@ impl<'p> Checker<'p> {
         } else {
             self.p.types.mapper(pairs)
         }
+    }
+
+    fn type_param_names_in_scope(&mut self, file: FileId, scope: ScopeId) -> SmallVec<[Atom; 8]> {
+        let params = self.type_params_in_scope(file, scope);
+        params
+            .iter()
+            .filter_map(|&p| Some(self.type_param_decl(p)?.1.name))
+            .collect()
     }
 
     /// How many of `outer_type_params(file, scope)`, which has the outermost first, have a statement block between where they are
@@ -287,7 +299,10 @@ impl<'p> Checker<'p> {
         if self.is_body_of_generic_alias(file, scope, node) {
             return self.identity_mapper(file, scope);
         }
-        let mut mentioned = Mentioned::default();
+        let mut mentioned = Mentioned {
+            candidates: self.type_param_names_in_scope(file, scope),
+            ..Mentioned::default()
+        };
         self.collect_mentions(file, node, &mut mentioned);
         self.identity_mapper_of_mentioned(file, scope, self.hir(file)[node].pos, &mentioned)
     }
@@ -302,7 +317,10 @@ impl<'p> Checker<'p> {
         if self.type_params_in_scope(file, scope).is_empty() {
             return MapperId::IDENTITY;
         }
-        let mut mentioned = Mentioned::default();
+        let mut mentioned = Mentioned {
+            candidates: self.type_param_names_in_scope(file, scope),
+            ..Mentioned::default()
+        };
         for &(f, func) in decls {
             self.collect_fn_mentions(f, func, &mut mentioned);
         }
@@ -357,8 +375,15 @@ impl<'p> Checker<'p> {
             TypeNodeKind::Ref { name, args } => {
                 if name.len() == 1 {
                     let name = hir.ids(name).next().unwrap();
-                    if !out.names.contains(&name) {
-                        out.names.push(name);
+                    // `getSymbolFromTypeReference`: a type parameter declared further in can have the name of one further out.
+                    if out.candidates.contains(&name) {
+                        let bound = self.bound(file);
+                        let scope = bound.type_scope[node.idx()];
+                        if let Some(id) = bound.resolve(scope, name, SymFlags::TYPE)
+                            && !out.type_params.contains(&Sym { file, id })
+                        {
+                            out.type_params.push(Sym { file, id });
+                        }
                     }
                 }
                 list(self, args, out);
@@ -394,8 +419,12 @@ impl<'p> Checker<'p> {
                 }
             }
             TypeNodeKind::Infer(tp) => {
-                if !out.names.contains(&hir[tp].name) {
-                    out.names.push(hir[tp].name);
+                let declared = Sym {
+                    file,
+                    id: self.bound(file).type_param_symbol[tp.idx()],
+                };
+                if !out.type_params.contains(&declared) {
+                    out.type_params.push(declared);
                 }
                 self.collect_mentions(file, hir[tp].constraint, out);
             }

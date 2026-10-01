@@ -91,10 +91,20 @@ impl<'p> Checker<'p> {
 
     /// `getIndexTypeEx`. `no_reducible_check` is `IndexFlagsNoReducibleCheck`.
     pub(super) fn keyof_ex(&mut self, ty: TypeId, no_reducible_check: bool) -> TypeId {
+        self.get_index_type_ex(ty, no_reducible_check, false)
+    }
+
+    /// `getIndexTypeEx`, with `IndexFlagsNoReducibleCheck` and `IndexFlagsNoIndexSignatures`.
+    pub(super) fn get_index_type_ex(
+        &mut self,
+        ty: TypeId,
+        no_reducible_check: bool,
+        no_index_signatures: bool,
+    ) -> TypeId {
         self.guard("keyof");
         // The keys of `NoInfer<T>` are those of `T`, and nothing is inferred to them either.
         if let TypeData::NoInfer(of) = *self.data(ty) {
-            let keys = self.keyof_ex(of, no_reducible_check);
+            let keys = self.get_index_type_ex(of, no_reducible_check, no_index_signatures);
             return self.no_infer(keys);
         }
         let ty = self.force(ty);
@@ -117,7 +127,7 @@ impl<'p> Checker<'p> {
                 }
                 let keys: SmallVec<[TypeId; 8]> = parts
                     .iter()
-                    .map(|&p| self.keyof_ex(p, no_reducible_check))
+                    .map(|&p| self.get_index_type_ex(p, no_reducible_check, no_index_signatures))
                     .collect();
                 return self.intersection(&keys);
             }
@@ -134,16 +144,24 @@ impl<'p> Checker<'p> {
                 }
                 let keys: SmallVec<[TypeId; 8]> = parts
                     .iter()
-                    .map(|&p| self.keyof_ex(p, no_reducible_check))
+                    .map(|&p| self.get_index_type_ex(p, no_reducible_check, no_index_signatures))
                     .collect();
                 return self.union(&keys);
             }
             _ => {}
         }
         let mapped = self.mapped_origin(ty);
+        if no_index_signatures
+            && let Some((file, node, mapper)) = mapped
+            && let Some(keys) =
+                self.get_index_type_for_mapped_type_no_index_signatures(ty, file, node, mapper)
+        {
+            return keys;
+        }
         // `getIndexTypeForMappedType`: the keys of a mapped type that does not rename them are what it maps over, known or not,
         // whatever came of it.
-        if let Some((file, node, mapper)) = mapped
+        if !no_index_signatures
+            && let Some((file, node, mapper)) = mapped
             && self.mapped_decl(file, node).name_ty.is_none()
         {
             let constraint = self.mapped_constraint(file, node, mapper);
@@ -216,6 +234,9 @@ impl<'p> Checker<'p> {
             }
         ) {
             for info in &members.shape().index {
+                if no_index_signatures && !self.is_key_type_included_no_index_signatures(info.key) {
+                    continue;
+                }
                 keys.push(info.key);
                 if info.key == TypeId::STRING {
                     keys.push(TypeId::NUMBER);
@@ -223,6 +244,71 @@ impl<'p> Checker<'p> {
             }
         }
         self.union(&keys)
+    }
+
+    /// `isKeyTypeIncluded(key, include)`, with what `getIndexTypeEx` includes under `IndexFlagsNoIndexSignatures`:
+    /// `TypeFlagsStringLiteral | TypeFlagsNumberLike | TypeFlagsESSymbolLike`.
+    fn is_key_type_included_no_index_signatures(&self, key: TypeId) -> bool {
+        match self.data(key) {
+            TypeData::Intersection(parts) => parts
+                .iter()
+                .any(|&p| self.is_key_type_included_no_index_signatures(p)),
+            TypeData::StringLit { .. } | TypeData::EnumLit { .. } => true,
+            _ => self.is_number_like(key) || self.is_symbol_like(key),
+        }
+    }
+
+    /// `getIndexTypeForMappedType(ty, IndexFlagsNoIndexSignatures)`, `ty` being the mapped type at `node` under `mapper`. Of the
+    /// keys only `any` and `string` are left out. `None`: the constraint type is unresolved.
+    fn get_index_type_for_mapped_type_no_index_signatures(
+        &mut self,
+        ty: TypeId,
+        file: FileId,
+        node: TypeNodeId,
+        mapper: MapperId,
+    ) -> Option<TypeId> {
+        let constraint = self.mapped_constraint(file, node, mapper);
+        let constraint = self.force(constraint);
+        if !self.is_known(constraint) {
+            return None;
+        }
+        let decl = self.mapped_decl(file, node);
+        // `shouldDeferIndexType`
+        if decl.name_ty.is_some() && self.is_generic(ty) {
+            return Some(self.intern(TypeData::Keyof(ty)));
+        }
+        let keys = if self.is_generic(constraint) {
+            // The modifiers type of `{ [P in keyof T]: X }` cannot be resolved yet.
+            if matches!(self.mapped_modifiers_source(file, node), Some((_, true))) {
+                return Some(self.intern(TypeData::Keyof(ty)));
+            }
+            List::Kept(self.parts(constraint))
+        } else {
+            self.mapped_key_types(file, node, mapper, constraint).0
+        };
+        let name_type = if decl.name_ty.is_some() {
+            let param = self.type_param(file, decl.param);
+            Some((param, self.type_from_node(file, decl.name_ty)))
+        } else {
+            None
+        };
+        let mut names = Vec::with_capacity(keys.len() + 1);
+        for key in keys {
+            let name = match name_type {
+                Some((param, declared)) => {
+                    let with_key = self.mapper_with_pair(mapper, param, key);
+                    self.instantiate(declared, with_key)
+                }
+                None => key,
+            };
+            names.push(name);
+            // `string` stands for `string | number`, as in `getLiteralTypeFromProperties`.
+            if name == TypeId::STRING {
+                names.push(TypeId::NUMBER);
+            }
+        }
+        let names = self.union(&names);
+        Some(self.filter(names, |_, key| key != TypeId::ANY && key != TypeId::STRING))
     }
 
     /// The literal type that names the property `name`, as far as the name alone tells. `None` for private names.

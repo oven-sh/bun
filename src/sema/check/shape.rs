@@ -4233,8 +4233,9 @@ impl<'p> Checker<'p> {
                             let found = self
                                 .indexed_access_flagged(obj, index, undefined)
                                 .unwrap_or(TypeId::UNKNOWN);
-                            // `getNextBaseConstraint`: what is found there is looked into in its turn.
-                            let found = if found != t {
+                            // `getNextBaseConstraint`: what is found there is looked into in its turn. Only `ty` is being resolved: a
+                            // `t` that `getSimplifiedType` made of it has a constraint of its own.
+                            let found = if found != t || t != ty {
                                 self.next_base_constraint(found)
                             } else {
                                 found

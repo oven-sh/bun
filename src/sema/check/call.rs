@@ -6104,6 +6104,9 @@ impl<'p> Checker<'p> {
                         PropKind::Spread => self
                             .infer_from_annotated_functions(file, prop.value, expected, inference),
                         PropKind::Init | PropKind::Method => {
+                            // `getApparentTypeOfContextualType` of the literal, under `ContextFlagsSignature`.
+                            let expected =
+                                self.instantiate_instantiable_for_signature(inference, expected);
                             if let Some(name) = self.member_name(file, prop.key)
                                 && let Some(member) = self.contextual_property(expected, name)
                             {
@@ -6402,6 +6405,12 @@ impl<'p> Checker<'p> {
         sensitive: bool,
     ) {
         let hir = self.hir(file);
+        // `getApparentTypeOfContextualType` under `ContextFlagsNoConstraints`: nil for a type variable and for what is nested in it.
+        let skip_sites_around = inference.skip_intra_expression_sites;
+        if sensitive {
+            let contextual = self.instantiate_with_expected_result(param, return_mapper);
+            inference.skip_intra_expression_sites |= self.is_type_variable(contextual);
+        }
         // `getApparentTypeOfContextualType`, on the way from a function to its signature: the literal around it is expected to be
         // what `param` comes to as things stand.
         let param = if sensitive {
@@ -6562,6 +6571,7 @@ impl<'p> Checker<'p> {
             );
             self.optional_member = false;
         }
+        inference.skip_intra_expression_sites = skip_sites_around;
     }
 
     /// Whether `p`, a member of the object literal `props`, is a setter that goes with a getter: the two are one property, and the
@@ -6663,6 +6673,9 @@ impl<'p> Checker<'p> {
             ty
         };
         self.note_array_literals(file, value, &mut inference.array_literals);
+        if sensitive && inference.skip_intra_expression_sites {
+            return;
+        }
         let target = if is_optional {
             self.optional(member_param)
         } else {
@@ -6691,7 +6704,9 @@ impl<'p> Checker<'p> {
             c.type_of_expr_for_inference(file, value)
         });
         self.note_array_literals(file, value, &mut inference.array_literals);
-        self.infer(inference, ty, param, 0);
+        if !inference.skip_intra_expression_sites {
+            self.infer(inference, ty, param, 0);
+        }
     }
 
     /// Looks at a part of an argument that what is expected of it matters to, with the calls inside it told what is known of the
@@ -6879,6 +6894,11 @@ impl<'p> Checker<'p> {
         props: Span<PropId>,
         target: TypeId,
     ) -> Option<TypeId> {
+        // `inferFromTypes`: the literal is `ObjectFlagsNonInferrableType`, so it is no candidate for a type parameter, and the
+        // constraint of a type parameter is not an inference target.
+        if self.is_type_param(target) {
+            return None;
+        }
         if !self.is_object_type(target)
             && !matches!(
                 self.data(target),
@@ -6896,16 +6916,19 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `target` without the object types in it that are `typesDefinitelyUnrelated` to `source`. `None`: nothing is left.
+    /// `target` without the object types in it that are `typesDefinitelyUnrelated` to `source`, and without the type parameters.
+    /// `None`: nothing is left.
     fn targets_not_definitely_unrelated(
         &mut self,
         source: TypeId,
         target: TypeId,
     ) -> Option<TypeId> {
         let (TypeData::Union(parts) | TypeData::Intersection(parts)) = self.data(target) else {
-            let is_unrelated =
-                self.is_object_type(target) && self.types_definitely_unrelated(source, target);
-            return (!is_unrelated).then_some(target);
+            // `source` is `ObjectFlagsNonInferrableType`: no candidate for a type parameter, whose constraint is not a target.
+            let is_target = !self.is_type_param(target)
+                && !(self.is_object_type(target)
+                    && self.types_definitely_unrelated(source, target));
+            return is_target.then_some(target);
         };
         let kept: Vec<TypeId> = parts
             .iter()
@@ -7037,6 +7060,10 @@ impl<'p> Checker<'p> {
         return_mapper: MapperId,
     ) -> bool {
         let hir = self.hir(file);
+        // `getApparentTypeOfContextualType` under `ContextFlagsNoConstraints`: nil for a type variable and for what is nested in it.
+        let skip_sites_around = inference.skip_intra_expression_sites;
+        let contextual = self.instantiate_with_expected_result(param, return_mapper);
+        inference.skip_intra_expression_sites |= self.is_type_variable(contextual);
         // `getContextualSignature` passes `ContextFlagsSignature` up to the array literal, where `getApparentTypeOfContextualType`
         // instantiates an instantiable contextual type with `nonFixingMapper` (`instantiateContextualType`).
         let param = self.instantiate_instantiable_for_signature(inference, param);
@@ -7075,6 +7102,7 @@ impl<'p> Checker<'p> {
                 self.infer_from_member(file, item, element_param, inference, return_mapper, true);
             }
         }
+        inference.skip_intra_expression_sites = skip_sites_around;
         in_tuple
     }
 

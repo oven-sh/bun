@@ -5045,11 +5045,7 @@ impl<'p> Checker<'p> {
 
     /// `getIndexTypeEx(t, IndexFlagsNoIndexSignatures)`
     pub(super) fn keyof_without_index_signatures(&mut self, t: TypeId) -> TypeId {
-        let keys = self.keyof(t);
-        if self.is_object_type(t) && self.members(t).is_some_and(|m| !m.shape().index.is_empty()) {
-            return self.filter(keys, |c, m| c.is_unit(m));
-        }
-        keys
+        self.get_index_type_ex(t, false, true)
     }
 
     /// `getIndexedAccessTypeOrUndefined(object, index, AccessFlagsWriting | ...)`: what can be written whichever key it is.

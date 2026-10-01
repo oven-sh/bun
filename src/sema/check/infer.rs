@@ -105,6 +105,9 @@ pub struct Inference {
     pub(super) own_of_source: SmallVec<[TypeId; 4]>,
     /// `propagationType`: the stand-in for the wildcard that is inferred for every type parameter in the target.
     propagated: Option<TypeId>,
+    /// The members of a literal are being checked that `getApparentTypeOfContextualType` has no type for under
+    /// `ContextFlagsNoConstraints`: `inferFromIntraExpressionSites` infers nothing from them.
+    pub(super) skip_intra_expression_sites: bool,
 }
 
 impl Inference {
@@ -149,6 +152,7 @@ impl Inference {
             stand_ins: None,
             own_of_source: SmallVec::new(),
             propagated: None,
+            skip_intra_expression_sites: false,
         }
     }
 

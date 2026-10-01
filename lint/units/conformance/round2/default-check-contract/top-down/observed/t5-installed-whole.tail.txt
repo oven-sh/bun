@@ -1,8 +1,0 @@
-(fail) default check > the binary under test: the probe takes it for a linter, and it ends both runs as the test run asks of a child [133.00ms]
-(fail) default check > the binary under test: a file without errors passes an instance without errors, and nothing was printed [127.99ms]
-(fail) default check > the binary under test: a syntax error of its parser is a difference from the oracle, and no crash [127.83ms]
-
- 123 pass
- 4 fail
- 209 expect() calls
-Ran 127 tests across 1 file. [44.87s]

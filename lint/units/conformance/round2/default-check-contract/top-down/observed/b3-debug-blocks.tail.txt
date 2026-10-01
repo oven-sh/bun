@@ -1,0 +1,7 @@
+(pass) expectations.json > records the level that the default check reaches [2.37ms]
+
+ 55 pass
+ 72 filtered out
+ 0 fail
+ 93 expect() calls
+Ran 55 tests across 1 file. [45.69s]

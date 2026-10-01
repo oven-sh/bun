@@ -1,0 +1,11 @@
+10:  ^ this test timed out after 5000ms.
+62:(fail) run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 1 [8974.54ms]
+63:  ^ this test timed out after 5000ms.
+9:(fail) run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 1 [8974.54ms]
+  ^ this test timed out after 5000ms.
+
+ 54 pass
+ 72 filtered out
+ 1 fail
+ 93 expect() calls
+Ran 55 tests across 1 file. [69.64s]

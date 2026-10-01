@@ -1,0 +1,3 @@
+module: cases 669: same 577, different 0, ESLint's parser rejects 92; 250 reports of ESLint
+commonjs: cases 669: same 454, different 0, ESLint's parser rejects 215; 320 reports of ESLint
+script: cases 669: same 453, different 0, ESLint's parser rejects 216; 398 reports of ESLint

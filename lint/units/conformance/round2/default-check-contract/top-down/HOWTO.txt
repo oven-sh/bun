@@ -1,0 +1,32 @@
+Research "default-check-contract", pass 1b (top-down), 2026-10-01, worktree at 3110ce85cf. Nothing here is in the worktree.
+It is built on ../../default-check-classification (bottom-up/default-check.patch and top-down/amend-bottom-up.patch) and replaces both.
+
+default-check-contract.patch   against 3110ce85cf, the files of the unit: runner/check_bun_lint.ts, runner/run.ts,
+                               runner/expectations.ts (one comment), fixtures/lints-fixture.ts, and of conformance.test.ts the
+                               describes "run", "default check" and "expectations.json", the helper failuresOf (a level) and imports.
+sweep-and-index.patch          against 3110ce85cf, after the first: sweep.ts (the level of the lists, the guard, the names, the
+                               crashes and timeouts) and runner/index.ts (verdictOutcomes, Death, Verdict). Not files of this unit.
+expectations.json              the lists with the level that the default check reaches: "first-section".
+    git apply --check default-check-contract.patch && git apply default-check-contract.patch
+    git apply --check sweep-and-index.patch && git apply sweep-and-index.patch
+The test file needs the glue of the corpus besides (runner/corpus.ts, the exports of ../../prototype/index.ts.patch); the hunks do not meet.
+
+What ran, in a scratch clone made with ../../scratch.sh <dir> --prototype and both patches laid over it (observed/):
+  installed bun 1.4.3 (no --lint), whole file      124 pass, 3 fail: the three tests "the binary under test" (wanted)
+  release build of be1ebe5295 (has --lint), whole  127 pass, 0 fail, 8.5 s (4.3 s in an earlier run)
+  debug build of the worktree, the three describes 55 pass, 0 fail
+  the same with the leak settings of CI            54 pass, 1 fail: "run > replayed oracles pass ...: group 1" took 9.0 s of the
+                                                   default 5 s; the test is unchanged and starts no process
+  sweep.ts, debug build, conformance/parser/ecmascript5/ErrorRecovery/ and Statements/: E 0 of 148, C 36 of 37, no crash
+  ../../typecheck.sh from another directory than the tree: no type error below test/cli/lint, with the first patch alone and with both
+  prettier --check with the .prettierrc of the repository: clean
+  Not run: Windows, macOS; the whole file with the debug build.
+
+probes/ (each names its inputs; they read a scratch clone and /tmp/dcc/raw-release.jsonl, the 12,797 raw runs of a release build)
+  replay.ts      the raw runs through resultOfRun and the comparison, without a process: classes, causes, the guard, the names
+  plainbest.ts   the oracle replayed with what the plain format holds of it, at both levels
+  an.ts          the raw runs by exit code and by the kinds of their lines
+  roots.ts       the raw runs by the extensions of their root files
+
+../../typecheck.sh printed "no type error" whenever the current directory was the tree: tsc prints paths relative to it, without
+the leading slash that the script looked for. The script is corrected (one grep).

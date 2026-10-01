@@ -930,6 +930,35 @@ describe("expect()", () => {
         expect(withAccessor).not.toEqual([expect.any(Number)]);
       });
 
+      if (isBun) {
+        // the same shapes in a child process, so a crash fails one test instead of the whole file
+        it("does not crash the process when the side with the matcher is longer", async () => {
+          const { bunEnv, bunExe } = require("harness");
+          const src = `
+            const { expect } = require("bun:test");
+            try { expect([1, expect.any(Number)]).toEqual([1]); } catch {}
+            try { expect([expect.any(Number)]).toEqual([]); } catch {}
+            try { expect([, 1]).toEqual([expect.any(Date), 1]); } catch {}
+            try { expect([]).toBeOneOf([[expect.any(Number)]]); } catch {}
+            try { expect([[expect.any(Number)]]).toContainEqual([]); } catch {}
+            try { expect(new Map([[expect.any(Number), 2]])).toContainEqual([]); } catch {}
+            console.log("ok");
+          `;
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "-e", src],
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toMatchObject({
+            stdout: "ok\n",
+            exitCode: 0,
+            signalCode: null,
+          });
+        });
+      }
+
       it("applies to the enumerable properties of an Error", () => {
         const received = Object.assign(new Error("boom"), { code: "E1" });
         expect(received).toEqual(Object.assign(new Error("boom"), { code: "E1", cb: optionalFn() }));
@@ -967,6 +996,32 @@ describe("expect()", () => {
         expect({ a: 1, cb: optionalFn() }).toEqual(received);
         expect(received).not.toEqual({ a: 1, cb: expect.any(Function) });
         expect(Object.create(received)).toEqual({ a: expect.any(Number), cb: optionalFn() });
+      });
+
+      it("does not depend on the key order of the other side", () => {
+        const received = {
+          get a() {
+            return 1;
+          },
+        };
+        // the matcher key enumerates before the shared key
+        expect(received).toEqual({ cb: optionalFn(), a: expect.any(Number) });
+        expect(received).toEqual({ cb: optionalFn(), a: 1 });
+        // an extra key that enumerates before a matcher at the shared key stays a mismatch
+        expect(received).not.toEqual({ b: 2, a: expect.any(Number) });
+        expect(received).not.toEqual({ b: 2, a: 1 });
+
+        const error = Object.assign(new Error("boom"), { code: "E1" });
+        expect(error).toEqual(Object.assign(new Error("boom"), { cb: optionalFn(), code: "E1" }));
+        expect(error).not.toEqual(Object.assign(new Error("boom"), { extra: 2, code: expect.any(String) }));
+      });
+
+      it("does not let a matcher-only key hide an extra key on the other side", () => {
+        const received = { a: 1, cb: optionalFn() };
+        Object.defineProperty(received, "k", { value: "x", enumerable: false });
+        expect(received).not.toEqual({ a: 1, k: "y" });
+        expect({ a: 1, k: "y" }).not.toEqual(received);
+        expect(received).toEqual({ a: 1 });
       });
 
       it("applies inside nested comparisons", () => {

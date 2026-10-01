@@ -42,16 +42,24 @@ const inputs: [string, () => unknown[], unknown[]][] = [
 describe("frozen arrays keep their elements in the vector", () => {
   describe.each(locks)("%s", (name, lock) => {
     test.each(inputs)("%s", (_input, make, expected) => {
+      "use strict";
       const a = lock(make());
       expect(describeObject(a)).toContain("ArrayWithSlowPutArrayStorage");
-      // The vector keeps its capacity, which is at least the number of elements.
-      expect(vectorLength(a)).toBeGreaterThanOrEqual(Math.min(a.length, 3));
-      expect(a).toEqual(expected);
+      // The vector keeps its capacity, which holds at least every present element.
+      expect(vectorLength(a)).toBeGreaterThanOrEqual(Object.keys(expected).length);
+      expect(a.length).toBe(expected.length);
+      expect(a).toStrictEqual(expected);
       expect(Object.keys(a)).toEqual(Object.keys(expected));
       expect(Object.isExtensible(a)).toBe(name === "non-writable length");
       expect(Object.getOwnPropertyDescriptor(a, "length")!.writable).toBe(
         name === "Object.seal" || name === "Object.preventExtensions",
       );
+      // No lock lets the array grow: either the object is non-extensible or its length is read-only.
+      expect(() => {
+        a[a.length] = 1;
+      }).toThrow(TypeError);
+      expect(() => a.push(1)).toThrow(TypeError);
+      expect(a.length).toBe(expected.length);
     });
 
     test("an array that already owns a sparse map entry", () => {
@@ -220,7 +228,7 @@ describe("frozen arrays keep their elements in the vector", () => {
     expect(() => Object.defineProperty(a, 1, { configurable: true })).toThrow(TypeError);
   });
 
-  test("freezing one literal leaves the next literal from the same site writable", async () => {
+  test.concurrent("freezing one literal leaves the next literal from the same site writable", async () => {
     // A separate process: another test file can put this realm in "having a bad time" mode, and
     // then every array is SlowPutArrayStorage.
     await using proc = Bun.spawn({
@@ -252,7 +260,7 @@ describe("frozen arrays keep their elements in the vector", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("freezing Array.prototype keeps it blank", async () => {
+  test.concurrent("freezing Array.prototype keeps it blank", async () => {
     // A separate process, so the rest of the test run keeps a writable Array.prototype.
     await using proc = Bun.spawn({
       cmd: [

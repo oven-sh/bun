@@ -1,15 +1,21 @@
+// Each worker runs PUMPS rounds of: arm a batch of short Atomics.waitAsync
+// timeouts, queue a few setTimeouts, notify. The main thread spins
+// Atomics.notify against the same address the whole time, so every worker's
+// RunLoop timers are re-armed from a foreign thread while the worker's own
+// loop drains them. The loop is bounded by iterations, not by the clock, so a
+// slow build gets the same number of cross-thread collisions as a fast one.
 declare var self: Worker;
 
-const DURATION_MS = Number(process.argv[2] ?? 3000);
+const PUMPS = Number(process.argv[2] ?? 100);
 const WORKERS = Number(process.argv[3] ?? 3);
 
 function noop() {}
 
 if (!Bun.isMainThread) {
   self.onmessage = (e: MessageEvent) => {
-    const { sab, durationMs } = e.data as { sab: SharedArrayBuffer; durationMs: number };
+    const { sab, pumps: total } = e.data as { sab: SharedArrayBuffer; pumps: number };
     const i32 = new Int32Array(sab);
-    const deadline = Date.now() + durationMs;
+    let pumps = 0;
 
     function pump() {
       for (let i = 0; i < 48; i++) {
@@ -18,10 +24,10 @@ if (!Bun.isMainThread) {
       }
       for (let i = 0; i < 8; i++) setTimeout(noop, i % 4);
       Atomics.notify(i32, 0, 8);
-      if (Date.now() < deadline) {
+      if (++pumps < total) {
         setTimeout(pump, 0);
       } else {
-        postMessage("done");
+        postMessage(pumps);
       }
     }
     pump();
@@ -31,13 +37,15 @@ if (!Bun.isMainThread) {
   const i32 = new Int32Array(sab);
   const workers: Worker[] = [];
   let done = 0;
+  let pumps = 0;
 
   for (let w = 0; w < WORKERS; w++) {
     const worker = new Worker(import.meta.url);
-    worker.onmessage = () => {
+    worker.onmessage = (e: MessageEvent) => {
+      pumps += e.data as number;
       if (++done === WORKERS) {
         for (const other of workers) other.terminate();
-        console.log("OK");
+        console.log(`OK ${done} workers ${pumps} pumps`);
         process.exit(0);
       }
     };
@@ -45,11 +53,10 @@ if (!Bun.isMainThread) {
       console.error("worker error:", e.message);
       process.exit(3);
     };
-    worker.postMessage({ sab, durationMs: DURATION_MS });
+    worker.postMessage({ sab, pumps: PUMPS });
     workers.push(worker);
   }
 
-  const deadline = Date.now() + DURATION_MS + 1000;
   function hammer() {
     for (let i = 0; i < 24; i++) {
       const w = Atomics.waitAsync(i32, 0, 0, 1 + (i % 5));
@@ -62,7 +69,7 @@ if (!Bun.isMainThread) {
       Atomics.notify(i32, 0, 2);
     }
     for (let i = 0; i < 4; i++) setTimeout(noop, i % 3);
-    if (Date.now() < deadline && done < WORKERS) setTimeout(hammer, 0);
+    if (done < WORKERS) setTimeout(hammer, 0);
   }
   hammer();
 }

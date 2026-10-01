@@ -7,7 +7,6 @@ use crate::node::validators::{validate_object, validate_string};
 use bun_collections::smallvec::SmallVec;
 use bun_core::{Utf8Bytes, strings};
 use bun_paths::{self, MAX_PATH_BYTES, Platform};
-use bun_sys;
 
 /// Create a JS string from a `[T]` slice (T = u8 | u16).
 ///
@@ -73,13 +72,13 @@ const PATH_MIN_WIDE: usize = 4096; // 4 KB
 
 /// Canonical path-unit trait — re-export so external callers that named
 /// `crate::node::path::PathChar` keep compiling.
-pub use bun_paths::PathChar;
+pub(crate) use bun_paths::PathChar;
 
 /// Runtime-only extension over [`PathChar`]: adds the `bun_sys`-coupled
 /// per-width `get_cwd` plus the `bytemuck::Pod`/`Default` bounds this module
 /// needs for `PathScratch`'s `cast_slice` and zero-init. Every generic `_t`
 /// fn here bounds on `PathCharCwd` (only `u8`/`u16` ever instantiate it).
-pub trait PathCharCwd: PathChar + Default + bytemuck::Pod {
+pub(crate) trait PathCharCwd: PathChar + Default + bytemuck::Pod {
     /// Per-width `get_cwd` — replaces the `IS_U16` runtime dispatch in `get_cwd_t`.
     fn get_cwd(buf: &mut [Self]) -> bun_sys::Result<&mut [Self]>;
 }
@@ -165,7 +164,7 @@ const CHAR_STR_DOT: &[u8] = b".";
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L919
 /// The structs returned by parse methods.
 #[derive(Default)]
-pub struct PathParsed<'a, T: PathCharCwd> {
+pub(crate) struct PathParsed<'a, T: PathCharCwd> {
     pub(crate) root: &'a [T],
     pub(crate) dir: &'a [T],
     pub(crate) base: &'a [T],
@@ -950,10 +949,10 @@ fn extname_windows_t<T: PathCharCwd>(path: &[T]) -> &[T] {
     &path[_start_dot.._end]
 }
 
-pub use bun_paths::resolve_path::is_sep_posix_t;
+pub(crate) use bun_paths::resolve_path::is_sep_posix_t;
 // Node `path.win32.isPathSeparator` accepts BOTH `/` and `\` — semantically
 // `is_sep_any_t`, NOT `is_sep_win32_t` (which is `\`-only). Keep the Node name.
-pub use bun_paths::is_sep_any_t as is_sep_windows_t;
+pub(crate) use bun_paths::is_sep_any_t as is_sep_windows_t;
 
 /// `'A' <= byte <= 'Z' || 'a' <= byte <= 'z'`
 #[inline]
@@ -2950,7 +2949,7 @@ fn resolve_windows_t<'a, T: PathCharCwd>(
             //   path = process.env[`=${resolvedDevice}`] || process.cwd();
             #[cfg(windows)]
             {
-                let mut u16_buf = bun_paths::WPathBuffer::uninit();
+                let mut u16_buf = bun_paths::w_path_buffer_pool::get();
                 // Storage for the `=X:` fast-path key. Declared here (not inside the
                 // `'brk:` block) so the slice it backs stays live across `getenv_w`.
                 // 4 elements (not 3) so the wchar immediately following the 3-char
@@ -3000,10 +2999,7 @@ fn resolve_windows_t<'a, T: PathCharCwd>(
                     }
                     // T == u8 when !IS_U16; bytemuck statically checks the layout.
                     let key8: &[u8] = bytemuck::cast_slice::<T, u8>(&buf2[..buf_size]);
-                    // Write the NUL after widening so the LPCWSTR is properly
-                    // terminated regardless of `WPathBuffer::uninit()`'s init
-                    // state — don't rely on `uninit()` happening to zero-fill
-                    // today.
+                    // Write the NUL after widening; a pooled buffer is not zeroed.
                     let n = strings::convert_utf8_to_utf16_in_buffer(&mut u16_buf[..], key8).len();
                     u16_buf[n] = 0;
                     &u16_buf[..=n]

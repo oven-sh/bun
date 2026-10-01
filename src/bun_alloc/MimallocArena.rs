@@ -379,14 +379,12 @@ impl MimallocArena {
 
     /// `bumpalo::Bump::alloc_slice_fill_default` parity.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub fn alloc_slice_fill_default<T: Default>(&self, len: usize) -> &mut [T] {
         self.alloc_slice_fill_with(len, |_| T::default())
     }
 
     /// `bumpalo::Bump::alloc_slice_fill_copy` parity.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub fn alloc_slice_fill_copy<T: Copy>(&self, len: usize, value: T) -> &mut [T] {
         self.alloc_slice_fill_with(len, |_| value)
     }
@@ -414,7 +412,6 @@ impl MimallocArena {
 
     /// `bumpalo::Bump::alloc_slice_fill_iter` parity.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub fn alloc_slice_fill_iter<T, I>(&self, iter: I) -> &mut [T]
     where
         I: IntoIterator<Item = T>,

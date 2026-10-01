@@ -22,11 +22,12 @@ use crate::bun_css;
 use crate::bun_fs;
 
 use crate::Graph::Graph;
+#[cfg(debug_assertions)]
+use crate::LinkerContext;
 use crate::html_import_manifest as HTMLImportManifest;
 use crate::options::{self, Loader};
 use crate::{
-    AdditionalFile, CompileResult, LinkerContext, LinkerGraph, PartRange, PathTemplate,
-    cheap_prefix_normalizer,
+    AdditionalFile, CompileResult, LinkerGraph, PartRange, PathTemplate, cheap_prefix_normalizer,
 };
 
 use crate::IndexInt;
@@ -82,12 +83,16 @@ pub struct Chunk {
     // borrows from the symbol table and so can't live in this owning struct.
     // `ChunkRenamer` is the owning equivalent (see `crate::bun_renamer`).
     pub(crate) renamer: bun_renamer::ChunkRenamer,
+    /// The nested scopes still to name after `rename_symbols_in_chunk`
+    /// (number renamer only), `(source_index, module-scope child)` grouped by
+    /// file; each file becomes a `NestedRenamer` task.
+    pub(crate) nested_scopes_to_rename: Vec<(u32, *const bun_ast::Scope)>,
 
     pub compile_results_for_chunk: CompileResultSlots,
 
-    /// Pre-built JSON fragment for this chunk's metafile output entry.
-    /// Generated during parallel chunk generation, joined at the end.
-    pub(crate) metafile_chunk_json: Box<[u8]>,
+    /// Byte length of the output emitted for this chunk: what `code()` returned plus
+    /// the source map comment. The metafile reports it as `outputs[..].bytes`.
+    pub(crate) final_output_size: usize,
 
     /// Pack boolean flags to reduce padding overhead.
     /// Previously 3 separate bool fields caused ~21 bytes of padding waste.
@@ -188,15 +193,6 @@ impl CompileResultSlots {
     }
 }
 
-impl core::ops::Index<usize> for CompileResultSlots {
-    type Output = CompileResult;
-    #[inline]
-    fn index(&self, i: usize) -> &CompileResult {
-        // SAFETY: reads happen only after the pool join; no concurrent writer.
-        unsafe { &*self.0[i].get() }
-    }
-}
-
 impl Default for Chunk {
     fn default() -> Self {
         Chunk {
@@ -213,8 +209,9 @@ impl Default for Chunk {
             intermediate_output: IntermediateOutput::default(),
             isolated_hash: u64::MAX,
             renamer: bun_renamer::ChunkRenamer::default(),
+            nested_scopes_to_rename: Vec::new(),
             compile_results_for_chunk: CompileResultSlots::default(),
-            metafile_chunk_json: Box::default(),
+            final_output_size: 0,
             flags: Flags::default(),
         }
     }
@@ -275,11 +272,19 @@ impl Chunk {
         self.entry_point.is_entry_point()
     }
 
+    /// Whether `source_index` is the entry point of this chunk. Without code
+    /// splitting, the files of other entry points can print in this chunk too.
+    #[inline]
+    pub(crate) fn is_entry_point_file(&self, source_index: u32) -> bool {
+        self.entry_point.is_entry_point() && self.entry_point.source_index() == source_index
+    }
+
     /// Stable short name for this chunk in generated code: its final content hash, as `[hash]` prints it.
-    pub(crate) fn id(&self) -> [u8; CHUNK_ID_LEN] {
-        bun_core::fmt::truncated_hash32_bytes(
-            self.template.placeholder.hash.unwrap_or(self.isolated_hash),
-        )
+    pub(crate) fn id(&self) -> bun_core::fmt::ContentHash {
+        self.template
+            .placeholder
+            .hash
+            .unwrap_or_else(|| bun_core::fmt::ContentHash::short(self.isolated_hash))
     }
 
     /// The chunks reachable from chunk `start` through cross-chunk imports of the given kinds, `start` first.
@@ -363,34 +368,6 @@ impl Chunk {
     #[inline]
     pub(crate) fn entry_bits(&self) -> &AutoBitSet {
         &self.entry_bits
-    }
-}
-
-#[derive(Clone, Copy, Default)]
-pub(crate) struct Order {
-    pub source_index: IndexInt,
-    pub distance: u32,
-    pub tie_breaker: u32,
-}
-
-impl Order {
-    fn less_than(_ctx: Order, a: Order, b: Order) -> bool {
-        (a.distance < b.distance) || (a.distance == b.distance && a.tie_breaker < b.tie_breaker)
-    }
-
-    /// Sort so files closest to an entry point come first. If two files are
-    /// equidistant to an entry point, then break the tie by sorting on the
-    /// stable source index derived from the DFS over all entry points.
-    pub(crate) fn sort(a: &mut [Order]) {
-        index_sort::sort_slice_unstable_by(a, |a, b| {
-            if Order::less_than(Order::default(), *a, *b) {
-                core::cmp::Ordering::Less
-            } else if Order::less_than(Order::default(), *b, *a) {
-                core::cmp::Ordering::Greater
-            } else {
-                core::cmp::Ordering::Equal
-            }
-        });
     }
 }
 
@@ -594,20 +571,6 @@ impl IntermediateOutput {
         dst
     }
 
-    pub(crate) fn get_size(&self) -> usize {
-        match self {
-            IntermediateOutput::Pieces(pieces) => {
-                let mut total: usize = 0;
-                for piece in pieces.slice() {
-                    total += piece.data.len();
-                }
-                total
-            }
-            IntermediateOutput::Joiner(joiner) => joiner.len,
-            IntermediateOutput::Empty => 0,
-        }
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub fn code<'d>(
         &mut self,
@@ -767,7 +730,9 @@ impl IntermediateOutput {
                     count += piece.data.len();
 
                     match piece.query.kind() {
-                        QueryKind::ChunkId => count += CHUNK_ID_LEN,
+                        QueryKind::ChunkId => {
+                            count += chunks[piece.query.index() as usize].id().len()
+                        }
                         QueryKind::Chunk
                         | QueryKind::Asset
                         | QueryKind::Scb
@@ -898,13 +863,14 @@ impl IntermediateOutput {
                     match piece.query.kind() {
                         QueryKind::ChunkId => {
                             let id = chunks[piece.query.index() as usize].id();
-                            remain[..CHUNK_ID_LEN].copy_from_slice(&id);
+                            let (bytes, len) = (id.bytes(), id.len());
+                            remain[..len].copy_from_slice(&bytes[..len]);
                             if ENABLE_SOURCE_MAP_SHIFTS {
                                 shift.before.advance(chunk.unique_key);
-                                shift.after.advance(&id);
+                                shift.after.advance(&bytes[..len]);
                                 shifts.push(shift);
                             }
-                            remain = &mut remain[CHUNK_ID_LEN..];
+                            remain = &mut remain[len..];
                         }
                         QueryKind::Asset
                         | QueryKind::Chunk
@@ -1235,7 +1201,7 @@ pub enum QueryKind {
     Scb = 3,
     /// Given an HTML import index, print the manifest
     HtmlImport = 4,
-    /// Given a chunk index, print the chunk's 8-character content hash
+    /// Given a chunk index, print the chunk's content hash as `[hash]` prints it
     ChunkId = 5,
 }
 
@@ -1267,8 +1233,6 @@ impl QueryKind {
         }
     }
 }
-
-pub(crate) const CHUNK_ID_LEN: usize = 8;
 
 /// Length of the lowercase-hex `unique_key` prefix (16 nibbles of a `u64`).
 pub(crate) const UNIQUE_KEY_PREFIX_LEN: usize = 16;
@@ -1528,7 +1492,7 @@ impl CssImportOrder {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(debug_assertions)]
     pub(crate) fn fmt<'a, 'ctx>(
         &'a self,
         ctx: &'a LinkerContext<'ctx>,
@@ -1537,7 +1501,7 @@ impl CssImportOrder {
     }
 }
 
-#[allow(dead_code)]
+#[cfg(debug_assertions)]
 pub(crate) struct CssImportOrderDebug<'a, 'ctx> {
     inner: &'a CssImportOrder,
     // Note: split lifetimes — `LinkerContext<'ctx>` is invariant over `'ctx`,
@@ -1548,6 +1512,7 @@ pub(crate) struct CssImportOrderDebug<'a, 'ctx> {
     ctx: &'a LinkerContext<'ctx>,
 }
 
+#[cfg(debug_assertions)]
 impl<'a, 'ctx> fmt::Display for CssImportOrderDebug<'a, 'ctx> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(writer, "{} = ", <&'static str>::from(&self.inner.kind))?;

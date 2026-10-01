@@ -3020,6 +3020,11 @@ function globalInstallEnv(home: string) {
   };
 }
 
+// A registry that knows no packages, so resolution fails in-process after init has run.
+function emptyRegistry() {
+  return Bun.serve({ port: 0, fetch: () => new Response(null, { status: 404 }) });
+}
+
 // #40683: the first -g add must create <global>/package.json, not adopt ~/package.json.
 it("first `bun add -g` creates the global package.json instead of adopting ~/package.json", async () => {
   const homeProject = JSON.stringify({ name: "home-project", private: true });
@@ -3073,10 +3078,9 @@ it("`bun add -g` ignores package.json/package-lock.json above the global dir", a
     ".bun": { install: { global: {} } },
   });
 
+  using registry = emptyRegistry();
   const { stdout, stderr, exited } = spawn({
-    // point at an unreachable registry so we never touch the real network,
-    // but still exercise the full init/walk-up code path that used to fail.
-    cmd: [bunExe(), "add", "-g", "--registry=http://127.0.0.1:1/", "chalk"],
+    cmd: [bunExe(), "add", "-g", `--registry=${registry.url}`, "chalk"],
     cwd: `${home}`,
     stdout: "pipe",
     stdin: "pipe",
@@ -3113,8 +3117,9 @@ it("`bun add -g` ignores a workspaces package.json above the global dir", async 
     ".bun": { install: { global: {} } },
   });
 
+  using registry = emptyRegistry();
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", "-g", "--registry=http://127.0.0.1:1/", "chalk"],
+    cmd: [bunExe(), "add", "-g", `--registry=${registry.url}`, "chalk"],
     cwd: `${home}`,
     stdout: "pipe",
     stdin: "pipe",
@@ -3149,8 +3154,9 @@ it("`bun add -g` does not adopt a parent workspace that lists the global dir", a
     ".bun": { install: { global: { "package.json": JSON.stringify({ name: "g", version: "1.0.0" }) } } },
   });
 
+  using registry = emptyRegistry();
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", "-g", "--registry=http://127.0.0.1:1/", "chalk"],
+    cmd: [bunExe(), "add", "-g", `--registry=${registry.url}`, "chalk"],
     cwd: `${home}`,
     stdout: "pipe",
     stdin: "pipe",

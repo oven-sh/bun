@@ -209,7 +209,7 @@ it("write result is not cumulative", async () => {
 
 // A short chunk is held back to be coalesced, and is reported as written right away. The long
 // chunk that pushes it out to the fd has to count only itself.
-it.each([
+it.concurrent.each([
   { kind: "bytes", long: new Uint8Array(40000).fill(0x62), byteLength: 40000 },
   { kind: "an ASCII string", long: Buffer.alloc(40000, "b").toString(), byteLength: 40000 },
   { kind: "a Latin-1 string", long: Buffer.alloc(40000, 0xe9).toString("latin1"), byteLength: 80000 },

@@ -1,0 +1,28 @@
+| R>A | a binding pattern of a signature is read as a binding pattern | 760 | 52 | `let x: ([a, , ]: A) => void;` |
+| R>A | a modifier stands before a parameter that is no parameter property | 1595 | 109 | `function f(private a) {}` |
+| R>A | a parameter of a signature has an initializer | 2470 | 169 | `let x:  (a = 1) => A;` |
+| R>A | a reserved word is the label of a rest element of a tuple | 2930 | 200 | `let x: [...in: []];` |
+| R>A | a reserved word is the name of a type reference | 2610 | 178 | `let x:  in;` |
+| R>A | a string in brackets names an enum member | 15 | 1 | `enum E { ['a'] = 1 }` |
+| R>A | abstract stands before declare | 15 | 1 | `abstract declare class C {}` |
+| R>A | accessor is a modifier without standard decorators | 83 | 10 | `class C { accessor a }` |
+| R>A | an import type takes type arguments and an expression in an attribute; .< stands before type arguments | 505 | 34 | `let x: import('x')<>;` |
+| R>A | an interface extends, or a class implements, an expression | 3060 | 204 | `class C implements [,] {}` |
+| R>A | as or satisfies names a type alias, an interface or a namespace | 60 | 4 | `type as = 1;` |
+| R>A | asserts is T is the assertion about a parameter named is | 770 | 52 | `f<() => asserts  is A>(x);` |
+| R>A | explained: a return statement outside a function | 30 | 2 | `function f(): class {} { return x; }` |
+| R>A | explained: an entry of an extends or implements list is a type, and tsc reads an expression there | 1380 | 92 | `class C implements [function] {}` |
+| R>A | explained: delete of a name in strict mode code | 30 | 2 | `class C implements [delete A] {}` |
+| R>A | explained: the type that a function type returns is missing | 510 | 34 | `f<<out>() => >(x);` |
+| R>A | explained: type arguments before a property access in an implements or extends entry | 30 | 2 | `class C implements A<>.C {}` |
+| R>A | out or in names a type or a type parameter | 530 | 38 | `let v = <out>x;` |
+| R>A | the type of an assertion predicate starts on the next line | 60 | 4 | `let f = (a): asserts a\nis A => a;` |
+| A>A | metadata: a type predicate is Boolean, an assertion predicate is undefined | 204 | 51 | `class C { @d x: this is A; }` |
+| A>A | metadata: an import type and unique symbol are Object | 56 | 14 | `class C { @d x: import('x') \| A; }` |
+| A>A | metadata: keyof, readonly and unique end before extends | 40 | 10 | `class C { @d x: readonly [] extends B ? C : D; }` |
+| A>A | metadata: the branches of a conditional type merge as the operands of | do | 496 | 124 | `class C { @d x: A extends  U ? U : never; }` |
+| A>A | metadata: unique takes the whole type after it | 32 | 8 | `class C { @d x: unique []; }` |
+| A>A | metadata: | and & operands are the check type of a conditional type | 4 | 1 | `class C { @d a: A \| B extends C ? string : string }` |
+| A>A | ruling: A>A a declaration named as or satisfies, where the base read a cast | 11 | 2 | `module as {}` |
+| A>A | ruling: metadata of a source that tsc does not parse | 388 | 97 | `class C { @d a: b is A }` |
+| R>R | both reject: another error list | 66028 | 4499 | `let x: in];` |

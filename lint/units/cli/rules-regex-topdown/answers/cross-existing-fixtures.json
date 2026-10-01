@@ -1,0 +1,12 @@
+{
+	"no-control-regex": [],
+	"no-regex-spaces": [
+		{
+			"code": "switch (a) { case /a b/: break; case /a  b/: break; }",
+			"from": "no-duplicate-case.json"
+		}
+	],
+	"no-useless-backreference": [],
+	"no-misleading-character-class": [],
+	"no-useless-escape": []
+}

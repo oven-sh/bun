@@ -1,0 +1,740 @@
+[
+	{
+		"code": "RegExp(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "new RegExp(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "(RegExp)(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "new (RegExp)(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "((RegExp))(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "RegExp?.(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "(0, RegExp)(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "(a, RegExp)(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "(RegExp, a)(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "(a, (b, RegExp))(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "((a, RegExp), b)(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "(a || RegExp)(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "(RegExp || a)(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "(a && RegExp)(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "(a ?? RegExp)(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "((a || RegExp) && b)(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "(a ? RegExp : b)(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "(a ? b : RegExp)(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "(RegExp ? a : b)(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "(x = RegExp)(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "(x ||= RegExp)(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "(x += RegExp)(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "new (a || RegExp)(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "new (x = RegExp)(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "(a || (b, RegExp))(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "(!RegExp)(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "(void RegExp)(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "(await RegExp)(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "new globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "globalThis[\"RegExp\"](\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "globalThis[`RegExp`](\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "globalThis[\"Reg\" + \"Exp\"](\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "globalThis?.RegExp(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "globalThis.RegExp?.(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "(globalThis).RegExp(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "(a || globalThis).RegExp(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "(0, globalThis).RegExp(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "(a || globalThis.RegExp)(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "globalThis.globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "window.RegExp(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "self.RegExp(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "global.RegExp(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "foo.RegExp(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "RegExp.call(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "RegExp.bind(null)(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "this.RegExp(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "globalThis.foo.RegExp(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "globalThis[RegExp](\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "new new RegExp(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "Regexp(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "regExp(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "RegExp();"
+	},
+	{
+		"code": "new RegExp();"
+	},
+	{
+		"code": "RegExp(\"\\\\1(a)  [👍]\\x1f\", \"u\");"
+	},
+	{
+		"code": "new RegExp(\"\\\\1(a)  [👍]\\x1f\", \"u\");"
+	},
+	{
+		"code": "RegExp(\"\\\\1(a)  [👍]\\x1f\", \"v\");"
+	},
+	{
+		"code": "new RegExp(\"\\\\1(a)  [👍]\\x1f\", \"v\");"
+	},
+	{
+		"code": "RegExp(\"\\\\1(a)  [👍]\\x1f\", \"uv\");"
+	},
+	{
+		"code": "new RegExp(\"\\\\1(a)  [👍]\\x1f\", \"uv\");"
+	},
+	{
+		"code": "RegExp(\"\\\\1(a)  [👍]\\x1f\", \"g\");"
+	},
+	{
+		"code": "new RegExp(\"\\\\1(a)  [👍]\\x1f\", \"g\");"
+	},
+	{
+		"code": "RegExp(\"\\\\1(a)  [👍]\\x1f\", `u`);"
+	},
+	{
+		"code": "new RegExp(\"\\\\1(a)  [👍]\\x1f\", `u`);"
+	},
+	{
+		"code": "RegExp(\"\\\\1(a)  [👍]\\x1f\", \"g\" + \"u\");"
+	},
+	{
+		"code": "new RegExp(\"\\\\1(a)  [👍]\\x1f\", \"g\" + \"u\");"
+	},
+	{
+		"code": "RegExp(\"\\\\1(a)  [👍]\\x1f\", flags);"
+	},
+	{
+		"code": "new RegExp(\"\\\\1(a)  [👍]\\x1f\", flags);"
+	},
+	{
+		"code": "RegExp(\"\\\\1(a)  [👍]\\x1f\", undefined);"
+	},
+	{
+		"code": "new RegExp(\"\\\\1(a)  [👍]\\x1f\", undefined);"
+	},
+	{
+		"code": "RegExp(\"\\\\1(a)  [👍]\\x1f\", null);"
+	},
+	{
+		"code": "new RegExp(\"\\\\1(a)  [👍]\\x1f\", null);"
+	},
+	{
+		"code": "RegExp(\"\\\\1(a)  [👍]\\x1f\", 1);"
+	},
+	{
+		"code": "new RegExp(\"\\\\1(a)  [👍]\\x1f\", 1);"
+	},
+	{
+		"code": "RegExp(\"\\\\1(a)  [👍]\\x1f\", foo());"
+	},
+	{
+		"code": "new RegExp(\"\\\\1(a)  [👍]\\x1f\", foo());"
+	},
+	{
+		"code": "RegExp(\"\\\\1(a)  [👍]\\x1f\", \"u\", extra);"
+	},
+	{
+		"code": "new RegExp(\"\\\\1(a)  [👍]\\x1f\", \"u\", extra);"
+	},
+	{
+		"code": "RegExp(\"\\\\1(a)  [👍]\\x1f\", ...rest);"
+	},
+	{
+		"code": "new RegExp(\"\\\\1(a)  [👍]\\x1f\", ...rest);"
+	},
+	{
+		"code": "RegExp(...[\"\\\\1(a)  [👍]\\x1f\"]);"
+	},
+	{
+		"code": "new RegExp(...[\"\\\\1(a)  [👍]\\x1f\"]);"
+	},
+	{
+		"code": "RegExp((\"\\\\1(a)  [👍]\\x1f\"));"
+	},
+	{
+		"code": "new RegExp((\"\\\\1(a)  [👍]\\x1f\"));"
+	},
+	{
+		"code": "RegExp(((\"\\\\1(a)  [👍]\\x1f\"), (\"u\")));"
+	},
+	{
+		"code": "new RegExp(((\"\\\\1(a)  [👍]\\x1f\"), (\"u\")));"
+	},
+	{
+		"code": "RegExp(\"\\\\1(a)  [👍]\\x1f\",);"
+	},
+	{
+		"code": "new RegExp(\"\\\\1(a)  [👍]\\x1f\",);"
+	},
+	{
+		"code": "RegExp(\"\\\\1(a)  [👍]\\x1f\", `${\"u\"}`);"
+	},
+	{
+		"code": "new RegExp(\"\\\\1(a)  [👍]\\x1f\", `${\"u\"}`);"
+	},
+	{
+		"code": "RegExp(\"\\\\1(a)  [👍]\\x1f\", cond ? \"u\" : \"u\");"
+	},
+	{
+		"code": "new RegExp(\"\\\\1(a)  [👍]\\x1f\", cond ? \"u\" : \"u\");"
+	},
+	{
+		"code": "RegExp(\"\\\\1(a)  [👍]\\x1f\", flags + \"v\");"
+	},
+	{
+		"code": "new RegExp(\"\\\\1(a)  [👍]\\x1f\", flags + \"v\");"
+	},
+	{
+		"code": "RegExp(\"\\\\1(a)  [👍]\\x1f\", \"\".concat(\"u\"));"
+	},
+	{
+		"code": "new RegExp(\"\\\\1(a)  [👍]\\x1f\", \"\".concat(\"u\"));"
+	},
+	{
+		"code": "RegExp(\"\\\\1(a)  [👍]\\x1f\", String(\"u\"));"
+	},
+	{
+		"code": "new RegExp(\"\\\\1(a)  [👍]\\x1f\", String(\"u\"));"
+	},
+	{
+		"code": "RegExp(\"\\\\1(a)  [👍]\\x1f\", [\"u\"].join(\"\"));"
+	},
+	{
+		"code": "new RegExp(\"\\\\1(a)  [👍]\\x1f\", [\"u\"].join(\"\"));"
+	},
+	{
+		"code": "RegExp('\\\\1(a)  [👍]\\x1f');"
+	},
+	{
+		"code": "new RegExp('\\\\1(a)  [👍]\\x1f');"
+	},
+	{
+		"code": "RegExp(`\\\\1(a)  [👍]\\x1f`);"
+	},
+	{
+		"code": "new RegExp(`\\\\1(a)  [👍]\\x1f`);"
+	},
+	{
+		"code": "RegExp(`\\\\1(a)  ${\"[👍]\"}\\x1f`);"
+	},
+	{
+		"code": "new RegExp(`\\\\1(a)  ${\"[👍]\"}\\x1f`);"
+	},
+	{
+		"code": "RegExp(\"\\\\1(a)\" + \"  [👍]\\x1f\");"
+	},
+	{
+		"code": "new RegExp(\"\\\\1(a)\" + \"  [👍]\\x1f\");"
+	},
+	{
+		"code": "RegExp((\"\\\\1(a)\" + \"  [👍]\\x1f\"));"
+	},
+	{
+		"code": "new RegExp((\"\\\\1(a)\" + \"  [👍]\\x1f\"));"
+	},
+	{
+		"code": "RegExp(\"\\\\1(a)  \" + (\"[👍]\\x1f\"));"
+	},
+	{
+		"code": "new RegExp(\"\\\\1(a)  \" + (\"[👍]\\x1f\"));"
+	},
+	{
+		"code": "RegExp(\"\\\\1(a)  [👍]\\x1f\" + x);"
+	},
+	{
+		"code": "new RegExp(\"\\\\1(a)  [👍]\\x1f\" + x);"
+	},
+	{
+		"code": "RegExp(x + \"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "new RegExp(x + \"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "RegExp(String.raw`\\1(a)  [👍]`);"
+	},
+	{
+		"code": "new RegExp(String.raw`\\1(a)  [👍]`);"
+	},
+	{
+		"code": "RegExp(cond ? \"\\\\1(a)  [👍]\" : \"\\\\1(a)  [👍]\");"
+	},
+	{
+		"code": "new RegExp(cond ? \"\\\\1(a)  [👍]\" : \"\\\\1(a)  [👍]\");"
+	},
+	{
+		"code": "RegExp((0, \"\\\\1(a)  [👍]\"));"
+	},
+	{
+		"code": "new RegExp((0, \"\\\\1(a)  [👍]\"));"
+	},
+	{
+		"code": "RegExp(\"\\\\1(a)  [👍]\" || x);"
+	},
+	{
+		"code": "new RegExp(\"\\\\1(a)  [👍]\" || x);"
+	},
+	{
+		"code": "RegExp(/\\1(a)  [👍]\\x1f/);"
+	},
+	{
+		"code": "new RegExp(/\\1(a)  [👍]\\x1f/);"
+	},
+	{
+		"code": "RegExp(/\\1(a)  [👍]\\x1f/, \"\");"
+	},
+	{
+		"code": "new RegExp(/\\1(a)  [👍]\\x1f/, \"\");"
+	},
+	{
+		"code": "RegExp(/\\1(a)  [👍]\\x1f/, \"u\");"
+	},
+	{
+		"code": "new RegExp(/\\1(a)  [👍]\\x1f/, \"u\");"
+	},
+	{
+		"code": "RegExp(/\\1(a)  [👍]\\x1f/, flags);"
+	},
+	{
+		"code": "new RegExp(/\\1(a)  [👍]\\x1f/, flags);"
+	},
+	{
+		"code": "RegExp((/\\1(a)  [👍]\\x1f/), \"g\");"
+	},
+	{
+		"code": "new RegExp((/\\1(a)  [👍]\\x1f/), \"g\");"
+	},
+	{
+		"code": "RegExp(/\\1(a)  [👍]\\x1f/u);"
+	},
+	{
+		"code": "new RegExp(/\\1(a)  [👍]\\x1f/u);"
+	},
+	{
+		"code": "RegExp(/\\1(a)  [👍]\\x1f/u, \"g\");"
+	},
+	{
+		"code": "new RegExp(/\\1(a)  [👍]\\x1f/u, \"g\");"
+	},
+	{
+		"code": "RegExp(/\\1(a)  [👍]\\x1f/v, \"\");"
+	},
+	{
+		"code": "new RegExp(/\\1(a)  [👍]\\x1f/v, \"\");"
+	},
+	{
+		"code": "RegExp(/\\1(a)  [👍]\\x1f/, \"uv\");"
+	},
+	{
+		"code": "new RegExp(/\\1(a)  [👍]\\x1f/, \"uv\");"
+	},
+	{
+		"code": "RegExp(/[👍]/ + \"\");"
+	},
+	{
+		"code": "new RegExp(/[👍]/ + \"\");"
+	},
+	{
+		"code": "RegExp(123);"
+	},
+	{
+		"code": "new RegExp(123);"
+	},
+	{
+		"code": "RegExp(null);"
+	},
+	{
+		"code": "new RegExp(null);"
+	},
+	{
+		"code": "RegExp(undefined);"
+	},
+	{
+		"code": "new RegExp(undefined);"
+	},
+	{
+		"code": "RegExp(true);"
+	},
+	{
+		"code": "new RegExp(true);"
+	},
+	{
+		"code": "RegExp(-1);"
+	},
+	{
+		"code": "new RegExp(-1);"
+	},
+	{
+		"code": "RegExp(1n);"
+	},
+	{
+		"code": "new RegExp(1n);"
+	},
+	{
+		"code": "RegExp(x);"
+	},
+	{
+		"code": "new RegExp(x);"
+	},
+	{
+		"code": "RegExp(x, \"u\");"
+	},
+	{
+		"code": "new RegExp(x, \"u\");"
+	},
+	{
+		"code": "RegExp(foo(\"\\\\1(a)  [👍]\\x1f\"));"
+	},
+	{
+		"code": "new RegExp(foo(\"\\\\1(a)  [👍]\\x1f\"));"
+	},
+	{
+		"code": "RegExp([\"\\\\1(a)  [👍]\\x1f\"]);"
+	},
+	{
+		"code": "new RegExp([\"\\\\1(a)  [👍]\\x1f\"]);"
+	},
+	{
+		"code": "RegExp({ source: \"\\\\1(a)  [👍]\\x1f\" });"
+	},
+	{
+		"code": "new RegExp({ source: \"\\\\1(a)  [👍]\\x1f\" });"
+	},
+	{
+		"code": "new RegExp;"
+	},
+	{
+		"code": "new RegExp"
+	},
+	{
+		"code": "new RegExp\n(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "var RegExp; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "let RegExp; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "const RegExp = x; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "function RegExp() {} RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "class RegExp {} RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "import RegExp from \"m\"; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "import { RegExp } from \"m\"; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "import { a as RegExp } from \"m\"; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "import * as RegExp from \"m\"; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "function f(RegExp) {} RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "(RegExp) => 1; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "try {} catch (RegExp) {} RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "{ let RegExp; } RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "function f() { var RegExp; } RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "var { RegExp } = x; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "var [RegExp] = x; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "var { a: RegExp = 1 } = x; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "(function RegExp() {}); RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "(class RegExp {}); RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "for (var RegExp in x); RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "for (const RegExp of x); RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "RegExp: for (;;) break RegExp; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "({ RegExp: 1 }); RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "a.RegExp = 1; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "({ RegExp } = x); RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "RegExp = x; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "RegExp++; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "[RegExp] = x; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "({ a: RegExp } = x); RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "for (RegExp of x); RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "for (RegExp in x); RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "RegExp ||= x; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "typeof RegExp; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "delete RegExp.a; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "RegExp.prototype.x = 1; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "export { RegExp } from \"m\"; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "export { a as RegExp } from \"m\"; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "export * as RegExp from \"m\"; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "var globalThis; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "globalThis = x; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "function f(globalThis) {} RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "var flags; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "const flags = \"u\"; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "let flags = \"u\"; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "var x = \"u\"; RegExp(\"\\\\1(a)  [👍]\\x1f\"); globalThis.RegExp(\"\\\\1(a)  [👍]\\x1f\"); RegExp(\"\\\\1(a)  [👍]\\x1f\", flags); RegExp(x);"
+	},
+	{
+		"code": "const r = RegExp; r(\"\\\\1(a)  [👍]\\x1f\"); new r(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "var r = RegExp; r(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "let r; r = RegExp; r(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "const { RegExp: R } = globalThis; R(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "const g = globalThis; g.RegExp(\"\\\\1(a)  [👍]\\x1f\");"
+	},
+	{
+		"code": "const p = \"\\\\1(a)  [👍]\\x1f\"; RegExp(p); new RegExp(p, \"u\");"
+	},
+	{
+		"code": "const f = \"u\"; RegExp(\"\\\\1(a)  [👍]\\x1f\", f);"
+	},
+	{
+		"code": "let p = \"\\\\1(a)  [👍]\\x1f\"; RegExp(p);"
+	},
+	{
+		"code": "var p = \"\\\\1(a)  [👍]\\x1f\"; p = 1; RegExp(p);"
+	},
+	{
+		"code": "const p = \"\\\\1(a)  [👍]\\x1f\", q = p; RegExp(q);"
+	},
+	{
+		"code": "function f() { const p = \"\\\\1(a)  [👍]\\x1f\"; return RegExp(p); }"
+	},
+	{
+		"code": "const p = \"\\\\1(a)  [👍]\\x1f\"; function f(p) { return RegExp(p); }"
+	},
+	{
+		"code": "const re = /\\1(a)  [👍]\\x1f/; RegExp(re, \"\");"
+	},
+	{
+		"code": "var é = /a  b/;"
+	},
+	{
+		"code": "/é👍[👍]\\a  b/;"
+	},
+	{
+		"code": "/* 👍 */ RegExp(\"a  b\");"
+	},
+	{
+		"code": "/a  b   c/;"
+	},
+	{
+		"code": "/a   +b/;"
+	},
+	{
+		"code": "/a   ?/;"
+	},
+	{
+		"code": "/a  *b  c/;"
+	},
+	{
+		"code": "/[  ]  /;"
+	},
+	{
+		"code": "/  [  ]/;"
+	},
+	{
+		"code": "/a  /u;"
+	},
+	{
+		"code": "/[[  ]  ]  /v;"
+	},
+	{
+		"code": "/👍  a/;"
+	},
+	{
+		"code": "/👍  +a   b/u;"
+	},
+	{
+		"code": "RegExp(\"a  b\"); RegExp('a \\ b'); RegExp(\"a\\x20\\x20b\"); RegExp(\"a  \\\\ b\");"
+	},
+	{
+		"code": "RegExp(\"  👍  +  \");"
+	},
+	{
+		"code": "/(  )/;"
+	},
+	{
+		"code": "/a  |b   /;"
+	},
+	{
+		"code": "/  $/;"
+	},
+	{
+		"code": "/^  /;"
+	}
+]

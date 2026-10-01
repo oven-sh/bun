@@ -1,0 +1,18 @@
+700 cases
+  7	both reject
+  1	no-control-regex extra
+  19	no-control-regex missing
+  661	no-control-regex same
+  1	no-misleading-character-class extra
+  23	no-misleading-character-class missing
+  657	no-misleading-character-class same
+  3	no-regex-spaces extra
+  19	no-regex-spaces missing
+  659	no-regex-spaces same
+  1	no-useless-backreference extra
+  42	no-useless-backreference missing
+  638	no-useless-backreference same
+  36	no-useless-escape missing
+  645	no-useless-escape same
+  2	only Bun rejects
+  10	only ESLint rejects

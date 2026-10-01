@@ -1,0 +1,19 @@
+lock acquired 2026-10-01T21:21:24Z
+r1 rc 0 seconds 24 ['libbun_js_parser-185fe25973f3a1f8.rlib', 'libbun_js_parser-185fe25973f3a1f8.rmeta', 'rustc.log']
+r1 full rc 0 seconds 294 load 316.95
+1.4.3-canary.1+be1ebe529
+harness targeted rc=0
+/tmp/gdr1a/runs/r1.targeted.jsonl.gz: 3952 inputs x 15 apis, 0 crashes, 1.2 s, bun 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb
+diff targeted rc=3
+base 1.4.3 e3566be889995ffff8b08823b9233617f979c889 (3952 sources)
+next 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (3952 sources)
+59280 records compared, 1107 differ, in 90 sources
+0 records with the mark !!, 15 with the mark ??, 15 with the mark ~~
+harness small rc=0
+/tmp/gdr1a/runs/r1.small.jsonl.gz: 209628 inputs x 15 apis, 0 crashes, 41.2 s, bun 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb
+diff small rc=3
+base 1.4.3 e3566be889995ffff8b08823b9233617f979c889 (209628 sources)
+next 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (209628 sources)
+3144420 records compared, 83595 differ, in 5904 sources
+0 records with the mark !!, 384 with the mark ??, 1965 with the mark ~~
+done 2026-10-01T21:27:34Z

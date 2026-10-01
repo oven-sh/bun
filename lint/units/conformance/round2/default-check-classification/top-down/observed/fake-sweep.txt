@@ -1,0 +1,30 @@
+instances 14: run 14 (E 14, C 0), skipped 0
+check /tmp/dcc/fake/bun-fake --lint
+pass: E 0 of 14, C 0 of 0
+by outcome, E: fail 11, crash 2, timeout 1
+by cause, E: fail: nothing 6, fail: syntax 5, crash: exit code 134 1, crash: signal SIGABRT 1, timeout: timeout 1
+  crash parserRealSource1.ts: the command ended by the signal SIGABRT: ==594739==ERROR: AddressSanitizer: heap-use-after-free on address 0x502000000010
+  fail parserRealSource10.ts: the code syntax is a name of the command and no code of TypeScript: /.src/parserRealSource10.ts(127,43): error syntax: Unexpected ]
+  fail parserRealSource11.ts: the code syntax is a name of the command and no code of TypeScript: /.src/parserRealSource11.ts(193,41): error syntax: Unexpected ]
+  fail parserRealSource12.ts: no diagnostic where the oracle has a baseline
+  fail parserRealSource13.ts: no diagnostic where the oracle has a baseline
+  fail parserRealSource14.ts: no diagnostic where the oracle has a baseline
+  timeout parserRealSource2.ts: the check did not end within 4000 ms
+  crash parserRealSource3.ts: the command ended with the exit code 134: thread 'main' panicked at src/js_parser/p.rs:10:5:
+  fail parserRealSource4.ts: the code syntax is a name of the command and no code of TypeScript: /.src/parserRealSource4.ts(195,38): error syntax: Unexpected ]
+  fail parserRealSource5.ts: no diagnostic where the oracle has a baseline
+  fail parserRealSource6.ts: no diagnostic where the oracle has a baseline
+  fail parserRealSource7.ts: the code syntax is a name of the command and no code of TypeScript: /.src/parserRealSource7.ts(16,46): error syntax: Unexpected ]
+  fail parserRealSource8.ts: no diagnostic where the oracle has a baseline
+  fail parserRealSource9.ts: the code syntax is a name of the command and no code of TypeScript: /.src/parserRealSource9.ts(12,40): error syntax: Unexpected ]
+crashes: 2, of which the command died in 2; the report has what each left
+  E parserRealSource1.ts: the command ended by the signal SIGABRT: ==594739==ERROR: AddressSanitizer: heap-use-after-free on address 0x502000000010
+  E parserRealSource3.ts: the command ended with the exit code 134: thread 'main' panicked at src/js_parser/p.rs:10:5:
+timeouts: 1 instances did not end within 4000 ms
+  E parserRealSource2.ts
+
+by directory: instances that pass, of those whose oracle has errors (E) and of those whose oracle has none (C)
+  conformance/parser/ecmascript5  E     0 of 14     C     0 of 0
+
+by diagnostic code: 11 codes; instances that pass, of those whose oracle has the code
+

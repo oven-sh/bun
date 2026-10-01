@@ -1,0 +1,60 @@
+instances 14915: run 12797 (E 7027, C 5770), skipped 2118
+    1244  skipped: unsupported target ES5
+     321  skipped: unsupported module kind AMD
+     222  skipped: unsupported module kind System
+      87  skipped: unsupported outFile
+      57  skipped: unsupported module kind UMD
+      57  skipped: unsupported module resolution kind 1
+      52  skipped: alwaysStrict=false is unsupported
+      31  skipped: unsupported baseUrl
+      24  skipped: esModuleInterop=false is unsupported
+      23  skipped: unsupported module resolution kind 2
+check /workspace/wt/parser/build/release/bun --lint
+2000 of 12797
+4000 of 12797
+6000 of 12797
+8000 of 12797
+10000 of 12797
+12000 of 12797
+pass: E 0 of 7027, C 5650 of 5770
+by outcome, E: fail 6934, unsupported 93
+by outcome, C: pass 5650, fail 27, unsupported 93
+guard: 5649 instances of C pass with nothing reported, 1 with reports of rules alone
+codes that are names and fail an instance; instances (diagnostics): syntax 1326 (3568), unsupported-extension 7 (11)
+reports of rules, left out; instances (reports): no-debugger 1 (1), no-empty-pattern 1 (1), no-self-assign 1 (3)
+    5628  fail: no diagnostic where the oracle has a baseline
+      67  unsupported: absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts
+      21  fail: n diagnostics without a code of TypeScript, the first is /.src/asyncArrowFunctionn_esn.ts(n,n): erro
+      21  fail: n diagnostics without a code of TypeScript, the first is /.src/asyncFunctionDeclarationn_esn.ts(n,n)
+      20  fail: n diagnostics without a code of TypeScript, the first is /.src/parserSkippedTokensn.ts(n,n): error s
+      16  fail: n diagnostics without a code of TypeScript, the first is /.src/parserGreaterThanTokenAmbiguityn.ts(n
+      13  fail: n diagnostics without a code of TypeScript, the first is /.src/parserComputedPropertyNamen.ts(n,n): 
+      12  fail: n diagnostics without a code of TypeScript, the first is /.src/computedPropertyNamesn_ESn.ts(n,n): e
+      12  fail: n diagnostics without a code of TypeScript, the first is /.src/parserStrictModen.ts(n,n): error synt
+      11  fail: n diagnostics without a code of TypeScript, the first is /.src/a.js(n,n): error syntax: Expected ";"
+  and 878 more reasons in the report
+
+by directory: instances that pass, of those whose oracle has errors (E) and of those whose oracle has none (C)
+  compiler                      E     0 of 3187   C  3040 of 3095
+  conformance                   E     0 of 1      C     1 of 1
+  conformance/Symbols           E     0 of 5      C     3 of 3
+  conformance/additionalChecks  E     0 of 1      C     0 of 0
+  conformance/ambient           E     0 of 9      C    11 of 11
+  conformance/async             E     0 of 94     C    85 of 92
+  conformance/asyncGenerators   E     0 of 3      C     2 of 2
+  conformance/classes           E     0 of 357    C   234 of 234
+  conformance/constEnums        E     0 of 6      C     3 of 3
+  conformance/controlFlow       E     0 of 27     C    31 of 31
+  conformance/declarationEmit   E     0 of 3      C    18 of 18
+  conformance/decorators        E     0 of 44     C    44 of 44
+  conformance/directives        E     0 of 4      C     2 of 2
+  conformance/dynamicImport     E     0 of 14     C    24 of 24
+  conformance/emitter           E     0 of 0      C    13 of 13
+  conformance/enums             E     0 of 8      C     6 of 6
+  conformance/es2016            E     0 of 1      C     0 of 0
+  conformance/es2017            E     0 of 6      C     6 of 6
+  conformance/es2018            E     0 of 3      C     2 of 2
+  conformance/es2019            E     0 of 11     C     4 of 4
+  conformance/es2020            E     0 of 14     C     9 of 9
+  conformance/es2021            E     0 of 20     C    19 of 19
+  conformance/es2022            E     0 of 14     C     2 of 2

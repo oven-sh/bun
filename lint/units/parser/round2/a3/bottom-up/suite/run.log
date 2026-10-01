@@ -4,3 +4,5 @@ transpiler.test.js: normal rc=0 [ 237 pass 0 fail ] lint rc=1 [ 231 pass 6 fail 
 decorators.test.ts: normal rc=0 [ 24 pass 0 fail ] lint rc=0 [ 24 pass 0 fail ] 2s
 decorator-metadata.test.ts: normal rc=0 [ 5 pass 0 fail ] lint rc=0 [ 5 pass 0 fail ] 0s
 ts.test.ts: normal rc=0 [ 59 pass 0 fail ] lint rc=0 [ 59 pass 0 fail ] 15s
+type-export.test.ts: normal rc=1 [ 69 pass 1 fail ] lint rc=0 [ 70 pass 0 fail ] 92s
+done 13:35:02

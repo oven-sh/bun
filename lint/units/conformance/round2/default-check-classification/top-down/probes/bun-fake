@@ -1,0 +1,10 @@
+#!/bin/bash
+# Stands for a binary that dies on one file and hangs on another; everything else goes to the real one.
+for a in "$@"; do
+  case "$a" in
+    */parserRealSource1.ts) echo "==$$==ERROR: AddressSanitizer: heap-use-after-free on address 0x502000000010" >&2; for i in $(seq 1 300); do echo "    #$i 0x00000f3765fb in frame$i /workspace/src/x.rs:$i:9 operand $a" >&2; done; echo "SUMMARY: AddressSanitizer: heap-use-after-free /workspace/src/js_parser/lexer.rs:1261:9 in next" >&2; echo "==$$==ABORTING" >&2; kill -ABRT $$;;
+    */parserRealSource2.ts) sleep 600;;
+    */parserRealSource3.ts) echo "thread 'main' panicked at src/js_parser/p.rs:10:5:" >&2; echo "index out of bounds" >&2; exit 134;;
+  esac
+done
+exec /workspace/wt/parser/build/release/bun "$@"

@@ -1,0 +1,78 @@
+records 12797
+exit codes and signals
+   11282  exit 0 signal null
+    1329  exit 2 signal null
+     186  exit undefined signal undefined not laid out
+classes
+    5650  pass (C: nothing to compare)
+    5628  fail: no diagnostic where the oracle has a baseline
+    1333  fail: a diagnostic that is no TypeScript diagnostic
+     186  unsupported (not laid out)
+classes by oracle class
+    5650  C pass (C: nothing to compare)
+    5628  E fail: no diagnostic where the oracle has a baseline
+    1306  E fail: a diagnostic that is no TypeScript diagnostic
+      93  C unsupported (not laid out)
+      93  E unsupported (not laid out)
+      27  C fail: a diagnostic that is no TypeScript diagnostic
+diagnostic lines by kind (lines)
+    3546  error syntax
+      22  warning syntax
+      11  error unsupported-extension (no file)
+       3  error <rule> no-self-assign
+       1  error <rule> no-debugger
+       1  error <rule> no-empty-pattern
+diagnostic kinds (instances that have one)
+    1319  error syntax
+       7  error unsupported-extension (no file)
+       7  warning syntax
+       1  error <rule> no-debugger
+       1  error <rule> no-empty-pattern
+       1  error <rule> no-self-assign
+rule reports
+       2  E instances with rule reports
+       1  C instances with rule reports
+C silent 5649, C with only rule reports 1; E silent 5626, E with only rule reports 2
+syntax error texts (lines)
+    1059  Expected "…" but found "…"
+     357  Expected identifier but found "…"
+     279  Invalid assignment target
+     194  "…" has already been declared
+     141  Syntax Error
+     123  Unexpected }
+     110  Unexpected "…"
+      64  Cannot use a declaration in a single-statement context
+      63  Unexpected )
+      59  "…" is a reserved word and cannot be used in strict mode
+      52  There is no containing label named "…"
+      47  "…" cannot be bound multiple times in the same parameter list
+      45  Declarations with the name "…" cannot be used in strict mode
+      45  The keyword "…" cannot be used here
+      44  Cannot use "…" here
+      43  Unexpected =
+      36  Cannot use "…" or "…" here.
+      36  Unexpected ]
+      33  Cannot use "…" as an identifier here
+      33  Expected "…" but found end of file
+      33  The constant "…" must be initialized
+      31  Unexpected ;
+      29  Unexpected end of file
+      26  Multiple exports with the same name "…"
+      24  Unexpected >
+  ... 132 more
+syntax warnings and messages (lines)
+      11  warning: Writing to read-only method "…" will throw
+       9  warning: Reading from setter-only property "…" will throw
+       2  warning: Writing to getter-only property "…" will throw
+samples:
+  pass (C: nothing to compare): 2dArrays.ts, ClassDeclarationWithInvalidConstOnPropertyDeclaration2.ts, DeclarationErrorsNoEmitOnError.ts, abstractClassInLocalScope.ts
+  fail: a diagnostic that is no TypeScript diagnostic: ArrowFunctionExpression1.ts, ClassDeclaration26.ts, ClassDeclarationWithInvalidConstOnPropertyDeclaration.ts, TransportStream.ts
+  fail: no diagnostic where the oracle has a baseline: ClassDeclaration10.ts, ClassDeclaration11.ts, ClassDeclaration13.ts, ClassDeclaration14.ts
+  unsupported (not laid out): booleanLiteralsContextuallyTypedFromUnion.tsx, callsOnComplexSignatures.tsx, caseInsensitiveFileSystemWithCapsImportTypeDeclarations.ts, checkJsxNotSetError.ts
+slow (>3 s): 1 [
+  [ "usingDeclarationsWithLegacyClassDecorators.5(module=esnext,target=esnext).ts",
+    3102
+  ]
+]
+timeouts: 0 []
+deaths: 0

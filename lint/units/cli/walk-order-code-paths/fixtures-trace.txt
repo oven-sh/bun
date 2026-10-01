@@ -1,0 +1,9782 @@
+== assignment--do-while-and.cjs
+start program
+F
+pushLoopContext ["DoWhileStatement",null]
+F
+makeDoWhileBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeDoWhileTest [null]
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popLoopContext
+F
+F
+end
+== assignment--do-while-or.cjs
+start program
+F
+pushLoopContext ["DoWhileStatement",null]
+F
+makeDoWhileBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeDoWhileTest [null]
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popLoopContext
+F
+F
+end
+== assignment--do-while-qq.cjs
+start program
+F
+pushLoopContext ["DoWhileStatement",null]
+F
+makeDoWhileBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeDoWhileTest [null]
+pushChoiceContext ["??",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popLoopContext
+F
+F
+end
+== assignment--for-and-1.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeForTest [null]
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeForUpdate
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeForBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== assignment--for-and-2.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeForTest [null]
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeForBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== assignment--for-or-1.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeForTest [null]
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeForUpdate
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeForBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== assignment--for-or-2.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeForTest [null]
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeForBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== assignment--for-qq-1.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeForTest [null]
+pushChoiceContext ["??",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeForUpdate
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeForBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== assignment--for-qq-2.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeForTest [null]
+pushChoiceContext ["??",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeForBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== assignment--if-and-1.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+end
+== assignment--if-and-2.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+end
+== assignment--if-and-3.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["&&",true]
+F
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeIfAlternate
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+popChoiceContext
+F
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+end
+== assignment--if-or-1.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+end
+== assignment--if-or-2.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+end
+== assignment--if-or-3.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["||",true]
+F
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeIfAlternate
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+popChoiceContext
+F
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+end
+== assignment--if-qq-1.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["??",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+end
+== assignment--if-qq-2.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["??",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+end
+== assignment--logical-and-1.cjs
+start program
+F
+F
+pushChoiceContext ["&&",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popChoiceContext
+F
+F
+F
+end
+== assignment--logical-and-2.cjs
+start program
+F
+F
+pushChoiceContext ["&&",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popChoiceContext
+F
+F
+F
+end
+== assignment--logical-and-3.cjs
+start program
+F
+F
+pushChoiceContext ["&&",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+pushChoiceContext ["??",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popChoiceContext
+F
+F
+F
+end
+== assignment--logical-or-1.cjs
+start program
+F
+F
+pushChoiceContext ["||",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popChoiceContext
+F
+F
+F
+end
+== assignment--logical-or-2.cjs
+start program
+F
+F
+pushChoiceContext ["||",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popChoiceContext
+F
+F
+F
+end
+== assignment--logical-or-3.cjs
+start program
+F
+F
+pushChoiceContext ["||",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+pushChoiceContext ["??",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popChoiceContext
+F
+F
+F
+end
+== assignment--logical-qq-1.cjs
+start program
+F
+F
+pushChoiceContext ["??",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popChoiceContext
+F
+F
+F
+end
+== assignment--logical-qq-2.cjs
+start program
+F
+F
+pushChoiceContext ["??",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popChoiceContext
+F
+F
+F
+end
+== assignment--logical-qq-3.cjs
+start program
+F
+F
+pushChoiceContext ["??",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+pushChoiceContext ["??",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popChoiceContext
+F
+F
+F
+end
+== assignment--multi-1.cjs
+start program
+F
+F
+pushChoiceContext ["&&",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popChoiceContext
+F
+F
+F
+end
+== assignment--multi-10.cjs
+start program
+F
+F
+pushChoiceContext ["||",false]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfAlternate
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeLogicalRight
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfAlternate
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+popChoiceContext
+F
+F
+F
+end
+== assignment--multi-2.cjs
+start program
+F
+F
+pushChoiceContext ["&&",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popChoiceContext
+F
+F
+F
+end
+== assignment--multi-3.cjs
+start program
+F
+F
+pushChoiceContext ["||",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popChoiceContext
+F
+F
+F
+end
+== assignment--multi-4.cjs
+start program
+F
+F
+pushChoiceContext ["||",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+pushChoiceContext ["??",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popChoiceContext
+F
+F
+F
+end
+== assignment--multi-5.cjs
+start program
+F
+F
+pushChoiceContext ["??",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+pushChoiceContext ["??",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popChoiceContext
+F
+F
+F
+end
+== assignment--multi-6.cjs
+start program
+F
+F
+pushChoiceContext ["??",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popChoiceContext
+F
+F
+F
+end
+== assignment--multi-7.cjs
+start program
+F
+F
+pushChoiceContext ["??",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popChoiceContext
+F
+popChoiceContext
+F
+F
+F
+end
+== assignment--multi-8.cjs
+start program
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+end
+== assignment--multi-9.cjs
+start program
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfAlternate
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+pushChoiceContext ["||",false]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfAlternate
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+F
+F
+F
+end
+== assignment--nested-and-1.cjs
+start program
+F
+F
+pushChoiceContext ["&&",false]
+F
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+F
+F
+end
+== assignment--nested-and-2.cjs
+start program
+F
+F
+pushChoiceContext ["||",false]
+F
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+F
+F
+end
+== assignment--nested-and-3.cjs
+start program
+F
+F
+pushChoiceContext ["??",false]
+F
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+F
+F
+end
+== assignment--nested-or-1.cjs
+start program
+F
+F
+pushChoiceContext ["&&",false]
+F
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+F
+F
+end
+== assignment--nested-or-2.cjs
+start program
+F
+F
+pushChoiceContext ["||",false]
+F
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+F
+F
+end
+== assignment--nested-or-3.cjs
+start program
+F
+F
+pushChoiceContext ["??",false]
+F
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+F
+F
+end
+== assignment--nested-qq-1.cjs
+start program
+F
+F
+pushChoiceContext ["&&",false]
+F
+pushChoiceContext ["??",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+F
+F
+end
+== assignment--nested-qq-2.cjs
+start program
+F
+F
+pushChoiceContext ["||",false]
+F
+pushChoiceContext ["??",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+F
+F
+end
+== assignment--nested-qq-3.cjs
+start program
+F
+F
+pushChoiceContext ["??",false]
+F
+pushChoiceContext ["??",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+F
+F
+end
+== assignment--simple-and-1.cjs
+start program
+F
+F
+pushChoiceContext ["&&",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+F
+F
+end
+== assignment--simple-and-2.cjs
+start program
+F
+F
+pushChoiceContext ["&&",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfAlternate
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popChoiceContext
+F
+F
+F
+end
+== assignment--simple-and-3.cjs
+start program
+F
+F
+pushChoiceContext ["&&",false]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfAlternate
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+F
+F
+end
+== assignment--simple-bitand.cjs
+start program
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== assignment--simple-eq.cjs
+start program
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== assignment--simple-or-1.cjs
+start program
+F
+F
+pushChoiceContext ["||",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+F
+F
+end
+== assignment--simple-or-2.cjs
+start program
+F
+F
+pushChoiceContext ["||",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfAlternate
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popChoiceContext
+F
+F
+F
+end
+== assignment--simple-or-3.cjs
+start program
+F
+F
+pushChoiceContext ["||",false]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfAlternate
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+F
+F
+end
+== assignment--simple-plus.cjs
+start program
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== assignment--simple-qq-1.cjs
+start program
+F
+F
+pushChoiceContext ["??",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+F
+F
+end
+== assignment--simple-qq-2.cjs
+start program
+F
+F
+pushChoiceContext ["??",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfAlternate
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popChoiceContext
+F
+F
+F
+end
+== assignment--simple-qq-3.cjs
+start program
+F
+F
+pushChoiceContext ["??",false]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfAlternate
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+F
+F
+end
+== assignment--while-and.cjs
+start program
+F
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [null]
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeWhileBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== assignment--while-or.cjs
+start program
+F
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [null]
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeWhileBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== assignment--while-qq.cjs
+start program
+F
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [null]
+pushChoiceContext ["??",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeWhileBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== block-and-break-1.cjs
+start program
+F
+pushBreakContext [false,"A"]
+F
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeBreak ["A"]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popBreakContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== block-and-break-2.cjs
+start program
+F
+pushBreakContext [false,"A"]
+F
+F
+pushBreakContext [false,"B"]
+F
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeBreak ["A"]
+F
+popChoiceContext
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeBreak ["B"]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popBreakContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popBreakContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== block-and-break-3.cjs
+start program
+F
+pushBreakContext [false,"A"]
+F
+F
+F
+F
+makeBreak ["A"]
+F
+popBreakContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== block-and-break-4.cjs
+start program
+F
+pushBreakContext [false,"A"]
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+popBreakContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== class-fields-init--arrow-function.cjs
+start program
+F
+F
+F
+F
+start class-field-initializer
+start function
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+end
+end
+F
+F
+F
+F
+end
+== class-fields-init--call-expression.cjs
+start program
+F
+F
+F
+F
+start class-field-initializer
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+end
+F
+F
+F
+F
+end
+== class-fields-init--conditional.cjs
+start program
+F
+F
+F
+F
+start class-field-initializer
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfAlternate
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+end
+F
+F
+F
+F
+end
+== class-fields-init--simple.cjs
+start program
+F
+F
+F
+F
+start class-field-initializer
+F
+makeFirstThrowablePathInTryOrCatchBlock
+end
+F
+F
+F
+F
+end
+== class-static-blocks--between-fields.cjs
+start program
+F
+F
+F
+F
+start class-field-initializer
+pushChoiceContext ["||",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+end
+F
+start class-static-block
+F
+F
+pushChoiceContext ["||",false]
+F
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+F
+F
+end
+F
+start class-field-initializer
+pushChoiceContext ["||",false]
+F
+pushChoiceContext ["||",true]
+F
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+end
+F
+F
+F
+F
+end
+== class-static-blocks--between-methods.cjs
+start program
+F
+F
+F
+F
+start function
+F
+F
+F
+pushChoiceContext ["||",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+F
+F
+F
+end
+F
+start class-static-block
+F
+F
+pushChoiceContext ["||",false]
+F
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+F
+F
+end
+F
+start function
+F
+F
+F
+pushChoiceContext ["||",false]
+F
+pushChoiceContext ["||",true]
+F
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+F
+F
+F
+end
+F
+F
+F
+F
+end
+== class-static-blocks--conditional.cjs
+start program
+F
+F
+F
+start class-static-block
+F
+F
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfAlternate
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+F
+F
+F
+end
+F
+F
+F
+end
+== class-static-blocks--empty.cjs
+start program
+F
+F
+F
+start class-static-block
+F
+F
+end
+F
+F
+F
+end
+== class-static-blocks--function-inside.cjs
+start program
+F
+F
+F
+start class-static-block
+F
+F
+start function
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+F
+F
+end
+F
+F
+F
+end
+== class-static-blocks--if-else.cjs
+start program
+F
+F
+F
+start class-static-block
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+F
+F
+popChoiceContext
+F
+F
+end
+F
+F
+F
+end
+== class-static-blocks--multiple-1.cjs
+start program
+F
+F
+F
+start class-static-block
+F
+F
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+F
+F
+end
+start class-static-block
+F
+F
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+F
+F
+end
+F
+F
+F
+end
+== class-static-blocks--multiple-2.cjs
+start program
+F
+F
+F
+start class-static-block
+F
+F
+pushChoiceContext ["||",false]
+F
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+F
+F
+end
+start class-static-block
+F
+F
+pushChoiceContext ["||",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+F
+F
+end
+F
+F
+F
+end
+== class-static-blocks--simple.cjs
+start program
+F
+F
+F
+start class-static-block
+F
+F
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+F
+F
+F
+end
+== default-params--nest.cjs
+start program
+F
+start function
+F
+F
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+pushForkContext
+forkBypassPath
+forkPath
+F
+F
+popForkContext
+F
+F
+F
+pushForkContext
+forkBypassPath
+forkPath
+F
+F
+popForkContext
+F
+F
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+end
+F
+end
+== default-params--simple.cjs
+start program
+F
+start function
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+pushForkContext
+forkBypassPath
+forkPath
+F
+F
+popForkContext
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+end
+F
+end
+== do-while--break-always.cjs
+start program
+F
+pushLoopContext ["DoWhileStatement",null]
+F
+makeDoWhileBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeBreak [null]
+F
+makeDoWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popLoopContext
+F
+F
+end
+== do-while--break-label.cjs
+start program
+F
+F
+pushLoopContext ["DoWhileStatement","A"]
+F
+makeDoWhileBody
+F
+F
+pushLoopContext ["DoWhileStatement","B"]
+F
+makeDoWhileBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeBreak ["A"]
+F
+popChoiceContext
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeBreak ["B"]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeDoWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popLoopContext
+F
+F
+F
+makeDoWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popLoopContext
+F
+F
+F
+end
+== do-while--break-nest.cjs
+start program
+F
+pushLoopContext ["DoWhileStatement",null]
+F
+makeDoWhileBody
+F
+pushLoopContext ["DoWhileStatement",null]
+F
+makeDoWhileBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeBreak [null]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeDoWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popLoopContext
+F
+F
+makeDoWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popLoopContext
+F
+F
+end
+== do-while--break-simple.cjs
+start program
+F
+pushLoopContext ["DoWhileStatement",null]
+F
+makeDoWhileBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeBreak [null]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeDoWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popLoopContext
+F
+F
+end
+== do-while--continue-always.cjs
+start program
+F
+pushLoopContext ["DoWhileStatement",null]
+F
+makeDoWhileBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeContinue [null]
+F
+makeDoWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popLoopContext
+F
+F
+end
+== do-while--continue-label.cjs
+start program
+F
+F
+pushLoopContext ["DoWhileStatement","A"]
+F
+makeDoWhileBody
+F
+F
+pushLoopContext ["DoWhileStatement","B"]
+F
+makeDoWhileBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeContinue ["A"]
+F
+popChoiceContext
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeContinue ["B"]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeDoWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popLoopContext
+F
+F
+F
+makeDoWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popLoopContext
+F
+F
+F
+end
+== do-while--continue-nest.cjs
+start program
+F
+pushLoopContext ["DoWhileStatement",null]
+F
+makeDoWhileBody
+F
+pushLoopContext ["DoWhileStatement",null]
+F
+makeDoWhileBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeContinue [null]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeDoWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popLoopContext
+F
+F
+makeDoWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popLoopContext
+F
+F
+end
+== do-while--continue-simple.cjs
+start program
+F
+pushLoopContext ["DoWhileStatement",null]
+F
+makeDoWhileBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeContinue [null]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeDoWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popLoopContext
+F
+F
+end
+== do-while--empty.cjs
+start program
+F
+pushLoopContext ["DoWhileStatement",null]
+F
+makeDoWhileBody
+F
+F
+makeDoWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popLoopContext
+F
+F
+end
+== do-while--simple.cjs
+start program
+F
+pushLoopContext ["DoWhileStatement",null]
+F
+makeDoWhileBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeDoWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popLoopContext
+F
+F
+end
+== for--break-always.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+F
+F
+F
+F
+F
+F
+F
+makeForTest [null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeForUpdate
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeForBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeBreak [null]
+F
+popLoopContext
+F
+F
+end
+== for--break-label.cjs
+start program
+F
+F
+pushLoopContext ["ForStatement","A"]
+F
+F
+F
+F
+F
+F
+F
+F
+F
+makeForTest [null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeForUpdate
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeForBody
+F
+F
+pushLoopContext ["ForStatement","B"]
+F
+F
+F
+F
+F
+F
+F
+F
+F
+makeForTest [null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeForUpdate
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeForBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeBreak ["A"]
+F
+popChoiceContext
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeBreak ["B"]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+F
+popLoopContext
+F
+F
+F
+end
+== for--break-nest.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+F
+F
+F
+F
+F
+F
+F
+makeForTest [null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeForUpdate
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeForBody
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+F
+F
+F
+F
+F
+F
+F
+makeForTest [null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeForUpdate
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeForBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeBreak [null]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+popLoopContext
+F
+F
+end
+== for--break-simple-no-test.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+F
+F
+F
+F
+F
+F
+F
+makeForUpdate
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeForBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeBreak [null]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== for--break-simple-no-update.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+F
+F
+F
+F
+F
+F
+F
+makeForTest [null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeForBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeBreak [null]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== for--break-simple.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+F
+F
+F
+F
+F
+F
+F
+makeForTest [null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeForUpdate
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeForBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeBreak [null]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== for--continue-always.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+F
+F
+F
+F
+F
+F
+F
+makeForTest [null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeForUpdate
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeForBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeContinue [null]
+F
+popLoopContext
+F
+F
+end
+== for--continue-label.cjs
+start program
+F
+F
+pushLoopContext ["ForStatement","A"]
+F
+F
+F
+F
+F
+F
+F
+F
+F
+makeForTest [null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeForUpdate
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeForBody
+F
+F
+pushLoopContext ["ForStatement","B"]
+F
+F
+F
+F
+F
+F
+F
+F
+F
+makeForTest [null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeForUpdate
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeForBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeContinue ["A"]
+F
+popChoiceContext
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeContinue ["B"]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+F
+popLoopContext
+F
+F
+F
+end
+== for--continue-nest.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+F
+F
+F
+F
+F
+F
+F
+makeForTest [null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeForUpdate
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeForBody
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+F
+F
+F
+F
+F
+F
+F
+makeForTest [null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeForUpdate
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeForBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeContinue [null]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+popLoopContext
+F
+F
+end
+== for--continue-simple-no-test.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+F
+F
+F
+F
+F
+F
+F
+makeForUpdate
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeForBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeContinue [null]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== for--continue-simple-no-update.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+F
+F
+F
+F
+F
+F
+F
+makeForTest [null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeForBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeContinue [null]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== for--continue-simple.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+F
+F
+F
+F
+F
+F
+F
+makeForTest [null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeForUpdate
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeForBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeContinue [null]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== for--direct-nest.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+F
+F
+F
+F
+F
+F
+F
+makeForTest [null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeForUpdate
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeForBody
+pushLoopContext ["ForStatement",null]
+F
+F
+F
+F
+F
+F
+F
+F
+F
+makeForTest [null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeForUpdate
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeForBody
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+popLoopContext
+F
+popLoopContext
+F
+F
+end
+== for--empty.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+makeForBody
+F
+F
+popLoopContext
+F
+F
+end
+== for--simple-fork-in-test-update.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+F
+F
+F
+F
+F
+F
+F
+makeForTest [null]
+pushChoiceContext ["test",false]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeIfConsequent
+F
+F
+makeIfAlternate
+F
+F
+popChoiceContext
+F
+makeForUpdate
+pushChoiceContext ["test",false]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeIfConsequent
+F
+F
+makeIfAlternate
+F
+F
+popChoiceContext
+F
+makeForBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== for--simple-no-test.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+F
+F
+F
+F
+F
+F
+F
+makeForUpdate
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeForBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== for--simple-no-update.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+F
+F
+F
+F
+F
+F
+F
+makeForTest [null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeForBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== for--simple-test-true.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+F
+F
+F
+F
+F
+F
+F
+makeForTest [true]
+F
+F
+makeForUpdate
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeForBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== for--simple.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+F
+F
+F
+F
+F
+F
+F
+makeForTest [null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeForUpdate
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeForBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== for-in--break-always.cjs
+start program
+F
+pushLoopContext ["ForInStatement",null]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+F
+F
+makeForInOfBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeBreak [null]
+F
+popLoopContext
+F
+F
+end
+== for-in--break-label.cjs
+start program
+F
+F
+pushLoopContext ["ForInStatement","A"]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+F
+F
+makeForInOfBody
+F
+F
+pushLoopContext ["ForInStatement","B"]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+F
+F
+makeForInOfBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeBreak ["A"]
+F
+popChoiceContext
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeBreak ["B"]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+F
+popLoopContext
+F
+F
+F
+end
+== for-in--break-nest.cjs
+start program
+F
+pushLoopContext ["ForInStatement",null]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+F
+F
+makeForInOfBody
+F
+pushLoopContext ["ForInStatement",null]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+F
+F
+makeForInOfBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeBreak [null]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+popLoopContext
+F
+F
+end
+== for-in--break-simple.cjs
+start program
+F
+pushLoopContext ["ForInStatement",null]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+F
+F
+makeForInOfBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeBreak [null]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== for-in--continue-always.cjs
+start program
+F
+pushLoopContext ["ForInStatement",null]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+F
+F
+makeForInOfBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeContinue [null]
+F
+popLoopContext
+F
+F
+end
+== for-in--continue-label.cjs
+start program
+F
+F
+pushLoopContext ["ForInStatement","A"]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+F
+F
+makeForInOfBody
+F
+F
+pushLoopContext ["ForInStatement","B"]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+F
+F
+makeForInOfBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeContinue ["A"]
+F
+popChoiceContext
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeContinue ["B"]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+F
+popLoopContext
+F
+F
+F
+end
+== for-in--continue-nest.cjs
+start program
+F
+pushLoopContext ["ForInStatement",null]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+F
+F
+makeForInOfBody
+F
+pushLoopContext ["ForInStatement",null]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+F
+F
+makeForInOfBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeContinue [null]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+popLoopContext
+F
+F
+end
+== for-in--continue-simple.cjs
+start program
+F
+pushLoopContext ["ForInStatement",null]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+F
+F
+makeForInOfBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeContinue [null]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== for-in--direct-nest.cjs
+start program
+F
+pushLoopContext ["ForInStatement",null]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+makeForInOfBody
+pushLoopContext ["ForInStatement",null]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+makeForInOfBody
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+popLoopContext
+F
+popLoopContext
+F
+F
+end
+== for-in--empty.cjs
+start program
+F
+pushLoopContext ["ForInStatement",null]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+F
+F
+makeForInOfBody
+F
+F
+popLoopContext
+F
+F
+end
+== for-in--simple.cjs
+start program
+F
+pushLoopContext ["ForInStatement",null]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+F
+F
+makeForInOfBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== for-of--break-always.cjs
+start program
+F
+pushLoopContext ["ForOfStatement",null]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+F
+F
+makeForInOfBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeBreak [null]
+F
+popLoopContext
+F
+F
+end
+== for-of--break-label.cjs
+start program
+F
+F
+pushLoopContext ["ForOfStatement","A"]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+F
+F
+makeForInOfBody
+F
+F
+pushLoopContext ["ForOfStatement","B"]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+F
+F
+makeForInOfBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeBreak ["A"]
+F
+popChoiceContext
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeBreak ["B"]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+F
+popLoopContext
+F
+F
+F
+end
+== for-of--break-nest.cjs
+start program
+F
+pushLoopContext ["ForOfStatement",null]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+F
+F
+makeForInOfBody
+F
+pushLoopContext ["ForOfStatement",null]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+F
+F
+makeForInOfBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeBreak [null]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+popLoopContext
+F
+F
+end
+== for-of--break-simple.cjs
+start program
+F
+pushLoopContext ["ForOfStatement",null]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+F
+F
+makeForInOfBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeBreak [null]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== for-of--continue-always.cjs
+start program
+F
+pushLoopContext ["ForOfStatement",null]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+F
+F
+makeForInOfBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeContinue [null]
+F
+popLoopContext
+F
+F
+end
+== for-of--continue-label.cjs
+start program
+F
+F
+pushLoopContext ["ForOfStatement","A"]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+F
+F
+makeForInOfBody
+F
+F
+pushLoopContext ["ForOfStatement","B"]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+F
+F
+makeForInOfBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeContinue ["A"]
+F
+popChoiceContext
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeContinue ["B"]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+F
+popLoopContext
+F
+F
+F
+end
+== for-of--continue-nest.cjs
+start program
+F
+pushLoopContext ["ForOfStatement",null]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+F
+F
+makeForInOfBody
+F
+pushLoopContext ["ForOfStatement",null]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+F
+F
+makeForInOfBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeContinue [null]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+popLoopContext
+F
+F
+end
+== for-of--continue-simple.cjs
+start program
+F
+pushLoopContext ["ForOfStatement",null]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+F
+F
+makeForInOfBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeContinue [null]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== for-of--direct-nest.cjs
+start program
+F
+pushLoopContext ["ForOfStatement",null]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+makeForInOfBody
+pushLoopContext ["ForOfStatement",null]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+makeForInOfBody
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+popLoopContext
+F
+popLoopContext
+F
+F
+end
+== for-of--empty.cjs
+start program
+F
+pushLoopContext ["ForOfStatement",null]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+F
+F
+makeForInOfBody
+F
+F
+popLoopContext
+F
+F
+end
+== for-of--simple.cjs
+start program
+F
+pushLoopContext ["ForOfStatement",null]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+F
+F
+makeForInOfBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== function--in-condition-expr.cjs
+start program
+F
+F
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+start function
+F
+F
+F
+F
+end
+makeIfAlternate
+start function
+F
+F
+F
+F
+end
+popChoiceContext
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== function--in-logical-right.cjs
+start program
+F
+F
+F
+F
+F
+pushChoiceContext ["||",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+start function
+F
+F
+F
+F
+end
+popChoiceContext
+F
+F
+F
+F
+end
+== function--new.cjs
+start program
+F
+start function
+F
+F
+F
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfAlternate
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+F
+F
+F
+F
+end
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== function--simple.cjs
+start program
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+start function
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+end
+F
+end
+== generator-yield-return-1.cjs
+start program
+F
+start function
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+F
+makeYield
+F
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+end
+F
+end
+== if-1.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+end
+== if-2.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+end
+== if-3.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeIfAlternate
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+popChoiceContext
+F
+F
+end
+== if-4.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+F
+F
+makeReturn
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+makeThrow
+F
+popChoiceContext
+F
+F
+end
+== if-5.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+F
+makeReturn
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== if-6.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeIfAlternate
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+popChoiceContext
+F
+makeIfAlternate
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+popChoiceContext
+F
+popChoiceContext
+F
+F
+end
+== logical--and-qq.cjs
+start program
+F
+F
+pushChoiceContext ["??",false]
+F
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+F
+F
+end
+== logical--do-while-and-1.cjs
+start program
+F
+pushLoopContext ["DoWhileStatement",null]
+F
+makeDoWhileBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeDoWhileTest [null]
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popLoopContext
+F
+F
+end
+== logical--do-while-and-2.cjs
+start program
+F
+pushLoopContext ["DoWhileStatement",null]
+F
+makeDoWhileBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeDoWhileTest [null]
+pushChoiceContext ["&&",true]
+F
+pushChoiceContext ["&&",true]
+F
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popLoopContext
+F
+F
+end
+== logical--do-while-mix-1.cjs
+start program
+F
+pushLoopContext ["DoWhileStatement",null]
+F
+makeDoWhileBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeDoWhileTest [null]
+pushChoiceContext ["||",true]
+F
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popLoopContext
+F
+F
+end
+== logical--do-while-mix-2.cjs
+start program
+F
+pushLoopContext ["DoWhileStatement",null]
+F
+makeDoWhileBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeDoWhileTest [null]
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popChoiceContext
+F
+popLoopContext
+F
+F
+end
+== logical--do-while-or-1.cjs
+start program
+F
+pushLoopContext ["DoWhileStatement",null]
+F
+makeDoWhileBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeDoWhileTest [null]
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popLoopContext
+F
+F
+end
+== logical--do-while-or-2.cjs
+start program
+F
+pushLoopContext ["DoWhileStatement",null]
+F
+makeDoWhileBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeDoWhileTest [null]
+pushChoiceContext ["||",true]
+F
+pushChoiceContext ["||",true]
+F
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popLoopContext
+F
+F
+end
+== logical--do-while-qq-1.cjs
+start program
+F
+pushLoopContext ["DoWhileStatement",null]
+F
+makeDoWhileBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeDoWhileTest [null]
+pushChoiceContext ["??",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popLoopContext
+F
+F
+end
+== logical--do-while-qq-2.cjs
+start program
+F
+pushLoopContext ["DoWhileStatement",null]
+F
+makeDoWhileBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeDoWhileTest [null]
+pushChoiceContext ["??",true]
+F
+pushChoiceContext ["??",true]
+F
+pushChoiceContext ["??",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popLoopContext
+F
+F
+end
+== logical--for-and-1.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeForTest [null]
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeForUpdate
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeForBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== logical--for-and-2.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeForTest [null]
+pushChoiceContext ["&&",true]
+F
+pushChoiceContext ["&&",true]
+F
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeForUpdate
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeForBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== logical--for-and-3.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeForTest [null]
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeForBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== logical--for-mix-1.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeForTest [null]
+pushChoiceContext ["||",true]
+F
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeForUpdate
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeForBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== logical--for-mix-2.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeForTest [null]
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popChoiceContext
+F
+makeForUpdate
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeForBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== logical--for-mix-3.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeForTest [null]
+pushChoiceContext ["||",true]
+F
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeForBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== logical--for-or-1.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeForTest [null]
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeForUpdate
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeForBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== logical--for-or-2.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeForTest [null]
+pushChoiceContext ["||",true]
+F
+pushChoiceContext ["||",true]
+F
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeForUpdate
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeForBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== logical--for-or-3.cjs
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeForTest [null]
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeForBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== logical--if-and-1.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+end
+== logical--if-and-2.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+end
+== logical--if-and-3.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeIfAlternate
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+popChoiceContext
+F
+F
+end
+== logical--if-and-4.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["&&",true]
+F
+pushChoiceContext ["&&",true]
+F
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+end
+== logical--if-and-5.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+end
+== logical--if-mix-1.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["||",true]
+F
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+end
+== logical--if-mix-2.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+end
+== logical--if-mix-and-qq-1.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["??",true]
+F
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+end
+== logical--if-mix-and-qq-2.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+pushChoiceContext ["??",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+end
+== logical--if-mix-or-qq-1.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["??",true]
+F
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+end
+== logical--if-mix-or-qq-2.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+pushChoiceContext ["??",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+end
+== logical--if-or-1.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+end
+== logical--if-or-2.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+end
+== logical--if-or-3.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeIfAlternate
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+popChoiceContext
+F
+F
+end
+== logical--if-or-4.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["||",true]
+F
+pushChoiceContext ["||",true]
+F
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+end
+== logical--if-or-5.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+end
+== logical--if-qdot-1.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+pushChainContext
+F
+makeOptionalNode
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeOptionalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+popChainContext
+F
+makeIfConsequent
+F
+pushChoiceContext ["test",false]
+F
+pushChainContext
+F
+makeOptionalNode
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeOptionalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+popChainContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+end
+== logical--if-qq-1.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["??",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+end
+== logical--if-qq-2.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["??",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+end
+== logical--if-qq-3.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["??",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeIfAlternate
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["??",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+popChoiceContext
+F
+F
+end
+== logical--if-qq-4.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["??",true]
+F
+pushChoiceContext ["??",true]
+F
+pushChoiceContext ["??",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+end
+== logical--if-qq-5.cjs
+start program
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["??",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+pushChoiceContext ["test",false]
+F
+pushChoiceContext ["??",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+end
+== logical--simple-1.cjs
+start program
+F
+F
+pushChoiceContext ["||",false]
+F
+pushChoiceContext ["||",true]
+F
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+F
+F
+end
+== logical--simple-2.cjs
+start program
+F
+F
+pushChoiceContext ["||",false]
+F
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popChoiceContext
+F
+F
+F
+end
+== logical--simple-3.cjs
+start program
+F
+F
+pushChoiceContext ["??",false]
+F
+pushChoiceContext ["??",true]
+F
+pushChoiceContext ["??",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+F
+F
+end
+== logical--while-and-1.cjs
+start program
+F
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [null]
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeWhileBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== logical--while-and-2.cjs
+start program
+F
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [null]
+pushChoiceContext ["&&",true]
+F
+pushChoiceContext ["&&",true]
+F
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeWhileBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== logical--while-mix-1.cjs
+start program
+F
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [null]
+pushChoiceContext ["||",true]
+F
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeWhileBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== logical--while-mix-2.cjs
+start program
+F
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [null]
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+pushChoiceContext ["&&",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+popChoiceContext
+F
+makeWhileBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== logical--while-or-1.cjs
+start program
+F
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [null]
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeWhileBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== logical--while-or-2.cjs
+start program
+F
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [null]
+pushChoiceContext ["||",true]
+F
+pushChoiceContext ["||",true]
+F
+pushChoiceContext ["||",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeWhileBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== logical--while-qq-1.cjs
+start program
+F
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [null]
+pushChoiceContext ["??",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeWhileBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== logical--while-qq-2.cjs
+start program
+F
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [null]
+pushChoiceContext ["??",true]
+F
+pushChoiceContext ["??",true]
+F
+pushChoiceContext ["??",true]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeWhileBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== object-literal--conditional.cjs
+start program
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfAlternate
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+F
+F
+F
+F
+F
+end
+== optional-chaining--complex-1.cjs
+start program
+F
+F
+pushChainContext
+F
+F
+F
+makeOptionalNode
+F
+makeOptionalNode
+F
+makeOptionalNode
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeOptionalRight
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfAlternate
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeOptionalRight
+pushChoiceContext ["||",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeOptionalRight
+pushChoiceContext ["&&",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+pushChoiceContext ["??",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+popChainContext
+F
+F
+F
+end
+== optional-chaining--complex-2.cjs
+start program
+F
+F
+F
+F
+pushChainContext
+F
+makeOptionalNode
+F
+makeOptionalNode
+F
+makeOptionalNode
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeOptionalRight
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfAlternate
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeOptionalRight
+pushChoiceContext ["||",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeOptionalRight
+pushChoiceContext ["&&",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+pushChoiceContext ["??",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+popChainContext
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== optional-chaining--complex-3.cjs
+start program
+F
+F
+pushChainContext
+F
+F
+F
+makeOptionalNode
+F
+pushChainContext
+F
+makeOptionalNode
+F
+makeOptionalNode
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeOptionalRight
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfAlternate
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeOptionalRight
+pushChoiceContext ["||",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+popChainContext
+F
+makeOptionalRight
+pushChoiceContext ["&&",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+pushChoiceContext ["??",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popChoiceContext
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+popChainContext
+F
+F
+F
+end
+== optional-chaining--simple-1.cjs
+start program
+F
+F
+pushChainContext
+F
+F
+F
+makeOptionalNode
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeOptionalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+popChainContext
+F
+F
+F
+end
+== optional-chaining--simple-2.cjs
+start program
+F
+F
+pushChainContext
+F
+makeOptionalNode
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeOptionalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+popChainContext
+F
+F
+F
+end
+== optional-chaining--simple-3.cjs
+start program
+F
+F
+pushChainContext
+F
+makeOptionalNode
+F
+makeOptionalNode
+F
+makeOptionalNode
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeOptionalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeOptionalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeOptionalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+popChainContext
+F
+F
+F
+end
+== optional-chaining--simple-4.cjs
+start program
+F
+F
+pushChainContext
+F
+F
+makeOptionalNode
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeOptionalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+popChainContext
+F
+F
+F
+end
+== switch--cases-1.cjs
+start program
+F
+pushSwitchContext [true,null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeBreak [null]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [true,false]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeBreak [null]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F-unless-reachable
+popSwitchContext
+F
+F
+end
+== switch--cases-2.cjs
+start program
+F
+pushSwitchContext [true,null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeReturn
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [true,false]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeReturn
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeBreak [null]
+F-unless-reachable
+popSwitchContext
+F
+F
+end
+== switch--cases-and-default-1.cjs
+start program
+F
+pushSwitchContext [true,null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeBreak [null]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [true,false]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeBreak [null]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F-unless-reachable
+forkPath
+F
+makeSwitchCaseBody [false,true]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F-unless-reachable
+popSwitchContext
+F
+F
+end
+== switch--cases-and-default-2.cjs
+start program
+F
+pushSwitchContext [true,null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeBreak [null]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [true,false]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeBreak [null]
+F-unless-reachable
+forkPath
+F
+makeSwitchCaseBody [false,true]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F-unless-reachable
+popSwitchContext
+F
+F
+end
+== switch--cases-and-default-3.cjs
+start program
+F
+pushSwitchContext [true,null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeBreak [null]
+F-unless-reachable
+forkPath
+F
+makeSwitchCaseBody [true,true]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [true,false]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeBreak [null]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F-unless-reachable
+popSwitchContext
+F
+F
+end
+== switch--default-only-1.cjs
+start program
+F
+pushSwitchContext [false,null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeSwitchCaseBody [true,true]
+F-unless-reachable
+popSwitchContext
+F
+F
+end
+== switch--default-only-2.cjs
+start program
+F
+pushSwitchContext [false,null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeSwitchCaseBody [false,true]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeBreak [null]
+F-unless-reachable
+popSwitchContext
+F
+F
+end
+== switch--empty.cjs
+start program
+F
+pushSwitchContext [false,null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popSwitchContext
+F
+F
+end
+== switch--precedence.cjs
+start program
+F
+start function
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+pushSwitchContext [true,null]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+F
+makeReturn
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [true,false]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [true,false]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+F
+makeReturn
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+F
+makeReturn
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+pushSwitchContext [true,null]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+F
+makeReturn
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+F
+makeReturn
+F-unless-reachable
+popSwitchContext
+F
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+pushSwitchContext [true,null]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+F
+makeReturn
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+F
+makeReturn
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+F
+makeReturn
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [true,false]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [true,false]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [true,false]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+F
+makeReturn
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [true,false]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [true,false]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [true,false]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [true,false]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [true,false]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+F
+makeReturn
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [true,false]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [true,false]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+F
+makeReturn
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [true,false]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+F
+makeReturn
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [true,false]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [true,false]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+F
+makeReturn
+F-unless-reachable
+popSwitchContext
+F
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+F
+makeReturn
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+F
+makeReturn
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+pushChoiceContext ["test",false]
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeIfConsequent
+F
+F
+F
+F
+F
+F
+F
+makeReturn
+F
+popChoiceContext
+F
+F
+F
+F
+F
+makeReturn
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+F
+makeReturn
+F-unless-reachable
+popSwitchContext
+F
+F
+F
+F
+F
+makeReturn
+F
+F
+end
+F
+end
+== switch--single-case-1.cjs
+start program
+F
+pushSwitchContext [true,null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeSwitchCaseBody [true,false]
+F-unless-reachable
+popSwitchContext
+F
+F
+end
+== switch--single-case-2.cjs
+start program
+F
+pushSwitchContext [true,null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeBreak [null]
+F-unless-reachable
+popSwitchContext
+F
+F
+end
+== try--generator-yield-finally-1.cjs
+start program
+F
+start function
+F
+F
+pushTryContext [true]
+F
+F
+F
+F
+F
+F
+makeYield
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeCatchBlock
+F
+F
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeFinallyBlock
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popTryContext
+F
+F
+F
+end
+F
+end
+== try--try-catch-1.cjs
+start program
+F
+pushTryContext [false]
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeCatchBlock
+F
+F
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+popTryContext
+F
+F
+end
+== try--try-catch-2.cjs
+start program
+F
+pushTryContext [false]
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeCatchBlock
+F
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeThrow
+F
+F
+popTryContext
+F
+F
+end
+== try--try-catch-3.cjs
+start program
+F
+pushTryContext [false]
+F
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeReturn
+F
+makeIfAlternate
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeThrow
+F
+popChoiceContext
+F
+F
+makeCatchBlock
+F
+F
+F
+F
+F
+F
+popTryContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== try--try-catch-4.cjs
+start program
+F
+pushTryContext [false]
+F
+F
+pushTryContext [false]
+F
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeThrow
+F
+popChoiceContext
+F
+F
+makeCatchBlock
+F
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeThrow
+F
+F
+popTryContext
+F
+F
+makeCatchBlock
+F
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeThrow
+F
+F
+popTryContext
+F
+F
+end
+== try--try-catch-finally-1.cjs
+start program
+F
+pushTryContext [true]
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeCatchBlock
+F
+F
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeFinallyBlock
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popTryContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== try--try-catch-finally-2.cjs
+start program
+F
+pushTryContext [true]
+F
+F
+F
+F
+makeReturn
+F
+makeCatchBlock
+F
+F
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeFinallyBlock
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popTryContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== try--try-catch-finally-3.cjs
+start program
+F
+pushTryContext [true]
+F
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeReturn
+F
+makeIfAlternate
+F
+F
+F
+F
+F
+makeThrow
+F
+popChoiceContext
+F
+F
+makeCatchBlock
+F
+F
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeFinallyBlock
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popTryContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== try--try-finally-1.cjs
+start program
+F
+pushTryContext [true]
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeFinallyBlock
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popTryContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== try--try-finally-2.cjs
+start program
+F
+pushTryContext [true]
+F
+F
+F
+F
+makeReturn
+F
+makeFinallyBlock
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popTryContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== try--try-finally-3.cjs
+start program
+F
+pushTryContext [true]
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeThrow
+F
+makeFinallyBlock
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popTryContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== try--try-finally-4.cjs
+start program
+F
+pushTryContext [true]
+F
+F
+pushTryContext [true]
+F
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeReturn
+F
+makeIfAlternate
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeThrow
+F
+popChoiceContext
+F
+F
+makeFinallyBlock
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popTryContext
+F
+F
+makeFinallyBlock
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popTryContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== try--try-finally-5.cjs
+start program
+F
+pushTryContext [true]
+F
+F
+pushTryContext [true]
+F
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeReturn
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeFinallyBlock
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popTryContext
+F
+F
+makeFinallyBlock
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popTryContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== try--try-with-for-inof-1.cjs
+start program
+F
+pushTryContext [false]
+F
+F
+pushLoopContext ["ForOfStatement",null]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeForInOfBody
+F
+F
+popLoopContext
+F
+F
+makeCatchBlock
+F
+F
+F
+F
+F
+F
+popTryContext
+F
+F
+end
+== try--try-with-for-inof-2.cjs
+start program
+F
+pushTryContext [false]
+F
+F
+pushLoopContext ["ForOfStatement",null]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeForInOfBody
+F
+F
+popLoopContext
+F
+F
+makeCatchBlock
+F
+F
+F
+F
+F
+F
+popTryContext
+F
+F
+end
+== try-catch-finally-identifier-reference.cjs
+start program
+F
+F
+F
+F
+F
+F
+F
+pushTryContext [true]
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+F
+makeCatchBlock
+F
+F
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+F
+F
+makeFinallyBlock
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popTryContext
+F
+F
+end
+== try-catch-finally-import-expression.cjs
+start program
+F
+pushTryContext [true]
+F
+F
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeCatchBlock
+F
+F
+F
+F
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+F
+makeFinallyBlock
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popTryContext
+F
+F
+end
+== try-catch-finally-member-expression.cjs
+start program
+F
+pushTryContext [true]
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeCatchBlock
+F
+F
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeFinallyBlock
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popTryContext
+F
+F
+end
+== try-catch-finally-new-expression.cjs
+start program
+F
+pushTryContext [true]
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeCatchBlock
+F
+F
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeFinallyBlock
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popTryContext
+F
+F
+end
+== unreachable-controls.cjs
+start program
+F
+start function
+F
+F
+F
+F
+makeReturn
+F
+F
+makeReturn
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+makeThrow
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [true]
+F
+F
+makeWhileBody
+F
+F
+F
+makeContinue [null]
+F
+F
+makeBreak [null]
+F
+popLoopContext
+F
+F
+F
+end
+F
+end
+== while--break-always.cjs
+start program
+F
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeWhileBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeBreak [null]
+F
+popLoopContext
+F
+F
+end
+== while--break-label.cjs
+start program
+F
+F
+pushLoopContext ["WhileStatement","A"]
+F
+makeWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeWhileBody
+F
+F
+pushLoopContext ["WhileStatement","B"]
+F
+makeWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeWhileBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeBreak ["A"]
+F
+popChoiceContext
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeBreak ["B"]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+F
+popLoopContext
+F
+F
+F
+end
+== while--break-nest-2.cjs
+start program
+F
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeWhileBody
+F
+pushBreakContext [false,"A"]
+F
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeBreak [null]
+F
+popChoiceContext
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeBreak ["A"]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popBreakContext
+F
+F
+popLoopContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== while--break-nest.cjs
+start program
+F
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeWhileBody
+F
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeWhileBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeBreak [null]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+popLoopContext
+F
+F
+end
+== while--break-simple.cjs
+start program
+F
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeWhileBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeBreak [null]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== while--continue-always.cjs
+start program
+F
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeWhileBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeContinue [null]
+F
+popLoopContext
+F
+F
+end
+== while--continue-label.cjs
+start program
+F
+F
+pushLoopContext ["WhileStatement","A"]
+F
+makeWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeWhileBody
+F
+F
+pushLoopContext ["WhileStatement","B"]
+F
+makeWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeWhileBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeContinue ["A"]
+F
+popChoiceContext
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeContinue ["B"]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+F
+popLoopContext
+F
+F
+F
+end
+== while--continue-nest.cjs
+start program
+F
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeWhileBody
+F
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeWhileBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeContinue [null]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+popLoopContext
+F
+F
+end
+== while--continue-simple.cjs
+start program
+F
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeWhileBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeContinue [null]
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== while--direct-nest.cjs
+start program
+F
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeWhileBody
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeWhileBody
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+popLoopContext
+F
+popLoopContext
+F
+F
+end
+== while--empty.cjs
+start program
+F
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeWhileBody
+F
+F
+popLoopContext
+F
+F
+end
+== while--simple.cjs
+start program
+F
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeWhileBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end

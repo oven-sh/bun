@@ -1,0 +1,118 @@
+diff -ruN a/test/cli/lint/conformance/runner/check_bun_lint.ts b/test/cli/lint/conformance/runner/check_bun_lint.ts
+--- a/test/cli/lint/conformance/runner/check_bun_lint.ts	2026-10-01 13:23:58.629779953 +0000
++++ b/test/cli/lint/conformance/runner/check_bun_lint.ts	2026-10-01 13:23:59.549135411 +0000
+@@ -50,6 +50,8 @@
+ const defaultProbeTimeoutMs = 60_000;
+ // The longest delay that a timer takes.
+ const longestTimeoutMs = 2 ** 31 - 1;
++// The most that a command may write before it is ended: eighty times the longest baseline of the corpus. A command that writes without end must not fill the memory of the run.
++const mostOutput = 16 * 1024 * 1024;
+ // Of a longer text of a command a report keeps this many characters of its start and of its end.
+ const excerptHead = 5000;
+ const excerptTail = 3000;
+@@ -106,6 +108,7 @@
+       stderr: "pipe",
+       signal: limit,
+       killSignal: "SIGKILL",
++      maxBuffer: mostOutput,
+     });
+   } catch (error) {
+     return { ...none, timedOut: false, notStarted: String(error) };
+diff -ruN a/test/cli/lint/conformance/runner/run.ts b/test/cli/lint/conformance/runner/run.ts
+--- a/test/cli/lint/conformance/runner/run.ts	2026-10-01 13:23:58.629921370 +0000
++++ b/test/cli/lint/conformance/runner/run.ts	2026-10-01 13:23:59.769251178 +0000
+@@ -125,6 +125,8 @@
+   cause?: string;
+   // The command of the check died. A crash without it is a fault of the check function or of the runner.
+   death?: Death;
++  // Of a crash and of a timeout: the file names of the program that the check was given, and its current directory, as the instance names them.
++  program?: { rootFiles: string[]; currentDirectory: string };
+   // The reports of lint rules that were left out of the comparison: the name of each rule and how many.
+   rules?: Record<string, number>;
+ }
+@@ -390,11 +392,14 @@
+     const timeoutMs =
+       wanted !== undefined && wanted > 0 ? Math.min(Math.ceil(wanted), longestTimeoutMs) : defaultTimeoutMs;
+     const ended = await callWithLimit(check, input, timeoutMs);
++    // What a report of a death or of a hang names: the check got these files, whatever it made of them.
++    const program = { rootFiles: input.rootFiles, currentDirectory: input.currentDirectory };
+     if (ended.how === "timeout") {
+-      return { outcome: "timeout", cause: "timeout", reason: `the check did not end within ${timeoutMs} ms` };
++      const reason = `the check did not end within ${timeoutMs} ms`;
++      return { outcome: "timeout", cause: "timeout", reason, program };
+     }
+     if (ended.how === "threw") {
+-      return { outcome: "crash", cause: "check threw", reason: `the check threw: ${textOf(ended.error)}` };
++      return { outcome: "crash", cause: "check threw", reason: `the check threw: ${textOf(ended.error)}`, program };
+     }
+     const value = ended.value as Partial<CheckResult> | null | undefined;
+     if (typeof value !== "object" || value === null) {
+@@ -413,7 +418,9 @@
+       if (!verdictOutcomes.includes(outcome as Verdict["outcome"])) {
+         return { outcome: "crash", cause: "check result", reason: "the check returned a verdict of no known outcome" };
+       }
+-      return { outcome: outcome!, cause: textOf(cause), reason: textOf(reason), death: deathOf(death), ...more };
++      const found: Ending = { outcome: outcome!, cause: textOf(cause), reason: textOf(reason), ...more };
++      if (outcome === "crash") Object.assign(found, { death: deathOf(death), program });
++      return found;
+     }
+     if (!Array.isArray(value.diagnostics)) {
+       return { outcome: "crash", cause: "check result", reason: "the check returned no list of diagnostics" };
+diff -ruN a/test/cli/lint/conformance/sweep.ts b/test/cli/lint/conformance/sweep.ts
+--- a/test/cli/lint/conformance/sweep.ts	2026-10-01 13:23:58.630031645 +0000
++++ b/test/cli/lint/conformance/sweep.ts	2026-10-01 13:23:59.160540718 +0000
+@@ -718,17 +718,14 @@
+       for (const line of r.diff?.split("\n") ?? []) say(`      ${line}`);
+     }
+   }
+-  // The names of the files of an instance as a report of its death or of its hang gives them.
+-  const operandsOf = (fact: Fact) => {
+-    const laid = layOut(paths, fact.run!, undefined);
+-    return laid.ok ? { operands: laid.input.rootFiles, currentDirectory: laid.input.currentDirectory } : {};
+-  };
++  // A report of a death or of a hang names the files that the check was given: the run keeps them with such an outcome.
+   const ended = (outcome: "crash" | "timeout") =>
+     ran.flatMap(fact => {
+       const r = resultOf.get(fact.name)!;
+       if (r.outcome !== outcome) return [];
+       const { name, kind, casePath } = fact;
+-      return [{ name, kind, casePath, cause: r.cause, reason: r.reason, ...operandsOf(fact), death: r.death }];
++      const program = { operands: r.program?.rootFiles, currentDirectory: r.program?.currentDirectory };
++      return [{ name, kind, casePath, cause: r.cause, reason: r.reason, ...program, death: r.death }];
+     });
+   const crashes = ended("crash");
+   const timeouts = ended("timeout");
+diff -ruN a/test/cli/lint/conformance.test.ts b/test/cli/lint/conformance.test.ts
+--- a/test/cli/lint/conformance.test.ts	2026-10-01 13:23:58.597480328 +0000
++++ b/test/cli/lint/conformance.test.ts	2026-10-01 13:24:35.509225762 +0000
+@@ -49,8 +49,8 @@
+ 
+ // A debug or sanitizer build runs this file's JavaScript about a hundred times slower: it takes the samples and leaves the whole corpus to release builds.
+ const small = isDebug || isASAN;
+-// A debug build needs more than the default time of a test for the processes that a test starts.
+-const spawnTimeout = small ? 60_000 : undefined;
++// A test that starts processes waits for a machine that is busy: the default time of a test is for one that is not.
++const spawnTimeout = small ? 60_000 : 20_000;
+ 
+ // One of every n names, the same on every platform and without an order of the directory entries.
+ const sampled = (name: string, n: number) => Bun.hash.crc32(name) % n === 0;
+@@ -679,9 +679,19 @@
+       cause: "signal SIGSEGV",
+       reason,
+       death,
++      program: { rootFiles: ["/.src/a.ts"], currentDirectory: "/.src" },
+       standIns: undefined,
+       rules: undefined,
+     });
++    const hangs: Check = (_input, signal) =>
++      new Promise(resolve => signal.addEventListener("abort", () => resolve({ diagnostics: [] })));
++    const { instance: _hung, ...timeout } = await runInstance(C, hangs, { ...options, timeoutMs: 1 });
++    expect(timeout).toEqual({
++      outcome: "timeout",
++      cause: "timeout",
++      reason: "the check did not end within 1 ms",
++      program: { rootFiles: ["/.src/a.ts"], currentDirectory: "/.src" },
++    });
+     const fails = reports({
+       diagnostics: [],
+       verdict: { outcome: "fail", cause: "syntax", reason: "x" },

@@ -1,0 +1,98 @@
+# amended bottom-up patch (../bottom-up/default-check.patch + amend-bottom-up.patch), scratch clone of 3110ce85cf with the glue of round2/prototype
+--- a2-installed
+      at <anonymous> (/tmp/dcc-scratch2/test/cli/lint/conformance.test.ts:1041:65)
+(fail) default check > the probe: the binary under test lints, and it ends both runs as the test run asks of a child [549.35ms]
+
+2 tests failed:
+(fail) enumerator > every instance is its line of the list, and the counts are those of the reference [35316.21ms]
+  ^ this test timed out after 30000ms.
+(fail) default check > the probe: the binary under test lints, and it ends both runs as the test run asks of a child [549.35ms]
+
+ 116 pass
+ 2 fail
+ 191 expect() calls
+Ran 118 tests across 1 file. [52.62s]
+--- a-debug-leak
+(skip) enumerator > every instance is its line of the list, and the counts are those of the reference
+
+
+1 tests failed:
+(fail) error baselines > read and written again, the bytes are the same: group 10 [5416.53ms]
+  ^ this test timed out after 5000ms.
+
+ 116 pass
+ 1 skip
+ 1 fail
+ 187 expect() calls
+Ran 118 tests across 1 file. [109.53s]
+--- a-release
+bun test v1.4.3-canary.1 (be1ebe529)
+
+test/cli/lint/conformance.test.ts:
+
+ 118 pass
+ 0 fail
+ 191 expect() calls
+Ran 118 tests across 1 file. [9.87s]
+
+# alternative.patch alone, same scratch setup
+--- t2-installed
+
+1 tests failed:
+(fail) default check > the binary under test is a linter: a unit without an error passes an instance without errors, a syntax error fails it [416.34ms]
+
+ 118 pass
+ 1 fail
+ 201 expect() calls
+Ran 119 tests across 1 file. [16.99s]
+--- t2-debug-leak
+1 tests skipped:
+(skip) enumerator > every instance is its line of the list, and the counts are those of the reference
+
+ 118 pass
+ 1 skip
+ 0 fail
+ 198 expect() calls
+Ran 119 tests across 1 file. [84.87s]
+--- t2-release
+bun test v1.4.3-canary.1 (be1ebe529)
+
+test/cli/lint/conformance.test.ts:
+
+ 119 pass
+ 0 fail
+ 202 expect() calls
+Ran 119 tests across 1 file. [7.53s]
+
+# ../bottom-up/default-check.patch alone, whole file
+--- s-installed
+      at <anonymous> (/tmp/dcc-scratch2/test/cli/lint/conformance.test.ts:1031:65)
+(fail) default check > the probe: the binary under test lints, and it ends both runs as the test run asks of a child [67.72ms]
+
+1 tests failed:
+(fail) default check > the probe: the binary under test lints, and it ends both runs as the test run asks of a child [67.72ms]
+
+ 117 pass
+ 1 fail
+ 190 expect() calls
+Ran 118 tests across 1 file. [16.04s]
+--- s-debug-leak
+(fail) directives > the vectors of the reference parser [5262.09ms]
+  ^ this test timed out after 5000ms.
+(fail) enumerator > the instances of one of 40 cases are their lines of the list: group 1 [5983.08ms]
+  ^ this test timed out after 5000ms.
+
+ 114 pass
+ 1 skip
+ 3 fail
+ 186 expect() calls
+Ran 118 tests across 1 file. [137.08s]
+--- s-release
+bun test v1.4.3-canary.1 (be1ebe529)
+
+test/cli/lint/conformance.test.ts:
+
+ 118 pass
+ 0 fail
+ 190 expect() calls
+Ran 118 tests across 1 file. [16.49s]

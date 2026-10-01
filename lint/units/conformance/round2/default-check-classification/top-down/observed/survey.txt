@@ -1,0 +1,44 @@
+instances 14915, run 12797
+laid out: E 7027, C 5770; not laid out 0; no operand 0
+operands by extension: files, instances
+  .ts         13383  11502 
+  .js          1180    925 
+  .d.ts         762    533 
+  .tsx          493    412 
+  .mts          190    146 
+  .cts          164    122 
+  .d.cts        109     61 
+  .d.mts        103     59 
+  .mjs           77     51 
+  .cjs           74     49 
+  .jsx           12      7 
+  (none)          4      4 UNSUPPORTED by bun --lint
+  .txt            4      4 UNSUPPORTED by bun --lint
+  .map            3      3 UNSUPPORTED by bun --lint
+operands whose extension is supported only when case is ignored: 0
+instances with an operand of an unsupported extension: 7
+  of class E 7, C 0
+  E jsFileCompilationWithMapFileAsJs.ts: .map
+  E jsFileCompilationWithMapFileAsJsWithInlineSourceMap.ts: .map
+  E jsFileCompilationWithMapFileAsJsWithOutDir.ts: .map
+  E bundlerImportTsExtensions(allowimportingtsextensions=false,noemit=false).ts: (none) .txt
+  E bundlerImportTsExtensions(allowimportingtsextensions=false,noemit=true).ts: (none) .txt
+  E bundlerImportTsExtensions(allowimportingtsextensions=true,noemit=false).ts: (none) .txt
+  E bundlerImportTsExtensions(allowimportingtsextensions=true,noemit=true).ts: (none) .txt
+shapes:
+    6229  E ts
+    5201  C ts
+     431  E js
+     286  C js
+     181  E ts+dts
+     178  C ts+dts
+      63  E ts+js
+      53  E js+dts
+      45  C ts+js
+      41  E dts
+      33  C js+dts
+      22  E ts+js+dts
+      21  C dts
+       6  C ts+js+dts
+       4  E ts+js+dts+other
+       3  E ts+js+other

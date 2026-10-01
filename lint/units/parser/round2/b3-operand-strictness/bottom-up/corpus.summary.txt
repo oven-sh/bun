@@ -1,0 +1,2 @@
+{"files":10608,"withParseDiagnostics":78,"postfixThenNewStatement":0,"thrown":0}
+of the 78 files with a parse diagnostic of tsc 6.0.2, the parse pass of bun be1ebe5295 (scanImports) rejects 78: no file of test/ and src/js holds a construct of B3

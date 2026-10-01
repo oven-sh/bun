@@ -401,25 +401,3 @@ pub(crate) fn last_before(tokens: &mut Tokens<'_, '_>, target: u32) -> Option<To
         last = Some(token);
     }
 }
-
-fn before_blanks(source: &[u8], mut at: usize) -> usize {
-    while at > 0 && matches!(source.get(at - 1), Some(b' ' | b'\t')) {
-        at -= 1;
-    }
-    at
-}
-
-/// The `case` that stands before `at` with blanks between them only.
-pub(crate) fn case_before(source: &[u8], at: u32) -> Option<u32> {
-    let at = before_blanks(source, at as usize);
-    let start = at.checked_sub(4)?;
-    if source.get(start..at)? != b"case" {
-        return None;
-    }
-    if let Some(&before) = start.checked_sub(1).and_then(|index| source.get(index)) {
-        if before.is_ascii_alphanumeric() || matches!(before, b'_' | b'$' | b'\\' | b'#') {
-            return None;
-        }
-    }
-    u32::try_from(start).ok()
-}

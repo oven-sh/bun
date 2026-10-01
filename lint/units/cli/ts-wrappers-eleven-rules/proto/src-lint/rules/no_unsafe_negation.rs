@@ -22,8 +22,12 @@ pub(crate) fn e_binary(context: &mut Context<'_, '_>, node: &E::Binary) {
     if unary.op != OpCode::UnNot {
         return;
     }
-    // `astUtils.isParenthesised`, and a TypeScript node around the `!`: `(!a) in b` and `!a as any in b` have no `!` as their left operand.
-    if context.is_wrapped(&node.left) {
+    // A TypeScript node around the `!` is the left operand for ESLint: `!a as any in b` has no negation there.
+    if context.ts_wrapper(&node.left).is_some() {
+        return;
+    }
+    // `astUtils.isParenthesised`: `(!a) in b` is what the rule asks for.
+    if context.paren_count(&node.left) > 0 {
         return;
     }
     let operator = bun_ast::Op::TABLE.get_ptr_const(node.op).text;

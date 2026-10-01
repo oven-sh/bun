@@ -701,10 +701,7 @@ impl<'p, 'a> Context<'p, 'a> {
                 return loc_at(before.start);
             }
         }
-        match tokens::case_before(self.text(), target) {
-            Some(start) => loc_at(start),
-            None => test.loc,
-        }
+        test.loc
     }
 
     /// The fields with `declare` of `class` that leave no node, each with how many members of `class.properties` stand before it.

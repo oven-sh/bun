@@ -1,0 +1,78 @@
+{"f":"test/bundler/bytecode-portability/builtin.js","d":[1109,556,0,"Expression expected."],"n":78}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/allow-ref-initialization-undefined.js","d":[1434,39,9,"Unexpected keyword or identifier."],"n":2}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/allow-ref-initialization.js","d":[1434,39,9,"Unexpected keyword or identifier."],"n":2}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/component-declaration-basic.flow.js","d":[1005,59,3,"';' expected."],"n":6}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/component-in-object-method-body.flow.js","d":[1434,207,9,"Unexpected keyword or identifier."],"n":4}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/destructuring-with-typecast-as-default-value.flow.js","d":[1005,53,1,"')' expected."],"n":9}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/error.bug-hir_loc_diff_2.js","d":[1109,921,1,"Expression expected."],"n":1}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/error.invalid-assign-current-inferred-ref-during-render.js","d":[1434,132,9,"Unexpected keyword or identifier."],"n":2}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/error.invalid-assing-to-ref-current-in-render.js","d":[1434,10,9,"Unexpected keyword or identifier."],"n":2}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/error.invalid-ref-access-render-unary.js","d":[1434,39,9,"Unexpected keyword or identifier."],"n":2}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/error.invalid-ref-initialization-unary-not.js","d":[1434,39,9,"Unexpected keyword or identifier."],"n":2}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/error.invalid-uncalled-function-capturing-mutable-values-memoizes-with-captures-values.js","d":[1434,899,4,"Unexpected keyword or identifier."],"n":10}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/error.ref-initialization-arbitrary.js","d":[1434,65,9,"Unexpected keyword or identifier."],"n":2}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/error.ref-initialization-call-2.js","d":[1434,39,9,"Unexpected keyword or identifier."],"n":2}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/error.ref-initialization-call.js","d":[1434,39,9,"Unexpected keyword or identifier."],"n":2}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/error.ref-initialization-linear.js","d":[1434,39,9,"Unexpected keyword or identifier."],"n":2}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/error.ref-initialization-nonif.js","d":[1434,39,9,"Unexpected keyword or identifier."],"n":2}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/error.ref-initialization-other.js","d":[1434,39,9,"Unexpected keyword or identifier."],"n":2}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/error.ref-initialization-post-access-2.js","d":[1434,39,9,"Unexpected keyword or identifier."],"n":2}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/error.ref-initialization-post-access.js","d":[1434,39,9,"Unexpected keyword or identifier."],"n":2}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/error.todo-hir_fn_type_mismatch.js","d":[1005,178,9,"';' expected."],"n":2}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/error.todo-hir_fn_type_mismatch_1.js","d":[1005,516,31,"';' expected."],"n":6}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/error.todo-hir_fn_type_mismatch_2.js","d":[1131,680,3,"Property or signature expected."],"n":5}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/error.todo-hir_jsxtext_nbsp.js","d":[1005,163,17,"';' expected."],"n":2}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/error.todo-hir_loc_diff_1.js","d":[1131,403,3,"Property or signature expected."],"n":2}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/error.todo-pattern2_type_to_object.js","d":[1005,333,9,"';' expected."],"n":2}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/error.todo-pattern3_type_to_poly.js","d":[1131,310,1,"Property or signature expected."],"n":7}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/error.todo-repro-missed-memoization-from-capture-in-invoked-function-inferred-as-mutation.js","d":[1434,212,9,"Unexpected keyword or identifier."],"n":2}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/error.todo-repro-missed-memoization-from-inferred-mutation-in-logger.js","d":[1434,275,9,"Unexpected keyword or identifier."],"n":2}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/error.todo-round2_float_precision.js","d":[1434,161,9,"Unexpected keyword or identifier."],"n":3}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/error.todo-round2_fn_type_component_to_other.js","d":[1005,176,2,"';' expected."],"n":4}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/error.todo-round2_id_numbering.js","d":[1434,254,9,"Unexpected keyword or identifier."],"n":4}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/error.todo-round2_severity_diff.js","d":[1131,310,3,"Property or signature expected."],"n":7}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/gating/component-syntax-ref-gating.flow.js","d":[1434,92,9,"Unexpected keyword or identifier."],"n":4}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/gating/gating-with-hoisted-type-reference.flow.js","d":[1434,99,9,"Unexpected keyword or identifier."],"n":3}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/hoist-destruct.js","d":[1434,8,9,"Unexpected keyword or identifier."],"n":2}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/hook-declaration-basic.flow.js","d":[1005,54,6,"';' expected."],"n":3}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/infer-types-through-type-cast.flow.js","d":[1005,234,1,"'=>' expected."],"n":1}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/logical-reorder.flow.js","d":[1434,33,9,"Unexpected keyword or identifier."],"n":3}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/match-expr-captured-var.flow.js","d":[1005,273,20,"';' expected."],"n":8}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/match-expr-jsx-spread.flow.js","d":[1005,296,18,"';' expected."],"n":8}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/match-expr-multi-gen-bindings.flow.js","d":[1005,325,25,"';' expected."],"n":13}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/match-expr-outlined-jsx.flow.js","d":[1005,378,20,"';' expected."],"n":13}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/match-expression-with-tuple-and-early-return.js","d":[1005,697,1,"';' expected."],"n":10}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/match-stmt-self-ref-const.flow.js","d":[1005,323,21,"';' expected."],"n":5}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/member-inc.js","d":[1434,9,9,"Unexpected keyword or identifier."],"n":2}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/new-mutability/repro-compiler-infinite-loop.js","d":[1434,66,9,"Unexpected keyword or identifier."],"n":2}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/new-mutability/repro-internal-compiler-shared-mutablerange-bug.js","d":[1434,87,9,"Unexpected keyword or identifier."],"n":8}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/new-mutability/repro-jsx-captures-value-mutated-later.js","d":[1434,108,9,"Unexpected keyword or identifier."],"n":2}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/new-mutability/repro-mutate-new-set-of-frozen-items-in-callback.js","d":[1109,127,1,"Expression expected."],"n":1}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/panresponder-ref-in-callback.js","d":[1005,91,10,"';' expected."],"n":2}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/preserve-memo-validation/error.useMemo-with-refs.flow.js","d":[1434,98,9,"Unexpected keyword or identifier."],"n":2}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/reassign-variable-in-usememo.js","d":[1128,9,6,"Declaration or statement expected."],"n":3}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/repro-invalid-destructuring-reassignment-undefined-variable.js","d":[1434,155,9,"Unexpected keyword or identifier."],"n":2}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/repro-mutate-ref-in-function-passed-to-hook.js","d":[1434,9,9,"Unexpected keyword or identifier."],"n":2}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/return-ref-callback-structure.js","d":[1434,119,9,"Unexpected keyword or identifier."],"n":4}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/return-ref-callback.js","d":[1434,119,9,"Unexpected keyword or identifier."],"n":2}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/type-annotation-indexer-no-rename-in-outlined.js","d":[1005,191,1,"')' expected."],"n":9}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/type-annotation-rename-in-type-cast.js","d":[1005,267,1,"')' expected."],"n":7}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/type-annotation-rename-position-based.js","d":[1005,198,1,"'=>' expected."],"n":1}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/type-cast-expression.flow.js","d":[1005,113,1,"'=>' expected."],"n":2}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/useCallback-ref-in-render.js","d":[1434,131,9,"Unexpected keyword or identifier."],"n":5}
+{"f":"test/bundler/transpiler/react-compiler-fixtures/useImperativeHandle-ref-mutate.js","d":[1434,62,9,"Unexpected keyword or identifier."],"n":3}
+{"f":"test/js/node/test/fixtures/es-module-loaders/syntax-error.mjs","d":[1005,29,2,"';' expected."],"n":1}
+{"f":"test/js/node/test/fixtures/es-modules/syntax-error.mjs","d":[1005,8,3,"',' expected."],"n":1}
+{"f":"test/js/node/test/fixtures/es-modules/wasm-source-phase.js","d":[1005,14,3,"'=' expected."],"n":2}
+{"f":"test/js/node/test/fixtures/rsa-oaep-test-vectors.js","d":[1005,13,1,"';' expected."],"n":2}
+{"f":"test/js/node/test/fixtures/syntax/bad_syntax.js","d":[1005,8,3,"',' expected."],"n":1}
+{"f":"test/js/node/test/fixtures/syntax/bad_syntax.mjs","d":[1005,8,3,"',' expected."],"n":1}
+{"f":"test/js/node/test/fixtures/syntax/bad_syntax_shebang.js","d":[1005,28,3,"',' expected."],"n":1}
+{"f":"test/js/node/test/fixtures/throws_error4.js","d":[1489,1134,26,"Decimals with leading zeros are not allowed."],"n":2}
+{"f":"test/js/node/test/fixtures/throws_error5.js","d":[1121,0,496,"Octal literals are not allowed. Use the syntax '0o0'."],"n":2}
+{"f":"test/js/node/test/fixtures/throws_error6.js","d":[1121,0,1019,"Octal literals are not allowed. Use the syntax '0o0'."],"n":2}
+{"f":"test/js/node/test/fixtures/uncaught-exceptions/parse-error-mod.js","d":[1002,51,0,"Unterminated string literal."],"n":1}
+{"f":"test/js/node/test/fixtures/utf8-bom-shebang-shebang.js","d":[18026,1,2,"'#!' can only be used at the start of a file."],"n":2}
+{"f":"test/regression/issue/14477/builtin-mismatch.tsx","d":[17002,19,1,"Expected corresponding JSX closing tag for 'div'."],"n":1}
+{"f":"test/regression/issue/14477/component-mismatch.tsx","d":[17002,20,3,"Expected corresponding JSX closing tag for 'Foo'."],"n":1}
+{"f":"test/regression/issue/14477/non-identifier-mismatch.tsx","d":[17002,126,1,"Expected corresponding JSX closing tag for 'div-:button'."],"n":1}

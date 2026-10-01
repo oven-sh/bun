@@ -1,0 +1,20 @@
+diff --git a/test/cli/lint/conformance/runner/index.ts b/test/cli/lint/conformance/runner/index.ts
+index 8c612a628e..c7370f69bd 100644
+--- a/test/cli/lint/conformance/runner/index.ts
++++ b/test/cli/lint/conformance/runner/index.ts
+@@ -1,4 +1,7 @@
+ // The one module that conformance.test.ts and sweep.ts import.
++export { getCompilerVaryByMap, skippedTests } from "./compiler_runner";
++export { caseBaseName, directoryOf, listCases, openCorpus } from "./corpus";
++export type { Corpus, CorpusFacts, CorpusInstance } from "./corpus";
+ export {
+   ExpectationsError,
+   checkLists,
+@@ -25,6 +28,7 @@ export type {
+   ResultFacts,
+   Shrink,
+ } from "./expectations";
++export { getFileBasedTestConfigurations } from "./harnessutil_variations";
+ export { emptyCheck, outcomes, replayCheck, runInstance, runInstances } from "./run";
+ export type {
+   Check,

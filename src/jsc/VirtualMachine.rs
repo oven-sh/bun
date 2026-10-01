@@ -3490,9 +3490,14 @@ impl VirtualMachine {
                         NodeModuleModule__callOverriddenRunMain(global_ref, argv1)
                     })
                     .map_err(|_| crate::CrateError::JSError)?;
-                    // If the override stored a promise itself, use that; otherwise
-                    // wrap its return value.
-                    if let Some(stored) = self.pending_internal_promise {
+                    // What the override threw or rejected with is the entry point's failure,
+                    // whatever it started before. Otherwise, if it stored a promise itself, use
+                    // that, or else wrap its return value.
+                    let rejected = ret.as_promise().is_some_and(|promise| {
+                        crate::JSPromise::status_ptr(promise.cast())
+                            == crate::js_promise::Status::Rejected
+                    });
+                    if !rejected && let Some(stored) = self.pending_internal_promise {
                         return Ok(stored);
                     }
                     // `Promise.resolve(ret)` reads `ret.constructor` / `ret.then`,
@@ -3501,6 +3506,9 @@ impl VirtualMachine {
                         JSC__JSInternalPromise__resolvedPromise(global_ref, ret)
                     })
                     .map_err(|_| crate::CrateError::JSError)?;
+                    // Whoever loads the entry point reports its promise, so, like the loader's,
+                    // it is not for the rejection tracker to report as well.
+                    crate::JSPromise::opaque_mut(resolved.cast()).set_handled();
                     self.pending_internal_promise = Some(resolved);
                     self.pending_internal_promise_is_protected = false;
                     return Ok(resolved);

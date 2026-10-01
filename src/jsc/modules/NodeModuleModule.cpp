@@ -833,27 +833,25 @@ extern "C" void Bun__VirtualMachine__setOverrideModuleRunMain(void* bunVM, bool 
 extern "C" JSC::EncodedJSValue NodeModuleModule__callOverriddenRunMain(Zig::GlobalObject* global, JSValue argv1)
 {
     auto& vm = JSC::getVM(global);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue overrideHandler = global->m_moduleRunMainFunction.get(global);
     auto callData = JSC::getCallData(overrideHandler);
     JSValue result;
     if (callData.type == JSC::CallData::Type::None) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        throwTypeError(global, throwScope, "Module.runMain is not a function"_s);
+        throwTypeError(global, scope, "Module.runMain is not a function"_s);
     } else {
         MarkedArgumentBuffer args;
         args.append(argv1);
         result = JSC::profiledCall(global, JSC::ProfilingReason::API, overrideHandler, callData, global, args);
     }
 
-    // Reported like what the entry point itself throws.
-    if (auto* exception = scope.exception()) {
-        if (vm.isTerminationException(exception))
-            return {};
-        scope.clearException();
-        return JSC::JSValue::encode(JSC::JSPromise::rejectedPromise(global, exception->value()));
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        // Reported like what the entry point itself throws. A termination stays pending.
+        if (!scope.tryClearException())
+            RELEASE_AND_RETURN(scope, {});
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSPromise::rejectedPromise(global, exception->value())));
     }
-    return JSC::JSValue::encode(result);
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(result));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(setModuleRunMain,

@@ -1,0 +1,30 @@
+let f = (public a: A) => a;
+let f = (public private a: A) => a;
+let f = function (public private a: A) {};
+let o = { m(public a: A) {} };
+let o = { m(public private a: A) {} };
+class C { m(public private a: A) {} }
+class C { constructor(public private a: A) {} }
+class C { constructor(readonly readonly a: A) {} }
+class C { set x(public public a: A) {} }
+declare function f(public private a: A): void;
+function f(public private a: A): void;
+function f(public a?: A) {}
+function f(public ...a: A[]) {}
+function f(...public a: A[]) {}
+function f(public {a}: A) {}
+function f(public⏎a: A) {}
+function f(readonly) {}
+function f(public readonly) {}
+function f(public public) {}
+type X = (public readonly) => void;
+type X = (public public) => void;
+type X = { a(public private b: B): A };
+let x: import("x", { assert: { a: "b" } });
+let x: import("x", { with: { a: "b" } }, );
+type X = ({ 1n: a }) => void;
+let x: unique [A];
+let x: A.if;
+let x: (a = 1);
+let x: [a = 1];
+type X = (a: A = 1, b?) => void;

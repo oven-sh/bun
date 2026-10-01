@@ -1,0 +1,76 @@
+class C implements +1 {} | head A | base Unexpected +
+interface I extends typeof a() {} | head A | base Expected "{" but found "("
+class C implements void A {} | head A | base Expected "{" but found "A"
+interface I extends delete A {} | head A | base Unexpected delete
+class C implements await A {} | head A | base Expected "{" but found "A"
+interface I extends <B>[] {} | head A | base Expected "(" but found "["
+interface I extends A extends B {} | head A | base Expected "?" but found "{"
+interface I extends A, B extends C {} | head A | base Expected "?" but found "{"
+interface I implements A extends B {} | head A | base Expected "?" but found "{"
+interface I extends {} | head A | base Expected "{" but found end of file
+interface I extends A, {} | head A | base Expected "{" but found end of file
+type X = (a?: A = 1) => R; | head A | base Expected ")" but found "?"
+type X = (a? = 1) => R; | head A | base Expected ")" but found "?"
+type X = (...a = []) => R; | head A | base Unexpected ...
+type X = (...a: A[] = []) => R; | head A | base Unexpected ...
+type X = ({ ...a = 1 }) => R; | head A | base Unexpected ...
+type X = ([...a = 1]) => R; | head A | base Expected "]" but found "="
+type X = { a(b? = 1): A }; | head A | base Expected ")" but found "="
+type X = new (a? = 1) => A; | head A | base Expected ")" but found "?"
+type X = (public private a: A) => R; | head A | base Expected ")" but found "private"
+type X = (public public a: A) => R; | head A | base Expected ")" but found "public"
+type X = (readonly public a: A) => R; | head A | base Expected ")" but found "a"
+type X = (override public a: A) => R; | head A | base Expected ")" but found "public"
+type X = (readonly readonly a: A) => R; | head A | base Expected ")" but found ":"
+function f(public private a: A) {} | head A | base Expected ")" but found "private"
+function f(public public a: A) {} | head A | base Expected ")" but found "public"
+function f(readonly public a: A) {} | head A | base Expected ")" but found "public"
+function f(override public a: A) {} | head A | base Expected ")" but found "public"
+function f(readonly readonly a: A) {} | head A | base Expected ")" but found "readonly"
+type X = { #a: A }; | head A | base Unexpected #a
+interface I { #a(): void } | head A | base Unexpected #a
+type X = { get #a(): A }; | head A | base Unexpected #a
+type X = { 1n: A }; | head A | base Unexpected 1n
+type X = { get a(): A {} }; | head A | base Unexpected {
+type X = { set a(v: A) {} }; | head A | base Unexpected {
+type X = { a: A = 1 }; | head A | base Unexpected =
+type X = { a?: A = 1 }; | head A | base Unexpected =
+type X = { [a] = 1 }; | head A | base Unexpected =
+interface I { a: A = 1 } | head A | base Unexpected =
+type X = { [k: string, l: number]: A }; | head A | base Expected "]" but found ","
+type X = { [a, b]: A }; | head A | base Expected "]" but found ","
+type X = { []: A }; | head A | base Unexpected ]
+type X = { [k?: string]: A }; | head A | base Expected "]" but found "?"
+type X = { [k?]: A }; | head A | base Expected "]" but found "?"
+type X = { [...k: string[]]: A }; | head A | base Unexpected ...
+type X = { [k: string,]: A }; | head A | base Expected "]" but found ","
+type X = { [k = 1]: A }; | head A | base Expected "]" but found "="
+type X = { [a + b]: A }; | head A | base Expected "]" but found "+"
+type X = { ["a" + "b"]: A }; | head A | base Expected "]" but found "+"
+type X = { [a as B]: A }; | head A | base Expected "]" but found "as"
+type X = [a: A?]; | head A | base Expected "]" but found "?"
+type X = [a?: A?]; | head A | base Expected "]" but found "?"
+type X = [a: ...B]; | head A | base Unexpected ...
+let x: #a; | head A | base Unexpected #a
+let x: keyof #a; | head A | base Unexpected #a
+let x: #a[]; | head A | base Unexpected #a
+function f<U extends #a>() {} | head A | base Unexpected #a
+type X = A.<B>; | head A | base Expected identifier but found "<"
+let x: Array.<A>; | head A | base Expected identifier but found "<"
+let x: A.B.<D>[]; | head A | base Expected identifier but found "<"
+function f<U extends in>() {} | head A | base Unexpected in
+function f<U extends delete>() {} | head A | base Unexpected delete
+function f<U extends class>() {} | head A | base Unexpected class
+function f<U extends super>() {} | head A | base Unexpected super
+function f<U extends super.a>() {} | head A | base Unexpected super
+let f = <U extends class>() => 0; | head A | base Unexpected class
+f< extends>(x); | head A | base Unexpected extends
+let x: A<extends>; | head A | base Unexpected extends
+class C { [k: string] } | head A | base Expected ":" but found "}"
+class C { [k: string, l: number]: A } | head A | base Expected "]" but found ","
+class C { x: A⏎[]; } | head A | base Unexpected ]
+class C { [k?: string]: T } | head A | base Unexpected :
+class C { [...k: string[]]: T } | head A | base Unexpected ...
+class C { [k: string,]: T } | head A | base Expected "]" but found ","
+class C { []: T } | head A | base Unexpected ]
+class C { [k: string = ""]: T } | head A | base Expected "]" but found "="

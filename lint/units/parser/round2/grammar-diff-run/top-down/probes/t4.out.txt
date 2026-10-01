@@ -1,0 +1,78 @@
+class C { accessor a: A }                    tsc parse[] grammar[]                         
+     base plain/exp: A / R(Expected ";" but found "a")
+     head plain/exp: A / A
+class C { readonly accessor a: A }           tsc parse[] grammar[TS1243@19]                
+     base plain/exp: A / R(Expected ";" but found "a")
+     head plain/exp: A / A
+class C { declare accessor a: A }            tsc parse[] grammar[TS1243@18]                
+     base plain/exp: A / R(Expected ";" but found "a")
+     head plain/exp: A / A
+class C { accessor a?: A }                   tsc parse[] grammar[TS1276@20]                
+     base plain/exp: A / R(Expected ";" but found "a")
+     head plain/exp: A / A
+class C { accessor a!: A }                   tsc parse[] grammar[]                         
+     base plain/exp: A / R(Expected ";" but found "a")
+     head plain/exp: A / A
+class C { accessor readonly a: A }           tsc parse[] grammar[TS1243@19]                
+     base plain/exp: R(Expected ";" but found "a") / R(Expected ";" but found "readonly")
+     head plain/exp: R(Expected ";" but found "a") / R(Expected ";" but found "a")
+class C { accessor declare a: A }            tsc parse[] grammar[TS1243@19]                
+     base plain/exp: R(Expected ";" but found "a") / R(Expected ";" but found "declare")
+     head plain/exp: R(Expected ";" but found "a") / R(Expected ";" but found "a")
+class C { static accessor a: A }             tsc parse[] grammar[]                         
+     base plain/exp: A / R(Expected ";" but found "a")
+     head plain/exp: A / A
+class C { accessor static a: A }             tsc parse[] grammar[TS1029@19]                
+     base plain/exp: R(Expected ";" but found "a") / R(Expected ";" but found "static")
+     head plain/exp: R(Expected ";" but found "a") / R(Expected ";" but found "a")
+class C { public accessor a: A }             tsc parse[] grammar[]                         
+     base plain/exp: A / R(Expected ";" but found "a")
+     head plain/exp: A / A
+class C { accessor public a: A }             tsc parse[] grammar[TS1029@19]                
+     base plain/exp: R(Expected ";" but found "a") / R(Expected ";" but found "public")
+     head plain/exp: R(Expected ";" but found "a") / R(Expected ";" but found "a")
+class C { override accessor a: A }           tsc parse[] grammar[]                         
+     base plain/exp: A / R(Expected ";" but found "a")
+     head plain/exp: A / A
+class C { accessor override a: A }           tsc parse[] grammar[TS1029@19]                
+     base plain/exp: R(Expected ";" but found "a") / R(Expected ";" but found "override")
+     head plain/exp: R(Expected ";" but found "a") / R(Expected ";" but found "a")
+class C { abstract accessor a: A }           tsc parse[] grammar[TS1253@10]                
+     base plain/exp: A / R(Expected ";" but found "a")
+     head plain/exp: A / A
+class C { accessor accessor a: A }           tsc parse[] grammar[TS1030@19]                
+     base plain/exp: R(Expected ";" but found "a") / R(Expected ";" but found "accessor")
+     head plain/exp: R(Expected ";" but found "a") / R(Expected ";" but found "a")
+class C { accessor a(): A {} }               tsc parse[] grammar[TS1275@10]                
+     base plain/exp: R(auto-accessor properties cannot have a method body) / R(Expected ";" but found "a")
+     head plain/exp: R(auto-accessor properties cannot have a method body) / R(auto-accessor properties cannot have a method body)
+class C { accessor get a(): A { return 1 } } tsc parse[] grammar[TS1275@10]                
+     base plain/exp: R(Expected ";" but found "a") / R(Expected ";" but found "get")
+     head plain/exp: R(Expected ";" but found "a") / R(Expected ";" but found "a")
+class C { async accessor a: A }              tsc parse[] grammar[TS1042@10]                
+     base plain/exp: R(Expected "(" but found ":") / R(Expected "(" but found "a")
+     head plain/exp: R(Expected "(" but found ":") / R(Expected "(" but found ":")
+class C { accessor constructor: A }          tsc parse[TS1005@30] grammar[-]               
+     base plain/exp: R(Invalid field name) / R(Expected ";" but found "constructor")
+     head plain/exp: R(Invalid field name) / R(Invalid field name)
+class C { accessor "a": A }                  tsc parse[] grammar[]                         
+     base plain/exp: A / R(Expected ";" but found ""a"")
+     head plain/exp: A / A
+class C { accessor [a]: A }                  tsc parse[] grammar[]                         
+     base plain/exp: A / R(Expected ";" but found "[")
+     head plain/exp: A / A
+class C { accessor 1: A }                    tsc parse[] grammar[]                         
+     base plain/exp: A / R(Expected ";" but found "1")
+     head plain/exp: A / A
+class C { accessor⏎a: A }                  tsc parse[] grammar[]                         
+     base plain/exp: A / A
+     head plain/exp: A / A
+class C { accessor = 1 }                     tsc parse[] grammar[]                         
+     base plain/exp: A / A
+     head plain/exp: A / A
+class C { accessor; }                        tsc parse[] grammar[]                         
+     base plain/exp: A / A
+     head plain/exp: A / A
+class C { accessor: A }                      tsc parse[] grammar[]                         
+     base plain/exp: A / A
+     head plain/exp: A / A

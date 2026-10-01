@@ -271,7 +271,7 @@ function main() {
 			else {
 				// The same reports but for a place that the probe cannot know (a class member of a TypeScript file)?
 				const loose = list => list.map(x => x.replace(/ \S+:\S+ /u, " ")).sort();
-				if (actual.some(x => x.includes(" ?:? ")) && JSON.stringify(loose(expected)) === JSON.stringify(loose(actual))) { count.samePlaceUnknown++; return; }
+				if (actual.some(x => x.includes(" ?:? ")) && JSON.stringify(loose(expected)) === JSON.stringify(loose(actual))) { count.samePlaceUnknown++; if (args.includes("--show-unknown")) console.log(`PLACE UNKNOWN [${s.ext}] ${JSON.stringify((s.name || s.code).slice(0, 400))}\n   eslint ${expected.join(" | ")}\n   bun    ${actual.join(" | ")}`); return; }
 				count.different++;
 				if (shown++ < showMax) console.log(`DIFFERENT [${s.ext}] ${JSON.stringify((s.name || s.code).slice(0, 400))}\n   eslint ${expected.join(" | ") || "(none)"}\n   bun    ${actual.join(" | ") || "(none)"}`);
 			}

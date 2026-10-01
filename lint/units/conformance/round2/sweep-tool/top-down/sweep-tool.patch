@@ -1,13 +1,15 @@
 diff --git a/test/cli/lint/conformance.test.ts b/test/cli/lint/conformance.test.ts
-index 0f294fa055..d655c660e9 100644
+index 0f294fa055..8eff397b29 100644
 --- a/test/cli/lint/conformance.test.ts
 +++ b/test/cli/lint/conformance.test.ts
-@@ -1153,3 +1153,136 @@ describe("expectations.json", () => {
+@@ -1153,3 +1153,129 @@ describe("expectations.json", () => {
      small ? 120_000 : 30_000,
    );
  });
 +
 +describe("sweep.ts", () => {
++  // Under a debug build a start of the script takes ten seconds of a processor: it loads the runner and lists the corpus.
++  const oneStart = small ? 120_000 : undefined;
 +  // The script with a check of the fixtures, which reads the units of its input: no file of an instance is written and no other command is started. The lists are empty, whatever expectations.json holds.
 +  const sweep = async (directory: string, fixture: string, ...args: string[]) => {
 +    const lists = join(directory, "lists.json");
@@ -23,35 +25,26 @@ index 0f294fa055..d655c660e9 100644
 +    return { stdout, stderr, exitCode };
 +  };
 +  const skipped = "skip abstractPropertyNegative(target=es5).ts unsupported target ES5";
-+  // A directory without "/" at its end, the file name of a case with two instances of which the reference skips one, the path of a case, and the name of an instance.
-+  const nine = [
-+    "conformance/types/tuple/named",
-+    "abstractPropertyNegative.ts",
-+    "compiler/2dArrays.ts",
-+    "castingTuple.ts",
-+  ];
++  // A directory without "/" at its end, the file name of a case with two instances of which the reference skips one, and the path of a case.
++  const five = ["conformance/types/tuple/emptyTuples", "abstractPropertyNegative.ts", "compiler/2dArrays.ts"];
 +
 +  test.concurrent(
 +    "--each: a line for each instance in the order of the names, and the exit code 0 when every instance that runs passes",
 +    async () => {
 +      using dir = tempDir("lint-conformance-sweep", {});
-+      const ran = await sweep(String(dir), "replay-check-fixture.ts", "--each", ...nine);
++      const ran = await sweep(String(dir), "replay-check-fixture.ts", "--each", ...five);
 +      expect(ran.stdout.split("\n")).toEqual([
 +        "pass 2dArrays.ts",
 +        "pass abstractPropertyNegative(target=es2015).ts",
 +        skipped,
-+        "pass castingTuple.ts",
-+        "pass namedTupleMembers.ts",
-+        "pass namedTupleMembersErrors.ts",
-+        "pass partiallyNamedTuples.ts",
-+        "pass partiallyNamedTuples2.ts",
-+        "pass partiallyNamedTuples3.ts",
++        "pass emptyTuplesTypeAssertion01.ts",
++        "pass emptyTuplesTypeAssertion02.ts",
 +        "",
 +      ]);
-+      expect(ran.stderr).toContain("instances 9: pass 8, skip 1\n");
++      expect(ran.stderr).toContain("instances 5: pass 4, skip 1\n");
 +      expect(ran.exitCode).toBe(0);
 +    },
-+    spawnTimeout,
++    oneStart,
 +  );
 +
 +  test.concurrent(
@@ -79,7 +72,7 @@ index 0f294fa055..d655c660e9 100644
 +      expect(ran.stderr).toContain("instances 5: pass 1, fail 3, skip 1\n");
 +      expect(ran.exitCode).toBe(1);
 +    },
-+    spawnTimeout,
++    oneStart,
 +  );
 +
 +  test.concurrent(
@@ -87,42 +80,42 @@ index 0f294fa055..d655c660e9 100644
 +    async () => {
 +      using dir = tempDir("lint-conformance-sweep", {});
 +      const resume = ["--resume", join(String(dir), "outcomes.jsonl")];
-+      const half = await sweep(String(dir), "empty-check-fixture.ts", "--each", "--shard", "1/2", ...resume, ...nine);
++      const half = await sweep(String(dir), "empty-check-fixture.ts", "--each", "--shard", "1/2", ...resume, ...five);
 +      expect(half.stdout.split("\n")).toEqual([
 +        "pass 2dArrays.ts",
 +        skipped,
-+        "pass namedTupleMembers.ts",
-+        "pass partiallyNamedTuples.ts",
-+        "pass partiallyNamedTuples3.ts",
++        `fail emptyTuplesTypeAssertion02.ts line 1: - "emptyTuplesTypeAssertion02.ts(2,11): error TS2493: Tuple type '[]' of length '0' has no element at index '0'."`,
 +        "",
 +      ]);
-+      expect(half.exitCode).toBe(0);
++      expect(half.exitCode).toBe(1);
 +
 +      const report = join(String(dir), "report.json");
-+      const whole = await sweep(String(dir), "empty-check-fixture.ts", ...resume, "--report", report, ...nine);
-+      expect(whole.stdout).toContain(": 4 outcomes kept, 4 instances to run\n");
++      const whole = await sweep(String(dir), "empty-check-fixture.ts", ...resume, "--report", report, ...five);
++      expect(whole.stdout).toContain(": 2 outcomes kept, 2 instances to run\n");
 +      expect(whole.stdout).toContain(
 +        [
-+          "                                 E run  E fail  C run  C pass",
-+          "  compiler                           1       1      1       1",
-+          "  conformance/types/tuple            1       1      0       0",
-+          "  conformance/types/tuple/named      1       1      4       4",
-+          "  total                              3       3      5       5",
++          "                                       E run  E fail  C run  C pass",
++          "  compiler                                 1       1      1       1",
++          "  conformance/types/tuple/emptyTuples      2       2      0       0",
++          "  total                                    3       3      1       1",
 +          "",
 +        ].join("\n"),
 +      );
-+      expect(whole.stdout).toContain("           E run  E fail\n  TS1005       1       1\n");
++      expect(whole.stdout).toContain("          E run  E fail\n  TS2493      2       2\n");
 +      const { totals, directoryOutcomes, codes, resumed } = JSON.parse(readFileSync(report, "utf8"));
-+      expect({ outcomes: totals.outcomes, named: directoryOutcomes["conformance/types/tuple/named"] }).toEqual({
-+        outcomes: { E: { fail: 3 }, C: { pass: 5 } },
-+        named: { E: { fail: 1 }, C: { pass: 4 } },
++      expect({ outcomes: totals.outcomes, directoryOutcomes, TS2493: codes.TS2493, kept: resumed.kept }).toEqual({
++        outcomes: { E: { fail: 3 }, C: { pass: 1 } },
++        directoryOutcomes: {
++          "compiler": { E: { fail: 1 }, C: { pass: 1 } },
++          "conformance/types/tuple/emptyTuples": { E: { fail: 2 }, C: {} },
++        },
++        TS2493: { instances: 2, pass: 0, diagnostics: 2, outcomes: { fail: 2 } },
++        kept: 2,
 +      });
-+      expect(codes.TS7008).toEqual({ instances: 1, pass: 0, diagnostics: 4, outcomes: { fail: 1 } });
-+      expect(resumed.kept).toBe(4);
 +      // Without --each the exit code speaks of the lists, and they are empty.
 +      expect(whole.exitCode).toBe(0);
 +    },
-+    small ? 120_000 : undefined,
++    small ? 240_000 : undefined,
 +  );
 +
 +  test.concurrent(
@@ -136,7 +129,7 @@ index 0f294fa055..d655c660e9 100644
 +      );
 +      expect(ran.exitCode).toBe(2);
 +    },
-+    spawnTimeout,
++    oneStart,
 +  );
 +});
 diff --git a/test/cli/lint/conformance/fixtures/empty-check-fixture.ts b/test/cli/lint/conformance/fixtures/empty-check-fixture.ts

@@ -195,7 +195,10 @@ function unusedVars(scopeManager, ast, facts, filename, tokens) {
 			let from = null;
 			for (let n = u.node; n && !from; n = n.parent) { from = scopeManager.acquire(n, true); if (from && from.type === "functionExpressionName") from = from.childScopes[0]; }
 			from = from || scopeManager.scopes[0];
-			for (const token of tokens) if (token.range[0] >= u.from && token.range[1] <= u.to && token.type === "Identifier") { const v = lookup(from, token.value); if (v) textUsed.add(v); }
+			for (const token of tokens) if (token.range[0] >= u.from && token.range[1] <= u.to && token.type === "Identifier") {
+				// What a token stands for is not known: it is a read of the nearest variable of that name that is a type, and of the nearest that is a value.
+				for (const kind of ["isTypeVariable", "isValueVariable"]) for (let sc = from; sc; sc = sc.upper) { const v = sc.variables.find(x => x.name === token.value && x[kind]); if (v) { textUsed.add(v); break; } }
+			}
 		}
 	}
 	// The references of a variable that the view has: not those inside what is not built. The scopes are shared with the real rule: nothing is changed in them.

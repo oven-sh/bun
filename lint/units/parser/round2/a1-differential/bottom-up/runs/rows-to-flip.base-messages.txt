@@ -1,0 +1,43 @@
+"let x: if;"                                   => Unexpected if
+"let x: class;"                                => Unexpected class
+"let x: function;"                             => Unexpected function
+"let x: in;"                                   => Unexpected in
+"let x: extends;"                              => Unexpected extends ; Unexpected ; ; Unexpected end of file
+"let x: super;"                                => Unexpected super
+"let x: delete;"                               => Unexpected delete
+"let x: if.x;"                                 => Unexpected if ; Unexpected .
+"let x: class<T>;"                             => Unexpected class ; Unexpected ;
+"let x: | if;"                                 => Unexpected if
+"let x: A | if;"                               => Unexpected if
+"let x: A & class;"                            => Unexpected class
+"let x: keyof if;"                             => Unexpected if
+"let x: (if);"                                 => Unexpected if ; Expected ";" but found ")"
+"let x: (class);"                              => Unexpected class ; Expected ";" but found ")"
+"let x: `${if}`;"                              => Unexpected if
+"type X = { a(b = 1): A };"                    => Expected ")" but found "=" ; Unexpected 1
+"let x: { a(b = 1): A };"                      => Expected ")" but found "=" ; Unexpected 1
+"interface I { (a = 1): A }"                   => Expected ")" but found "=" ; Unexpected 1
+"type X = { a(public b: B): A };"              => Expected ")" but found "b" ; Unexpected )
+"interface I extends a() {}"                   => Expected "{" but found "(" ; Unexpected )
+"interface I extends a.b() {}"                 => Expected "{" but found "(" ; Unexpected )
+"let g: (a = 1) => void;"                      => Expected ")" but found "=" ; Expected ";" but found "1" ; Unexpected )
+"let x: ({ a = 1 }) => void;"                  => Unexpected =
+"let x: (public a: A) => void;"                => Expected ")" but found "a" ; Expected ";" but found ":" ; Expected ";" but found ")" ; Unexpected =>
+"let x: A<(a = 1) => void>;"                   => Expected ")" but found "=" ; Expected ">" but found "1" ; Unexpected )
+"class C extends B<(a = 1) => void> {}"        => Expected ")" but found "=" ; Expected ">" but found "1" ; Expected identifier but found ")" ; Expected ";" but
+"function f(public a: A) {}"                   => Expected ")" but found "a" ; Expected ";" but found ")"
+"const v = <in>x;"                             => The modifier "in" is not valid here ; Unexpected in
+"const v = <in>(x);"                           => The modifier "in" is not valid here ; Unexpected in
+"const v = <if>x;"                             => Unexpected if
+"const v = <class>x;"                          => Unexpected class ; Expected "{" but found ">" ; Expected "}" but found end of file
+"const v = <enum>x;"                           => Unexpected enum
+"const v = x as if;"                           => Unexpected if
+"const v = x as var;"                          => Unexpected var
+"const v = x satisfies if;"                    => Unexpected if
+"const v = (): if => x;"                       => Expected "=>" but found ":"
+"x as if;"                                     => Unexpected if
+"x as var;"                                    => Unexpected var
+"class C { m(public a: A) {} }"                => Expected ")" but found "a" ; Expected ";" but found ")" ; Expected identifier but found "{"
+"class C implements a() {}"                    => Expected "{" but found "(" ; Expected identifier but found ")"
+"export { a } from \"x\"\nwith { type: \"json\" };" => Expected "(" but found "{" ; Expected ")" but found ":" ; Unexpected }
+"export * from \"x\"\nwith { type: \"json\" };" => Expected "(" but found "{" ; Expected ")" but found ":" ; Unexpected }

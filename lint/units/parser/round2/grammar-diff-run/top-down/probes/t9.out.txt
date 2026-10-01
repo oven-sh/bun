@@ -1,0 +1,53 @@
+R>R  tsc parse[] grammar[]                      let f = (public a: A) => a;
+      base: Expected ")" but found "a"
+R>R  tsc parse[] grammar[TS1028@16]             let f = (public private a: A) => a;
+      base: Expected ")" but found "private"
+R>A  tsc parse[] grammar[TS1028@25]             let f = function (public private a: A) {};
+      base: Expected ")" but found "private"
+R>A  tsc parse[] grammar[]                      let o = { m(public a: A) {} };
+      base: Expected ")" but found "a"
+R>A  tsc parse[] grammar[TS1028@19]             let o = { m(public private a: A) {} };
+      base: Expected ")" but found "private"
+R>A  tsc parse[] grammar[TS1028@19]             class C { m(public private a: A) {} }
+      base: Expected ")" but found "private"
+A>A  tsc parse[] grammar[TS1028@29]             class C { constructor(public private a: A) {} }
+A>A  tsc parse[] grammar[TS1030@31]             class C { constructor(readonly readonly a: A) {} }
+R>A  tsc parse[] grammar[TS1028@23]             class C { set x(public public a: A) {} }
+      base: Expected ")" but found "public"
+R>A  tsc parse[] grammar[TS1028@26]             declare function f(public private a: A): void;
+      base: Expected ")" but found "private"
+R>A  tsc parse[] grammar[TS1028@18]             function f(public private a: A): void;
+      base: Expected ")" but found "private"
+R>A  tsc parse[] grammar[]                      function f(public a?: A) {}
+      base: Expected ")" but found "a"
+R>R  tsc parse[] grammar[TS1317@11]             function f(public ...a: A[]) {}
+      base: Expected ")" but found "..."
+R>R  tsc parse[TS1005@21] grammar[-]            function f(...public a: A[]) {}
+      base: Expected ")" but found "a"
+R>R  tsc parse[] grammar[TS1187@11]             function f(public {a}: A) {}
+      base: Expected ")" but found "{"
+R>R  tsc parse[TS1005@18] grammar[-]            function f(public⏎a: A) {}
+      base: Expected ")" but found "a"
+A>A  tsc parse[] grammar[]                      function f(readonly) {}
+R>A  tsc parse[] grammar[]                      function f(public readonly) {}
+      base: Expected ")" but found "readonly"
+R>A  tsc parse[] grammar[]                      function f(public public) {}
+      base: Expected ")" but found "public"
+R>A  tsc parse[] grammar[]                      type X = (public readonly) => void;
+      base: Expected ")" but found "readonly"
+R>A  tsc parse[] grammar[]                      type X = (public public) => void;
+      base: Expected ")" but found "public"
+R>A  tsc parse[] grammar[TS1028@20]             type X = { a(public private b: B): A };
+      base: Expected ")" but found "private"
+A>A  tsc parse[] grammar[TS2880@29]             let x: import("x", { assert: { a: "b" } });
+A>A  tsc parse[TS1005@39,TS1134@41] grammar[-]  let x: import("x", { with: { a: "b" } }, );
+R>A  tsc parse[] grammar[]                      type X = ({ 1n: a }) => void;
+      base: Unexpected 1n
+A>A  tsc parse[] grammar[TS1005@14]             let x: unique [A];
+A>A  tsc parse[] grammar[]                      let x: A.if;
+R>R  tsc parse[TS1005@14] grammar[-]            let x: (a = 1);
+      base: Expected ")" but found "="
+R>R  tsc parse[TS1005@10] grammar[-]            let x: [a = 1];
+      base: Expected "]" but found "="
+R>A  tsc parse[] grammar[]                      type X = (a: A = 1, b?) => void;
+      base: Expected ")" but found ":"

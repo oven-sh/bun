@@ -547,7 +547,12 @@ fn has_modifier_error(hir: &hir::File, name: u32) -> bool {
 // ───────────────────────────── the grammar of signatures ─────────────────────────────
 
 /// `checkGrammarTypeParameterList`: `<>`, which the summary has nothing of. (Not before an arrow function, where the parser refuses it.)
-fn check_grammar_type_parameter_list(hir: &hir::File, f: FnId, out: &mut Vec<Diagnostic>) -> bool {
+fn check_grammar_type_parameter_list(
+    c: &Checker<'_>,
+    hir: &hir::File,
+    f: FnId,
+    out: &mut Vec<Diagnostic>,
+) -> bool {
     let (text, func) = (&hir.text[..], &hir[f]);
     if !func.type_params.is_empty()
         || func.kind == FnKind::Arrow
@@ -567,11 +572,18 @@ fn check_grammar_type_parameter_list(hir: &hir::File, f: FnId, out: &mut Vec<Dia
         start: open as u32 - 1,
         code: 1098,
     });
+    c.note(open as u32 - 1, close as u32, 1098, vec![]);
     true
 }
 
 /// `checkGrammarParameterList`. Whether it objects to anything that ends the checks of the signature.
-fn check_grammar_parameter_list(hir: &hir::File, f: FnId, out: &mut Vec<Diagnostic>) -> bool {
+fn check_grammar_parameter_list(
+    c: &Checker<'_>,
+    file: FileId,
+    f: FnId,
+    out: &mut Vec<Diagnostic>,
+) -> bool {
+    let hir = c.hir(file);
     let (text, func) = (&hir.text[..], &hir[f]);
     let count = func.params.len();
     let mut seen_optional = false;
@@ -589,6 +601,7 @@ fn check_grammar_parameter_list(hir: &hir::File, f: FnId, out: &mut Vec<Diagnost
                     start: dots as u32 - 3,
                     code: 1014,
                 });
+                c.note(dots as u32 - 3, dots as u32, 1014, vec![]);
                 return true;
             }
             // Whether a signature without a body is ambient is not always known. One with a body is not.
@@ -614,6 +627,7 @@ fn check_grammar_parameter_list(hir: &hir::File, f: FnId, out: &mut Vec<Diagnost
                     start: name,
                     code: 1048,
                 });
+                c.note(name, c.end_of_pat(file, param.pat), 1048, vec![]);
                 return true;
             }
         } else if question.is_some() || param.flags.contains(Flags::OPTIONAL) {
@@ -623,6 +637,7 @@ fn check_grammar_parameter_list(hir: &hir::File, f: FnId, out: &mut Vec<Diagnost
                     start: name,
                     code: 1015,
                 });
+                c.note(name, c.end_of_pat(file, param.pat), 1015, vec![]);
                 return true;
             }
         } else if seen_optional && param.default.is_none() {
@@ -630,6 +645,7 @@ fn check_grammar_parameter_list(hir: &hir::File, f: FnId, out: &mut Vec<Diagnost
                 start: name,
                 code: 1016,
             });
+            c.note(name, c.end_of_pat(file, param.pat), 1016, vec![]);
             return true;
         }
     }
@@ -638,11 +654,13 @@ fn check_grammar_parameter_list(hir: &hir::File, f: FnId, out: &mut Vec<Diagnost
 
 /// `checkGrammarArrowFunction`. `is_reserved`: the file is `.mts` or `.cts`, where `<T>() => x` could be taken for JSX.
 fn check_grammar_arrow_function(
-    hir: &hir::File,
+    c: &Checker<'_>,
+    file: FileId,
     f: FnId,
     is_reserved: bool,
     out: &mut Vec<Diagnostic>,
 ) -> bool {
+    let hir = c.hir(file);
     let (text, func) = (&hir.text[..], &hir[f]);
     if func.kind != FnKind::Arrow {
         return false;
@@ -660,10 +678,11 @@ fn check_grammar_arrow_function(
             && let Some(end) = end
             && text.get(skip_trivia(text, end)) == Some(&b'>')
         {
-            out.push(Diagnostic {
-                start: start_with_modifiers(text, first.pos, first.flags, TYPE_PARAMETER_MODIFIERS),
-                code: 7060,
-            });
+            let start =
+                start_with_modifiers(text, first.pos, first.flags, TYPE_PARAMETER_MODIFIERS);
+            out.push(Diagnostic { start, code: 7060 });
+            let end = c.end_of_type_param(file, func.type_params.at(0));
+            c.note(start, end, 7060, vec![]);
         }
     }
     // A line ends between what comes before the arrow and the arrow.
@@ -697,6 +716,7 @@ fn check_grammar_arrow_function(
             start: func.anchor,
             code: 1200,
         });
+        c.note(func.anchor, func.anchor + 2, 1200, vec![]);
     }
     is_on_a_new_line
 }
@@ -736,10 +756,12 @@ fn use_strict_prologue(text: &[u8], open: usize) -> Option<u32> {
 
 /// `checkGrammarForUseStrictSimpleParameterList`
 fn check_use_strict_with_simple_parameters(
-    hir: &hir::File,
+    c: &Checker<'_>,
+    file: FileId,
     f: FnId,
     out: &mut Vec<Diagnostic>,
 ) -> bool {
+    let hir = c.hir(file);
     let func = &hir[f];
     let is_simple = |p: ParamId| {
         hir[p].default.is_none()
@@ -763,10 +785,23 @@ fn check_use_strict_with_simple_parameters(
                 code: 1346,
             }),
     );
+    for p in func.params.iter().filter(|&p| !is_simple(p)) {
+        c.note(hir[p].pos, c.end_of_param(file, p), 1346, vec![]);
+    }
     out.push(Diagnostic {
         start: directive,
         code: 1347,
     });
+    // The statement, with its `;`.
+    let end = skip_string(&hir.text, directive as usize).map_or(0, |end| {
+        let next = skip_trivia(&hir.text, end);
+        if hir.text.get(next) == Some(&b';') {
+            next + 1
+        } else {
+            end
+        }
+    });
+    c.note(directive, end as u32, 1347, vec![]);
     true
 }
 
@@ -1429,6 +1464,8 @@ struct Overload {
     parent: (FileId, u32, u32),
     /// Where an error about it goes: its name, or where a constructor starts.
     at: u32,
+    /// Where that error ends. 0: with the token at `at`.
+    end: u32,
     flags: Flags,
     is_optional: bool,
     /// As opposed to whatever else shares the symbol: a namespace, a class, an interface.
@@ -1446,7 +1483,12 @@ fn canonical_overload(first: Overload, implementation: Option<Overload>) -> Over
 
 /// `checkFlagAgreementBetweenOverloads` and `checkQuestionTokenAgreementBetweenOverloads`, as `checkFunctionOrConstructorSymbolWorker`
 /// calls them for the declarations `all` of a symbol. What is said about `file` is kept.
-fn check_overloads_agree(file: FileId, all: &[Overload], out: &mut Vec<Diagnostic>) {
+fn check_overloads_agree(
+    c: &Checker<'_>,
+    file: FileId,
+    all: &[Overload],
+    out: &mut Vec<Diagnostic>,
+) {
     const CHECKED: Flags = Flags::EXPORT
         .union(Flags::AMBIENT)
         .union(Flags::PRIVATE)
@@ -1492,18 +1534,21 @@ fn check_overloads_agree(file: FileId, all: &[Overload], out: &mut Vec<Diagnosti
                 continue;
             };
             out.push(Diagnostic { start: o.at, code });
+            c.note(o.at, o.end, code, vec![]);
         }
     }
     if is_some_optional != is_every_optional {
         let canonical = canonical_overload(first, implementation).is_optional;
-        out.extend(
-            all.iter()
-                .filter(|o| o.file == file && o.is_optional != canonical)
-                .map(|o| Diagnostic {
-                    start: o.at,
-                    code: 2386,
-                }),
-        );
+        for o in all
+            .iter()
+            .filter(|o| o.file == file && o.is_optional != canonical)
+        {
+            out.push(Diagnostic {
+                start: o.at,
+                code: 2386,
+            });
+            c.note(o.at, o.end, 2386, vec![]);
+        }
     }
 }
 
@@ -1569,6 +1614,11 @@ impl Checker<'_> {
                 let start = start_of_written_type(&hir.text, hir[decl.default].pos);
                 if resolution.states.get(&(file, tp)) == Some(&DefaultState::Circular) {
                     out.push(Diagnostic { start, code: 2716 });
+                    let end = self.end_of_type_node_from(file, decl.default, start);
+                    self.explain_to(start, end, 2716, |c| {
+                        let param = c.type_param(file, tp);
+                        vec![c.type_to_string(param)]
+                    });
                 } else {
                     // `getConstraintOfTypeParameter`: another declaration of a merged class or interface may write the constraint.
                     let param = self.type_param(file, tp);
@@ -1580,7 +1630,10 @@ impl Checker<'_> {
                         let constraint = self.instantiate(constraint, mapper);
                         let constraint = self.type_with_this_argument(constraint, default);
                         if self.is_known_not_to_fit(default, constraint) {
-                            self.report_not_assignable(default, constraint, start, 2344, out);
+                            let end = self.end_of_type_node_from(file, decl.default, start);
+                            self.report_not_assignable_with_end(
+                                default, constraint, start, end, 2344, out,
+                            );
                         }
                     }
                 }
@@ -1721,15 +1774,15 @@ impl Checker<'_> {
                     seen_default = true;
                     defaults.push((decl.default, list, index));
                 } else if seen_default {
-                    out.push(Diagnostic {
-                        start: start_with_modifiers(
-                            &hir.text,
-                            decl.pos,
-                            decl.flags,
-                            TYPE_PARAMETER_MODIFIERS,
-                        ),
-                        code: 2706,
-                    });
+                    let start = start_with_modifiers(
+                        &hir.text,
+                        decl.pos,
+                        decl.flags,
+                        TYPE_PARAMETER_MODIFIERS,
+                    );
+                    out.push(Diagnostic { start, code: 2706 });
+                    let end = self.end_of_type_param(file, p);
+                    self.explain_to(start, end, 2706, |_| vec![]);
                 }
             }
         }
@@ -1764,6 +1817,8 @@ impl Checker<'_> {
                             start: hir.types[t].pos,
                             code: 2744,
                         });
+                        let end = self.end_of_type_node(file, TypeNodeId(t as u32));
+                        self.explain_to(hir.types[t].pos, end, 2744, |_| vec![]);
                     }
                 }
                 at = parents[at.idx()];
@@ -1852,6 +1907,8 @@ impl Checker<'_> {
                     )
                 {
                     out.push(Diagnostic { start, code: 2637 });
+                    let end = self.end_of_type_param(file, tp);
+                    self.explain_to(start, end, 2637, |_| vec![]);
                     continue;
                 }
                 if modifiers == Flags::IN | Flags::OUT {
@@ -1899,6 +1956,15 @@ impl Checker<'_> {
                 self.reliability = reliability;
                 if is_wrong {
                     out.push(Diagnostic { start, code: 2636 });
+                    let end = self.end_of_type_param(file, tp);
+                    self.explain_to(start, end, 2636, |c| {
+                        let (source, target) = c.type_names_for_error_display(source, target);
+                        vec![source, target]
+                    });
+                    self.explain_chain(start, 2636, |c| {
+                        let relation = super::relate::Relation::Assignable;
+                        c.relation_chain_under(source, target, relation, 2636)
+                    });
                 }
             }
         }
@@ -1943,9 +2009,9 @@ impl Checker<'_> {
                 );
             let mut has_objected = !is_silent
                 && (is_named && has_modifier_error(hir, func.name_pos)
-                    || check_grammar_type_parameter_list(hir, f, out)
-                    || check_grammar_parameter_list(hir, f, out)
-                    || check_grammar_arrow_function(hir, f, is_reserved, out));
+                    || check_grammar_type_parameter_list(self, hir, f, out)
+                    || check_grammar_parameter_list(self, file, f, out)
+                    || check_grammar_arrow_function(self, file, f, is_reserved, out));
             // `IsFunctionLikeDeclaration`
             let is_declaration = match func.kind {
                 FnKind::Decl | FnKind::Expr | FnKind::Arrow | FnKind::Constructor => true,
@@ -1953,7 +2019,7 @@ impl Checker<'_> {
                 _ => false,
             };
             if !has_objected && is_declaration && checks_use_strict {
-                has_objected = check_use_strict_with_simple_parameters(hir, f, out);
+                has_objected = check_use_strict_with_simple_parameters(self, file, f, out);
             }
             if is_silent {
                 continue;
@@ -1968,6 +2034,7 @@ impl Checker<'_> {
                     if matches!(bound.fns[i].owner, FnOwner::Expr(_)) && !has_written_body(hir, f) {
                         if let Some(start) = self.end_of_bodiless_declaration(file, f) {
                             out.push(Diagnostic { start, code: 1005 });
+                            self.explain_to(start, start + 1, 1005, |_| vec!["{".to_owned()]);
                         }
                         continue;
                     }
@@ -1981,12 +2048,15 @@ impl Checker<'_> {
                                 start: func.name_pos,
                                 code: 1318,
                             });
+                            let end = self.end_of_name_at(file, func.name_pos);
+                            self.explain_to(func.name_pos, end, 1318, |_| vec![]);
                         }
                     } else if !is_ambient
                         && !is_abstract
                         && let Some(start) = self.end_of_bodiless_declaration(file, f)
                     {
                         out.push(Diagnostic { start, code: 1005 });
+                        self.explain_to(start, start + 1, 1005, |_| vec!["{".to_owned()]);
                     }
                 }
                 FnKind::Constructor => {
@@ -2010,19 +2080,24 @@ impl Checker<'_> {
                             start: start as u32,
                             code: 1092,
                         });
+                        // The list ends with its last parameter or the comma after that.
+                        let end = skip_angle_brackets(text, less_than)
+                            .map_or(0, |past| skip_trivia_back(text, past - 1));
+                        self.explain_to(start as u32, end as u32, 1092, |_| vec![]);
                     } else if func.ret.is_some() {
-                        out.push(Diagnostic {
-                            start: start_of_written_type(text, hir[func.ret].pos),
-                            code: 1093,
-                        });
+                        let start = start_of_written_type(text, hir[func.ret].pos);
+                        out.push(Diagnostic { start, code: 1093 });
+                        let end = self.end_of_type_node_from(file, func.ret, start);
+                        self.explain_to(start, end, 1093, |_| vec![]);
                     } else if text.get(func.anchor as usize) == Some(&b'(')
                         && let Some(close) = skip_balanced(text, func.anchor as usize)
                         && text.get(skip_trivia(text, close)) == Some(&b':')
                     {
-                        out.push(Diagnostic {
-                            start: skip_trivia(text, skip_trivia(text, close) + 1) as u32,
-                            code: 1093,
-                        });
+                        let colon = skip_trivia(text, close);
+                        let start = skip_trivia(text, colon + 1) as u32;
+                        out.push(Diagnostic { start, code: 1093 });
+                        let end = skip_type(text, colon + 1).map_or(0, |end| end as u32);
+                        self.explain_to(start, end, 1093, |_| vec![]);
                     }
                 }
                 _ => {}
@@ -2063,6 +2138,8 @@ impl Checker<'_> {
                         start: param.pos,
                         code: 1294,
                     });
+                    let end = self.end_of_param(file, p);
+                    self.explain_to(param.pos, end, 1294, |_| vec![]);
                 }
                 if func.kind == FnKind::Constructor
                     && matches!(hir[param.pat].kind, PatKind::Ident(known::constructor))
@@ -2080,6 +2157,11 @@ impl Checker<'_> {
             };
             if let Some(start) = this_parameter(hir, FnId(i as u32)) {
                 out.push(Diagnostic { start, code });
+                if func.this_ty.is_some() {
+                    let ty = start_of_written_type(&hir.text, hir[func.this_ty].pos);
+                    let end = self.end_of_type_node_from(file, func.this_ty, ty);
+                    self.explain_to(start, end, code, |_| vec![]);
+                }
             }
             // A `this` that is not the first parameter is listed in `params`.
             let is_this =
@@ -2088,6 +2170,10 @@ impl Checker<'_> {
                 start: hir[p].pos,
                 code,
             }));
+            for p in func.params.iter().filter(is_this) {
+                let end = self.end_of_param(file, p);
+                self.explain_to(hir[p].pos, end, code, |_| vec![]);
+            }
         }
     }
 
@@ -2114,6 +2200,10 @@ impl Checker<'_> {
                             start: member.pos,
                             code: 1267,
                         });
+                        let end = self.end_of_member_name(file, m);
+                        self.explain_to(member.pos, end, 1267, |c| {
+                            vec![c.source_text(file, member.pos, end)]
+                        });
                     }
                     MemberKind::Method
                         if member.flags.contains(Flags::ABSTRACT)
@@ -2123,6 +2213,10 @@ impl Checker<'_> {
                         out.push(Diagnostic {
                             start: member.pos,
                             code: 1245,
+                        });
+                        let end = self.end_of_member_name(file, m);
+                        self.explain_to(member.pos, end, 1245, |c| {
+                            vec![c.source_text(file, member.pos, end)]
                         });
                     }
                     MemberKind::Getter | MemberKind::Setter => {
@@ -2194,10 +2288,13 @@ impl Checker<'_> {
                 };
                 let (get, set) = (hir[getter].flags, hir[setter].flags);
                 let mut both = |code: u32| {
-                    out.extend([getter, setter].map(|m| Diagnostic {
-                        start: hir[m].pos,
-                        code,
-                    }))
+                    for m in [getter, setter] {
+                        out.push(Diagnostic {
+                            start: hir[m].pos,
+                            code,
+                        });
+                        self.note(hir[m].pos, self.end_of_member_name(file, m), code, vec![]);
+                    }
                 };
                 if get.contains(Flags::ABSTRACT) != set.contains(Flags::ABSTRACT) {
                     both(2676);
@@ -2229,10 +2326,10 @@ impl Checker<'_> {
                     let end = hir.types[t].pos as usize + 4;
                     let next = skip_trivia(text, end);
                     if word_at(text, next) == b"is" && !has_line_break(text, end, next) {
-                        out.push(Diagnostic {
-                            start: hir.types[t].pos,
-                            code: 1228,
-                        });
+                        let start = hir.types[t].pos;
+                        out.push(Diagnostic { start, code: 1228 });
+                        let end = skip_type(text, start as usize).map_or(0, |end| end as u32);
+                        self.explain_to(start, end, 1228, |_| vec![]);
                     }
                     continue;
                 }
@@ -2250,10 +2347,10 @@ impl Checker<'_> {
                         && word != b"extends"
                         && !has_line_break(text, end, next)
                     {
-                        out.push(Diagnostic {
-                            start: hir.types[t].pos,
-                            code: 1228,
-                        });
+                        let start = hir.types[t].pos;
+                        out.push(Diagnostic { start, code: 1228 });
+                        let end = skip_type(text, start as usize).map_or(0, |end| end as u32);
+                        self.explain_to(start, end, 1228, |_| vec![]);
                     }
                     continue;
                 }
@@ -2277,6 +2374,8 @@ impl Checker<'_> {
                     start: hir.types[t].pos,
                     code: 1228,
                 });
+                let end = self.end_of_type_node(file, node);
+                self.explain_to(hir.types[t].pos, end, 1228, |_| vec![]);
                 continue;
             };
             if param == known::this {
@@ -2321,9 +2420,12 @@ impl Checker<'_> {
             }
             let (narrowed, declared) = (self.type_from_node(file, ty), self.type_of_param(file, p));
             if self.is_known_not_to_fit(narrowed, declared) {
-                out.push(Diagnostic {
-                    start: start_of_written_type(text, hir[ty].pos),
-                    code: 2677,
+                let start = start_of_written_type(text, hir[ty].pos);
+                out.push(Diagnostic { start, code: 2677 });
+                let end = self.end_of_type_node_from(file, ty, start);
+                self.explain_to(start, end, 2677, |_| vec![]);
+                self.explain_chain(start, 2677, |c| {
+                    c.assignability_lines(narrowed, declared, 1)
                 });
             }
         }
@@ -2346,10 +2448,10 @@ impl Checker<'_> {
                 && has_written_body(hir, f)
                 && self.type_from_node(file, func.ret) == TypeId::VOID
             {
-                out.push(Diagnostic {
-                    start: start_of_written_type(&hir.text, hir[func.ret].pos),
-                    code: 2505,
-                });
+                let start = start_of_written_type(&hir.text, hir[func.ret].pos);
+                out.push(Diagnostic { start, code: 2505 });
+                let end = self.end_of_type_node_from(file, func.ret, start);
+                self.explain_to(start, end, 2505, |_| vec![]);
             }
         }
     }
@@ -2547,14 +2649,16 @@ impl Checker<'_> {
     fn check_async_functions_and_awaits(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let has_promise_type = self.global_type_symbol(known::Promise).is_some();
-        // Where it is written, what is awaited, where an error goes (nowhere, if none is asked for), and what is said of what has a
-        // `then` but is no promise.
-        let mut sites: Vec<(u32, Result<ExprId, TypeId>, Option<u32>, u32)> = Vec::new();
+        // Where it is written, what is awaited, where an error goes and on what (nowhere, if none is asked for), and what is said of
+        // what has a `then` but is no promise.
+        let mut sites: Vec<(u32, Result<ExprId, TypeId>, Option<(u32, Reported)>, u32)> =
+            Vec::new();
         for (i, e) in hir.exprs.iter().enumerate() {
             if let ExprKind::Await(operand) = e.kind
                 && !matches!(bound.expr_parent[i], Parent::None)
             {
-                sites.push((e.pos, Ok(operand), Some(e.pos), 0));
+                let node = Reported::Expr(ExprId(i as u32));
+                sites.push((e.pos, Ok(operand), Some((e.pos, node)), 0));
             }
         }
         let mut branches = Vec::new();
@@ -2568,7 +2672,7 @@ impl Checker<'_> {
             {
                 continue;
             }
-            let whole = self.start_of_function_error(file, f);
+            let whole = (self.start_of_function_error(file, f), Reported::Function(f));
             let is_annotated = func.ret.is_some();
             if is_annotated && !func.flags.contains(Flags::GENERATOR) {
                 let ret = self.type_from_node(file, func.ret);
@@ -2581,6 +2685,11 @@ impl Checker<'_> {
                 {
                     if has_promise_type && self.is_global_ref(ret, known::Promise).is_none() {
                         out.push(Diagnostic { start, code: 1064 });
+                        let end = self.end_of_type_node_from(file, func.ret, start);
+                        self.explain_to(start, end, 1064, |c| {
+                            let awaited = c.awaited_no_alias(ret).unwrap_or(TypeId::VOID);
+                            vec![c.type_to_string(awaited)]
+                        });
                         // What could have been meant is part of the message: it is awaited for that, and no more is said.
                         sites.push((start, Err(ret), None, 0));
                     } else {
@@ -2591,15 +2700,18 @@ impl Checker<'_> {
             // `checkReturnExpression` where it says what it returns, `checkAndAggregateReturnExpressionTypes` and `getReturnTypeFromBody`
             // where it does not.
             let is_block = matches!(func.body, FnBody::Block(_));
-            let mut returned: Vec<(ExprId, u32)> = Vec::new();
+            let mut returned: Vec<(ExprId, (u32, Reported))> = Vec::new();
             match func.body {
-                FnBody::Expr(e) => returned.push((e, self.start_of(file, e))),
+                FnBody::Expr(e) => {
+                    returned.push((e, (self.start_of(file, e), Reported::Written(e))))
+                }
                 FnBody::Block(_) => {
                     for s in bound.ids(bound.fns[i].returns) {
                         if let StmtKind::Return(e) = hir[s].kind
                             && e.is_some()
                         {
-                            returned.push((e, hir[s].pos));
+                            // `GetErrorRangeForNode`: the keyword.
+                            returned.push((e, (hir[s].pos, Reported::Token)));
                         }
                     }
                 }
@@ -2652,15 +2764,19 @@ impl Checker<'_> {
             state.found = 0;
             state.stack.clear();
             self.look_for_awaited_type(ty, &mut state);
-            let Some(start) = start else { continue };
+            let Some((start, node)) = start else { continue };
             if state.found & Awaiting::UNKNOWN != 0 {
                 continue;
             }
             if state.found & Awaiting::CIRCULAR != 0 {
                 out.push(Diagnostic { start, code: 1062 });
+                let end = end_of_reported(self, file, node);
+                self.explain_to(start, end, 1062, |_| vec![]);
             }
             if state.found & Awaiting::THENABLE != 0 && code != 0 {
                 out.push(Diagnostic { start, code });
+                let end = end_of_reported(self, file, node);
+                self.explain_to(start, end, code, |_| vec![]);
             }
         }
     }
@@ -2685,6 +2801,8 @@ impl Checker<'_> {
                     start: e.pos,
                     code: 2712,
                 });
+                let end = self.end_inside_parentheses(file, ExprId(i as u32));
+                self.explain_to(e.pos, end, 2712, |_| vec![]);
             }
         }
         // `getReturnTypeFromBody` only gets there for a function that returns nothing, calls of itself aside.
@@ -2724,10 +2842,10 @@ impl Checker<'_> {
                 _ => false,
             };
             if is_asked {
-                out.push(Diagnostic {
-                    start: self.start_of_function_error(file, f),
-                    code: 2705,
-                });
+                let start = self.start_of_function_error(file, f);
+                out.push(Diagnostic { start, code: 2705 });
+                let end = end_of_function_error(self, file, f);
+                self.explain_to(start, end, 2705, |_| vec![]);
             }
         }
     }
@@ -2821,6 +2939,12 @@ impl Checker<'_> {
                     file: of,
                     parent: (of, kind, id),
                     at,
+                    // Of a constructor, `GetErrorRangeForNode` ends with the keyword.
+                    end: if of == file && self.explains {
+                        self.end_of_name_at(of, member.pos)
+                    } else {
+                        0
+                    },
                     flags: member.flags & checked,
                     is_optional: member.flags.contains(Flags::OPTIONAL),
                     is_function: true,
@@ -2843,7 +2967,7 @@ impl Checker<'_> {
                 group.clear();
                 group.extend(entries[start..end].iter().map(|e| e.2));
                 let said = out.len();
-                check_overloads_agree(file, &group, out);
+                check_overloads_agree(self, file, &group, out);
                 // `declareSymbolEx`: a name is what it is first declared as. After a property or an accessor, each method is a symbol of
                 // its own, with nothing to agree with.
                 if out.len() > said
@@ -2943,7 +3067,7 @@ impl Checker<'_> {
                             .iter()
                             .map(|&i| overload_of_declared(&all[i], file, index as u32)),
                     );
-                    check_overloads_agree(file, &overloads, out);
+                    check_overloads_agree(&*self, file, &overloads, out);
                 }
             });
         }
@@ -2998,7 +3122,7 @@ impl Checker<'_> {
                     overloads.extend(group.iter().map(|&i| {
                         overload_of_declared(&all[i], sharing[homes[i]].file, homes[i] as u32)
                     }));
-                    check_overloads_agree(file, &overloads, out);
+                    check_overloads_agree(&*self, file, &overloads, out);
                 }
             });
         }
@@ -3213,17 +3337,27 @@ impl Checker<'_> {
                 _ => continue,
             };
             out.push(Diagnostic { start, code: 1294 });
+            // An enum and a namespace are pointed at by their names.
+            if matches!(
+                s.kind,
+                StmtKind::ImportEquals(_) | StmtKind::ExportAssign(_)
+            ) {
+                let end = self.end_of_stmt(file, StmtId(i as u32));
+                self.explain_to(start, end, 1294, |_| vec![]);
+            }
         }
         // `<T>e`, from the `<`.
         for (i, e) in hir.exprs.iter().enumerate() {
             if matches!(bound.expr_parent[i], Parent::None) {
                 continue;
             }
-            let less_than = match e.kind {
+            // Where the `<` ends, and the `>`.
+            let (less_than, close) = match e.kind {
                 // The type comes before the operand. In `x as T` it comes after.
-                ExprKind::As { expr, ty } if hir[ty].pos < hir[expr].pos => {
-                    skip_trivia_back(text, start_of_written_type(text, hir[ty].pos) as usize)
-                }
+                ExprKind::As { expr, ty } if hir[ty].pos < hir[expr].pos => (
+                    skip_trivia_back(text, start_of_written_type(text, hir[ty].pos) as usize),
+                    skip_trivia_back(text, self.start_of(file, expr) as usize),
+                ),
                 ExprKind::AsConst(operand) => {
                     let close = skip_trivia_back(text, self.start_of(file, operand) as usize);
                     if !text[..close].ends_with(b">") {
@@ -3233,7 +3367,7 @@ impl Checker<'_> {
                     if word_before(text, word) != b"const" {
                         continue;
                     }
-                    skip_trivia_back(text, word - 5)
+                    (skip_trivia_back(text, word - 5), close)
                 }
                 _ => continue,
             };
@@ -3242,6 +3376,7 @@ impl Checker<'_> {
                     start: less_than as u32 - 1,
                     code: 1294,
                 });
+                self.explain_to(less_than as u32 - 1, close as u32, 1294, |_| vec![]);
             }
         }
     }
@@ -3259,6 +3394,7 @@ fn overload_of_declared(d: &Declared, file: FileId, block: u32) -> Overload {
         file,
         parent: (file, 3, block),
         at: d.at,
+        end: 0,
         flags: d.flags & (Flags::EXPORT | Flags::AMBIENT),
         is_optional: false,
         is_function: d.what == DeclaredAs::Function,
@@ -3279,6 +3415,44 @@ enum DefaultState {
 struct DefaultResolution {
     states: FxHashMap<(FileId, TypeParamId), DefaultState>,
     done: FxHashSet<(FileId, TypeNodeId)>,
+}
+
+/// What an error is reported on, which says where it ends.
+#[derive(Copy, Clone)]
+enum Reported {
+    /// One token.
+    Token,
+    /// An expression, without the parentheses around it.
+    Expr(ExprId),
+    /// An expression as it is written.
+    Written(ExprId),
+    /// `GetErrorRangeForNode` of a function.
+    Function(FnId),
+}
+
+/// Where the error that starts at `start_of_function_error` ends.
+fn end_of_function_error(c: &Checker<'_>, file: FileId, f: FnId) -> u32 {
+    let (hir, bound) = (c.hir(file), c.bound(file));
+    let func = &hir[f];
+    match (func.kind, bound.fns[f.idx()].owner) {
+        (FnKind::Arrow | FnKind::Expr, FnOwner::Expr(e)) => c.error_end_inside_parentheses(file, e),
+        (FnKind::Constructor, FnOwner::Member(m)) => c.end_of_name_at(file, hir[m].pos),
+        (FnKind::Method | FnKind::Getter | FnKind::Setter, _) => {
+            c.end_of_name_at(file, func.name_pos)
+        }
+        _ if func.name.is_some() => c.end_of_name_at(file, func.name_pos),
+        _ => c.end_of_token_at(file, func.pos),
+    }
+}
+
+/// Where an error reported on `node` ends.
+fn end_of_reported(c: &Checker<'_>, file: FileId, node: Reported) -> u32 {
+    match node {
+        Reported::Token => 0,
+        Reported::Expr(e) => c.end_inside_parentheses(file, e),
+        Reported::Written(e) => c.end_of_expr(file, e),
+        Reported::Function(f) => end_of_function_error(c, file, f),
+    }
 }
 
 /// What `look_for_awaited_type` keeps track of.

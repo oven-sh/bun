@@ -67,6 +67,10 @@ impl Checker<'_> {
                     start: hir.classes[c].name_pos,
                     code: 2310,
                 });
+                self.explain(hir.classes[c].name_pos, 2310, |c| {
+                    let ty = c.declared_type(own);
+                    vec![c.type_to_string(ty)]
+                });
             }
         }
         for i in 0..hir.interfaces.len() {
@@ -78,6 +82,10 @@ impl Checker<'_> {
                 out.push(Diagnostic {
                     start: hir.interfaces[i].name_pos,
                     code: 2310,
+                });
+                self.explain(hir.interfaces[i].name_pos, 2310, |c| {
+                    let ty = c.declared_type(own);
+                    vec![c.type_to_string(ty)]
                 });
             }
         }
@@ -91,10 +99,11 @@ impl Checker<'_> {
                     .get(&(file, TypeNodeId(n as u32)))
                     .is_some()
             {
-                out.push(Diagnostic {
-                    start: start_of_constraint(hir, hir[hir[m].param].constraint),
-                    code: 2313,
-                });
+                let param = &hir[hir[m].param];
+                let start = start_of_constraint(hir, param.constraint);
+                out.push(Diagnostic { start, code: 2313 });
+                let end = self.end_of_type_node_from(file, param.constraint, start);
+                self.note(start, end, 2313, vec![self.atom_text(param.name)]);
             }
         }
         self.check_circular_mapped_properties(file, out);
@@ -118,10 +127,11 @@ impl Checker<'_> {
                 }
             }
             if is_circular {
-                out.push(Diagnostic {
-                    start: start_of_constraint(hir, constraint),
-                    code: 2313,
-                });
+                let start = start_of_constraint(hir, constraint);
+                out.push(Diagnostic { start, code: 2313 });
+                let end = self.end_of_type_node_from(file, constraint, start);
+                let name = self.atom_text(hir.type_params[p].name);
+                self.note(start, end, 2313, vec![name]);
             }
         }
     }
@@ -155,10 +165,18 @@ impl Checker<'_> {
                 PatParent::Param(p) => (hir[p].ty.is_some(), hir[p].default.is_none(), hir[p].pos),
                 _ => (false, false, hir[pat].pos),
             };
+            let code = if is_annotated { 2502 } else { 7022 };
             if is_annotated {
                 out.push(Diagnostic { start, code: 2502 });
             } else if no_implicit_any && !is_bare_parameter {
                 out.push(Diagnostic { start, code: 7022 });
+            }
+            if let PatKind::Ident(name) = hir[pat].kind {
+                let end = match bound.pat_parent[i] {
+                    PatParent::Param(p) => self.end_of_param(file, p),
+                    _ => 0,
+                };
+                self.note(start, end, code, vec![self.atom_text(name)]);
             }
         }
         for i in 0..hir.members.len() {
@@ -179,11 +197,13 @@ impl Checker<'_> {
                         start: hir[member].pos,
                         code: 2502,
                     });
+                    self.note_at_member_name(file, member, member, 2502);
                 } else if no_implicit_any {
                     out.push(Diagnostic {
                         start: hir[member].pos,
                         code: 7022,
                     });
+                    self.note_at_member_name(file, member, member, 7022);
                 }
                 continue;
             }
@@ -246,11 +266,13 @@ impl Checker<'_> {
                     start: hir[g].pos,
                     code: 2502,
                 });
+                self.note_at_member_name(file, g, first, 2502);
             } else if let Some(s) = setter.filter(|&s| setter_is_annotated(s)) {
                 out.push(Diagnostic {
                     start: hir[s].pos,
                     code: 2502,
                 });
+                self.note_at_member_name(file, s, first, 2502);
             } else if let Some(g) = getter
                 && no_implicit_any
             {
@@ -258,6 +280,7 @@ impl Checker<'_> {
                     start: hir[g].pos,
                     code: 7023,
                 });
+                self.note_at_member_name(file, g, first, 7023);
             }
         }
         // The circle of a composite signature is reported at its first member, which may come before the function that closes it.
@@ -300,6 +323,8 @@ impl Checker<'_> {
                 };
                 if let Some(start) = self.name_of_function(file, accessor) {
                     out.push(Diagnostic { start, code });
+                    let end = self.end_of_name_at(file, start);
+                    self.note(start, end, code, vec![self.source_text(file, start, end)]);
                 }
                 continue;
             }
@@ -308,6 +333,8 @@ impl Checker<'_> {
                     start: hir[hir[func].ret].pos,
                     code: 2577,
                 });
+                let end = self.end_of_type_node(file, hir[func].ret);
+                self.note(hir[hir[func].ret].pos, end, 2577, Vec::new());
             } else if no_implicit_any {
                 self.report_implicit_any_return(file, func, out);
             }
@@ -316,6 +343,17 @@ impl Checker<'_> {
             self.check_circular_exports(file, out);
             self.check_circular_assignment_declarations(file, out);
         }
+    }
+
+    /// What is noted of the error `code` on the name of `member`: `symbolToString` of its symbol, which `first` declares first.
+    fn note_at_member_name(&self, file: FileId, member: MemberId, first: MemberId, code: u32) {
+        let name = self.source_text(
+            file,
+            self.hir(file)[first].pos,
+            self.end_of_member_name(file, first),
+        );
+        let end = self.end_of_member_name(file, member);
+        self.note(self.hir(file)[member].pos, end, code, vec![name]);
     }
 
     /// `symbol.ValueDeclaration` of the CommonJS export `symbol` of `file`: the first assignment that sets it. `None` if `symbol` has
@@ -366,6 +404,14 @@ impl Checker<'_> {
             self.type_of_symbol(sym);
             if self.p.circular_symbols.get(&sym).is_some() {
                 out.push(Diagnostic { start, code: 7022 });
+                let end = match symbol.decls.first() {
+                    Some(&Decl::ExportExpr(stmt)) => self.end_of_stmt(file, stmt),
+                    _ => match self.commonjs_value_declaration(file, symbol) {
+                        Some(assignment) => self.end_inside_parentheses(file, assignment),
+                        None => 0,
+                    },
+                };
+                self.explain_to(start, end, 7022, |c| vec![c.symbol_to_string(sym)]);
             }
         }
     }
@@ -392,10 +438,20 @@ impl Checker<'_> {
                 .get(&(file, declaration))
                 .is_some()
             {
-                out.push(Diagnostic {
-                    start: self.start_inside_parentheses(file, declaration),
-                    code: 7022,
-                });
+                let start = self.start_inside_parentheses(file, declaration);
+                out.push(Diagnostic { start, code: 7022 });
+                // `GetNameOfDeclaration`
+                let name = match hir[checked].kind {
+                    ExprKind::Dot { name, .. } => self.atom_text(name),
+                    ExprKind::Index { index, .. } => self.source_text(
+                        file,
+                        self.start_inside_parentheses(file, index),
+                        self.end_inside_parentheses(file, index),
+                    ),
+                    _ => continue,
+                };
+                let end = self.end_inside_parentheses(file, declaration);
+                self.note(start, end, 7022, vec![name]);
             }
         }
     }
@@ -426,6 +482,9 @@ impl Checker<'_> {
                     start: node.pos,
                     code: 2615,
                 });
+                // Which property of which mapped type is not kept.
+                let end = self.end_of_type_node(file, TypeNodeId(n as u32));
+                self.note(node.pos, end, 2615, Vec::new());
             }
         }
     }
@@ -503,11 +562,19 @@ impl Checker<'_> {
         out: &mut Vec<Diagnostic>,
     ) {
         match self.name_of_function(file, func) {
-            Some(start) => out.push(Diagnostic { start, code: 7023 }),
-            None => out.push(Diagnostic {
-                start: self.hir(file)[func].pos,
-                code: 7024,
-            }),
+            Some(start) => {
+                out.push(Diagnostic { start, code: 7023 });
+                let end = self.end_of_name_at(file, start);
+                self.note(start, end, 7023, vec![self.source_text(file, start, end)]);
+            }
+            None => {
+                let start = self.hir(file)[func].pos;
+                out.push(Diagnostic { start, code: 7024 });
+                if let FnOwner::Expr(e) = self.bound(file).fns[func.idx()].owner {
+                    let end = self.error_end_inside_parentheses(file, e);
+                    self.note(start, end, 7024, Vec::new());
+                }
+            }
         }
     }
 

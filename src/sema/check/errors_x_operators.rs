@@ -16,6 +16,7 @@
 
 use super::errors::Diagnostic;
 use super::errors_x_signatures::has_parse_diagnostics;
+use super::explain::Line;
 use super::*;
 use crate::bind::{FnOwner, MemberOwner, Parent, PatParent};
 use crate::resolve::ScriptTarget;
@@ -27,7 +28,7 @@ impl Checker<'_> {
             return;
         }
         let mut sites = Vec::new();
-        let mut awaiting = Awaiting::new(1320);
+        let mut awaiting = Awaiting::new(file, 1320);
         for i in 0..hir.exprs.len() {
             if matches!(bound.expr_parent[i], Parent::None) {
                 continue;
@@ -46,10 +47,14 @@ impl Checker<'_> {
                 // `checkAssertion`
                 ExprKind::AsConst(operand) => {
                     if !is_valid_const_assertion_argument(self, file, operand) {
-                        out.push(Diagnostic {
-                            start: start_of_const_asserted(self, file, operand),
-                            code: 1355,
-                        });
+                        let start = start_of_const_asserted(self, file, operand);
+                        out.push(Diagnostic { start, code: 1355 });
+                        let end = if start < self.start_inside_parentheses(file, operand) {
+                            self.end_of_expr_from(file, operand, start)
+                        } else {
+                            self.error_end_inside_parentheses(file, operand)
+                        };
+                        self.note(start, end, 1355, Vec::new());
                     }
                 }
                 ExprKind::Satisfies { expr, ty } => check_satisfies(self, file, expr, ty, out),
@@ -71,7 +76,7 @@ impl Checker<'_> {
                 ExprKind::Await(operand) if !matches!(hir[operand].kind, ExprKind::Await(_)) => {
                     let ty = self.type_of_expr(file, operand);
                     if !self.is_uncertain(file, operand) {
-                        awaiting.begin(hir.exprs[i].pos);
+                        awaiting.begin(hir.exprs[i].pos, ErrorNode::Inside(e));
                         has_awaited_type(self, ty, &mut awaiting);
                         if !awaiting.unknown {
                             out.append(&mut awaiting.said);
@@ -95,6 +100,7 @@ impl Checker<'_> {
                             input,
                             sent: TypeId::UNDEFINED,
                             at,
+                            node: ErrorNode::Written(inner),
                         });
                     }
                 }
@@ -142,6 +148,7 @@ impl Checker<'_> {
                 input: given,
                 sent: TypeId::UNDEFINED,
                 at,
+                node: ErrorNode::Written(expr),
             });
             if pattern.is_some() && self.is_known(given) && !self.is_any(given) {
                 let input = self.iterated_type(given, is_await);
@@ -170,6 +177,7 @@ impl Checker<'_> {
                 input: given,
                 sent: TypeId::UNDEFINED,
                 at: hir.pats[p].pos,
+                node: ErrorNode::Pat(PatId(p as u32)),
             });
         }
         // What is found wrong with the way something is gone through is said the first time it is gone through that way.
@@ -240,9 +248,11 @@ fn check_grammar_rest_element(
     let before = end_of_previous_token(&hir.text, (start as usize).min(hir.text.len()));
     if !is_last {
         out.push(Diagnostic { start, code: 2462 });
+        c.note(start, c.end_of_pat(file, name), 2462, Vec::new());
     } else if hir.text[..before].ends_with(b":") {
         // `...a: b`: the property name is not kept.
         out.push(Diagnostic { start, code: 2566 });
+        c.note(start, c.end_of_pat(file, name), 2566, Vec::new());
     } else if default.is_some()
         && let Some(start) = start_of_equals_before(c, file, default)
     {
@@ -284,6 +294,28 @@ fn error_start_inside_parentheses(c: &Checker<'_>, file: FileId, e: ExprId) -> u
         ExprKind::Class(class) if hir[class].name.is_some() => hir[class].name_pos,
         ExprKind::Satisfies { ty, .. } => start_of_satisfies(hir, ty).unwrap_or(start),
         _ => start,
+    }
+}
+
+/// The node an error is about.
+#[derive(Copy, Clone)]
+enum ErrorNode {
+    /// An expression as it is written, in its parentheses.
+    Written(ExprId),
+    /// An expression less the parentheses around it.
+    Inside(ExprId),
+    Pat(PatId),
+}
+
+/// `GetErrorRangeForNode`: where an error about `node` ends. 0 if nobody is going to read it.
+fn error_end(c: &Checker<'_>, file: FileId, node: ErrorNode) -> u32 {
+    if !c.explains {
+        return 0;
+    }
+    match node {
+        ErrorNode::Written(e) => c.error_end_of(file, e),
+        ErrorNode::Inside(e) => c.error_end_inside_parentheses(file, e),
+        ErrorNode::Pat(pat) => c.end_of_pat(file, pat),
     }
 }
 
@@ -710,10 +742,9 @@ fn check_binary_like(c: &mut Checker<'_>, file: FileId, e: ExprId, out: &mut Vec
                 && c.is_assignable(r, TypeId::BIGINT)
                 && language_version(c) < ScriptTarget::ES2016
             {
-                out.push(Diagnostic {
-                    start: c.start_inside_parentheses(file, e),
-                    code: 2791,
-                });
+                let start = c.start_inside_parentheses(file, e);
+                out.push(Diagnostic { start, code: 2791 });
+                c.note(start, c.end_inside_parentheses(file, e), 2791, Vec::new());
             }
             if !both_fit {
                 return;
@@ -727,9 +758,23 @@ fn check_binary_like(c: &mut Checker<'_>, file: FileId, e: ExprId, out: &mut Vec
                 && let Some(EnumValue::Number(bits)) = c.constant_value(file, right)
                 && f64::from_bits(bits).abs() >= 32.0
             {
-                out.push(Diagnostic {
-                    start: c.start_inside_parentheses(file, e),
-                    code: 6807,
+                let start = c.start_inside_parentheses(file, e);
+                out.push(Diagnostic { start, code: 6807 });
+                let end = c.end_inside_parentheses(file, e);
+                c.explain_to(start, end, 6807, |c| {
+                    let operator = match (op, is_assignment) {
+                        (BinOp::Shl, false) => "<<",
+                        (BinOp::Shl, true) => "<<=",
+                        (BinOp::Shr, false) => ">>",
+                        (BinOp::Shr, true) => ">>=",
+                        (_, false) => ">>>",
+                        (_, true) => ">>>=",
+                    };
+                    vec![
+                        c.source_text(file, c.start_of(file, left), c.end_of_expr(file, left)),
+                        operator.to_owned(),
+                        crate::atom::number_to_string(f64::from_bits(bits) % 32.0),
+                    ]
                 });
             }
         }
@@ -765,10 +810,15 @@ fn check_binary_like(c: &mut Checker<'_>, file: FileId, e: ExprId, out: &mut Vec
                 || is_literal_expression_of_object(hir, right))
                 && (!hir.is_js || matches!(op, BinOp::EqEqEq | BinOp::NotEqEq))
             {
-                out.push(Diagnostic {
-                    start: c.start_inside_parentheses(file, e),
-                    code: 2839,
-                });
+                let start = c.start_inside_parentheses(file, e);
+                out.push(Diagnostic { start, code: 2839 });
+                let always = if matches!(op, BinOp::EqEq | BinOp::EqEqEq) {
+                    "false"
+                } else {
+                    "true"
+                };
+                let end = c.end_inside_parentheses(file, e);
+                c.note(start, end, 2839, vec![always.to_owned()]);
             }
         }
         BinOp::Instanceof => check_instanceof(c, file, left, right, out),
@@ -804,10 +854,9 @@ fn check_reference_expression(
         ExprKind::Dot { .. } | ExprKind::Index { .. } => optional_chain,
         _ => invalid,
     };
-    out.push(Diagnostic {
-        start: error_start(c, file, e),
-        code,
-    });
+    let start = error_start(c, file, e);
+    out.push(Diagnostic { start, code });
+    c.note(start, c.error_end_of(file, e), code, Vec::new());
     false
 }
 
@@ -901,6 +950,7 @@ fn note_assignment_pattern(
                 input: source,
                 sent: TypeId::UNDEFINED,
                 at: hir[target].pos,
+                node: ErrorNode::Inside(target),
             });
             let is_pattern = |item: ExprId| match hir[item].kind {
                 ExprKind::Spread(rest) => is_nested_pattern(hir, rest),
@@ -980,6 +1030,7 @@ fn check_assignment_pattern(
                 if is_rest && i + 1 < props.len() {
                     if let Some(start) = start_of_dots_before(c, file, prop.value) {
                         out.push(Diagnostic { start, code: 2462 });
+                        c.note(start, c.end_of_prop(file, p), 2462, Vec::new());
                     }
                 } else if is_rest || matches!(prop.kind, PropKind::Init | PropKind::Shorthand) {
                     check_assignment_element(c, file, prop.value, is_rest, out);
@@ -990,10 +1041,11 @@ fn check_assignment_pattern(
             for (i, item) in hir.ids(items).enumerate() {
                 match hir[item].kind {
                     ExprKind::Missing => {}
-                    ExprKind::Spread(_) if i + 1 < items.len() => out.push(Diagnostic {
-                        start: hir[item].pos,
-                        code: 2462,
-                    }),
+                    ExprKind::Spread(_) if i + 1 < items.len() => {
+                        let start = hir[item].pos;
+                        out.push(Diagnostic { start, code: 2462 });
+                        c.note(start, c.end_of_expr(file, item), 2462, Vec::new());
+                    }
                     ExprKind::Spread(rest) => match hir[rest].kind {
                         ExprKind::Assign {
                             op: None, value, ..
@@ -1088,11 +1140,13 @@ fn check_assignment_operator(
         && type_of_property_of_type(c, object, name)
             .is_some_and(|declared| c.contains_missing_type(declared));
     let at = c.start_of(file, target);
-    if !c.check_assignable(
+    let end = error_end(c, file, ErrorNode::Written(target));
+    if !c.check_assignable_with_end(
         file,
         source,
         wanted,
         at,
+        end,
         value,
         if is_mismatch { 2412 } else { 2322 },
         out,
@@ -1174,17 +1228,25 @@ fn check_unary(
     }
     c.check_not_nullish(file, operand, ty, out);
     if maybe_type_of_kind_considering_base_constraint(c, ty, Checker::is_symbol_like) {
-        out.push(Diagnostic {
-            start: error_start(c, file, operand),
-            code: 2469,
-        });
+        let start = error_start(c, file, operand);
+        out.push(Diagnostic { start, code: 2469 });
+        let operator = match op {
+            UnOp::Plus => "+",
+            UnOp::Minus => "-",
+            _ => "~",
+        };
+        let end = c.error_end_of(file, operand);
+        c.note(start, end, 2469, vec![operator.to_owned()]);
     }
     if op == UnOp::Plus
         && maybe_type_of_kind_considering_base_constraint(c, ty, Checker::is_bigint_like)
     {
-        out.push(Diagnostic {
-            start: error_start(c, file, operand),
-            code: 2736,
+        let start = error_start(c, file, operand);
+        out.push(Diagnostic { start, code: 2736 });
+        let end = c.error_end_of(file, operand);
+        c.explain_to(start, end, 2736, |c| {
+            let base = c.base_of_literal(ty);
+            vec!["+".to_owned(), c.type_to_string(base)]
         });
     }
 }
@@ -1268,10 +1330,9 @@ fn check_template_spans(
             && !c.is_uncertain(file, span)
             && maybe_type_of_kind_considering_base_constraint(c, ty, Checker::is_symbol_like)
         {
-            out.push(Diagnostic {
-                start: error_start(c, file, span),
-                code: 2731,
-            });
+            let start = error_start(c, file, span);
+            out.push(Diagnostic { start, code: 2731 });
+            c.note(start, c.error_end_of(file, span), 2731, Vec::new());
         }
     }
 }
@@ -1313,10 +1374,9 @@ fn check_tagged_template(
         if matches!(c.bound(file).expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Array(_)))
             && !is_parenthesized(hir, e)
         {
-            out.push(Diagnostic {
-                start: error_start(c, file, data.callee),
-                code: 2796,
-            });
+            let start = error_start(c, file, data.callee);
+            out.push(Diagnostic { start, code: 2796 });
+            c.note(start, c.error_end_of(file, data.callee), 2796, Vec::new());
         }
     }
     // `resolveUntypedCall`: the template is looked at like one without a tag.
@@ -1366,10 +1426,14 @@ fn is_has_instance_applicable(
         }
         if !is_related_for_sure(c, r, wanted, by_subtype)? {
             if let Some(out) = report {
-                out.push(Diagnostic {
-                    start: error_start(c, file, right),
-                    code: 2684,
+                let start = error_start(c, file, right);
+                out.push(Diagnostic { start, code: 2684 });
+                let end = c.error_end_of(file, right);
+                c.explain_to(start, end, 2684, |c| {
+                    let (given, expected) = c.type_names_for_error_display(r, wanted);
+                    vec![given, expected]
                 });
+                c.explain_chain(start, 2684, |c| c.assignability_chain(r, wanted));
             }
             return Some(false);
         }
@@ -1392,7 +1456,8 @@ fn is_has_instance_applicable(
             node = expr;
         }
         let at = error_start_inside_parentheses(c, file, node);
-        c.check_assignable(file, l, wanted, at, node, 2345, out);
+        let end = c.error_end_inside_parentheses(file, node);
+        c.check_assignable_with_end(file, l, wanted, at, end, node, 2345, out);
     }
     Some(false)
 }
@@ -1420,10 +1485,9 @@ fn check_instanceof(
             && c.signatures(r, true).is_empty()
             && is_related_for_sure(c, r, function, true) == Some(false)
         {
-            out.push(Diagnostic {
-                start: error_start(c, file, right),
-                code: 2359,
-            });
+            let start = error_start(c, file, right);
+            out.push(Diagnostic { start, code: 2359 });
+            c.note(start, c.error_end_of(file, right), 2359, Vec::new());
         }
         return;
     };
@@ -1486,15 +1550,25 @@ fn check_instanceof(
                     false,
                     Some(&mut said),
                 );
-                out.extend(said.into_iter().map(|d| Diagnostic {
-                    start: d.start,
-                    code: 2860,
-                }));
+                for d in said {
+                    let mut on_top = d.code;
+                    if fitting.len() > 1 {
+                        c.explain_under(d.start, on_top, 2770, Vec::new());
+                        c.explain_under(d.start, 2770, 2769, Vec::new());
+                        on_top = 2769;
+                    }
+                    c.explain_under(d.start, on_top, 2860, Vec::new());
+                    out.push(Diagnostic {
+                        start: d.start,
+                        code: 2860,
+                    });
+                }
             }
-            None => out.push(Diagnostic {
-                start: c.start_of(file, left),
-                code: 2860,
-            }),
+            None => {
+                let start = c.start_of(file, left);
+                out.push(Diagnostic { start, code: 2860 });
+                explain_has_instance_arity(c, file, left, right, start, &candidates);
+            }
         }
     }
     let returned = match chosen {
@@ -1509,7 +1583,64 @@ fn check_instanceof(
         }
     };
     let at = error_start(c, file, right);
-    c.check_assignable(file, returned, TypeId::BOOLEAN, at, ExprId::NONE, 2861, out);
+    let end = error_end(c, file, ErrorNode::Written(right));
+    c.check_assignable_with_end(
+        file,
+        returned,
+        TypeId::BOOLEAN,
+        at,
+        end,
+        ExprId::NONE,
+        2861,
+        out,
+    );
+}
+
+/// `getArgumentArityError`, of the one argument `left` of `right[Symbol.hasInstance]`, under 2860, which is reported at `start`.
+fn explain_has_instance_arity(
+    c: &mut Checker<'_>,
+    file: FileId,
+    left: ExprId,
+    right: ExprId,
+    start: u32,
+    candidates: &[SigId],
+) {
+    if !c.explains {
+        return;
+    }
+    let (mut min, mut max, mut has_rest) = (usize::MAX, 0usize, false);
+    // `minAbove`: the fewest parameters of those that take more than the one argument.
+    let mut above = usize::MAX;
+    for &sig in candidates {
+        let params = c.sig_params(sig);
+        let most = c.parameter_count(&params);
+        min = min.min(c.min_argument_count(&params));
+        max = max.max(most);
+        if most > 1 {
+            above = above.min(most);
+        }
+        has_rest |= c.has_effective_rest_parameter(&params);
+    }
+    let (code, args) = if min < 1 && 1 < max {
+        (
+            2575,
+            vec!["1".to_owned(), "0".to_owned(), above.to_string()],
+        )
+    } else {
+        let range = if !has_rest && min < max {
+            format!("{min}-{max}")
+        } else {
+            min.to_string()
+        };
+        (
+            if has_rest { 2555 } else { 2554 },
+            vec![range, "1".to_owned()],
+        )
+    };
+    // One argument too many is reported on the argument, anything else on the whole expression.
+    let end = c.end_of_expr(file, if max < 1 { left } else { right });
+    c.note(start, end, code, args);
+    c.explain_under(start, code, 2860, Vec::new());
 }
 
 /// `checkInExpression`, once the right operand has been found to be an object: 2638
@@ -1525,10 +1656,10 @@ fn check_right_operand_of_in(
     }
     let there = non_null_type(c, ty);
     if c.is_assignable(there, TypeId::OBJECT) && has_empty_object_intersection(c, file, right, ty) {
-        out.push(Diagnostic {
-            start: error_start(c, file, right),
-            code: 2638,
-        });
+        let start = error_start(c, file, right);
+        out.push(Diagnostic { start, code: 2638 });
+        let end = c.error_end_of(file, right);
+        c.explain_to(start, end, 2638, |c| vec![c.type_to_string(ty)]);
     }
 }
 
@@ -1574,10 +1705,14 @@ fn has_empty_object_intersection(c: &mut Checker<'_>, file: FileId, e: ExprId, t
 
 /// What `getAwaitedTypeNoAliasEx` is given besides the type, and what it says.
 struct Awaiting {
+    file: FileId,
     /// Where the node the errors are about starts.
     at: u32,
+    node: ErrorNode,
     /// What to say of something with a `then` that is no promise.
     message: u32,
+    /// `thisTypeForError`: the `this` that the last `then` looked at asks for, if no `then` takes what is awaited for `this`.
+    this_type_for_error: Option<TypeId>,
     /// `awaitedTypeStack`
     stack: Vec<TypeId>,
     /// `cachedTypes`: the types that awaiting gives something for though something was found wrong on the way. What they give is
@@ -1589,10 +1724,13 @@ struct Awaiting {
 }
 
 impl Awaiting {
-    fn new(message: u32) -> Awaiting {
+    fn new(file: FileId, message: u32) -> Awaiting {
         Awaiting {
+            file,
             at: 0,
+            node: ErrorNode::Inside(ExprId::NONE),
             message,
+            this_type_for_error: None,
             stack: Vec::new(),
             settled: Vec::new(),
             said: Vec::new(),
@@ -1600,9 +1738,10 @@ impl Awaiting {
         }
     }
 
-    /// On to the node that starts at `at`.
-    fn begin(&mut self, at: u32) {
+    /// On to `node`, which starts at `at`.
+    fn begin(&mut self, at: u32, node: ErrorNode) {
         self.at = at;
+        self.node = node;
         self.stack.clear();
         self.said.clear();
         self.unknown = false;
@@ -1637,6 +1776,7 @@ fn has_awaited_type_uncached(c: &mut Checker<'_>, t: TypeId, a: &mut Awaiting) -
                 start: a.at,
                 code: 1062,
             });
+            c.note(a.at, error_end(c, a.file, a.node), 1062, Vec::new());
             return false;
         }
         a.stack.push(t);
@@ -1651,6 +1791,7 @@ fn has_awaited_type_uncached(c: &mut Checker<'_>, t: TypeId, a: &mut Awaiting) -
     if c.is_generic_object_type(t) {
         return true;
     }
+    a.this_type_for_error = None;
     if let Some(promised) = promised_type_of_promise(c, t, a) {
         let promised = c.force(promised);
         if t == promised || a.stack.contains(&promised) {
@@ -1658,6 +1799,7 @@ fn has_awaited_type_uncached(c: &mut Checker<'_>, t: TypeId, a: &mut Awaiting) -
                 start: a.at,
                 code: 1062,
             });
+            c.note(a.at, error_end(c, a.file, a.node), 1062, Vec::new());
             return false;
         }
         a.stack.push(t);
@@ -1670,6 +1812,16 @@ fn has_awaited_type_uncached(c: &mut Checker<'_>, t: TypeId, a: &mut Awaiting) -
             start: a.at,
             code: a.message,
         });
+        c.note(a.at, error_end(c, a.file, a.node), a.message, Vec::new());
+        if let Some(this) = a.this_type_for_error {
+            c.explain_chain(a.at, a.message, |c| {
+                vec![Line {
+                    code: 2684,
+                    args: vec![c.type_to_string(t), c.type_to_string(this)],
+                    level: 1,
+                }]
+            });
+        }
         return false;
     }
     true
@@ -1694,6 +1846,7 @@ fn promised_type_of_promise(c: &mut Checker<'_>, t: TypeId, a: &mut Awaiting) ->
     }
     // The ways to call `then` on a `t`.
     let mut callbacks = Vec::new();
+    let mut refused_by = None;
     for sig in c.signatures(then, false) {
         if let Some(this) = c.sig_this_type(sig)
             && this != TypeId::VOID
@@ -1705,7 +1858,10 @@ fn promised_type_of_promise(c: &mut Checker<'_>, t: TypeId, a: &mut Awaiting) ->
             };
             match takes_it {
                 Some(true) => {}
-                Some(false) => continue,
+                Some(false) => {
+                    refused_by = Some(this);
+                    continue;
+                }
                 None => {
                     a.unknown = true;
                     return None;
@@ -1716,6 +1872,7 @@ fn promised_type_of_promise(c: &mut Checker<'_>, t: TypeId, a: &mut Awaiting) ->
         callbacks.push(c.param_type_at(&params, 0).unwrap_or(TypeId::NEVER));
     }
     if callbacks.is_empty() {
+        a.this_type_for_error = refused_by;
         return None;
     }
     let on_fulfilled = c.union(&callbacks);
@@ -1876,6 +2033,7 @@ fn note_yield_star(
         input,
         sent,
         at: error_start(c, file, value),
+        node: ErrorNode::Written(value),
     });
 }
 
@@ -1925,6 +2083,7 @@ struct IterationSite {
     sent: TypeId,
     /// Where the node the errors are about starts.
     at: u32,
+    node: ErrorNode,
 }
 
 /// `IterationTypes`
@@ -1956,8 +2115,10 @@ enum IteratorMethod {
 
 /// What looking for iteration types finds to say.
 struct IterationReport {
+    file: FileId,
     /// Where the node the errors are about starts.
     at: u32,
+    node: ErrorNode,
     /// What is said whatever comes of it.
     said: Vec<Diagnostic>,
     /// `diagnosticOutput`: what is said only if there turns out to be something to go through.
@@ -1967,9 +2128,11 @@ struct IterationReport {
 }
 
 impl IterationReport {
-    fn new(at: u32) -> IterationReport {
+    fn new(file: FileId, at: u32, node: ErrorNode) -> IterationReport {
         IterationReport {
+            file,
             at,
+            node,
             said: Vec::new(),
             held: Vec::new(),
             unknown: false,
@@ -1996,6 +2159,7 @@ fn check_iterated_type(
         input,
         sent,
         at,
+        node,
     } = site;
     let input = c.force(input);
     let input = c.reduced(input);
@@ -2011,7 +2175,7 @@ fn check_iterated_type(
     // `getGlobalIterableType() != emptyGenericType`
     let iterable_exists = c.global_type_of_arity(known::Iterable, 3).is_some();
     if iterable_exists || usage.allows_async() {
-        let mut report = IterationReport::new(at);
+        let mut report = IterationReport::new(file, at, node);
         let types = iteration_types_of_iterable(c, input, usage, iterable_exists, &mut report);
         if report.unknown {
             return;
@@ -2021,21 +2185,23 @@ fn check_iterated_type(
             out.append(&mut report.said);
             // `reportTypeNotIterableError`
             if iterable_exists {
-                out.push(Diagnostic {
-                    start: at,
-                    code: if usage.allows_async() { 2504 } else { 2488 },
-                });
+                let code = if usage.allows_async() { 2504 } else { 2488 };
+                out.push(Diagnostic { start: at, code });
+                let end = error_end(c, file, node);
+                c.explain_to(at, end, code, |c| vec![c.type_to_string(input)]);
             }
         } else if !cached.contains(&key) {
             cached.push(key);
             out.append(&mut report.said);
         }
         if let Some(next) = types.next {
-            c.check_assignable(
+            let end = error_end(c, file, node);
+            c.check_assignable_with_end(
                 file,
                 sent,
                 next,
                 at,
+                end,
                 ExprId::NONE,
                 usage.code_for_what_is_sent(),
                 out,
@@ -2062,7 +2228,7 @@ fn check_iterated_type(
         return;
     }
     // `getIterationDiagnosticDetails`
-    let mut quiet = IterationReport::new(at);
+    let mut quiet = IterationReport::new(file, at, node);
     let yielded = iteration_types_of_iterable(c, input, usage, false, &mut quiet).yielded;
     if quiet.unknown {
         return;
@@ -2079,6 +2245,8 @@ fn check_iterated_type(
         2461
     };
     out.push(Diagnostic { start: at, code });
+    let end = error_end(c, file, node);
+    c.explain_to(at, end, code, |c| vec![c.type_to_string(array_type)]);
 }
 
 /// `getIterationTypesOfIterable`. `reports`: there is a node to put errors on.
@@ -2342,8 +2510,8 @@ fn resolve_iteration_type(
     if !is_async {
         return Some(t);
     }
-    let mut awaiting = Awaiting::new(1320);
-    awaiting.begin(report.at);
+    let mut awaiting = Awaiting::new(report.file, 1320);
+    awaiting.begin(report.at, report.node);
     let has = has_awaited_type(c, t, &mut awaiting);
     report.unknown |= awaiting.unknown;
     if reports {
@@ -2407,6 +2575,8 @@ fn iteration_types_of_method(
                 start: report.at,
                 code,
             });
+            let end = error_end(c, report.file, report.node);
+            c.note(report.at, end, code, vec![c.atom_text(name)]);
         }
         return Iteration::default();
     }
@@ -2486,10 +2656,13 @@ fn iteration_types_of_method(
         returned.extend(types.returned);
     } else {
         if reports {
+            let code = if is_async { 2547 } else { 2490 };
             report.held.push(Diagnostic {
                 start: report.at,
-                code: if is_async { 2547 } else { 2490 },
+                code,
             });
+            let end = error_end(c, report.file, report.node);
+            c.note(report.at, end, code, vec![c.atom_text(name)]);
         }
         yielded = Some(TypeId::ANY);
         returned.push(TypeId::ANY);

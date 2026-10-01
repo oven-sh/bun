@@ -34,7 +34,13 @@ impl Checker<'_> {
                         // Where `null` and `undefined` are not told apart nothing has been said of them, or taken out.
                         if !self.is_nothing_but_nullish(given) {
                             let at = self.start_of_error_about(file, expr);
-                            iterated = self.check_iterated(given, is_await, at, out);
+                            iterated = self.check_iterated(
+                                given,
+                                is_await,
+                                at,
+                                |c| c.error_end_of(file, expr),
+                                out,
+                            );
                         }
                     }
                     let StmtKind::Expr(target) = hir[left].kind else {
@@ -55,7 +61,10 @@ impl Checker<'_> {
                         // Whatever else is written there is held against what comes out, whatever is wrong with it: 2487, 2781.
                         let wanted = self.type_of_assignment_target(file, target);
                         let at = self.start_of_error_about(file, target);
-                        self.check_assignable(file, iterated, wanted, at, expr, 2322, out);
+                        let end = self.error_end_of(file, target);
+                        self.check_assignable_with_end(
+                            file, iterated, wanted, at, end, expr, 2322, out,
+                        );
                     }
                 }
                 StmtKind::ForIn { left, expr, .. } => {
@@ -75,10 +84,10 @@ impl Checker<'_> {
                             && self.is_known(keys)
                             && !self.is_assignable(keys, wanted)
                         {
-                            out.push(Diagnostic {
-                                start: self.start_of_error_about(file, target),
-                                code: 2405,
-                            });
+                            let start = self.start_of_error_about(file, target);
+                            out.push(Diagnostic { start, code: 2405 });
+                            let end = self.error_end_of(file, target);
+                            self.explain_to(start, end, 2405, |_| vec![]);
                         }
                     }
                     // `isTypeAssignableToKind(rightType, NonPrimitive | InstantiableNonPrimitive)`. `keyof T` is an instantiable
@@ -89,10 +98,10 @@ impl Checker<'_> {
                             && !matches!(self.data(given), TypeData::Keyof(_))
                         || self.is_assignable(given, TypeId::OBJECT);
                     if given == TypeId::NEVER || !is_object {
-                        out.push(Diagnostic {
-                            start: self.start_of_error_about(file, expr),
-                            code: 2407,
-                        });
+                        let start = self.start_of_error_about(file, expr);
+                        out.push(Diagnostic { start, code: 2407 });
+                        let end = self.error_end_of(file, expr);
+                        self.explain_to(start, end, 2407, |c| vec![c.type_to_string(given)]);
                     }
                 }
                 _ => {}
@@ -112,7 +121,7 @@ impl Checker<'_> {
                     let given = self.type_of_expr(file, inner);
                     if !self.is_uncertain(file, inner) && !self.is_nothing_but_nullish(given) {
                         let at = self.start_of_error_about(file, inner);
-                        self.check_iterated(given, false, at, out);
+                        self.check_iterated(given, false, at, |c| c.error_end_of(file, inner), out);
                     }
                 }
                 // One that is a default in a pattern is looked at with the pattern.
@@ -154,11 +163,13 @@ impl Checker<'_> {
                 continue;
             }
             let generator = self.generator_instantiation(declared, f.flags.contains(Flags::ASYNC));
-            self.check_assignable(
+            let end = self.end_of_type_node(file, f.ret);
+            self.check_assignable_with_end(
                 file,
                 generator,
                 declared,
                 hir[f.ret].pos,
+                end,
                 ExprId::NONE,
                 2322,
                 out,
@@ -241,7 +252,7 @@ impl Checker<'_> {
             // `getIteratedTypeOrElementType`: without `Iterable` a list is taken apart as it is.
             if has_iterable
                 && self
-                    .check_iterated(given, false, hir[pat].pos, out)
+                    .check_iterated(given, false, hir[pat].pos, |c| c.end_of_pat(file, pat), out)
                     .is_none()
             {
                 continue;
@@ -256,8 +267,16 @@ impl Checker<'_> {
                             // `AccessFlagsAllowMissing`
                             let allows_missing =
                                 elem.default.is_some() && self.is_object_literal_type(given);
-                            let at = hir[elem.pat].pos;
-                            self.destructured_property(given, key, allows_missing, at, out);
+                            let name = elem.pat;
+                            self.destructured_property(
+                                file,
+                                given,
+                                key,
+                                allows_missing,
+                                hir[name].pos,
+                                |c| c.end_of_pat(file, name),
+                                out,
+                            );
                         }
                     }
                 }
@@ -272,9 +291,12 @@ impl Checker<'_> {
                     && let Some(code) =
                         self.past_the_end_of_tuples(given, self.number_name(index as f64))
                 {
-                    out.push(Diagnostic {
-                        start: hir[elem.pat].pos,
-                        code,
+                    let start = hir[elem.pat].pos;
+                    out.push(Diagnostic { start, code });
+                    let end = self.end_of_pat(file, elem.pat);
+                    let name = self.number_name(index as f64);
+                    self.explain_to(start, end, code, |c| {
+                        past_the_end_arguments(c, code, given, name)
                     });
                 }
             }
@@ -473,12 +495,13 @@ impl Checker<'_> {
         self.generator_of(yielded, returned, next, is_async)
     }
 
-    /// `checkIteratedTypeOrElementType`. `None`: it cannot be gone through, or it cannot be told.
+    /// `checkIteratedTypeOrElementType`. `None`: it cannot be gone through, or it cannot be told. `at`, `end`: the range of `errorNode`.
     fn check_iterated(
         &mut self,
         given: TypeId,
         allows_async: bool,
         at: u32,
+        end: impl FnOnce(&Self) -> u32,
         out: &mut Vec<Diagnostic>,
     ) -> Option<TypeId> {
         if !self.is_known(given) {
@@ -495,10 +518,10 @@ impl Checker<'_> {
         let given = self.force(given);
         let given = self.reduced(given);
         if !self.is_iterable(given, allows_async) {
-            out.push(Diagnostic {
-                start: at,
-                code: if allows_async { 2504 } else { 2488 },
-            });
+            let code = if allows_async { 2504 } else { 2488 };
+            out.push(Diagnostic { start: at, code });
+            let end = end(&*self);
+            self.explain_to(at, end, code, |c| vec![c.type_to_string(given)]);
             return None;
         }
         let iterated = self.iterated_type(given, allows_async);
@@ -635,10 +658,14 @@ impl Checker<'_> {
                         let ty = match (found, name) {
                             _ if past_the_end.is_some() => {
                                 if !has_default && let Some(code) = past_the_end {
-                                    out.push(Diagnostic {
-                                        start: self.start_of_index_node(file, prop.key, prop.pos),
-                                        code,
-                                    });
+                                    let start = self.start_of_index_node(file, prop.key, prop.pos);
+                                    out.push(Diagnostic { start, code });
+                                    if let Some(name) = name {
+                                        let end = self.end_of_index_node(file, prop.key);
+                                        self.explain_to(start, end, code, |c| {
+                                            past_the_end_arguments(c, code, object, name)
+                                        });
+                                    }
                                 }
                                 TypeId::UNDEFINED
                             }
@@ -656,6 +683,10 @@ impl Checker<'_> {
                                         start: prop.pos,
                                         code,
                                     });
+                                    let end = self.end_of_prop_name(file, p);
+                                    self.explain_to(prop.pos, end, code, |c| {
+                                        accessibility_arguments(c, file, target, code, object, name)
+                                    });
                                 }
                                 ty
                             }
@@ -666,10 +697,12 @@ impl Checker<'_> {
                             _ => {
                                 let at = self.start_of_index_node(file, prop.key, prop.pos);
                                 self.destructured_property(
+                                    file,
                                     source,
                                     key,
                                     has_default && is_literal,
                                     at,
+                                    |c| c.end_of_index_node(file, prop.key),
                                     out,
                                 )
                             }
@@ -686,7 +719,13 @@ impl Checker<'_> {
             }
             ExprKind::Array(items) => {
                 // `checkArrayLiteralAssignment`. `None`: it cannot be gone through (2488), or is not known: on with the error type.
-                let iterated = self.check_iterated(source, false, hir[target].pos, out);
+                let iterated = self.check_iterated(
+                    source,
+                    false,
+                    hir[target].pos,
+                    |c| c.end_of_expr(file, target),
+                    out,
+                );
                 let is_tuples = iterated.is_some() && self.every_type(source, |c, m| c.is_tuple(m));
                 let has_default = |c: &Self, e: ExprId| {
                     matches!(hir[e].kind, ExprKind::Assign { op: None, .. })
@@ -723,9 +762,12 @@ impl Checker<'_> {
                                         self.number_name(index as f64),
                                     )
                                 {
-                                    out.push(Diagnostic {
-                                        start: self.start_of(file, item),
-                                        code,
+                                    let start = self.start_of(file, item);
+                                    out.push(Diagnostic { start, code });
+                                    let end = self.end_of_expr(file, item);
+                                    let name = self.number_name(index as f64);
+                                    self.explain_to(start, end, code, |c| {
+                                        past_the_end_arguments(c, code, source, name)
                                     });
                                 }
                                 let ty = self.element_of_destructured(source, index, false);
@@ -798,7 +840,8 @@ impl Checker<'_> {
         }
         let wanted = self.type_of_assignment_target(file, target);
         let at = self.start_of_error_about(file, target);
-        self.check_assignable(file, source, wanted, at, value, 2322, out);
+        let end = self.error_end_of(file, target);
+        self.check_assignable_with_end(file, source, wanted, at, end, value, 2322, out);
     }
 
     /// `checkReferenceExpression`: a name or a property access, whatever is asserted of it, that is no optional chain.
@@ -886,15 +929,26 @@ impl Checker<'_> {
         at as u32
     }
 
+    /// Where that node ends. 0: it is one token.
+    fn end_of_index_node(&self, file: FileId, key: PropKey) -> u32 {
+        match key {
+            PropKey::Computed(k) => self.end_of_expr(file, k),
+            _ => 0,
+        }
+    }
+
     /// `getIndexedAccessTypeOrUndefined`, asked by a name in a pattern for which `source` has no property: what `source` has under
-    /// `key`. For each member of `key` that finds nothing, at `at`: 2339 if it is a literal, 2537 if it is `string` or `number`, else
-    /// 2538; what comes out is then the error type. Both types are known, and `source` is not `any`.
+    /// `key`. For each member of `key` that finds nothing, from `at` to `end`: 2339 if it is a literal, 2537 if it is `string` or
+    /// `number`, else 2538; what comes out is then the error type. Both types are known, and `source` is not `any`.
+    #[allow(clippy::too_many_arguments)]
     fn destructured_property(
         &mut self,
+        file: FileId,
         source: TypeId,
         key: TypeId,
         allows_missing: bool,
         at: u32,
+        end: impl Fn(&Self) -> u32,
         out: &mut Vec<Diagnostic>,
     ) -> TypeId {
         // `getReducedApparentType`: what is generic is looked into as what it extends. What is generic even so is put off.
@@ -932,6 +986,24 @@ impl Checker<'_> {
                         2538
                     };
                     out.push(Diagnostic { start: at, code });
+                    let until = end(&*self);
+                    self.explain_to(at, until, code, |c| {
+                        let object = c.reduced(object);
+                        match code {
+                            2339 => vec![literal_value_text(c, part), c.type_to_string(object)],
+                            2537 => vec![c.type_to_string(object), c.type_to_string(part)],
+                            // `indexNode.Kind == KindBigIntLiteral`
+                            _ if matches!(c.data(part), TypeData::BigIntLit { .. })
+                                && c.hir(file)
+                                    .text
+                                    .get(at as usize)
+                                    .is_some_and(|b| b.is_ascii_digit()) =>
+                            {
+                                vec!["bigint".to_owned()]
+                            }
+                            _ => vec![c.type_to_string(part)],
+                        }
+                    });
                     is_missing = true;
                 }
             }
@@ -989,6 +1061,8 @@ impl Checker<'_> {
             root = outer;
         }
         let mut at = hir[pat].pos;
+        // The parameter, if the error is about the whole of it. A variable or a binding element is pointed at by its name.
+        let mut parameter = ParamId::NONE;
         let mut is_put_off = false;
         let is_annotated = match bound.pat_parent[root.idx()] {
             PatParent::Var(d) => {
@@ -1010,6 +1084,7 @@ impl Checker<'_> {
                 if root == pat {
                     // An error about a parameter starts where the parameter does.
                     at = hir[q].pos;
+                    parameter = q;
                     // `contextuallyCheckFunctionExpressionOrObjectLiteralMethod` looks at the parameters of an argument while the call
                     // is being resolved, when what is expected is still in terms of the type parameters of what is called.
                     let index = (q.0 - hir[func].params.start) as usize;
@@ -1021,11 +1096,18 @@ impl Checker<'_> {
             }
             _ => return,
         };
+        let end = move |c: &Self| {
+            if parameter.is_some() {
+                c.end_of_param(file, parameter)
+            } else {
+                c.end_of_pat(file, pat)
+            }
+        };
         let strict = self.p.files.options.strict_null_checks;
         if strict && initializer.is_some() {
             let ty = self.type_of_expr(file, initializer);
             if !self.is_uncertain(file, initializer) {
-                self.check_not_null_nor_void(ty, at, out);
+                self.check_not_null_nor_void(ty, at, end, out);
             }
         }
         if is_put_off {
@@ -1038,16 +1120,22 @@ impl Checker<'_> {
         }
         match hir[pat].kind {
             PatKind::Array(_) => {
-                self.check_iterated(widened, false, at, out);
+                self.check_iterated(widened, false, at, end, out);
             }
-            _ if strict => self.check_not_null_nor_void(widened, at, out),
+            _ if strict => self.check_not_null_nor_void(widened, at, end, out),
             _ => {}
         }
     }
 
     /// `checkNonNullNonVoidType`, said of a declaration, which is no entity name, where `null` and `undefined` are told apart:
     /// 2571, 2531 to 2533.
-    fn check_not_null_nor_void(&mut self, ty: TypeId, at: u32, out: &mut Vec<Diagnostic>) {
+    fn check_not_null_nor_void(
+        &mut self,
+        ty: TypeId,
+        at: u32,
+        end: impl FnOnce(&Self) -> u32,
+        out: &mut Vec<Diagnostic>,
+    ) {
         if !self.is_known(ty) || self.is_any(ty) {
             return;
         }
@@ -1072,6 +1160,8 @@ impl Checker<'_> {
             _ => return,
         };
         out.push(Diagnostic { start: at, code });
+        let end = end(&*self);
+        self.explain_to(at, end, code, |_| vec![]);
     }
 
     /// The two halves of `isInAmbientOrTypeNode`, of the parameters of `func`: whether they are only declared (`NodeFlagsAmbient`),
@@ -1183,8 +1273,16 @@ impl Checker<'_> {
         } else {
             hir[e].pos
         };
+        // An error about a `yield` as a whole is put on the keyword.
+        let end = move |c: &Self| {
+            if value.is_some() {
+                c.error_end_of(file, value)
+            } else {
+                0
+            }
+        };
         if star {
-            match self.check_iterated(yielded, is_async, at, out) {
+            match self.check_iterated(yielded, is_async, at, end, out) {
                 Some(iterated) => yielded = iterated,
                 None => return,
             }
@@ -1209,14 +1307,101 @@ impl Checker<'_> {
         if is_async {
             yielded = self.awaited(yielded);
         }
-        self.check_assignable(
+        let end = end(&*self);
+        self.check_assignable_with_end(
             file,
             yielded,
             wanted,
             at,
+            end,
             if star { ExprId::NONE } else { value },
             2322,
             out,
         );
     }
+}
+
+/// The arguments of what `past_the_end_of_tuples` says of the element `name` of `object`: 2493, or 2339 of a union.
+fn past_the_end_arguments(
+    c: &mut Checker<'_>,
+    code: u32,
+    object: TypeId,
+    name: Atom,
+) -> Vec<String> {
+    let printed = c.type_to_string(object);
+    if code != 2493 {
+        return vec![c.atom_text(name), printed];
+    }
+    // `getTypeReferenceArity`
+    let length = match c.data(object) {
+        TypeData::Tuple { elems, .. } => elems.len(),
+        _ => 0,
+    };
+    vec![printed, length.to_string(), c.atom_text(name)]
+}
+
+/// `LiteralType.value` of a string or number literal type or of a member of an enum, as it is put in a message.
+fn literal_value_text(c: &Checker<'_>, ty: TypeId) -> String {
+    match *c.data(ty) {
+        TypeData::StringLit { value, .. }
+        | TypeData::EnumLit {
+            value: EnumValue::String(value),
+            ..
+        } => c.atom_text(value),
+        TypeData::NumberLit { bits, .. }
+        | TypeData::EnumLit {
+            value: EnumValue::Number(bits),
+            ..
+        } => crate::atom::number_to_string(f64::from_bits(bits)),
+        _ => String::new(),
+    }
+}
+
+/// The arguments of what `checkPropertyAccessibilityAtLocation` says of the property `name` of `containing`, asked for by `e`:
+/// 2341 2445 2446.
+fn accessibility_arguments(
+    c: &mut Checker<'_>,
+    file: FileId,
+    e: ExprId,
+    code: u32,
+    containing: TypeId,
+    name: Atom,
+) -> Vec<String> {
+    let first = c.parts(containing).first().copied().unwrap_or(containing);
+    let first = c.apparent_type(first);
+    // `getDeclaringClass`
+    let declaring = match c.prop_of(first, name) {
+        Some((prop, _)) => c.declaring_class(&prop),
+        None => None,
+    };
+    let property = c.atom_text(name);
+    if code != 2446 {
+        let class = match declaring {
+            Some(class) => c.declared_type(class),
+            None => containing,
+        };
+        return vec![property, c.type_to_string(class)];
+    }
+    // The innermost class around that is, or derives from, the one that declares it.
+    let mut enclosing = None;
+    for class in c.enclosing_classes(file, e) {
+        let class = c.class_sym(file, class);
+        let declared = c.declared_type(class);
+        if let Some(declaring) = declaring
+            && c.has_base(declared, declaring, 0)
+        {
+            enclosing = Some(declared);
+            break;
+        }
+    }
+    let through = if c.is_deferred(containing) {
+        c.base_constraint(containing)
+    } else {
+        containing
+    };
+    let enclosing = match enclosing {
+        Some(class) => c.type_to_string(class),
+        None => String::new(),
+    };
+    vec![property, enclosing, c.type_to_string(through)]
 }

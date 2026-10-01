@@ -53,6 +53,37 @@ fn unwrap_unary_tuples(
     (check, extends)
 }
 
+/// What `checkTypeRelatedToEx` was given where it reports an error.
+#[derive(Copy, Clone)]
+struct RelationError {
+    source: TypeId,
+    target: TypeId,
+    relation: Relation,
+    /// The code of `headMessage`. For none, what `reportRelationError` says then: 2322, or 2678 under the comparable relation.
+    head: u32,
+    /// Whether `source`, and whether `target`, is written as an alias that is not the name it is compared under.
+    named_otherwise: (bool, bool),
+}
+
+/// What `levenshteinWithMax` measures: changing a letter costs two, and changing its case next to nothing.
+fn edit_distance(a: &[u8], b: &[u8]) -> f64 {
+    let mut previous: Vec<f64> = (0..=b.len()).map(|j| j as f64).collect();
+    let mut current = vec![0.0; b.len() + 1];
+    for (i, x) in a.iter().enumerate() {
+        current[0] = (i + 1) as f64;
+        for (j, y) in b.iter().enumerate() {
+            current[j + 1] = if x == y {
+                previous[j]
+            } else {
+                let change = previous[j] + if x.eq_ignore_ascii_case(y) { 0.1 } else { 2.0 };
+                (previous[j + 1] + 1.0).min(current[j] + 1.0).min(change)
+            };
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    previous[b.len()]
+}
+
 impl Checker<'_> {
     pub(super) fn check_assignments(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let hir = self.hir(file);
@@ -87,12 +118,14 @@ impl Checker<'_> {
             }
             let target = self.type_from_node(file, decl.ty);
             let source = self.type_of_expr(file, decl.init);
+            let end = self.end_if_explained(|c| c.end_of_pat(file, decl.pat));
             self.check_assignable_to(
                 file,
                 source,
                 target,
                 Some((file, decl.ty)),
                 hir[decl.pat].pos,
+                end,
                 decl.init,
                 false,
                 false,
@@ -116,12 +149,14 @@ impl Checker<'_> {
             let source = self.type_of_expr(file, param.default);
             let written = param.ty.is_some().then_some((file, param.ty));
             let at = param.pos.min(hir[param.pat].pos);
+            let end = self.end_if_explained(|c| c.end_of_param(file, ParamId(p as u32)));
             self.check_assignable_to(
                 file,
                 source,
                 target,
                 written,
                 at,
+                end,
                 param.default,
                 false,
                 is_uninstantiated,
@@ -160,7 +195,13 @@ impl Checker<'_> {
                 {
                     let target = self.type_of_pat(file, pat);
                     let source = self.type_of_expr(file, default);
-                    self.check_assignable(file, source, target, hir[pat].pos, default, 2322, out);
+                    let (at, end) = (
+                        hir[pat].pos,
+                        self.end_if_explained(|c| c.end_of_pat(file, pat)),
+                    );
+                    self.check_assignable_with_end(
+                        file, source, target, at, end, default, 2322, out,
+                    );
                 }
             }
         }
@@ -187,12 +228,14 @@ impl Checker<'_> {
                 declared
             };
             let written = (!is_optional).then_some((file, member.ty));
+            let end = self.end_if_explained(|c| c.end_of_member_name(file, MemberId(m as u32)));
             self.check_assignable_to(
                 file,
                 source,
                 target,
                 written,
                 member.pos,
+                end,
                 member.init,
                 false,
                 false,
@@ -306,8 +349,9 @@ impl Checker<'_> {
             }
             let at = self.start_of(file, target);
             let written = self.annotation_of_reference(file, target);
+            let end = self.end_if_explained(|c| c.end_of_expr(file, target));
             self.check_assignable_to(
-                file, source, wanted, written, at, value, false, false, 2322, out,
+                file, source, wanted, written, at, end, value, false, false, 2322, out,
             );
         }
         for f in 0..hir.fns.len() {
@@ -630,8 +674,20 @@ impl Checker<'_> {
                 continue;
             }
             let at = self.start_inside_parentheses(file, ExprId(i as u32));
-            let said = match self.excess_within(given, target, Relation::Comparable, at, 2352, 0) {
-                Some(excess) => excess,
+            let end = self.end_inside_parentheses(file, ExprId(i as u32));
+            let error = RelationError {
+                source: given,
+                target,
+                relation: Relation::Comparable,
+                head: 2352,
+                named_otherwise: (false, false),
+            };
+            let excess = self.excess_within(given, target, Relation::Comparable, at, end, 2352, 0);
+            let said = match excess {
+                Some(excess) => {
+                    self.explain_head_over_excess(excess, at, end, error);
+                    excess
+                }
                 None => {
                     // `tryElaborateArrayLikeErrors`: on top of that nothing is said.
                     let (given, target) = (self.force(given), self.force(target));
@@ -642,10 +698,9 @@ impl Checker<'_> {
                     };
                     let loses_readonly = self.is_readonly_array_or_tuple(given)
                         && self.is_mutable_array_or_tuple(target);
-                    Diagnostic {
-                        start: at,
-                        code: if loses_readonly { 4104 } else { 2352 },
-                    }
+                    let code = if loses_readonly { 4104 } else { 2352 };
+                    self.explain_relation_error(at, end, code, error.target, error);
+                    Diagnostic { start: at, code }
                 }
             };
             out.push(said);
@@ -906,6 +961,13 @@ impl Checker<'_> {
                     start: prop.pos,
                     code: 2353,
                 });
+                let end = self.end_of_prop_name(file, p);
+                self.explain_to(prop.pos, end, 2353, |c| {
+                    vec![
+                        c.source_text(file, prop.pos, end),
+                        c.type_to_string(context),
+                    ]
+                });
             }
         }
     }
@@ -1039,9 +1101,15 @@ impl Checker<'_> {
                 {
                     continue;
                 }
-                out.push(Diagnostic {
-                    start: self.hir(of)[pat].pos,
-                    code: 2403,
+                let start = self.hir(of)[pat].pos;
+                out.push(Diagnostic { start, code: 2403 });
+                let end = self.end_of_pat(of, pat);
+                self.explain_to(start, end, 2403, |c| {
+                    vec![
+                        c.source_text(of, start, end),
+                        c.type_to_string(declared),
+                        c.type_to_string(here),
+                    ]
                 });
             }
         }
@@ -1428,7 +1496,8 @@ impl Checker<'_> {
                 if fits != Some(false) {
                     continue;
                 }
-                self.report_not_assignable(argument, constraint, hir[node].pos, 2344, out);
+                let (at, end) = (hir[node].pos, self.end_of_type_node(file, node));
+                self.report_not_assignable_with_end(argument, constraint, at, end, 2344, out);
                 break;
             }
         }
@@ -1489,7 +1558,10 @@ impl Checker<'_> {
                     // A default that does not do is not written here: there is nowhere to say so.
                     if k < given.len() {
                         let node: TypeNodeId = hir.id_at(class.extends_args, k);
-                        self.report_not_assignable(argument, constraint, hir[node].pos, 2344, out);
+                        let (at, end) = (hir[node].pos, self.end_of_type_node(file, node));
+                        self.report_not_assignable_with_end(
+                            argument, constraint, at, end, 2344, out,
+                        );
                     }
                     break 'signatures;
                 }
@@ -1530,10 +1602,16 @@ impl Checker<'_> {
                 }
             });
             if fits == Some(false) {
-                out.push(Diagnostic {
-                    start: hir[at].pos,
-                    code: 2322,
-                });
+                let (start, end) = (hir[at].pos, self.end_of_type_node(file, at));
+                out.push(Diagnostic { start, code: 2322 });
+                let error = RelationError {
+                    source: ty,
+                    target: keys,
+                    relation: Relation::Assignable,
+                    head: 2322,
+                    named_otherwise: (false, false),
+                };
+                self.explain_relation_error(start, end, 2322, keys, error);
             }
         }
     }
@@ -1862,8 +1940,15 @@ impl Checker<'_> {
         while let ExprKind::Satisfies { expr, .. } = self.hir(file)[e].kind {
             e = expr;
         }
-        let at = statement.unwrap_or_else(|| self.start_inside_parentheses(file, e));
-        self.check_effective_node_assignable(file, ty, wanted, at, e, 2322, out);
+        // Of a `return` statement it is the keyword that is pointed at.
+        let (at, end) = match statement {
+            Some(at) => (at, 0),
+            None => (
+                self.start_inside_parentheses(file, e),
+                self.end_if_explained(|c| c.error_end_inside_parentheses(file, e)),
+            ),
+        };
+        self.check_effective_node_assignable(file, ty, wanted, at, end, e, 2322, out);
     }
 
     /// Complains unless `source`, the type of `e` if there is an `e`, fits `target`. `at`: where, if not further in.
@@ -1878,7 +1963,27 @@ impl Checker<'_> {
         head: u32,
         out: &mut Vec<Diagnostic>,
     ) -> bool {
-        self.check_assignable_to(file, source, target, None, at, e, false, false, head, out)
+        self.check_assignable_to(
+            file, source, target, None, at, 0, e, false, false, head, out,
+        )
+    }
+
+    /// The same. `end`: where the node that starts at `at` ends.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn check_assignable_with_end(
+        &mut self,
+        file: FileId,
+        source: TypeId,
+        target: TypeId,
+        at: u32,
+        end: u32,
+        e: ExprId,
+        head: u32,
+        out: &mut Vec<Diagnostic>,
+    ) -> bool {
+        self.check_assignable_to(
+            file, source, target, None, at, end, e, false, false, head, out,
+        )
     }
 
     /// The same for an `e` that is what `getEffectiveCheckNode` leaves: the parentheses around it are no part of it.
@@ -1889,15 +1994,24 @@ impl Checker<'_> {
         source: TypeId,
         target: TypeId,
         at: u32,
+        end: u32,
         e: ExprId,
         head: u32,
         out: &mut Vec<Diagnostic>,
     ) -> bool {
-        self.check_assignable_to(file, source, target, None, at, e, true, false, head, out)
+        self.check_assignable_to(
+            file, source, target, None, at, end, e, true, false, head, out,
+        )
+    }
+
+    /// `end()`, if where errors end is going to be read. For an end that is worked out before it is known that there is an error.
+    fn end_if_explained(&self, end: impl FnOnce(&Self) -> u32) -> u32 {
+        if self.explains { end(self) } else { 0 }
     }
 
     /// `written`: where `target` is written out, if it is. `is_effective`: the parentheses around `e` are no part of it.
     /// `is_uninstantiated`: `target` comes from the uninstantiated signature of a generic callee, so its type parameters are expected.
+    /// `end`: where the node that starts at `at` ends. `0`: with the token there.
     #[allow(clippy::too_many_arguments)]
     fn check_assignable_to(
         &mut self,
@@ -1906,6 +2020,7 @@ impl Checker<'_> {
         target: TypeId,
         written: Option<(FileId, TypeNodeId)>,
         at: u32,
+        end: u32,
         e: ExprId,
         is_effective: bool,
         is_uninstantiated: bool,
@@ -1947,6 +2062,9 @@ impl Checker<'_> {
                 start: at,
                 code: 2859,
             });
+            self.explain_to(at, end, 2859, |c| {
+                vec![c.type_to_string(source), c.type_to_string(target)]
+            });
             return false;
         }
         if e.is_none() || !self.elaborate_from(file, e, is_effective, source, target, head, out) {
@@ -1955,9 +2073,11 @@ impl Checker<'_> {
             } else {
                 None
             };
-            let named_otherwise =
-                self.is_named_otherwise(written, target) || self.is_named_otherwise(given, source);
-            self.report_not_assignable_as(source, target, at, head, named_otherwise, out);
+            let named_otherwise = (
+                self.is_named_otherwise(given, source),
+                self.is_named_otherwise(written, target),
+            );
+            self.report_not_assignable_as(source, target, at, end, head, named_otherwise, out);
         }
         false
     }
@@ -2323,12 +2443,15 @@ impl Checker<'_> {
                     && self.is_known(returned)
                     && self.is_assignable(returned, target)
                 {
-                    let at = if is_effective {
-                        self.start_inside_parentheses(file, e)
+                    let (at, end) = if is_effective {
+                        (
+                            self.start_inside_parentheses(file, e),
+                            self.error_end_inside_parentheses(file, e),
+                        )
                     } else {
-                        self.start_of(file, e)
+                        (self.start_of(file, e), self.error_end_of(file, e))
                     };
-                    self.report_not_assignable(source, target, at, head, out);
+                    self.report_not_assignable_with_end(source, target, at, end, head, out);
                     return true;
                 }
             }
@@ -2400,8 +2523,10 @@ impl Checker<'_> {
                 ),
                 _ => (ExprId::NONE, 2322),
             };
-            reported |=
-                self.elaborate_element(file, source, target, prop.pos, next, name, head, out);
+            let end = self.end_of_prop_name(file, p);
+            reported |= self.elaborate_element_with_end(
+                file, source, target, prop.pos, end, next, name, head, out,
+            );
         }
         reported
     }
@@ -2448,8 +2573,9 @@ impl Checker<'_> {
                 check_node = expr;
             }
             let at = self.start_inside_parentheses(file, check_node);
+            let end = self.error_end_inside_parentheses(file, check_node);
             reported |= self.elaborate_element_from(
-                file, source, target, at, check_node, true, name, 2322, out,
+                file, source, target, at, end, check_node, true, name, 2322, out,
             );
         }
         reported
@@ -2524,20 +2650,21 @@ impl Checker<'_> {
         self.indexed_access_if_any(ty, key, false)
     }
 
-    /// `elaborateElement`: `at` is where the property or the element is written, `next` its value if it has one to go into.
+    /// `elaborateElement`: the property or the element is written from `at` to `end`, `next` is its value if it has one to go into.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn elaborate_element(
+    pub(super) fn elaborate_element_with_end(
         &mut self,
         file: FileId,
         source: TypeId,
         target: TypeId,
         at: u32,
+        end: u32,
         next: ExprId,
         name: Atom,
         head: u32,
         out: &mut Vec<Diagnostic>,
     ) -> bool {
-        self.elaborate_element_from(file, source, target, at, next, false, name, head, out)
+        self.elaborate_element_from(file, source, target, at, end, next, false, name, head, out)
     }
 
     /// `is_effective`: `next` is what `getEffectiveCheckNode` leaves, so the parentheses around it are no part of it.
@@ -2548,6 +2675,7 @@ impl Checker<'_> {
         source: TypeId,
         target: TypeId,
         at: u32,
+        end: u32,
         next: ExprId,
         is_effective: bool,
         name: Atom,
@@ -2594,6 +2722,9 @@ impl Checker<'_> {
                 start: at,
                 code: 2412,
             });
+            self.explain_to(at, end, 2412, |c| {
+                vec![c.type_to_string(given), c.type_to_string(wanted)]
+            });
             return true;
         }
         // What may be left out is not held to be `undefined`.
@@ -2602,7 +2733,7 @@ impl Checker<'_> {
         } else {
             wanted
         };
-        self.report_not_assignable(given, wanted, at, head, out);
+        self.report_not_assignable_with_end(given, wanted, at, end, head, out);
         true
     }
 
@@ -2621,7 +2752,7 @@ impl Checker<'_> {
     }
 
     /// `getExactOptionalUnassignableProperties`, whether there are any.
-    fn has_exact_optional_unassignable_properties(
+    pub(super) fn has_exact_optional_unassignable_properties(
         &mut self,
         source: TypeId,
         target: TypeId,
@@ -2751,8 +2882,8 @@ impl Checker<'_> {
             return false;
         }
         if !self.elaborate(file, body, given, all, 2322, out) {
-            let at = self.start_of(file, body);
-            self.report_not_assignable(given, all, at, 2322, out);
+            let (at, end) = (self.start_of(file, body), self.error_end_of(file, body));
+            self.report_not_assignable_with_end(given, all, at, end, 2322, out);
         }
         true
     }
@@ -2768,19 +2899,46 @@ impl Checker<'_> {
         head: u32,
         out: &mut Vec<Diagnostic>,
     ) {
-        self.report_not_assignable_as(source, target, at, head, false, out);
+        self.report_not_assignable_as(source, target, at, 0, head, (false, false), out);
     }
 
-    /// `named_otherwise`: one of the two is written as an alias that is not the name it is compared under.
+    /// The same. `end`: where the node that starts at `at` ends.
+    pub(super) fn report_not_assignable_with_end(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        at: u32,
+        end: u32,
+        head: u32,
+        out: &mut Vec<Diagnostic>,
+    ) {
+        self.report_not_assignable_as(source, target, at, end, head, (false, false), out);
+    }
+
+    /// `named_otherwise`: whether `source`, and whether `target`, is written as an alias that is not the name it is compared under.
+    #[allow(clippy::too_many_arguments)]
     fn report_not_assignable_as(
         &mut self,
         source: TypeId,
         target: TypeId,
         at: u32,
+        end: u32,
         head: u32,
-        named_otherwise: bool,
+        named_otherwise: (bool, bool),
         out: &mut Vec<Diagnostic>,
     ) {
+        let error = RelationError {
+            source,
+            target,
+            // 2678 is what `reportRelationError` says without a head message under the comparable relation.
+            relation: if head == 2678 {
+                Relation::Comparable
+            } else {
+                Relation::Assignable
+            },
+            head,
+            named_otherwise,
+        };
         self.trace_pair(head, at, source, target);
         if std::env::var_os("BUN_SEMA_EXPLAIN").is_some() {
             let why = self.explain_not_assignable(source, target);
@@ -2800,40 +2958,298 @@ impl Checker<'_> {
         {
             // Of attributes it is worded otherwise, and `head` goes on top. The complaint moves to an attribute and to nothing else.
             if let Some(excess) = self.excess_property(source, target, Relation::Assignable) {
-                let start = match excess {
+                let (start, end) = match excess {
                     Excess::Unknown(
                         Prop {
                             source: PropSource::Literal(file, p),
                             ..
                         },
                         _,
-                    ) => self.hir(file)[p].pos,
-                    _ => at,
+                    ) => (self.hir(file)[p].pos, self.end_of_jsx_attr_name(file, p)),
+                    _ => (at, end),
                 };
                 out.push(Diagnostic { start, code: head });
+                self.explain_relation_error(start, end, head, target, error);
                 return;
             }
         } else if let Some(excess) =
-            self.excess_within(source, target, Relation::Assignable, at, head, 0)
+            self.excess_within(source, target, Relation::Assignable, at, end, head, 0)
         {
             out.push(excess);
+            self.explain_head_over_excess(excess, at, end, error);
             return;
         }
-        let code = self.head_of_relation_error(source, target, head, named_otherwise);
+        let (code, said_of) = self.head_of_relation_error(
+            source,
+            target,
+            head,
+            named_otherwise.0 || named_otherwise.1,
+        );
         out.push(Diagnostic { start: at, code });
+        self.explain_relation_error(at, end, code, said_of, error);
+    }
+
+    /// What `excess_within` found is noted where it is found, unless `error.head` ended up on top of it.
+    /// `at`, `end`: the node the complaint was on to begin with.
+    fn explain_head_over_excess(
+        &mut self,
+        excess: Diagnostic,
+        at: u32,
+        end: u32,
+        error: RelationError,
+    ) {
+        if excess.code != error.head {
+            return;
+        }
+        let end = if excess.start == at {
+            end
+        } else {
+            self.checking
+                .map_or(0, |file| self.end_of_name_at(file, excess.start))
+        };
+        self.explain_relation_error(excess.start, end, excess.code, error.target, error);
+    }
+
+    /// Notes the message of the relation error reported from `start` to `end`. `code`: what stands first in it. `said_of`: the target
+    /// that is about, `error.target` or a part of it.
+    fn explain_relation_error(
+        &mut self,
+        start: u32,
+        end: u32,
+        code: u32,
+        said_of: TypeId,
+        error: RelationError,
+    ) {
+        let RelationError {
+            source,
+            target,
+            relation,
+            head,
+            named_otherwise,
+        } = error;
+        let named_otherwise = (named_otherwise.0, named_otherwise.1 && said_of == target);
+        self.explain_to(start, end, code, |c| {
+            // What is compared for the sake of the message says nothing about the comparison that is being reported.
+            let (gave_up, too_complex) = (c.relation_gave_up, c.relation_too_complex);
+            let arguments = c.relation_error_arguments(code, source, said_of, named_otherwise);
+            c.relation_gave_up = gave_up;
+            c.relation_too_complex = too_complex;
+            arguments
+        });
+        // Nothing is said under these.
+        if matches!(code, 2741 | 2739 | 2740 | 4104 | 2559 | 2560) {
+            return;
+        }
+        self.explain_chain(start, code, |c| {
+            let mut lines = c.relation_lines(source, target, relation, Some(head), 0);
+            let starts_with_head = lines.first().is_some_and(|first| {
+                first.code == code
+                    || first.code == head
+                    || matches!(first.code, 2719 | 2375 | 2379 | 2820)
+            });
+            if starts_with_head {
+                lines.remove(0);
+            } else {
+                for line in &mut lines {
+                    line.level += 1;
+                }
+            }
+            lines
+        });
+    }
+
+    /// The arguments of the message `code` that stands first in the error for `source` not being related to `target`.
+    fn relation_error_arguments(
+        &mut self,
+        code: u32,
+        source: TypeId,
+        target: TypeId,
+        named_otherwise: (bool, bool),
+    ) -> Vec<String> {
+        let compared = self.compared_in_place_of(source, target);
+        // `reportErrorResults`: what has an alias, or is compared as its only base, is named as it is given.
+        let is_named_as_given = |c: &mut Self, ty: TypeId, is_named_otherwise: bool| {
+            is_named_otherwise
+                || c.alias_for_display(ty).is_some()
+                || c.has_single_base_for_non_augmenting_subtype(ty)
+        };
+        let source = if is_named_as_given(self, source, named_otherwise.0) {
+            source
+        } else {
+            compared.0
+        };
+        let target = if is_named_as_given(self, target, named_otherwise.1) {
+            target
+        } else {
+            compared.1
+        };
+        match code {
+            // `isRelatedToEx`, `tryElaborateArrayLikeErrors`
+            2559 | 2560 | 4104 => vec![self.type_to_string(source), self.type_to_string(target)],
+            // `reportUnmatchedProperty`
+            2741 | 2739 | 2740 => {
+                let (source_name, target_name) = self.type_names_for_error_display(source, target);
+                let missing = self.unmatched_properties(compared.0, compared.1);
+                let listed = if code == 2740 { 4 } else { missing.len() };
+                let names: Vec<String> = missing
+                    .iter()
+                    .take(listed)
+                    .map(|prop| self.prop_to_string(prop))
+                    .collect();
+                let names = names.join(", ");
+                match code {
+                    2741 => vec![names, source_name, target_name],
+                    2739 => vec![source_name, target_name, names],
+                    _ => vec![
+                        source_name,
+                        target_name,
+                        names,
+                        missing.len().saturating_sub(4).to_string(),
+                    ],
+                }
+            }
+            // `reportRelationError`
+            _ => {
+                let (source_name, target_name) = self.relation_error_names(source, target);
+                let mut arguments = vec![source_name, target_name];
+                if code == 2820
+                    && let Some(suggested) =
+                        self.closest_string_literal_type(compared.0, compared.1)
+                {
+                    arguments.push(self.type_to_string(suggested));
+                }
+                arguments
+            }
+        }
+    }
+
+    /// What `isRelatedToEx` compares in place of `source` and `target`: `getNormalizedType` of each, and `X` for a target
+    /// `X | null | undefined` if `source` is never `null` or `undefined`.
+    fn compared_in_place_of(&mut self, source: TypeId, target: TypeId) -> (TypeId, TypeId) {
+        let (source, target) = (self.force(source), self.force(target));
+        let (source, target) = (self.regular(source), self.regular(target));
+        let (source, target) = (
+            self.simplified(source, false),
+            self.simplified(target, true),
+        );
+        let has_primitive_flag =
+            self.is_primitive(source) || source == TypeId::BOOLEAN || self.is_whole_enum(source);
+        // `TypeFlagsDefinitelyNonNullable`
+        if has_primitive_flag && !self.is_nullish(source)
+            || self.is_object_type(source)
+            || source == TypeId::OBJECT
+        {
+            (source, self.without_nullable_alternatives(target))
+        } else {
+            (source, target)
+        }
+    }
+
+    /// Whether `ty` is the union of all the members of an enum.
+    fn is_whole_enum(&mut self, ty: TypeId) -> bool {
+        match self.data(ty) {
+            TypeData::Union(parts) => match *self.data(parts[0]) {
+                TypeData::EnumLit { member, .. } | TypeData::Enum { symbol: member, .. } => {
+                    self.enum_type_of_member(member) == ty
+                }
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    /// How `reportRelationError` names the two: `generalizedSourceType` and `targetType`.
+    fn relation_error_names(&mut self, source: TypeId, target: TypeId) -> (String, String) {
+        let (source_name, target_name) = self.type_names_for_error_display(source, target);
+        // `isLiteralType`
+        if target != TypeId::NEVER
+            && self.every_type(source, |c, member| c.is_unit(member))
+            && !self.could_have_top_level_singleton_types(target, 0)
+        {
+            let generalized = self.base_of_literal(source);
+            return (
+                self.type_to_string_fully_qualified(generalized),
+                target_name,
+            );
+        }
+        (source_name, target_name)
+    }
+
+    /// `typeCouldHaveTopLevelSingletonTypes`
+    fn could_have_top_level_singleton_types(&mut self, ty: TypeId, depth: u32) -> bool {
+        let ty = self.force(ty);
+        if ty == TypeId::BOOLEAN || depth > 32 {
+            return false;
+        }
+        if let TypeData::Union(parts) | TypeData::Intersection(parts) = self.data(ty) {
+            return parts
+                .iter()
+                .any(|&part| self.could_have_top_level_singleton_types(part, depth + 1));
+        }
+        let is_pattern = matches!(
+            self.data(ty),
+            TypeData::Template { .. } | TypeData::StringMapping { .. }
+        );
+        // `TypeFlagsInstantiable`
+        if (is_pattern || self.is_deferred(ty))
+            && let Some(constraint) = self.constraint_of(ty)
+            && constraint != ty
+        {
+            return self.could_have_top_level_singleton_types(constraint, depth + 1);
+        }
+        is_pattern || self.is_unit(ty)
+    }
+
+    /// `getUnmatchedProperties`: the properties `target` requires that `source` does not have.
+    fn unmatched_properties(&mut self, source: TypeId, target: TypeId) -> Vec<Prop> {
+        let (Some(sm), Some(tm)) = (self.members(source), self.members(target)) else {
+            return Vec::new();
+        };
+        let mut missing = Vec::new();
+        for tp in &tm.shape().props {
+            if !self.is_static_private_name(tp)
+                && !tp.flags.contains(PropFlags::OPTIONAL)
+                && self.property_of_type(&sm, tp.name).is_none()
+            {
+                missing.push(tp.clone());
+            }
+        }
+        missing
+    }
+
+    /// `getSuggestedTypeForNonexistentStringLiteralType`
+    fn closest_string_literal_type(&self, source: TypeId, target: TypeId) -> Option<TypeId> {
+        let TypeData::StringLit { value, .. } = *self.data(source) else {
+            return None;
+        };
+        let text = self.files().atoms.bytes(value);
+        // In the order `CompareTypes` keeps them in: of those that are as close, the first.
+        self.parts_in_order(target)
+            .into_iter()
+            .filter_map(|part| match *self.data(part) {
+                TypeData::StringLit { value: other, .. } => {
+                    let other = self.files().atoms.bytes(other);
+                    is_close(text, other).then(|| (part, edit_distance(text, other)))
+                }
+                _ => None,
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|closest| closest.0)
     }
 
     /// Where `isRelatedToEx`, reporting, comes upon a property that is too much in an object literal (`hasExcessProperties`), if that
     /// is what `source` not being related to `target` comes down to. From there on the complaint is at the name of the property
     /// (`r.errorNode`). It is 2353 or 2561 as long as only `reportRelationError` and `Types_of_property_0_are_incompatible` would go
     /// on top, which then are not said. Once anything else is, `head` ends up on top.
-    /// `at`: where the complaint is to begin with.
+    /// `at`, `end`: the node the complaint is on to begin with.
+    #[allow(clippy::too_many_arguments)]
     fn excess_within(
         &mut self,
         source: TypeId,
         target: TypeId,
         relation: Relation,
         at: u32,
+        end: u32,
         head: u32,
         depth: u32,
     ) -> Option<Diagnostic> {
@@ -2847,12 +3263,12 @@ impl Checker<'_> {
         if self.is_object_literal_type(source) {
             match self.excess_property(source, target, relation) {
                 Some(Excess::Unknown(prop, in_type)) => {
-                    return Some(self.excess_property_error(&prop, in_type, at));
+                    return Some(self.excess_property_error(&prop, in_type, at, end));
                 }
                 // No more is looked at than what the property holds.
                 Some(Excess::Mismatch(given, wanted)) => {
                     let further_in =
-                        self.excess_within(given, wanted, relation, at, head, depth + 1);
+                        self.excess_within(given, wanted, relation, at, end, head, depth + 1);
                     return Some(further_in.unwrap_or(Diagnostic {
                         start: at,
                         code: head,
@@ -2871,7 +3287,7 @@ impl Checker<'_> {
                     .into_iter()
                     .find(|&part| !self.related(part, target, relation))?
             };
-            return self.excess_within(part, target, relation, at, head, depth + 1);
+            return self.excess_within(part, target, relation, at, end, head, depth + 1);
         }
         if !self.is_object_type(source) {
             return None;
@@ -2880,7 +3296,7 @@ impl Checker<'_> {
         if self.is_union(target) {
             let best = self.best_matching_type(source, target)?;
             let regular = self.regular_type_of_object_literal(source);
-            return self.excess_within(regular, best, relation, at, head, depth + 1);
+            return self.excess_within(regular, best, relation, at, end, head, depth + 1);
         }
         match self.data(target) {
             // `typeRelatedToEachType`, where nothing is too much (`IntersectionStateTarget`): what is wrong there is said first.
@@ -2908,7 +3324,7 @@ impl Checker<'_> {
             if self.is_readonly_array_or_tuple(source) && self.is_mutable_array_or_tuple(target) {
                 return None;
             }
-            return self.excess_within(given, wanted, relation, at, head, depth + 1);
+            return self.excess_within(given, wanted, relation, at, end, head, depth + 1);
         }
         // `propertiesRelatedTo`, of a list and a tuple: up to the first element that is not related.
         if let TypeData::Tuple {
@@ -2999,7 +3415,8 @@ impl Checker<'_> {
                 if self.related(given, wanted, relation) {
                     continue;
                 }
-                let found = self.excess_within(given, wanted, relation, at, head, depth + 1)?;
+                let found =
+                    self.excess_within(given, wanted, relation, at, end, head, depth + 1)?;
                 // Where either has more than one element, which one it is is said on top.
                 let names_position = target_arity > 1 || source_arity > 1;
                 return Some(if names_position {
@@ -3041,7 +3458,7 @@ impl Checker<'_> {
                 self.type_of_prop_as_read(tp, tm.mapper),
             );
             if !self.related(given, wanted, relation) {
-                return self.excess_within(given, wanted, relation, at, head, depth + 1);
+                return self.excess_within(given, wanted, relation, at, end, head, depth + 1);
             }
             // `propertyRelatedTo`: it may be left out where it may not.
             if relation != Relation::Comparable
@@ -3056,9 +3473,16 @@ impl Checker<'_> {
     }
 
     /// 2353, or 2561 where it looks like a slip of the pen: `in_type` has no room for the property `prop` of an object literal
-    /// (`hasExcessProperties`). It is said at the name of the property, or `at` if that is not written in the file at hand.
-    fn excess_property_error(&mut self, prop: &Prop, in_type: TypeId, at: u32) -> Diagnostic {
-        let (start, is_identifier) = match prop.source {
+    /// (`hasExcessProperties`). It is said at the name of the property, or on the node from `at` to `end` if that is not written in
+    /// the file at hand.
+    fn excess_property_error(
+        &mut self,
+        prop: &Prop,
+        in_type: TypeId,
+        at: u32,
+        end: u32,
+    ) -> Diagnostic {
+        let (start, end, is_identifier) = match prop.source {
             PropSource::Literal(file, p) if self.checking.is_none_or(|checked| checked == file) => {
                 let (hir, written) = (self.hir(file), &self.hir(file)[p]);
                 // A name written as a string or a number is not taken for a slip of the pen.
@@ -3068,12 +3492,13 @@ impl Checker<'_> {
                 );
                 (
                     written.pos,
+                    self.end_of_prop_name(file, p),
                     matches!(written.key, PropKey::Name(_)) && !is_literal,
                 )
             }
-            _ => (at, false),
+            _ => (at, end, false),
         };
-        let mut is_misspelt = false;
+        let mut suggestions: Vec<Atom> = Vec::new();
         if is_identifier {
             // `getSuggestionForNonexistentProperty`, among the properties of `errorTarget`: of a union, those all its members have.
             let text = self.files().atoms.bytes(prop.name);
@@ -3089,19 +3514,33 @@ impl Checker<'_> {
                     .map(|p| p.name)
                     .filter(|&name| is_close(text, self.files().atoms.bytes(name)))
                     .collect();
-                is_misspelt |= close.into_iter().any(|name| {
-                    part == error_target || self.type_of_property(error_target, name).is_some()
-                });
+                for name in close {
+                    if part == error_target || self.type_of_property(error_target, name).is_some() {
+                        suggestions.push(name);
+                    }
+                }
                 // `getPropertiesOfUnionOrIntersectionType`: no further than the first member without index signatures.
-                if is_misspelt || members.shape().index.is_empty() {
+                if !suggestions.is_empty() || members.shape().index.is_empty() {
                     break;
                 }
             }
         }
-        Diagnostic {
-            start,
-            code: if is_misspelt { 2561 } else { 2353 },
-        }
+        let code = if suggestions.is_empty() { 2353 } else { 2561 };
+        self.explain_to(start, end, code, |c| {
+            let error_target = c.filter(in_type, |c, m| c.is_target_of_excess_property_check(m));
+            let mut arguments = vec![c.prop_to_string(prop), c.type_to_string(error_target)];
+            // `GetSpellingSuggestion`: of those that are as close, the one declared first.
+            let text = c.files().atoms.bytes(prop.name);
+            let distance = |name: Atom| edit_distance(text, c.files().atoms.bytes(name));
+            if let Some(&suggested) = suggestions
+                .iter()
+                .min_by(|&&a, &&b| distance(a).total_cmp(&distance(b)))
+            {
+                arguments.push(c.atom_text(suggested));
+            }
+            arguments
+        });
+        Diagnostic { start, code }
     }
 
     /// `isExcessPropertyCheckTarget`
@@ -3140,13 +3579,15 @@ impl Checker<'_> {
     /// What is said first of `source` not fitting `target`, where `head` would be said for lack of anything better: the part of
     /// `isRelatedToEx`, `reportErrorResults` and `reportRelationError` that decides on it.
     /// `named_otherwise`: one of the two is written as an alias that is not the name it is compared under.
+    /// With it comes the target it is said of: `target`, or the part of `target` that `source` is held against where it is said.
     fn head_of_relation_error(
         &mut self,
         source: TypeId,
         target: TypeId,
         head: u32,
         named_otherwise: bool,
-    ) -> u32 {
+    ) -> (u32, TypeId) {
+        let said_of = target;
         let (source, target) = (self.force(source), self.force(target));
         let (source, target) = (self.regular(source), self.regular(target));
         // `reportErrorResults`: the head names the two as they are given, what is missing is said of what they are compared as.
@@ -3155,15 +3596,7 @@ impl Checker<'_> {
             || self.has_single_base_for_non_augmenting_subtype(target)
             || self.is_aliased_jsx_class_attributes(source, target);
         // `TypeFlagsPrimitive`, which `boolean` and an enum have though they are unions.
-        let is_whole_enum = match self.data(source) {
-            TypeData::Union(parts) => match *self.data(parts[0]) {
-                TypeData::EnumLit { member, .. } | TypeData::Enum { symbol: member, .. } => {
-                    self.enum_type_of_member(member) == source
-                }
-                _ => false,
-            },
-            _ => false,
-        };
+        let is_whole_enum = self.is_whole_enum(source);
         let has_primitive_flag =
             self.is_primitive(source) || source == TypeId::BOOLEAN || is_whole_enum;
         // `TypeFlagsDefinitelyNonNullable`
@@ -3200,11 +3633,11 @@ impl Checker<'_> {
                     if let Some(&first) = self.signatures(source, construct).first() {
                         let returned = self.sig_return(first);
                         if self.is_assignable(returned, target) {
-                            return 2560;
+                            return (2560, said_of);
                         }
                     }
                 }
-                return 2559;
+                return (2559, said_of);
             }
         }
         // `reportErrorResults`: of attributes that do not fit `JSX.IntrinsicAttributes & ..` no more is said than what is wrong with
@@ -3239,7 +3672,7 @@ impl Checker<'_> {
         {
             // `tryElaborateArrayLikeErrors`
             if self.is_readonly_array_or_tuple(source) && self.is_mutable_array_or_tuple(target) {
-                return 4104;
+                return (4104, said_of);
             }
             // Of `Object` something else is said in between.
             if gives_way
@@ -3247,7 +3680,7 @@ impl Checker<'_> {
                 && self.is_global_ref(source, known::Object).is_none()
                 && let Some(code) = self.why_not_assignable_at_the_surface(source, target)
             {
-                return code;
+                return (code, said_of);
             }
         }
         if head == 2322 {
@@ -3259,10 +3692,10 @@ impl Checker<'_> {
                 )
                 && a == b
             {
-                return 2719;
+                return (2719, said_of);
             }
             if self.has_exact_optional_unassignable_properties(source, target) {
-                return 2375;
+                return (2375, said_of);
             }
             // `getSuggestedTypeForNonexistentStringLiteralType`
             if let TypeData::StringLit { value, .. } = *self.data(source)
@@ -3276,18 +3709,18 @@ impl Checker<'_> {
                     _ => false,
                 });
                 if is_misspelt {
-                    return 2820;
+                    return (2820, said_of);
                 }
             }
         } else if head == 2345 && self.has_exact_optional_unassignable_properties(source, target) {
-            return 2379;
+            return (2379, said_of);
         }
-        head
+        (head, said_of)
     }
 
     /// `getSingleBaseForNonAugmentingSubtype`, whether there is one: a class or an interface that extends one type and adds nothing
     /// to it. It is compared as that type.
-    fn has_single_base_for_non_augmenting_subtype(&mut self, ty: TypeId) -> bool {
+    pub(super) fn has_single_base_for_non_augmenting_subtype(&mut self, ty: TypeId) -> bool {
         use crate::bind::Decl;
         let TypeData::Ref { target, .. } = *self.data(ty) else {
             return false;

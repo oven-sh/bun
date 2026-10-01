@@ -534,6 +534,20 @@ fn written_at(
     }
 }
 
+/// The arguments of the message `why_not_a_key_of` chose for `object[keys]`: of 4105 the name of the property, of 2536 both types.
+fn arguments_of_refused_key(
+    c: &mut Checker<'_>,
+    code: u32,
+    object: TypeId,
+    keys: TypeId,
+) -> Vec<String> {
+    if code == 4105 {
+        let name = c.property_name_of_type(keys);
+        return name.map(|name| c.atom_text(name)).into_iter().collect();
+    }
+    vec![c.type_to_string(keys), c.type_to_string(object)]
+}
+
 /// TypeScript's stack of type resolutions, and what came of those that are over.
 #[derive(Default)]
 struct Circles {
@@ -642,6 +656,8 @@ impl Checker<'_> {
                                 start: start(),
                                 code: 2574,
                             });
+                            let end = self.end_of_tuple_elem(file, e);
+                            self.explain_to(start(), end, 2574, |_| vec![]);
                         }
                         break;
                     }
@@ -672,6 +688,8 @@ impl Checker<'_> {
                         start: start(),
                         code,
                     });
+                    let end = self.end_of_tuple_elem(file, e);
+                    self.explain_to(start(), end, code, |_| vec![]);
                 }
                 break;
             }
@@ -719,6 +737,8 @@ impl Checker<'_> {
                             start: hir[node].pos,
                             code: 2799,
                         });
+                        let end = self.end_of_type_node(file, node);
+                        self.explain_to(hir[node].pos, end, 2799, |_| vec![]);
                         return;
                     }
                 }
@@ -749,6 +769,8 @@ impl Checker<'_> {
                     start: hir.types[t].pos,
                     code: 2799,
                 });
+                let end = self.end_of_type_node(file, node);
+                self.explain_to(hir.types[t].pos, end, 2799, |_| vec![]);
             }
         }
     }
@@ -786,6 +808,8 @@ impl Checker<'_> {
                                 start: hir.exprs[i].pos,
                                 code: 2800,
                             });
+                            let end = self.end_inside_parentheses(file, ExprId(i as u32));
+                            self.explain_to(hir.exprs[i].pos, end, 2800, |_| vec![]);
                             break;
                         }
                     }
@@ -823,6 +847,8 @@ impl Checker<'_> {
                     start: hir.exprs[i].pos,
                     code: 2590,
                 });
+                let end = self.end_inside_parentheses(file, e);
+                self.explain_to(hir.exprs[i].pos, end, 2590, |_| vec![]);
             }
         }
     }
@@ -859,6 +885,8 @@ impl Checker<'_> {
                     start: hir.types[t].pos,
                     code: 2590,
                 });
+                let end = self.end_of_type_node(file, TypeNodeId(t as u32));
+                self.explain_to(hir.types[t].pos, end, 2590, |_| vec![]);
             }
         }
     }
@@ -929,8 +957,8 @@ impl Checker<'_> {
         out: &mut Vec<Diagnostic>,
     ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // (start of the object literal, contextual intersection, property name, start of the error)
-        let mut refused: Vec<(u32, TypeId, Atom, u32)> = Vec::new();
+        // (start of the object literal, contextual intersection, property name, start and end of the error)
+        let mut refused: Vec<(u32, TypeId, Atom, u32, u32)> = Vec::new();
         for i in 0..hir.exprs.len() {
             let ExprKind::Object(props) = hir.exprs[i].kind else {
                 continue;
@@ -964,18 +992,24 @@ impl Checker<'_> {
                     if !std::mem::take(&mut self.union_too_complex) {
                         continue;
                     }
-                    let start = match hir[prop.value].kind {
+                    let (start, end) = match hir[prop.value].kind {
                         // These ask for their contextual type while `checkExpression` has them as the current node.
                         ExprKind::Fn(_) | ExprKind::Object(_) | ExprKind::Array(_)
                             if prop.kind == PropKind::Init =>
                         {
-                            self.error_start_inside_parentheses(file, prop.value)
+                            (
+                                self.error_start_inside_parentheses(file, prop.value),
+                                self.error_end_inside_parentheses(file, prop.value),
+                            )
                         }
                         // `checkExpressionForMutableLocation` and `checkObjectLiteralMethod` ask while the object literal is the
                         // current node.
-                        _ => hir.exprs[i].pos,
+                        _ => (
+                            hir.exprs[i].pos,
+                            self.end_inside_parentheses(file, ExprId(i as u32)),
+                        ),
                     };
-                    refused.push((hir.exprs[i].pos, part, name, start));
+                    refused.push((hir.exprs[i].pos, part, name, start, end));
                 }
             }
         }
@@ -991,6 +1025,7 @@ impl Checker<'_> {
                     start: r.3,
                     code: 2590,
                 });
+                self.explain_to(r.3, r.4, 2590, |_| vec![]);
             }
         }
     }
@@ -1105,6 +1140,8 @@ impl Checker<'_> {
                         start: hir.types[t].pos,
                         code: 1338,
                     });
+                    let end = self.end_of_type_node(file, TypeNodeId(t as u32));
+                    self.explain_to(hir.types[t].pos, end, 1338, |_| vec![]);
                 }
                 continue;
             }
@@ -1217,11 +1254,15 @@ impl Checker<'_> {
                     start: hir[decl.ty].pos,
                     code: 1333,
                 });
+                let end = self.end_of_type_node(file, decl.ty);
+                self.explain_to(hir[decl.ty].pos, end, 1333, |_| vec![]);
             } else if !is_in_variable_statement {
                 out.push(Diagnostic {
                     start: hir[decl.ty].pos,
                     code: 1334,
                 });
+                let end = self.end_of_type_node(file, decl.ty);
+                self.explain_to(hir[decl.ty].pos, end, 1334, |_| vec![]);
             } else if !matches!(decl.kind, VarKind::Const | VarKind::AwaitUsing) {
                 // `NodeFlagsConst` is one of the two bits of `NodeFlagsAwaitUsing`.
                 out.push(Diagnostic {
@@ -1252,6 +1293,8 @@ impl Checker<'_> {
                 start: member.pos,
                 code,
             });
+            let end = self.end_of_member_name(file, MemberId(m as u32));
+            self.explain_to(member.pos, end, code, |_| vec![]);
         }
         for (t, node) in hir.types.iter().enumerate() {
             if matches!(node.kind, TypeNodeKind::UniqueSymbol)
@@ -1262,6 +1305,8 @@ impl Checker<'_> {
                     start: node.pos,
                     code: 1335,
                 });
+                let end = self.end_of_type_node(file, TypeNodeId(t as u32));
+                self.explain_to(node.pos, end, 1335, |_| vec![]);
             }
         }
     }
@@ -1398,6 +1443,8 @@ impl Checker<'_> {
                     start: member.pos,
                     code: 1021,
                 });
+                let end = self.end_of_member(file, MemberId(m as u32));
+                self.explain_to(member.pos, end, 1021, |_| vec![]);
             }
         }
     }
@@ -1463,6 +1510,15 @@ impl Checker<'_> {
                 _ => first.pos,
             };
             out.push(Diagnostic { start, code: 7061 });
+            let end = match first.kind {
+                MemberKind::Constructor => self.end_of_name_at(file, first.pos),
+                MemberKind::Property | MemberKind::Getter | MemberKind::Setter => {
+                    self.end_of_member_name(file, all.at(0))
+                }
+                MemberKind::Method if is_in_class => self.end_of_member_name(file, all.at(0)),
+                _ => self.end_of_member(file, all.at(0)),
+            };
+            self.explain_to(start, end, 7061, |_| vec![]);
         }
     }
 
@@ -1539,10 +1595,10 @@ impl Checker<'_> {
                 MemberKind::Method
                     if !self.is_signature_inside_a_class(file, MemberId(m as u32)) =>
                 {
-                    out.push(Diagnostic {
-                        start: start_of_modifiers(&hir.text, member.pos),
-                        code: 18016,
-                    });
+                    let start = start_of_modifiers(&hir.text, member.pos);
+                    out.push(Diagnostic { start, code: 18016 });
+                    let end = self.end_of_member(file, MemberId(m as u32));
+                    self.note(start, end, 18016, vec![]);
                 }
                 _ => {}
             }
@@ -1619,10 +1675,13 @@ impl Checker<'_> {
                     start: last as u32 - 1,
                     code: 1009,
                 }),
-                Some(b'<') => out.push(Diagnostic {
-                    start: last as u32 - 1,
-                    code: 1099,
-                }),
+                Some(b'<') => {
+                    out.push(Diagnostic {
+                        start: last as u32 - 1,
+                        code: 1099,
+                    });
+                    self.explain_to(last as u32 - 1, close as u32, 1099, |_| vec![]);
+                }
                 _ => {}
             }
         }
@@ -1650,6 +1709,8 @@ impl Checker<'_> {
                     start: open as u32,
                     code: 1099,
                 });
+                let end = skip_trivia(text, open + 1) as u32 + 1;
+                self.explain_to(open as u32, end, 1099, |_| vec![]);
             }
         }
         // `checkGrammarJsxElement`: the list after the name of an opening tag.
@@ -1680,6 +1741,8 @@ impl Checker<'_> {
                     start: open as u32,
                     code: 1099,
                 });
+                let end = skip_trivia(text, open + 1) as u32 + 1;
+                self.explain_to(open as u32, end, 1099, |_| vec![]);
             }
         }
     }
@@ -1733,6 +1796,8 @@ impl Checker<'_> {
                     start: open as u32,
                     code: 1099,
                 });
+                let end = skip_trivia(text, open + 1) as u32 + 1;
+                self.explain_to(open as u32, end, 1099, |_| vec![]);
             }
         }
     }
@@ -1804,6 +1869,8 @@ impl Checker<'_> {
                     start: self.start_of(file, expr),
                     code: 2848,
                 });
+                let end = self.end_inside_parentheses(file, ExprId(i as u32));
+                self.explain_to(self.start_of(file, expr), end, 2848, |_| vec![]);
             }
             let ty = self.type_of_expr(file, expr);
             if !self.is_uncertain(file, expr) {
@@ -1844,10 +1911,11 @@ impl Checker<'_> {
             let is_in_parentheses = hir.parens.binary_search_by_key(&right.0, |p| p.0.0).is_ok();
             let is_compared = matches!(bound.expr_parent[i], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Binary { op: BinOp::Lt, left, .. } if left.idx() == i));
             if is_in_parentheses || !is_compared {
-                out.push(Diagnostic {
-                    start: self.start_inside_parentheses(file, right),
-                    code: 2848,
-                });
+                let start = self.start_inside_parentheses(file, right);
+                out.push(Diagnostic { start, code: 2848 });
+                let end =
+                    end_of_type_arguments(text, after + 1).map_or(0, |close| close as u32 + 1);
+                self.explain_to(start, end, 2848, |_| vec![]);
             }
         }
     }
@@ -1885,15 +1953,16 @@ impl Checker<'_> {
             return;
         }
         let hir = self.hir(file);
-        // Whether any part takes the list, and whether any that has signatures does not.
-        let mut found = (false, false);
+        // Whether any part takes the list, and the first that has signatures and does not.
+        let mut found = (false, None);
         let mut applicable = Vec::new();
         self.note_whether_type_arguments_apply(ty, args.len(), &mut found, &mut applicable, 0);
-        if !found.0 || found.1 {
-            out.push(Diagnostic {
-                start: start_of_type(hir, hir.id_at(args, 0)),
-                code: 2635,
-            });
+        if !found.0 || found.1.is_some() {
+            let start = start_of_type(hir, hir.id_at(args, 0));
+            out.push(Diagnostic { start, code: 2635 });
+            let error_type = if found.0 { found.1.unwrap_or(ty) } else { ty };
+            let end = self.end_of_type_args(file, args);
+            self.explain_to(start, end, 2635, |c| vec![c.type_to_string(error_type)]);
         }
         if applicable.is_empty() {
             return;
@@ -1909,10 +1978,13 @@ impl Checker<'_> {
                 self.failing_type_argument(sig, &type_params, &given)
                 && self.answer_if_sure(|c| c.is_assignable(argument, constraint)) == Some(false)
             {
-                self.report_not_assignable(
+                let node = hir.id_at(args, index);
+                let start = start_of_type(hir, node);
+                self.report_not_assignable_with_end(
                     argument,
                     constraint,
-                    start_of_type(hir, hir.id_at(args, index)),
+                    start,
+                    self.end_of_type_node_from(file, node, start),
                     2344,
                     out,
                 );
@@ -1925,7 +1997,7 @@ impl Checker<'_> {
         &mut self,
         ty: TypeId,
         given: usize,
-        found: &mut (bool, bool),
+        found: &mut (bool, Option<TypeId>),
         applicable: &mut Vec<SigId>,
         depth: u32,
     ) {
@@ -1933,7 +2005,9 @@ impl Checker<'_> {
         let mut own = (false, false);
         self.note_signatures_that_take(ty, given, &mut own, found, applicable, depth);
         found.0 |= own.1;
-        found.1 |= own.0 && !own.1;
+        if own.0 && !own.1 && found.1.is_none() {
+            found.1 = Some(ty);
+        }
     }
 
     /// Its `getInstantiatedTypePart`.
@@ -1942,7 +2016,7 @@ impl Checker<'_> {
         ty: TypeId,
         given: usize,
         own: &mut (bool, bool),
-        found: &mut (bool, bool),
+        found: &mut (bool, Option<TypeId>),
         applicable: &mut Vec<SigId>,
         depth: u32,
     ) {
@@ -2031,10 +2105,10 @@ impl Checker<'_> {
             if !self.is_generic_object_type(object)
                 && self.is_negative_index_of_a_tuple(object, keys)
             {
-                out.push(Diagnostic {
-                    start: start_of_type(hir, index),
-                    code: 2514,
-                });
+                let start = start_of_type(hir, index);
+                out.push(Diagnostic { start, code: 2514 });
+                let end = self.end_of_type_node_from(file, index, start);
+                self.explain_to(start, end, 2514, |_| vec![]);
             }
             let whole = self.type_from_node(file, TypeNodeId(t as u32));
             let TypeData::IndexedAccess {
@@ -2070,6 +2144,10 @@ impl Checker<'_> {
             out.push(Diagnostic {
                 start: hir.types[t].pos,
                 code,
+            });
+            let end = self.end_of_type_node(file, TypeNodeId(t as u32));
+            self.explain_to(hir.types[t].pos, end, code, |c| {
+                arguments_of_refused_key(c, code, waiting, key)
             });
         }
     }
@@ -2275,6 +2353,8 @@ impl Checker<'_> {
                     start: self.start_of(file, index),
                     code: 2514,
                 });
+                let end = self.end_of_expr(file, index);
+                self.explain_to(self.start_of(file, index), end, 2514, |_| vec![]);
                 continue;
             }
             // `getAssignmentTargetKind(node) != AssignmentKindNone`
@@ -2299,6 +2379,8 @@ impl Checker<'_> {
                     start: at,
                     code: 2862,
                 });
+                let end = self.end_inside_parentheses(file, e);
+                self.explain_to(at, end, 2862, |c| vec![c.type_to_string(object)]);
                 continue;
             }
             let checked = self.type_of_expr(file, e);
@@ -2321,7 +2403,13 @@ impl Checker<'_> {
                 continue;
             };
             match self.why_not_a_key_of(waiting, key) {
-                Some(code) => out.push(Diagnostic { start: at, code }),
+                Some(code) => {
+                    out.push(Diagnostic { start: at, code });
+                    let end = self.end_inside_parentheses(file, e);
+                    self.explain_to(at, end, code, |c| {
+                        arguments_of_refused_key(c, code, waiting, key)
+                    });
+                }
                 None if is_written && self.is_known(waiting) && self.is_known(key) => {
                     if let Some((of, node, _)) = self.mapped_origin(waiting)
                         && self.mapped_decl(of, node).readonly == MappedModifier::Add
@@ -2330,6 +2418,8 @@ impl Checker<'_> {
                             start: at,
                             code: 2542,
                         });
+                        let end = self.end_inside_parentheses(file, e);
+                        self.explain_to(at, end, 2542, |c| vec![c.type_to_string(waiting)]);
                     }
                 }
                 None => {}
@@ -2441,9 +2531,22 @@ impl Checker<'_> {
                 // A tuple type has no name to go by. `[...X[]]` is an array.
                 let is_tuple = matches!(hir[node].kind, TypeNodeKind::Tuple(_))
                     && array_element_type_node(hir, node).is_none();
+                let code = if is_tuple { 4110 } else { 4109 };
                 out.push(Diagnostic {
                     start: hir[node].pos,
-                    code: if is_tuple { 4110 } else { 4109 },
+                    code,
+                });
+                // `getArrayOrTupleTargetType`
+                let parent = parents[node.idx()];
+                let is_readonly =
+                    parent.is_some() && matches!(hir[parent].kind, TypeNodeKind::Readonly(_));
+                let end = self.end_of_type_node(file, node);
+                self.explain_to(hir[node].pos, end, code, |c| {
+                    match c.type_symbol_written(file, node) {
+                        Some(sym) => vec![c.symbol_to_string(sym)],
+                        None if is_readonly => vec!["ReadonlyArray".to_owned()],
+                        None => vec!["Array".to_owned()],
+                    }
                 });
             }
         }

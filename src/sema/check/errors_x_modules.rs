@@ -62,12 +62,14 @@ struct Cx<'a> {
     verbatim_commonjs: bool,
     /// `getVerbatimModuleSyntaxErrorMessage`
     esm_syntax_code: u32,
-    /// The start and the type (`getTypeFromImportAttributes`) of the attributes of each import or export declaration. The `&self`
-    /// passes collect them, and `check_import_attribute_types` relates them, which needs `&mut self`.
-    attribute_types: std::cell::RefCell<Vec<(u32, AttributesType)>>,
-    /// The imported names that are no export of their module, and where `esm_syntax_code` goes if they stand for something after all.
-    /// `check_members_of_export_equals` asks the type of the `export =` value, which needs `&mut self`.
-    members_of_export_equals: std::cell::RefCell<Vec<(Sym, u32)>>,
+    /// The start, the end and the type (`getTypeFromImportAttributes`) of the attributes of each import or export declaration. The
+    /// `&self` passes collect them, and `check_import_attribute_types` relates them, which needs `&mut self`.
+    attribute_types: std::cell::RefCell<Vec<(u32, u32, AttributesType)>>,
+    /// The imported names that are no export of their module, and the specifier `esm_syntax_code` is said of if they stand for
+    /// something after all. `check_members_of_export_equals` asks the type of the `export =` value, which needs `&mut self`.
+    members_of_export_equals: std::cell::RefCell<Vec<(Sym, ImportSpecId)>>,
+    /// The start and the code of each error whose message names a symbol, and the symbol. Printing it needs `&mut self`.
+    named_symbols: std::cell::RefCell<Vec<(u32, u32, Sym)>>,
 }
 
 /// What `getTypeFromImportAttributes` is computed from.
@@ -198,6 +200,7 @@ impl Checker<'_> {
             },
             attribute_types: Default::default(),
             members_of_export_equals: Default::default(),
+            named_symbols: Default::default(),
             uses,
         };
         let top = Around {
@@ -223,6 +226,9 @@ impl Checker<'_> {
         self.xm_import_calls_and_types(&cx, out);
         self.check_import_attribute_types(&cx, out);
         self.check_members_of_export_equals(&cx, out);
+        for (start, code, sym) in cx.named_symbols.take() {
+            self.explain(start, code, |c| vec![c.symbol_to_string(sym)]);
+        }
     }
 
     /// `reportFlowControlError`: reports 2563 at the first token of the function body, namespace body or file that contains a reference
@@ -282,6 +288,7 @@ impl Checker<'_> {
             if let Some(start) = start {
                 reported = block;
                 out.push(Diagnostic { start, code: 2563 });
+                self.note(start, self.end_of_token_at(file, start), 2563, Vec::new());
             }
         }
     }
@@ -353,6 +360,7 @@ impl Checker<'_> {
                     let start = statement_start(cx.text, pos);
                     if start != pos {
                         out.push(Diagnostic { start, code: 1184 });
+                        self.note(start, self.end_of_stmt(cx.file, s), 1184, Vec::new());
                     }
                     let code = if around.module.is_some() {
                         1316
@@ -367,10 +375,20 @@ impl Checker<'_> {
                         continue;
                     };
                     out.push(Diagnostic { start, code });
+                    self.note(start, self.end_of_stmt(cx.file, s), code, Vec::new());
                 }
                 _ => {}
             }
         }
+    }
+
+    /// `node.End()` of the statement said to be at `pos`. 0 if there is none.
+    fn xm_statement_end(&self, cx: &Cx<'_>, pos: u32) -> u32 {
+        self.hir(cx.file)
+            .stmts
+            .iter()
+            .position(|s| s.pos == pos)
+            .map_or(0, |s| self.end_of_stmt(cx.file, StmtId(s as u32)))
     }
 
     // ───────────────────────────── module declarations ─────────────────────────────
@@ -475,6 +493,12 @@ impl Checker<'_> {
                     start: name_pos,
                     code: 1280,
                 });
+                self.note(
+                    name_pos,
+                    0,
+                    1280,
+                    vec![isolated_modules_like_flag_name(files)],
+                );
             }
             if cx.verbatim_commonjs
                 && is_at_top
@@ -589,14 +613,17 @@ impl Checker<'_> {
         let Some(found) = self.xm_module_of_specifier(cx.file, name) else {
             // `resolveExternalModule`. Names written where everything is only declared are not held against anybody.
             let (from, validates) = (files.module(cx.file), !around.is_ambient);
-            if from.imported_file(name).is_some() {
+            if let Some(target) = from.imported_file(name) {
                 if validates {
                     report(2306, false);
+                    self.note(start, 0, 2306, vec![files.module(target).path.clone()]);
                 }
             } else if from.is_untyped_import(name) {
                 // With `allowJs` the JavaScript is a file of the program like any other.
                 if !self.p.files.options.allow_js {
                     report(2665, false);
+                    // The file it resolves to is not kept.
+                    self.note(start, 0, 2665, vec![self.atom_text(name)]);
                 }
             } else if validates {
                 let code = if !self.p.files.options.resolve_json_module && text.ends_with(b".json")
@@ -612,6 +639,17 @@ impl Checker<'_> {
                     2664
                 };
                 report(code, false);
+                let written = self.atom_text(name);
+                match code {
+                    2835 => {
+                        if let Some(extension) =
+                            suggested_import_extension(files, &from.path, &written)
+                        {
+                            self.note(start, 0, code, vec![written + extension]);
+                        }
+                    }
+                    _ => self.note(start, 0, code, vec![written]),
+                }
             }
             return false;
         };
@@ -646,6 +684,7 @@ impl Checker<'_> {
         if (is_variable || flags.contains(SymFlags::ENUM) && is_const_enum()) && has_values() {
             if flags.contains(SymFlags::NAMESPACE_MODULE) {
                 report(2649, false);
+                cx.named_symbols.borrow_mut().push((start, 2649, main));
             } else if !is_variable {
                 // `reportMergeSymbolError`, of the declarations on this side.
                 report(2567, true);
@@ -860,10 +899,9 @@ impl Checker<'_> {
                 && !cx.may_be_module
                 && is_relative_name(self.files().atoms.bytes(spec))
             {
-                out.push(Diagnostic {
-                    start: statement_start(cx.text, pos),
-                    code: 2439,
-                });
+                let start = statement_start(cx.text, pos);
+                out.push(Diagnostic { start, code: 2439 });
+                self.note(start, self.xm_statement_end(cx, pos), 2439, Vec::new());
                 return false;
             }
         }
@@ -872,12 +910,13 @@ impl Checker<'_> {
         if let Some(written) = written
             && written.kind != SpecifierKind::Require
         {
-            self.xm_attributes_after(cx, written.pos, is_export, |value| {
+            self.xm_attributes_after(cx, written.pos, is_export, |value, end| {
                 are_strings = false;
                 out.push(Diagnostic {
                     start: value,
                     code: 2858,
                 });
+                self.note(value, end, 2858, Vec::new());
             });
         }
         are_strings
@@ -978,6 +1017,7 @@ impl Checker<'_> {
             start: written.pos,
             code,
         });
+        self.note(written.pos, 0, code, vec![self.atom_text(spec)]);
         true
     }
 
@@ -1094,6 +1134,8 @@ impl Checker<'_> {
                         start: clause as u32,
                         code: 18060,
                     });
+                    let end = self.end_of_name_at(cx.file, import.namespace_pos);
+                    self.note(clause as u32, end, 18060, Vec::new());
                 }
             }
             let is_missing = self.xm_module_is_missing(
@@ -1123,6 +1165,10 @@ impl Checker<'_> {
                         start: import.default_pos,
                         code: cx.esm_syntax_code,
                     });
+                    let end = cx
+                        .specifier(pos, import.spec)
+                        .map_or(0, |written| import_clause_end(cx.text, written.pos));
+                    self.note(import.default_pos, end, cx.esm_syntax_code, Vec::new());
                 }
                 if import.namespace.is_some() && is_resolved(import.namespace) {
                     out.push(Diagnostic {
@@ -1139,10 +1185,16 @@ impl Checker<'_> {
                             start: hir[s].imported_pos,
                             code: cx.esm_syntax_code,
                         });
+                        self.note(
+                            hir[s].imported_pos,
+                            self.end_of_import_spec(cx.file, s),
+                            cx.esm_syntax_code,
+                            Vec::new(),
+                        );
                     } else if let Some(id) = bound.lookup(locals, hir[s].local) {
                         cx.members_of_export_equals
                             .borrow_mut()
-                            .push((files.sym(cx.file, id), hir[s].imported_pos));
+                            .push((files.sym(cx.file, id), s));
                     }
                 }
             }
@@ -1159,7 +1211,7 @@ impl Checker<'_> {
                 )
                 && files.is_only_importable_as_default(cx.file, module)
                 && !self
-                    .xm_attributes_after(cx, written.pos, false, |_| {})
+                    .xm_attributes_after(cx, written.pos, false, |_, _| {})
                     .is_some_and(|(attributes, _)| {
                         attributes
                             .entries
@@ -1171,6 +1223,12 @@ impl Checker<'_> {
                     start: written.pos,
                     code: 1543,
                 });
+                self.note(
+                    written.pos,
+                    0,
+                    1543,
+                    vec![module_kind_name(files.options.module).to_owned()],
+                );
             }
         } else {
             let is_used = [import.default, import.namespace]
@@ -1334,15 +1392,20 @@ impl Checker<'_> {
                             start: hir[s].local_pos,
                             code: cx.esm_syntax_code,
                         });
+                        self.note(
+                            hir[s].local_pos,
+                            self.end_of_export_spec(cx.file, s),
+                            cx.esm_syntax_code,
+                            Vec::new(),
+                        );
                     }
                 }
             }
             let is_in_ambient_namespace = export.spec.is_none() && around.is_ambient;
             if around.module.is_some() && !around.is_ambient_module && !is_in_ambient_namespace {
-                out.push(Diagnostic {
-                    start: statement_start(cx.text, pos),
-                    code: 1194,
-                });
+                let start = statement_start(cx.text, pos);
+                out.push(Diagnostic { start, code: 1194 });
+                self.note(start, self.xm_statement_end(cx, pos), 1194, Vec::new());
             }
         } else {
             // What a file exports other files may ask for.
@@ -1387,6 +1450,9 @@ impl Checker<'_> {
                             start: written.pos,
                             code: 2498,
                         });
+                        cx.named_symbols
+                            .borrow_mut()
+                            .push((written.pos, 2498, module));
                     }
                 } else if alias.is_some()
                     && cx.verbatim_commonjs
@@ -1400,6 +1466,11 @@ impl Checker<'_> {
                         start: star as u32,
                         code: cx.esm_syntax_code,
                     });
+                    // `* as alias`
+                    let word = skip_trivia(cx.text, star + 1);
+                    let name = skip_trivia(cx.text, word_end(cx.text, word));
+                    let end = self.end_of_name_at(cx.file, name as u32);
+                    self.note(star as u32, end, cx.esm_syntax_code, Vec::new());
                 }
             }
         } else {
@@ -1423,10 +1494,9 @@ impl Checker<'_> {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
         let start = statement_start(cx.text, pos);
         if around.module.is_some() && !around.is_ambient_module {
-            out.push(Diagnostic {
-                start,
-                code: if is_export_equals { 1063 } else { 1319 },
-            });
+            let code = if is_export_equals { 1063 } else { 1319 };
+            out.push(Diagnostic { start, code });
+            self.note(start, self.xm_statement_end(cx, pos), code, Vec::new());
             return;
         }
         cx.modifiers_before_export(pos, 1120, around, out);
@@ -1440,6 +1510,12 @@ impl Checker<'_> {
                 start,
                 code: cx.esm_syntax_code,
             });
+            self.note(
+                start,
+                self.xm_statement_end(cx, pos),
+                cx.esm_syntax_code,
+                Vec::new(),
+            );
             return;
         }
         let ExprKind::Ident(name) = hir[e].kind else {
@@ -1460,10 +1536,17 @@ impl Checker<'_> {
             return;
         };
         let mut report = |equals: u32, default: u32| {
+            let code = if is_export_equals { equals } else { default };
             out.push(Diagnostic {
                 start: hir[e].pos,
-                code: if is_export_equals { equals } else { default },
-            })
+                code,
+            });
+            self.note(
+                hir[e].pos,
+                0,
+                code,
+                vec![self.atom_text(name), isolated_modules_like_flag_name(files)],
+            );
         };
         let type_only = self.xm_type_only_declaration(sym, SymFlags::VALUE);
         // What cannot be followed may be anything: `SymbolFlagsAll`.
@@ -1576,24 +1659,28 @@ impl Checker<'_> {
             return;
         };
         let Some((attributes, object)) =
-            self.xm_attributes_after(cx, written.pos, is_export, |_| {})
+            self.xm_attributes_after(cx, written.pos, is_export, |_, _| {})
         else {
             return;
         };
         if object.is_some() {
-            cx.attribute_types
-                .borrow_mut()
-                .push((attributes.start, AttributesType::Object(object)));
+            cx.attribute_types.borrow_mut().push((
+                attributes.start,
+                attributes.end,
+                AttributesType::Object(object),
+            ));
         } else if let Some(ty) = self.type_from_import_attributes(&attributes) {
-            cx.attribute_types
-                .borrow_mut()
-                .push((attributes.start, AttributesType::Known(ty)));
+            cx.attribute_types.borrow_mut().push((
+                attributes.start,
+                attributes.end,
+                AttributesType::Known(ty),
+            ));
         }
         // The remaining checks report with `grammarErrorOnNode`.
         if !cx.grammar {
             return;
         }
-        let overrides = attributes.overrides_resolution_mode(is_type_only, out);
+        let overrides = attributes.overrides_resolution_mode(self, is_type_only, out);
         if is_type_only && overrides {
             return;
         }
@@ -1617,6 +1704,7 @@ impl Checker<'_> {
             start: attributes.start,
             code,
         });
+        self.note(attributes.start, attributes.end, code, Vec::new());
     }
 
     /// `getTypeFromImportAttributes`: a non-fresh object type with one property per attribute, typed as the regular literal type of its
@@ -1698,7 +1786,7 @@ impl Checker<'_> {
         let target = self.declared_type(sym);
         // `getNullableType(importAttributesType, TypeFlagsUndefined)`
         let target = self.optional(target);
-        for (start, source) in attribute_types {
+        for (start, end, source) in attribute_types {
             let source = match source {
                 AttributesType::Known(ty) => Some(ty),
                 AttributesType::Object(object) => {
@@ -1706,19 +1794,35 @@ impl Checker<'_> {
                 }
             };
             if let Some(source) = source {
-                self.check_assignable(cx.file, source, target, start, ExprId::NONE, 2322, out);
+                self.check_assignable_with_end(
+                    cx.file,
+                    source,
+                    target,
+                    start,
+                    end,
+                    ExprId::NONE,
+                    2322,
+                    out,
+                );
             }
         }
     }
 
     /// `getExternalModuleMember`: a property of the value a module is with `export =` is what the imported name stands for.
     fn check_members_of_export_equals(&mut self, cx: &Cx<'_>, out: &mut Vec<Diagnostic>) {
-        for (sym, start) in cx.members_of_export_equals.take() {
+        for (sym, specifier) in cx.members_of_export_equals.take() {
             if self.imported_property_of_export_equals(sym).is_some() {
+                let start = self.hir(cx.file)[specifier].imported_pos;
                 out.push(Diagnostic {
                     start,
                     code: cx.esm_syntax_code,
                 });
+                self.note(
+                    start,
+                    self.end_of_import_spec(cx.file, specifier),
+                    cx.esm_syntax_code,
+                    Vec::new(),
+                );
             }
         }
     }
@@ -1735,6 +1839,12 @@ impl Checker<'_> {
                         start: e.pos,
                         code: cx.esm_syntax_code,
                     });
+                    self.note(
+                        e.pos,
+                        self.end_inside_parentheses(cx.file, ExprId(i as u32)),
+                        cx.esm_syntax_code,
+                        Vec::new(),
+                    );
                 }
             }
         }
@@ -1755,7 +1865,7 @@ impl Checker<'_> {
                 && let Some(written) = cx.specifier(node.pos, spec)
                 && let Some(attributes) = import_type_attributes(cx.text, written.pos as usize)
             {
-                attributes.overrides_resolution_mode(true, out);
+                attributes.overrides_resolution_mode(self, true, out);
             }
             if !name.is_empty() {
                 continue;
@@ -1772,10 +1882,17 @@ impl Checker<'_> {
             } else {
                 SymFlags::TYPE
             }) {
+                let code = if is_typeof { 1339 } else { 1340 };
                 out.push(Diagnostic {
                     start: node.pos,
-                    code: if is_typeof { 1339 } else { 1340 },
+                    code,
                 });
+                self.note(
+                    node.pos,
+                    self.end_of_type_node(cx.file, TypeNodeId(i as u32)),
+                    code,
+                    vec![self.atom_text(spec)],
+                );
             }
         }
     }
@@ -1800,10 +1917,14 @@ impl Checker<'_> {
                 // `default` without `export` (1029) is a modifier all the same.
                 && find_modifier(cx.text, statement_start(cx.text, s.pos), b"default").is_none()
             {
-                out.push(Diagnostic {
-                    start: class_declaration_start(hir, s.pos, c),
-                    code: 1211,
-                });
+                let start = class_declaration_start(hir, s.pos, c);
+                out.push(Diagnostic { start, code: 1211 });
+                self.note(
+                    start,
+                    self.end_of_token_at(cx.file, start),
+                    1211,
+                    Vec::new(),
+                );
             }
             if matches!(bound.stmt_parent[i], Parent::File | Parent::Module(_)) {
                 continue;
@@ -1948,6 +2069,75 @@ fn is_relative_name(name: &[u8]) -> bool {
     }
 }
 
+/// `getSuggestedImportExtension`, of the relative `spec` written in the file `from`. Only the files of the program are known to be there.
+pub(super) fn suggested_import_extension(
+    files: &Files,
+    from: &str,
+    spec: &str,
+) -> Option<&'static str> {
+    let stem = crate::resolve::join(crate::resolve::parent_dir(from), spec);
+    let for_tsx = if files.options.jsx == crate::resolve::JsxEmit::Preserve {
+        ".jsx"
+    } else {
+        ".js"
+    };
+    [
+        (".mts", ".mjs"),
+        (".ts", ".js"),
+        (".cts", ".cjs"),
+        (".mjs", ".mjs"),
+        (".js", ".js"),
+        (".cjs", ".cjs"),
+        (".tsx", for_tsx),
+        (".jsx", ".jsx"),
+        (".json", ".json"),
+    ]
+    .into_iter()
+    .find(|(written, _)| files.by_path.contains_key(&format!("{stem}{written}")))
+    .map(|(_, suggested)| suggested)
+}
+
+// ───────────────────────────── what goes into messages ─────────────────────────────
+
+/// `getIsolatedModulesLikeFlagName`
+pub(super) fn isolated_modules_like_flag_name(files: &Files) -> String {
+    if files.options.verbatim_module_syntax {
+        "verbatimModuleSyntax".to_owned()
+    } else {
+        "isolatedModules".to_owned()
+    }
+}
+
+/// `ModuleKind.String`
+pub(super) fn module_kind_name(kind: ModuleKind) -> &'static str {
+    match kind {
+        ModuleKind::CommonJs => "CommonJS",
+        ModuleKind::Amd => "AMD",
+        ModuleKind::Umd => "UMD",
+        ModuleKind::System => "System",
+        ModuleKind::Es2015 => "ES2015",
+        ModuleKind::Es2020 => "ES2020",
+        ModuleKind::Es2022 => "ES2022",
+        ModuleKind::EsNext => "ESNext",
+        ModuleKind::Node16 => "Node16",
+        ModuleKind::Node18 => "Node18",
+        ModuleKind::Node20 => "Node20",
+        ModuleKind::NodeNext => "NodeNext",
+        ModuleKind::Preserve => "Preserve",
+    }
+}
+
+/// `node.End()` of the import clause of the declaration whose module specifier is at `spec_pos`: where what comes before the `from`
+/// ends. 0 if there is no `from`.
+pub(super) fn import_clause_end(text: &[u8], spec_pos: u32) -> u32 {
+    let end = skip_trivia_back(text, spec_pos as usize);
+    let from = word_start(text, end);
+    if &text[from..end] != b"from" {
+        return 0;
+    }
+    skip_trivia_back(text, from) as u32
+}
+
 // ───────────────────────────── import attributes, as they are written ─────────────────────────────
 
 struct Attribute<'a> {
@@ -1963,6 +2153,8 @@ struct Attribute<'a> {
 struct Attributes<'a> {
     /// Where the node starts: at the keyword, or at the brace in `import("m", { with: { .. } })`.
     start: u32,
+    /// Where it ends: after the closing brace. 0 if that is not known.
+    end: u32,
     first: Option<Attribute<'a>>,
     /// The name, without quotes, and the `Attribute::value` of every attribute.
     entries: Vec<(&'a [u8], Option<&'a [u8]>)>,
@@ -1970,7 +2162,12 @@ struct Attributes<'a> {
 
 impl Attributes<'_> {
     /// `getResolutionModeOverride`: whether they say how the module is to be looked for.
-    fn overrides_resolution_mode(&self, report_errors: bool, out: &mut Vec<Diagnostic>) -> bool {
+    fn overrides_resolution_mode(
+        &self,
+        c: &Checker<'_>,
+        report_errors: bool,
+        out: &mut Vec<Diagnostic>,
+    ) -> bool {
         let mut report = |start: u32, code: u32| {
             if report_errors {
                 out.push(Diagnostic { start, code });
@@ -1978,6 +2175,7 @@ impl Attributes<'_> {
         };
         let Some(only) = self.first.as_ref().filter(|_| self.entries.len() == 1) else {
             report(self.start, 1464);
+            c.note(self.start, self.end, 1464, Vec::new());
             return false;
         };
         if !only.name_is_string {
@@ -2001,13 +2199,13 @@ impl Attributes<'_> {
 impl<'p> Checker<'p> {
     /// The attributes after the module specifier at `spec_pos` of an import or export declaration, and the `ExprKind::Object` the
     /// parser kept them as (`hir::File::import_attributes`). They are read from the text, and the object is `NONE`, if it kept none.
-    /// `on_other_value`: called with the start of each value that is not a string in single or double quotes.
+    /// `on_other_value`: called with the start and the end of each value that is not a string in single or double quotes.
     fn xm_attributes_after<'a>(
         &self,
         cx: &Cx<'a>,
         spec_pos: u32,
         is_export: bool,
-        mut on_other_value: impl FnMut(u32),
+        mut on_other_value: impl FnMut(u32, u32),
     ) -> Option<(Attributes<'a>, ExprId)>
     where
         'p: 'a,
@@ -2027,8 +2225,14 @@ impl<'p> Checker<'p> {
         let ExprKind::Object(props) = hir[object].kind else {
             return None;
         };
+        let open = skip_trivia(cx.text, keyword_end);
         let mut attributes = Attributes {
             start,
+            end: if cx.text.get(open) == Some(&b'{') {
+                self.end_of_bracket_at(cx.file, open as u32)
+            } else {
+                0
+            },
             first: None,
             entries: Vec::with_capacity(props.len()),
         };
@@ -2053,7 +2257,7 @@ impl<'p> Checker<'p> {
             if (value.is_none() || quote == Some(b'`'))
                 && !matches!(hir[prop.value].kind, ExprKind::Missing)
             {
-                on_other_value(value_pos);
+                on_other_value(value_pos, self.end_of_expr(cx.file, prop.value));
             }
             if attributes.first.is_none() {
                 let name_is_string = matches!(cx.text.get(prop.pos as usize), Some(b'"' | b'\''));
@@ -2094,7 +2298,7 @@ fn parse_attributes(
     text: &[u8],
     open: usize,
     start: u32,
-    mut on_other_value: impl FnMut(u32),
+    mut on_other_value: impl FnMut(u32, u32),
 ) -> Option<Attributes<'_>> {
     if text.get(open) != Some(&b'{') {
         return None;
@@ -2102,6 +2306,7 @@ fn parse_attributes(
     let mut at = skip_trivia(text, open + 1);
     let mut attributes = Attributes {
         start,
+        end: 0,
         first: None,
         entries: Vec::new(),
     };
@@ -2125,7 +2330,7 @@ fn parse_attributes(
             Some(end) => (Some(&text[value_pos + 1..end - 1]), end),
             None => {
                 let end = expression_end(text, value_pos).filter(|&end| end > value_pos)?;
-                on_other_value(value_pos as u32);
+                on_other_value(value_pos as u32, skip_trivia_back(text, end) as u32);
                 // A template that nothing is substituted in.
                 match text[value_pos..end].trim_ascii_end() {
                     [b'`', inner @ .., b'`'] if !inner.contains(&b'`') => (Some(inner), end),
@@ -2155,6 +2360,7 @@ fn parse_attributes(
             _ => return None,
         }
     }
+    attributes.end = at as u32 + 1;
     Some(attributes)
 }
 
@@ -2175,7 +2381,7 @@ fn import_type_attributes(text: &[u8], spec_pos: usize) -> Option<Attributes<'_>
         return None;
     }
     let open = skip_trivia(text, at + 1);
-    parse_attributes(text, open, open as u32, |_| {})
+    parse_attributes(text, open, open as u32, |_, _| {})
 }
 
 /// Where the expression at `at` ends, which a `,` or a `}` follows. `None` if counting brackets does not tell.

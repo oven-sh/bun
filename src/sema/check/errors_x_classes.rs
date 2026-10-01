@@ -34,6 +34,10 @@ struct Overrider {
     /// Where an error about it goes.
     start: u32,
     is_parameter: bool,
+    /// The member, or the constructor that has the parameter.
+    member: MemberId,
+    /// `NONE` for a member.
+    param: ParamId,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -181,6 +185,8 @@ impl Checker<'_> {
                 start: class.name_pos,
                 code: 2725,
             });
+            let module = super::errors_x_modules::module_kind_name(self.p.files.options.module);
+            self.note(class.name_pos, 0, 2725, vec![module.to_owned()]);
         }
         let base = self.resolve_base_of_class(file, c, sym, out);
         if let ClassBase::Is { constructor, .. } = base {
@@ -203,6 +209,8 @@ impl Checker<'_> {
                     start: hir[node].pos,
                     code: 2422,
                 });
+                let end = self.end_of_type_node(file, node);
+                self.note(hir[node].pos, end, 2422, Vec::new());
             }
         }
     }
@@ -317,6 +325,7 @@ impl Checker<'_> {
                 returns = list;
                 let Some(&first) = returns.first() else {
                     out.push(Diagnostic { start, code: 2508 });
+                    self.note(start, self.end_of_expr(file, extends), 2508, Vec::new());
                     return nothing;
                 };
                 first
@@ -330,9 +339,15 @@ impl Checker<'_> {
         {
             return ClassBase::Unknown;
         }
+        let unreduced = base;
         let base = self.reduced_base_type(base);
         if !self.is_valid_base_type(base) {
             out.push(Diagnostic { start, code: 2509 });
+            let end = self.end_of_expr(file, extends);
+            self.explain_to(start, end, 2509, |c| vec![c.type_to_string(base)]);
+            self.explain_chain(start, 2509, |c| {
+                c.never_intersection_line(unreduced).into_iter().collect()
+            });
             return nothing;
         }
         if self.has_base(base, sym, 0) {
@@ -356,6 +371,7 @@ impl Checker<'_> {
             self.relation_gave_up |= gave_up_before;
             if !all_the_same && is_sure {
                 out.push(Diagnostic { start, code: 2510 });
+                self.note(start, self.end_of_expr(file, extends), 2510, Vec::new());
             }
         }
         ClassBase::Is { constructor, base }
@@ -641,9 +657,19 @@ impl Checker<'_> {
             .into_iter()
             .any(|around| self.class_sym(file, around) == class);
         if !is_within {
-            out.push(Diagnostic {
-                start: self.start_of(file, extends),
-                code: 2675,
+            let start = self.start_of(file, extends);
+            out.push(Diagnostic { start, code: 2675 });
+            // The type arguments are part of what is extended.
+            let last_argument = self.end_of_type_args(file, self.hir(file)[c].extends_args);
+            let end = if last_argument == 0 {
+                self.end_of_expr(file, extends)
+            } else {
+                let rest = self.hir(file).text.get(last_argument as usize..);
+                let close = rest.and_then(|rest| rest.iter().position(|&b| b == b'>'));
+                last_argument + close.map_or(0, |at| at as u32 + 1)
+            };
+            self.explain_to(start, end, 2675, |c| {
+                vec![super::errors_modules::fully_qualified_name(c, class)]
             });
         }
     }
@@ -743,6 +769,8 @@ impl Checker<'_> {
                     start: hir[node].pos,
                     code: 2312,
                 });
+                let end = self.end_of_type_node(file, node);
+                self.note(hir[node].pos, end, 2312, Vec::new());
             }
         }
     }
@@ -776,6 +804,8 @@ impl Checker<'_> {
                     flags: member.flags,
                     start: member.pos,
                     is_parameter: false,
+                    member: m,
+                    param: ParamId::NONE,
                 };
                 self.check_member_for_override_modifier(file, c, sym, base, overrider, out);
                 continue;
@@ -794,6 +824,8 @@ impl Checker<'_> {
                     flags: param.flags,
                     start: param.pos,
                     is_parameter: true,
+                    member: m,
+                    param: p,
                 };
                 self.check_member_for_override_modifier(file, c, sym, base, overrider, out);
             }
@@ -830,6 +862,8 @@ impl Checker<'_> {
             ClassBase::Nothing => {
                 if has_override {
                     report(4112);
+                    let class_type = self.declared_type(sym);
+                    self.explain_override_modifier(file, member, 4112, Some(class_type), None);
                 }
                 return;
             }
@@ -846,6 +880,7 @@ impl Checker<'_> {
                 Some(false) => {
                     if has_override {
                         report(4127);
+                        self.explain_override_modifier(file, member, 4127, None, None);
                     }
                     return;
                 }
@@ -873,11 +908,14 @@ impl Checker<'_> {
         };
         let Some(base_prop) = base_prop else {
             if has_override && self.is_heritage_known(base_type, 0) {
-                report(if self.has_similar_member(base_type, name) {
+                let code = if self.has_similar_member(base_type, name) {
                     4117
                 } else {
                     4113
-                });
+                };
+                report(code);
+                let misspelt = (code == 4117).then_some((base_type, name));
+                self.explain_override_modifier(file, member, code, Some(base), misspelt);
             }
             return;
         };
@@ -893,10 +931,47 @@ impl Checker<'_> {
             return;
         }
         if !is_abstract {
-            report(if member.is_parameter { 4115 } else { 4114 });
+            let code = if member.is_parameter { 4115 } else { 4114 };
+            report(code);
+            self.explain_override_modifier(file, member, code, Some(base), None);
         } else if member.flags.contains(Flags::ABSTRACT) {
             report(4116);
+            self.explain_override_modifier(file, member, 4116, Some(base), None);
         }
+    }
+
+    /// The end and the arguments of what `checkMemberForOverrideModifier` says of `member`. `named`: the class itself or what it
+    /// extends. `misspelt`: where to look for what the name may have been meant to be.
+    fn explain_override_modifier(
+        &mut self,
+        file: FileId,
+        member: Overrider,
+        code: u32,
+        named: Option<TypeId>,
+        misspelt: Option<(TypeId, Atom)>,
+    ) {
+        let code = if self.hir(file).is_js {
+            js_override_code(code)
+        } else {
+            code
+        };
+        let end = if member.is_parameter {
+            self.end_of_param(file, member.param)
+        } else {
+            self.error_end_of_member(file, member.member)
+        };
+        self.explain_to(member.start, end, code, |c| {
+            let mut args = Vec::new();
+            if let Some(named) = named {
+                args.push(c.type_to_string(named));
+            }
+            if let Some((in_type, name)) = misspelt
+                && let Some(prop) = c.suggested_member(in_type, name)
+            {
+                args.push(c.prop_to_string(&prop));
+            }
+            args
+        });
     }
 
     /// Whether the computed name `e` comes to a name that is known beforehand: not `isNonBindableDynamicName`.
@@ -991,6 +1066,40 @@ impl Checker<'_> {
                     && is_close(text, candidate)
             })
         })
+    }
+
+    /// `getSuggestedSymbolForNonexistentClassMember`: the property `has_similar_member` says there is. `GetSpellingSuggestion` takes
+    /// the closest, and of two that are as close the first.
+    fn suggested_member(&mut self, ty: TypeId, name: Atom) -> Option<Prop> {
+        let written = self.written_name(name);
+        let late_bound = written
+            .strip_prefix(crate::atom::SYMBOL_NAME_PREFIX)
+            .map(|described| {
+                let description = &described[..described
+                    .iter()
+                    .rposition(|&b| b == b'@')
+                    .unwrap_or(described.len())];
+                [crate::atom::SYMBOL_NAME_PREFIX, description, &b"@0"[..]].concat()
+            });
+        let text = late_bound.as_deref().unwrap_or(written);
+        let ty = self.reduced(ty);
+        let apparent = self.apparent_type(ty);
+        let members = self.members(apparent)?;
+        let mut best: Option<(f64, &Prop)> = None;
+        for prop in &members.shape().props {
+            let candidate = self.written_name(prop.name);
+            if matches!(prop.source, PropSource::Symbol(_))
+                || candidate.starts_with(crate::atom::SYMBOL_NAME_PREFIX)
+                || !is_close(text, candidate)
+            {
+                continue;
+            }
+            let distance = super::errors_access::edit_distance(text, candidate);
+            if best.is_none_or(|(least, _)| distance + 0.05 < least) {
+                best = Some((distance, prop));
+            }
+        }
+        best.map(|(_, prop)| prop.clone())
     }
 
     /// Whether `prop` has declarations at all, and whether one of them says `abstract`. `None`: where it comes from is not kept.
@@ -1148,6 +1257,8 @@ impl Checker<'_> {
                         start: hir[hir[call].callee].pos,
                         code: 2401,
                     });
+                    let end = self.end_inside_parentheses(file, first);
+                    self.note(hir[hir[call].callee].pos, end, 2401, Vec::new());
                 }
                 continue;
             }
@@ -1172,10 +1283,15 @@ impl Checker<'_> {
                 }
             }
             if !is_first {
-                out.push(Diagnostic {
-                    start: start_with_modifiers(&hir.text, hir[m].pos),
-                    code: 2376,
-                });
+                let start = start_with_modifiers(&hir.text, hir[m].pos);
+                out.push(Diagnostic { start, code: 2376 });
+                // `GetErrorRangeForNode`: up to the keyword.
+                self.note(
+                    start,
+                    self.end_of_name_at(file, hir[m].pos),
+                    2376,
+                    Vec::new(),
+                );
             }
         }
     }
@@ -1478,6 +1594,7 @@ impl Checker<'_> {
                             start: name_pos,
                             code: 2715,
                         });
+                        self.explain_abstract_property_access(file, name_pos, obj, name);
                     }
                 }
                 // `isThisInitializedObjectBindingExpression`
@@ -1504,6 +1621,7 @@ impl Checker<'_> {
                                 start: prop.pos,
                                 code: 2715,
                             });
+                            self.explain_abstract_property_access(file, prop.pos, value, name);
                         }
                     }
                 }
@@ -1539,9 +1657,38 @@ impl Checker<'_> {
                     && self.is_abstract_property_of_class(file, decl.init, name, false)
                 {
                     out.push(Diagnostic { start, code: 2715 });
+                    self.explain_abstract_property_access(file, start, decl.init, name);
                 }
             }
         }
+    }
+
+    /// The arguments of 2715, which is reported on the name at `start`: the property `name` of what `this` is, and the class that
+    /// declares it.
+    fn explain_abstract_property_access(
+        &mut self,
+        file: FileId,
+        start: u32,
+        this: ExprId,
+        name: Atom,
+    ) {
+        let end = self.end_of_name_at(file, start);
+        self.explain_to(start, end, 2715, |c| {
+            let object = c.type_of_expr(file, this);
+            let apparent = c.apparent_type(object);
+            let Some((prop, _)) = c.prop_of(apparent, name) else {
+                return Vec::new();
+            };
+            let mut class_name = String::new();
+            if let PropSource::Members(members) = &prop.source
+                && let Some(&(f, m)) = members.first()
+                && let MemberOwner::Class(class) = c.bound(f).member_owner[m.idx()]
+            {
+                let class = c.class_sym(f, class);
+                class_name = c.symbol_to_string(class);
+            }
+            vec![c.prop_to_string(&prop), class_name]
+        });
     }
 
     /// `isNodeUsedDuringClassInitialization`, of what has `parent`: going outwards, a constructor with a body or the declaration

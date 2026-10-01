@@ -50,22 +50,36 @@ impl Checker<'_> {
                     right,
                 } => {
                     if let Some(mixed) = self.operand_mixed_with_nullish(file, e, left, right) {
-                        out.push(Diagnostic {
-                            start: self.start_of(file, mixed),
-                            code: 5076,
-                        });
+                        let start = self.start_of(file, mixed);
+                        out.push(Diagnostic { start, code: 5076 });
+                        let (first, second) = if mixed == left {
+                            match hir[left].kind {
+                                ExprKind::Binary { op: BinOp::And, .. } => ("&&", "??"),
+                                _ => ("||", "??"),
+                            }
+                        } else if mixed == right {
+                            ("??", "&&")
+                        } else {
+                            ("??", "||")
+                        };
+                        self.note(
+                            start,
+                            self.end_of_expr(file, mixed),
+                            5076,
+                            vec![first.to_owned(), second.to_owned()],
+                        );
                     }
                     let target = self.skip_outer_expressions(file, left);
-                    match self.syntactic_nullishness(file, target) {
-                        ALWAYS => out.push(Diagnostic {
-                            start: self.error_start_inside_parentheses(file, target),
-                            code: 2871,
-                        }),
-                        NEVER => out.push(Diagnostic {
-                            start: self.error_start_inside_parentheses(file, target),
-                            code: 2869,
-                        }),
-                        _ => {}
+                    let code = match self.syntactic_nullishness(file, target) {
+                        ALWAYS => 2871,
+                        NEVER => 2869,
+                        _ => 0,
+                    };
+                    if code != 0 {
+                        let start = self.error_start_inside_parentheses(file, target);
+                        out.push(Diagnostic { start, code });
+                        let end = self.error_end_inside_parentheses(file, target);
+                        self.note(start, end, code, Vec::new());
                     }
                 }
                 ExprKind::Unary {
@@ -122,7 +136,8 @@ impl Checker<'_> {
                         {
                             // `checkTypeComparableTo`: what the relation says first, 2678 for lack of anything better.
                             let at = self.error_start_of(file, test);
-                            self.report_not_assignable(case, subject, at, 2678, out);
+                            let end = self.error_end_of(file, test);
+                            self.report_not_assignable_with_end(case, subject, at, end, 2678, out);
                         }
                     }
                 }
@@ -140,15 +155,16 @@ impl Checker<'_> {
                     && bound.fns[f].end.is_some()
                     && bound.fns[f].returns.is_empty()
                 {
-                    let start = match bound.fns[f].owner {
-                        FnOwner::Member(m) => hir[m].pos,
+                    let (start, end) = match bound.fns[f].owner {
+                        FnOwner::Member(m) => (hir[m].pos, self.end_of_member_name(file, m)),
                         FnOwner::Expr(e) => match bound.expr_parent[e.idx()] {
-                            Parent::Prop(p) => hir[p].pos,
+                            Parent::Prop(p) => (hir[p].pos, self.end_of_prop_name(file, p)),
                             _ => continue,
                         },
                         _ => continue,
                     };
                     out.push(Diagnostic { start, code: 2378 });
+                    self.note(start, end, 2378, Vec::new());
                 }
             }
         }
@@ -223,24 +239,18 @@ impl Checker<'_> {
 
     /// `checkTruthinessOfType`
     fn check_truthiness(&mut self, file: FileId, e: ExprId, out: &mut Vec<Diagnostic>) {
-        if self.type_of_expr(file, e) == TypeId::VOID {
-            out.push(Diagnostic {
-                start: self.error_start_of(file, e),
-                code: 1345,
-            });
-            return;
-        }
-        match self.syntactic_truthiness(file, e) {
-            ALWAYS => out.push(Diagnostic {
-                start: self.error_start_of(file, e),
-                code: 2872,
-            }),
-            NEVER => out.push(Diagnostic {
-                start: self.error_start_of(file, e),
-                code: 2873,
-            }),
-            _ => {}
-        }
+        let code = if self.type_of_expr(file, e) == TypeId::VOID {
+            1345
+        } else {
+            match self.syntactic_truthiness(file, e) {
+                ALWAYS => 2872,
+                NEVER => 2873,
+                _ => return,
+            }
+        };
+        let start = self.error_start_of(file, e);
+        out.push(Diagnostic { start, code });
+        self.note(start, self.error_end_of(file, e), code, Vec::new());
     }
 
     /// `GetErrorRangeForNode`, for an expression as it is written: where an error about the whole of `e` goes. In parentheses it is
@@ -540,6 +550,11 @@ impl Checker<'_> {
             }
             _ => self.start_inside_parentheses(file, operand),
         };
+        // A missing node is empty.
+        let end = match hir[operand].kind {
+            ExprKind::Missing if !self.is_written_in_parentheses(file, operand) => start,
+            _ => self.error_end_inside_parentheses(file, operand),
+        };
         let (obj, name) = match hir[operand].kind {
             ExprKind::Dot { obj, name, .. } => (obj, Some(name)),
             // `getPropertyNameFromIndex`: the one name that the type of what is in the brackets stands for.
@@ -557,6 +572,7 @@ impl Checker<'_> {
             // A missing operand is an identifier without text, which is no access expression either.
             _ => {
                 out.push(Diagnostic { start, code: 2703 });
+                self.note(start, end, 2703, Vec::new());
                 return;
             }
         };
@@ -565,6 +581,7 @@ impl Checker<'_> {
             && matches!(hir[operand].kind, ExprKind::Dot { .. })
         {
             out.push(Diagnostic { start, code: 18011 });
+            self.note(start, end, 18011, Vec::new());
         }
         let object = self.type_of_expr(file, obj);
         if !self.is_known(object) || self.is_any(object) || self.is_uncertain(file, obj) {
@@ -600,6 +617,7 @@ impl Checker<'_> {
         }
         if is_readonly {
             out.push(Diagnostic { start, code: 2704 });
+            self.note(start, end, 2704, Vec::new());
             return;
         }
         // `checkDeleteExpressionMustBeOptional`
@@ -619,6 +637,7 @@ impl Checker<'_> {
                 });
         if !is_optional {
             out.push(Diagnostic { start, code: 2790 });
+            self.note(start, end, 2790, Vec::new());
         }
     }
 

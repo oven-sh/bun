@@ -16,7 +16,21 @@ struct Written {
     at_sign: u32,
     /// Its expression, from the parenthesis on if it is in parentheses.
     start: u32,
+    /// Where the expression ends, and the decorator with it.
+    end: u32,
     is_parenthesized: bool,
+}
+
+/// What a signature does not take of what a decorator is called with.
+#[derive(Copy, Clone)]
+struct Mismatch {
+    /// The node it is said of.
+    at: u32,
+    end: u32,
+    source: TypeId,
+    target: TypeId,
+    /// 2345, or 2684 of `this`.
+    code: u32,
 }
 
 /// Whether a signature takes what a decorator is called with.
@@ -24,8 +38,7 @@ enum Applicable {
     Yes,
     /// That rests on something that is not known.
     Unknown,
-    /// It does not, which is said there.
-    No(u32),
+    No(Mismatch),
 }
 
 impl Checker<'_> {
@@ -376,15 +389,18 @@ impl Checker<'_> {
         if let Some(rest) = before.strip_suffix(b"(").map(<[u8]>::trim_ascii_end)
             && rest.ends_with(b"@")
         {
+            let start = before.len() as u32 - 1;
             return Written {
                 at_sign: rest.len() as u32 - 1,
-                start: before.len() as u32 - 1,
+                start,
+                end: self.end_of_bracket_at(file, start),
                 is_parenthesized: true,
             };
         }
         Written {
             at_sign: start.saturating_sub(1),
             start,
+            end: self.end_of_expr(file, e),
             is_parenthesized: start != self.start_inside_parentheses(file, e),
         }
     }
@@ -437,10 +453,12 @@ impl Checker<'_> {
                     let is_overload = matches!(owner, DecoratorOwner::Member(m) if hir[m].kind == MemberKind::Method && matches!(hir[hir[m].func].body, FnBody::None));
                     // `grammarErrorOnFirstToken`
                     if !hir.has_parse_diagnostics {
+                        let code = if is_overload { 1249 } else { 1206 };
                         out.push(Diagnostic {
                             start: at_sign,
-                            code: if is_overload { 1249 } else { 1206 },
+                            code,
                         });
+                        self.note(at_sign, at_sign + 1, code, Vec::new());
                     }
                 }
                 continue;
@@ -472,6 +490,7 @@ impl Checker<'_> {
                             start: at_sign,
                             code: 1207,
                         });
+                        self.note(at_sign, at_sign + 1, 1207, Vec::new());
                     }
                 }
             }
@@ -483,6 +502,7 @@ impl Checker<'_> {
                     start: written.start,
                     code: 1497,
                 });
+                self.note(written.start, written.end, 1497, Vec::new());
             }
             self.check_decorator(file, owner, e, written, out);
         }
@@ -541,18 +561,25 @@ impl Checker<'_> {
             && wanted != TypeId::VOID
         {
             // `getThisArgumentType`
-            let (this, at) = match this_arg {
+            let (this, at, end) = match this_arg {
                 Some((obj, chain)) => (
                     self.chain_receiver(file, obj, chain).0,
                     self.start_of(file, obj),
+                    self.end_of_expr(file, obj),
                 ),
-                None => (TypeId::VOID, written.at_sign),
+                None => (TypeId::VOID, written.at_sign, written.end),
             };
             if !self.is_known(this) || !self.is_known(wanted) {
                 return Applicable::Unknown;
             }
             if !related(self, this, wanted) {
-                return Applicable::No(at);
+                return Applicable::No(Mismatch {
+                    at,
+                    end,
+                    source: this,
+                    target: wanted,
+                    code: 2684,
+                });
             }
         }
         let params = self.sig_params(sig);
@@ -571,7 +598,13 @@ impl Checker<'_> {
                 return Applicable::Unknown;
             }
             if !related(self, arg.ty, wanted) {
-                return Applicable::No(written.start);
+                return Applicable::No(Mismatch {
+                    at: written.start,
+                    end: written.end,
+                    source: arg.ty,
+                    target: wanted,
+                    code: 2345,
+                });
             }
         }
         if let Some(rest) = rest {
@@ -586,14 +619,82 @@ impl Checker<'_> {
             }
             let spread = self.tuple(&elems, &vec![ElemFlags::REQUIRED; elems.len()], false);
             if !related(self, spread, rest) {
-                return Applicable::No(if elems.is_empty() {
-                    written.at_sign
-                } else {
-                    written.start
+                return Applicable::No(Mismatch {
+                    at: if elems.is_empty() {
+                        written.at_sign
+                    } else {
+                        written.start
+                    },
+                    end: written.end,
+                    source: spread,
+                    target: rest,
+                    code: 2345,
                 });
             }
         }
         Applicable::Yes
+    }
+
+    /// What `isSignatureApplicable` says of `mismatch`, under what `reportCallResolutionErrors` puts on top of it: 2769 and 2770 if
+    /// several candidates got as far as their arguments, and `head`.
+    fn explain_decorator_mismatch(&mut self, mismatch: Mismatch, is_overloaded: bool, head: u32) {
+        if !self.explains {
+            return;
+        }
+        let Mismatch {
+            at,
+            end,
+            source,
+            target,
+            code,
+        } = mismatch;
+        let mut said = Vec::new();
+        self.report_not_assignable_with_end(source, target, at, end, code, &mut said);
+        match said.first() {
+            Some(inner) if inner.start == at => {
+                let mut top = inner.code;
+                if is_overloaded {
+                    self.explain_under(at, top, 2770, Vec::new());
+                    self.explain_under(at, 2770, 2769, Vec::new());
+                    top = 2769;
+                }
+                self.explain_under(at, top, head, Vec::new());
+            }
+            _ => self.note(at, end, head, Vec::new()),
+        }
+    }
+
+    /// `getArgumentArityError`, of a decorator that is called with `given` arguments and that none of `sigs` takes that many of:
+    /// the line under `head`.
+    fn explain_decorator_arity(
+        &mut self,
+        sigs: &[SigId],
+        given: usize,
+        at: u32,
+        end: u32,
+        head: u32,
+    ) {
+        if !self.explains {
+            return;
+        }
+        let counts = self.argument_counts(sigs, given);
+        let (code, args) = if counts.least < given && given < counts.most {
+            (
+                2575,
+                vec![
+                    given.to_string(),
+                    counts.most_below.to_string(),
+                    counts.least_above.to_string(),
+                ],
+            )
+        } else {
+            (
+                if counts.has_rest { 1279 } else { 1278 },
+                vec![counts.expected(), given.to_string()],
+            )
+        };
+        self.note(at, end, code, args);
+        self.explain_under(at, code, head, Vec::new());
     }
 
     /// `resolveDecorator`, `resolveCall`, `checkDecorator`
@@ -609,6 +710,7 @@ impl Checker<'_> {
         let Written {
             at_sign,
             start,
+            end,
             is_parenthesized,
         } = written;
         let function = self.type_of_expr(file, e);
@@ -660,10 +762,14 @@ impl Checker<'_> {
                 start: at_sign,
                 code: 1329,
             });
+            self.note(at_sign, end, 1329, vec![self.source_text(file, start, end)]);
             return;
         }
         if sigs.is_empty() {
             out.push(Diagnostic { start, code: head });
+            self.note(start, end, 2349, Vec::new());
+            self.explain_chain(start, 2349, |c| c.invocation_error_lines(apparent, false));
+            self.explain_under(start, 2349, head, Vec::new());
             return;
         }
         let Some(expected) = self.decorator_call_signature(file, owner) else {
@@ -682,12 +788,15 @@ impl Checker<'_> {
         let mut chosen = None;
         // Of the last of `candidatesForArgumentError`, where it does not fit; of `candidateForArgumentArityError`, how many it takes.
         let (mut argument_error, mut arity_error) = (None, None);
+        // How many `candidatesForArgumentError` there are, and `candidateForArgumentArityError` itself.
+        let (mut argument_errors, mut arity_candidate) = (0, None);
         let passes: &[bool] = if sigs.len() > 1 {
             &[true, false]
         } else {
             &[false]
         };
         'passes: for &by_subtype in passes {
+            argument_errors = 0;
             for (k, params) in lists.iter().enumerate() {
                 if !self.has_correct_decorator_arity(file, owner, params) {
                     continue;
@@ -713,6 +822,7 @@ impl Checker<'_> {
                     let params = self.sig_params(candidate);
                     if !self.has_correct_decorator_arity(file, owner, &params) {
                         arity_error = Some(self.parameter_count(&params));
+                        arity_candidate = Some(candidate);
                         continue;
                     }
                 }
@@ -724,7 +834,10 @@ impl Checker<'_> {
                         break 'passes;
                     }
                     Applicable::Unknown => return,
-                    Applicable::No(at) => argument_error = Some(at),
+                    Applicable::No(mismatch) => {
+                        argument_error = Some(mismatch);
+                        argument_errors += 1;
+                    }
                 }
             }
         }
@@ -733,20 +846,32 @@ impl Checker<'_> {
             None => {
                 // `reportCallResolutionErrors`. `getArgumentArityError`: more than any of them takes is said where the arguments are
                 // taken to be, at the expression; whatever else is wrong with their number, of the decorator.
-                let at = argument_error.unwrap_or_else(|| {
-                    let most = arity_error.unwrap_or_else(|| {
-                        lists
-                            .iter()
-                            .map(|params| self.parameter_count(params))
-                            .max()
-                            .unwrap_or(0)
-                    });
-                    if most < given.len() { start } else { at_sign }
-                });
+                let at = argument_error.map_or_else(
+                    || {
+                        let most = arity_error.unwrap_or_else(|| {
+                            lists
+                                .iter()
+                                .map(|params| self.parameter_count(params))
+                                .max()
+                                .unwrap_or(0)
+                        });
+                        if most < given.len() { start } else { at_sign }
+                    },
+                    |mismatch: Mismatch| mismatch.at,
+                );
                 out.push(Diagnostic {
                     start: at,
                     code: head,
                 });
+                match (argument_error, arity_candidate) {
+                    (Some(mismatch), _) => {
+                        self.explain_decorator_mismatch(mismatch, argument_errors > 1, head)
+                    }
+                    (None, Some(candidate)) => {
+                        self.explain_decorator_arity(&[candidate], given.len(), at, end, head)
+                    }
+                    (None, None) => self.explain_decorator_arity(&sigs, given.len(), at, end, head),
+                }
                 // `getCandidateForOverloadFailure`
                 if sigs.len() == 1
                     || sigs
@@ -802,5 +927,17 @@ impl Checker<'_> {
             _ => 1270,
         };
         out.push(Diagnostic { start, code });
+        if self.explains {
+            // `checkTypeAssignableTo`, for what it says.
+            let mut said = Vec::new();
+            self.report_not_assignable_with_end(returned, wanted, start, end, code, &mut said);
+            if !said.iter().any(|d| d.start == start && d.code == code) {
+                self.explain_to(start, end, code, |c| {
+                    let (returned, wanted) = c.type_names_for_error_display(returned, wanted);
+                    vec![returned, wanted]
+                });
+                self.explain_chain(start, code, |c| c.assignability_chain(returned, wanted));
+            }
+        }
     }
 }

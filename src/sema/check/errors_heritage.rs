@@ -8,6 +8,15 @@ use super::errors::Diagnostic;
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent};
 
+/// The node an error of `checkIndexConstraints` is reported on.
+#[derive(Copy, Clone)]
+enum Reported {
+    Member(MemberId),
+    Param(ParamId),
+    /// The name of the interface.
+    Name,
+}
+
 impl Checker<'_> {
     pub(super) fn check_heritage(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -79,6 +88,20 @@ impl Checker<'_> {
                         && let Some(properties) = self.type_without_signatures(static_base)
                         && !self.is_assignable(static_type, properties)
                     {
+                        // `properties` goes by the name of what it is made from.
+                        self.explain(name_or_node, 2417, |c| {
+                            let (heir, base) =
+                                c.type_names_for_error_display(static_type, static_base);
+                            vec![heir, base]
+                        });
+                        self.explain_chain(name_or_node, 2417, |c| {
+                            c.relation_chain_under(
+                                static_type,
+                                static_base,
+                                super::relate::Relation::Assignable,
+                                2417,
+                            )
+                        });
                         self.report_not_assignable(
                             static_type,
                             properties,
@@ -287,6 +310,30 @@ impl Checker<'_> {
                     start: member.pos,
                     code: 2416,
                 });
+                let end = self.end_of_member_name(file, m);
+                self.explain_to(member.pos, end, 2416, |c| {
+                    let declared = match c.prop_of(plain.0, name) {
+                        Some((prop, _)) => c.prop_to_string(&prop),
+                        None => c.atom_text(name),
+                    };
+                    vec![
+                        declared,
+                        c.type_to_string(plain.0),
+                        c.type_to_string(plain.1),
+                    ]
+                });
+                self.explain_chain(member.pos, 2416, |c| {
+                    let (Some((own, own_mapper)), Some((inherited, base_mapper))) =
+                        (c.prop_of(with_this.0, name), c.prop_of(with_this.1, name))
+                    else {
+                        return Vec::new();
+                    };
+                    let (given, wanted) = (
+                        c.type_of_prop(&own, own_mapper),
+                        c.type_of_prop(&inherited, base_mapper),
+                    );
+                    c.assignability_lines(given, wanted, 1)
+                });
                 issued = true;
             }
         }
@@ -401,6 +448,7 @@ impl Checker<'_> {
         };
         let is_abstract_class = hir[c].flags.contains(Flags::ABSTRACT);
         let mut not_implemented = 0;
+        let mut missed: Vec<&Prop> = Vec::new();
         for inherited in &base_members.shape().props {
             let Some(derived) = own_members.resolved.prop(inherited.name) else {
                 continue;
@@ -420,6 +468,7 @@ impl Checker<'_> {
                     });
                     if !elsewhere {
                         not_implemented += 1;
+                        missed.push(inherited);
                     }
                 }
                 continue;
@@ -475,17 +524,22 @@ impl Checker<'_> {
                 }
                 if base_accessor && !base_property && derived_property && !derived_accessor {
                     out.push(Diagnostic { start, code: 2610 });
+                    self.explain_override(file, start, 2610, inherited, base, class_type);
                 } else if base_property && !base_accessor && derived_accessor {
                     out.push(Diagnostic { start, code: 2611 });
+                    self.explain_override(file, start, 2611, inherited, base, class_type);
                 }
             } else if base_method {
                 if !(derived_method || derived_property) {
                     out.push(Diagnostic { start, code: 2423 });
+                    self.explain_override(file, start, 2423, inherited, base, class_type);
                 }
             } else if base_accessor {
                 out.push(Diagnostic { start, code: 2426 });
+                self.explain_override(file, start, 2426, inherited, base, class_type);
             } else {
                 out.push(Diagnostic { start, code: 2425 });
+                self.explain_override(file, start, 2425, inherited, base, class_type);
             }
         }
         if not_implemented > 0 {
@@ -499,15 +553,61 @@ impl Checker<'_> {
                 (_, false) => 2655,
                 (_, true) => 2650,
             };
-            out.push(Diagnostic {
-                start: if hir[c].name.is_some() {
-                    hir[c].name_pos
+            let start = if hir[c].name.is_some() {
+                hir[c].name_pos
+            } else {
+                hir[c].pos
+            };
+            out.push(Diagnostic { start, code });
+            self.explain(start, code, |c| {
+                let names: Vec<String> = missed.iter().map(|prop| c.prop_to_string(prop)).collect();
+                let listed = if names.len() > 5 { 4 } else { names.len() };
+                let list = match &names[..] {
+                    [only] => only.clone(),
+                    _ => names[..listed]
+                        .iter()
+                        .map(|name| format!("'{name}'"))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                };
+                let mut args = Vec::new();
+                if !is_expression {
+                    args.push(c.type_to_string(class_type));
+                }
+                let base_name = c.type_to_string(base);
+                if names.len() == 1 {
+                    args.extend([list, base_name]);
                 } else {
-                    hir[c].pos
-                },
-                code,
+                    args.extend([base_name, list]);
+                }
+                if names.len() > 5 {
+                    args.push((names.len() - 4).to_string());
+                }
+                args
             });
         }
+    }
+
+    /// The arguments of what `checkKindsOfPropertyMemberOverrides` says at the name of a member that overrides `inherited`.
+    fn explain_override(
+        &mut self,
+        file: FileId,
+        start: u32,
+        code: u32,
+        inherited: &Prop,
+        base: TypeId,
+        heir: TypeId,
+    ) {
+        let end = self.end_of_name_at(file, start);
+        self.explain_to(start, end, code, |c| {
+            let name = c.prop_to_string(inherited);
+            let (base, heir) = (c.type_to_string(base), c.type_to_string(heir));
+            if matches!(code, 2610 | 2611) {
+                vec![name, base, heir]
+            } else {
+                vec![base, name, heir]
+            }
+        });
     }
 
     fn check_interface_heritage(
@@ -533,11 +633,32 @@ impl Checker<'_> {
         let name_pos = self.hir(file)[i].name_pos;
         let bases = self.base_types(sym);
         if is_first {
-            if !self.inherited_properties_are_identical(sym, ty, &bases) {
+            let mut conflict = None;
+            if !self.inherited_properties_are_identical(sym, ty, &bases, &mut conflict) {
                 out.push(Diagnostic {
                     start: name_pos,
                     code: 2320,
                 });
+                if let Some((prop, first, second)) = conflict {
+                    self.explain(name_pos, 2320, |c| {
+                        vec![
+                            c.type_to_string(ty),
+                            c.type_to_string(first),
+                            c.type_to_string(second),
+                        ]
+                    });
+                    self.explain_chain(name_pos, 2320, |c| {
+                        vec![super::explain::Line {
+                            code: 2319,
+                            args: vec![
+                                c.prop_to_string(&prop),
+                                c.type_to_string(first),
+                                c.type_to_string(second),
+                            ],
+                            level: 1,
+                        }]
+                    });
+                }
                 return;
             }
             let this = self.intern(TypeData::ThisParam(sym));
@@ -550,7 +671,7 @@ impl Checker<'_> {
                     self.report_not_assignable(ty, base, name_pos, 2430, out);
                 }
             }
-        } else if !self.inherited_properties_are_identical(sym, ty, &bases) {
+        } else if !self.inherited_properties_are_identical(sym, ty, &bases, &mut None) {
             return;
         }
         let mut locals = Vec::new();
@@ -572,12 +693,13 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkInheritedPropertiesAreIdentical`
+    /// `checkInheritedPropertiesAreIdentical`. `conflict`: the first property that is not, and the two of `bases` it differs in.
     fn inherited_properties_are_identical(
         &mut self,
         sym: Sym,
         ty: TypeId,
         bases: &[TypeId],
+        conflict: &mut Option<(Prop, TypeId, TypeId)>,
     ) -> bool {
         if bases.len() < 2 {
             return true;
@@ -601,10 +723,10 @@ impl Checker<'_> {
         let this = self.intern(TypeData::ThisParam(sym));
         let access = PropFlags::PRIVATE | PropFlags::PROTECTED;
         // Of what is private or protected, where it is declared as well.
-        let mut seen: Vec<(Atom, TypeId, PropFlags, Option<PropSource>)> = Vec::new();
-        for &base in bases {
+        let mut seen: Vec<(Atom, TypeId, PropFlags, Option<PropSource>, TypeId)> = Vec::new();
+        for &declared_base in bases {
             // `this` is in each what it is in the heir.
-            let base = self.with_this_argument(base, this);
+            let base = self.with_this_argument(declared_base, this);
             let Some(members) = self.members(base) else {
                 continue;
             };
@@ -619,17 +741,20 @@ impl Checker<'_> {
                         ty,
                         prop.flags,
                         prop.flags.intersects(access).then(|| prop.source.clone()),
+                        declared_base,
                     )),
                     // `compareProperties`
-                    Some((_, other, flags, source)) => {
-                        let (other, flags) = (*other, *flags);
+                    Some((_, other, flags, source, from)) => {
+                        let (other, flags, from) = (*other, *flags, *from);
                         if flags & access != prop.flags & access {
+                            *conflict = Some((prop.clone(), from, declared_base));
                             return false;
                         }
                         // What is not for all to see is the same only if it is declared in one place. Of the rest, whether it can be
                         // left out counts.
                         let same = if flags.intersects(access) {
                             if source.as_ref() != Some(&prop.source) {
+                                *conflict = Some((prop.clone(), from, declared_base));
                                 return false;
                             }
                             PropFlags::READONLY
@@ -641,6 +766,7 @@ impl Checker<'_> {
                                 && self.is_known(other)
                                 && !self.is_identical(other, ty)
                         {
+                            *conflict = Some((prop.clone(), from, declared_base));
                             return false;
                         }
                     }
@@ -677,7 +803,7 @@ impl Checker<'_> {
             })
             .collect();
         // Where the index signature for `key` is written, if the type itself declares it.
-        let local_index = |c: &mut Self, key: TypeId| -> Option<(FileId, u32)> {
+        let local_index = |c: &mut Self, key: TypeId| -> Option<(FileId, u32, Reported)> {
             for &(f, span) in locals {
                 for m in span.iter() {
                     let member = c.hir(f)[m];
@@ -696,7 +822,7 @@ impl Checker<'_> {
                         TypeId::STRING
                     };
                     if c.parts(declared).contains(&key) {
-                        return Some((f, member.pos));
+                        return Some((f, member.pos, Reported::Member(m)));
                     }
                 }
             }
@@ -716,13 +842,13 @@ impl Checker<'_> {
                 // An error about a parameter goes to where it starts, modifiers included (`GetErrorRangeForNode`).
                 PropSource::Parameter(f, p) => {
                     let bound = self.bound(*f);
-                    matches!(bound.fns[bound.param_fn[p.idx()].idx()].owner, FnOwner::Member(m) if is_local(*f, m)).then(|| (*f, self.hir(*f)[*p].pos))
+                    matches!(bound.fns[bound.param_fn[p.idx()].idx()].owner, FnOwner::Member(m) if is_local(*f, m)).then(|| (*f, self.hir(*f)[*p].pos, Reported::Param(*p)))
                 }
                 _ => self
                     .declarations_of_prop(prop)
                     .iter()
                     .find(|&&(f, m)| is_local(f, m))
-                    .map(|&(f, m)| (f, self.hir(f)[m].pos)),
+                    .map(|&(f, m)| (f, self.hir(f)[m].pos, Reported::Member(m))),
             };
             let prop_type = self.type_of_prop_as_read(prop, members.mapper);
             if !self.is_known(prop_type) {
@@ -745,14 +871,23 @@ impl Checker<'_> {
                                 .is_some_and(|m| m.shape().index.iter().any(|i| i.key == info.key))
                     });
                     if !has_both {
-                        at = Some((file, name_pos));
+                        at = Some((file, name_pos, Reported::Name));
                     }
                 }
-                if let Some((f, start)) = at
+                if let Some((f, start, node)) = at
                     && f == file
                     && !self.is_assignable(prop_type, info.value)
                 {
                     out.push(Diagnostic { start, code: 2411 });
+                    let end = self.end_of_reported(file, node);
+                    self.explain_to(start, end, 2411, |c| {
+                        vec![
+                            c.prop_to_string(prop),
+                            c.type_to_string(prop_type),
+                            c.type_to_string(info.key),
+                            c.type_to_string(info.value),
+                        ]
+                    });
                 }
             }
         }
@@ -804,6 +939,15 @@ impl Checker<'_> {
                             start: member.pos,
                             code: 2411,
                         });
+                        let end = self.end_of_member_name(f, m);
+                        self.explain_to(member.pos, end, 2411, |c| {
+                            vec![
+                                c.source_text(f, member.pos, end),
+                                c.type_to_string(prop_type),
+                                c.type_to_string(info.key),
+                                c.type_to_string(info.value),
+                            ]
+                        });
                     }
                 }
             }
@@ -828,19 +972,52 @@ impl Checker<'_> {
                             })
                         });
                         if !has_both {
-                            at = Some((file, name_pos));
+                            at = Some((file, name_pos, Reported::Name));
                         }
                     }
-                    if let Some((f, start)) = at
+                    if let Some((f, start, node)) = at
                         && f == file
                         && self.is_known(check.value)
                         && self.is_known(info.value)
                         && !self.is_assignable(check.value, info.value)
                     {
                         out.push(Diagnostic { start, code: 2413 });
+                        let end = self.end_of_reported(file, node);
+                        self.explain_to(start, end, 2413, |c| {
+                            vec![
+                                c.type_to_string(check.key),
+                                c.type_to_string(check.value),
+                                c.type_to_string(info.key),
+                                c.type_to_string(info.value),
+                            ]
+                        });
                     }
                 }
             }
+        }
+    }
+
+    fn end_of_reported(&self, file: FileId, node: Reported) -> u32 {
+        match node {
+            Reported::Member(m) => self.error_end_of_member(file, m),
+            Reported::Param(p) => self.end_of_param(file, p),
+            Reported::Name => 0,
+        }
+    }
+
+    /// The end of `GetErrorRangeForNode` of a member: that of its name. A signature in a type that is no property is reported on as
+    /// a whole.
+    pub(super) fn error_end_of_member(&self, file: FileId, m: MemberId) -> u32 {
+        let is_in_class = matches!(
+            self.bound(file).member_owner[m.idx()],
+            MemberOwner::Class(_)
+        );
+        match self.hir(file)[m].kind {
+            MemberKind::Property | MemberKind::Getter | MemberKind::Setter => {
+                self.end_of_member_name(file, m)
+            }
+            MemberKind::Method if is_in_class => self.end_of_member_name(file, m),
+            _ => self.end_of_member(file, m),
         }
     }
 

@@ -51,6 +51,7 @@ impl Checker<'_> {
             let wanted = self.union(&[TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
             if is_nullable || !self.is_assignable(ty, wanted) {
                 out.push(Diagnostic { start, code: 2464 });
+                self.note(start, self.end_of_name_at(file, start), 2464, Vec::new());
             }
         }
     }
@@ -155,15 +156,29 @@ impl Checker<'_> {
             } else {
                 files.exports(resolved)
             };
-            let is_misspelt = exports.iter().any(|&(other, sym)| {
+            let is_candidate = |&(other, sym): &(Atom, Sym)| {
                 other != known::export_equals
                     && files.flags(sym).intersects(MODULE_MEMBER)
                     && is_close(text, files.atoms.bytes(other))
-            });
+            };
+            let is_misspelt = exports.iter().any(is_candidate);
             if is_misspelt {
                 out.push(Diagnostic {
                     start: at,
                     code: 2724,
+                });
+                self.explain(at, 2724, |c| {
+                    // `GetSpellingSuggestion`: of those that are as close, the one declared first.
+                    let distance = |other: Atom| edit_distance(text, files.atoms.bytes(other));
+                    let suggested = exports
+                        .iter()
+                        .filter(|&candidate| is_candidate(candidate))
+                        .min_by(|a, b| distance(a.0).total_cmp(&distance(b.0)).then(a.1.cmp(&b.1)));
+                    vec![
+                        fully_qualified_name(c, resolved),
+                        c.atom_text(name),
+                        suggested.map_or_else(String::new, |s| c.symbol_to_string(s.1)),
+                    ]
                 });
                 return;
             }
@@ -181,6 +196,17 @@ impl Checker<'_> {
                     match self.is_qualified_name_a_value(file, scope, names) {
                         Some(true) => {
                             out.push(Diagnostic { start, code: 2749 });
+                            // `getContainingQualifiedNameNode`: all of the names.
+                            let mut end = at + text.len() as u32;
+                            for &later in &names[i + 1..] {
+                                end = next_name(&hir.text, end)
+                                    + files.atoms.bytes(later).len() as u32;
+                            }
+                            self.explain_to(start, end, 2749, |c| {
+                                let written: Vec<String> =
+                                    names.iter().map(|&n| c.atom_text(n)).collect();
+                                vec![written.join(".")]
+                            });
                             return;
                         }
                         Some(false) => {}
@@ -193,9 +219,17 @@ impl Checker<'_> {
                     let dot = skip_trivia(&hir.text, at as usize + text.len());
                     let is_missing =
                         names[i + 1] == known::empty && hir.text.get(dot) == Some(&b'.');
+                    let right = if is_missing { dot as u32 + 1 } else { next };
                     out.push(Diagnostic {
-                        start: if is_missing { dot as u32 + 1 } else { next },
+                        start: right,
                         code: 2713,
+                    });
+                    let right_name = names[i + 1];
+                    self.explain(right, 2713, |c| {
+                        vec![
+                            exported.map_or_else(String::new, |m| c.symbol_to_string(m)),
+                            c.atom_text(right_name),
+                        ]
                     });
                     return;
                 }
@@ -203,6 +237,9 @@ impl Checker<'_> {
             out.push(Diagnostic {
                 start: at,
                 code: 2694,
+            });
+            self.explain(at, 2694, |c| {
+                vec![fully_qualified_name(c, resolved), c.atom_text(name)]
             });
             return;
         }
@@ -340,6 +377,15 @@ impl Checker<'_> {
                     start: prop.pos,
                     code,
                 });
+                if matches!(prop.key, PropKey::Computed(_)) {
+                    let end = self.end_of_prop_name(file, p);
+                    let args = if code == 2300 {
+                        vec![self.source_text(file, prop.pos, end)]
+                    } else {
+                        Vec::new()
+                    };
+                    self.note(prop.pos, end, code, args);
+                }
                 if code == 1118 || code == 1119 {
                     break;
                 }
@@ -396,7 +442,12 @@ impl Checker<'_> {
         }
         // `declareSymbolEx` declares `default` in `GetExports(container.Symbol())`: the file has one table, and all blocks of a namespace or
         // an ambient module share one.
-        report_default_export_conflicts(self.default_exports(file, hir.body).iter(), out);
+        report_default_export_conflicts(
+            self,
+            file,
+            self.default_exports(file, hir.body).iter(),
+            out,
+        );
         let mut blocks: Vec<(SymbolId, u32, Vec<DefaultExport>)> = Vec::new();
         for (m, module) in hir.modules.iter().enumerate() {
             let defaults = self.default_exports(file, module.body);
@@ -407,7 +458,12 @@ impl Checker<'_> {
         // The blocks of a symbol are bound in source order.
         blocks.sort_by_key(|block| (block.0, block.1));
         for group in blocks.chunk_by(|a, b| a.0.is_some() && a.0 == b.0) {
-            report_default_export_conflicts(group.iter().flat_map(|block| &block.2), out);
+            report_default_export_conflicts(
+                self,
+                file,
+                group.iter().flat_map(|block| &block.2),
+                out,
+            );
         }
         // And `export =` all by itself.
         if self.files().module(file).is_module() {
@@ -446,10 +502,9 @@ impl Checker<'_> {
                 _ => continue,
             };
             if is_ambient && e.is_some() && !is_entity_name_expression(self, file, e) {
-                out.push(Diagnostic {
-                    start: self.start_of(file, e),
-                    code: 2714,
-                });
+                let start = self.start_of(file, e);
+                out.push(Diagnostic { start, code: 2714 });
+                self.note(start, self.end_of_expr(file, e), 2714, Vec::new());
             }
         }
     }
@@ -463,9 +518,10 @@ impl Checker<'_> {
         const INTERFACE: u8 = 16;
         let hir = self.hir(file);
         let mut defaults: Vec<DefaultExport> = Vec::new();
-        let mut declare = |start: u32, includes: u8, excludes: u8, code: u32| {
+        let mut declare = |start: u32, statement: StmtId, includes: u8, excludes: u8, code: u32| {
             defaults.push(DefaultExport {
                 start,
+                statement,
                 includes,
                 excludes,
                 code,
@@ -480,12 +536,9 @@ impl Checker<'_> {
                     } else {
                         PROPERTY
                     };
-                    declare(
-                        self.export_assignment_name_start(file, s),
-                        includes,
-                        u8::MAX,
-                        2528,
-                    );
+                    let start = self.export_assignment_name_start(file, s);
+                    let statement = if start == hir[s].pos { s } else { StmtId::NONE };
+                    declare(start, statement, includes, u8::MAX, 2528);
                 }
                 StmtKind::Fn(f) if hir[f].flags.contains(Flags::DEFAULT) => {
                     declare(
@@ -494,6 +547,7 @@ impl Checker<'_> {
                         } else {
                             hir[s].pos
                         },
+                        StmtId::NONE,
                         FUNCTION,
                         PROPERTY,
                         2528,
@@ -506,25 +560,26 @@ impl Checker<'_> {
                         } else {
                             hir[s].pos
                         },
+                        StmtId::NONE,
                         CLASS,
                         PROPERTY | CLASS,
                         2528,
                     );
                 }
                 StmtKind::Interface(i) if hir[i].flags.contains(Flags::DEFAULT) => {
-                    declare(hir[i].name_pos, INTERFACE, 0, 2528)
+                    declare(hir[i].name_pos, StmtId::NONE, INTERFACE, 0, 2528)
                 }
                 StmtKind::ExportNamed(x) => {
                     for spec in hir[x].items.iter() {
                         if hir[spec].exported == known::default {
-                            declare(hir[spec].pos, ALIAS, ALIAS, 2528);
+                            declare(hir[spec].pos, StmtId::NONE, ALIAS, ALIAS, 2528);
                         }
                     }
                 }
                 // A name like any other that happens to be `default`: no default export.
                 StmtKind::ExportStar { alias, .. } if alias == known::default => {
                     if let Some(start) = start_of_namespace_export_name(&hir.text, hir[s].pos) {
-                        declare(start, ALIAS, ALIAS, 2300);
+                        declare(start, StmtId::NONE, ALIAS, ALIAS, 2300);
                     }
                 }
                 _ => {}
@@ -576,11 +631,13 @@ impl Checker<'_> {
         };
         // `module.exports = e` is one too.
         let written = files.symbol(equals).decls.iter().find_map(|d| match *d {
-            Decl::ExportExpr(statement) => Some(self.hir(file)[statement].pos),
-            Decl::ModuleExports(e) => Some(self.start_of(file, e)),
+            Decl::ExportExpr(statement) => Some((self.hir(file)[statement].pos, *d)),
+            Decl::ModuleExports(e) => Some((self.start_of(file, e), *d)),
             _ => None,
         });
-        let Some(start) = written else { return };
+        let Some((start, declaration)) = written else {
+            return;
+        };
         let others = |of: Sym| {
             files
                 .exports(of)
@@ -605,6 +662,12 @@ impl Checker<'_> {
         };
         if exports_values || shadows_a_namespace() {
             out.push(Diagnostic { start, code: 2309 });
+            let end = match declaration {
+                Decl::ExportExpr(statement) => self.end_of_stmt(file, statement),
+                Decl::ModuleExports(e) => self.end_of_expr(file, e),
+                _ => 0,
+            };
+            self.note(start, end, 2309, Vec::new());
         }
     }
 
@@ -960,6 +1023,8 @@ impl Checker<'_> {
 struct DefaultExport {
     /// The start of its error span.
     start: u32,
+    /// The statement, if the error span is all of it. `NONE`: it is one token.
+    statement: StmtId,
     /// The symbol flags it adds.
     includes: u8,
     /// The symbol flags it conflicts with.
@@ -971,27 +1036,65 @@ struct DefaultExport {
 /// `declareSymbolEx`, for the declarations of `default` in one table of exports: 2528, 2300. A conflict is reported at the new
 /// declaration and at every declaration of the symbol in the table. The new declaration does not join that symbol.
 fn report_default_export_conflicts<'a>(
+    c: &Checker<'_>,
+    file: FileId,
     defaults: impl Iterator<Item = &'a DefaultExport>,
     out: &mut Vec<Diagnostic>,
 ) {
     let mut flags = 0;
-    let mut accepted: Vec<u32> = Vec::new();
+    let mut accepted: Vec<&DefaultExport> = Vec::new();
     for d in defaults {
         if flags & d.excludes == 0 {
             flags |= d.includes;
-            accepted.push(d.start);
+            accepted.push(d);
             continue;
         }
-        out.extend(
-            accepted
-                .iter()
-                .chain(std::iter::once(&d.start))
-                .map(|&start| Diagnostic {
-                    start,
-                    code: d.code,
-                }),
-        );
+        for declared in accepted.iter().copied().chain(std::iter::once(d)) {
+            out.push(Diagnostic {
+                start: declared.start,
+                code: d.code,
+            });
+            if declared.statement.is_some() {
+                let end = c.end_of_stmt(file, declared.statement);
+                c.note(declared.start, end, d.code, Vec::new());
+            }
+        }
     }
+}
+
+/// `getFullyQualifiedName`
+pub(super) fn fully_qualified_name(c: &mut Checker<'_>, sym: Sym) -> String {
+    let files = c.files();
+    let symbol = files.symbol(sym);
+    let name = c.symbol_to_string(sym);
+    if symbol.parent.is_none() {
+        return name;
+    }
+    let parent = files.sym(sym.file, symbol.parent);
+    // What is not exported has no parent (`declareModuleMember`).
+    if files.export(parent, symbol.name) != Some(sym) {
+        return name;
+    }
+    format!("{}.{name}", fully_qualified_name(c, parent))
+}
+
+/// What `levenshteinWithMax` measures: changing a letter costs two, and changing its case next to nothing.
+fn edit_distance(a: &[u8], b: &[u8]) -> f64 {
+    let mut previous: Vec<f64> = (0..=b.len()).map(|j| j as f64).collect();
+    let mut current = vec![0.0; b.len() + 1];
+    for (i, x) in a.iter().enumerate() {
+        current[0] = (i + 1) as f64;
+        for (j, y) in b.iter().enumerate() {
+            current[j + 1] = if x == y {
+                previous[j]
+            } else {
+                let change = previous[j] + if x.eq_ignore_ascii_case(y) { 0.1 } else { 2.0 };
+                (previous[j + 1] + 1.0).min(current[j] + 1.0).min(change)
+            };
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    previous[b.len()]
 }
 
 /// `IsEntityNameExpression`. A missing expression is an empty Identifier (`createMissingIdentifier`).

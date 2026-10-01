@@ -127,6 +127,8 @@ impl Checker<'_> {
                         start: hir.cases[c].pos,
                         code: 7029,
                     });
+                    let end = self.error_range_of_case(file, CaseId(c as u32)).1;
+                    self.explain_to(hir.cases[c].pos, end, 7029, |_| vec![]);
                 }
             }
         }
@@ -298,20 +300,32 @@ impl Checker<'_> {
     ) {
         let hir = self.hir(file);
         let mut in_run = false;
+        // The error goes from the first statement of a run to the last.
+        let (mut run_start, mut run_last) = (0, StmtId::NONE);
         for s in hir.ids(list) {
             if self.is_potentially_executable(file, s)
                 && self.is_source_element_unreachable(file, s)
             {
                 if !std::mem::replace(&mut in_run, true) {
+                    run_start = start_of_statement(hir, s);
                     out.push(Diagnostic {
-                        start: start_of_statement(hir, s),
+                        start: run_start,
                         code: 7027,
                     });
                 }
+                run_last = s;
                 continue;
+            }
+            if in_run {
+                let end = self.end_of_stmt(file, run_last);
+                self.explain_to(run_start, end, 7027, |_| vec![]);
             }
             in_run = false;
             self.check_unreachable_within(file, s, out);
+        }
+        if in_run {
+            let end = self.end_of_stmt(file, run_last);
+            self.explain_to(run_start, end, 7027, |_| vec![]);
         }
     }
 
@@ -324,10 +338,10 @@ impl Checker<'_> {
             if c.is_potentially_executable(file, inner)
                 && c.is_source_element_unreachable(file, inner)
             {
-                out.push(Diagnostic {
-                    start: start_of_statement(c.hir(file), inner),
-                    code: 7027,
-                });
+                let start = start_of_statement(c.hir(file), inner);
+                out.push(Diagnostic { start, code: 7027 });
+                let end = c.end_of_stmt(file, inner);
+                c.explain_to(start, end, 7027, |_| vec![]);
             } else {
                 c.check_unreachable_within(file, inner, out);
             }
@@ -545,6 +559,17 @@ impl Checker<'_> {
             _ => return,
         };
         out.push(Diagnostic { start, code });
+        let end = if f.ret.is_some() {
+            self.end_of_type_node_from(file, f.ret, start)
+        } else {
+            match bound.fns[func.idx()].owner {
+                FnOwner::Expr(e) if matches!(f.kind, FnKind::Arrow | FnKind::Expr) => {
+                    self.error_end_inside_parentheses(file, e)
+                }
+                _ => self.end_of_name_at(file, start),
+            }
+        };
+        self.explain_to(start, end, code, |_| vec![]);
     }
 
     /// `checkReturnStatement`, where `undefined` is not told apart: `return;` where something is to be returned.
@@ -628,11 +653,14 @@ impl Checker<'_> {
             next.unwrap_or(TypeId::UNKNOWN),
             is_async,
         );
-        self.check_assignable(
+        let start = start_of_return_type(hir, f.ret);
+        let end = self.end_of_type_node_from(file, f.ret, start);
+        self.check_assignable_with_end(
             file,
             generator,
             declared,
-            start_of_return_type(hir, f.ret),
+            start,
+            end,
             ExprId::NONE,
             2322,
             out,
@@ -966,8 +994,8 @@ impl Checker<'_> {
     /// `checkSuperExpression`, `checkConstructorDeclaration`.
     fn check_super(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // The constructors that call it, not from a function inside.
-        let mut calling: Vec<(FnId, u32)> = Vec::new();
+        // The constructors that call it, not from a function inside, where, and the call.
+        let mut calling: Vec<(FnId, u32, ExprId)> = Vec::new();
         for i in 0..hir.exprs.len() {
             if !matches!(hir.exprs[i].kind, ExprKind::Super)
                 || matches!(bound.expr_parent[i], Parent::None)
@@ -1091,7 +1119,11 @@ impl Checker<'_> {
                         && matches!(parent, Parent::FnBody(_))
                         && !through_function
                     {
-                        calling.push((f, start));
+                        let call = match bound.expr_parent[i] {
+                            Parent::Expr(call) => call,
+                            _ => ExprId::NONE,
+                        };
+                        calling.push((f, start, call));
                     }
                     (of, is_legal)
                 }
@@ -1135,14 +1167,25 @@ impl Checker<'_> {
             }
             let extends_null = matches!(hir[hir[c].extends].kind, ExprKind::Null);
             match calling.iter().filter(|x| x.0.idx() == f).map(|x| x.1).min() {
-                Some(first) if extends_null => out.push(Diagnostic {
-                    start: first,
-                    code: 17005,
-                }),
-                None if !extends_null => out.push(Diagnostic {
-                    start: start_of_constructor(hir, m),
-                    code: 2377,
-                }),
+                Some(first) if extends_null => {
+                    out.push(Diagnostic {
+                        start: first,
+                        code: 17005,
+                    });
+                    if let Some(&(_, _, call)) = calling.iter().find(|x| x.1 == first)
+                        && call.is_some()
+                    {
+                        let end = self.end_inside_parentheses(file, call);
+                        self.explain_to(first, end, 17005, |_| vec![]);
+                    }
+                }
+                None if !extends_null => {
+                    let start = start_of_constructor(hir, m);
+                    out.push(Diagnostic { start, code: 2377 });
+                    // Up to the end of the keyword.
+                    let end = self.end_of_name_at(file, hir[m].pos);
+                    self.explain_to(start, end, 2377, |_| vec![]);
+                }
                 _ => {}
             }
         }
@@ -1178,6 +1221,7 @@ impl Checker<'_> {
                                 if matches!(hir[s].kind, StmtKind::Labeled { label: outer, .. } if outer == label)
                                 {
                                     out.push(Diagnostic { start, code: 1114 });
+                                    self.explain(start, 1114, |c| vec![c.atom_text(label)]);
                                     break;
                                 }
                                 parent = bound.stmt_parent[s.idx()];
@@ -1220,6 +1264,8 @@ impl Checker<'_> {
             };
             if let Some(code) = code {
                 out.push(Diagnostic { start, code });
+                let end = self.end_of_stmt(file, StmtId(i as u32));
+                self.explain_to(start, end, code, |_| vec![]);
             }
         }
     }

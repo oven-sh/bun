@@ -12,6 +12,7 @@ impl Checker<'_> {
     pub(super) fn check_grammar(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         for &(start, code) in &self.files().module(file).missing_references {
             out.push(Diagnostic { start, code });
+            self.note_missing_reference(file, start, code);
         }
         let hir = self.hir(file);
         // A JSON file has no statements of its own: its `export =` is the binder's.
@@ -25,8 +26,43 @@ impl Checker<'_> {
             self.check_variables_are_initialized(file, out);
             self.check_yield_in_property_initializers(file, out);
         }
+        let said_before = out.len();
         self.check_strict_mode(file, parses, out);
+        // `getStrictModeIdentifierMessage`: all of them are reported on the name they are about.
+        for d in &out[said_before..] {
+            if d.code == 1214 {
+                let start = d.start;
+                self.explain(start, 1214, |c| {
+                    vec![c.source_text(file, start, c.end_of_name_at(file, start))]
+                });
+            }
+        }
         self.check_comma_operators(file, out);
+    }
+
+    /// `getSourceFileFromReference`, `processingDiagnostic.toDiagnostic`: what is said of the `/// <reference>` whose value is written at
+    /// `start`.
+    fn note_missing_reference(&self, file: FileId, start: u32, code: u32) {
+        let references = &self.hir(file).references;
+        let Some(&(_, value, ..)) = references.iter().find(|r| r.2 == start) else {
+            return;
+        };
+        let name = self.atom_text(value);
+        let end = start + self.files().atoms.bytes(value).len() as u32;
+        // `supportedExtensions`
+        let extensions = if self.p.files.options.allow_js {
+            "'.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'"
+        } else {
+            "'.ts', '.tsx', '.d.ts', '.cts', '.d.cts', '.mts', '.d.mts'"
+        };
+        let args = match code {
+            1006 => Vec::new(),
+            2688 => vec![name],
+            2726 => vec![name.to_lowercase()],
+            6054 | 6231 => vec![name.replace('\\', "/"), extensions.to_owned()],
+            _ => vec![name.replace('\\', "/")],
+        };
+        self.note(start, end, code, args);
     }
 
     /// `GetImpliedNodeFormatForEmit`: `Some(true)` for an ECMAScript module, `Some(false)` for CommonJS.
@@ -68,6 +104,8 @@ impl Checker<'_> {
                             start: s.pos,
                             code: 1202,
                         });
+                        let end = self.end_of_stmt(file, StmtId(i as u32));
+                        self.note(s.pos, end, 1202, Vec::new());
                     }
                     // `checkImportEqualsDeclaration`
                     if matches!(import.target, ImportEqualsTarget::Entity(_))
@@ -78,6 +116,8 @@ impl Checker<'_> {
                             start: s.pos,
                             code: 1392,
                         });
+                        let end = self.end_of_stmt(file, StmtId(i as u32));
+                        self.note(s.pos, end, 1392, Vec::new());
                     }
                 }
                 StmtKind::ExportAssign(_) => {
@@ -99,11 +139,15 @@ impl Checker<'_> {
                             start: s.pos,
                             code: 1203,
                         });
+                        let end = self.end_of_stmt(file, StmtId(i as u32));
+                        self.note(s.pos, end, 1203, Vec::new());
                     } else if kind == ModuleKind::System && !is_ambient {
                         out.push(Diagnostic {
                             start: s.pos,
                             code: 1218,
                         });
+                        let end = self.end_of_stmt(file, StmtId(i as u32));
+                        self.note(s.pos, end, 1218, Vec::new());
                     }
                 }
                 _ => {}
@@ -134,6 +178,8 @@ impl Checker<'_> {
                         start: e.pos,
                         code: 18060,
                     });
+                    let end = self.end_inside_parentheses(file, ExprId(i as u32));
+                    self.note(e.pos, end, 18060, Vec::new());
                     continue;
                 }
             } else if kind == ModuleKind::Es2015 {
@@ -142,6 +188,8 @@ impl Checker<'_> {
                     start: e.pos,
                     code: 1323,
                 });
+                let end = self.end_inside_parentheses(file, ExprId(i as u32));
+                self.note(e.pos, end, 1323, Vec::new());
                 continue;
             }
             if after_keyword == Some(b'<') {
@@ -153,10 +201,9 @@ impl Checker<'_> {
                 .find(|o| o.0 == specifier)
                 .map(|o| o.1);
             if !has_import_attributes && let Some(options) = options {
-                out.push(Diagnostic {
-                    start: self.start_of(file, options),
-                    code: 1324,
-                });
+                let start = self.start_of(file, options);
+                out.push(Diagnostic { start, code: 1324 });
+                self.note(start, self.error_end_of(file, options), 1324, Vec::new());
                 continue;
             }
             // No argument: 1450, which is a message and not an error.
@@ -169,6 +216,8 @@ impl Checker<'_> {
                     start: hir[spread].pos,
                     code: 1325,
                 });
+                let end = self.end_of_expr(file, spread);
+                self.note(hir[spread].pos, end, 1325, Vec::new());
             }
         }
     }
@@ -188,8 +237,15 @@ impl Checker<'_> {
             let is_pattern = matches!(hir[decl.pat].kind, PatKind::Object(_) | PatKind::Array(_));
             let is_using = matches!(decl.kind, VarKind::Using | VarKind::AwaitUsing);
             let start = hir[decl.pat].pos;
+            let keyword = match decl.kind {
+                VarKind::AwaitUsing => "await using",
+                VarKind::Using => "using",
+                _ => "const",
+            };
             if is_pattern && is_using {
                 out.push(Diagnostic { start, code: 1492 });
+                let end = self.end_of_pat(file, decl.pat);
+                self.note(start, end, 1492, vec![keyword.to_owned()]);
                 continue;
             }
             if decl.init.is_some() || decl.flags.contains(Flags::AMBIENT) {
@@ -204,8 +260,10 @@ impl Checker<'_> {
             }
             if is_pattern {
                 out.push(Diagnostic { start, code: 1182 });
+                self.note(start, self.end_of_pat(file, decl.pat), 1182, Vec::new());
             } else if is_using || decl.kind == VarKind::Const {
                 out.push(Diagnostic { start, code: 1155 });
+                self.note(start, 0, 1155, vec![keyword.to_owned()]);
             }
         }
     }
@@ -302,6 +360,7 @@ impl Checker<'_> {
             let start = self.start_of(file, left);
             if !self.is_in_adjacent_jsx_elements(file, id, start) {
                 out.push(Diagnostic { start, code: 2695 });
+                self.note(start, self.error_end_of(file, left), 2695, Vec::new());
             }
         }
     }

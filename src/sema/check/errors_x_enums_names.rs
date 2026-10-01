@@ -134,6 +134,7 @@ impl Checker<'_> {
                             open_parenthesis(hir, index).or_else(|| error_start(self, file, index))
                         {
                             out.push(Diagnostic { start, code: 2476 });
+                            self.note(start, self.error_end_of(file, index), 2476, Vec::new());
                         }
                         // It is in error, and what is in error can be anything.
                         continue;
@@ -181,11 +182,17 @@ impl Checker<'_> {
                         && matches!(parent, Parent::Stmt(s) if s.is_some() && matches!(hir[s].kind, StmtKind::ExportAssign(_) | StmtKind::ExportDefault(_)));
                 if !ok && let Some(start) = own {
                     out.push(Diagnostic { start, code: 2475 });
+                    let end = self.error_end_inside_parentheses(file, e);
+                    self.note(start, end, 2475, Vec::new());
                 }
                 continue;
             };
             // Each pair of parentheses is an expression of that type too, and only the outermost is where `e` seems to be.
             out.extend(own.map(|start| Diagnostic { start, code: 2475 }));
+            if let Some(start) = own {
+                let end = self.error_end_inside_parentheses(file, e);
+                self.note(start, end, 2475, Vec::new());
+            }
             let inside = self.start_inside_parentheses(file, e) as usize;
             let mut at = open as usize;
             let mut is_outermost = true;
@@ -195,6 +202,8 @@ impl Checker<'_> {
                         start: at as u32,
                         code: 2475,
                     });
+                    let end = self.end_of_expr_from(file, e, at as u32);
+                    self.note(at as u32, end, 2475, Vec::new());
                 }
                 is_outermost = false;
                 at = skip_trivia(&hir.text, at + 1);
@@ -283,6 +292,14 @@ impl Checker<'_> {
                     && files.decls(found).first().is_some_and(|d| d.0 != file)
                 {
                     out.push(Diagnostic { start, code: 1281 });
+                    let option = if files.options.verbatim_module_syntax {
+                        "verbatimModuleSyntax"
+                    } else {
+                        "isolatedModules"
+                    };
+                    let name = self.atom_text(name);
+                    let qualified = format!("{}.{name}", self.atom_text(hir[en].name));
+                    self.note(start, 0, 1281, vec![name, option.to_owned(), qualified]);
                 }
                 break;
             }
@@ -332,6 +349,7 @@ impl Checker<'_> {
                 out[said].code = 2311;
             } else if names_shorthand_property {
                 out[said].code = 18004;
+                self.note(start, 0, 18004, vec![self.atom_text(name)]);
             }
         }
     }
@@ -385,6 +403,9 @@ impl Checker<'_> {
                         d.code = 2690;
                     }
                 }
+                let name = self.atom_text(name);
+                let parameter = if name == "K" { "P" } else { "K" };
+                self.note(start, 0, 2690, vec![name, parameter.to_owned()]);
             }
         }
     }
@@ -572,12 +593,35 @@ impl Checker<'_> {
                     start: x.pos,
                     code: 2686,
                 });
+                let looked_up = if is_umd_global(fragment_factory) {
+                    fragment_factory
+                } else {
+                    factory
+                };
+                let end = self.end_of_jsx_opening(file, ExprId(i as u32), jsx);
+                self.note(x.pos, end, 2686, vec![self.atom_text(looked_up)]);
             } else if of_elements {
                 // The name of the tag, which follows the `<`.
+                let start = skip_trivia(&hir.text, x.pos as usize + 1);
                 out.push(Diagnostic {
-                    start: skip_trivia(&hir.text, x.pos as usize + 1) as u32,
+                    start: start as u32,
                     code: 2686,
                 });
+                let rest = hir.text.get(start..).unwrap_or(&[]);
+                let length = rest
+                    .iter()
+                    .position(|&b| {
+                        !(b.is_ascii_alphanumeric()
+                            || b >= 0x80
+                            || matches!(b, b'_' | b'$' | b'.' | b'-' | b':'))
+                    })
+                    .unwrap_or(rest.len());
+                self.note(
+                    start as u32,
+                    (start + length) as u32,
+                    2686,
+                    vec![self.atom_text(factory)],
+                );
             }
         }
     }
@@ -731,6 +775,9 @@ impl Checker<'_> {
                     }
                     out.retain(|d| d.start != start || !is_name_not_found(d.code));
                     out.push(Diagnostic { start, code: 2844 });
+                    let property =
+                        self.source_text(file, member.pos, self.end_of_member_name(file, m));
+                    self.note(start, 0, 2844, vec![property, self.atom_text(name)]);
                 });
             }
         }
@@ -810,6 +857,15 @@ impl EnumValues<'_, '_> {
         }
     }
 
+    /// `error`, at the name of a member of an enum.
+    fn error_at_name(&mut self, file: FileId, start: u32, code: u32) {
+        if file == self.file && !self.gave_up {
+            self.errors.push(Diagnostic { start, code });
+            let end = self.c.end_of_name_at(file, start);
+            self.c.note(start, end, code, Vec::new());
+        }
+    }
+
     /// `computeEnumMemberValues`
     fn compute_enum_member_values(&mut self, file: FileId, en: EnumId) {
         if !self.computed.insert((file, en)) {
@@ -863,7 +919,7 @@ impl EnumValues<'_, '_> {
             if self.unsure_members.contains(&(file, previous)) {
                 self.unsure_members.insert((file, member));
             } else {
-                self.error(file, hir[member].pos, 1061);
+                self.error_at_name(file, hir[member].pos, 1061);
             }
             return Evaluated::default();
         };
@@ -873,7 +929,7 @@ impl EnumValues<'_, '_> {
         {
             let before = self.enum_member_value(file, previous);
             if !matches!(before.value, Some(Value::Number(_))) || before.resolved_other_files {
-                self.error(file, hir[member].pos, 18056);
+                self.error_at_name(file, hir[member].pos, 18056);
             }
         }
         Evaluated::number(auto_value)
@@ -887,7 +943,7 @@ impl EnumValues<'_, '_> {
         let source = hir.text.get(pos as usize..).unwrap_or_default();
         // `IsComputedNonLiteralName`: `["a"]` and `[1]` are named by their literal, any other `[e]` has no name.
         if source.first() == Some(&b'[') && (name.is_none() || name == known::empty) {
-            self.error(file, pos, 1164);
+            self.error_at_name(file, pos, 1164);
             return;
         }
         let token_len = source
@@ -903,7 +959,7 @@ impl EnumValues<'_, '_> {
                 b"Infinity" | b"-Infinity" | b"NaN"
             );
         if is_bigint || is_numeric {
-            self.error(file, pos, 2452);
+            self.error_at_name(file, pos, 2452);
         }
     }
 
@@ -935,17 +991,35 @@ impl EnumValues<'_, '_> {
                     && let Value::Number(n) = value
                     && !n.is_finite()
                 {
-                    self.error(file, start, if n.is_nan() { 2478 } else { 2477 });
+                    let code = if n.is_nan() { 2478 } else { 2477 };
+                    self.error(file, start, code);
+                    let end = self.c.error_end_of(file, initializer);
+                    self.c.note(start, end, code, Vec::new());
                 }
                 if self.c.p.files.options.isolated_modules
                     && value == Value::String
                     && !result.is_syntactically_string
                 {
                     self.error(file, start, 18055);
+                    let name = format!(
+                        "{}.{}",
+                        self.c.atom_text(hir[en].name),
+                        self.c.atom_text(hir[member].name)
+                    );
+                    let end = self.c.error_end_of(file, initializer);
+                    self.c.note(start, end, 18055, vec![name]);
                 }
             }
-            None if is_const => self.error(file, start, 2474),
-            None if is_ambient_enum(hir, en) => self.error(file, start, 1066),
+            None if is_const => {
+                self.error(file, start, 2474);
+                let end = self.c.error_end_of(file, initializer);
+                self.c.note(start, end, 2474, Vec::new());
+            }
+            None if is_ambient_enum(hir, en) => {
+                self.error(file, start, 1066);
+                let end = self.c.error_end_of(file, initializer);
+                self.c.note(start, end, 1066, Vec::new());
+            }
             None => {
                 let ty = self.c.type_of_expr(file, initializer);
                 if self.c.is_known(ty) && !self.c.is_uncertain(file, initializer) {
@@ -956,6 +1030,23 @@ impl EnumValues<'_, '_> {
                     self.c.relation_gave_up |= gave_up_before;
                     if !fits && is_sure {
                         self.error(file, start, 18033);
+                        let end = self.c.error_end_of(file, initializer);
+                        let relation = super::relate::Relation::Assignable;
+                        self.c.explain_to(start, end, 18033, |c| {
+                            let lines =
+                                c.relation_lines(ty, TypeId::NUMBER, relation, Some(18033), 0);
+                            match lines.into_iter().next() {
+                                Some(head) if head.code == 18033 => head.args,
+                                _ => {
+                                    let (given, wanted) =
+                                        c.type_names_for_error_display(ty, TypeId::NUMBER);
+                                    vec![given, wanted]
+                                }
+                            }
+                        });
+                        self.c.explain_chain(start, 18033, |c| {
+                            c.relation_chain_under(ty, TypeId::NUMBER, relation, 18033)
+                        });
                     }
                 }
             }
@@ -1173,10 +1264,19 @@ impl EnumValues<'_, '_> {
             declaration.filter(|&(of, member)| Location::Member(of, member) != location)
         else {
             self.error(file, start, 2565);
+            if file == self.file {
+                let end = self.c.end_inside_parentheses(file, e);
+                self.c
+                    .explain_to(start, end, 2565, |c| vec![c.symbol_to_string(symbol)]);
+            }
             return Evaluated::default();
         };
         if !is_declared_before_use(self.c, Location::Member(of, member), location) {
             self.error(file, start, 2651);
+            if file == self.file {
+                let end = self.c.end_inside_parentheses(file, e);
+                self.c.note(start, end, 2651, Vec::new());
+            }
             return Evaluated::number(0.0);
         }
         let value = self.enum_member_value(of, member);

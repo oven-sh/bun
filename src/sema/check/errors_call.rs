@@ -8,6 +8,7 @@
 
 use super::call::{Arg, ResolvedCall};
 use super::errors::Diagnostic;
+use super::explain::Line;
 use super::*;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent};
 
@@ -31,6 +32,30 @@ struct Failed {
     for_arity_error: Option<SigId>,
     /// `candidateForTypeArgumentError`
     for_type_argument_error: Option<SigId>,
+}
+
+/// How many arguments the candidates of a call take.
+pub(super) struct ArgumentCounts {
+    /// `minCount`
+    pub(super) least: usize,
+    /// `maxCount`
+    pub(super) most: usize,
+    /// `maxBelow`: the most that one requires that requires fewer than there are.
+    pub(super) most_below: usize,
+    /// `minAbove`: the fewest that one takes that takes more than there are.
+    pub(super) least_above: usize,
+    pub(super) has_rest: bool,
+}
+
+impl ArgumentCounts {
+    /// `parameterRange`
+    pub(super) fn expected(&self) -> String {
+        if !self.has_rest && self.least < self.most {
+            format!("{}-{}", self.least, self.most)
+        } else {
+            self.least.to_string()
+        }
+    }
 }
 
 impl Checker<'_> {
@@ -100,6 +125,10 @@ impl Checker<'_> {
                 start: d.start,
                 code,
             });
+            if code != d.code {
+                let end = self.error_end_of(file, data.callee);
+                self.note(d.start, end, code, Vec::new());
+            }
         }
         if stops {
             return;
@@ -129,6 +158,7 @@ impl Checker<'_> {
                         start: node_start,
                         code: 2347,
                     });
+                    self.note(node_start, self.end_of_expr(file, e), 2347, Vec::new());
                 }
                 return;
             }
@@ -142,6 +172,8 @@ impl Checker<'_> {
                         start: node_start,
                         code: 2348,
                     });
+                    let end = self.end_of_expr(file, e);
+                    self.explain_to(node_start, end, 2348, |c| vec![c.type_to_string(called)]);
                     return;
                 }
                 // `invocationErrorDetails`: an access in parentheses is not an access that is called.
@@ -159,6 +191,14 @@ impl Checker<'_> {
                     2349
                 };
                 out.push(Diagnostic { start, code });
+                let end = match hir[data.callee].kind {
+                    ExprKind::Dot { name_pos, .. } if is_bare => {
+                        self.end_of_name_at(file, name_pos)
+                    }
+                    _ => self.error_end_of(file, data.callee),
+                };
+                self.note(start, end, code, Vec::new());
+                self.explain_chain(start, code, |c| c.invocation_error_lines(apparent, false));
                 return;
             }
             self.report_call_resolution(file, e, c, &call_sigs, false, resolved, out);
@@ -171,14 +211,20 @@ impl Checker<'_> {
                     start: node_start,
                     code: 2347,
                 });
+                self.note(node_start, self.end_of_expr(file, e), 2347, Vec::new());
             }
             return;
         }
         if !construct_sigs.is_empty() {
-            if let Some(code) = self.why_constructor_not_accessible(file, e, construct_sigs[0]) {
+            if let Some((code, class)) = self.inaccessible_constructor(file, e, construct_sigs[0]) {
                 out.push(Diagnostic {
                     start: node_start,
                     code,
+                });
+                let end = self.end_of_expr(file, e);
+                self.explain_to(node_start, end, code, |c| {
+                    let declaring = c.declared_type(class);
+                    vec![c.type_to_string(declaring)]
                 });
                 return;
             }
@@ -187,6 +233,7 @@ impl Checker<'_> {
                     start: node_start,
                     code: 2511,
                 });
+                self.note(node_start, self.end_of_expr(file, e), 2511, Vec::new());
                 return;
             }
             self.report_call_resolution(file, e, c, &construct_sigs, true, resolved, out);
@@ -210,6 +257,7 @@ impl Checker<'_> {
                         start: node_start,
                         code: 7009,
                     });
+                    self.note(node_start, self.end_of_expr(file, e), 7009, Vec::new());
                 }
             } else if let Some(sig) = sig {
                 let returned = self.sig_return(sig);
@@ -221,20 +269,75 @@ impl Checker<'_> {
                         start: node_start,
                         code: 2350,
                     });
+                    self.note(node_start, self.end_of_expr(file, e), 2350, Vec::new());
                 }
                 if self.sig_this_type(sig) == Some(TypeId::VOID) {
                     out.push(Diagnostic {
                         start: node_start,
                         code: 2679,
                     });
+                    self.note(node_start, self.end_of_expr(file, e), 2679, Vec::new());
                 }
             }
             return;
         }
-        out.push(Diagnostic {
-            start: self.start_of(file, data.callee),
-            code: 2351,
-        });
+        let start = self.start_of(file, data.callee);
+        out.push(Diagnostic { start, code: 2351 });
+        self.note(
+            start,
+            self.error_end_of(file, data.callee),
+            2351,
+            Vec::new(),
+        );
+        self.explain_chain(start, 2351, |c| c.invocation_error_lines(apparent, true));
+    }
+
+    /// `invocationErrorDetails`: the lines under 2349, 6234 or 2351, of what has the apparent type `apparent`.
+    pub(super) fn invocation_error_lines(
+        &mut self,
+        apparent: TypeId,
+        construct: bool,
+    ) -> Vec<Line> {
+        let line = |code: u32, name: String, level: u32| Line {
+            code,
+            args: vec![name],
+            level,
+        };
+        let (none_of_type, not_all, no_constituent, incompatible) = if construct {
+            (2761, 2760, 2759, 2762)
+        } else {
+            (2757, 2756, 2755, 2758)
+        };
+        let whole = self.type_to_string(apparent);
+        if !self.is_union(apparent) {
+            return vec![line(none_of_type, whole, 1)];
+        }
+        let mut has_signatures = false;
+        // The first constituent without signatures.
+        let mut without = None;
+        for part in self.parts_in_order(apparent) {
+            let reduced = self.apparent_type(part);
+            let reduced = self.reduced(reduced);
+            if !self.signatures(reduced, construct).is_empty() {
+                has_signatures = true;
+                if without.is_some() {
+                    break;
+                }
+            } else {
+                without = without.or(Some(part));
+                if has_signatures {
+                    break;
+                }
+            }
+        }
+        match without {
+            _ if !has_signatures => vec![line(no_constituent, whole, 1)],
+            Some(part) => {
+                let part = self.type_to_string(part);
+                vec![line(not_all, whole, 1), line(none_of_type, part, 2)]
+            }
+            None => vec![line(incompatible, whole, 1)],
+        }
     }
 
     /// `checkCallExpression`: 2776 and 2775, of a call that is a statement and asserts something.
@@ -263,10 +366,9 @@ impl Checker<'_> {
         } else {
             return;
         };
-        out.push(Diagnostic {
-            start: self.start_of(file, data.callee),
-            code,
-        });
+        let start = self.start_of(file, data.callee);
+        out.push(Diagnostic { start, code });
+        self.note(start, self.end_of_expr(file, data.callee), code, Vec::new());
     }
 
     /// `getEffectsSignature`, of a call that is a statement and resolves to a signature that asserts: whether there is one.
@@ -387,10 +489,18 @@ impl Checker<'_> {
             // With parentheses around it, it is those that are the element of the array.
             let is_element = !is_parenthesized(hir, e)
                 && matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Array(_)));
-            out.push(Diagnostic {
-                start: self.start_of(file, data.callee),
-                code: if is_element { 2796 } else { 2349 },
-            });
+            let start = self.start_of(file, data.callee);
+            let code = if is_element { 2796 } else { 2349 };
+            out.push(Diagnostic { start, code });
+            self.note(
+                start,
+                self.error_end_of(file, data.callee),
+                code,
+                Vec::new(),
+            );
+            if !is_element {
+                self.explain_chain(start, code, |c| c.invocation_error_lines(apparent, false));
+            }
             return;
         }
         self.report_call_resolution(file, e, c, &call_sigs, false, resolved, out);
@@ -682,6 +792,17 @@ impl Checker<'_> {
         e: ExprId,
         sig: SigId,
     ) -> Option<u32> {
+        self.inaccessible_constructor(file, e, sig)
+            .map(|(code, _)| code)
+    }
+
+    /// The same, and the class that declares the constructor.
+    fn inaccessible_constructor(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        sig: SigId,
+    ) -> Option<(u32, Sym)> {
         // The declaration of a signature is that of the one it is a clone of.
         let mut sig = sig;
         let mut steps = 0;
@@ -722,11 +843,12 @@ impl Checker<'_> {
         {
             return None;
         }
-        Some(if modifiers.contains(Flags::PRIVATE) {
+        let code = if modifiers.contains(Flags::PRIVATE) {
             2673
         } else {
             2674
-        })
+        };
+        Some((code, class))
     }
 
     /// `typeHasProtectedAccessibleBase`: whether `class` comes from `target` by way of first bases. (What `findMixins` would
@@ -1071,6 +1193,8 @@ impl Checker<'_> {
             );
             for d in said {
                 out.push(if for_argument_error.len() > 1 {
+                    self.explain_under(d.start, d.code, 2770, Vec::new());
+                    self.explain_under(d.start, 2770, 2769, Vec::new());
                     Diagnostic {
                         start: d.start,
                         code: 2769,
@@ -1087,8 +1211,16 @@ impl Checker<'_> {
                 self.failing_type_argument(candidate, &type_params, &type_args)
             {
                 let node = hir.ids(data.type_args).nth(index).unwrap();
+                let end = self.end_of_type_node(file, node);
                 // 2344, or what says more.
-                self.report_not_assignable(given, constraint, hir[node].pos, 2344, out);
+                self.report_not_assignable_with_end(
+                    given,
+                    constraint,
+                    hir[node].pos,
+                    end,
+                    2344,
+                    out,
+                );
             }
         } else {
             let mut fitting = Vec::new();
@@ -1265,8 +1397,9 @@ impl Checker<'_> {
             if !self.is_assignable(given, wanted) {
                 if let Some(out) = report.as_deref_mut() {
                     let start = self.start_of(file, this_arg.unwrap_or(e));
+                    let end = self.error_end_of(file, this_arg.unwrap_or(e));
                     // 2684, or what says more.
-                    self.report_not_assignable(given, wanted, start, 2684, out);
+                    self.report_not_assignable_with_end(given, wanted, start, end, 2684, out);
                 }
                 return Applicable::No;
             }
@@ -1320,7 +1453,8 @@ impl Checker<'_> {
                 && node != e
             {
                 let at = self.start_inside_parentheses(file, check_node);
-                self.check_assignable(file, given, wanted, at, inner, 2345, out);
+                let end = self.error_end_inside_parentheses(file, check_node);
+                self.check_assignable_with_end(file, given, wanted, at, end, inner, 2345, out);
             }
             return Applicable::No;
         }
@@ -1336,15 +1470,29 @@ impl Checker<'_> {
                 if let Some(out) = report
                     && args.get(count).is_none_or(|first| first.1 != e)
                 {
-                    let at = match args[count..] {
-                        [] => self.start_of(file, e),
+                    let (at, end) = match args[count..] {
+                        [] => (self.start_of(file, e), self.end_of_expr(file, e)),
                         [(_, node)] => {
                             let check_node = self.effective_check_node(file, node);
-                            self.start_inside_parentheses(file, check_node)
+                            (
+                                self.start_inside_parentheses(file, check_node),
+                                self.error_end_inside_parentheses(file, check_node),
+                            )
                         }
-                        [(_, first), ..] => self.start_of(file, first),
+                        [(_, first), .., (_, last)] => {
+                            (self.start_of(file, first), self.end_of_expr(file, last))
+                        }
                     };
-                    self.check_assignable(file, given, rest, at, ExprId::NONE, 2345, out);
+                    self.check_assignable_with_end(
+                        file,
+                        given,
+                        rest,
+                        at,
+                        end,
+                        ExprId::NONE,
+                        2345,
+                        out,
+                    );
                 }
                 return Applicable::No;
             }
@@ -1373,6 +1521,49 @@ impl Checker<'_> {
         }
     }
 
+    /// Where the node that starts at `start_of_call_error` ends.
+    fn end_of_call_error(&self, file: FileId, e: ExprId, c: CallId, is_new: bool) -> u32 {
+        let hir = self.hir(file);
+        if is_new || matches!(hir[e].kind, ExprKind::TaggedTemplate(_)) {
+            return self.end_of_expr(file, e);
+        }
+        let callee = hir[c].callee;
+        match hir[callee].kind {
+            ExprKind::Dot { name_pos, .. } if !is_parenthesized(hir, callee) => {
+                self.end_of_name_at(file, name_pos)
+            }
+            _ => self.error_end_of(file, callee),
+        }
+    }
+
+    /// What `getArgumentArityError` counts in `sigs`, for a call with `given` arguments.
+    pub(super) fn argument_counts(&mut self, sigs: &[SigId], given: usize) -> ArgumentCounts {
+        let mut counts = ArgumentCounts {
+            least: usize::MAX,
+            most: 0,
+            most_below: 0,
+            least_above: usize::MAX,
+            has_rest: false,
+        };
+        for &sig in sigs {
+            let params = self.sig_params(sig);
+            let (from, to) = (
+                self.min_argument_count(&params),
+                self.parameter_count(&params),
+            );
+            counts.least = counts.least.min(from);
+            counts.most = counts.most.max(to);
+            if from < given {
+                counts.most_below = counts.most_below.max(from);
+            }
+            if given < to {
+                counts.least_above = counts.least_above.min(to);
+            }
+            counts.has_rest |= self.has_effective_rest_parameter(&params);
+        }
+        counts
+    }
+
     /// `getArgumentArityError`: 2554 2555 2556 2575 2794 2810
     fn report_argument_arity(
         &mut self,
@@ -1385,20 +1576,20 @@ impl Checker<'_> {
         out: &mut Vec<Diagnostic>,
     ) {
         if let Some(&(_, node)) = args.iter().find(|a| matches!(a.0, Arg::Spread(..))) {
-            out.push(Diagnostic {
-                start: self.start_of(file, node),
-                code: 2556,
-            });
+            let start = self.start_of(file, node);
+            out.push(Diagnostic { start, code: 2556 });
+            self.note(start, self.end_of_expr(file, node), 2556, Vec::new());
             return;
         }
-        let (mut least, mut most) = (usize::MAX, 0);
-        let mut has_rest = false;
-        for &sig in sigs {
-            let params = self.sig_params(sig);
-            least = least.min(self.min_argument_count(&params));
-            most = most.max(self.parameter_count(&params));
-            has_rest |= self.has_effective_rest_parameter(&params);
-        }
+        let counts = self.argument_counts(sigs, args.len());
+        let expected = counts.expected();
+        let ArgumentCounts {
+            least,
+            most,
+            most_below,
+            least_above,
+            has_rest,
+        } = counts;
         let error_start = self.start_of_call_error(file, e, c, is_new);
         let code = if has_rest {
             2555
@@ -1420,21 +1611,27 @@ impl Checker<'_> {
         } else {
             2554
         };
+        let given = args.len().to_string();
         if least < args.len() && args.len() < most {
             out.push(Diagnostic {
                 start: error_start,
                 code: 2575,
             });
+            let end = self.end_of_call_error(file, e, c, is_new);
+            let either = vec![given, most_below.to_string(), least_above.to_string()];
+            self.note(error_start, end, 2575, either);
         } else if args.len() < least || most >= args.len() {
             out.push(Diagnostic {
                 start: error_start,
                 code,
             });
+            let end = self.end_of_call_error(file, e, c, is_new);
+            self.note(error_start, end, code, vec![expected, given]);
         } else if args[most].1 != e {
-            out.push(Diagnostic {
-                start: self.start_of(file, args[most].1),
-                code,
-            });
+            let start = self.start_of(file, args[most].1);
+            out.push(Diagnostic { start, code });
+            let end = self.end_of_expr(file, args[args.len() - 1].1);
+            self.note(start, end, code, vec![expected, given]);
         }
         // Otherwise it is at the template of a tagged template, and where that starts is not kept.
     }
@@ -1491,24 +1688,51 @@ impl Checker<'_> {
             return;
         };
         let mut code = 2558;
+        let mut counts = Vec::new();
         if sigs.len() > 1 {
             let (mut below, mut above) = (false, false);
+            // `belowArgCount`, `aboveArgCount`
+            let (mut most_below, mut least_above) = (0usize, usize::MAX);
             for &sig in sigs {
                 let type_params = self.sig_type_params(sig);
-                if self.min_type_argument_count(&type_params) > given {
+                let least = self.min_type_argument_count(&type_params);
+                if least > given {
                     above = true;
+                    least_above = least_above.min(least);
                 } else if type_params.len() < given {
                     below = true;
+                    most_below = most_below.max(type_params.len());
                 }
             }
             if below && above {
                 code = 2743;
+                counts.push(given.to_string());
+                counts.push(most_below.to_string());
+                counts.push(least_above.to_string());
+            } else {
+                let expected = if below { most_below } else { least_above };
+                counts.push(expected.to_string());
+                counts.push(given.to_string());
             }
+        } else if let [sig] = *sigs {
+            let type_params = self.sig_type_params(sig);
+            let (least, most) = (
+                self.min_type_argument_count(&type_params),
+                type_params.len(),
+            );
+            counts.push(if least < most {
+                format!("{least}-{most}")
+            } else {
+                least.to_string()
+            });
+            counts.push(given.to_string());
         }
         out.push(Diagnostic {
             start: hir[first].pos,
             code,
         });
+        let end = self.end_of_type_args(file, hir[c].type_args);
+        self.note(hir[first].pos, end, code, counts);
     }
 }
 

@@ -518,7 +518,13 @@ impl Checker<'_> {
         self.check_await_expressions_are_in_place(file, parses, &rules, out);
         self.check_yield_in_parameter_initializers(file, out);
         self.check_initializers_of_using_declarations(file, out);
+        let said_before = out.len();
         self.check_modifiers_of_merged_declarations(file, out);
+        // `DeclarationNameToString`: the name as it is written, which may be a string or in brackets.
+        for d in &out[said_before..] {
+            let (start, end) = (d.start, self.end_of_name_at(file, d.start));
+            self.note(start, end, 2687, vec![self.source_text(file, start, end)]);
+        }
         if parses {
             self.check_catch_clause_variables(file, out);
         }
@@ -558,6 +564,7 @@ impl Checker<'_> {
                     )
             });
             out.push(Diagnostic { start, code: 1036 });
+            self.note(start, self.end_of_token_at(file, start), 1036, Vec::new());
         }
         refused
     }
@@ -600,6 +607,13 @@ impl Checker<'_> {
                             start: pos,
                             code: 2410,
                         });
+                        // Up to where the statement starts, which is right after the `)`.
+                        let open = skip_trivia(text, pos as usize + b"with".len());
+                        if text.get(open) == Some(&b'(')
+                            && let Some(end) = end_of_brackets(text, open)
+                        {
+                            self.note(pos, end as u32, 2410, Vec::new());
+                        }
                     }
                 }
                 // `checkReturnStatement`
@@ -657,10 +671,9 @@ impl Checker<'_> {
                                 .is_ok())
                         && let Some(code) = why_no_reference(hir, target, [2487, 2781])
                     {
-                        out.push(Diagnostic {
-                            start: self.start_of_error_on(file, target, None),
-                            code,
-                        });
+                        let start = self.start_of_error_on(file, target, None);
+                        out.push(Diagnostic { start, code });
+                        self.note(start, self.error_end_of(file, target), code, Vec::new());
                     }
                     // `checkGrammarForInOrForOfStatement`, and the static block from `checkForOfStatement`.
                     let is_refused = refused.contains(&s);
@@ -761,6 +774,10 @@ impl Checker<'_> {
             self.start_of(file, target),
             self.start_of_error_on(file, target, None),
         );
+        // One of the two is reported.
+        let end = self.error_end_of(file, target);
+        self.note(start, end, code, Vec::new());
+        self.note(start, end, 2405, Vec::new());
         // It may have been said already, of where the expression starts.
         if let Some(said) = out
             .iter_mut()
@@ -864,10 +881,14 @@ impl Checker<'_> {
             if parses {
                 // The parser has one word for both kinds.
                 out.retain(|d| d.start != start || d.code != 1545);
-                out.push(Diagnostic {
+                let code = codes[usize::from(is_await)];
+                out.push(Diagnostic { start, code });
+                self.note(
                     start,
-                    code: codes[usize::from(is_await)],
-                });
+                    self.end_of_var_decl_list(file, decls),
+                    code,
+                    Vec::new(),
+                );
                 if is_loop_head {
                     remove_loop_declaration_errors(hir, s, out);
                 }
@@ -890,6 +911,12 @@ impl Checker<'_> {
         let has_error = match self.place_of_await_in(file, Parent::Stmt(s), rules) {
             AwaitPlace::StaticBlock => {
                 out.push(Diagnostic { start, code: 18054 });
+                self.note(
+                    start,
+                    self.end_of_var_decl_list(file, decls),
+                    18054,
+                    Vec::new(),
+                );
                 true
             }
             AwaitPlace::TopLevel(_) if parses => {
@@ -957,6 +984,7 @@ impl Checker<'_> {
                         start: hir[pat].pos,
                         code: 2492,
                     });
+                    self.note(hir[pat].pos, 0, 2492, vec![self.atom_text(name)]);
                 }
             }
         }
@@ -1217,13 +1245,19 @@ impl Checker<'_> {
             }
             // 18037 and 2524 are said whether or not the file parses.
             match place {
-                AwaitPlace::StaticBlock => out.push(Diagnostic { start, code: 18037 }),
+                AwaitPlace::StaticBlock => {
+                    out.push(Diagnostic { start, code: 18037 });
+                    let end = self.end_inside_parentheses(file, ExprId(i as u32));
+                    self.note(start, end, 18037, Vec::new());
+                }
                 AwaitPlace::TopLevel(_) if parses => rules.object(start, 1375, 1378, out),
                 AwaitPlace::Elsewhere if parses => out.push(Diagnostic { start, code: 1308 }),
                 _ => {}
             }
             if self.xs_is_in_parameter_initializer(file, ExprId(i as u32)) {
                 out.push(Diagnostic { start, code: 2524 });
+                let end = self.end_inside_parentheses(file, ExprId(i as u32));
+                self.note(start, end, 2524, Vec::new());
             }
         }
     }
@@ -1345,7 +1379,13 @@ impl Checker<'_> {
                 continue;
             }
             let at = self.start_of_error_on(file, decl.init, Some(hir[decl.pat].pos));
-            self.report_not_assignable(source, target, at, head, out);
+            // A function without a name of its own goes by the name of the variable.
+            let end = if at == hir[decl.pat].pos {
+                0
+            } else {
+                self.error_end_of(file, decl.init)
+            };
+            self.report_not_assignable_with_end(source, target, at, end, head, out);
         }
     }
 

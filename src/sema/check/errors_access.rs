@@ -8,375 +8,159 @@
 use super::errors::{Diagnostic, is_close};
 use super::errors_order::Named;
 use super::errors_small::has_parse_diagnostics;
+use super::explain::Line;
 use super::*;
 use crate::bind::{ClassOwner, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
 
-/// The properties of the standard library that came with a version of it: `(type, properties)`. `getFeatureMap`
-const LIBRARY_FEATURES: &[(&str, &[&str])] = &[
-    (
-        "Array",
-        &[
-            "find",
-            "findIndex",
-            "fill",
-            "copyWithin",
-            "entries",
-            "keys",
-            "values",
-            "includes",
-            "flat",
-            "flatMap",
-            "at",
-            "findLastIndex",
-            "findLast",
-            "toReversed",
-            "toSorted",
-            "toSpliced",
-            "with",
-        ],
-    ),
-    (
-        "ArrayBuffer",
-        &[
-            "maxByteLength",
-            "resizable",
-            "resize",
-            "detached",
-            "transfer",
-            "transferToFixedLength",
-        ],
-    ),
-    (
-        "Atomics",
-        &[
-            "add",
-            "and",
-            "compareExchange",
-            "exchange",
-            "isLockFree",
-            "load",
-            "or",
-            "store",
-            "sub",
-            "wait",
-            "notify",
-            "xor",
-            "waitAsync",
-        ],
-    ),
-    (
-        "SharedArrayBuffer",
-        &["byteLength", "slice", "growable", "maxByteLength", "grow"],
-    ),
-    (
-        "RegExp",
-        &["flags", "sticky", "unicode", "dotAll", "unicodeSets"],
-    ),
-    ("RegExpConstructor", &["escape"]),
-    (
-        "Reflect",
-        &[
-            "apply",
-            "construct",
-            "defineProperty",
-            "deleteProperty",
-            "get",
-            "getOwnPropertyDescriptor",
-            "getPrototypeOf",
-            "has",
-            "isExtensible",
-            "ownKeys",
-            "preventExtensions",
-            "set",
-            "setPrototypeOf",
-        ],
-    ),
-    ("ArrayConstructor", &["from", "of", "fromAsync"]),
-    (
-        "ObjectConstructor",
-        &[
-            "assign",
-            "getOwnPropertySymbols",
-            "keys",
-            "is",
-            "setPrototypeOf",
-            "values",
-            "entries",
-            "getOwnPropertyDescriptors",
-            "fromEntries",
-            "hasOwn",
-            "groupBy",
-        ],
-    ),
-    (
-        "NumberConstructor",
-        &[
-            "isFinite",
-            "isInteger",
-            "isNaN",
-            "isSafeInteger",
-            "parseFloat",
-            "parseInt",
-        ],
-    ),
-    (
-        "Math",
-        &[
-            "clz32", "imul", "sign", "log10", "log2", "log1p", "expm1", "cosh", "sinh", "tanh",
-            "acosh", "asinh", "atanh", "hypot", "trunc", "fround", "cbrt", "f16round",
-        ],
-    ),
-    (
-        "Map",
-        &[
-            "entries",
-            "keys",
-            "values",
-            "getOrInsert",
-            "getOrInsertComputed",
-        ],
-    ),
-    ("MapConstructor", &["groupBy"]),
-    (
-        "Set",
-        &[
-            "entries",
-            "keys",
-            "values",
-            "union",
-            "intersection",
-            "difference",
-            "symmetricDifference",
-            "isSubsetOf",
-            "isSupersetOf",
-            "isDisjointFrom",
-        ],
-    ),
-    (
-        "PromiseConstructor",
-        &[
-            "all",
-            "race",
-            "reject",
-            "resolve",
-            "allSettled",
-            "any",
-            "withResolvers",
-            "try",
-        ],
-    ),
-    ("Symbol", &["for", "keyFor", "description"]),
-    ("WeakMap", &["getOrInsert", "getOrInsertComputed"]),
-    (
-        "String",
-        &[
-            "codePointAt",
-            "includes",
-            "endsWith",
-            "normalize",
-            "repeat",
-            "startsWith",
-            "anchor",
-            "big",
-            "blink",
-            "bold",
-            "fixed",
-            "fontcolor",
-            "fontsize",
-            "italics",
-            "link",
-            "small",
-            "strike",
-            "sub",
-            "sup",
-            "padStart",
-            "padEnd",
-            "trimStart",
-            "trimEnd",
-            "trimLeft",
-            "trimRight",
-            "matchAll",
-            "replaceAll",
-            "at",
-            "isWellFormed",
-            "toWellFormed",
-        ],
-    ),
-    ("StringConstructor", &["fromCodePoint", "raw"]),
-    ("DateTimeFormat", &["formatToParts"]),
-    ("Promise", &["finally"]),
-    ("RegExpMatchArray", &["groups"]),
-    ("RegExpExecArray", &["groups"]),
-    (
-        "Intl",
-        &[
-            "PluralRules",
-            "RelativeTimeFormat",
-            "Locale",
-            "DisplayNames",
-            "ListFormat",
-            "DateTimeFormat",
-            "Segmenter",
-            "DurationFormat",
-        ],
-    ),
-    ("NumberFormat", &["formatToParts"]),
-    (
-        "SymbolConstructor",
-        &["matchAll", "metadata", "dispose", "asyncDispose"],
-    ),
-    (
-        "DataView",
-        &[
-            "setBigInt64",
-            "setBigUint64",
-            "getBigInt64",
-            "getBigUint64",
-            "setFloat16",
-            "getFloat16",
-        ],
-    ),
-    (
-        "RelativeTimeFormat",
-        &["format", "formatToParts", "resolvedOptions"],
-    ),
-    (
-        "Int8Array",
-        &[
-            "at",
-            "findLastIndex",
-            "findLast",
-            "toReversed",
-            "toSorted",
-            "toSpliced",
-            "with",
-        ],
-    ),
-    (
-        "Uint8Array",
-        &[
-            "at",
-            "findLastIndex",
-            "findLast",
-            "toReversed",
-            "toSorted",
-            "toSpliced",
-            "with",
-        ],
-    ),
-    (
-        "Uint8ClampedArray",
-        &[
-            "at",
-            "findLastIndex",
-            "findLast",
-            "toReversed",
-            "toSorted",
-            "toSpliced",
-            "with",
-        ],
-    ),
-    (
-        "Int16Array",
-        &[
-            "at",
-            "findLastIndex",
-            "findLast",
-            "toReversed",
-            "toSorted",
-            "toSpliced",
-            "with",
-        ],
-    ),
-    (
-        "Uint16Array",
-        &[
-            "at",
-            "findLastIndex",
-            "findLast",
-            "toReversed",
-            "toSorted",
-            "toSpliced",
-            "with",
-        ],
-    ),
-    (
-        "Int32Array",
-        &[
-            "at",
-            "findLastIndex",
-            "findLast",
-            "toReversed",
-            "toSorted",
-            "toSpliced",
-            "with",
-        ],
-    ),
-    (
-        "Uint32Array",
-        &[
-            "at",
-            "findLastIndex",
-            "findLast",
-            "toReversed",
-            "toSorted",
-            "toSpliced",
-            "with",
-        ],
-    ),
-    (
-        "Float32Array",
-        &[
-            "at",
-            "findLastIndex",
-            "findLast",
-            "toReversed",
-            "toSorted",
-            "toSpliced",
-            "with",
-        ],
-    ),
-    (
-        "Float64Array",
-        &[
-            "at",
-            "findLastIndex",
-            "findLast",
-            "toReversed",
-            "toSorted",
-            "toSpliced",
-            "with",
-        ],
-    ),
-    (
-        "BigInt64Array",
-        &[
-            "at",
-            "findLastIndex",
-            "findLast",
-            "toReversed",
-            "toSorted",
-            "toSpliced",
-            "with",
-        ],
-    ),
-    (
-        "BigUint64Array",
-        &[
-            "at",
-            "findLastIndex",
-            "findLast",
-            "toReversed",
-            "toSorted",
-            "toSpliced",
-            "with",
-        ],
-    ),
-    ("Error", &["cause"]),
-    ("ErrorConstructor", &["isError"]),
-    ("Uint8ArrayConstructor", &["fromBase64", "fromHex"]),
-    ("Date", &["toTemporalInstant"]),
+/// What a type of the standard library got with each version of it: `(lib, properties)`.
+type Features = &'static [(&'static str, &'static [&'static str])];
+
+#[rustfmt::skip]
+const TYPED_ARRAY_FEATURES: Features = &[
+    ("es2022", &["at"]),
+    ("es2023", &["findLastIndex", "findLast", "toReversed", "toSorted", "toSpliced", "with"]),
 ];
+
+/// The properties of the standard library that came with a version of it, by type. `getFeatureMap`
+#[rustfmt::skip]
+const LIBRARY_FEATURES: &[(&str, Features)] = &[
+    ("Array", &[
+        ("es2015", &["find", "findIndex", "fill", "copyWithin", "entries", "keys", "values"]),
+        ("es2016", &["includes"]),
+        ("es2019", &["flat", "flatMap"]),
+        ("es2022", &["at"]),
+        ("es2023", &["findLastIndex", "findLast", "toReversed", "toSorted", "toSpliced", "with"]),
+    ]),
+    ("ArrayBuffer", &[
+        ("es2024", &["maxByteLength", "resizable", "resize", "detached", "transfer", "transferToFixedLength"]),
+    ]),
+    ("Atomics", &[
+        ("es2017", &[
+            "add", "and", "compareExchange", "exchange", "isLockFree", "load", "or", "store", "sub", "wait", "notify", "xor",
+        ]),
+        ("es2024", &["waitAsync"]),
+    ]),
+    ("SharedArrayBuffer", &[
+        ("es2017", &["byteLength", "slice"]),
+        ("es2024", &["growable", "maxByteLength", "grow"]),
+    ]),
+    ("RegExp", &[
+        ("es2015", &["flags", "sticky", "unicode"]),
+        ("es2018", &["dotAll"]),
+        ("es2024", &["unicodeSets"]),
+    ]),
+    ("RegExpConstructor", &[("es2025", &["escape"])]),
+    ("Reflect", &[
+        ("es2015", &[
+            "apply", "construct", "defineProperty", "deleteProperty", "get", "getOwnPropertyDescriptor", "getPrototypeOf", "has",
+            "isExtensible", "ownKeys", "preventExtensions", "set", "setPrototypeOf",
+        ]),
+    ]),
+    ("ArrayConstructor", &[
+        ("es2015", &["from", "of"]),
+        ("esnext", &["fromAsync"]),
+    ]),
+    ("ObjectConstructor", &[
+        ("es2015", &["assign", "getOwnPropertySymbols", "keys", "is", "setPrototypeOf"]),
+        ("es2017", &["values", "entries", "getOwnPropertyDescriptors"]),
+        ("es2019", &["fromEntries"]),
+        ("es2022", &["hasOwn"]),
+        ("es2024", &["groupBy"]),
+    ]),
+    ("NumberConstructor", &[
+        ("es2015", &["isFinite", "isInteger", "isNaN", "isSafeInteger", "parseFloat", "parseInt"]),
+    ]),
+    ("Math", &[
+        ("es2015", &[
+            "clz32", "imul", "sign", "log10", "log2", "log1p", "expm1", "cosh", "sinh", "tanh", "acosh", "asinh", "atanh", "hypot",
+            "trunc", "fround", "cbrt",
+        ]),
+        ("es2025", &["f16round"]),
+    ]),
+    ("Map", &[
+        ("es2015", &["entries", "keys", "values"]),
+        ("esnext", &["getOrInsert", "getOrInsertComputed"]),
+    ]),
+    ("MapConstructor", &[("es2024", &["groupBy"])]),
+    ("Set", &[
+        ("es2015", &["entries", "keys", "values"]),
+        ("es2025", &[
+            "union", "intersection", "difference", "symmetricDifference", "isSubsetOf", "isSupersetOf", "isDisjointFrom",
+        ]),
+    ]),
+    ("PromiseConstructor", &[
+        ("es2015", &["all", "race", "reject", "resolve"]),
+        ("es2020", &["allSettled"]),
+        ("es2021", &["any"]),
+        ("es2024", &["withResolvers"]),
+        ("es2025", &["try"]),
+    ]),
+    ("Symbol", &[
+        ("es2015", &["for", "keyFor"]),
+        ("es2019", &["description"]),
+    ]),
+    ("WeakMap", &[("esnext", &["getOrInsert", "getOrInsertComputed"])]),
+    ("String", &[
+        ("es2015", &[
+            "codePointAt", "includes", "endsWith", "normalize", "repeat", "startsWith", "anchor", "big", "blink", "bold", "fixed",
+            "fontcolor", "fontsize", "italics", "link", "small", "strike", "sub", "sup",
+        ]),
+        ("es2017", &["padStart", "padEnd"]),
+        ("es2019", &["trimStart", "trimEnd", "trimLeft", "trimRight"]),
+        ("es2020", &["matchAll"]),
+        ("es2021", &["replaceAll"]),
+        ("es2022", &["at"]),
+        ("es2024", &["isWellFormed", "toWellFormed"]),
+    ]),
+    ("StringConstructor", &[("es2015", &["fromCodePoint", "raw"])]),
+    ("DateTimeFormat", &[("es2017", &["formatToParts"])]),
+    ("Promise", &[("es2018", &["finally"])]),
+    ("RegExpMatchArray", &[("es2018", &["groups"])]),
+    ("RegExpExecArray", &[("es2018", &["groups"])]),
+    ("Intl", &[
+        ("es2018", &["PluralRules"]),
+        ("es2020", &["RelativeTimeFormat", "Locale", "DisplayNames"]),
+        ("es2021", &["ListFormat", "DateTimeFormat"]),
+        ("es2022", &["Segmenter"]),
+        ("es2025", &["DurationFormat"]),
+    ]),
+    ("NumberFormat", &[("es2018", &["formatToParts"])]),
+    ("SymbolConstructor", &[
+        ("es2020", &["matchAll"]),
+        ("esnext", &["metadata", "dispose", "asyncDispose"]),
+    ]),
+    ("DataView", &[
+        ("es2020", &["setBigInt64", "setBigUint64", "getBigInt64", "getBigUint64"]),
+        ("es2025", &["setFloat16", "getFloat16"]),
+    ]),
+    ("RelativeTimeFormat", &[("es2020", &["format", "formatToParts", "resolvedOptions"])]),
+    ("Int8Array", TYPED_ARRAY_FEATURES),
+    ("Uint8Array", TYPED_ARRAY_FEATURES),
+    ("Uint8ClampedArray", TYPED_ARRAY_FEATURES),
+    ("Int16Array", TYPED_ARRAY_FEATURES),
+    ("Uint16Array", TYPED_ARRAY_FEATURES),
+    ("Int32Array", TYPED_ARRAY_FEATURES),
+    ("Uint32Array", TYPED_ARRAY_FEATURES),
+    ("Float32Array", TYPED_ARRAY_FEATURES),
+    ("Float64Array", TYPED_ARRAY_FEATURES),
+    ("BigInt64Array", TYPED_ARRAY_FEATURES),
+    ("BigUint64Array", TYPED_ARRAY_FEATURES),
+    ("Error", &[("es2022", &["cause"])]),
+    ("ErrorConstructor", &[("esnext", &["isError"])]),
+    ("Uint8ArrayConstructor", &[("esnext", &["fromBase64", "fromHex"])]),
+    ("Date", &[("esnext", &["toTemporalInstant"])]),
+];
+
+/// What `checkPropertyAccessibilityAtLocation` objects to.
+struct Inaccessible {
+    code: u32,
+    /// The property, or the first of those it is made of.
+    prop: Prop,
+    /// The class the message names: the one that declares the property; for 2446, the one around.
+    class: Option<Sym>,
+    /// What the property was asked of.
+    containing: TypeId,
+}
 
 impl Checker<'_> {
     /// 2339 2551 2550 2576 2812 7017 2689; 2542; 18046 to 18050, 2531 to 2533, 2571; 2341 2445 2446 2513 2855.
@@ -447,6 +231,7 @@ impl Checker<'_> {
                     start: name_pos,
                     code: 2339,
                 });
+                self.explain_no_property(file, e, left, name, name_pos, 2339);
                 continue;
             }
             // `IsAssignmentTarget`
@@ -483,6 +268,9 @@ impl Checker<'_> {
                             start: name_pos,
                             code: 2339,
                         });
+                        self.explain(name_pos, 2339, |c| {
+                            vec![c.atom_text(name), c.type_to_string(left)]
+                        });
                     } else if self.p.files.options.no_implicit_any {
                         out.push(Diagnostic {
                             start: name_pos,
@@ -493,10 +281,10 @@ impl Checker<'_> {
                 }
                 // `checkAndReportErrorForExtendingInterface`
                 if self.is_extending_interface(file, e) {
-                    out.push(Diagnostic {
-                        start: self.start_of(file, e),
-                        code: 2689,
-                    });
+                    let start = self.start_of(file, e);
+                    out.push(Diagnostic { start, code: 2689 });
+                    let end = self.end_of_expr(file, e);
+                    self.explain_to(start, end, 2689, |c| vec![c.entity_name_around(file, e)]);
                     continue;
                 }
                 let containing = if matches!(self.data(left), TypeData::ThisParam(_)) {
@@ -509,6 +297,7 @@ impl Checker<'_> {
                     start: name_pos,
                     code,
                 });
+                self.explain_no_property(file, e, containing, name, name_pos, code);
                 continue;
             }
             // `isDeleteTarget`
@@ -521,10 +310,10 @@ impl Checker<'_> {
                     .index_signature_for_key(&infos, key)
                     .is_some_and(|(_, is_readonly)| is_readonly)
                 {
-                    out.push(Diagnostic {
-                        start: self.start_inside_parentheses(file, e),
-                        code: 2542,
-                    });
+                    let start = self.start_inside_parentheses(file, e);
+                    out.push(Diagnostic { start, code: 2542 });
+                    let end = self.end_inside_parentheses(file, e);
+                    self.explain_to(start, end, 2542, |c| vec![c.type_to_string(apparent)]);
                 }
                 continue;
             }
@@ -537,7 +326,74 @@ impl Checker<'_> {
                     start: name_pos,
                     code,
                 });
+                self.explain(name_pos, code, |c| {
+                    c.names_in_inaccessibility(
+                        file,
+                        Parent::Expr(e),
+                        is_super,
+                        writing,
+                        apparent,
+                        name,
+                    )
+                });
             }
+        }
+    }
+
+    /// `getEntityNameForExtendingInterface`: the whole of the dotted name that `e` is, or is the left part of, as it is written.
+    fn entity_name_around(&self, file: FileId, e: ExprId) -> String {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut top = e;
+        while let Parent::Expr(parent) = bound.expr_parent[top.idx()]
+            && parent.is_some()
+            && matches!(hir[parent].kind, ExprKind::Dot { .. })
+        {
+            top = parent;
+        }
+        self.source_text(file, self.start_of(file, top), self.end_of_expr(file, top))
+    }
+
+    /// `DeclarationNameToString` of the name written at `pos`.
+    pub(super) fn declaration_name_at(&self, file: FileId, pos: u32) -> String {
+        self.source_text(file, pos, self.end_of_name_at(file, pos))
+    }
+
+    /// The name of a property whose declaration cannot be read: a `#x` as it is written, `[Symbol.iterator]` for what a symbol names.
+    fn name_of_unread_property(&self, name: Atom) -> String {
+        let bytes = self.files().atoms.bytes(name);
+        let Some(symbol) = bytes.strip_prefix(crate::atom::SYMBOL_NAME_PREFIX) else {
+            return String::from_utf8_lossy(as_written(bytes)).into_owned();
+        };
+        let symbol = String::from_utf8_lossy(symbol);
+        match symbol.split_once('@') {
+            Some((variable, _)) => format!("[{variable}]"),
+            None => format!("[Symbol.{symbol}]"),
+        }
+    }
+
+    /// `symbolToString` of a property: its name as the first of its declarations writes it (`getNameOfSymbolAsWritten`).
+    pub(super) fn property_to_string(&mut self, prop: &Prop) -> String {
+        let written = match &prop.source {
+            PropSource::Members(declared) => declared
+                .first()
+                .map(|&(file, member)| (file, self.hir(file)[member].pos)),
+            PropSource::Parameter(file, param) => {
+                let hir = self.hir(*file);
+                Some((*file, hir[hir[*param].pat].pos))
+            }
+            PropSource::Literal(file, literal) => Some((*file, self.hir(*file)[*literal].pos)),
+            PropSource::Symbol(symbol) => return self.symbol_to_string(*symbol),
+            PropSource::Intersected(_, parts) if !parts.is_empty() => {
+                return self.property_to_string(&parts[0]);
+            }
+            _ => None,
+        };
+        match written {
+            // There is no text of the default library.
+            Some((file, pos)) if !self.hir(file).text.is_empty() => {
+                self.declaration_name_at(file, pos)
+            }
+            _ => self.name_of_unread_property(prop.name),
         }
     }
 
@@ -762,6 +618,10 @@ impl Checker<'_> {
                                 start: at_index,
                                 code,
                             });
+                            let end = self.end_of_expr(file, index);
+                            self.explain_to(at_index, end, code, |c| {
+                                c.names_in_no_lookup(code, apparent, key)
+                            });
                         }
                         // Below zero in a tuple that ends: 2514, and `undefined`.
                         if place < 0.0
@@ -777,6 +637,10 @@ impl Checker<'_> {
                                 out.push(Diagnostic {
                                     start: at_access,
                                     code: 2542,
+                                });
+                                let end = self.end_inside_parentheses(file, e);
+                                self.explain_to(at_access, end, 2542, |c| {
+                                    vec![c.type_to_string(apparent)]
                                 });
                             }
                             continue;
@@ -811,11 +675,15 @@ impl Checker<'_> {
                             start: at_index,
                             code: 2538,
                         });
+                        let end = self.end_of_expr(file, index);
+                        self.explain_to(at_index, end, 2538, |c| vec![c.type_to_string(key)]);
                     } else if is_written && is_readonly {
                         out.push(Diagnostic {
                             start: at_access,
                             code: 2542,
                         });
+                        let end = self.end_inside_parentheses(file, e);
+                        self.explain_to(at_access, end, 2542, |c| vec![c.type_to_string(apparent)]);
                     }
                     continue;
                 }
@@ -835,6 +703,10 @@ impl Checker<'_> {
                                 start: at_access,
                                 code: 2339,
                             });
+                            let end = self.end_inside_parentheses(file, e);
+                            self.explain_to(at_access, end, 2339, |c| {
+                                c.names_in_no_lookup(2339, apparent, key)
+                            });
                             continue;
                         }
                         if key == TypeId::STRING || key == TypeId::NUMBER {
@@ -853,6 +725,10 @@ impl Checker<'_> {
                             start: at_access,
                             code: 2339,
                         });
+                        let end = self.end_inside_parentheses(file, e);
+                        self.explain_to(at_access, end, 2339, |c| {
+                            c.names_in_no_lookup(2339, apparent, key)
+                        });
                         was_missing = true;
                         continue;
                     }
@@ -861,6 +737,10 @@ impl Checker<'_> {
                     if !is_said {
                         continue;
                     }
+                    let (end_of_access, end_of_index) = (
+                        self.end_inside_parentheses(file, e),
+                        self.end_of_expr(file, index),
+                    );
                     if let Some(name) = name
                         && self.static_side_has(apparent, name)
                     {
@@ -868,25 +748,56 @@ impl Checker<'_> {
                             start: at_access,
                             code: 2576,
                         });
+                        self.explain_to(at_access, end_of_access, 2576, |c| {
+                            let container = c.type_to_string(apparent);
+                            let written = c.source_text(file, at_index, end_of_index);
+                            let member = format!("{container}[{written}]");
+                            vec![c.atom_text(name), container, member]
+                        });
                     } else if infos.iter().any(|info| info.0 == TypeId::NUMBER) {
                         out.push(Diagnostic {
                             start: at_index,
                             code: 7015,
                         });
+                        self.explain_to(at_index, end_of_index, 7015, |_| Vec::new());
                     } else if name.is_some_and(|n| self.is_property_misspelt(apparent, n, None)) {
                         out.push(Diagnostic {
                             start: at_index,
                             code: 2551,
+                        });
+                        self.explain_to(at_index, end_of_index, 2551, |c| {
+                            let mut names = c.names_in_no_lookup(2339, apparent, key);
+                            names.push(
+                                match name.and_then(|n| c.property_meant(apparent, n, None, true)) {
+                                    Some(meant) => c.name_of_unread_property(meant),
+                                    None => String::new(),
+                                },
+                            );
+                            names
                         });
                     } else if self.has_accessor_method_for(apparent, key, is_target) {
                         out.push(Diagnostic {
                             start: at_access,
                             code: 7052,
                         });
+                        self.explain_to(at_access, end_of_access, 7052, |c| {
+                            let method = if is_target { "set" } else { "get" };
+                            let call = match c.access_to_string(file, obj) {
+                                Some(receiver) => format!("{receiver}.{method}"),
+                                None => method.to_owned(),
+                            };
+                            vec![c.type_to_string(apparent), call]
+                        });
                     } else {
                         out.push(Diagnostic {
                             start: at_access,
                             code: 7053,
+                        });
+                        self.explain_to(at_access, end_of_access, 7053, |c| {
+                            vec![c.type_to_string(keys), c.type_to_string(apparent)]
+                        });
+                        self.explain_chain(at_access, 7053, |c| {
+                            c.lines_under_implicit_any_element(apparent, key)
                         });
                     }
                     continue;
@@ -902,8 +813,92 @@ impl Checker<'_> {
                     start: at_index,
                     code,
                 });
+                let end = self.end_of_expr(file, index);
+                self.explain_to(at_index, end, code, |c| {
+                    // `indexNode.Kind == KindBigIntLiteral`
+                    if matches!(hir[index].kind, ExprKind::BigInt(_))
+                        && !c.is_written_in_parentheses(file, index)
+                    {
+                        return vec!["bigint".to_owned()];
+                    }
+                    c.names_in_no_lookup(code, apparent, key)
+                });
                 was_missing = true;
             }
+        }
+    }
+
+    /// What goes into the message `getPropertyTypeForIndexType` has for `key`, which finds nothing in `object`: 2339 2493 2537 2538.
+    pub(super) fn names_in_no_lookup(
+        &mut self,
+        code: u32,
+        object: TypeId,
+        key: TypeId,
+    ) -> Vec<String> {
+        let name = match self.property_name_of_type(key) {
+            Some(name) => self.atom_text(name),
+            None => String::new(),
+        };
+        match code {
+            2339 => vec![name, self.type_to_string(object)],
+            2493 => {
+                // `getTypeReferenceArity`
+                let length = match self.data(object) {
+                    TypeData::Tuple { elems, .. } => elems.len(),
+                    _ => 0,
+                };
+                vec![self.type_to_string(object), length.to_string(), name]
+            }
+            2537 => vec![self.type_to_string(object), self.type_to_string(key)],
+            2538 => vec![self.type_to_string(key)],
+            _ => Vec::new(),
+        }
+    }
+
+    /// What `getPropertyTypeForIndexType` puts under 7053.
+    fn lines_under_implicit_any_element(&mut self, object: TypeId, key: TypeId) -> Vec<Line> {
+        let (code, first) = match *self.data(key) {
+            TypeData::EnumLit { .. } => (2339, format!("[{}]", self.type_to_string(key))),
+            TypeData::UniqueSymbol { name, .. } => (2339, format!("[{}]", self.atom_text(name))),
+            TypeData::StringLit { .. } | TypeData::NumberLit { .. } => {
+                match self.property_name_of_type(key) {
+                    Some(name) => (2339, self.atom_text(name)),
+                    None => return Vec::new(),
+                }
+            }
+            _ if key == TypeId::STRING || key == TypeId::NUMBER => (7054, self.type_to_string(key)),
+            _ => return Vec::new(),
+        };
+        vec![Line {
+            code,
+            args: vec![first, self.type_to_string(object)],
+            level: 1,
+        }]
+    }
+
+    /// `tryGetPropertyAccessOrIdentifierToString`
+    fn access_to_string(&self, file: FileId, e: ExprId) -> Option<String> {
+        if self.is_written_in_parentheses(file, e) {
+            return None;
+        }
+        let hir = self.hir(file);
+        match hir[e].kind {
+            ExprKind::Ident(name) => Some(self.atom_text(name)),
+            ExprKind::Dot { obj, name, .. } => {
+                let receiver = self.access_to_string(file, obj)?;
+                Some(format!("{receiver}.{}", self.atom_text(name)))
+            }
+            // `IsPropertyName`
+            ExprKind::Index { obj, index, .. } if !self.is_written_in_parentheses(file, index) => {
+                let receiver = self.access_to_string(file, obj)?;
+                let name = match hir[index].kind {
+                    ExprKind::Ident(name) | ExprKind::String(name) => self.atom_text(name),
+                    ExprKind::Number(n) => crate::atom::number_to_string(hir.numbers[n as usize]),
+                    _ => return None,
+                };
+                Some(format!("{receiver}.{name}"))
+            }
+            _ => None,
         }
     }
 
@@ -1335,13 +1330,29 @@ impl Checker<'_> {
         name: Atom,
         access: Option<(FileId, ExprId)>,
     ) -> bool {
+        self.property_meant(object, name, access, false).is_some()
+    }
+
+    /// The property that may have been meant. `closest`: the one `GetSpellingSuggestion` settles on, and not the first that will do.
+    fn property_meant(
+        &mut self,
+        object: TypeId,
+        name: Atom,
+        access: Option<(FileId, ExprId)>,
+        closest: bool,
+    ) -> Option<Atom> {
         let text = as_written(self.files().atoms.bytes(name));
+        let access = access.and_then(|(file, e)| match self.hir(file)[e].kind {
+            ExprKind::Dot { obj, chain, .. } => Some((file, e, obj, chain)),
+            _ => None,
+        });
+        let mut best: Option<(f64, ((u8, FileId, u32), &[u8]), Atom)> = None;
         // `getPropertiesOfUnionOrIntersectionType`: of a union, what all its members have, which is among what the first has. A
         // member with index signatures may have by them what only the next declares.
         for &member in self.parts(object) {
             let member = self.apparent_type(member);
             let Some(members) = self.members(member) else {
-                return false;
+                break;
             };
             for prop in &members.shape().props {
                 let candidate = as_written(self.files().atoms.bytes(prop.name));
@@ -1351,41 +1362,74 @@ impl Checker<'_> {
                 {
                     continue;
                 }
-                let Some((file, e)) = access else { return true };
-                let ExprKind::Dot { obj, chain, .. } = self.hir(file)[e].kind else {
-                    return true;
+                let is_within_reach = match access {
+                    None => true,
+                    Some((file, e, obj, chain)) => {
+                        // `isPropertyAccessible`: a `#x` is within reach in the class that declares it, and not in an optional chain.
+                        let is_private_name = matches!(&prop.source, PropSource::Members(declared)
+                            if declared.first().is_some_and(|&(f, m)| matches!(self.hir(f)[m].key, PropKey::Private(_))));
+                        if is_private_name {
+                            chain == Chain::No
+                                && self.declaring_class(prop).is_some_and(|class| {
+                                    self.enclosing_classes(file, e)
+                                        .into_iter()
+                                        .any(|c| self.class_sym(file, c) == class)
+                                })
+                        } else {
+                            let is_super = matches!(self.hir(file)[obj].kind, ExprKind::Super);
+                            self.why_not_accessible(
+                                file,
+                                Parent::Expr(e),
+                                is_super,
+                                false,
+                                object,
+                                prop.name,
+                            )
+                            .is_none()
+                        }
+                    }
                 };
-                // `isPropertyAccessible`: a `#x` is within reach in the class that declares it, and not in an optional chain.
-                let is_private_name = matches!(&prop.source, PropSource::Members(declared)
-                    if declared.first().is_some_and(|&(f, m)| matches!(self.hir(f)[m].key, PropKey::Private(_))));
-                let is_within_reach = if is_private_name {
-                    chain == Chain::No
-                        && self.declaring_class(prop).is_some_and(|class| {
-                            self.enclosing_classes(file, e)
-                                .into_iter()
-                                .any(|c| self.class_sym(file, c) == class)
-                        })
-                } else {
-                    let is_super = matches!(self.hir(file)[obj].kind, ExprKind::Super);
-                    self.why_not_accessible(
-                        file,
-                        Parent::Expr(e),
-                        is_super,
-                        false,
-                        object,
-                        prop.name,
-                    )
-                    .is_none()
-                };
-                if is_within_reach {
-                    return true;
+                if !is_within_reach {
+                    continue;
+                }
+                if !closest {
+                    return Some(prop.name);
+                }
+                // `compareSymbols` decides between two that are as close.
+                let distance = edit_distance(text, candidate);
+                let order = (self.order_of_property(prop), candidate);
+                if best.is_none_or(|(least, first, _)| {
+                    distance < least || distance == least && order < first
+                }) {
+                    best = Some((distance, order, prop.name));
                 }
             }
             if members.shape().index.is_empty() {
-                return false;
+                break;
             }
         }
-        false
+        best.map(|found| found.2)
+    }
+
+    /// Where `prop` is first declared, as `compareSymbols` orders symbols: what has no declaration comes last.
+    pub(super) fn order_of_property(&self, prop: &Prop) -> (u8, FileId, u32) {
+        let declared = match &prop.source {
+            PropSource::Members(declared) => declared
+                .first()
+                .map(|&(file, member)| (file, self.hir(file)[member].pos)),
+            PropSource::Parameter(file, param) => Some((*file, self.hir(*file)[*param].pos)),
+            PropSource::Literal(file, literal) => Some((*file, self.hir(*file)[*literal].pos)),
+            PropSource::Assigned(file, assignments) => assignments
+                .first()
+                .map(|&assignment| (*file, self.hir(*file)[assignment].pos)),
+            // The binder numbers the symbols of a file in the order it comes to their declarations.
+            PropSource::Symbol(symbol) => Some((symbol.file, symbol.id.0)),
+            PropSource::Intersected(_, parts) if !parts.is_empty() => {
+                return self.order_of_property(&parts[0]);
+            }
+            _ => None,
+        };
+        declared.map_or((1, FileId(0), 0), |(file, pos)| (0, file, pos))
     }
 
     /// `getSuggestionForNonexistentIndexSignature`: it has a `get`, or a `set`, that takes the key.
@@ -1453,6 +1497,7 @@ impl Checker<'_> {
                 // `getConditionalFlowTypeOfType`: in the true branch of `A extends B ? .. : ..`, `A` is a `B` as well.
                 let parents = parents.get_or_insert_with(|| Self::type_node_parents(hir, bound));
                 let narrowed = self.conditional_flow_type(file, written, obj, parents);
+                let mut looked_into = apparent;
                 if narrowed != written {
                     if self.is_generic(narrowed) {
                         continue;
@@ -1461,10 +1506,17 @@ impl Checker<'_> {
                     if self.why_no_lookup(narrowed, key, false).is_none() {
                         continue;
                     }
+                    looked_into = narrowed;
                 }
                 out.push(Diagnostic {
                     start: hir[index].pos,
                     code,
+                });
+                // `boolean` is not taken apart (`getIndexedAccessTypeOrUndefined`).
+                let key = if keys == TypeId::BOOLEAN { keys } else { key };
+                let end = self.end_of_type_node(file, index);
+                self.explain_to(hir[index].pos, end, code, |c| {
+                    c.names_in_no_lookup(code, looked_into, key)
                 });
             }
         }
@@ -1584,6 +1636,11 @@ impl Checker<'_> {
                             start: hir[binding].pos,
                             code,
                         });
+                        self.explain(hir[binding].pos, code, |c| {
+                            c.names_in_inaccessibility(
+                                file, around, is_super, false, declared, name,
+                            )
+                        });
                     }
                 }
                 return;
@@ -1650,6 +1707,10 @@ impl Checker<'_> {
                     start: at_name,
                     code,
                 });
+                let end = self.end_of_name_at(file, at_name);
+                self.explain_to(at_name, end, code, |c| {
+                    c.names_in_inaccessibility(file, around, is_super, false, declared, name)
+                });
             }
             // What a pattern implies is the type of an object literal until it is widened: it may lack what has a default.
             if prop.is_rest || is_declared || is_implied && !is_widened && prop.default.is_some() {
@@ -1680,9 +1741,20 @@ impl Checker<'_> {
                 let is_bigint = code == 2339
                     && matches!(prop.key, PropKey::Name(_))
                     && is_bigint_literal(&hir.text, at);
-                out.push(Diagnostic {
-                    start: at,
-                    code: if is_bigint { 2538 } else { code },
+                let code = if is_bigint { 2538 } else { code };
+                out.push(Diagnostic { start: at, code });
+                let end = match prop.key {
+                    PropKey::Computed(k) => self.end_of_expr(file, k),
+                    _ => self.end_of_name_at(file, at),
+                };
+                // `boolean` is not taken apart (`getIndexedAccessTypeOrUndefined`).
+                let key = if keys == TypeId::BOOLEAN { keys } else { key };
+                self.explain_to(at, end, code, |c| {
+                    if is_bigint {
+                        vec!["bigint".to_owned()]
+                    } else {
+                        c.names_in_no_lookup(code, looked_into, key)
+                    }
                 });
             }
         }
@@ -1791,31 +1863,9 @@ impl Checker<'_> {
                 return 2339;
             }
         }
-        // `getSuggestedLibForNonExistentProperty`: it goes by the symbol of the type, whatever kind of type that is.
         let apparent = self.apparent_type(containing);
-        let container = match *self.data(apparent) {
-            TypeData::Ref { target, .. } => Some(target),
-            TypeData::Anon {
-                origin:
-                    Origin::Module(s)
-                    | Origin::ClassStatic(s)
-                    | Origin::Function(s)
-                    | Origin::EnumObject(s),
-                ..
-            } => Some(s),
-            _ => None,
-        };
-        if let Some(target) = container
-            && self.files().symbol(target).name.is_some()
-        {
-            let container = self.files().atoms.text(self.files().symbol(target).name);
-            let missing = self.files().atoms.text(name);
-            if LIBRARY_FEATURES
-                .iter()
-                .any(|(ty, props)| *ty == container && props.contains(&&*missing))
-            {
-                return 2550;
-            }
+        if self.library_with_property(apparent, name).is_some() {
+            return 2550;
         }
         // `getSuggestedSymbolForNonexistentProperty`: it is for a property access that what is out of reach is left out, which the
         // `a.b` of `typeof a.b` in a type is not.
@@ -1845,6 +1895,157 @@ impl Checker<'_> {
             return 2812;
         }
         2339
+    }
+
+    /// `getSuggestedLibForNonExistentProperty`: the version of the library that `name` came to `apparent` with. It goes by the symbol
+    /// of the type, whatever kind of type that is.
+    fn library_with_property(&self, apparent: TypeId, name: Atom) -> Option<&'static str> {
+        let container = match *self.data(apparent) {
+            TypeData::Ref { target, .. } => target,
+            TypeData::Anon {
+                origin:
+                    Origin::Module(s)
+                    | Origin::ClassStatic(s)
+                    | Origin::Function(s)
+                    | Origin::EnumObject(s),
+                ..
+            } => s,
+            _ => return None,
+        };
+        let container = self.files().symbol(container).name;
+        if container.is_none() {
+            return None;
+        }
+        let container = self.files().atoms.text(container);
+        let missing = self.files().atoms.text(name);
+        let (_, features) = LIBRARY_FEATURES.iter().find(|(ty, _)| *ty == container)?;
+        features
+            .iter()
+            .find(|(_, props)| props.contains(&&*missing))
+            .map(|&(lib, _)| lib)
+    }
+
+    /// What `reportNonexistentProperty` puts into the message `why_no_property` chose, which is `code`, and under it. `start`: where
+    /// `name` is written.
+    pub(super) fn explain_no_property(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        containing: TypeId,
+        name: Atom,
+        start: u32,
+        code: u32,
+    ) {
+        self.explain(start, code, |c| {
+            let missing = c.declaration_name_at(file, start);
+            let reduced = c.reduced(containing);
+            let container = c.type_to_string(reduced);
+            let last = match code {
+                2576 => format!("{container}.{missing}"),
+                2550 => {
+                    let apparent = c.apparent_type(containing);
+                    c.library_with_property(apparent, name)
+                        .unwrap_or_default()
+                        .to_owned()
+                }
+                2551 => {
+                    let is_access = matches!(c.hir(file)[e].kind, ExprKind::Dot { .. })
+                        && !c.bound(file).is_in_type_query(e);
+                    let apparent = c.apparent_type(containing);
+                    let looked_into = c.reduced(apparent);
+                    let access = is_access.then_some((file, e));
+                    match c.property_meant(looked_into, name, access, true) {
+                        Some(meant) => c.name_of_unread_property(meant),
+                        None => String::new(),
+                    }
+                }
+                _ => return vec![missing, container],
+            };
+            vec![missing, container, last]
+        });
+        self.explain_chain(start, code, |c| {
+            // The first member of a union that lacks it.
+            let is_private = c.files().atoms.bytes(name).first() == Some(&b'#');
+            if !is_private && containing != TypeId::BOOLEAN && c.is_union(containing) {
+                for &member in c.parts(containing) {
+                    let apparent = c.apparent_type(member);
+                    if c.type_of_property(apparent, name).is_none() {
+                        return vec![Line {
+                            code: 2339,
+                            args: vec![
+                                c.declaration_name_at(file, start),
+                                c.type_to_string(member),
+                            ],
+                            level: 1,
+                        }];
+                    }
+                }
+            }
+            match code {
+                2339 | 2812 => c.never_intersection_line(containing).into_iter().collect(),
+                _ => Vec::new(),
+            }
+        });
+    }
+
+    /// `elaborateNeverIntersection`: why there is nothing that is a `ty`, if that is so. At level 1.
+    pub(super) fn never_intersection_line(&mut self, ty: TypeId) -> Option<Line> {
+        let TypeData::Intersection(parts) = self.data(ty) else {
+            return None;
+        };
+        if !self.is_never_intersection(ty) {
+            return None;
+        }
+        let members = self.members(ty)?;
+        let (mut discriminant, mut private) = (None, None);
+        for prop in &members.shape().props {
+            let PropSource::Intersected(_, of) = &prop.source else {
+                continue;
+            };
+            // `isConflictingPrivateProperty`
+            if private.is_none()
+                && prop.flags.contains(PropFlags::PRIVATE)
+                && Self::value_declaration(prop).is_none()
+            {
+                private = Some(prop);
+            }
+            // `isDiscriminantWithNeverType`
+            if prop.flags.contains(PropFlags::OPTIONAL)
+                || self.type_of_prop(prop, members.mapper) != TypeId::NEVER
+            {
+                continue;
+            }
+            let mut types = Vec::with_capacity(of.len());
+            for part in of.iter() {
+                types.push(self.type_of_prop(part, MapperId::IDENTITY));
+            }
+            if !types.contains(&TypeId::NEVER)
+                && types.iter().any(|&t| t != types[0])
+                && types.iter().any(|&t| {
+                    t == TypeId::BOOLEAN
+                        || self.is_pattern_literal(t)
+                        || self.every_type(t, |c, m| c.is_unit(m))
+                })
+            {
+                discriminant = Some(prop);
+                break;
+            }
+        }
+        let (code, prop) = match (discriminant, private) {
+            (Some(prop), _) => (18031, prop),
+            (None, Some(prop)) => (18032, prop),
+            (None, None) => return None,
+        };
+        // `TypeFormatFlagsNoTypeReduction`: the members as they are written down, and not `never`.
+        let mut written = Vec::with_capacity(parts.len());
+        for &part in parts.iter() {
+            written.push(self.type_to_string(part));
+        }
+        Some(Line {
+            code,
+            args: vec![written.join(" & "), self.property_to_string(prop)],
+            level: 1,
+        })
     }
 
     /// The classes `e` is written in, from the inside out.
@@ -2083,6 +2284,49 @@ impl Checker<'_> {
         containing: TypeId,
         name: Atom,
     ) -> Option<u32> {
+        self.inaccessibility(file, at, is_super, writing, containing, name)
+            .map(|found| found.code)
+    }
+
+    /// What goes into the message `why_not_accessible` chose.
+    pub(super) fn names_in_inaccessibility(
+        &mut self,
+        file: FileId,
+        at: Parent,
+        is_super: bool,
+        writing: bool,
+        containing: TypeId,
+        name: Atom,
+    ) -> Vec<String> {
+        let Some(found) = self.inaccessibility(file, at, is_super, writing, containing, name)
+        else {
+            return Vec::new();
+        };
+        let mut names = vec![self.property_to_string(&found.prop)];
+        match found.class {
+            Some(class) => {
+                let class = self.declared_type(class);
+                names.push(self.type_to_string(class));
+            }
+            None if found.code == 2445 => names.push(self.type_to_string(found.containing)),
+            None => {}
+        }
+        if found.code == 2446 {
+            names.push(self.type_to_string(found.containing));
+        }
+        names
+    }
+
+    /// `why_not_accessible`, with what the message names.
+    fn inaccessibility(
+        &mut self,
+        file: FileId,
+        at: Parent,
+        is_super: bool,
+        writing: bool,
+        containing: TypeId,
+        name: Atom,
+    ) -> Option<Inaccessible> {
         // `forEachProperty`: a property of a union or of an intersection is made of those of the members.
         let mut parts: Vec<Prop> = Vec::new();
         for &member in self.parts(containing) {
@@ -2095,6 +2339,12 @@ impl Checker<'_> {
             }
         }
         let first = parts.first()?;
+        let found = |code: u32, class: Option<Sym>, containing: TypeId| Inaccessible {
+            code,
+            prop: first.clone(),
+            class,
+            containing,
+        };
         let hidden = Flags::PRIVATE | Flags::PROTECTED;
         // With one declaration for all of them it goes by that (`createUnionOrIntersectionProperty`). Otherwise it is private if one of
         // them is, else public if one is, else protected, and static if one is.
@@ -2120,7 +2370,7 @@ impl Checker<'_> {
         let is_static = flags.contains(Flags::STATIC);
         if is_super {
             if flags.contains(Flags::ABSTRACT) {
-                return Some(2513);
+                return Some(found(2513, self.declaring_class(first), containing));
             }
             // `isClassInstanceProperty`: a field is set on the instance, there is nothing of it in the parent's prototype. An
             // `accessor` is there.
@@ -2131,7 +2381,7 @@ impl Checker<'_> {
                     && matches!(self.bound(f).member_owner[m.idx()], MemberOwner::Class(_))
             };
             if !is_static && parts.iter().any(|p| matches!(&p.source, PropSource::Members(declared) if declared.iter().any(|d| is_field(d)))) {
-                return Some(2855);
+                return Some(found(2855, None, containing));
             }
         }
         if !flags.intersects(hidden) {
@@ -2151,7 +2401,8 @@ impl Checker<'_> {
                 return None;
             }
             let declaring = self.declaring_class(first)?;
-            return (!enclosing.contains(&declaring)).then_some(2341);
+            return (!enclosing.contains(&declaring))
+                .then(|| found(2341, Some(declaring), containing));
         }
         if is_super {
             return None;
@@ -2204,7 +2455,13 @@ impl Checker<'_> {
             }
         }
         let Some(enclosing_class) = enclosing_class else {
-            return Some(2445);
+            // `getDeclaringClass`: what is put together from several declarations has no parent.
+            let class = if is_declared_once {
+                self.declaring_class(first)
+            } else {
+                None
+            };
+            return Some(found(2445, class, containing));
         };
         if is_static {
             return None;
@@ -2215,7 +2472,8 @@ impl Checker<'_> {
         } else {
             containing
         };
-        (!self.has_base(through, enclosing_class, 0)).then_some(2446)
+        (!self.has_base(through, enclosing_class, 0))
+            .then(|| found(2446, Some(enclosing_class), through))
     }
 }
 
@@ -2248,6 +2506,25 @@ fn is_bigint_literal(text: &[u8], at: u32) -> bool {
         .position(|b| !b.is_ascii_alphanumeric() && *b != b'_')
         .unwrap_or(written.len());
     written.first().is_some_and(u8::is_ascii_digit) && written[..end].ends_with(b"n")
+}
+
+/// What `levenshteinWithMax` measures: changing a letter costs two, and changing its case next to nothing.
+pub(super) fn edit_distance(a: &[u8], b: &[u8]) -> f64 {
+    let mut previous: Vec<f64> = (0..=b.len()).map(|j| j as f64).collect();
+    let mut current = vec![0.0; b.len() + 1];
+    for (i, x) in a.iter().enumerate() {
+        current[0] = (i + 1) as f64;
+        for (j, y) in b.iter().enumerate() {
+            current[j + 1] = if x == y {
+                previous[j]
+            } else {
+                let change = previous[j] + if x.eq_ignore_ascii_case(y) { 0.1 } else { 2.0 };
+                (previous[j + 1] + 1.0).min(current[j] + 1.0).min(change)
+            };
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    previous[b.len()]
 }
 
 /// `SymbolName`: a `#x` as it is written, without what tells it from the `#x` of another class.

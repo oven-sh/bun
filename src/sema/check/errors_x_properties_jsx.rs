@@ -20,6 +20,7 @@
 //! `declare`, `type`, a bracket, a brace) is read off the text.
 
 use super::errors::Diagnostic;
+use super::errors_jsx::jsx_name_end;
 use super::errors_small::has_parameter_list_error;
 use super::*;
 use crate::atom::Interner;
@@ -114,6 +115,7 @@ impl Checker<'_> {
                         start: name,
                         code: 1166,
                     });
+                    self.note(name, self.end_of_bracket_at(file, name), 1166, Vec::new());
                     return;
                 }
                 if member.flags.contains(Flags::ACCESSOR | Flags::OPTIONAL)
@@ -126,18 +128,17 @@ impl Checker<'_> {
             MemberOwner::Interface(_) | MemberOwner::TypeLiteral(_) => {
                 let is_interface = matches!(owner, MemberOwner::Interface(_));
                 if is_dynamic {
-                    out.push(Diagnostic {
-                        start: name,
-                        code: if is_interface { 1169 } else { 1170 },
-                    });
+                    let code = if is_interface { 1169 } else { 1170 };
+                    out.push(Diagnostic { start: name, code });
+                    self.note(name, self.end_of_bracket_at(file, name), code, Vec::new());
                     return;
                 }
                 if member.init.is_some() {
                     let start = self.start_of_error_on_initializer(file, member.init, None);
-                    out.push(Diagnostic {
-                        start,
-                        code: if is_interface { 1246 } else { 1247 },
-                    });
+                    let code = if is_interface { 1246 } else { 1247 };
+                    out.push(Diagnostic { start, code });
+                    let end = self.end_of_error_on_initializer(file, member.init, start);
+                    self.note(start, end, code, Vec::new());
                     return;
                 }
             }
@@ -207,6 +208,7 @@ impl Checker<'_> {
                 continue;
             }
             out.push(Diagnostic { start: name, code });
+            self.note(name, self.end_of_bracket_at(file, name), code, Vec::new());
         }
     }
 
@@ -228,12 +230,16 @@ impl Checker<'_> {
         let start = self.start_of_error_on_initializer(file, init, name);
         if !is_const_or_readonly || has_type {
             out.push(Diagnostic { start, code: 1039 });
+            let end = self.end_of_error_on_initializer(file, init, start);
+            self.note(start, end, 1039, Vec::new());
             return;
         }
         let written = self.start_of(file, init);
         let in_parentheses = before_parentheses(&self.hir(file).text, written) != written;
         if self.is_literal_or_enum_reference(file, init, in_parentheses) == Some(false) {
             out.push(Diagnostic { start, code: 1254 });
+            let end = self.end_of_error_on_initializer(file, init, start);
+            self.note(start, end, 1254, Vec::new());
         }
     }
 
@@ -319,6 +325,15 @@ impl Checker<'_> {
             }
         }
         before_parentheses(&hir.text, self.start_of(file, e))
+    }
+
+    /// Where the error about `e` that `start_of_error_on_initializer` puts at `start` ends.
+    fn end_of_error_on_initializer(&self, file: FileId, e: ExprId, start: u32) -> u32 {
+        if start == self.error_start_of(file, e) {
+            self.error_end_of(file, e)
+        } else {
+            self.end_of_expr_from(file, e, start)
+        }
     }
 
     /// `checkGrammarVariableDeclaration`, of the variables that are ambient or say `!`: 1039 1254, 1263 1264 1255.
@@ -623,10 +638,9 @@ impl Checker<'_> {
                             ExprKind::Array(_) | ExprKind::Object(_)
                         )
                     {
-                        out.push(Diagnostic {
-                            start: self.start_of(file, prop.value),
-                            code: 2501,
-                        });
+                        let start = self.start_of(file, prop.value);
+                        out.push(Diagnostic { start, code: 2501 });
+                        self.note(start, self.end_of_expr(file, prop.value), 2501, Vec::new());
                         return;
                     }
                 }
@@ -775,7 +789,7 @@ impl Checker<'_> {
     // ───────────────────────────── types ─────────────────────────────
 
     /// `checkJSDocTypeIsInJsFile`, where the syntax tree keeps a `?` after a type that makes nothing optional: `[...T?]`.
-    fn check_nullable_rest_elements(&self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_nullable_rest_elements(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for (i, node) in hir.types.iter().enumerate() {
             let TypeNodeKind::Tuple(elems) = node.kind else {
@@ -812,6 +826,22 @@ impl Checker<'_> {
                 let start = before_parentheses(&hir.text, hir[elem.ty].pos);
                 if trim_trivia_end(upto(&hir.text, start)).ends_with(b"...") {
                     out.push(Diagnostic { start, code: 17019 });
+                    let ty = elem.ty;
+                    let end_of_type = self.end_of_type_node_from(file, ty, start);
+                    let question = skip_trivia(&hir.text, end_of_type as usize);
+                    let end = if hir.text.get(question) == Some(&b'?') {
+                        question as u32 + 1
+                    } else {
+                        0
+                    };
+                    self.explain_to(start, end, 17019, |c| {
+                        // `getNullableType`
+                        let mut meant = c.type_from_node(file, ty);
+                        if meant != TypeId::NEVER && meant != TypeId::VOID {
+                            meant = c.union(&[meant, TypeId::UNDEFINED]);
+                        }
+                        vec!["?".to_owned(), c.type_to_string(meant)]
+                    });
                 }
             }
         }
@@ -846,10 +876,9 @@ impl Checker<'_> {
                 if let Some(colon) = name.iter().position(|&c| c == b':')
                     && !(name[0].is_ascii_lowercase() || name[..colon].contains(&b'-'))
                 {
-                    out.push(Diagnostic {
-                        start: hir[jsx.tag].pos,
-                        code: 2639,
-                    });
+                    let start = hir[jsx.tag].pos;
+                    out.push(Diagnostic { start, code: 2639 });
+                    self.note(start, jsx_name_end(&hir.text, start), 2639, Vec::new());
                 }
             }
             seen.clear();
@@ -863,15 +892,25 @@ impl Checker<'_> {
                         start: attr.pos,
                         code: 17001,
                     });
+                    self.note(
+                        attr.pos,
+                        self.end_of_jsx_attr_name(file, p),
+                        17001,
+                        Vec::new(),
+                    );
                     break;
                 }
                 seen.push(attr.key);
                 // The parser places the `Missing` of `name={}` at the `{`.
                 if attr.value.is_some() && matches!(hir[attr.value].kind, ExprKind::Missing) {
-                    out.push(Diagnostic {
-                        start: hir[attr.value].pos,
-                        code: 17000,
-                    });
+                    let start = hir[attr.value].pos;
+                    out.push(Diagnostic { start, code: 17000 });
+                    self.note(
+                        start,
+                        self.end_of_bracket_at(file, start),
+                        17000,
+                        Vec::new(),
+                    );
                     break;
                 }
             }
@@ -897,10 +936,9 @@ impl Checker<'_> {
                 )
                 && !is_parenthesized(hir, x)
             {
-                out.push(Diagnostic {
-                    start: self.start_of(file, x),
-                    code: 18007,
-                });
+                let start = self.start_of(file, x);
+                out.push(Diagnostic { start, code: 18007 });
+                self.note(start, self.end_of_expr(file, x), 18007, Vec::new());
             }
         };
         for &(_, j) in elements {
@@ -946,10 +984,9 @@ impl Checker<'_> {
                 };
                 let before = trim_trivia_end(before);
                 if before.ends_with(b"{") {
-                    out.push(Diagnostic {
-                        start: before.len() as u32 - 1,
-                        code: 2609,
-                    });
+                    let start = before.len() as u32 - 1;
+                    out.push(Diagnostic { start, code: 2609 });
+                    self.note(start, self.end_of_bracket_at(file, start), 2609, Vec::new());
                 }
             }
         }
@@ -1003,6 +1040,12 @@ impl Checker<'_> {
                     start: hir[e].pos,
                     code,
                 });
+                self.note(
+                    hir[e].pos,
+                    self.end_inside_parentheses(file, e),
+                    code,
+                    Vec::new(),
+                );
             }
         }
     }
@@ -1062,6 +1105,8 @@ impl Checker<'_> {
                     start: hir[e].pos,
                     code: 2607,
                 });
+                let end = self.end_of_jsx_opening(file, e, j);
+                self.explain_to(hir[e].pos, end, 2607, |c| vec![c.atom_text(name)]);
             }
         }
     }

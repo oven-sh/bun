@@ -233,10 +233,20 @@ impl Checker<'_> {
                 .filter(|_| starts_at_previous_end(i + 1))
             {
                 Some((next, _)) if hir[f].name.is_some() && hir[next].name == hir[f].name => {}
-                Some((next, at)) if has_body(&hir[next]) => out.push(Diagnostic {
-                    start: at,
-                    code: 2389,
-                }),
+                Some((next, at)) if has_body(&hir[next]) => {
+                    out.push(Diagnostic {
+                        start: at,
+                        code: 2389,
+                    });
+                    // `DeclarationNameToString`
+                    let name = if hir[f].name.is_some() {
+                        let name_end = self.end_of_name_at(file, hir[f].name_pos);
+                        self.source_text(file, hir[f].name_pos, name_end)
+                    } else {
+                        "(Missing)".to_owned()
+                    };
+                    self.note(at, 0, 2389, vec![name]);
+                }
                 _ => out.push(Diagnostic { start, code: 2391 }),
             }
         };
@@ -268,6 +278,8 @@ impl Checker<'_> {
                 code: 2393,
             }));
         }
+        let declarations: Vec<(FnId, u32, u32)> =
+            declarations.iter().map(|d| (d.0, d.1, 0)).collect();
         self.check_overload_group(file, &declarations, 2393, out);
     }
 
@@ -318,17 +330,18 @@ impl Checker<'_> {
             })
     }
 
-    /// `group`: the declarations of one function, method or constructor, and where an error about each goes.
+    /// `group`: the declarations of one function, method or constructor, and where an error about each starts and ends. An end of 0:
+    /// with the token it starts at.
     fn check_overload_group(
         &mut self,
         file: FileId,
-        group: &[(FnId, u32)],
+        group: &[(FnId, u32, u32)],
         duplicate: u32,
         out: &mut Vec<Diagnostic>,
     ) {
         let hir = self.hir(file);
         let mut bodies = group.iter().filter(|g| has_body(&hir[g.0]));
-        let Some(&(implementation, _)) = bodies.next() else {
+        let Some(&(implementation, _, _)) = bodies.next() else {
             return;
         };
         if bodies.next().is_some() {
@@ -336,12 +349,15 @@ impl Checker<'_> {
                 start: g.1,
                 code: duplicate,
             }));
+            for g in group {
+                self.note(g.1, g.2, duplicate, Vec::new());
+            }
         }
         if group.len() < 2 {
             return;
         }
         let body = self.sig_of_fn(file, implementation);
-        for &(f, start) in group {
+        for &(f, start, end) in group {
             if has_body(&hir[f]) {
                 continue;
             }
@@ -350,6 +366,7 @@ impl Checker<'_> {
                 Some(true) => {}
                 Some(false) => {
                     out.push(Diagnostic { start, code: 2394 });
+                    self.note(start, end, 2394, Vec::new());
                     break;
                 }
                 None => break,
@@ -423,6 +440,15 @@ impl Checker<'_> {
                 member.pos
             }
         };
+        // `GetErrorRangeForNode`: up to the end of the name, or of the keyword of a constructor.
+        let end_of = |i: usize| {
+            let m = members.at(i);
+            if hir[m].kind == MemberKind::Constructor {
+                self.end_of_token_at(file, hir[m].pos)
+            } else {
+                self.end_of_member_name(file, m)
+            }
+        };
         let starts_at_previous_end = |i: usize| {
             !follows_skipped_token(hir, hir[members.at(i - 1)].pos, hir[members.at(i)].pos)
         };
@@ -442,10 +468,12 @@ impl Checker<'_> {
                     if names[i].is_some() && names[i + 1] == names[i] {
                         let is_static = member.flags.contains(Flags::STATIC);
                         if next.flags.contains(Flags::STATIC) != is_static {
+                            let code = if is_static { 2387 } else { 2388 };
                             out.push(Diagnostic {
                                 start: next.pos,
-                                code: if is_static { 2387 } else { 2388 },
+                                code,
                             });
+                            self.note(next.pos, end_of(i + 1), code, Vec::new());
                         }
                         return;
                     }
@@ -454,6 +482,13 @@ impl Checker<'_> {
                             start: start_of(next),
                             code: 2389,
                         });
+                        // `DeclarationNameToString`
+                        let name = if member.kind == MemberKind::Constructor {
+                            "(Missing)".to_owned()
+                        } else {
+                            self.source_text(file, member.pos, end_of(i))
+                        };
+                        self.note(start_of(next), end_of(i + 1), 2389, vec![name]);
                         return;
                     }
                 }
@@ -467,6 +502,7 @@ impl Checker<'_> {
                 start: start_of(member),
                 code,
             });
+            self.note(start_of(member), end_of(i), code, Vec::new());
         };
         let of = |i: usize| {
             let member = &hir[members.at(i)];
@@ -485,9 +521,12 @@ impl Checker<'_> {
         {
             report(last);
         }
-        let declarations: Vec<(FnId, u32)> = group
+        let declarations: Vec<(FnId, u32, u32)> = group
             .iter()
-            .map(|&i| (hir[members.at(i)].func, start_of(&hir[members.at(i)])))
+            .map(|&i| {
+                let member = &hir[members.at(i)];
+                (member.func, start_of(member), end_of(i))
+            })
             .collect();
         let duplicate = if hir[members.at(group[0])].kind == MemberKind::Constructor {
             2392

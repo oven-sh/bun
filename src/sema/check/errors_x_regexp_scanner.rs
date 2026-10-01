@@ -25,13 +25,26 @@ impl Checker<'_> {
             ScriptTarget::None => ScriptTarget::ES2025,
             target => target,
         };
+        let mut noted: Option<Vec<Noted>> = self.explains.then(Vec::new);
         for e in &hir.exprs {
             if matches!(e.kind, ExprKind::Regex) {
-                check_regular_expression_literal(&hir.text, e.pos as usize, target, out);
+                check_regular_expression_literal(
+                    &hir.text,
+                    e.pos as usize,
+                    target,
+                    out,
+                    noted.as_mut(),
+                );
             }
+        }
+        for (start, end, code, args) in noted.into_iter().flatten() {
+            self.note(start, end, code, args);
         }
     }
 }
+
+/// Of an error: where it starts, where it ends, its code, and the arguments of its message.
+type Noted = (u32, u32, u32, Vec<String>);
 
 /// `hasParseDiagnostics`. What the parser objected to and went on from is kept with what tsgo's binder and checker say of syntax.
 /// They are told apart by the code: these are the ones only parser.go and scanner.go give, and 1003 and 1005, which are only ever
@@ -106,6 +119,7 @@ fn check_regular_expression_literal(
     token_start: usize,
     target: ScriptTarget,
     out: &mut Vec<Diagnostic>,
+    noted: Option<&mut Vec<Noted>>,
 ) {
     if text.get(token_start) != Some(&b'/') {
         return;
@@ -154,6 +168,7 @@ fn check_regular_expression_literal(
         is_too_deep: false,
         last_error: None,
         out,
+        noted,
     };
     p += 1;
     let mut flags = 0u8;
@@ -163,14 +178,14 @@ fn check_regular_expression_literal(
             break;
         }
         match regexp_flag(ch) {
-            None => parser.error(1499, p),
-            Some(flag) if flags & flag != 0 => parser.error(1500, p),
+            None => parser.error(1499, p, size),
+            Some(flag) if flags & flag != 0 => parser.error(1500, p, size),
             Some(flag) if (flags | flag) & ANY_UNICODE_MODE == ANY_UNICODE_MODE => {
-                parser.error(1502, p)
+                parser.error(1502, p, size)
             }
             Some(flag) => {
                 flags |= flag;
-                parser.check_flag_availability(flag, p);
+                parser.check_flag_availability(flag, p, size);
             }
         }
         p += size;
@@ -197,10 +212,10 @@ struct RegExpParser<'a> {
     number_of_capturing_groups: usize,
     /// The names of all named capturing groups.
     group_specifiers: Vec<Cow<'a, [u8]>>,
-    /// `\k<name>`: where the name is, and the name.
-    group_name_references: Vec<(usize, Cow<'a, [u8]>)>,
-    /// `\1`: where the number is, and the number.
-    decimal_escapes: Vec<(usize, usize)>,
+    /// `\k<name>`: where the name starts and ends, and the name.
+    group_name_references: Vec<(usize, usize, Cow<'a, [u8]>)>,
+    /// `\1`: where the number starts and ends, and the number.
+    decimal_escapes: Vec<(usize, usize, usize)>,
     /// Which of `group_specifiers` are in the alternatives being read. tsgo has a stack of sets, one for each alternative.
     named_capturing_groups: Vec<usize>,
     /// Without `u` or `v` a character past U+FFFF is two. The first has been given, without moving on: this is the second.
@@ -211,18 +226,39 @@ struct RegExpParser<'a> {
     /// Where the last error that was reported is.
     last_error: Option<usize>,
     out: &'a mut Vec<Diagnostic>,
+    /// `None`: nobody reads the messages.
+    noted: Option<&'a mut Vec<Noted>>,
 }
 
 impl<'a> RegExpParser<'a> {
     /// What `checkGrammarRegularExpressionLiteral` makes of what the scanner says: an error where the one before it is adds nothing.
-    fn error(&mut self, code: u32, start: usize) {
+    fn error(&mut self, code: u32, start: usize, length: usize) {
+        self.error_with(code, start, length, Vec::new);
+    }
+
+    /// The same, of an error whose message takes arguments.
+    fn error_with(
+        &mut self,
+        code: u32,
+        start: usize,
+        length: usize,
+        args: impl FnOnce() -> Vec<String>,
+    ) {
         if self.last_error != Some(start) && !self.is_too_deep {
             self.last_error = Some(start);
             self.out.push(Diagnostic {
                 start: start as u32,
                 code,
             });
+            if let Some(noted) = self.noted.as_mut() {
+                noted.push((start as u32, (start + length) as u32, code, args()));
+            }
         }
+    }
+
+    /// 1508, of the character `ch` at `start`.
+    fn error_unexpected(&mut self, start: usize, ch: u8) {
+        self.error_with(1508, start, 1, || vec![char::from(ch).to_string()]);
     }
 
     /// `char`. `None` for its -1: the body is over.
@@ -253,37 +289,42 @@ impl<'a> RegExpParser<'a> {
     }
 
     /// `checkRegularExpressionFlagAvailability`
-    fn check_flag_availability(&mut self, flag: u8, pos: usize) {
-        let available_from = match flag {
-            HAS_INDICES => ScriptTarget::ES2022,
-            DOT_ALL => ScriptTarget::ES2018,
-            UNICODE_SETS => ScriptTarget::ES2024,
+    fn check_flag_availability(&mut self, flag: u8, pos: usize, size: usize) {
+        let (available_from, name) = match flag {
+            HAS_INDICES => (ScriptTarget::ES2022, "es2022"),
+            DOT_ALL => (ScriptTarget::ES2018, "es2018"),
+            UNICODE_SETS => (ScriptTarget::ES2024, "es2024"),
             _ => return,
         };
         if self.target < available_from {
-            self.error(1501, pos);
+            self.error_with(1501, pos, size, || vec![name.to_owned()]);
         }
     }
 
     /// `run`
     fn run(&mut self) {
         self.scan_disjunction(false);
-        for (pos, name) in &std::mem::take(&mut self.group_name_references) {
+        for (pos, end, name) in &std::mem::take(&mut self.group_name_references) {
             if !self.group_specifiers.contains(name) {
-                self.error(1532, *pos);
+                self.error_with(1532, *pos, *end - *pos, || {
+                    vec![String::from_utf8_lossy(name).into_owned()]
+                });
             }
         }
         // With Annex B a number greater than that of the groups is an octal escape or the digits themselves. Most likely it is
         // a mistake all the same.
-        for (pos, value) in std::mem::take(&mut self.decimal_escapes) {
+        for (pos, end, value) in std::mem::take(&mut self.decimal_escapes) {
             if value > self.number_of_capturing_groups {
-                self.error(
+                let groups = self.number_of_capturing_groups;
+                self.error_with(
                     if self.number_of_capturing_groups > 0 {
                         1533
                     } else {
                         1534
                     },
                     pos,
+                    end - pos,
+                    || vec![groups.to_string()],
                 );
             }
         }
@@ -342,7 +383,11 @@ impl<'a> RegExpParser<'a> {
                                     self.scan_group_name(false);
                                     self.scan_expected_char(b'>');
                                     if self.target < ScriptTarget::ES2018 {
-                                        self.error(1503, group_name_start);
+                                        self.error(
+                                            1503,
+                                            group_name_start,
+                                            self.pos - group_name_start,
+                                        );
                                     }
                                     self.number_of_capturing_groups += 1;
                                     is_previous_term_quantifiable = true;
@@ -355,7 +400,7 @@ impl<'a> RegExpParser<'a> {
                                     self.pos += 1;
                                     self.scan_pattern_modifiers(set_flags);
                                     if self.pos == flags_start + 1 {
-                                        self.error(1504, flags_start);
+                                        self.error(1504, flags_start, self.pos - flags_start);
                                     }
                                 }
                                 self.scan_expected_char(b':');
@@ -383,7 +428,7 @@ impl<'a> RegExpParser<'a> {
                         self.pos += 1;
                     }
                     if !is_previous_term_quantifiable {
-                        self.error(1507, start);
+                        self.error(1507, start, self.pos - start);
                     }
                     is_previous_term_quantifiable = false;
                 }
@@ -405,7 +450,7 @@ impl<'a> RegExpParser<'a> {
                 b')' if is_in_group => return,
                 b')' | b']' | b'}' => {
                     if self.any_unicode_mode || ch == b')' {
-                        self.error(1508, self.pos);
+                        self.error_unexpected(self.pos, ch);
                     }
                     self.pos += 1;
                     is_previous_term_quantifiable = true;
@@ -434,20 +479,20 @@ impl<'a> RegExpParser<'a> {
             let max = self.scan_digits();
             if min.is_empty() {
                 if !max.is_empty() || self.peek() == Some(b'}') {
-                    self.error(1505, digits_start);
+                    self.error(1505, digits_start, 0);
                 } else {
-                    self.error(1508, start);
+                    self.error_unexpected(start, b'{');
                     return false;
                 }
             } else if !max.is_empty()
                 && compare_decimal_strings(min, max).is_gt()
                 && (self.any_unicode_mode || self.peek() == Some(b'}'))
             {
-                self.error(1506, digits_start);
+                self.error(1506, digits_start, self.pos - digits_start);
             }
         } else if min.is_empty() {
             if self.any_unicode_mode {
-                self.error(1508, start);
+                self.error_unexpected(start, b'{');
             }
             return false;
         }
@@ -455,7 +500,7 @@ impl<'a> RegExpParser<'a> {
             if !self.any_unicode_mode {
                 return false;
             }
-            self.error(1005, self.pos);
+            self.error_with(1005, self.pos, 0, || vec!["}".to_owned()]);
             self.pos -= 1;
         }
         true
@@ -469,12 +514,12 @@ impl<'a> RegExpParser<'a> {
                 break;
             }
             match regexp_flag(ch) {
-                None => self.error(1499, self.pos),
-                Some(flag) if curr_flags & flag != 0 => self.error(1500, self.pos),
-                Some(flag) if flag & MODIFIERS == 0 => self.error(1509, self.pos),
+                None => self.error(1499, self.pos, size),
+                Some(flag) if curr_flags & flag != 0 => self.error(1500, self.pos, size),
+                Some(flag) if flag & MODIFIERS == 0 => self.error(1509, self.pos, size),
                 Some(flag) => {
                     curr_flags |= flag;
-                    self.check_flag_availability(flag, self.pos);
+                    self.check_flag_availability(flag, self.pos, size);
                 }
             }
             self.pos += size;
@@ -492,12 +537,12 @@ impl<'a> RegExpParser<'a> {
                     self.scan_group_name(true);
                     self.scan_expected_char(b'>');
                 } else if self.any_unicode_mode || self.named_capture_groups {
-                    self.error(1510, self.pos - 2);
+                    self.error(1510, self.pos - 2, 2);
                 }
             }
             Some(b'q') if self.unicode_sets_mode => {
                 self.pos += 1;
-                self.error(1511, self.pos - 2);
+                self.error(1511, self.pos - 2, 2);
             }
             _ => {
                 if !self.scan_character_class_escape() && !self.scan_decimal_escape() {
@@ -519,14 +564,14 @@ impl<'a> RegExpParser<'a> {
                 .saturating_mul(10)
                 .saturating_add(usize::from(digit - b'0'))
         });
-        self.decimal_escapes.push((start, value));
+        self.decimal_escapes.push((start, self.pos, value));
         true
     }
 
     /// `scanCharacterEscape`: past the backslash, `c` and a letter, a character of the syntax, or what `scan_escape_sequence` knows.
     fn scan_character_escape(&mut self, atom_escape: bool) -> ClassAtom {
         let Some(ch) = self.peek() else {
-            self.error(1513, self.pos - 1);
+            self.error(1513, self.pos - 1, 1);
             return ClassAtom::Char(BACKSLASH);
         };
         match ch {
@@ -540,7 +585,7 @@ impl<'a> RegExpParser<'a> {
                     return ClassAtom::Char(u32::from(letter & 0x1f));
                 }
                 if self.any_unicode_mode {
-                    self.error(1512, self.pos - 2);
+                    self.error(1512, self.pos - 2, 2);
                 } else if atom_escape {
                     self.pos -= 1;
                     return ClassAtom::Char(BACKSLASH);
@@ -566,7 +611,7 @@ impl<'a> RegExpParser<'a> {
         let start = self.pos;
         self.pos += 1;
         let Some(ch) = self.peek() else {
-            self.error(1126, self.pos);
+            self.error(1126, self.pos, 0);
             return ClassAtom::None;
         };
         self.pos += 1;
@@ -584,22 +629,30 @@ impl<'a> RegExpParser<'a> {
                 if is_octal_digit(self.peek()) {
                     self.pos += 1;
                 }
-                self.error(
+                let code = self.text[start + 1..self.pos]
+                    .iter()
+                    .fold(0u32, |code, &digit| code * 8 + u32::from(digit - b'0'));
+                self.error_with(
                     if !atom_escape && ch != b'0' {
                         1536
                     } else {
                         1487
                     },
                     start,
+                    self.pos - start,
+                    || vec![format!("\\x{code:02x}")],
                 );
-                ClassAtom::Char(
-                    self.text[start + 1..self.pos]
-                        .iter()
-                        .fold(0u32, |code, &digit| code * 8 + u32::from(digit - b'0')),
-                )
+                ClassAtom::Char(code)
             }
             b'8' | b'9' => {
-                self.error(if atom_escape { 1488 } else { 1537 }, start);
+                let text = self.text;
+                let end = self.pos;
+                self.error_with(
+                    if atom_escape { 1488 } else { 1537 },
+                    start,
+                    end - start,
+                    || vec![String::from_utf8_lossy(&text[start..end]).into_owned()],
+                );
                 ClassAtom::Char(u32::from(ch))
             }
             b'b' => ClassAtom::Char(0x08),
@@ -615,7 +668,7 @@ impl<'a> RegExpParser<'a> {
                 let code_point = self.scan_unicode_escape(true);
                 if extended {
                     if !self.any_unicode_mode {
-                        self.error(1538, start);
+                        self.error(1538, start, self.pos - start);
                     }
                     return code_point.map_or(ClassAtom::Text, ClassAtom::Char);
                 }
@@ -645,7 +698,7 @@ impl<'a> RegExpParser<'a> {
             b'x' => {
                 while self.pos < start + 4 {
                     if !self.peek().is_some_and(|digit| digit.is_ascii_hexdigit()) {
-                        self.error(1125, self.pos);
+                        self.error(1125, self.pos, 0);
                         return ClassAtom::Text;
                     }
                     self.pos += 1;
@@ -671,7 +724,7 @@ impl<'a> RegExpParser<'a> {
                     return ClassAtom::None;
                 }
                 if self.any_unicode_mode {
-                    self.error(1535, start);
+                    self.error(1535, start, self.pos - start);
                 }
                 ClassAtom::Char(ch)
             }
@@ -696,7 +749,7 @@ impl<'a> RegExpParser<'a> {
         let min_count = if extended { 1 } else { 4 };
         if self.pos - digits_start < min_count {
             if should_emit_invalid_escape_error {
-                self.error(1125, self.pos);
+                self.error(1125, self.pos, 0);
             }
             return None;
         }
@@ -705,7 +758,7 @@ impl<'a> RegExpParser<'a> {
             let mut is_invalid_extended_escape = false;
             if value > 0x10FFFF {
                 if should_emit_invalid_escape_error {
-                    self.error(1198, start + 1);
+                    self.error(1198, start + 1, self.pos - start - 1);
                 }
                 is_invalid_extended_escape = true;
             }
@@ -713,7 +766,7 @@ impl<'a> RegExpParser<'a> {
                 Some(b'}') => self.pos += 1,
                 next => {
                     if should_emit_invalid_escape_error {
-                        self.error(if next.is_none() { 1126 } else { 1199 }, self.pos);
+                        self.error(if next.is_none() { 1126 } else { 1199 }, self.pos, 0);
                     }
                     is_invalid_extended_escape = true;
                 }
@@ -741,15 +794,15 @@ impl<'a> RegExpParser<'a> {
         let start = self.pos;
         let name = self.scan_identifier();
         if self.pos == start {
-            self.error(1514, self.pos);
+            self.error(1514, self.pos, 0);
         } else if is_reference {
-            self.group_name_references.push((start, name));
+            self.group_name_references.push((start, self.pos, name));
         } else if self
             .named_capturing_groups
             .iter()
             .any(|&group| self.group_specifiers[group] == name)
         {
-            self.error(1515, start);
+            self.error(1515, start, self.pos - start);
         } else {
             self.named_capturing_groups
                 .push(self.group_specifiers.len());
@@ -822,12 +875,12 @@ impl<'a> RegExpParser<'a> {
                 return;
             }
             if min_character == ClassAtom::None && self.any_unicode_mode {
-                self.error(1516, min_start);
+                self.error(1516, min_start, self.pos - 1 - min_start);
             }
             let max_start = self.pos;
             let max_character = self.scan_class_atom();
             if max_character == ClassAtom::None && self.any_unicode_mode {
-                self.error(1516, max_start);
+                self.error(1516, max_start, self.pos - max_start);
                 continue;
             }
             // The empty string decodes as U+FFFD, no bytes long, which is as long as it is: it is compared like a character.
@@ -839,7 +892,7 @@ impl<'a> RegExpParser<'a> {
             if let (ClassAtom::Char(min), ClassAtom::Char(max)) = (min_character, max_character)
                 && min > max
             {
-                self.error(1517, min_start);
+                self.error(1517, min_start, self.pos - min_start);
             }
         }
     }
@@ -868,8 +921,9 @@ impl<'a> RegExpParser<'a> {
             return;
         }
         let mut start = self.pos;
+        let first = self.text[start];
         let mut operand = if self.is_at_class_set_operator() {
-            self.error(1520, self.pos);
+            self.error(1520, self.pos, 0);
             self.may_contain_strings = false;
             ClassAtom::None
         } else {
@@ -879,7 +933,7 @@ impl<'a> RegExpParser<'a> {
             Some(b'-') => {
                 if self.peek_at(1) == Some(b'-') {
                     if is_character_complement && self.may_contain_strings {
-                        self.error(1518, start);
+                        self.error(1518, start, self.pos - start);
                     }
                     let first_may_contain_strings = self.may_contain_strings;
                     self.scan_class_set_sub_expression(ClassSetExpressionType::ClassSubtraction);
@@ -892,16 +946,17 @@ impl<'a> RegExpParser<'a> {
                 if self.peek_at(1) == Some(b'&') {
                     self.scan_class_set_sub_expression(ClassSetExpressionType::ClassIntersection);
                     if is_character_complement && self.may_contain_strings {
-                        self.error(1518, start);
+                        self.error(1518, start, self.pos - start);
                     }
                     self.may_contain_strings = !is_character_complement && self.may_contain_strings;
                     return;
                 }
-                self.error(1508, self.pos);
+                // tsgo names the character the expression starts with, not the `&`.
+                self.error_unexpected(self.pos, first);
             }
             _ => {
                 if is_character_complement && self.may_contain_strings {
-                    self.error(1518, start);
+                    self.error(1518, start, self.pos - start);
                 }
                 expression_may_contain_strings = self.may_contain_strings;
             }
@@ -915,27 +970,27 @@ impl<'a> RegExpParser<'a> {
                     }
                     if self.peek() == Some(b'-') {
                         self.pos += 1;
-                        self.error(1519, self.pos - 2);
+                        self.error(1519, self.pos - 2, 2);
                         start = self.pos - 2;
                         operand = ClassAtom::Text;
                         continue;
                     }
                     if operand == ClassAtom::None {
-                        self.error(1516, start);
+                        self.error(1516, start, self.pos - 1 - start);
                     }
                     let second_start = self.pos;
                     let second_operand = self.scan_class_set_operand();
                     if is_character_complement && self.may_contain_strings {
-                        self.error(1518, second_start);
+                        self.error(1518, second_start, self.pos - second_start);
                     }
                     expression_may_contain_strings |= self.may_contain_strings;
                     if second_operand == ClassAtom::None {
-                        self.error(1516, second_start);
+                        self.error(1516, second_start, self.pos - second_start);
                     } else if let (ClassAtom::Char(min), ClassAtom::Char(max)) =
                         (operand, second_operand)
                         && min > max
                     {
-                        self.error(1517, start);
+                        self.error(1517, start, self.pos - start);
                     }
                 }
                 b'&' => {
@@ -943,14 +998,14 @@ impl<'a> RegExpParser<'a> {
                     self.pos += 1;
                     if self.peek() == Some(b'&') {
                         self.pos += 1;
-                        self.error(1519, self.pos - 2);
+                        self.error(1519, self.pos - 2, 2);
                         if self.peek() == Some(b'&') {
-                            self.error(1508, self.pos);
+                            self.error_unexpected(self.pos, ch);
                             self.pos += 1;
                         }
                         operand = ClassAtom::Text;
                     } else {
-                        self.error(1508, self.pos - 1);
+                        self.error_unexpected(self.pos - 1, ch);
                         operand = ClassAtom::Char(u32::from(ch));
                     }
                     continue;
@@ -962,7 +1017,7 @@ impl<'a> RegExpParser<'a> {
             }
             start = self.pos;
             if self.is_at_class_set_operator() {
-                self.error(1519, self.pos);
+                self.error(1519, self.pos, 2);
                 self.pos += 2;
                 operand = ClassAtom::Text;
             } else {
@@ -982,10 +1037,10 @@ impl<'a> RegExpParser<'a> {
                     if self.peek() == Some(b'-') {
                         self.pos += 1;
                         if expression_type != ClassSetExpressionType::ClassSubtraction {
-                            self.error(1519, self.pos - 2);
+                            self.error(1519, self.pos - 2, 2);
                         }
                     } else {
-                        self.error(1519, self.pos - 1);
+                        self.error(1519, self.pos - 1, 1);
                     }
                 }
                 Some(b'&') => {
@@ -993,21 +1048,29 @@ impl<'a> RegExpParser<'a> {
                     if self.peek() == Some(b'&') {
                         self.pos += 1;
                         if expression_type != ClassSetExpressionType::ClassIntersection {
-                            self.error(1519, self.pos - 2);
+                            self.error(1519, self.pos - 2, 2);
                         }
                         if self.peek() == Some(b'&') {
-                            self.error(1508, self.pos);
+                            self.error_unexpected(self.pos, b'&');
                             self.pos += 1;
                         }
                     } else {
-                        self.error(1508, self.pos - 1);
+                        self.error_unexpected(self.pos - 1, b'&');
                     }
                 }
                 // The operator is expected.
-                _ => self.error(1005, self.pos),
+                _ => self.error_with(1005, self.pos, 0, || {
+                    vec![
+                        match expression_type {
+                            ClassSetExpressionType::ClassSubtraction => "--",
+                            ClassSetExpressionType::ClassIntersection => "&&",
+                        }
+                        .to_owned(),
+                    ]
+                }),
             }
             if self.is_class_content_exit() {
-                self.error(1520, self.pos);
+                self.error(1520, self.pos, 0);
                 break;
             }
             self.scan_class_set_operand();
@@ -1044,7 +1107,7 @@ impl<'a> RegExpParser<'a> {
                         self.scan_expected_char(b'}');
                         return ClassAtom::None;
                     }
-                    self.error(1521, self.pos - 2);
+                    self.error(1521, self.pos - 2, 2);
                     return ClassAtom::Char(u32::from(b'q'));
                 }
                 self.pos -= 1;
@@ -1123,7 +1186,7 @@ impl<'a> RegExpParser<'a> {
                     | b'~'
             )
         {
-            self.error(1522, self.pos);
+            self.error(1522, self.pos, 2);
             self.pos += 2;
             return ClassAtom::Text;
         }
@@ -1131,7 +1194,7 @@ impl<'a> RegExpParser<'a> {
             ch,
             b'/' | b'(' | b')' | b'[' | b']' | b'{' | b'}' | b'-' | b'|'
         ) {
-            self.error(1508, self.pos);
+            self.error_unexpected(self.pos, ch);
             self.pos += 1;
             return ClassAtom::Char(u32::from(ch));
         }
@@ -1178,41 +1241,59 @@ impl<'a> RegExpParser<'a> {
             if self.peek() == Some(b'=') {
                 let values = values_of_non_binary_unicode_property(property_name_or_value);
                 if self.pos == property_name_or_value_start {
-                    self.error(1523, self.pos);
+                    self.error(1523, self.pos, 0);
                 } else if values.is_none() {
-                    self.error(1524, property_name_or_value_start);
+                    self.error(
+                        1524,
+                        property_name_or_value_start,
+                        property_name_or_value.len(),
+                    );
                 }
                 self.pos += 1;
                 let property_value_start = self.pos;
                 let property_value = self.scan_word_characters();
                 if self.pos == property_value_start {
-                    self.error(1525, self.pos);
+                    self.error(1525, self.pos, 0);
                 } else if let Some(values) = values
                     && !has(values, property_value)
                 {
-                    self.error(1526, property_value_start);
+                    self.error(1526, property_value_start, property_value.len());
                 }
             } else if self.pos == property_name_or_value_start {
-                self.error(1527, self.pos);
+                self.error(1527, self.pos, 0);
             } else if has(BINARY_UNICODE_PROPERTIES_OF_STRINGS, property_name_or_value) {
                 if !self.unicode_sets_mode {
-                    self.error(1528, property_name_or_value_start);
+                    self.error(
+                        1528,
+                        property_name_or_value_start,
+                        property_name_or_value.len(),
+                    );
                 } else if is_character_complement {
-                    self.error(1518, property_name_or_value_start);
+                    self.error(
+                        1518,
+                        property_name_or_value_start,
+                        property_name_or_value.len(),
+                    );
                 } else {
                     self.may_contain_strings = true;
                 }
             } else if !has(GENERAL_CATEGORY_VALUES, property_name_or_value)
                 && !has(BINARY_UNICODE_PROPERTIES, property_name_or_value)
             {
-                self.error(1529, property_name_or_value_start);
+                self.error(
+                    1529,
+                    property_name_or_value_start,
+                    property_name_or_value.len(),
+                );
             }
             self.scan_expected_char(b'}');
             if !self.any_unicode_mode {
-                self.error(1530, start);
+                self.error(1530, start, self.pos - start);
             }
         } else if self.any_unicode_mode {
-            self.error(1531, self.pos - 2);
+            self.error_with(1531, self.pos - 2, 2, || {
+                vec![if is_character_complement { "P" } else { "p" }.to_owned()]
+            });
         } else {
             self.pos -= 1;
             return false;
@@ -1269,7 +1350,7 @@ impl<'a> RegExpParser<'a> {
         if self.peek() == Some(ch) {
             self.pos += 1;
         } else {
-            self.error(1005, self.pos);
+            self.error_with(1005, self.pos, 0, || vec![char::from(ch).to_string()]);
         }
     }
 

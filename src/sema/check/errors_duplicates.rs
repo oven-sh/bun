@@ -414,6 +414,12 @@ impl Checker<'_> {
             if target_flags & NAMESPACE_MODULE != 0 {
                 // What does not go with a namespace without values has words of its own, said once.
                 self.report_declarations(file, source[..1].iter(), 2649, out);
+                let (of, decl, _) = source[0];
+                if of == file
+                    && let Some(start) = self.declaration_name_start(of, decl)
+                {
+                    self.explain(start, 2649, |c| vec![c.symbol_to_string(sym)]);
+                }
             } else {
                 // The code depends on whether either symbol is an enum or block scoped.
                 self.report_merge_symbol_error(
@@ -532,7 +538,7 @@ impl Checker<'_> {
 
     /// `mergeSymbol`: reports the pairs of symbols that `Files::merge` refused to merge. The target is an alias, an export reached
     /// through `export *`, or an export of a pattern ambient module.
-    fn check_refused_merges(&self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_refused_merges(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let files = self.files();
         let declarations = |sym: Sym| -> Vec<Declaration> {
             files
@@ -547,6 +553,12 @@ impl Checker<'_> {
             if files.flags(target).contains(SymFlags::NAMESPACE_MODULE) {
                 // What does not go with a namespace without values has words of its own, said once.
                 self.report_declarations(file, added.iter().take(1), 2649, out);
+                if let Some(&(of, decl, _)) = added.first()
+                    && of == file
+                    && let Some(start) = self.declaration_name_start(of, decl)
+                {
+                    self.explain(start, 2649, |c| vec![c.symbol_to_string(target)]);
+                }
                 continue;
             }
             // `reportMergeSymbolError`
@@ -646,10 +658,20 @@ impl Checker<'_> {
                     continue;
                 }
                 match decl {
-                    Decl::Class(c) => out.push(Diagnostic {
-                        start: self.hir(of)[c].name_pos,
-                        code: 2813,
-                    }),
+                    Decl::Class(c) => {
+                        let class = &self.hir(of)[c];
+                        out.push(Diagnostic {
+                            start: class.name_pos,
+                            code: 2813,
+                        });
+                        // `symbol.Name`
+                        let name = if class.flags.contains(Flags::DEFAULT) {
+                            known::default
+                        } else {
+                            class.name
+                        };
+                        self.note(class.name_pos, 0, 2813, vec![self.atom_text(name)]);
+                    }
                     Decl::Fn(f) => out.push(Diagnostic {
                         start: self.hir(of)[f].name_pos,
                         code: 2814,
@@ -794,6 +816,7 @@ impl Checker<'_> {
                         {
                             if other == file {
                                 out.push(Diagnostic { start, code: 2300 });
+                                self.note_duplicate_name(file, start, start);
                             }
                         }
                     }
@@ -856,6 +879,7 @@ impl Checker<'_> {
                             start: at.1,
                             code: 2300,
                         });
+                        c.note_duplicate_name(file, at.1, at.1);
                     }
                 }
             };
@@ -894,7 +918,8 @@ impl Checker<'_> {
         }
         for body in std::iter::once(hir.body).chain(hir.modules.iter().map(|m| m.body)) {
             let mut names: Vec<(Atom, u32)> = Vec::new();
-            let mut equals: Vec<u32> = Vec::new();
+            // Where each `export =` is reported, and the statement if that is what it is reported on.
+            let mut equals: Vec<(u32, StmtId)> = Vec::new();
             for s in hir.ids(body) {
                 match hir[s].kind {
                     StmtKind::ExportNamed(x) => {
@@ -921,16 +946,28 @@ impl Checker<'_> {
                     }
                     StmtKind::ExportAssign(e) => {
                         equals.push(if matches!(hir[e].kind, ExprKind::Ident(_)) {
-                            hir[e].pos
+                            (hir[e].pos, StmtId::NONE)
                         } else {
-                            hir[s].pos
+                            (hir[s].pos, s)
                         })
                     }
                     _ => {}
                 }
             }
             if equals.len() > 1 {
-                out.extend(equals.iter().map(|&start| Diagnostic { start, code: 2300 }));
+                out.extend(
+                    equals
+                        .iter()
+                        .map(|&(start, _)| Diagnostic { start, code: 2300 }),
+                );
+                for &(start, statement) in &equals {
+                    let end = if statement.is_some() {
+                        self.end_of_stmt(file, statement)
+                    } else {
+                        0
+                    };
+                    self.note(start, end, 2300, vec!["export=".to_owned()]);
+                }
             }
             for (i, &(name, start)) in names.iter().enumerate() {
                 if names
@@ -950,11 +987,22 @@ impl Checker<'_> {
         if !self.files().module(file).is_module() {
             return;
         }
+        /// What an error on a declaration is reported on.
+        #[derive(Copy, Clone)]
+        enum Node {
+            /// Its name or its first token.
+            Token,
+            Statement(StmtId),
+            Specifier(ExportSpecId),
+            /// `* as ns`: where `ns` is.
+            NamespaceExport(u32),
+        }
         struct Declared {
             name: Atom,
             /// Where an error on the declaration starts: at its name. An export specifier, `* as ns` and `export default e` are
             /// reported at their first token.
             start: u32,
+            node: Node,
             includes: u32,
             excludes: u32,
             is_overload: bool,
@@ -1001,6 +1049,7 @@ impl Checker<'_> {
                         name
                     },
                     start: if unnamed { hir[s].pos } else { start },
+                    node: Node::Token,
                     includes,
                     excludes,
                     is_overload,
@@ -1062,6 +1111,7 @@ impl Checker<'_> {
                 StmtKind::ExportDefault(e) => declared.push(Declared {
                     name: known::default,
                     start: hir[s].pos,
+                    node: Node::Statement(s),
                     includes: if matches!(hir[e].kind, ExprKind::Ident(_) | ExprKind::Dot { .. }) {
                         ALIAS
                     } else {
@@ -1079,6 +1129,7 @@ impl Checker<'_> {
                         declared.push(Declared {
                             name: hir[i].exported,
                             start: export_specifier_start(hir, i),
+                            node: Node::Specifier(i),
                             includes: ALIAS,
                             excludes: ALIAS,
                             is_overload: false,
@@ -1090,10 +1141,11 @@ impl Checker<'_> {
                 }
                 // `bindExportDeclaration`: the declaration of `export * as ns` is the `* as ns` node.
                 StmtKind::ExportStar { alias, .. } if alias.is_some() => {
-                    if let Some((start, _)) = namespace_export_starts(hir, s) {
+                    if let Some((start, name_start)) = namespace_export_starts(hir, s) {
                         declared.push(Declared {
                             name: alias,
                             start,
+                            node: Node::NamespaceExport(name_start),
                             includes: ALIAS,
                             excludes: ALIAS,
                             is_overload: false,
@@ -1135,10 +1187,13 @@ impl Checker<'_> {
             {
                 for d in &accepted {
                     match d.includes {
-                        CLASS => out.push(Diagnostic {
-                            start: d.start,
-                            code: 2813,
-                        }),
+                        CLASS => {
+                            out.push(Diagnostic {
+                                start: d.start,
+                                code: 2813,
+                            });
+                            self.note(d.start, 0, 2813, vec![self.atom_text(name)]);
+                        }
                         FUNCTION => out.push(Diagnostic {
                             start: d.start,
                             code: 2814,
@@ -1191,6 +1246,8 @@ impl Checker<'_> {
                         start: d.start,
                         code: 2484,
                     });
+                    let end = self.end_of_export_spec(file, spec);
+                    self.note(d.start, end, 2484, vec![self.atom_text(name)]);
                 }
             }
             if flags & (VALUE_MODULE | NAMESPACE_MODULE | ENUM) != 0 {
@@ -1212,6 +1269,15 @@ impl Checker<'_> {
                         code: 2323,
                     }),
             );
+            for d in accepted.iter().filter(|d| !d.is_overload) {
+                let end = match d.node {
+                    Node::Token => 0,
+                    Node::Statement(s) => self.end_of_stmt(file, s),
+                    Node::Specifier(spec) => self.end_of_export_spec(file, spec),
+                    Node::NamespaceExport(name_start) => self.end_of_name_at(file, name_start),
+                };
+                self.note(d.start, end, 2323, vec![self.atom_text(name)]);
+            }
         }
     }
 
@@ -1275,10 +1341,10 @@ impl Checker<'_> {
                     files.resolve_alias_if_needed(found)
                 };
                 if target.is_some_and(|target| files.flags(target).intersects(excluded)) {
-                    out.push(Diagnostic {
-                        start: export_specifier_start(hir, spec),
-                        code: 2484,
-                    });
+                    let start = export_specifier_start(hir, spec);
+                    out.push(Diagnostic { start, code: 2484 });
+                    let end = self.end_of_export_spec(file, spec);
+                    self.note(start, end, 2484, vec![self.atom_text(exported)]);
                 }
             }
         }
@@ -1330,9 +1396,35 @@ impl Checker<'_> {
                         start: member.pos,
                         code: 2699,
                     });
+                    self.explain_static_name_conflict(file, m, name);
                 }
             }
         }
+    }
+
+    /// The arguments of 2699, which is reported on the name of the static member `m`: `name`, and the class.
+    fn explain_static_name_conflict(&mut self, file: FileId, m: MemberId, name: Atom) {
+        let start = self.hir(file)[m].pos;
+        let end = self.end_of_member_name(file, m);
+        self.explain_to(start, end, 2699, |c| {
+            let mut class_name = String::new();
+            if let crate::bind::MemberOwner::Class(class) = c.bound(file).member_owner[m.idx()] {
+                let symbol = c.bound(file).class_symbol[class.idx()];
+                class_name = if symbol.is_some() {
+                    let symbol = c.files().sym(file, symbol);
+                    c.symbol_to_string(symbol)
+                } else {
+                    c.atom_text(c.hir(file)[class].name)
+                };
+            }
+            vec![c.atom_text(name), class_name]
+        });
+    }
+
+    /// The argument of 2300 at the name of a member that starts at `start`: the name that starts at `named_at`, as it is written.
+    fn note_duplicate_name(&self, file: FileId, start: u32, named_at: u32) {
+        let name = self.source_text(file, named_at, self.end_of_name_at(file, named_at));
+        self.note(start, self.end_of_name_at(file, start), 2300, vec![name]);
     }
 
     fn check_members_of(
@@ -1365,6 +1457,8 @@ impl Checker<'_> {
         let mut entries: Vec<Entry> = Vec::new();
         // Name, whether it is static, what it makes of the name, what that excludes, where, and 1 for a property, 2 for an accessor.
         let mut declared: Vec<(Atom, bool, u32, u32, u32, u8)> = Vec::new();
+        // Where those are whose names the checker works out (`lateBindMember`).
+        let mut late_bound: Vec<u32> = Vec::new();
         for m in members.iter() {
             let member = &hir[m];
             let is_static = member.flags.contains(Flags::STATIC);
@@ -1403,6 +1497,10 @@ impl Checker<'_> {
                     start: member.pos,
                     code: 2699,
                 });
+                self.explain_static_name_conflict(file, m, name);
+            }
+            if matches!(member.key, PropKey::Computed(_)) {
+                late_bound.push(member.pos);
             }
             declared.push((name, is_static, includes, excludes, member.pos, kind));
         }
@@ -1438,8 +1536,26 @@ impl Checker<'_> {
                 entry.accepted.push(pos);
                 continue;
             }
+            let late_before = entry
+                .accepted
+                .iter()
+                .copied()
+                .find(|at| late_bound.contains(at));
             for &start in entry.accepted.iter().chain(std::iter::once(&pos)) {
                 out.push(Diagnostic { start, code: 2300 });
+                match (late_before, late_bound.contains(&pos)) {
+                    // The binder names each as it is written.
+                    (None, false) => self.note_duplicate_name(file, start, start),
+                    // `lateBindMember`
+                    (Some(_), true) if !self.files().atoms.is_symbol_name(name) => {
+                        let end = self.end_of_name_at(file, start);
+                        self.note(start, end, 2300, vec![self.atom_text(name)]);
+                    }
+                    (Some(_), true) => self.note_duplicate_name(file, start, pos),
+                    // `reportMergeSymbolError`: `symbolToString` of the symbol that is bound late.
+                    (Some(first), false) => self.note_duplicate_name(file, start, first),
+                    (None, true) => self.note_duplicate_name(file, start, pos),
+                }
             }
             // After an accessor met something else, nothing goes with it any more.
             if entry.flags & ACCESSOR != 0 && entry.flags & ACCESSOR != includes & ACCESSOR {
@@ -1465,6 +1581,18 @@ impl Checker<'_> {
                 1 | 2 if entry.state == 1 || kind != 2 => {
                     for &start in &entry.all {
                         out.push(Diagnostic { start, code: 2300 });
+                        // `symbolToString`: as the first declaration of the symbol writes it. Those the binder names come first.
+                        let named_at = if entry.accepted.contains(&start) {
+                            entry
+                                .accepted
+                                .iter()
+                                .copied()
+                                .find(|at| !late_bound.contains(at))
+                                .unwrap_or(entry.accepted[0])
+                        } else {
+                            start
+                        };
+                        self.note_duplicate_name(file, start, named_at);
                     }
                     // `reportDuplicateMemberErrors`: a parameter property with the name is reported even if the duplicates are static.
                     if is_static {

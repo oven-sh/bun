@@ -65,6 +65,8 @@ impl Checker<'_> {
                         start: param.pos,
                         code: 2369,
                     });
+                    let end = self.end_of_param(file, p);
+                    self.explain_to(param.pos, end, 2369, |_| vec![]);
                 }
                 // A leading `this` parameter is `this_ty`, so one listed in `params` is never the first.
                 if matches!(hir[param.pat].kind, PatKind::Ident(known::this)) {
@@ -72,6 +74,8 @@ impl Checker<'_> {
                         start: param.pos,
                         code: 2680,
                     });
+                    let end = self.end_of_param(file, p);
+                    self.explain_to(param.pos, end, 2680, |_| vec!["this".to_owned()]);
                 }
                 if !has_body {
                     self.check_element_initializers(file, param.pat, out);
@@ -80,6 +84,8 @@ impl Checker<'_> {
                             start: param.pos,
                             code: 2371,
                         });
+                        let end = self.end_of_param(file, p);
+                        self.explain_to(param.pos, end, 2371, |_| vec![]);
                     }
                 }
                 let is_pattern =
@@ -95,6 +101,8 @@ impl Checker<'_> {
                         start: param.pos,
                         code: 2463,
                     });
+                    let end = self.end_of_param(file, p);
+                    self.explain_to(param.pos, end, 2463, |_| vec![]);
                 }
                 if param.flags.contains(Flags::REST) && !is_pattern {
                     let mut ty = self.type_of_param(file, p);
@@ -120,6 +128,8 @@ impl Checker<'_> {
                             start: param.pos,
                             code: 2370,
                         });
+                        let end = self.end_of_param(file, p);
+                        self.explain_to(param.pos, end, 2370, |_| vec![]);
                     }
                 }
             }
@@ -147,6 +157,8 @@ impl Checker<'_> {
                             start: hir[prop.value].pos,
                             code: 2371,
                         });
+                        let end = self.end_of_pat(file, prop.value);
+                        self.note(hir[prop.value].pos, end, 2371, vec![]);
                     }
                 }
             }
@@ -159,6 +171,8 @@ impl Checker<'_> {
                             start: hir[elem.pat].pos,
                             code: 2371,
                         });
+                        let end = self.end_of_pat(file, elem.pat);
+                        self.note(hir[elem.pat].pos, end, 2371, vec![]);
                     }
                 }
             }
@@ -187,7 +201,7 @@ impl Checker<'_> {
         };
         const NOWHERE: (PatId, ParamId) = (PatId::NONE, ParamId::NONE);
         for i in 0..hir.exprs.len() {
-            let ExprKind::Ident(_) = hir.exprs[i].kind else {
+            let ExprKind::Ident(name) = hir.exprs[i].kind else {
                 continue;
             };
             let local = bound.expr_symbol[i];
@@ -294,6 +308,10 @@ impl Checker<'_> {
                 out.push(Diagnostic {
                     start: hir.exprs[i].pos,
                     code: 2373,
+                });
+                self.explain(hir.exprs[i].pos, 2373, |c| {
+                    let end = c.end_of_pat(file, within);
+                    vec![c.source_text(file, hir[within].pos, end), c.atom_text(name)]
                 });
             }
         }
@@ -764,16 +782,23 @@ impl Checker<'_> {
                     !self.is_assignable(of_symbol, again) || !self.is_assignable(again, of_symbol)
                 };
                 if differs {
-                    out.push(if d.member.is_some() {
-                        Diagnostic {
-                            start: hir[d.member].pos,
-                            code: 2717,
-                        }
+                    let (start, end, code) = if d.member.is_some() {
+                        (
+                            hir[d.member].pos,
+                            self.end_of_member_name(file, d.member),
+                            2717,
+                        )
                     } else {
-                        Diagnostic {
-                            start: hir[hir[d.param].pat].pos,
-                            code: 2403,
-                        }
+                        let name = hir[d.param].pat;
+                        (hir[name].pos, self.end_of_pat(file, name), 2403)
+                    };
+                    out.push(Diagnostic { start, code });
+                    self.explain_to(start, end, code, |c| {
+                        vec![
+                            c.source_text(file, start, end),
+                            c.type_to_string(of_symbol),
+                            c.type_to_string(again),
+                        ]
                     });
                 }
             }
@@ -871,10 +896,15 @@ impl Checker<'_> {
             _ => false,
         };
         if is_in_place && self.flags_of_alias_target(sym).intersects(excluded) {
-            out.push(Diagnostic {
-                start: start.unwrap_or(hir.stmts[statement].pos),
-                code: 2440,
-            });
+            let start = start.unwrap_or(hir.stmts[statement].pos);
+            out.push(Diagnostic { start, code: 2440 });
+            let end = match decl {
+                Decl::ImportDefault(i) => end_of_import_clause(self, file, i),
+                Decl::ImportSpec(s) => self.end_of_import_spec(file, s),
+                Decl::ImportEquals(_) => self.end_of_stmt(file, StmtId(statement as u32)),
+                _ => 0,
+            };
+            self.explain_to(start, end, 2440, |c| vec![c.symbol_to_string(sym)]);
         }
     }
 
@@ -993,10 +1023,10 @@ impl Checker<'_> {
             // `isConstructorType`
             let apparent = self.apparent_type(base);
             if self.signatures(apparent, true).is_empty() {
-                out.push(Diagnostic {
-                    start: self.start_of(file, extends),
-                    code: 2507,
-                });
+                let start = self.start_of(file, extends);
+                out.push(Diagnostic { start, code: 2507 });
+                let end = self.end_of_expr(file, extends);
+                self.explain_to(start, end, 2507, |c| vec![c.type_to_string(base)]);
             }
         }
     }
@@ -1023,7 +1053,7 @@ impl Checker<'_> {
                 continue;
             }
             self.collect_index_signatures(file, members, is_class, &mut seen);
-            Self::report_duplicate_index_signatures(file, &mut seen, out);
+            self.report_duplicate_index_signatures(file, &mut seen, out);
         }
     }
 
@@ -1043,7 +1073,7 @@ impl Checker<'_> {
             };
             self.collect_index_signatures(of, members, is_class, &mut seen);
         }
-        Self::report_duplicate_index_signatures(file, &mut seen, out);
+        self.report_duplicate_index_signatures(file, &mut seen, out);
     }
 
     /// `getIndexSymbol`: adds the index signatures among `members` to `seen`, which has where they are by the type of the key. A key
@@ -1053,7 +1083,7 @@ impl Checker<'_> {
         file: FileId,
         members: Span<MemberId>,
         is_class: bool,
-        seen: &mut Vec<(TypeId, Vec<(FileId, u32)>)>,
+        seen: &mut Vec<(TypeId, Vec<(FileId, MemberId)>)>,
     ) {
         let hir = self.hir(file);
         for m in members.iter() {
@@ -1078,8 +1108,8 @@ impl Checker<'_> {
                     continue;
                 }
                 match seen.iter_mut().find(|s| s.0 == key) {
-                    Some(entry) => entry.1.push((file, member.pos)),
-                    None => seen.push((key, vec![(file, member.pos)])),
+                    Some(entry) => entry.1.push((file, m)),
+                    None => seen.push((key, vec![(file, m)])),
                 }
             }
         }
@@ -1087,23 +1117,41 @@ impl Checker<'_> {
 
     /// 2374 at each index signature of `file` whose key another of those in `seen` has too. Empties `seen`.
     fn report_duplicate_index_signatures(
+        &mut self,
         file: FileId,
-        seen: &mut Vec<(TypeId, Vec<(FileId, u32)>)>,
+        seen: &mut Vec<(TypeId, Vec<(FileId, MemberId)>)>,
         out: &mut Vec<Diagnostic>,
     ) {
-        for (_, places) in seen.drain(..) {
+        let hir = self.hir(file);
+        for (key, places) in seen.drain(..) {
             if places.len() > 1 {
-                out.extend(
-                    places
-                        .into_iter()
-                        .filter(|place| place.0 == file)
-                        .map(|place| Diagnostic {
-                            start: place.1,
-                            code: 2374,
-                        }),
-                );
+                for (_, m) in places.into_iter().filter(|place| place.0 == file) {
+                    let start = hir[m].pos;
+                    out.push(Diagnostic { start, code: 2374 });
+                    let end = self.end_of_member(file, m);
+                    self.explain_to(start, end, 2374, |c| vec![c.type_to_string(key)]);
+                }
             }
         }
+    }
+}
+
+/// `node.End()` of the import clause of `import`, which has a default import: that, and the `{ .. }` or `* as ns` after it.
+fn end_of_import_clause(c: &Checker<'_>, file: FileId, import: ImportId) -> u32 {
+    let hir = c.hir(file);
+    let name_end = c.end_of_name_at(file, hir[import].default_pos);
+    if hir[import].namespace.is_some() {
+        return c.end_of_name_at(file, hir[import].namespace_pos);
+    }
+    let rest = hir.text.get(name_end as usize..).unwrap_or_default();
+    let Some(after_comma) = rest.trim_ascii_start().strip_prefix(b",") else {
+        return name_end;
+    };
+    let braces = after_comma.trim_ascii_start();
+    if braces.starts_with(b"{") {
+        c.end_of_bracket_at(file, (hir.text.len() - braces.len()) as u32)
+    } else {
+        name_end
     }
 }
 

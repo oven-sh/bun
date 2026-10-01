@@ -7,7 +7,9 @@
 //! Nothing here allocates per node: one list of diagnostics is handed down, the arenas are gone through by index, and a
 //! diagnostic is a place and a number until somebody wants to read it.
 
+use super::errors_modules::fully_qualified_name;
 use super::errors_order::Named;
+use super::errors_x_modules::suggested_import_extension;
 use super::errors_x_statements::{is_said_by_the_binder, is_said_by_the_parser};
 use super::*;
 use crate::bind::{
@@ -54,6 +56,11 @@ impl Checker<'_> {
             .iter()
             .map(|&(start, code)| Diagnostic { start, code })
             .partition(|d| is_syntactic_early_error(hir, d.start, d.code));
+        if self.explains {
+            for &(start, code) in &hir.early_errors {
+                explain_early_error(self, file, start, code);
+            }
+        }
         // `hasParseDiagnostics`: in a file with parser or scanner errors, `grammarErrorOnNode` and its like report nothing, and neither do
         // the binder's `checkContextualIdentifier` and `checkPrivateIdentifier`. Early errors with their codes are dropped as well.
         // Errors the checker reports with a plain `error` stay.
@@ -153,6 +160,14 @@ impl Checker<'_> {
         // `checkWithStatement`, `checkReturnStatement`, `checkExportAssignment`: what they never look at is taken back, whoever said it.
         pass!(check_x_statements);
         pass!(take_back_export_assignments_in_namespaces);
+        // These name a type, which is not asked for before everything has been checked.
+        if self.explains {
+            for &(start, code) in &hir.early_errors {
+                if matches!(code, 17019 | 17020) {
+                    explain_jsdoc_nullable_type(self, file, start, code);
+                }
+            }
+        }
         if has_parse_diagnostics {
             // `bindNamespaceExportDeclaration` reports 1184 whether or not the file parses.
             out.retain(|d| {
@@ -299,6 +314,7 @@ impl Checker<'_> {
                 out.push(Diagnostic { start, code: 1262 });
             } else if can_await || matches!(around, Parent::None) {
                 out.push(Diagnostic { start, code: 1359 });
+                self.note(start, 0, 1359, vec![word_at(self, file, start)]);
             }
             return;
         }
@@ -312,6 +328,7 @@ impl Checker<'_> {
             1212
         };
         out.push(Diagnostic { start, code });
+        self.note(start, 0, code, vec![word_at(self, file, start)]);
     }
 
     /// `checkExportAssignment` is done with an `export =` or an `export default` in a namespace (1063 1319) before it gets to the
@@ -447,7 +464,21 @@ impl Checker<'_> {
                 let wanted = self.declared_type(sym);
                 let wanted = self.optional(wanted);
                 let at = self.start_of(file, options);
-                self.check_assignable(file, given, wanted, at, ExprId::NONE, 2322, out);
+                let end = if self.explains {
+                    self.end_of_expr(file, options)
+                } else {
+                    0
+                };
+                self.check_assignable_with_end(
+                    file,
+                    given,
+                    wanted,
+                    at,
+                    end,
+                    ExprId::NONE,
+                    2322,
+                    out,
+                );
             }
         }
         // `checkImportCallExpression`: 2880 at the first `assert: ..` of an options object literal, with or without a global
@@ -583,6 +614,19 @@ impl Checker<'_> {
                     (import.default_pos, 2613)
                 };
                 out.push(Diagnostic { start, code });
+                let end = if code == 2613 {
+                    end_of_import_clause(self, file, import)
+                } else {
+                    0
+                };
+                let local = import.default;
+                self.explain_to(start, end, code, |c| {
+                    let mut arguments = vec![c.symbol_to_string(module)];
+                    if code == 2613 {
+                        arguments.push(c.atom_text(local));
+                    }
+                    arguments
+                });
             }
             for s in import.named.iter() {
                 self.check_imported_name(
@@ -590,6 +634,7 @@ impl Checker<'_> {
                     usage,
                     module,
                     target,
+                    import.spec,
                     hir[s].imported,
                     hir[s].imported_pos,
                     out,
@@ -617,6 +662,7 @@ impl Checker<'_> {
                     usage,
                     module,
                     target,
+                    export.spec,
                     hir[s].local,
                     hir[s].local_pos,
                     out,
@@ -669,11 +715,11 @@ impl Checker<'_> {
             {
                 continue;
             }
-            let code = self.not_found(file, scope, name, all);
+            let code = self.not_found(file, scope, name, all, start);
             out.push(Diagnostic { start, code });
             // `markIdentifierAliasReferenced`: what is kept is looked up once more, as a value.
             if is_marked && !type_only {
-                let code = self.not_found(file, scope, name, SymFlags::VALUE);
+                let code = self.not_found(file, scope, name, SymFlags::VALUE, start);
                 out.push(Diagnostic { start, code });
             }
         }
@@ -812,13 +858,15 @@ impl Checker<'_> {
 
     /// `getExternalModuleMember`, and `getTargetOfModuleDefault` for `default`: `name`, written at `start` in `from`, is imported from
     /// `module`. `usage`: the syntax the specifier is emitted as (`getEmitSyntaxForModuleSpecifierExpression`). `target`: the value
-    /// `module` exports with `export =`, or else `module`.
+    /// `module` exports with `export =`, or else `module`. `spec`: the specifier `module` is imported by.
+    #[allow(clippy::too_many_arguments)]
     fn check_imported_name(
         &mut self,
         from: FileId,
         usage: ResolutionMode,
         module: Sym,
         target: Sym,
+        spec: Atom,
         name: Atom,
         start: u32,
         out: &mut Vec<Diagnostic>,
@@ -845,15 +893,30 @@ impl Checker<'_> {
             self.value_has_declared_property(target, name)
         };
         if is_there == Some(false) {
-            out.push(Diagnostic {
-                start,
-                code: self.why_no_module_member(from, module, target, name, start),
+            let (code, other) = self.why_no_module_member(from, module, target, name, start);
+            out.push(Diagnostic { start, code });
+            self.explain(start, code, |c| {
+                let module_name = module_name_as_imported(c, module, spec);
+                // `DeclarationNameToString`: a string is written with its quotes.
+                let name = match c.hir(from).text.get(start as usize) {
+                    Some(b'"' | b'\'') => word_at(c, from, start),
+                    _ => c.atom_text(name),
+                };
+                match code {
+                    2460 | 2724 => {
+                        let other = other.map_or_else(String::new, |s| c.symbol_to_string(s));
+                        vec![module_name, name, other]
+                    }
+                    2595 | 2597 => vec![name],
+                    2616 => vec![name.clone(), name, module_name],
+                    _ => vec![module_name, name],
+                }
             });
         }
     }
 
     /// `errorNoModuleMemberSymbol`, `reportNonExportedMember`, `reportInvalidImportEqualsExportMember`. The arguments are those of
-    /// `check_imported_name`.
+    /// `check_imported_name`. With 2724 comes what may have been meant, with 2460 what the name is exported as.
     fn why_no_module_member(
         &self,
         from: FileId,
@@ -861,7 +924,7 @@ impl Checker<'_> {
         target: Sym,
         name: Atom,
         start: u32,
-    ) -> u32 {
+    ) -> (u32, Option<Sym>) {
         let files = self.files();
         let text = files.atoms.bytes(name);
         // `getSuggestedSymbolForNonexistentModule`: for a name, not for a string, and only what a module declares (`SymbolFlagsModuleMember`).
@@ -884,10 +947,17 @@ impl Checker<'_> {
                 files.flags(s).intersects(module_member) && is_close(text, files.atoms.bytes(other))
             })
         {
-            return 2724;
+            let candidates = exports
+                .iter()
+                .filter(|&&(_, s)| files.flags(s).intersects(module_member))
+                .map(|&(other, s)| (files.atoms.bytes(other), Meant::Symbol(s)));
+            return match closest(self, text, candidates) {
+                Some(Meant::Symbol(meant)) => (2724, Some(meant)),
+                _ => (2724, None),
+            };
         }
         if files.export(module, known::default).is_some() {
-            return 2614;
+            return (2614, None);
         }
         // What the file, or the first `declare module "m"`, declares for itself.
         let local = files.decls(module).first().and_then(|&(of, decl)| {
@@ -904,15 +974,16 @@ impl Checker<'_> {
                 .lookup(bound.scopes[scope].locals, name)
                 .map(|id| files.sym(of, id))
         });
-        let Some(local) = local else { return 2305 };
+        let Some(local) = local else {
+            return (2305, None);
+        };
         // `getSymbolIfSameReference`
         let local = files.resolve_alias(local);
         let own = files.exports(module);
         let Some(equals) = files.export(module, known::export_equals) else {
-            return if own.iter().any(|&(_, e)| files.resolve_alias(e) == local) {
-                2460
-            } else {
-                2459
+            return match own.iter().find(|&&(_, e)| files.resolve_alias(e) == local) {
+                Some(&(_, exported)) => (2460, Some(exported)),
+                None => (2459, None),
             };
         };
         // `bindCommonJSTypeExports`: next to types or namespaces that are exported, `export =` is a namespace of them besides, and no
@@ -923,15 +994,17 @@ impl Checker<'_> {
                     .flags(s)
                     .intersects(SymFlags::TYPE | SymFlags::NAMESPACE)
         });
-        if local.is_none() || is_more_than_an_alias || files.resolve_alias(equals) != local {
-            2305
-        } else if files.options.module >= crate::resolve::ModuleKind::Es2015 {
-            2595
-        } else if self.hir(from).is_js {
-            2597
-        } else {
-            2616
-        }
+        let code =
+            if local.is_none() || is_more_than_an_alias || files.resolve_alias(equals) != local {
+                2305
+            } else if files.options.module >= crate::resolve::ModuleKind::Es2015 {
+                2595
+            } else if self.hir(from).is_js {
+                2597
+            } else {
+                2616
+            };
+        (code, None)
     }
 
     /// `resolveExternalModule`. `kind` is `None` for `import()` and `Require` for a `require()` call too. `mode`: the way the specifier is
@@ -945,7 +1018,7 @@ impl Checker<'_> {
         mode: ResolutionMode,
         out: &mut Vec<Diagnostic>,
     ) {
-        let options = &self.p.files.options;
+        let options = &self.files().options;
         let is_side_effect = kind == Some(SpecifierKind::SideEffect);
         if is_side_effect && !options.no_unchecked_side_effect_imports {
             return;
@@ -953,6 +1026,10 @@ impl Checker<'_> {
         // Reported before the module is looked up, found or not.
         if self.files().atoms.bytes(spec).starts_with(b"@types/") {
             out.push(Diagnostic { start, code: 6137 });
+            self.explain(start, 6137, |c| {
+                let text = c.atom_text(spec);
+                vec![text["@types/".len()..].to_owned(), text]
+            });
         }
         let module = self.files().module(file);
         let is_jsx_set = options.jsx != crate::resolve::JsxEmit::None;
@@ -968,6 +1045,7 @@ impl Checker<'_> {
             let is_refused = !is_jsx_set && (is_jsx_file || path.ends_with(".tsx"));
             if is_refused {
                 out.push(Diagnostic { start, code: 6142 });
+                self.explain(start, 6142, |c| vec![c.atom_text(spec), path.clone()]);
             }
             // The file is not a module. The loader reads a refused `.tsx` file for the import, which tsc does not do, so that file only
             // counts if it is a root file. A refused `.jsx` file is linked only if the program has it for another reason.
@@ -976,6 +1054,7 @@ impl Checker<'_> {
                 && (!is_refused || is_jsx_file || options.files.contains(path))
             {
                 out.push(Diagnostic { start, code: 2306 });
+                self.explain(start, 2306, |_| vec![path.clone()]);
             }
             return;
         }
@@ -985,6 +1064,7 @@ impl Checker<'_> {
         // `GetResolutionDiagnostic`, `needAllowArbitraryExtensions`
         if module.arbitrary_extension_imports.contains(&(spec, mode)) {
             out.push(Diagnostic { start, code: 6263 });
+            self.explain(start, 6263, |c| vec![c.atom_text(spec)]);
             return;
         }
         // The specifier resolves to JavaScript that is not in the program.
@@ -992,9 +1072,11 @@ impl Checker<'_> {
             // `GetResolutionDiagnostic`: a `.jsx` file needs `jsx` before anything else.
             if !is_jsx_set && module.jsx_imports.contains(&(spec, mode)) {
                 out.push(Diagnostic { start, code: 6142 });
+                self.explain(start, 6142, |c| vec![c.atom_text(spec)]);
             // `errorOnImplicitAnyModule`
             } else if options.no_implicit_any && !is_side_effect {
                 out.push(Diagnostic { start, code: 7016 });
+                self.explain(start, 7016, |c| vec![c.atom_text(spec)]);
             }
             return;
         }
@@ -1026,6 +1108,17 @@ impl Checker<'_> {
             2307
         };
         out.push(Diagnostic { start, code });
+        match code {
+            2580 | 2591 | 2732 => self.explain(start, code, |c| vec![c.atom_text(spec)]),
+            2835 => self.explain(start, code, |c| {
+                let (files, text) = (c.files(), c.atom_text(spec));
+                match suggested_import_extension(files, &files.module(file).path, &text) {
+                    Some(extension) => vec![text + extension],
+                    None => Vec::new(),
+                }
+            }),
+            _ => {}
+        }
     }
 
     /// `getModeForUsageLocation` for the argument of `require(spec)`: CommonJS. Falls back to the first mode the loader resolved `spec`
@@ -1097,6 +1190,7 @@ impl Checker<'_> {
                 ResolutionMode::Require,
                 module,
                 target,
+                spec,
                 name,
                 start,
                 out,
@@ -1459,6 +1553,12 @@ impl Checker<'_> {
                         start: member.pos,
                         code: 2564,
                     });
+                    if matches!(member.key, PropKey::Computed(_)) {
+                        let (start, end) = (member.pos, self.end_of_member_name(file, m));
+                        self.explain_to(start, end, 2564, |c| {
+                            vec![c.source_text(file, start, end)]
+                        });
+                    }
                 }
             }
         }
@@ -1587,7 +1687,7 @@ impl Checker<'_> {
             {
                 continue;
             }
-            let code = self.why_no_value(file, Some(e), scope, name);
+            let code = self.why_no_value(file, Some(e), scope, name, hir[e].pos);
             out.push(Diagnostic {
                 start: hir[e].pos,
                 code,
@@ -1616,7 +1716,7 @@ impl Checker<'_> {
             {
                 continue;
             }
-            let code = self.why_no_value(file, Some(e), scope, name);
+            let code = self.why_no_value(file, Some(e), scope, name, hir[e].pos);
             out.push(Diagnostic {
                 start: hir[e].pos,
                 code,
@@ -1663,7 +1763,7 @@ impl Checker<'_> {
                 {
                     2840
                 } else {
-                    self.why_no_type(file, scope, first)
+                    self.why_no_type(file, scope, first, start)
                 };
                 out.push(Diagnostic { start, code });
             }
@@ -1690,7 +1790,7 @@ impl Checker<'_> {
                             _ => b"bigint",
                         };
                         let name = self.files().atoms.intern(text);
-                        self.why_no_type(file, scope, name)
+                        self.why_no_type(file, scope, name, hir[node].pos)
                     }
                     _ => continue,
                 };
@@ -1793,7 +1893,7 @@ impl Checker<'_> {
                     .resolve_name(file, scope, names[0], SymFlags::VALUE)
                     .is_none()
             {
-                let code = self.why_no_value(file, None, scope, names[0]);
+                let code = self.why_no_value(file, None, scope, names[0], start);
                 out.push(Diagnostic { start, code });
             }
         }
@@ -1847,6 +1947,27 @@ impl Checker<'_> {
             _ => 2503,
         };
         out.push(Diagnostic { start, code });
+        match code {
+            // It is said of the `QualifiedName` the first two names make.
+            2713 => {
+                let (text, atoms) = (&self.hir(file).text, &self.files().atoms);
+                let property = names[1];
+                let dot = skip_trivia(text, start as usize + atoms.bytes(first).len());
+                let end = if text.get(dot) == Some(&b'.') {
+                    (skip_trivia(text, dot + 1) + atoms.bytes(property).len()) as u32
+                } else {
+                    0
+                };
+                self.explain_to(start, end, code, |c| {
+                    vec![c.atom_text(first), c.atom_text(property)]
+                });
+            }
+            2833 => self.explain(start, code, |c| {
+                let meant = name_meant(c, file, scope, first, SymFlags::NAMESPACE);
+                vec![c.atom_text(first), meant]
+            }),
+            _ => {}
+        }
     }
 
     /// `getTypeFromImportTypeNode`: 2694, each name after `import("m")` has to be there.
@@ -1926,6 +2047,8 @@ impl Checker<'_> {
             } else {
                 SymFlags::NAMESPACE
             };
+            // `currentNamespace`, as long as it is a symbol here.
+            let namespace = ty.is_none().then_some(sym);
             // `getSymbol`, `symbolIsValueEx`: an alias is what it stands for, be it exported as a type only.
             let exported = match if ty.is_none() {
                 self.files().namespace_member(sym, n)
@@ -1972,6 +2095,11 @@ impl Checker<'_> {
                     start: at as u32,
                     code: 2694,
                 });
+                if let Some(namespace) = namespace {
+                    self.explain(at as u32, 2694, |c| {
+                        vec![fully_qualified_name(c, namespace), c.atom_text(n)]
+                    });
+                }
                 return;
             }
             at += written.len();
@@ -2079,6 +2207,8 @@ impl Checker<'_> {
                 start: hir.types[i].pos,
                 code,
             });
+            let end = self.end_of_type_node(file, TypeNodeId(i as u32));
+            explain_type_argument_count(self, hir.types[i].pos, end, code, sym);
         }
         // `resolveBaseTypesOfClass`: what a class extends, if that is a class, is read like a reference to its type.
         for c in 0..hir.classes.len() {
@@ -2116,10 +2246,10 @@ impl Checker<'_> {
                     2707 if hir.is_js => 8027,
                     code => code,
                 };
-                out.push(Diagnostic {
-                    start: self.start_of(file, class.extends),
-                    code,
-                });
+                let start = self.start_of(file, class.extends);
+                out.push(Diagnostic { start, code });
+                let end = end_of_extends(self, file, class);
+                explain_type_argument_count(self, start, end, code, base);
             }
         }
     }
@@ -2141,7 +2271,11 @@ impl Checker<'_> {
 
     /// `getDeclaredTypeOfTypeAlias`: an alias that circularly references itself (2456) never gets its type parameters, so
     /// `getTypeFromTypeAliasReference` takes it for one that is not generic: 2315 with type arguments, nothing without.
-    fn recount_type_arguments_of_circular_aliases(&self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn recount_type_arguments_of_circular_aliases(
+        &mut self,
+        file: FileId,
+        out: &mut Vec<Diagnostic>,
+    ) {
         if !out.iter().any(|d| d.code == 2456) {
             return;
         }
@@ -2183,17 +2317,28 @@ impl Checker<'_> {
                     start: node.pos,
                     code: 2315,
                 });
+                if let Some(sym) = found {
+                    let end = self.end_of_type_node(file, TypeNodeId(i as u32));
+                    explain_type_argument_count(self, node.pos, end, 2315, sym);
+                }
             }
         }
     }
 
     /// `onFailedToResolveSymbol`: `name` is written where a value goes and no value goes by it. `e`: the identifier, if it is an
-    /// expression, which the first name of `import a = b.c` is not.
-    fn why_no_value(&mut self, file: FileId, e: Option<ExprId>, scope: ScopeId, name: Atom) -> u32 {
+    /// expression, which the first name of `import a = b.c` is not. `start`: where it is written.
+    fn why_no_value(
+        &mut self,
+        file: FileId,
+        e: Option<ExprId>,
+        scope: ScopeId,
+        name: Atom,
+        start: u32,
+    ) -> u32 {
         if let Some(code) = self.what_is_there_instead_of_a_value(file, e, scope, name) {
             return code;
         }
-        let code = self.not_found(file, scope, name, SymFlags::VALUE);
+        let code = self.not_found(file, scope, name, SymFlags::VALUE, start);
         // `getCannotFindNameDiagnosticForName`: `await(x)` and `f(await)` were meant to await. Parentheses around the name come between
         // it and the call.
         if code == 2304
@@ -2242,7 +2387,23 @@ impl Checker<'_> {
         {
             return Some(code);
         }
-        if e.is_some_and(|e| self.is_extending_interface(file, e)) {
+        if let Some(e) = e
+            && self.is_extending_interface(file, e)
+        {
+            let start = self.hir(file)[e].pos;
+            self.explain(start, 2689, |c| {
+                // `getEntityNameForExtendingInterface`
+                let (hir, bound) = (c.hir(file), c.bound(file));
+                let mut top = e;
+                while let Parent::Expr(p) = bound.expr_parent[top.idx()]
+                    && p.is_some()
+                    && matches!(hir[p].kind, ExprKind::Dot { .. })
+                {
+                    top = p;
+                }
+                let (from, to) = (c.start_of(file, top), c.end_of_expr(file, top));
+                vec![c.source_text(file, from, to)]
+            });
             return Some(2689);
         }
         if self
@@ -2426,8 +2587,8 @@ impl Checker<'_> {
         }
     }
 
-    /// `name` is written where a type goes and no type goes by it.
-    fn why_no_type(&mut self, file: FileId, scope: ScopeId, name: Atom) -> u32 {
+    /// `name` is written at `start`, where a type goes, and no type goes by it.
+    fn why_no_type(&mut self, file: FileId, scope: ScopeId, name: Atom, start: u32) -> u32 {
         if self
             .files()
             .resolve_name(file, scope, name, SymFlags::MODULE)
@@ -2444,7 +2605,7 @@ impl Checker<'_> {
                 return 2749;
             }
         }
-        self.not_found(file, scope, name, SymFlags::TYPE)
+        self.not_found(file, scope, name, SymFlags::TYPE, start)
     }
 
     /// `getSymbolFlags`. Of an alias that leads nowhere, nothing.
@@ -2457,11 +2618,23 @@ impl Checker<'_> {
         }
     }
 
-    fn not_found(&mut self, file: FileId, scope: ScopeId, name: Atom, meaning: SymFlags) -> u32 {
+    /// `start`: where `name` is written, which is where the error goes.
+    fn not_found(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        name: Atom,
+        meaning: SymFlags,
+        start: u32,
+    ) -> u32 {
         let text = self.files().atoms.bytes(name);
         if !is_name_of_a_library_feature(text)
             && self.is_something_similar_in_scope(file, scope, name, meaning)
         {
+            self.explain(start, 2552, |c| {
+                let meant = name_meant(c, file, scope, name, meaning);
+                vec![c.atom_text(name), meant]
+            });
             return 2552;
         }
         // `getCannotFindNameDiagnosticForName`. `UsesWildcardTypes`: there is nothing to add to `types` then.
@@ -2472,7 +2645,7 @@ impl Checker<'_> {
             .types
             .as_ref()
             .is_some_and(|t| t.iter().any(|t| t == "*"));
-        match text {
+        let code = match text {
             b"document" | b"console" => 2584,
             b"$" => {
                 if takes_all_types {
@@ -2520,7 +2693,17 @@ impl Checker<'_> {
             | b"BigInt64Array"
             | b"BigUint64Array" => 2583,
             _ => 2304,
+        };
+        if code != 2304 {
+            self.explain(start, code, |c| {
+                let mut arguments = vec![c.atom_text(name)];
+                if code == 2583 {
+                    arguments.push(library_of_feature(text).to_owned());
+                }
+                arguments
+            });
         }
+        code
     }
 
     /// `getPropertyOfType`: whether `ty` has a property `name`, what every function and every object has included. What an index
@@ -2638,6 +2821,9 @@ impl Checker<'_> {
                 let class = self.files().sym(file, bound.class_symbol[c.idx()]);
                 let constructor = self.type_of_symbol(class);
                 if self.has_property(constructor, name) {
+                    self.explain(hir[e].pos, 2662, |c| {
+                        vec![c.atom_text(name), c.symbol_to_string(class)]
+                    });
                     return Some(2662);
                 }
                 if !past_this && member.is_some_and(|m| !hir[m].flags.contains(Flags::STATIC)) {
@@ -2990,6 +3176,782 @@ fn edit_distance_within(a: &[u8], b: &[u8], max: f32) -> bool {
     rows[a.len() % 2][b.len()] <= max
 }
 
+// ───────────────────────────── what goes into the messages ─────────────────────────────
+
+/// `DeclarationNameToString`, `TokenText`: the name or the word written at `start`.
+fn word_at(c: &Checker<'_>, file: FileId, start: u32) -> String {
+    c.source_text(file, start, c.end_of_name_at(file, start))
+}
+
+/// What may have been meant by a name that nothing goes by.
+#[derive(Copy, Clone)]
+enum Meant {
+    Symbol(Sym),
+    /// What has no declaration: the name of a primitive type, `undefined`, `globalThis`.
+    Word(&'static str),
+}
+
+/// What `levenshteinWithMax` measures: changing a letter costs two, and changing its case next to nothing.
+fn spelling_distance(a: &[u8], b: &[u8]) -> f64 {
+    let mut previous: Vec<f64> = (0..=b.len()).map(|j| j as f64).collect();
+    let mut current = vec![0.0; b.len() + 1];
+    for (i, x) in a.iter().enumerate() {
+        current[0] = (i + 1) as f64;
+        for (j, y) in b.iter().enumerate() {
+            current[j + 1] = if x == y {
+                previous[j]
+            } else {
+                let change = previous[j] + if x.eq_ignore_ascii_case(y) { 0.1 } else { 2.0 };
+                (previous[j + 1] + 1.0).min(current[j] + 1.0).min(change)
+            };
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    previous[b.len()]
+}
+
+/// Where the first declaration of `sym` is: the libraries first, then by file, then by position. `compareSymbols`, `compareNodes`
+fn place_of_first_declaration(c: &Checker<'_>, sym: Sym) -> Option<(bool, FileId, u32)> {
+    let (file, decl) = c.files().decls(sym).first().copied()?;
+    let hir = c.hir(file);
+    let pos = match decl {
+        Decl::Var(p) | Decl::Param(p) | Decl::Require(p) => hir[p].pos,
+        Decl::Fn(f) => hir[f].pos,
+        Decl::Class(x) => hir[x].pos,
+        Decl::Interface(i) => hir[i].name_pos,
+        Decl::Alias(a) => hir[a].name_pos,
+        Decl::Enum(e) => hir[e].name_pos,
+        Decl::EnumMember(m) => hir[m].pos,
+        Decl::Module(m) => hir[m].name_pos,
+        Decl::TypeParam(t) => hir[t].pos,
+        Decl::ImportDefault(i) => hir[i].default_pos,
+        Decl::ImportNamespace(i) => hir[i].namespace_pos,
+        Decl::ImportSpec(s) => hir[s].pos,
+        Decl::ImportEquals(i) => hir[i].name_pos,
+        Decl::ExportSpec(s) => hir[s].pos,
+        Decl::ExportStarAs(s) | Decl::ExportExpr(s) | Decl::UmdGlobal(s) => hir[s].pos,
+        Decl::ModuleExports(e) | Decl::ExportsProperty(e) => hir[e].pos,
+        _ => 0,
+    };
+    Some((!c.files().module(file).is_lib, file, pos))
+}
+
+/// `GetSpellingSuggestion`: which of `candidates` is closest to `name`, of those that are close. Of two that are as close, the one
+/// declared first (`compareSymbols`).
+fn closest<'a>(
+    c: &Checker<'_>,
+    name: &[u8],
+    candidates: impl Iterator<Item = (&'a [u8], Meant)>,
+) -> Option<Meant> {
+    let mut best: Option<(f64, Option<(bool, FileId, u32)>, &'a [u8], Meant)> = None;
+    for (text, meant) in candidates {
+        if !is_close(name, text) {
+            continue;
+        }
+        let distance = spelling_distance(name, text);
+        let place = match meant {
+            Meant::Symbol(sym) => place_of_first_declaration(c, sym),
+            Meant::Word(_) => None,
+        };
+        let is_better = best.is_none_or(|(least, first, first_text, _)| {
+            distance
+                .total_cmp(&least)
+                .then_with(|| match (place, first) {
+                    (Some(place), Some(first)) => place.cmp(&first),
+                    _ => first.is_some().cmp(&place.is_some()),
+                })
+                .then_with(|| text.cmp(first_text))
+                .is_lt()
+        });
+        if is_better {
+            best = Some((distance, place, text, meant));
+        }
+    }
+    best.map(|best| best.3)
+}
+
+/// `getSuggestedSymbolForNonexistentSymbol`: what `is_something_similar_in_scope` comes upon. Each table is looked into on its own
+/// (`getSuggestionForSymbolNameLookup`), and the first that has something close decides.
+fn what_is_similar_in_scope(
+    c: &Checker<'_>,
+    file: FileId,
+    mut scope: ScopeId,
+    name: Atom,
+    meaning: SymFlags,
+) -> Option<Meant> {
+    let (files, bound) = (c.files(), c.bound(file));
+    let text = files.atoms.bytes(name);
+    let fits = |candidate: Atom, sym: Sym| {
+        let flags = files.flags(sym);
+        is_close(text, files.atoms.bytes(candidate))
+            && (flags.intersects(meaning)
+                || (flags.contains(SymFlags::ALIAS) && c.resolved_flags(sym).intersects(meaning)))
+    };
+    while scope.is_some() {
+        let s = &bound.scopes[scope.idx()];
+        let exports = if s.symbol.is_some() {
+            bound.symbols[s.symbol.idx()].exports
+        } else {
+            TableId::NONE
+        };
+        for table in [s.locals, exports] {
+            let candidates = bound
+                .table(table)
+                .iter()
+                .map(|&(candidate, id)| (candidate, files.sym(file, id)))
+                .filter(|&(candidate, sym)| fits(candidate, sym))
+                .map(|(candidate, sym)| (files.atoms.bytes(candidate), Meant::Symbol(sym)));
+            if let Some(meant) = closest(c, text, candidates) {
+                return Some(meant);
+            }
+        }
+        scope = s.parent;
+    }
+    // `getPrimitiveTypeAliasSuggestions`, `undefinedSymbol` and `globalThisSymbol` are looked into together with `globals`.
+    let primitives: [(&'static str, Atom); 6] = [
+        ("string", known::String),
+        ("number", known::Number),
+        ("boolean", known::Boolean),
+        ("object", known::Object),
+        ("bigint", known::BigInt),
+        ("symbol", known::Symbol),
+    ];
+    let words = primitives
+        .into_iter()
+        .filter(|&(_, wrapper)| {
+            meaning.intersects(SymFlags::TYPE_ALIAS) && files.globals.contains_key(&wrapper)
+        })
+        .map(|(primitive, _)| primitive)
+        .chain(
+            meaning
+                .intersects(SymFlags::VARIABLE)
+                .then_some("undefined"),
+        )
+        .chain(meaning.intersects(SymFlags::MODULE).then_some("globalThis"))
+        .map(|word| (word.as_bytes(), Meant::Word(word)));
+    let globals = files
+        .globals
+        .iter()
+        .filter(|&(&candidate, &sym)| fits(candidate, sym))
+        .map(|(&candidate, &sym)| (files.atoms.bytes(candidate), Meant::Symbol(sym)));
+    closest(c, text, globals.chain(words))
+}
+
+/// `symbolToString` of `getSuggestedSymbolForNonexistentSymbol`: the name that may have been meant by `name`, which nothing that is a
+/// `meaning` goes by in `scope`. Empty if nothing is close.
+pub(super) fn name_meant(
+    c: &mut Checker<'_>,
+    file: FileId,
+    scope: ScopeId,
+    name: Atom,
+    meaning: SymFlags,
+) -> String {
+    match what_is_similar_in_scope(c, file, scope, name, meaning) {
+        Some(Meant::Symbol(sym)) => c.symbol_to_string(sym),
+        Some(Meant::Word(word)) => word.to_owned(),
+        None => String::new(),
+    }
+}
+
+/// `getSuggestedLibForNonExistentName`: the library of the first entry of `getFeatureMap`, for the names 2583 is said of.
+fn library_of_feature(name: &[u8]) -> &'static str {
+    match name {
+        b"SharedArrayBuffer" | b"Atomics" => "es2017",
+        b"AsyncIterable"
+        | b"AsyncIterableIterator"
+        | b"AsyncGenerator"
+        | b"AsyncGeneratorFunction" => "es2018",
+        b"BigInt" | b"BigInt64Array" | b"BigUint64Array" => "es2020",
+        _ => "es2015",
+    }
+}
+
+/// `getFullyQualifiedName` of `module`, seen from an import of it. `getSpecifierForModuleSymbol`: a file goes by a specifier that
+/// leads to it from there, for which `spec`, the one that is written, is taken.
+fn module_name_as_imported(c: &mut Checker<'_>, module: Sym, spec: Atom) -> String {
+    let decls = c.files().decls(module);
+    if decls.iter().any(|d| matches!(d.1, Decl::File)) {
+        format!("\"{}\"", c.atom_text(spec))
+    } else {
+        c.symbol_to_string(module)
+    }
+}
+
+/// `node.End()` of the clause of `import a, { b } from "m"`, which has a default name.
+fn end_of_import_clause(c: &Checker<'_>, file: FileId, import: &Import) -> u32 {
+    let text = &c.hir(file).text;
+    let name_end = c.end_of_name_at(file, import.default_pos);
+    let comma = skip_trivia(text, name_end as usize);
+    if text.get(comma) != Some(&b',') {
+        return name_end;
+    }
+    let bindings = skip_trivia(text, comma + 1);
+    match text.get(bindings) {
+        Some(b'{') => c.end_of_bracket_at(file, bindings as u32),
+        Some(b'*') => c.end_of_name_at(file, import.namespace_pos),
+        _ => name_end,
+    }
+}
+
+/// `node.End()` of the `ExpressionWithTypeArguments` that `class` extends. 0: it cannot be told.
+fn end_of_extends(c: &Checker<'_>, file: FileId, class: &Class) -> u32 {
+    if class.extends_args.is_empty() {
+        return c.end_of_expr(file, class.extends);
+    }
+    let text = &c.hir(file).text;
+    let mut at = skip_trivia(text, c.end_of_type_args(file, class.extends_args) as usize);
+    if text.get(at) == Some(&b',') {
+        at = skip_trivia(text, at + 1);
+    }
+    if text.get(at) == Some(&b'>') {
+        at as u32 + 1
+    } else {
+        0
+    }
+}
+
+/// What `getTypeFromClassOrInterfaceReference`, `getTypeFromTypeAliasReference` and `checkNoTypeArguments` say of `sym`. 8026 and 8027
+/// are given the arguments of 2314 and 2707, so that their `{0}` is the type.
+fn explain_type_argument_count(c: &mut Checker<'_>, start: u32, end: u32, code: u32, sym: Sym) {
+    c.explain_to(start, end, code, |c| {
+        if code == 2315 {
+            return vec![c.symbol_to_string(sym)];
+        }
+        let flags = c.files().flags(sym);
+        let name = if flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE) {
+            let declared = c.declared_type(sym);
+            // `TypeFormatFlagsWriteArrayAsGenericType`
+            match c.array_element(declared) {
+                Some(element) => {
+                    let (array, element) = (c.symbol_to_string(sym), c.type_to_string(element));
+                    format!("{array}<{element}>")
+                }
+                None => c.type_to_string(declared),
+            }
+        } else {
+            c.symbol_to_string(sym)
+        };
+        let (least, most) = c.type_argument_arity(sym);
+        vec![name, least.to_string(), most.to_string()]
+    });
+}
+
+/// `getPropertyTypeForIndexType`: where `e` is `a[k]`, the 2540 at `at` is said of all of `k`, and names the property as
+/// `symbolToString` does. Of `a.b` it is said of `b`, which is read off the source.
+fn explain_readonly_element(
+    c: &mut Checker<'_>,
+    file: FileId,
+    e: ExprId,
+    at: u32,
+    prop: Option<&Prop>,
+    name: Atom,
+) {
+    let ExprKind::Index { index, .. } = c.hir(file)[e].kind else {
+        return;
+    };
+    let end = error_end_if_read(c, file, index);
+    c.explain_to(at, end, 2540, |c| {
+        vec![match prop {
+            Some(prop) => c.property_to_string(prop),
+            None => c.atom_text(name),
+        }]
+    });
+}
+
+/// `error_end_of`, if it is going to be read.
+fn error_end_if_read(c: &Checker<'_>, file: FileId, e: ExprId) -> u32 {
+    if c.explains {
+        c.error_end_of(file, e)
+    } else {
+        0
+    }
+}
+
+/// `entityNameToString`
+fn entity_name_text(c: &Checker<'_>, file: FileId, e: ExprId) -> String {
+    match c.hir(file)[e].kind {
+        ExprKind::Dot { obj, name, .. } => {
+            format!("{}.{}", entity_name_text(c, file, obj), c.atom_text(name))
+        }
+        ExprKind::Ident(name) => c.atom_text(name),
+        ExprKind::This => "this".to_owned(),
+        _ => String::new(),
+    }
+}
+
+/// `TokenToString` of the operator of `a op b`, or of `a op= b`.
+fn operator_text(op: BinOp, is_assignment: bool) -> String {
+    let text = match op {
+        BinOp::Add => "+",
+        BinOp::Sub => "-",
+        BinOp::Mul => "*",
+        BinOp::Div => "/",
+        BinOp::Rem => "%",
+        BinOp::Pow => "**",
+        BinOp::Shl => "<<",
+        BinOp::Shr => ">>",
+        BinOp::UShr => ">>>",
+        BinOp::BitAnd => "&",
+        BinOp::BitOr => "|",
+        BinOp::BitXor => "^",
+        BinOp::Lt => "<",
+        BinOp::Le => "<=",
+        BinOp::Gt => ">",
+        BinOp::Ge => ">=",
+        BinOp::EqEq => "==",
+        BinOp::NotEq => "!=",
+        BinOp::EqEqEq => "===",
+        BinOp::NotEqEq => "!==",
+        BinOp::In => "in",
+        BinOp::Instanceof => "instanceof",
+        BinOp::And => "&&",
+        BinOp::Or => "||",
+        BinOp::Nullish => "??",
+        BinOp::Comma => ",",
+    };
+    if is_assignment {
+        format!("{text}=")
+    } else {
+        text.to_owned()
+    }
+}
+
+/// What an operator asks of the types of its two operands.
+type Related = fn(&mut Checker<'_>, TypeId, TypeId) -> bool;
+
+/// `bothAreBigIntLike`
+fn both_are_bigint_like(c: &mut Checker<'_>, left: TypeId, right: TypeId) -> bool {
+    c.is_assignable(left, TypeId::BIGINT) && c.is_assignable(right, TypeId::BIGINT)
+}
+
+/// `closeEnoughKind`: what `+` may well take.
+fn may_be_added(c: &mut Checker<'_>, left: TypeId, right: TypeId) -> bool {
+    [left, right].into_iter().all(|t| {
+        c.is_any(t)
+            || t == TypeId::UNKNOWN
+            || c.is_assignable(t, TypeId::NUMBER)
+            || c.is_assignable(t, TypeId::BIGINT)
+            || c.is_assignable(t, TypeId::STRING)
+    })
+}
+
+/// What `<`, `<=`, `>` and `>=` take.
+fn can_be_ordered(c: &mut Checker<'_>, left: TypeId, right: TypeId) -> bool {
+    if c.is_any(left) || c.is_any(right) {
+        return true;
+    }
+    let numeric = c.union(&[TypeId::NUMBER, TypeId::BIGINT]);
+    let (l, r) = (
+        c.is_assignable(left, numeric),
+        c.is_assignable(right, numeric),
+    );
+    l && r || !l && !r && c.are_comparable(left, right)
+}
+
+/// `isTypeEqualityComparableTo`, one way or the other.
+fn can_be_equal(c: &mut Checker<'_>, left: TypeId, right: TypeId) -> bool {
+    let nullable = |t: TypeId| t.is_null() || t.is_undefined();
+    nullable(left) || nullable(right) || c.are_comparable(left, right)
+}
+
+/// `reportOperatorError`, of `e`, which is `a op b` or `a op= b`: what goes with the 2365 or the 2367 at `start`. `left` and `right`:
+/// the types of the operands. `is_related`: what they fail.
+#[allow(clippy::too_many_arguments)]
+fn explain_operator_error(
+    c: &mut Checker<'_>,
+    file: FileId,
+    e: ExprId,
+    op: BinOp,
+    start: u32,
+    code: u32,
+    left: TypeId,
+    right: TypeId,
+    is_related: Option<Related>,
+) {
+    let end = c.end_inside_parentheses(file, e);
+    c.explain_to(start, end, code, |c| {
+        let (mut effective_left, mut effective_right) = (left, right);
+        if let Some(is_related) = is_related {
+            let would_work_with_await = match (c.awaited_no_alias(left), c.awaited_no_alias(right))
+            {
+                (Some(l), Some(r)) if (l, r) != (left, right) => is_related(c, l, r),
+                _ => false,
+            };
+            if !would_work_with_await {
+                // `getBaseTypesIfUnrelated`
+                let (left_base, right_base) = (c.base_of_literal(left), c.base_of_literal(right));
+                if !is_related(c, left_base, right_base) {
+                    (effective_left, effective_right) = (left_base, right_base);
+                }
+            }
+        }
+        let (left, right) = c.type_names_for_error_display(effective_left, effective_right);
+        if code == 2367 {
+            return vec![left, right];
+        }
+        let is_assignment = matches!(c.hir(file)[e].kind, ExprKind::Assign { .. });
+        vec![operator_text(op, is_assignment), left, right]
+    });
+}
+
+/// `GetViableKeywordSuggestions`
+const VIABLE_KEYWORD_SUGGESTIONS: &[&str] = &[
+    "abstract",
+    "accessor",
+    "any",
+    "asserts",
+    "assert",
+    "bigint",
+    "boolean",
+    "break",
+    "case",
+    "catch",
+    "class",
+    "continue",
+    "const",
+    "constructor",
+    "debugger",
+    "declare",
+    "default",
+    "defer",
+    "delete",
+    "else",
+    "enum",
+    "export",
+    "extends",
+    "false",
+    "finally",
+    "for",
+    "from",
+    "function",
+    "get",
+    "immediate",
+    "implements",
+    "import",
+    "infer",
+    "instanceof",
+    "interface",
+    "intrinsic",
+    "keyof",
+    "let",
+    "module",
+    "namespace",
+    "never",
+    "new",
+    "null",
+    "number",
+    "object",
+    "package",
+    "private",
+    "protected",
+    "public",
+    "override",
+    "out",
+    "readonly",
+    "require",
+    "global",
+    "return",
+    "satisfies",
+    "set",
+    "static",
+    "string",
+    "super",
+    "switch",
+    "symbol",
+    "this",
+    "throw",
+    "true",
+    "try",
+    "type",
+    "typeof",
+    "undefined",
+    "unique",
+    "unknown",
+    "using",
+    "var",
+    "void",
+    "while",
+    "with",
+    "yield",
+    "async",
+    "await",
+];
+
+/// The modifiers written right before `at`.
+fn modifiers_before(text: &[u8], at: usize) -> Vec<&[u8]> {
+    let mut found = Vec::new();
+    let mut end = at.min(text.len());
+    loop {
+        end = text[..end].trim_ascii_end().len();
+        let from = text[..end]
+            .iter()
+            .rposition(|b| !b.is_ascii_alphabetic())
+            .map_or(0, |before| before + 1);
+        let is_part_of_a_name = text[..from]
+            .last()
+            .is_some_and(|&b| b.is_ascii_digit() || matches!(b, b'_' | b'$') || b >= 0x80);
+        let is_modifier = matches!(
+            &text[from..end],
+            b"abstract"
+                | b"accessor"
+                | b"async"
+                | b"const"
+                | b"declare"
+                | b"default"
+                | b"export"
+                | b"in"
+                | b"out"
+                | b"override"
+                | b"private"
+                | b"protected"
+                | b"public"
+                | b"readonly"
+                | b"static"
+        );
+        if is_part_of_a_name || !is_modifier {
+            return found;
+        }
+        found.push(&text[from..end]);
+        end = from;
+    }
+}
+
+/// `checkGrammarModifiers`: what 1029, 1040 or 1243 names, when it is reported at the modifier `word`, which comes after `before`.
+fn modifiers_in_message(code: u32, word: &str, before: &[&[u8]]) -> Option<Vec<String>> {
+    // What is looked for among the modifiers seen so far, in this order.
+    let looked_for: &[&str] = match (code, word) {
+        (1029, "default") => return Some(vec!["export".to_owned(), "default".to_owned()]),
+        (1040, "async") => return Some(vec!["async".to_owned()]),
+        (1243, "async") => return Some(vec!["async".to_owned(), "abstract".to_owned()]),
+        (1029, "override") => &["readonly", "accessor", "async"],
+        (1029, "public" | "private" | "protected") => &[
+            "override", "static", "accessor", "readonly", "async", "abstract",
+        ],
+        (1029, "static") => &["readonly", "async", "accessor", "override"],
+        (1029, "export") => &["declare", "abstract", "async"],
+        (1029, "abstract") => &["override", "accessor"],
+        (1029, "in") => &["out"],
+        (1040, "declare") => &["async", "override"],
+        (1243, "override") => &["declare"],
+        (1243, "private" | "static") => &["abstract"],
+        (1243, "accessor") => &["readonly", "declare"],
+        (1243, "readonly" | "declare") => &["accessor"],
+        (1243, "abstract") => &["static", "private"],
+        _ => return None,
+    };
+    let seen = looked_for
+        .iter()
+        .find(|seen| before.contains(&seen.as_bytes()))?
+        .to_string();
+    Some(match (code, word) {
+        (1040, _) => vec![seen],
+        (1243, "abstract") => vec![seen, word.to_owned()],
+        _ => vec![word.to_owned(), seen],
+    })
+}
+
+/// `checkJSDocTypeIsInJsFile`: 17019 of `T?` or `T!`, 17020 of `?T` or `!T`, which starts at `start`.
+fn explain_jsdoc_nullable_type(c: &mut Checker<'_>, file: FileId, start: u32, code: u32) {
+    let hir = c.hir(file);
+    let text = &hir.text[..];
+    let is_postfix = code == 17019;
+    // With `?` the tree has a union of `T` and a `null` that is put where all of it starts. With `!` it has `T` alone.
+    let nullable = hir.types.iter().find_map(|t| match t.kind {
+        TypeNodeKind::Union(members) if t.pos == start && members.len() == 2 => {
+            let (operand, null) = (hir.id_at(members, 0), hir.id_at(members, 1));
+            let is_made_up = hir[null].pos == start
+                && matches!(hir[null].kind, TypeNodeKind::Keyword(Keyword::Null));
+            is_made_up.then_some(operand)
+        }
+        _ => None,
+    });
+    let operand = nullable.or_else(|| {
+        let at = if is_postfix {
+            start
+        } else {
+            skip_trivia(text, start as usize + 1) as u32
+        };
+        // What is around comes after what is inside.
+        (0..hir.types.len())
+            .rev()
+            .map(|i| TypeNodeId(i as u32))
+            .find(|&node| {
+                hir[node].pos == at
+                    && (!is_postfix
+                        || text.get(skip_trivia(text, c.end_of_type_node(file, node) as usize))
+                            == Some(&b'!'))
+            })
+    });
+    let Some(operand) = operand else {
+        return;
+    };
+    let operand_end = c.end_of_type_node(file, operand);
+    let end = if is_postfix {
+        skip_trivia(text, operand_end as usize) as u32 + 1
+    } else {
+        operand_end
+    };
+    c.explain_to(start, end, code, |c| {
+        let mut ty = c.type_from_node(file, operand);
+        if nullable.is_none() {
+            return vec!["!".to_owned(), c.type_to_string(ty)];
+        }
+        // `getNullableType`
+        if ty != TypeId::NEVER && ty != TypeId::VOID {
+            ty = if is_postfix {
+                c.union(&[ty, TypeId::UNDEFINED])
+            } else {
+                c.union(&[ty, TypeId::UNDEFINED, TypeId::NULL])
+            };
+        }
+        vec!["?".to_owned(), c.type_to_string(ty)]
+    });
+}
+
+/// What goes with an entry of `early_errors`, which is a place and a code, where the source or the tree says it.
+fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
+    let hir = c.hir(file);
+    let (text, at) = (&hir.text[..], start as usize);
+    match code {
+        1029 | 1040 | 1243 => {
+            let (word, before) = (word_at(c, file, start), modifiers_before(text, at));
+            if let Some(arguments) = modifiers_in_message(code, &word, &before) {
+                c.note(start, 0, code, arguments);
+            }
+        }
+        // `createIdentifierWithDiagnostic`, `parsingContextErrors`, `parseErrorForInvalidName`: these name the word they are reported at.
+        1359 | 1389 | 1390 | 2819 => c.note(start, 0, code, vec![word_at(c, file, start)]),
+        // `checkGrammarHeritageClause`: reported where the keyword ends.
+        1097 => {
+            let end = text[..at.min(text.len())].trim_ascii_end().len();
+            let from = text[..end]
+                .iter()
+                .rposition(|b| !b.is_ascii_alphabetic())
+                .map_or(0, |before| before + 1);
+            let keyword = c.source_text(file, from as u32, end as u32);
+            c.note(start, start, code, vec![keyword]);
+        }
+        // `scanNumber`: after a `-` the error starts one character before the literal.
+        1121 => {
+            let with_minus = text.get(at) != Some(&b'0');
+            let zero = at + usize::from(with_minus);
+            if text.get(zero) != Some(&b'0') {
+                return;
+            }
+            let mut end = zero + 1;
+            while text.get(end).is_some_and(u8::is_ascii_digit) {
+                end += 1;
+            }
+            let digits = c.source_text(file, zero as u32 + 1, end as u32);
+            let digits = match digits.trim_start_matches('0') {
+                "" => "0",
+                digits => digits,
+            };
+            let sign = if with_minus { "-" } else { "" };
+            c.note(start, end as u32, code, vec![format!("{sign}0o{digits}")]);
+        }
+        // `checkGrammarVariableDeclaration`
+        1155 | 1492 => {
+            let Some(decl) = hir.var_decls.iter().find(|d| hir[d.pat].pos == start) else {
+                return;
+            };
+            let keyword = match decl.kind {
+                VarKind::AwaitUsing => "await using",
+                VarKind::Using => "using",
+                _ => "const",
+            };
+            let end = c.end_of_pat(file, decl.pat);
+            c.note(start, end, code, vec![keyword.to_owned()]);
+        }
+        // `parseErrorForMissingSemicolonAfter`
+        1435 => {
+            let word = word_at(c, file, start);
+            let keywords = VIABLE_KEYWORD_SUGGESTIONS
+                .iter()
+                .map(|&keyword| (keyword.as_bytes(), Meant::Word(keyword)));
+            let suggestion = match closest(c, word.as_bytes(), keywords) {
+                Some(Meant::Word(keyword)) => keyword.to_owned(),
+                // `getSpaceSuggestion`
+                _ => match VIABLE_KEYWORD_SUGGESTIONS
+                    .iter()
+                    .find(|k| word.len() > k.len() + 2 && word.starts_with(**k))
+                {
+                    Some(keyword) => format!("{keyword} {}", &word[keyword.len()..]),
+                    None => return,
+                },
+            };
+            c.note(start, 0, code, vec![suggestion]);
+        }
+        // `scanEscapeSequence`: up to three octal digits, two after `4` to `7`.
+        1487 => {
+            let longest = if matches!(text.get(at + 1), Some(b'0'..=b'3')) {
+                at + 4
+            } else {
+                at + 3
+            };
+            let mut end = at + 2;
+            while end < longest && matches!(text.get(end), Some(b'0'..=b'7')) {
+                end += 1;
+            }
+            let digits = c.source_text(file, start + 1, end as u32);
+            if let Ok(value) = u32::from_str_radix(&digits, 8) {
+                c.note(start, end as u32, code, vec![format!("\\x{value:02x}")]);
+            }
+        }
+        1488 => c.note(
+            start,
+            start + 2,
+            code,
+            vec![c.source_text(file, start, start + 2)],
+        ),
+        // `parseUnaryExpressionOrHigher`: said of all that is on the left of the `**`.
+        17006 | 17007 => {
+            let end = hir.exprs.iter().find_map(|x| match x.kind {
+                ExprKind::Binary {
+                    op: BinOp::Pow,
+                    left,
+                    ..
+                } if c.start_of(file, left) == start => Some(c.end_of_expr(file, left)),
+                _ => None,
+            });
+            let arguments = if code == 17006 {
+                vec![c.source_text(file, start, c.end_of_token_at(file, start))]
+            } else {
+                Vec::new()
+            };
+            c.note(start, end.unwrap_or(0), code, arguments);
+        }
+        // `parseJsxElementOrSelfClosingElementOrFragment`, `parseJsxChild`: the name in the opening tag.
+        17008 => {
+            let name = skip_trivia(text, at) as u32;
+            let end = super::errors_jsx::jsx_name_end(text, name);
+            c.note(start, end, code, vec![c.source_text(file, name, end)]);
+        }
+        // `checkGrammarMetaProperty`
+        17012 => {
+            let Some(dot) = start_of_token_before(text, start, b".") else {
+                return;
+            };
+            let (keyword, meant) = if start_of_token_before(text, dot, b"new").is_some() {
+                ("new", "target")
+            } else {
+                ("import", "meta")
+            };
+            c.note(
+                start,
+                0,
+                code,
+                vec![
+                    word_at(c, file, start),
+                    keyword.to_owned(),
+                    meant.to_owned(),
+                ],
+            );
+        }
+        _ => {}
+    }
+}
+
 // ───────────────────────────── operators ─────────────────────────────
 
 impl Checker<'_> {
@@ -3028,10 +3990,9 @@ impl Checker<'_> {
                                 } else {
                                     self.why_no_property(file, left, object, name)
                                 };
-                                out.push(Diagnostic {
-                                    start: hir[left].pos,
-                                    code,
-                                });
+                                let start = hir[left].pos;
+                                out.push(Diagnostic { start, code });
+                                self.explain_no_property(file, left, object, name, start, code);
                             }
                         }
                     } else {
@@ -3041,18 +4002,30 @@ impl Checker<'_> {
                             let wanted =
                                 self.union(&[TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
                             let at = self.error_start_of(file, left);
-                            self.check_assignable(file, key, wanted, at, ExprId::NONE, 2322, out);
+                            let end = error_end_if_read(self, file, left);
+                            self.check_assignable_with_end(
+                                file,
+                                key,
+                                wanted,
+                                at,
+                                end,
+                                ExprId::NONE,
+                                2322,
+                                out,
+                            );
                         }
                     }
                     let object = self.type_of_expr(file, right);
                     if self.is_known(object) {
                         let object = self.check_not_nullish(file, right, object, out);
                         let at = self.error_start_of(file, right);
-                        self.check_assignable(
+                        let end = error_end_if_read(self, file, right);
+                        self.check_assignable_with_end(
                             file,
                             object,
                             TypeId::OBJECT,
                             at,
+                            end,
                             ExprId::NONE,
                             2322,
                             out,
@@ -3158,6 +4131,13 @@ impl Checker<'_> {
         ) && (self.is_global_nan(file, left) || self.is_global_nan(file, right))
         {
             out.push(Diagnostic { start, code: 2845 });
+            let end = self.end_inside_parentheses(file, e);
+            let always = if matches!(op, BinOp::EqEq | BinOp::EqEqEq) {
+                "false"
+            } else {
+                "true"
+            };
+            self.note(start, end, 2845, vec![always.to_owned()]);
         }
         // What cannot be written to is in error, and can be anything.
         let is_refused = matches!(self.hir(file)[e].kind, ExprKind::Assign { .. })
@@ -3221,10 +4201,23 @@ impl Checker<'_> {
                         (_, false) => b"^",
                         (_, true) => b"^=",
                     };
-                    let start =
-                        start_of_token_before(&hir.text, self.start_of(file, right), operator)
-                            .unwrap_or(start);
+                    let found =
+                        start_of_token_before(&hir.text, self.start_of(file, right), operator);
+                    let start = found.unwrap_or(start);
                     out.push(Diagnostic { start, code: 2447 });
+                    let end = found.map_or(0, |at| at + operator.len() as u32);
+                    // `getSuggestedBooleanOperator`
+                    let suggested = match op {
+                        BinOp::BitAnd => "&&",
+                        BinOp::BitOr => "||",
+                        _ => "!==",
+                    };
+                    self.explain_to(start, end, 2447, |_| {
+                        vec![
+                            String::from_utf8_lossy(operator).into_owned(),
+                            suggested.to_owned(),
+                        ]
+                    });
                     return false;
                 }
                 let left_fits = self.check_arithmetic_operand(file, left, l, 2362, out);
@@ -3238,6 +4231,8 @@ impl Checker<'_> {
                         && self.is_assignable(r, TypeId::BIGINT);
                     if !both || op == BinOp::UShr {
                         out.push(Diagnostic { start, code: 2365 });
+                        let is_related = (!both).then_some(both_are_bigint_like as Related);
+                        explain_operator_error(self, file, e, op, start, 2365, l, r, is_related);
                     }
                 }
                 left_fits && right_fits
@@ -3266,13 +4261,15 @@ impl Checker<'_> {
                     || self.is_any(r);
                 if !has_result {
                     out.push(Diagnostic { start, code: 2365 });
+                    let is_related = Some(may_be_added as Related);
+                    explain_operator_error(self, file, e, op, start, 2365, l, r, is_related);
                     return false;
                 }
                 // Symbols are only looked for once the two can be added.
-                !self.check_no_symbol_operand(file, left, right, l, r, out)
+                !self.check_no_symbol_operand(file, e, op, left, right, l, r, out)
             }
             BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
-                if self.check_no_symbol_operand(file, left, right, l, r, out) {
+                if self.check_no_symbol_operand(file, e, op, left, right, l, r, out) {
                     return false;
                 }
                 let l = self.check_not_nullish(file, left, l, out);
@@ -3290,6 +4287,8 @@ impl Checker<'_> {
                     || (!ln && !rn && (self.is_comparable(l, r) || self.is_comparable(r, l))))
                 {
                     out.push(Diagnostic { start, code: 2365 });
+                    let is_related = Some(can_be_ordered as Related);
+                    explain_operator_error(self, file, e, op, start, 2365, l, r, is_related);
                 }
                 false
             }
@@ -3302,6 +4301,8 @@ impl Checker<'_> {
                 {
                     self.trace_pair(2367, start, l, r);
                     out.push(Diagnostic { start, code: 2367 });
+                    let is_related = Some(can_be_equal as Related);
+                    explain_operator_error(self, file, e, op, start, 2367, l, r, is_related);
                 }
                 false
             }
@@ -3321,6 +4322,7 @@ impl Checker<'_> {
     ) {
         let hir = self.hir(file);
         let at = self.error_start_of(file, target);
+        let end = error_end_if_read(self, file, target);
         // `checkReferenceExpression`: what is asserted of a reference is a reference too. A pattern is only one to `=`.
         let mut reference = target;
         while let ExprKind::NonNull(x)
@@ -3356,6 +4358,7 @@ impl Checker<'_> {
                     start: at,
                     code: 2364,
                 });
+                self.note(at, end, 2364, Vec::new());
                 return;
             }
         };
@@ -3392,7 +4395,7 @@ impl Checker<'_> {
             } else {
                 left
             };
-            self.check_assignable(file, right, wanted, at, value, 2322, out);
+            self.check_assignable_with_end(file, right, wanted, at, end, value, 2322, out);
             return;
         }
         // The others put what they make of the two where the target is, which is what it is known to hold there.
@@ -3420,7 +4423,7 @@ impl Checker<'_> {
         if self.has_type_variables(wanted) && !self.is_in_generic_context(file, e) {
             return;
         }
-        self.check_assignable(file, source, wanted, at, ExprId::NONE, 2322, out);
+        self.check_assignable_with_end(file, source, wanted, at, end, ExprId::NONE, 2322, out);
     }
 
     /// `isGlobalNaN`
@@ -3458,10 +4461,14 @@ impl Checker<'_> {
         }
     }
 
-    /// 2469: an operator that does not take symbols is given one. `checkForDisallowedESSymbolOperand`
+    /// 2469: an operator that does not take symbols is given one. `checkForDisallowedESSymbolOperand`. `e`: `left op right` or
+    /// `left op= right`.
+    #[allow(clippy::too_many_arguments)]
     fn check_no_symbol_operand(
         &mut self,
         file: FileId,
+        e: ExprId,
+        op: BinOp,
         left: ExprId,
         right: ExprId,
         l: TypeId,
@@ -3482,10 +4489,11 @@ impl Checker<'_> {
         } else {
             return false;
         };
-        out.push(Diagnostic {
-            start: self.error_start_of(file, offending),
-            code: 2469,
-        });
+        let start = self.error_start_of(file, offending);
+        out.push(Diagnostic { start, code: 2469 });
+        let end = self.error_end_of(file, offending);
+        let is_assignment = matches!(self.hir(file)[e].kind, ExprKind::Assign { .. });
+        self.explain_to(start, end, 2469, |_| vec![operator_text(op, is_assignment)]);
         true
     }
 
@@ -3524,10 +4532,9 @@ impl Checker<'_> {
         let numeric = self.union(&[TypeId::NUMBER, TypeId::BIGINT]);
         let fits = self.is_assignable(ty, numeric);
         if !fits {
-            out.push(Diagnostic {
-                start: self.error_start_of(file, operand),
-                code,
-            });
+            let start = self.error_start_of(file, operand);
+            out.push(Diagnostic { start, code });
+            self.note(start, self.error_end_of(file, operand), code, Vec::new());
         }
         fits
     }
@@ -3549,9 +4556,12 @@ impl Checker<'_> {
         let is_name = self.is_entity_name(file, node);
         // This much alone is a matter of strictNullChecks: without them a type that is `null` or `undefined` is nothing else.
         if ty == TypeId::UNKNOWN && self.p.files.options.strict_null_checks {
-            out.push(Diagnostic {
-                start,
-                code: if is_name { 18046 } else { 2571 },
+            let code = if is_name { 18046 } else { 2571 };
+            out.push(Diagnostic { start, code });
+            let end = self.error_end_of(file, node);
+            self.explain_to(start, end, code, |c| match code {
+                18046 => vec![entity_name_text(c, file, node)],
+                _ => Vec::new(),
             });
             return TypeId::ANY;
         }
@@ -3582,6 +4592,12 @@ impl Checker<'_> {
             },
         };
         out.push(Diagnostic { start, code });
+        let end = self.error_end_of(file, node);
+        self.explain_to(start, end, code, |c| match code {
+            18050 if matches!(c.hir(file)[node].kind, ExprKind::Null) => vec!["null".to_owned()],
+            18047..=18050 => vec![entity_name_text(c, file, node)],
+            _ => Vec::new(),
+        });
         // Where nothing is left, or nothing is taken out, it is in error.
         match self.non_nullable(ty) {
             rest if rest == TypeId::NEVER || rest.is_null() || rest.is_undefined() => TypeId::ANY,
@@ -3725,10 +4741,9 @@ impl Checker<'_> {
                     op: None, target, ..
                 } => {
                     if !self.can_be_written_to(file, target, true) {
-                        out.push(Diagnostic {
-                            start: self.error_start_of(file, target),
-                            code: 2364,
-                        });
+                        let start = self.error_start_of(file, target);
+                        out.push(Diagnostic { start, code: 2364 });
+                        self.note(start, self.error_end_of(file, target), 2364, Vec::new());
                     }
                 }
                 ExprKind::Unary {
@@ -3745,10 +4760,9 @@ impl Checker<'_> {
                     if self.is_assignable(ty, numeric)
                         && !self.can_be_written_to(file, operand, false)
                     {
-                        out.push(Diagnostic {
-                            start: self.error_start_of(file, operand),
-                            code: 2357,
-                        });
+                        let start = self.error_start_of(file, operand);
+                        out.push(Diagnostic { start, code: 2357 });
+                        self.note(start, self.error_end_of(file, operand), 2357, Vec::new());
                     }
                 }
                 _ => {}
@@ -3784,6 +4798,7 @@ impl Checker<'_> {
                     start: at,
                     code: 2540,
                 });
+                explain_readonly_element(self, file, e, at, None, name);
             }
             return;
         }
@@ -3819,6 +4834,7 @@ impl Checker<'_> {
                 start: at,
                 code: 2540,
             });
+            explain_readonly_element(self, file, e, at, Some(&prop), name);
         }
     }
 

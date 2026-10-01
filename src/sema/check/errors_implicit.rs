@@ -15,6 +15,52 @@ fn is_empty_array_literal(hir: &hir::File, e: ExprId) -> bool {
     matches!(hir[e].kind, ExprKind::Array(items) if items.is_empty())
 }
 
+/// `DeclarationNameToString(GetNameOfDeclaration(e))`, of `a.name = value`, `a["name"] = value` or
+/// `Object.defineProperty(a, "name", descriptor)`.
+fn name_of_assignment_declaration(c: &Checker<'_>, file: FileId, e: ExprId) -> String {
+    let hir = c.hir(file);
+    let written = |x: ExprId| c.source_text(file, c.start_of(file, x), c.end_of_expr(file, x));
+    match hir[e].kind {
+        ExprKind::Assign { target, .. } => match hir[target].kind {
+            ExprKind::Dot { name, .. } => c.atom_text(name),
+            // `GetElementOrPropertyAccessName`: a literal key, without the parentheses around it.
+            ExprKind::Index { index, .. }
+                if matches!(hir[index].kind, ExprKind::String(_) | ExprKind::Number(_))
+                    || matches!(hir[index].kind, ExprKind::Template { exprs, .. } if exprs.is_empty()) =>
+            {
+                c.source_text(file, hir[index].pos, c.end_inside_parentheses(file, index))
+            }
+            _ => written(target),
+        },
+        _ => match crate::bind::define_property_call(hir, e) {
+            Some((_, key)) => written(key),
+            None => "(Missing)".to_owned(),
+        },
+    }
+}
+
+/// Notes what `reportImplicitAny` says of `e`, an assignment or a call of `Object.defineProperty` that declares a property of type
+/// `ty`. The error is on the whole of `e`. Not `has_name`: it is `module.exports = value`.
+fn explain_assignment_declaration(
+    c: &mut Checker<'_>,
+    file: FileId,
+    e: ExprId,
+    code: u32,
+    has_name: bool,
+    ty: &'static str,
+) {
+    let start = c.start_inside_parentheses(file, e);
+    let end = c.end_inside_parentheses(file, e);
+    c.explain_to(start, end, code, |c| {
+        let name = if has_name {
+            name_of_assignment_declaration(c, file, e)
+        } else {
+            "(Missing)".to_owned()
+        };
+        vec![name, ty.to_owned()]
+    });
+}
+
 impl Checker<'_> {
     pub(super) fn check_implicit_any(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         if !self.p.files.options.no_implicit_any {
@@ -43,6 +89,10 @@ impl Checker<'_> {
                         let getter = self.sibling_accessor(file, func, FnKind::Getter);
                         if getter.is_none_or(|g| self.accessor_says_nothing(file, g)) {
                             out.push(Diagnostic { start, code: 7032 });
+                            let end = self.end_of_name_at(file, start);
+                            self.explain_to(start, end, 7032, |c| {
+                                vec![c.source_text(file, start, end)]
+                            });
                         }
                     } else {
                         // The setter is the one to be told, if it can be.
@@ -52,6 +102,10 @@ impl Checker<'_> {
                                 && self.is_private_within_ambient(file, s)
                         }) {
                             out.push(Diagnostic { start, code: 7033 });
+                            let end = self.end_of_name_at(file, start);
+                            self.explain_to(start, end, 7033, |c| {
+                                vec![c.source_text(file, start, end)]
+                            });
                         }
                     }
                 }
@@ -65,14 +119,17 @@ impl Checker<'_> {
             }
             // Nothing to go by: no body, and nothing said.
             match decl.kind {
-                FnKind::ConstructSignature => out.push(Diagnostic {
-                    start: self.start_of_signature(file, func),
-                    code: 7013,
-                }),
-                FnKind::CallSignature => out.push(Diagnostic {
-                    start: self.start_of_signature(file, func),
-                    code: 7020,
-                }),
+                FnKind::ConstructSignature | FnKind::CallSignature => {
+                    let code = if decl.kind == FnKind::ConstructSignature {
+                        7013
+                    } else {
+                        7020
+                    };
+                    let start = self.start_of_signature(file, func);
+                    out.push(Diagnostic { start, code });
+                    let end = self.end_of_fn(file, func);
+                    self.explain_to(start, end, code, |_| vec![]);
+                }
                 // `checkObjectLiteralMethod`, unlike `checkFunctionOrMethodDeclaration`, says nothing of a missing body.
                 FnKind::Method if matches!(bound.fns[f].owner, FnOwner::Expr(_)) => {}
                 FnKind::Decl | FnKind::Method if !is_private_ambient => {
@@ -82,9 +139,33 @@ impl Checker<'_> {
                     } else {
                         7010
                     };
-                    out.push(Diagnostic {
-                        start: self.start_of_signature(file, func),
-                        code,
+                    let start = self.start_of_signature(file, func);
+                    out.push(Diagnostic { start, code });
+                    // `GetErrorRangeForNode` has no case for a method signature: the error is on the whole of it.
+                    let (name_end, end) = match bound.fns[f].owner {
+                        FnOwner::Member(m) => {
+                            let name_end = self.end_of_member_name(file, m);
+                            match bound.member_owner[m.idx()] {
+                                MemberOwner::Class(_) => (name_end, name_end),
+                                _ => (name_end, self.end_of_member(file, m)),
+                            }
+                        }
+                        _ => (self.end_of_name_at(file, start), 0),
+                    };
+                    let is_missing = match bound.fns[f].owner {
+                        FnOwner::Member(m) => {
+                            matches!(hir[m].key, PropKey::None | PropKey::Name(known::empty))
+                        }
+                        _ => decl.name == known::empty,
+                    };
+                    self.explain_to(start, end, code, |c| {
+                        if code == 7011 {
+                            vec!["any".to_owned()]
+                        } else if is_missing {
+                            vec!["(Missing)".to_owned(), "any".to_owned()]
+                        } else {
+                            vec![c.source_text(file, start, name_end), "any".to_owned()]
+                        }
                     });
                 }
                 _ => {}
@@ -106,6 +187,10 @@ impl Checker<'_> {
                     out.push(Diagnostic {
                         start: member.pos,
                         code: 7008,
+                    });
+                    let end = self.end_of_member_name(file, MemberId(m as u32));
+                    self.explain_to(member.pos, end, 7008, |c| {
+                        vec![c.source_text(file, member.pos, end), "any[]".to_owned()]
                     });
                 }
                 continue;
@@ -143,6 +228,10 @@ impl Checker<'_> {
             out.push(Diagnostic {
                 start: member.pos,
                 code: 7008,
+            });
+            let end = self.end_of_member_name(file, MemberId(m as u32));
+            self.explain_to(member.pos, end, 7008, |c| {
+                vec![c.source_text(file, member.pos, end), "any".to_owned()]
             });
         }
         self.check_assignment_declarations_implicit_any(file, out);
@@ -185,6 +274,8 @@ impl Checker<'_> {
                     start: node.pos,
                     code: 7039,
                 });
+                let end = self.end_of_type_node(file, TypeNodeId(t as u32));
+                self.explain_to(node.pos, end, 7039, |_| vec![]);
             }
         }
     }
@@ -230,6 +321,10 @@ impl Checker<'_> {
                             start: self.start_inside_parentheses(file, assignment),
                             code: 7008,
                         });
+                        let has_name = matches!(decl, Decl::ExportsProperty(_));
+                        explain_assignment_declaration(
+                            self, file, assignment, 7008, has_name, "any[]",
+                        );
                     }
                     is_nullable &= !self.is_uncertain(file, rightmost);
                 }
@@ -238,6 +333,17 @@ impl Checker<'_> {
                         start: self.start_inside_parentheses(file, value_declaration),
                         code: 7008,
                     });
+                    let has_name = !symbol
+                        .decls
+                        .contains(&Decl::ModuleExports(value_declaration));
+                    explain_assignment_declaration(
+                        self,
+                        file,
+                        value_declaration,
+                        7008,
+                        has_name,
+                        "any",
+                    );
                 }
             }
         }
@@ -387,6 +493,7 @@ impl Checker<'_> {
                         start: self.start_inside_parentheses(file, declaration),
                         code: 7008,
                     });
+                    explain_assignment_declaration(self, file, declaration, 7008, true, "any[]");
                 }
             }
         }
@@ -400,6 +507,7 @@ impl Checker<'_> {
                 start: self.start_inside_parentheses(file, first),
                 code,
             });
+            explain_assignment_declaration(self, file, first, code, true, "any");
         }
     }
 
@@ -622,6 +730,23 @@ impl Checker<'_> {
                         start: param.pos,
                         code,
                     });
+                    let is_rest = param.flags.contains(Flags::REST);
+                    // A leading `this` parameter is counted, and is not among `params`.
+                    let position = index + usize::from(decl.this_ty.is_some());
+                    let end = self.end_of_param(file, p);
+                    self.explain_to(param.pos, end, code, |c| {
+                        let name = if name == known::empty {
+                            "(Missing)".to_owned()
+                        } else {
+                            c.atom_text(name)
+                        };
+                        match code {
+                            7051 if is_rest => vec![format!("arg{position}"), name + "[]"],
+                            7051 => vec![format!("arg{position}"), name],
+                            7019 => vec![name, "any[]".to_owned()],
+                            _ => vec![name, "any".to_owned()],
+                        }
+                    });
                 }
                 PatKind::Object(_) | PatKind::Array(_) => {
                     self.check_pattern_implicitly_any(file, param.pat, out)
@@ -692,10 +817,15 @@ impl Checker<'_> {
             }
             match hir[element].kind {
                 // `getTypeFromBindingElement`: what it comes to be plays no part.
-                PatKind::Ident(_) => out.push(Diagnostic {
-                    start: hir[element].pos,
-                    code: 7031,
-                }),
+                PatKind::Ident(name) => {
+                    let start = hir[element].pos;
+                    out.push(Diagnostic { start, code: 7031 });
+                    if name == known::empty {
+                        self.explain_to(start, start, 7031, |_| {
+                            vec!["(Missing)".to_owned(), "any".to_owned()]
+                        });
+                    }
+                }
                 PatKind::Object(_) | PatKind::Array(_) => {
                     self.check_pattern_implicitly_any(file, element, out)
                 }
@@ -894,9 +1024,19 @@ impl Checker<'_> {
                     }
                     // A hole is an element without a name, and is told off like the rest.
                     if elem.default.is_none() {
-                        out.push(Diagnostic {
-                            start: hir[elem.pat].pos,
-                            code: 7031,
+                        let start = hir[elem.pat].pos;
+                        out.push(Diagnostic { start, code: 7031 });
+                        let end = self.end_of_pat(file, elem.pat);
+                        let is_missing = matches!(
+                            hir[elem.pat].kind,
+                            PatKind::Missing | PatKind::Ident(known::empty)
+                        );
+                        self.explain_to(start, end, 7031, |c| {
+                            if is_missing {
+                                vec!["(Missing)".to_owned(), "any".to_owned()]
+                            } else {
+                                vec![c.source_text(file, start, end), "any".to_owned()]
+                            }
                         });
                     }
                 }

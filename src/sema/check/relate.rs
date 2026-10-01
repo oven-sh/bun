@@ -27,7 +27,7 @@ pub(super) enum Relation {
 
 impl Relation {
     /// `relation == assignableRelation || relation == comparableRelation`
-    fn is_lenient(self) -> bool {
+    pub(super) fn is_lenient(self) -> bool {
         matches!(
             self,
             Relation::Assignable
@@ -37,7 +37,7 @@ impl Relation {
         )
     }
 
-    fn is_subtype(self) -> bool {
+    pub(super) fn is_subtype(self) -> bool {
         matches!(self, Relation::Subtype | Relation::StrictSubtype)
     }
 }
@@ -48,8 +48,8 @@ pub(super) struct Ternary(u8);
 
 impl Ternary {
     pub(super) const FALSE: Ternary = Ternary(0);
-    const UNKNOWN: Ternary = Ternary(1);
-    const MAYBE: Ternary = Ternary(3);
+    pub(super) const UNKNOWN: Ternary = Ternary(1);
+    pub(super) const MAYBE: Ternary = Ternary(3);
     pub(super) const TRUE: Ternary = Ternary(0xff);
 
     #[inline]
@@ -58,7 +58,7 @@ impl Ternary {
     }
 
     #[inline]
-    fn of(value: bool) -> Ternary {
+    pub(super) fn of(value: bool) -> Ternary {
         if value { Ternary::TRUE } else { Ternary::FALSE }
     }
 }
@@ -79,48 +79,48 @@ impl BitAndAssign for Ternary {
 }
 
 // IntersectionState
-const STATE_NONE: u8 = 0;
+pub(super) const STATE_NONE: u8 = 0;
 /// The source is a part of an intersection.
-const STATE_SOURCE: u8 = 1;
+pub(super) const STATE_SOURCE: u8 = 1;
 /// The target is a part of an intersection.
-const STATE_TARGET: u8 = 2;
+pub(super) const STATE_TARGET: u8 = 2;
 /// The source is an object literal that has been looked over for properties nobody asked for.
-const STATE_REGULAR: u8 = 4;
+pub(super) const STATE_REGULAR: u8 = 4;
 
 // RecursionFlags and ExpandingFlags
-const REC_SOURCE: u8 = 1;
-const REC_TARGET: u8 = 2;
-const REC_BOTH: u8 = 3;
+pub(super) const REC_SOURCE: u8 = 1;
+pub(super) const REC_TARGET: u8 = 2;
+pub(super) const REC_BOTH: u8 = 3;
 
 // RelationComparisonResult
-const SUCCEEDED: u8 = 1;
-const FAILED: u8 = 2;
+pub(super) const SUCCEEDED: u8 = 1;
+pub(super) const FAILED: u8 = 2;
 const REPORTS_UNMEASURABLE: u8 = 8;
 const REPORTS_UNRELIABLE: u8 = 16;
-const COMPLEXITY_OVERFLOW: u8 = 32;
+pub(super) const COMPLEXITY_OVERFLOW: u8 = 32;
 
 // VarianceFlags
-const INVARIANT: u8 = 0;
-const COVARIANT: u8 = 1;
-const CONTRAVARIANT: u8 = 2;
-const BIVARIANT: u8 = 3;
-const INDEPENDENT: u8 = 4;
-const VARIANCE_MASK: u8 = 7;
-const UNMEASURABLE: u8 = 8;
+pub(super) const INVARIANT: u8 = 0;
+pub(super) const COVARIANT: u8 = 1;
+pub(super) const CONTRAVARIANT: u8 = 2;
+pub(super) const BIVARIANT: u8 = 3;
+pub(super) const INDEPENDENT: u8 = 4;
+pub(super) const VARIANCE_MASK: u8 = 7;
+pub(super) const UNMEASURABLE: u8 = 8;
 const UNRELIABLE: u8 = 16;
-const ALLOWS_STRUCTURAL_FALLBACK: u8 = UNMEASURABLE | UNRELIABLE;
+pub(super) const ALLOWS_STRUCTURAL_FALLBACK: u8 = UNMEASURABLE | UNRELIABLE;
 
 // SignatureCheckMode
-const BIVARIANT_CALLBACK: u8 = 1;
-const STRICT_CALLBACK: u8 = 2;
+pub(super) const BIVARIANT_CALLBACK: u8 = 1;
+pub(super) const STRICT_CALLBACK: u8 = 2;
 const IGNORE_RETURN_TYPES: u8 = 4;
-const STRICT_ARITY: u8 = 8;
-const STRICT_TOP_SIGNATURE: u8 = 16;
-const CALLBACK: u8 = BIVARIANT_CALLBACK | STRICT_CALLBACK;
+pub(super) const STRICT_ARITY: u8 = 8;
+pub(super) const STRICT_TOP_SIGNATURE: u8 = 16;
+pub(super) const CALLBACK: u8 = BIVARIANT_CALLBACK | STRICT_CALLBACK;
 
 /// `getRelationKey`: the source, the target, and flags. The flags hold the relation in the low four bits and the intersection
 /// state above it.
-type Key = (TypeId, TypeId, u8);
+pub(super) type Key = (TypeId, TypeId, u8);
 
 /// Flag of a `Key` for two generic type references. The two ids of such a key are the halves of a hash.
 const GENERIC_KEY: u8 = 0x80;
@@ -152,18 +152,18 @@ impl GenericKeyBuilder {
 
 /// What one question, with all the questions it leads to, keeps track of.
 pub(super) struct Relater {
-    relation: Relation,
+    pub(super) relation: Relation,
     /// The two types `check_type_related_to` was called with. `NEVER` in a relater created elsewhere.
     top_source: TypeId,
     top_target: TypeId,
     /// The comparisons under way and those that came out true on the assumption that they do.
-    maybe_keys: Vec<Key>,
+    pub(super) maybe_keys: Vec<Key>,
     /// `maybeKeysSet`: the keys in `maybe_keys`.
-    maybe_keys_set: FxHashSet<Key>,
-    source_stack: Vec<TypeId>,
-    target_stack: Vec<TypeId>,
-    expanding: u8,
-    overflow: bool,
+    pub(super) maybe_keys_set: FxHashSet<Key>,
+    pub(super) source_stack: Vec<TypeId>,
+    pub(super) target_stack: Vec<TypeId>,
+    pub(super) expanding: u8,
+    pub(super) overflow: bool,
     /// A cached `COMPLEXITY_OVERFLOW` entry answered one of the comparisons.
     hit_cached_overflow: bool,
     relation_count: i32,
@@ -173,7 +173,7 @@ pub(super) struct Relater {
 }
 
 impl Relater {
-    fn new(relation: Relation, cycles: u64) -> Relater {
+    pub(super) fn new(relation: Relation, cycles: u64) -> Relater {
         Relater {
             relation,
             top_source: TypeId::NEVER,
@@ -227,7 +227,7 @@ impl<'p> Checker<'p> {
     // ───────────────────────────── kinds of types, as the relation sees them ─────────────────────────────
 
     #[inline]
-    fn is_type_param(&self, ty: TypeId) -> bool {
+    pub(super) fn is_type_param(&self, ty: TypeId) -> bool {
         matches!(
             self.data(ty),
             TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::Marker(_)
@@ -240,7 +240,7 @@ impl<'p> Checker<'p> {
     }
 
     #[inline]
-    fn is_union_or_intersection(&self, ty: TypeId) -> bool {
+    pub(super) fn is_union_or_intersection(&self, ty: TypeId) -> bool {
         matches!(
             self.data(ty),
             TypeData::Union(_) | TypeData::Intersection(_)
@@ -259,17 +259,17 @@ impl<'p> Checker<'p> {
 
     /// `TypeFlagsStructuredOrInstantiable`
     #[inline]
-    fn is_structured_or_instantiable(&self, ty: TypeId) -> bool {
+    pub(super) fn is_structured_or_instantiable(&self, ty: TypeId) -> bool {
         self.is_object_type(ty) || self.is_union_or_intersection(ty) || self.is_instantiable(ty)
     }
 
     /// `TypeFlagsPrimitive`, which `boolean` and an enum have though they are unions.
-    fn has_primitive_flag(&self, ty: TypeId) -> bool {
+    pub(super) fn has_primitive_flag(&self, ty: TypeId) -> bool {
         self.is_primitive(ty) || ty == TypeId::BOOLEAN || self.union_enum_symbol(ty).is_some()
     }
 
     /// The enum a member belongs to; an enum is its own.
-    fn enum_of(&self, symbol: Sym) -> Sym {
+    pub(super) fn enum_of(&self, symbol: Sym) -> Sym {
         if self.files().flags(symbol).contains(SymFlags::ENUM_MEMBER) {
             self.files()
                 .sym(symbol.file, self.files().symbol(symbol).parent)
@@ -279,7 +279,7 @@ impl<'p> Checker<'p> {
     }
 
     /// The enum all the members of the union `ty` are members of, computed ones included (`getDeclaredTypeOfEnum`).
-    fn union_enum_symbol(&self, ty: TypeId) -> Option<Sym> {
+    pub(super) fn union_enum_symbol(&self, ty: TypeId) -> Option<Sym> {
         let TypeData::Union(parts) = self.data(ty) else {
             return None;
         };
@@ -296,7 +296,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `TypeFlagsDefinitelyNonNullable`
-    fn is_definitely_non_nullable(&self, ty: TypeId) -> bool {
+    pub(super) fn is_definitely_non_nullable(&self, ty: TypeId) -> bool {
         (self.has_primitive_flag(ty) && !self.is_nullish(ty))
             || self.is_object_type(ty)
             || ty == TypeId::OBJECT
@@ -331,7 +331,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    fn is_generic_mapped_type(&mut self, ty: TypeId) -> bool {
+    pub(super) fn is_generic_mapped_type(&mut self, ty: TypeId) -> bool {
         matches!(
             self.data(ty),
             TypeData::Anon {
@@ -341,7 +341,7 @@ impl<'p> Checker<'p> {
         ) && self.is_generic(ty)
     }
 
-    fn is_generic_tuple_type(&self, ty: TypeId) -> bool {
+    pub(super) fn is_generic_tuple_type(&self, ty: TypeId) -> bool {
         matches!(self.data(ty), TypeData::Tuple { flags, .. } if flags.iter().any(|f| f.contains(ElemFlags::VARIADIC)))
     }
 
@@ -361,7 +361,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `isGenericIndexType`
-    fn is_generic_index_type(&mut self, ty: TypeId) -> bool {
+    pub(super) fn is_generic_index_type(&mut self, ty: TypeId) -> bool {
         match self.data(ty) {
             TypeData::Union(parts) | TypeData::Intersection(parts) => {
                 parts.iter().any(|&p| self.is_generic_index_type(p))
@@ -859,7 +859,7 @@ impl<'p> Checker<'p> {
     // ───────────────────────────── simpler forms ─────────────────────────────
 
     /// `getNormalizedType`
-    fn normalized(&mut self, ty: TypeId, writing: bool) -> TypeId {
+    pub(super) fn normalized(&mut self, ty: TypeId, writing: bool) -> TypeId {
         let mut t = ty;
         loop {
             let n = match self.data(t) {
@@ -1124,7 +1124,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `getSimplifiedTypeOrConstraint`
-    fn simplified_or_constraint(&mut self, t: TypeId) -> Option<TypeId> {
+    pub(super) fn simplified_or_constraint(&mut self, t: TypeId) -> Option<TypeId> {
         let simplified = self.simplified(t, false);
         if simplified != t {
             Some(simplified)
@@ -1236,12 +1236,12 @@ impl<'p> Checker<'p> {
     }
 
     /// `getBaseConstraintOrType`
-    fn base_constraint_or_type(&mut self, t: TypeId) -> TypeId {
+    pub(super) fn base_constraint_or_type(&mut self, t: TypeId) -> TypeId {
         self.base_constraint_of(t).unwrap_or(t)
     }
 
     /// `getEffectiveConstraintOfIntersection`
-    fn effective_constraint_of_intersection(
+    pub(super) fn effective_constraint_of_intersection(
         &mut self,
         types: &[TypeId],
         target_is_union: bool,
@@ -1290,7 +1290,7 @@ impl<'p> Checker<'p> {
 
     // ───────────────────────────── conditional types ─────────────────────────────
 
-    fn cond_origin(&self, t: TypeId) -> (FileId, TypeNodeId, MapperId, [TypeNodeId; 4]) {
+    pub(super) fn cond_origin(&self, t: TypeId) -> (FileId, TypeNodeId, MapperId, [TypeNodeId; 4]) {
         let TypeData::Cond { file, node, mapper } = *self.data(t) else {
             unreachable!()
         };
@@ -1312,16 +1312,16 @@ impl<'p> Checker<'p> {
         self.instantiate(declared, mapper)
     }
 
-    fn cond_check(&mut self, t: TypeId) -> TypeId {
+    pub(super) fn cond_check(&mut self, t: TypeId) -> TypeId {
         self.cond_piece(t, 0)
     }
 
-    fn cond_extends(&mut self, t: TypeId) -> TypeId {
+    pub(super) fn cond_extends(&mut self, t: TypeId) -> TypeId {
         self.cond_piece(t, 1)
     }
 
     /// `getTrueTypeFromConditionalType`, where it is what a value goes to.
-    fn cond_true(&mut self, t: TypeId) -> TypeId {
+    pub(super) fn cond_true(&mut self, t: TypeId) -> TypeId {
         self.resolved_cond_true(t, false)
     }
 
@@ -1341,11 +1341,11 @@ impl<'p> Checker<'p> {
     }
 
     /// `getFalseTypeFromConditionalType`
-    fn cond_false(&mut self, t: TypeId) -> TypeId {
+    pub(super) fn cond_false(&mut self, t: TypeId) -> TypeId {
         self.cond_piece(t, 3)
     }
 
-    fn cond_infer_params(&mut self, t: TypeId) -> Vec<TypeId> {
+    pub(super) fn cond_infer_params(&mut self, t: TypeId) -> Vec<TypeId> {
         let (file, _, _, nodes) = self.cond_origin(t);
         let mut params = Vec::new();
         self.collect_infer_params(file, nodes[1], &mut params);
@@ -1456,7 +1456,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `getTrueTypeFromConditionalType`, where it is what a value comes from.
-    fn cond_true_as_source(&mut self, t: TypeId) -> TypeId {
+    pub(super) fn cond_true_as_source(&mut self, t: TypeId) -> TypeId {
         self.resolved_cond_true(t, true)
     }
 
@@ -1524,7 +1524,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `getConstraintOfDistributiveConditionalType`, computed once (`resolvedConstraintOfDistributive`).
-    fn constraint_of_distributive_conditional(&mut self, t: TypeId) -> Option<TypeId> {
+    pub(super) fn constraint_of_distributive_conditional(&mut self, t: TypeId) -> Option<TypeId> {
         if let Some(&cached) = self.cond_distributive_memo.get(&t) {
             return cached;
         }
@@ -1661,7 +1661,11 @@ impl<'p> Checker<'p> {
 
     /// `getApparentMappedTypeKeys`, of `{ [P in keyof X as N]: .. }`: what `N` (`name`) makes of the keys `X` is known to have.
     /// `None`: it is not written with `keyof` (`isMappedTypeWithKeyofConstraintDeclaration`).
-    fn apparent_mapped_type_keys(&mut self, name: TypeId, mapped: TypeId) -> Option<TypeId> {
+    pub(super) fn apparent_mapped_type_keys(
+        &mut self,
+        name: TypeId,
+        mapped: TypeId,
+    ) -> Option<TypeId> {
         let (file, node, mapper) = self.mapped_origin(mapped)?;
         let (declared, true) = self.mapped_modifiers_source(file, node)? else {
             return None;
@@ -1695,7 +1699,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `getCombinedMappedTypeOptionality`: -1 optionality is stripped, 1 it is added.
-    fn combined_mapped_optionality(&mut self, t: TypeId) -> i32 {
+    pub(super) fn combined_mapped_optionality(&mut self, t: TypeId) -> i32 {
         if self.mapped_origin(t).is_some() {
             return match self.mapped_optional_modifier(t) {
                 MappedModifier::Remove => -1,
@@ -1721,7 +1725,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `isMappedTypeGenericIndexedAccess`
-    fn is_mapped_type_generic_indexed_access(&mut self, t: TypeId) -> bool {
+    pub(super) fn is_mapped_type_generic_indexed_access(&mut self, t: TypeId) -> bool {
         let TypeData::IndexedAccess { obj, index, .. } = *self.data(t) else {
             return false;
         };
@@ -1752,7 +1756,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `isMarkerType`, of a reference to a class or an interface.
-    fn is_marker_type(&mut self, t: TypeId) -> bool {
+    pub(super) fn is_marker_type(&mut self, t: TypeId) -> bool {
         // `getVariances`: arrays are never measured.
         if !self.p.types.flags(t).contains(TypeFlags::HAS_MARKER) || self.is_array(t) {
             return false;
@@ -1767,7 +1771,12 @@ impl<'p> Checker<'p> {
     /// Whether `createMarkerType` has made the instantiation of `sym`, whose type parameters are `params`, with `args`: each
     /// parameter for itself, but for one that a marker stands for. `variances_of` makes them once it has set about `sym`. Until
     /// then such an instantiation goes by the variances of `sym` like any other, which is what sets about it.
-    fn are_marker_arguments(&self, sym: Sym, params: &[TypeId], args: &[TypeId]) -> bool {
+    pub(super) fn are_marker_arguments(
+        &self,
+        sym: Sym,
+        params: &[TypeId],
+        args: &[TypeId],
+    ) -> bool {
         if params.len() != args.len() {
             return false;
         }
@@ -1998,7 +2007,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `hasCovariantVoidArgument`
-    fn has_covariant_void_argument(&self, args: &[TypeId], variances: &[u8]) -> bool {
+    pub(super) fn has_covariant_void_argument(&self, args: &[TypeId], variances: &[u8]) -> bool {
         variances
             .iter()
             .zip(args)
@@ -2008,7 +2017,7 @@ impl<'p> Checker<'p> {
     // ───────────────────────────── one comparison ─────────────────────────────
 
     #[inline]
-    fn is_related_to(
+    pub(super) fn is_related_to(
         &mut self,
         r: &mut Relater,
         source: TypeId,
@@ -2019,7 +2028,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `isRelatedToEx`
-    fn is_related_to_ex(
+    pub(super) fn is_related_to_ex(
         &mut self,
         r: &mut Relater,
         original_source: TypeId,
@@ -2310,14 +2319,14 @@ impl<'p> Checker<'p> {
     }
 
     /// `isTypeSubsetOf(globalObjectType, target)`
-    fn contains_global_object_type(&self, target: TypeId) -> bool {
+    pub(super) fn contains_global_object_type(&self, target: TypeId) -> bool {
         self.parts(target)
             .iter()
             .any(|&p| self.is_global_ref(p, known::Object).is_some())
     }
 
     /// `getTypeOfPropertyInType`
-    fn type_of_property_in_type(&mut self, t: TypeId, name: Atom) -> TypeId {
+    pub(super) fn type_of_property_in_type(&mut self, t: TypeId, name: Atom) -> TypeId {
         let t = self.apparent_type(t);
         let Some(members) = self.members(t) else {
             return TypeId::UNDEFINED;
@@ -2349,7 +2358,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `isExcessPropertyCheckTarget`
-    fn is_excess_property_check_target(&self, t: TypeId) -> bool {
+    pub(super) fn is_excess_property_check_target(&self, t: TypeId) -> bool {
         match self.data(t) {
             TypeData::Union(parts) => parts
                 .iter()
@@ -2364,7 +2373,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `isKnownProperty`
-    fn is_known_property(&mut self, t: TypeId, name: Atom) -> bool {
+    pub(super) fn is_known_property(&mut self, t: TypeId, name: Atom) -> bool {
         match self.data(t) {
             TypeData::Union(parts) | TypeData::Intersection(parts) => {
                 self.is_excess_property_check_target(t)
@@ -2430,7 +2439,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `filterPrimitivesIfContainsNonPrimitive`
-    fn filter_primitives_if_contains_non_primitive(&mut self, union: TypeId) -> TypeId {
+    pub(super) fn filter_primitives_if_contains_non_primitive(&mut self, union: TypeId) -> TypeId {
         if self.some_type(union, |_, m| m == TypeId::OBJECT) {
             let result = self.filter(union, |c, m| !c.has_primitive_flag(m));
             if result != TypeId::NEVER {
@@ -2441,7 +2450,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `findMatchingDiscriminantType`
-    fn find_matching_discriminant_type(
+    pub(super) fn find_matching_discriminant_type(
         &mut self,
         r: &mut Relater,
         source: TypeId,
@@ -2522,7 +2531,7 @@ impl<'p> Checker<'p> {
     // ───────────────────────────── unions and intersections ─────────────────────────────
 
     /// `unionOrIntersectionRelatedTo`. The order matters: unions before intersections, "each" before "some".
-    fn union_or_intersection_related_to(
+    pub(super) fn union_or_intersection_related_to(
         &mut self,
         r: &mut Relater,
         source: TypeId,
@@ -2600,7 +2609,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    fn constituents(&self, t: TypeId) -> &'p [TypeId] {
+    pub(super) fn constituents(&self, t: TypeId) -> &'p [TypeId] {
         match self.data(t) {
             TypeData::Union(parts) | TypeData::Intersection(parts) => parts,
             _ => &[],
@@ -2685,7 +2694,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `typeRelatedToSomeType`
-    fn type_related_to_some_type(
+    pub(super) fn type_related_to_some_type(
         &mut self,
         r: &mut Relater,
         source: TypeId,
@@ -2859,7 +2868,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `getRelationKey`. The second value is `constrained`: a constrained type parameter was written by id.
-    fn relation_key(
+    pub(super) fn relation_key(
         &mut self,
         source: TypeId,
         target: TypeId,
@@ -3288,7 +3297,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `isSourceIntersectionNeedingExtraCheck`
-    fn is_source_intersection_needing_extra_check(
+    pub(super) fn is_source_intersection_needing_extra_check(
         &mut self,
         source: TypeId,
         target: TypeId,
@@ -4124,7 +4133,7 @@ impl<'p> Checker<'p> {
 
     /// `getTypeWithThisArgument`: `t` with `this_argument` for `this` in its members. As there, it goes after the type arguments
     /// of a reference to a class or an interface, where `members` finds it.
-    fn reference_with_this(&mut self, t: TypeId, this_argument: TypeId) -> TypeId {
+    pub(super) fn reference_with_this(&mut self, t: TypeId, this_argument: TypeId) -> TypeId {
         match self.data(t) {
             TypeData::Ref { target, args } => {
                 if self.all_type_params_of_symbol(*target).len() != args.len() {
@@ -4164,7 +4173,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `getIndexTypeOfTypeEx(t, numberType, anyType)`
-    fn number_index_type_or_any(&mut self, t: TypeId) -> TypeId {
+    pub(super) fn number_index_type_or_any(&mut self, t: TypeId) -> TypeId {
         if let Some(element) = self.array_element(t) {
             return element;
         }
@@ -4187,7 +4196,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `getIndexTypeEx(t, IndexFlagsNoIndexSignatures)`
-    fn keyof_without_index_signatures(&mut self, t: TypeId) -> TypeId {
+    pub(super) fn keyof_without_index_signatures(&mut self, t: TypeId) -> TypeId {
         let keys = self.keyof(t);
         if self.is_object_type(t) && self.members(t).is_some_and(|m| !m.shape().index.is_empty()) {
             return self.filter(keys, |c, m| c.is_unit(m));
@@ -4541,7 +4550,7 @@ impl<'p> Checker<'p> {
     // ───────────────────────────── properties ─────────────────────────────
 
     /// `propertiesRelatedTo`
-    fn properties_related_to(
+    pub(super) fn properties_related_to(
         &mut self,
         r: &mut Relater,
         source: TypeId,
@@ -4833,7 +4842,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `isValidOverrideOf`
-    fn is_valid_override_of(&mut self, source_prop: &Prop, target_prop: &Prop) -> bool {
+    pub(super) fn is_valid_override_of(&mut self, source_prop: &Prop, target_prop: &Prop) -> bool {
         if source_prop.source == target_prop.source {
             return true;
         }
@@ -4954,7 +4963,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `private`, `protected` or neither, of the constructor `sig` is declared as. `None`: it has no declaration.
-    fn constructor_accessibility(&mut self, sig: SigId) -> Option<Flags> {
+    pub(super) fn constructor_accessibility(&mut self, sig: SigId) -> Option<Flags> {
         let mut sig = sig;
         for _ in 0..64 {
             match *self.p.types.sig(self.p.types.sig_origin(sig)) {
@@ -4975,7 +4984,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `signaturesRelatedTo`
-    fn signatures_related_to(
+    pub(super) fn signatures_related_to(
         &mut self,
         r: &mut Relater,
         source: TypeId,
@@ -5113,7 +5122,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `signatureRelatedTo`
-    fn signature_related_to(
+    pub(super) fn signature_related_to(
         &mut self,
         r: &mut Relater,
         source: SigId,
@@ -5208,7 +5217,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `isTopSignature`: `(...args: any[]) => any`, `(...args: never) => unknown`: what every function is.
-    fn is_top_signature(&mut self, sig: SigId) -> bool {
+    pub(super) fn is_top_signature(&mut self, sig: SigId) -> bool {
         if !self.sig_type_params(sig).is_empty()
             || self.sig_this_type(sig).is_some_and(|t| !self.is_any(t))
         {
@@ -5228,7 +5237,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `isInstantiatedGenericParameter`
-    fn is_instantiated_generic_parameter(&mut self, sig: SigId, index: usize) -> bool {
+    pub(super) fn is_instantiated_generic_parameter(&mut self, sig: SigId, index: usize) -> bool {
         // `cloneSignature` keeps the target.
         let sig = self.p.types.sig_origin(sig);
         let Some((file, func, _)) = self.sig_decl(sig) else {
@@ -5324,7 +5333,11 @@ impl<'p> Checker<'p> {
     }
 
     /// `getRestOrAnyTypeAtPosition`
-    fn rest_or_any_type_at_position(&mut self, params: &[SigParam], pos: usize) -> TypeId {
+    pub(super) fn rest_or_any_type_at_position(
+        &mut self,
+        params: &[SigParam],
+        pos: usize,
+    ) -> TypeId {
         let rest = self.params_as_tuple(params, pos);
         match self.array_element(rest) {
             Some(element) if self.is_any(element) => TypeId::ANY,
@@ -5333,7 +5346,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `compareSignaturesRelated`. `as_given`: the two before their type parameters were erased.
-    fn compare_signatures_related(
+    pub(super) fn compare_signatures_related(
         &mut self,
         r: &mut Relater,
         source: SigId,
@@ -5709,7 +5722,7 @@ impl<'p> Checker<'p> {
     // ───────────────────────────── index signatures ─────────────────────────────
 
     /// `indexSignaturesRelatedTo`
-    fn index_signatures_related_to(
+    pub(super) fn index_signatures_related_to(
         &mut self,
         r: &mut Relater,
         source: TypeId,
@@ -5800,7 +5813,7 @@ impl<'p> Checker<'p> {
 
     /// `getApparentTypeOfIntersectionType`: the intersection of what the members of `ty` look like. `apparent_type` leaves an
     /// intersection whose members all look like objects as it is, and `members` puts its shape together from what they look like.
-    fn apparent_type_of_intersection(&mut self, ty: TypeId) -> TypeId {
+    pub(super) fn apparent_type_of_intersection(&mut self, ty: TypeId) -> TypeId {
         let TypeData::Intersection(parts) = self.data(ty) else {
             return ty;
         };

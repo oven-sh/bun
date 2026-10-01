@@ -1023,8 +1023,14 @@ impl Pass<'_, '_> {
             ty = self.adjusted(ty, Facts::NEUndefinedOrNull);
         }
         if matches!(ty, Abs::Auto | Abs::AutoArray) && !self.is_changed_out_of_sight(&walk, e) {
-            self.report(hir[pat].pos, 7034);
-            self.report(hir[e].pos, 7005);
+            let (file, declared_at) = (self.file, hir[pat].pos);
+            let shown = if ty == Abs::Auto { "any" } else { "any[]" };
+            for (start, code) in [(declared_at, 7034), (hir[e].pos, 7005)] {
+                self.report(start, code);
+                self.c.explain(start, code, |c| {
+                    vec![c.declaration_name_at(file, declared_at), shown.to_owned()]
+                });
+            }
         }
     }
 
@@ -2763,7 +2769,7 @@ impl Pass<'_, '_> {
                     } else if !text.is_empty() {
                         self.check_named_access(e, obj, name, name_pos, chain);
                     }
-                    self.check_used_before_assigned(e, obj, name, name_pos);
+                    self.check_used_before_assigned(e, obj, name, name_pos, ExprId::NONE);
                 }
                 ExprKind::Index { obj, index, .. }
                     if matches!(self.hir[obj].kind, ExprKind::This)
@@ -2772,7 +2778,7 @@ impl Pass<'_, '_> {
                     let key = self.c.type_of_expr(self.file, index);
                     if let Some(name) = self.c.property_name_of_type(key) {
                         let at = self.c.start_of(self.file, index);
-                        self.check_used_before_assigned(e, obj, name, at);
+                        self.check_used_before_assigned(e, obj, name, at, index);
                     }
                 }
                 _ => {}
@@ -2933,6 +2939,8 @@ impl Pass<'_, '_> {
                 if is_set_only && assignment != AssignmentKind::Definite {
                     let start = self.c.start_inside_parentheses(self.file, e);
                     self.report(start, 2806);
+                    let end = self.c.end_inside_parentheses(self.file, e);
+                    self.c.explain_to(start, end, 2806, |_| Vec::new());
                 }
                 return;
             }
@@ -2941,7 +2949,18 @@ impl Pass<'_, '_> {
         if let Some((file, type_class)) = self.class_of_private_property(left, name) {
             let is_shadowed = lexical
                 .is_some_and(|(i, _, _)| file == self.file && classes[i..].contains(&type_class));
-            self.report(name_pos, if is_shadowed { 18014 } else { 18013 });
+            let code = if is_shadowed { 18014 } else { 18013 };
+            self.report(name_pos, code);
+            let here = self.file;
+            self.c.explain(name_pos, code, |c| {
+                let on = if is_shadowed {
+                    c.type_to_string(left)
+                } else {
+                    let class = c.class_sym(file, type_class);
+                    c.symbol_to_string(class)
+                };
+                vec![c.declaration_name_at(here, name_pos), on]
+            });
             return;
         }
         // 1111, through `grammarErrorOnNode`.
@@ -2953,6 +2972,11 @@ impl Pass<'_, '_> {
             return;
         }
         // `reportNonexistentProperty`, `getSuggestedSymbolForNonexistentProperty`
+        let containing = if matches!(self.c.data(left), TypeData::ThisParam(_)) {
+            apparent
+        } else {
+            left
+        };
         let atoms = &self.c.files().atoms;
         let text = written_private_name(atoms.bytes(name));
         if let Some(members) = self.c.members(apparent) {
@@ -2994,10 +3018,14 @@ impl Pass<'_, '_> {
                     return;
                 }
                 self.report(name_pos, 2551);
+                self.c
+                    .explain_no_property(self.file, e, containing, name, name_pos, 2551);
                 return;
             }
         }
         self.report(name_pos, 2339);
+        self.c
+            .explain_no_property(self.file, e, containing, name, name_pos, 2339);
     }
 
     /// Whether `name` is no property of `apparent` and an index signature stands in for it.
@@ -3072,6 +3100,9 @@ impl Pass<'_, '_> {
             });
             if is_block_scoped {
                 self.report(name_pos, 2339);
+                self.c.explain(name_pos, 2339, |c| {
+                    vec![c.atom_text(name), c.type_to_string(left)]
+                });
             } else if self.no_implicit_any {
                 self.report(name_pos, 7017);
             }
@@ -3105,8 +3136,15 @@ impl Pass<'_, '_> {
     }
 
     /// `getFlowTypeOfAccessExpression`: reports 2565 at `at` if `e`, an access to the property `name` of `obj`, can read the property
-    /// before it is assigned (`assumeUninitialized`).
-    fn check_used_before_assigned(&mut self, e: ExprId, obj: ExprId, name: Atom, at: u32) {
+    /// before it is assigned (`assumeUninitialized`). `index`: what is at `at`, if that is not just the name.
+    fn check_used_before_assigned(
+        &mut self,
+        e: ExprId,
+        obj: ExprId,
+        name: Atom,
+        at: u32,
+        index: ExprId,
+    ) {
         // `getFlowTypeOfReferenceEx` returns the declared type of a reference without a flow node.
         if !self.strict
             || self.bound.expr_flow[e.idx()] == UNREACHABLE
@@ -3123,6 +3161,20 @@ impl Pass<'_, '_> {
             && self.c.may_be_unassigned(self.file, e, declared)
         {
             self.report(at, 2565);
+            let file = self.file;
+            let end = if index.is_some() {
+                self.c.end_of_expr(file, index)
+            } else {
+                0
+            };
+            self.c.explain_to(at, end, 2565, |c| {
+                let object = c.type_of_expr(file, obj);
+                let apparent = c.apparent_type(object);
+                vec![match c.prop_of(apparent, name) {
+                    Some((prop, _)) => c.property_to_string(&prop),
+                    None => c.atom_text(name),
+                }]
+            });
         }
     }
 
@@ -3312,6 +3364,10 @@ impl Pass<'_, '_> {
         {
             let start = self.c.start_inside_parentheses(self.file, e);
             self.report(start, 2565);
+            let end = self.c.end_inside_parentheses(self.file, e);
+            let member = self.c.files().sym(self.file, symbol);
+            self.c
+                .explain_to(start, end, 2565, |c| vec![c.symbol_to_string(member)]);
         }
     }
 }
@@ -3383,9 +3439,24 @@ impl Pass<'_, '_> {
             if self.hir.var_decls[d].init.is_none()
                 && let Some(pat) = self.untyped_variable(VarDeclId(d as u32))
             {
-                self.report(self.hir[pat].pos, 7005);
+                let (file, start) = (self.file, self.hir[pat].pos);
+                self.report(start, 7005);
+                self.c.explain(start, 7005, |c| {
+                    vec![c.declaration_name_at(file, start), "any".to_owned()]
+                });
             }
         }
+    }
+
+    /// Notes what `reportImplicitAny` and `reportWideningErrorsInType` say of a declaration that takes its type from the expression
+    /// `from`. `name`: where its name is written.
+    fn explain_implicit_any(&mut self, start: u32, end: u32, code: u32, name: u32, from: ExprId) {
+        let file = self.file;
+        self.c.explain_to(start, end, code, |c| {
+            let ty = c.type_of_expr(file, from);
+            let ty = c.widened(ty);
+            vec![c.declaration_name_at(file, name), c.type_to_string(ty)]
+        });
     }
 
     /// `reportErrorsFromWidening`, wherever a type is taken from an expression: 7018, or else 7005, 7006 7019, 7008, 7010 7011, 7025 7055.
@@ -3400,7 +3471,10 @@ impl Pass<'_, '_> {
                 && let Some(pat) = self.untyped_variable(VarDeclId(d as u32))
             {
                 let widening = self.widening_of(init);
-                self.report_errors_from_widening(&widening, hir[pat].pos, 7005);
+                let start = hir[pat].pos;
+                if self.report_errors_from_widening(&widening, start, 7005) {
+                    self.explain_implicit_any(start, 0, 7005, start, init);
+                }
             }
         }
         for m in 0..hir.members.len() {
@@ -3411,7 +3485,10 @@ impl Pass<'_, '_> {
                 && matches!(bound.member_owner[m], MemberOwner::Class(_))
             {
                 let widening = self.widening_of(member.init);
-                self.report_errors_from_widening(&widening, member.pos, 7008);
+                if self.report_errors_from_widening(&widening, member.pos, 7008) {
+                    let end = self.c.end_of_name_at(self.file, member.pos);
+                    self.explain_implicit_any(member.pos, end, 7008, member.pos, member.init);
+                }
             }
         }
         for f in 0..hir.fns.len() {
@@ -3442,15 +3519,16 @@ impl Pass<'_, '_> {
                     continue;
                 }
                 let widening = self.widening_of(param.default);
-                self.report_errors_from_widening(
-                    &widening,
-                    param.pos,
-                    if param.flags.contains(Flags::REST) {
-                        7019
-                    } else {
-                        7006
-                    },
-                );
+                let code = if param.flags.contains(Flags::REST) {
+                    7019
+                } else {
+                    7006
+                };
+                if self.report_errors_from_widening(&widening, param.pos, code) {
+                    let end = self.c.end_of_param(self.file, p);
+                    let name = hir[param.pat].pos;
+                    self.explain_implicit_any(param.pos, end, code, name, param.default);
+                }
             }
             self.check_widening_of_results(func);
         }
@@ -3758,23 +3836,68 @@ impl Pass<'_, '_> {
                 self.c.is_generic(ty)
             }
         };
-        if reports_yield {
-            self.report_errors_from_widening(&yielded, start, if is_named { 7055 } else { 7025 });
-        }
-        if reports_return {
-            self.report_errors_from_widening(&returned, start, if is_named { 7010 } else { 7011 });
+        for (reports, widening, code, is_yield) in [
+            (
+                reports_yield,
+                &yielded,
+                if is_named { 7055 } else { 7025 },
+                true,
+            ),
+            (
+                reports_return,
+                &returned,
+                if is_named { 7010 } else { 7011 },
+                false,
+            ),
+        ] {
+            if !reports || !self.report_errors_from_widening(widening, start, code) {
+                continue;
+            }
+            // `GetErrorRangeForNode`
+            let file = self.file;
+            let end = match (f.kind, owner) {
+                (FnKind::Arrow, FnOwner::Expr(e)) => self.c.error_end_inside_parentheses(file, e),
+                // The first token of a function expression that nothing names.
+                (FnKind::Expr, _) if start == f.pos => 0,
+                _ => self.c.end_of_name_at(file, start),
+            };
+            self.c.explain_to(start, end, code, |c| {
+                let sig = c.sig_of_fn(file, func);
+                let result = c.sig_return(sig);
+                let ty = if is_generator {
+                    c.iteration_types(result, is_async)
+                        .map_or(TypeId::ANY, |types| {
+                            if is_yield {
+                                types.yielded
+                            } else {
+                                types.returned
+                            }
+                        })
+                } else if is_async {
+                    c.awaited(result)
+                } else {
+                    result
+                };
+                let ty = c.type_to_string(ty);
+                if is_named {
+                    vec![c.source_text(file, start, end), ty]
+                } else {
+                    vec![ty]
+                }
+            });
         }
     }
 
     /// `reportErrorsFromWidening`. `start`, `code`: what `reportImplicitAny` says of the declaration if there is nothing in the type
-    /// to point at.
-    fn report_errors_from_widening(&mut self, widening: &Widening, start: u32, code: u32) {
-        if !widening.is_unknown()
+    /// to point at. Whether it did say that.
+    fn report_errors_from_widening(&mut self, widening: &Widening, start: u32, code: u32) -> bool {
+        let is_reported = !widening.is_unknown()
             && widening.contains_widening_type()
-            && !self.report_widening_errors_in_type(widening)
-        {
+            && !self.report_widening_errors_in_type(widening);
+        if is_reported {
             self.report(start, code);
         }
+        is_reported
     }
 
     /// `reportWideningErrorsInType`: 7018
@@ -3791,6 +3914,11 @@ impl Pass<'_, '_> {
                     is_reported = self.report_widening_errors_in_type(prop);
                     if !is_reported {
                         self.report(*start, 7018);
+                        if let Some(p) = self.hir.props.iter().position(|p| p.pos == *start) {
+                            let p = PropId(p as u32);
+                            let end = self.c.end_of_prop(self.file, p);
+                            self.explain_implicit_any(*start, end, 7018, *start, self.hir[p].value);
+                        }
                         is_reported = true;
                     }
                 }
@@ -4161,7 +4289,17 @@ impl Pass<'_, '_> {
             }
             let symbol = bound.pat_symbol[prop.value.idx()];
             if symbol.is_some() && !bound.expr_symbol.contains(&symbol) {
-                self.report(hir[prop.value].pos, 2842);
+                let (file, start, property) = (self.file, hir[prop.value].pos, prop.pos);
+                self.report(start, 2842);
+                let is_missing = matches!(hir[prop.value].kind, PatKind::Ident(name) if self.c.files().atoms.bytes(name).is_empty());
+                self.c.explain(start, 2842, |c| {
+                    let name = if is_missing {
+                        "(Missing)".to_owned()
+                    } else {
+                        c.declaration_name_at(file, start)
+                    };
+                    vec![name, c.declaration_name_at(file, property)]
+                });
             }
         }
         if !self.no_implicit_any {

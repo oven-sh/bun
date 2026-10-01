@@ -77,9 +77,10 @@ struct ExportWalk {
     visited: Vec<Sym>,
     non_type_only_names: FxHashSet<Atom>,
     type_only_stars: FxHashMap<Atom, FileId>,
-    /// The file whose `export *` are reported, and where those that say again what another has said start.
+    /// The file whose `export *` are reported. Of those that say again what another has said: where they start, the one that said it
+    /// first, and the name.
     report_in: Option<FileId>,
-    collisions: Vec<u32>,
+    collisions: Vec<(u32, ExportStar, Atom)>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -136,7 +137,68 @@ impl Checker<'_> {
                 && join(parent_dir(path), &files.atoms.text(value)) == path
             {
                 out.push(Diagnostic { start, code: 1006 });
+                let end = start + files.atoms.bytes(value).len() as u32;
+                self.note(start, end, 1006, Vec::new());
             }
+        }
+    }
+
+    // ───────────────────────────── where errors end ─────────────────────────────
+
+    /// `node.End()` of the statement at `pos`. 0 if there is none.
+    fn xa_statement_end(&self, file: FileId, pos: u32) -> u32 {
+        self.hir(file)
+            .stmts
+            .iter()
+            .position(|s| s.pos == pos)
+            .map_or(0, |s| self.end_of_stmt(file, StmtId(s as u32)))
+    }
+
+    /// Where the module specifier of the statement at `pos`, which says `spec`, is written.
+    fn xa_specifier_pos(&self, file: FileId, pos: u32, spec: Atom) -> Option<u32> {
+        self.hir(file)
+            .specifier_uses
+            .iter()
+            .filter(|u| u.spec == spec && u.pos >= pos)
+            .map(|u| u.pos)
+            .min()
+    }
+
+    /// `GetTextOfNode` of the same: with its quotes.
+    fn xa_specifier_text(&self, file: FileId, pos: u32, spec: Atom) -> String {
+        let text = &self.hir(file).text[..];
+        self.xa_specifier_pos(file, pos, spec)
+            .and_then(|at| Some((at, string_literal(text, at as usize)?.1)))
+            .map_or_else(
+                || format!("\"{}\"", self.atom_text(spec)),
+                |(at, end)| self.source_text(file, at, end as u32),
+            )
+    }
+
+    /// The end of `GetErrorRangeForNode` of the declaration `node` of an alias. 0: it is one token.
+    fn xa_alias_node_end(&self, file: FileId, node: &AliasNode) -> u32 {
+        let hir = self.hir(file);
+        match node.decl {
+            Decl::ImportDefault(x) => self
+                .xa_specifier_pos(file, hir[node.stmt].pos, hir[x].spec)
+                .map_or(0, |at| {
+                    super::errors_x_modules::import_clause_end(&hir.text, at)
+                }),
+            Decl::ImportSpec(s) => self.end_of_import_spec(file, s),
+            Decl::ExportSpec(s) => self.end_of_export_spec(file, s),
+            // `* as ns`
+            Decl::ExportStarAs(_) => {
+                let text = &hir.text[..];
+                let word = skip_trivia(text, node.start as usize + 1);
+                match eat_word(text, word, b"as") {
+                    Some(end) => self.end_of_name_at(file, skip_trivia(text, end) as u32),
+                    None => 0,
+                }
+            }
+            Decl::ImportEquals(_) | Decl::ExportExpr(_) | Decl::UmdGlobal(_) => {
+                self.end_of_stmt(file, node.stmt)
+            }
+            _ => 0,
         }
     }
 
@@ -779,8 +841,9 @@ impl Checker<'_> {
         let stars = self.xa_export_stars_of(symbol);
         if !stars.is_empty() {
             let mut nested: FxHashMap<Atom, Sym> = FxHashMap::default();
-            // `exportsWithDuplicate`, by name.
-            let mut lookup: FxHashMap<Atom, Vec<(FileId, u32)>> = FxHashMap::default();
+            // `ExportCollision`, by name: whose `specifierText` it is, and `exportsWithDuplicate`.
+            let mut lookup: FxHashMap<Atom, (ExportStar, Vec<(FileId, u32)>)> =
+                FxHashMap::default();
             for star in &stars {
                 let resolved = files.module_of_specifier(star.file, star.spec);
                 let Some(exported) = self.xa_visit_exports(
@@ -799,11 +862,11 @@ impl Checker<'_> {
                     match nested.get(&id) {
                         None => {
                             nested.insert(id, source);
-                            lookup.insert(id, Vec::new());
+                            lookup.insert(id, (*star, Vec::new()));
                         }
                         Some(&target) => {
                             if self.xa_resolve_symbol(target) != self.xa_resolve_symbol(source)
-                                && let Some(duplicates) = lookup.get_mut(&id)
+                                && let Some((_, duplicates)) = lookup.get_mut(&id)
                             {
                                 duplicates.push((star.file, star.pos));
                             }
@@ -812,7 +875,7 @@ impl Checker<'_> {
                 }
             }
             let report_in = walk.report_in;
-            for (id, duplicates) in &lookup {
+            for (id, (first, duplicates)) in &lookup {
                 // What the module exports itself settles it.
                 if *id == known::export_equals || symbols.contains_key(id) {
                     continue;
@@ -821,7 +884,7 @@ impl Checker<'_> {
                     duplicates
                         .iter()
                         .filter(|d| Some(d.0) == report_in)
-                        .map(|d| d.1),
+                        .map(|d| (d.1, *first, *id)),
                 );
             }
             for (id, nested_symbol) in nested {
@@ -893,8 +956,21 @@ impl Checker<'_> {
         out.extend(
             walk.collisions
                 .iter()
-                .map(|&start| Diagnostic { start, code: 2308 }),
+                .map(|&(start, ..)| Diagnostic { start, code: 2308 }),
         );
+        // Those at one place come in the order of their messages.
+        let mut said: Vec<(u32, Vec<String>)> = walk
+            .collisions
+            .iter()
+            .map(|&(start, first, name)| {
+                let specifier = self.xa_specifier_text(first.file, first.pos, first.spec);
+                (start, vec![specifier, self.atom_text(name)])
+            })
+            .collect();
+        said.sort();
+        for (start, args) in said {
+            self.note(start, self.xa_statement_end(file, start), 2308, args);
+        }
     }
 
     // ───────────────────────────── the declarations of aliases ─────────────────────────────
@@ -1002,6 +1078,8 @@ impl Checker<'_> {
                     start: node.start,
                     code: 2303,
                 });
+                let end = self.xa_alias_node_end(file, node);
+                self.explain_to(node.start, end, 2303, |c| vec![c.symbol_to_string(sym)]);
             }
         }
     }
@@ -1140,6 +1218,22 @@ impl Checker<'_> {
                     18042
                 },
             });
+            // What is no Identifier goes by the name of the symbol.
+            let is_string = matches!(hir.text.get(name_start as usize), Some(b'"' | b'\''));
+            let identifier = match decl {
+                Decl::ImportSpec(s) if !is_string => hir[s].imported,
+                _ => files.symbol(sym).name,
+            };
+            self.note(
+                name_start,
+                0,
+                18042,
+                type_import_in_javascript(
+                    self.atom_text(identifier),
+                    spec.is_some().then(|| self.atom_text(spec)),
+                    matches!(decl, Decl::ImportSpec(_)),
+                ),
+            );
             // `checkAliasSymbol` returns before 2440 and 2484, which earlier passes report at the start of the declaration.
             out.retain(|d| d.start != start || !matches!(d.code, 2440 | 2484));
             return;
@@ -1163,41 +1257,69 @@ impl Checker<'_> {
             && own.intersects(SymFlags::VALUE)
         {
             out.push(Diagnostic { start, code: 2865 });
+            let end = self.xa_alias_node_end(file, node);
+            self.explain_to(start, end, 2865, |c| vec![c.symbol_to_string(sym)]);
         }
         if is_ambient {
             return;
         }
         let is_verbatim = options.verbatim_module_syntax;
         let type_only_alias = links.type_only.get(&sym).copied();
+        // `node.PropertyNameOrName().Text()`
+        let property_name = match decl {
+            Decl::ImportSpec(s) => hir[s].imported,
+            Decl::ExportSpec(s) => hir[s].local,
+            _ => files.symbol(sym).name,
+        };
+        let flag_name = || super::errors_x_modules::isolated_modules_like_flag_name(files);
         if is_type || type_only_alias.is_some() {
             match decl {
                 Decl::ImportDefault(_) | Decl::ImportSpec(_) | Decl::ImportEquals(_) => {
                     if is_verbatim {
-                        out.push(Diagnostic {
+                        let code = if spec.is_none() {
+                            1288
+                        } else if is_type {
+                            1484
+                        } else {
+                            1485
+                        };
+                        out.push(Diagnostic { start, code });
+                        self.note(
                             start,
-                            code: if spec.is_none() {
-                                1288
-                            } else if is_type {
-                                1484
-                            } else {
-                                1485
-                            },
-                        });
+                            self.xa_alias_node_end(file, node),
+                            code,
+                            vec![self.atom_text(property_name)],
+                        );
                     }
                     if is_type
                         && matches!(decl, Decl::ImportEquals(x) if hir[x].flags.contains(Flags::EXPORT))
                     {
                         out.push(Diagnostic { start, code: 1269 });
+                        self.note(
+                            start,
+                            self.xa_alias_node_end(file, node),
+                            1269,
+                            vec![flag_name()],
+                        );
                     }
                 }
                 // What says `type` in this very file can be seen to go away without looking at any other.
                 Decl::ExportSpec(_)
                     if is_verbatim || type_only_alias.is_none_or(|t| t.file != file) =>
                 {
-                    out.push(Diagnostic {
-                        start,
-                        code: if is_type { 1205 } else { 1448 },
-                    });
+                    let end = self.xa_alias_node_end(file, node);
+                    if is_type {
+                        out.push(Diagnostic { start, code: 1205 });
+                        self.note(start, end, 1205, vec![flag_name()]);
+                    } else {
+                        out.push(Diagnostic { start, code: 1448 });
+                        self.note(
+                            start,
+                            end,
+                            1448,
+                            vec![self.atom_text(property_name), flag_name()],
+                        );
+                    }
                 }
                 _ => {}
             }
@@ -1210,9 +1332,16 @@ impl Checker<'_> {
             && files.resolve_alias(sym).is_some()
         {
             out.push(Diagnostic { start, code: 1293 });
+            self.note(start, self.xa_alias_node_end(file, node), 1293, Vec::new());
         }
         if is_verbatim && self.xa_is_ambient_const_enum(target) {
             out.push(Diagnostic { start, code: 2748 });
+            self.note(
+                start,
+                self.xa_alias_node_end(file, node),
+                2748,
+                vec![flag_name()],
+            );
         }
     }
 
@@ -1256,10 +1385,18 @@ impl Checker<'_> {
                 type_only.kind,
                 TypeOnlyKind::ExportSpecifier | TypeOnlyKind::ExportStar
             );
+            let start = skip_trivia(&hir.text, after_equals);
+            let code = if is_export { 1379 } else { 1380 };
             out.push(Diagnostic {
-                start: skip_trivia(&hir.text, after_equals) as u32,
-                code: if is_export { 1379 } else { 1380 },
+                start: start as u32,
+                code,
             });
+            self.note(
+                start as u32,
+                entity_name_end(&hir.text, start) as u32,
+                code,
+                Vec::new(),
+            );
             return;
         }
     }
@@ -1312,6 +1449,29 @@ impl Checker<'_> {
                     _ => hir[pat].pos,
                 };
                 out.push(Diagnostic { start, code: 18042 });
+                // What is no Identifier goes by the name of the symbol.
+                let identifier = match bound.pat_parent[pat.idx()] {
+                    PatParent::Prop(_, p)
+                        if hir
+                            .text
+                            .get(start as usize)
+                            .copied()
+                            .is_some_and(is_word_byte) =>
+                    {
+                        hir[p].key.name().unwrap_or(symbol.name)
+                    }
+                    _ => symbol.name,
+                };
+                self.note(
+                    start,
+                    0,
+                    18042,
+                    type_import_in_javascript(
+                        self.atom_text(identifier),
+                        Some(self.atom_text(spec)),
+                        false,
+                    ),
+                );
             }
         }
     }
@@ -1405,6 +1565,17 @@ impl Checker<'_> {
                 _ => continue,
             };
             out.push(Diagnostic { start, code: 2866 });
+            let end = match import {
+                Decl::ImportDefault(x) => self
+                    .xa_specifier_pos(file, start, hir[x].spec)
+                    .map_or(0, |at| {
+                        super::errors_x_modules::import_clause_end(&hir.text, at)
+                    }),
+                Decl::ImportSpec(s) => self.end_of_import_spec(file, s),
+                Decl::ImportEquals(_) => self.xa_statement_end(file, start),
+                _ => 0,
+            };
+            self.note(start, end, 2866, vec![self.atom_text(name)]);
         }
     }
 
@@ -1556,10 +1727,14 @@ impl Checker<'_> {
             {
                 continue;
             }
-            out.push(Diagnostic {
-                start: hir[reference].pos,
-                code: 1272,
-            });
+            let start = hir[reference].pos;
+            out.push(Diagnostic { start, code: 1272 });
+            self.note(
+                start,
+                entity_name_end(&hir.text, start as usize) as u32,
+                1272,
+                Vec::new(),
+            );
         }
     }
 
@@ -1661,6 +1836,8 @@ impl Checker<'_> {
             let path = files.module(module.file).path.as_str();
             if path.ends_with(".json") || path.ends_with(".d.json.ts") {
                 out.push(Diagnostic { start, code: 1544 });
+                let kind = super::errors_x_modules::module_kind_name(files.options.module);
+                self.note(start, 0, 1544, vec![kind.to_owned()]);
             }
         }
     }
@@ -1668,7 +1845,7 @@ impl Checker<'_> {
     // ───────────────────────────── module specifiers ─────────────────────────────
 
     /// Every place a module is named, and how.
-    fn xa_module_specifiers(&self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn xa_module_specifiers(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let files = self.files();
         let (hir, bound) = (self.hir(file), self.bound(file));
         let text = &hir.text[..];
@@ -1878,7 +2055,7 @@ impl Checker<'_> {
 
     /// `resolveExternalModule`, for what it says of a module that is found.
     fn xa_resolved_module(
-        &self,
+        &mut self,
         file: FileId,
         spec: Atom,
         start: u32,
@@ -1888,8 +2065,14 @@ impl Checker<'_> {
         let files = self.files();
         let options = &files.options;
         let text = files.atoms.text(spec);
-        if text.starts_with("@types/") {
+        if let Some(without_prefix) = text.strip_prefix("@types/") {
             out.push(Diagnostic { start, code: 6137 });
+            self.note(
+                start,
+                0,
+                6137,
+                vec![without_prefix.to_owned(), text.to_string()],
+            );
         }
         // A module that is declared by name is what it is declared to be.
         if files
@@ -1906,6 +2089,7 @@ impl Checker<'_> {
         // `GetResolutionDiagnostic`. A file that is refused is not loaded for the sake of the import.
         if target.path.ends_with(".tsx") && options.jsx == JsxEmit::None {
             out.push(Diagnostic { start, code: 6142 });
+            self.note(start, 0, 6142, vec![text.to_string(), target.path.clone()]);
             if !options.files.contains(&target.path) {
                 return;
             }
@@ -1919,10 +2103,22 @@ impl Checker<'_> {
         if using_ts_extension && is_declaration_name {
             if site.is_emittable {
                 out.push(Diagnostic { start, code: 2846 });
+                let is_esm = (ModuleKind::Es2015..=ModuleKind::EsNext).contains(&options.module)
+                    || site.mode == ResolutionMode::Import;
+                let suggested =
+                    suggested_import_source(&text, is_esm, options.allow_importing_ts_extensions);
+                self.note(start, 0, 2846, vec![suggested]);
             }
         } else if using_ts_extension && !allows_ts_extensions {
             if site.is_emittable {
                 out.push(Diagnostic { start, code: 5097 });
+                // An extension that a pattern of `imports` or `paths` matched may be anywhere in the specifier.
+                let extension = try_extract_ts_extension(&text).or_else(|| {
+                    [".ts", ".tsx", ".d.ts", ".cts", ".d.cts", ".mts", ".d.mts"]
+                        .into_iter()
+                        .find(|&e| text.contains(e))
+                });
+                self.note(start, 0, 5097, vec![extension.unwrap_or("").to_owned()]);
             }
         } else if options.rewrite_relative_import_extensions
             && !site.is_ambient
@@ -1937,8 +2133,18 @@ impl Checker<'_> {
                 target.hir.kind != FileKind::Declaration && !target.path.contains("/node_modules/");
             if !using_ts_extension && should_rewrite {
                 out.push(Diagnostic { start, code: 2876 });
+                self.note(
+                    start,
+                    0,
+                    2876,
+                    vec![relative_path_from_file(&importing.path, &target.path)],
+                );
             } else if using_ts_extension && !should_rewrite && may_be_emitted {
                 out.push(Diagnostic { start, code: 2877 });
+                // `GetAnyExtensionFromPath`
+                let base = &text[text.rfind('/').map_or(0, |i| i + 1)..];
+                let extension = base.rfind('.').map_or("", |i| &base[i..]);
+                self.note(start, 0, 2877, vec![extension.to_owned()]);
             }
         }
         if !target.is_module() || !matches!(options.module, ModuleKind::Node16 | ModuleKind::Node18)
@@ -1968,6 +2174,12 @@ impl Checker<'_> {
             _ => 1479,
         };
         out.push(Diagnostic { start, code });
+        self.note(start, 0, code, vec![text.to_string()]);
+        if code != 1471 {
+            self.explain_chain(start, code, |_| {
+                mode_mismatch_details(&importing.path).into_iter().collect()
+            });
+        }
     }
 
     // ───────────────────────────── expressions ─────────────────────────────
@@ -1998,10 +2210,10 @@ impl Checker<'_> {
                     }
                     if ty.is_undefined() || ty.is_null() || !self.is_assignable(ty, TypeId::STRING)
                     {
-                        out.push(Diagnostic {
-                            start: self.start_of(file, argument),
-                            code: 7036,
-                        });
+                        let start = self.start_of(file, argument);
+                        out.push(Diagnostic { start, code: 7036 });
+                        let end = self.end_of_expr(file, argument);
+                        self.explain_to(start, end, 7036, |c| vec![c.type_to_string(ty)]);
                     }
                 }
                 // `checkImportMetaProperty`
@@ -2022,15 +2234,17 @@ impl Checker<'_> {
                         || is_other_import_meta_property(&hir.text, start)
                     {
                         out.push(Diagnostic { start, code });
+                        let end = meta_property_end(&hir.text, start, b"import");
+                        self.note(start, end, code, Vec::new());
                     }
                 }
                 // `checkNewTargetMetaProperty`
                 ExprKind::NewTarget => {
                     if self.xa_has_new_target_container(file, e) == Some(false) {
-                        out.push(Diagnostic {
-                            start: hir.exprs[i].pos,
-                            code: 17013,
-                        });
+                        let start = hir.exprs[i].pos;
+                        out.push(Diagnostic { start, code: 17013 });
+                        let end = meta_property_end(&hir.text, start, b"new");
+                        self.note(start, end, 17013, vec!["new.target".to_owned()]);
                     }
                 }
                 ExprKind::Ident(_) if files.options.isolated_modules => {
@@ -2183,18 +2397,27 @@ impl Checker<'_> {
             }
             _ => {}
         }
-        out.push(Diagnostic {
-            start: self.start_inside_parentheses(file, e),
-            code: 2748,
-        });
+        let flag_name = super::errors_x_modules::isolated_modules_like_flag_name(self.files());
+        let start = self.start_inside_parentheses(file, e);
+        out.push(Diagnostic { start, code: 2748 });
+        self.note(
+            start,
+            self.end_inside_parentheses(file, e),
+            2748,
+            vec![flag_name.clone()],
+        );
         // Parentheses around it are an expression of the same type.
         if self.p.files.options.isolated_modules_said
             && let Ok(at) = hir.parens.binary_search_by_key(&e.0, |p| p.0.0)
         {
-            out.push(Diagnostic {
-                start: hir.parens[at].1,
-                code: 2748,
-            });
+            let start = hir.parens[at].1;
+            out.push(Diagnostic { start, code: 2748 });
+            self.note(
+                start,
+                self.end_of_expr_from(file, e, start),
+                2748,
+                vec![flag_name],
+            );
         }
     }
 
@@ -2285,7 +2508,7 @@ impl Checker<'_> {
         let line_of = |pos: u32| line_starts.partition_point(|&start| start <= pos) - 1;
         // `directivesByLine`: the line, where the directive starts, whether an error is expected, and whether one came.
         let mut by_line: Vec<(usize, u32, bool, bool)> = Vec::new();
-        for &(start, expects_error) in &directives {
+        for &(start, _, expects_error) in &directives {
             let line = line_of(start);
             // The last in a line is the one that counts.
             if by_line.last().is_some_and(|last| last.0 == line) {
@@ -2337,6 +2560,11 @@ impl Checker<'_> {
                 .unwrap_or(end);
             if self.xa_is_all_known(file, from, to) && !self.timed_out() {
                 out.push(Diagnostic { start, code: 2578 });
+                let end = directives
+                    .iter()
+                    .find(|directive| directive.0 == start)
+                    .map_or(0, |directive| directive.1);
+                self.note(start, end, 2578, Vec::new());
             }
         }
     }
@@ -2415,6 +2643,19 @@ fn is_other_import_meta_property(text: &[u8], pos: u32) -> bool {
     eat_word(text, pos as usize, b"import")
         .and_then(|end| eat(text, end, b'.'))
         .is_some_and(|dot_end| eat_word(text, skip_trivia(text, dot_end), b"defer").is_none())
+}
+
+/// Where the meta-property `keyword.name` at `pos` ends. 0 if that is not what is written there.
+fn meta_property_end(text: &[u8], pos: u32, keyword: &[u8]) -> u32 {
+    let Some(dot_end) = eat_word(text, pos as usize, keyword).and_then(|end| eat(text, end, b'.'))
+    else {
+        return 0;
+    };
+    let mut end = skip_trivia(text, dot_end);
+    while text.get(end).copied().is_some_and(is_word_byte) {
+        end += 1;
+    }
+    end as u32
 }
 
 /// The string literal at `at`: what is between the quotes, as written, and where it ends.
@@ -2515,6 +2756,104 @@ fn strip_ts_extension(path: &str) -> Option<&str> {
         .filter(|stem| !stem.is_empty())
 }
 
+/// `TryExtractTSExtension`
+fn try_extract_ts_extension(path: &str) -> Option<&'static str> {
+    [".d.ts", ".d.cts", ".d.mts", ".ts", ".tsx", ".mts", ".cts"]
+        .into_iter()
+        .find(|&e| path.ends_with(e))
+}
+
+/// `getSuggestedImportSource`, of a specifier that names a declaration file. `is_esm`: what is written out is an ECMAScript module.
+fn suggested_import_source(specifier: &str, is_esm: bool, prefers_ts: bool) -> String {
+    let extension = try_extract_ts_extension(specifier).unwrap_or("");
+    let stem = &specifier[..specifier.len() - extension.len()];
+    if !is_esm {
+        return stem.to_owned();
+    }
+    let suggested = match (extension, prefers_ts) {
+        (".mts" | ".d.mts", true) => ".mts",
+        (".mts" | ".d.mts", false) => ".mjs",
+        (".cts" | ".d.cts", true) => ".cts",
+        (".cts" | ".d.cts", false) => ".cjs",
+        (_, true) => ".ts",
+        (_, false) => ".js",
+    };
+    format!("{stem}{suggested}")
+}
+
+/// `GetRelativePathFromFile`
+fn relative_path_from_file(from: &str, to: &str) -> String {
+    let from: Vec<&str> = parent_dir(from)
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect();
+    let to: Vec<&str> = to.split('/').filter(|part| !part.is_empty()).collect();
+    let common = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
+    let mut parts: Vec<&str> = vec![".."; from.len() - common];
+    parts.extend_from_slice(&to[common..]);
+    let path = parts.join("/");
+    // `EnsurePathIsNonModuleName`
+    if path.starts_with("../") {
+        path
+    } else {
+        format!("./{path}")
+    }
+}
+
+/// `CreateModeMismatchDetails`, of the file at `path`, for an extension `resolveExternalModule` asks it about. Which `package.json` the
+/// file goes by is not kept: it is taken to say `type`, or not to be there.
+fn mode_mismatch_details(path: &str) -> Option<super::explain::Line> {
+    let (code, args) = if path.ends_with(".d.ts") {
+        return None;
+    } else if path.ends_with(".ts") {
+        (1480, vec![".mts".to_owned()])
+    } else if path.ends_with(".js") {
+        (1480, vec![".mjs".to_owned()])
+    } else if path.ends_with(".tsx") || path.ends_with(".jsx") {
+        (1483, Vec::new())
+    } else {
+        return None;
+    };
+    Some(super::explain::Line {
+        code,
+        args,
+        level: 1,
+    })
+}
+
+/// The arguments of 18042: the name, and the type to write instead. `specifier`: the module, if one is named.
+/// `is_import_specifier`: the name is one of those in the braces of an import.
+fn type_import_in_javascript(
+    identifier: String,
+    specifier: Option<String>,
+    is_import_specifier: bool,
+) -> Vec<String> {
+    let mut import = format!("import(\"{}\")", specifier.as_deref().unwrap_or("..."));
+    if is_import_specifier {
+        import.push('.');
+        import.push_str(&identifier);
+    }
+    vec![identifier, import]
+}
+
+/// Where the entity name `a.b.c` that starts at `start` ends.
+fn entity_name_end(text: &[u8], start: usize) -> usize {
+    let mut end = start;
+    loop {
+        while text.get(end).copied().is_some_and(is_word_byte) {
+            end += 1;
+        }
+        let Some(after_dot) = eat(text, end, b'.') else {
+            return end;
+        };
+        let next = skip_trivia(text, after_dot);
+        if !text.get(next).copied().is_some_and(is_word_byte) {
+            return end;
+        }
+        end = next;
+    }
+}
+
 /// `IsDeclarationFileName`
 fn is_declaration_file_name(path: &str) -> bool {
     let base = &path[path.rfind('/').map_or(0, |i| i + 1)..];
@@ -2581,7 +2920,7 @@ fn process_comment_directive(
     start: usize,
     end: usize,
     multiline: bool,
-    out: &mut Vec<(u32, bool)>,
+    out: &mut Vec<(u32, u32, bool)>,
 ) {
     let mut at = start;
     let skip = |at: &mut usize, wanted: &[u8]| {
@@ -2602,9 +2941,9 @@ fn process_comment_directive(
     }
     let rest = &text[at + 1..];
     if rest.starts_with(b"ts-expect-error") {
-        out.push((start as u32, true));
+        out.push((start as u32, end as u32, true));
     } else if rest.starts_with(b"ts-ignore") {
-        out.push((start as u32, false));
+        out.push((start as u32, end as u32, false));
     }
 }
 
@@ -2640,9 +2979,9 @@ fn can_start_regular_expression(before: &[u8]) -> bool {
     !matches!(last, b')' | b']' | b'}' | b'<' | b'"' | b'\'' | b'`')
 }
 
-/// The comments of `text` that are `@ts-ignore` or `@ts-expect-error`: where each starts, as `CommentDirective.Loc` has it, and
-/// whether it expects an error. What is in strings, templates and regular expressions is no comment.
-fn comment_directives(text: &[u8]) -> Vec<(u32, bool)> {
+/// The comments of `text` that are `@ts-ignore` or `@ts-expect-error`: where each starts and ends, as `CommentDirective.Loc` has it,
+/// and whether it expects an error. What is in strings, templates and regular expressions is no comment.
+fn comment_directives(text: &[u8]) -> Vec<(u32, u32, bool)> {
     let mut out = Vec::new();
     if !text.windows(4).any(|w| w == b"@ts-") {
         return out;

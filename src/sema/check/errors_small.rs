@@ -170,9 +170,15 @@ impl Checker<'_> {
                 let is_in_type = ty.is_some()
                     && hir[ty].pos <= start
                     && (init.is_none() || start < self.start_of(file, init));
-                out.push(Diagnostic {
-                    start,
-                    code: if is_in_type { 2844 } else { 2301 },
+                let code = if is_in_type { 2844 } else { 2301 };
+                out.push(Diagnostic { start, code });
+                // `DeclarationNameToString`: the name of the property as it is written.
+                self.explain(start, code, |checker| {
+                    let end = checker.end_of_member_name(file, member);
+                    vec![
+                        checker.source_text(file, hir[member].pos, end),
+                        checker.atom_text(name),
+                    ]
                 });
             }
         }
@@ -429,6 +435,14 @@ impl Checker<'_> {
                             start: hir.stmts[s].pos,
                             code: 1156,
                         });
+                        let keyword = match decls.iter().next().map(|d| hir[d].kind) {
+                            Some(VarKind::Let) => "let",
+                            Some(VarKind::Const) => "const",
+                            Some(VarKind::Using) => "using",
+                            _ => "await using",
+                        };
+                        let end = self.end_of_stmt(file, me);
+                        self.explain_to(hir.stmts[s].pos, end, 1156, |_| vec![keyword.to_owned()]);
                     }
                 }
                 // `checkTypeAliasDeclaration`, `checkInterfaceDeclaration`: `containerAllowsBlockScopedVariable`. A matter of grammar.
@@ -452,12 +466,13 @@ impl Checker<'_> {
                                 | StmtKind::ForOf { .. }
                         )
                     {
-                        let start = match hir.stmts[s].kind {
-                            StmtKind::TypeAlias(a) => hir[a].name_pos,
-                            StmtKind::Interface(i) => hir[i].name_pos,
+                        let (start, keyword) = match hir.stmts[s].kind {
+                            StmtKind::TypeAlias(a) => (hir[a].name_pos, "type"),
+                            StmtKind::Interface(i) => (hir[i].name_pos, "interface"),
                             _ => continue,
                         };
                         out.push(Diagnostic { start, code: 1156 });
+                        self.explain(start, 1156, |_| vec![keyword.to_owned()]);
                     }
                 }
                 StmtKind::ForOf { left, .. } if matches!(hir[left].kind, StmtKind::Var(_)) => {
@@ -477,6 +492,8 @@ impl Checker<'_> {
                                 start: hir[hir[d].pat].pos,
                                 code: 2491,
                             });
+                            let end = self.end_of_pat(file, hir[d].pat);
+                            self.explain_to(hir[hir[d].pat].pos, end, 2491, |_| vec![]);
                         }
                     }
                     StmtKind::Expr(x)
@@ -486,6 +503,8 @@ impl Checker<'_> {
                             start: hir[x].pos,
                             code: 2491,
                         });
+                        let end = self.end_inside_parentheses(file, x);
+                        self.explain_to(hir[x].pos, end, 2491, |_| vec![]);
                     }
                     _ => {}
                 },
@@ -514,15 +533,21 @@ impl Checker<'_> {
                 code: if is_for_in { 1091 } else { 1188 },
             });
         } else if hir[first].init.is_some() {
+            let code = if is_for_in { 1189 } else { 1190 };
             out.push(Diagnostic {
                 start: hir[hir[first].pat].pos,
-                code: if is_for_in { 1189 } else { 1190 },
+                code,
             });
+            let end = self.end_of_pat(file, hir[first].pat);
+            self.explain_to(hir[hir[first].pat].pos, end, code, |_| vec![]);
         } else if hir[first].ty.is_some() {
+            let code = if is_for_in { 2404 } else { 2483 };
             out.push(Diagnostic {
                 start: hir[hir[first].pat].pos,
-                code: if is_for_in { 2404 } else { 2483 },
+                code,
             });
+            let end = self.end_of_pat(file, hir[first].pat);
+            self.explain_to(hir[hir[first].pat].pos, end, code, |_| vec![]);
         }
     }
 
@@ -591,6 +616,8 @@ impl Checker<'_> {
                     hir[params[0]].pos
                 };
                 out.push(Diagnostic { start, code: 1053 });
+                let end = self.end_of_token_at(file, start);
+                self.explain_to(start, end, 1053, |_| vec![]);
                 continue;
             } else if hir[params[0]].flags.contains(Flags::OPTIONAL) {
                 // At the `?`, which comes after the name or the pattern.
@@ -617,6 +644,8 @@ impl Checker<'_> {
                 continue;
             };
             out.push(Diagnostic { start, code });
+            let end = self.end_of_name_at(file, start);
+            self.explain_to(start, end, code, |_| vec![]);
         }
     }
 
@@ -741,11 +770,21 @@ impl Checker<'_> {
         }
         let start = self.start_inside_parentheses(file, location);
         // A member of an enum is what it is.
-        if let (TypeData::EnumLit { .. }, ExprKind::Dot { obj, .. }) =
+        if let (TypeData::EnumLit { value, .. }, ExprKind::Dot { obj, .. }) =
             (self.data(ty), hir[location].kind)
             && self.is_resolved_to_an_enum(file, obj)
         {
             out.push(Diagnostic { start, code: 2845 });
+            // `evaluator.IsTruthy`
+            let is_truthy = match *value {
+                EnumValue::String(text) => !self.files().atoms.bytes(text).is_empty(),
+                EnumValue::Number(bits) => {
+                    let number = f64::from_bits(bits);
+                    number != 0.0 && !number.is_nan()
+                }
+            };
+            let end = self.end_inside_parentheses(file, location);
+            self.explain_to(start, end, 2845, |_| vec![is_truthy.to_string()]);
             return;
         }
         // Sure to be truthy: nothing in it can be falsy.
@@ -801,9 +840,15 @@ impl Checker<'_> {
                 && self.is_mentioned_within(file, location, test, body, false)
         };
         if !is_used {
-            out.push(Diagnostic {
-                start,
-                code: if is_promise { 2801 } else { 2774 },
+            let code = if is_promise { 2801 } else { 2774 };
+            out.push(Diagnostic { start, code });
+            let end = self.end_inside_parentheses(file, location);
+            self.explain_to(start, end, code, |c| {
+                if code != 2801 {
+                    return vec![];
+                }
+                // `getTypeNameForErrorDisplay`: two types that read the same are both written with qualified names.
+                vec![c.type_names_for_error_display(ty, ty).0]
             });
         }
     }
@@ -1054,6 +1099,12 @@ impl Checker<'_> {
                 }
             };
             out.push(Diagnostic { start, code: 2698 });
+            let end = if matches!(hir[owner].kind, ExprKind::Jsx(_)) {
+                self.error_end_of(file, prop.value)
+            } else {
+                self.end_of_expr(file, prop.value)
+            };
+            self.explain_to(start, end, 2698, |_| vec![]);
         }
     }
 
@@ -1127,10 +1178,10 @@ impl Checker<'_> {
                 && !self.is_uncertain(file, left)
                 && self.is_all_assignable_to_primitives(l)
             {
-                out.push(Diagnostic {
-                    start: self.error_start_of(file, left),
-                    code: 2358,
-                });
+                let start = self.error_start_of(file, left);
+                out.push(Diagnostic { start, code: 2358 });
+                let end = self.error_end_of(file, left);
+                self.explain_to(start, end, 2358, |_| vec![]);
             }
             if !self.is_known(r)
                 || self.is_any(r)
@@ -1144,10 +1195,10 @@ impl Checker<'_> {
                 && self.signatures(r, true).is_empty()
                 && !self.is_subtype(r, function)
             {
-                out.push(Diagnostic {
-                    start: self.error_start_of(file, right),
-                    code: 2359,
-                });
+                let start = self.error_start_of(file, right);
+                out.push(Diagnostic { start, code: 2359 });
+                let end = self.error_end_of(file, right);
+                self.explain_to(start, end, 2359, |_| vec![]);
             }
         }
     }
@@ -1246,6 +1297,8 @@ impl Checker<'_> {
                             start: member.pos,
                             code: 2432,
                         });
+                        let end = self.end_of_name_at(file, member.pos);
+                        self.explain_to(member.pos, end, 2432, |_| vec![]);
                     }
                     seen_without_initializer = true;
                 }

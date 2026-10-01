@@ -40,6 +40,20 @@ struct Unused<'a> {
     syntax_errors: Vec<u32>,
     locals: bool,
     parameters: bool,
+    /// The errors that are reported on more than an identifier: start, code, node.
+    reported_on: std::cell::RefCell<Vec<(u32, u32, Reported)>>,
+}
+
+/// The node an error is reported on.
+#[derive(Copy, Clone)]
+enum Reported {
+    Statement(StmtId),
+    VariableDeclarationList(Span<VarDeclId>),
+    Pattern(PatId),
+    TypeParameter(TypeParamId),
+    /// `rangeOfTypeParameters`
+    TypeParameters(Span<TypeParamId>),
+    MemberName(MemberId),
 }
 
 /// What an expression can be written in.
@@ -92,6 +106,7 @@ impl Checker<'_> {
             syntax_errors,
             locals,
             parameters,
+            reported_on: Default::default(),
         };
         for (i, s) in hir.stmts.iter().enumerate() {
             match s.kind {
@@ -136,6 +151,32 @@ impl Checker<'_> {
             self.note_private_reads(file, &mut u);
         }
         u.report(out);
+        for (start, code, node) in u.reported_on.take() {
+            let mut args = Vec::new();
+            let end = match node {
+                Reported::Statement(s) => self.end_of_stmt(file, s),
+                Reported::VariableDeclarationList(decls) => self.end_of_var_decl_list(file, decls),
+                Reported::Pattern(pat) => self.end_of_pat(file, pat),
+                Reported::TypeParameter(p) => {
+                    args.push(self.atom_text(hir[p].name));
+                    self.end_of_type_param(file, p)
+                }
+                Reported::TypeParameters(params) => {
+                    let last = self.end_of_type_param(file, params.at(params.len() - 1));
+                    let mut close = skip_trivia(&hir.text, last as usize);
+                    if hir.text.get(close) == Some(&b',') {
+                        close = skip_trivia(&hir.text, close + 1);
+                    }
+                    close as u32 + 1
+                }
+                Reported::MemberName(m) => {
+                    let end = self.end_of_member_name(file, m);
+                    args.push(self.source_text(file, start, end));
+                    end
+                }
+            };
+            self.note(start, end, code, args);
+        }
     }
 
     /// `markJsxAliasReferenced`: a tag is a call of the factory, which has to be in scope where the tag is, unless a module that is there
@@ -1680,6 +1721,11 @@ impl Unused<'_> {
             if decls.len() > 1 && decls.iter().all(|d| self.is_unreferenced(hir[d].pat)) {
                 if !(0..decls.len()).any(|i| self.variable_has_syntax_error(stmt, decls, i)) {
                     self.local(hir[stmt].pos, 6199, out);
+                    self.reported_on.borrow_mut().push((
+                        hir[stmt].pos,
+                        6199,
+                        Reported::VariableDeclarationList(decls),
+                    ));
                 }
             } else {
                 for (i, d) in decls.iter().enumerate() {
@@ -1715,6 +1761,11 @@ impl Unused<'_> {
                 // The error may be in another part of the import than the one that is unused: node ends are not kept.
             } else if declared > 1 && declared == end - i && stmt.is_some() {
                 self.local(hir[stmt].pos, 6192, out);
+                self.reported_on.borrow_mut().push((
+                    hir[stmt].pos,
+                    6192,
+                    Reported::Statement(stmt),
+                ));
             } else {
                 // What `import type` brings in are types. (Not so `import { type T }`.)
                 for unused in &imports[i..end] {
@@ -1961,6 +2012,9 @@ impl Unused<'_> {
                     start: hir[pat].pos,
                     code: 6198,
                 });
+                self.reported_on
+                    .borrow_mut()
+                    .push((hir[pat].pos, 6198, Reported::Pattern(pat)));
             }
         } else {
             for e in elements {
@@ -2029,18 +2083,20 @@ impl Unused<'_> {
                 .text
                 .get(..first as usize)
                 .and_then(|before| before.iter().rposition(|&c| c == b'<'));
-            out.push(Diagnostic {
-                start: open.map_or(first.saturating_sub(1), |at| at as u32),
-                code: 6205,
-            });
+            let start = open.map_or(first.saturating_sub(1), |at| at as u32);
+            out.push(Diagnostic { start, code: 6205 });
+            self.reported_on
+                .borrow_mut()
+                .push((start, 6205, Reported::TypeParameters(params)));
             return;
         }
         for p in params.iter() {
             if self.is_unreferenced_type_parameter(p) {
-                out.push(Diagnostic {
-                    start: self.start_of_type_parameter(p),
-                    code: 6196,
-                });
+                let start = self.start_of_type_parameter(p);
+                out.push(Diagnostic { start, code: 6196 });
+                self.reported_on
+                    .borrow_mut()
+                    .push((start, 6196, Reported::TypeParameter(p)));
             }
         }
     }
@@ -2125,6 +2181,11 @@ impl Unused<'_> {
                             start: member.pos,
                             code: 6133,
                         });
+                        self.reported_on.borrow_mut().push((
+                            member.pos,
+                            6133,
+                            Reported::MemberName(m),
+                        ));
                     }
                 }
                 MemberKind::Constructor => {

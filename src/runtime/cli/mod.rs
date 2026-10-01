@@ -1024,6 +1024,20 @@ pub(crate) mod command {
         {
             return Tag::AutoCommand;
         }
+        if keyword == RootCommandMatcher::case(b"i")
+            || keyword == RootCommandMatcher::case(b"install")
+        {
+            // `bun install -g` is `bun add -g`. A value that a leading flag
+            // consumed is not the flag.
+            let rest = (idx + 1..argv.len()).filter_map(|i| argv.get(i).map(|z| z.as_bytes()));
+            if leading_flags()
+                .map(|(flag, _)| flag)
+                .chain(rest)
+                .any(|arg| arg == b"-g" || arg == b"--global")
+            {
+                return Tag::AddCommand;
+            }
+        }
         keyword_tag(first_arg_name).unwrap_or(Tag::AutoCommand)
     }
 
@@ -1064,15 +1078,10 @@ pub(crate) mod command {
         if x == RootCommandMatcher::case(b"repl") {
             return Some(Tag::ReplCommand);
         }
-        if x == RootCommandMatcher::case(b"i") || x == RootCommandMatcher::case(b"install") {
-            for a in bun::argv().iter() {
-                if a == b"-g" || a == b"--global" {
-                    return Some(Tag::AddCommand);
-                }
-            }
-            return Some(Tag::InstallCommand);
-        }
-        if x == RootCommandMatcher::case(b"ci") {
+        if x == RootCommandMatcher::case(b"i")
+            || x == RootCommandMatcher::case(b"install")
+            || x == RootCommandMatcher::case(b"ci")
+        {
             return Some(Tag::InstallCommand);
         }
         if x == RootCommandMatcher::case(b"c") || x == RootCommandMatcher::case(b"create") {
@@ -1561,10 +1570,19 @@ pub(crate) mod command {
         Ok(())
     }
 
+    /// `--help` or `-h` in front of the keyword (`bun --help init`).
+    fn help_requested_before_keyword() -> bool {
+        leading_flags().any(|(flag, _)| flag == b"--help" || flag == b"-h")
+    }
+
     #[cold]
     #[inline(never)]
     fn exec_init() -> CmdResult {
         // InitCommand parses its own argv (no Context).
+        if help_requested_before_keyword() {
+            tag_print_help(Tag::InitCommand, true);
+            Global::exit(0);
+        }
         apply_leading_cwd();
         let argv = argv_zslice();
         let start = (subcommand_argv_index() + 1).min(argv.len());
@@ -1578,11 +1596,13 @@ pub(crate) mod command {
         // exec handles both the non-tty path (dump the embedded completion
         // script to stdout) and the tty install path (bunx symlink, fpath/XDG
         // dir search, profile patching).
-        for a in bun::argv().iter().skip(subcommand_argv_index() + 1) {
-            if matches!(a, b"--help" | b"-h") {
-                tag_print_help(Tag::InstallCompletionsCommand, true);
-                Global::exit(0);
-            }
+        let help_after_keyword = bun::argv()
+            .iter()
+            .skip(subcommand_argv_index() + 1)
+            .any(|a| matches!(a, b"--help" | b"-h"));
+        if help_after_keyword || help_requested_before_keyword() {
+            tag_print_help(Tag::InstallCompletionsCommand, true);
+            Global::exit(0);
         }
         super::install_completions_command::InstallCompletionsCommand::exec()?;
         Global::exit(0);
@@ -1868,16 +1888,8 @@ pub(crate) mod command {
         let mut template_name_start: usize = 0;
         let mut positionals: [&[u8]; 2] = [b"", b""];
         let mut positional_i: usize = 0;
-        let mut dash_dash_bun = false;
-        let mut print_help = false;
-
-        for (flag, _) in leading_flags() {
-            if flag == b"--bun" {
-                dash_dash_bun = true;
-            } else if flag == b"--help" || flag == b"-h" {
-                print_help = true;
-            }
-        }
+        let mut dash_dash_bun = leading_flags().any(|(flag, _)| flag == b"--bun");
+        let mut print_help = help_requested_before_keyword();
 
         if args.len() > 2 {
             let remainder = &args[cmd_idx..];

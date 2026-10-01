@@ -582,6 +582,14 @@ describe.concurrent("global flag before subcommand", () => {
     });
   }
 
+  test("bun --help init prints the init help and writes nothing", async () => {
+    using dir = tempDir("which-help-init", {});
+    const { stdout, exitCode } = await run(String(dir), ["--help", "init"]);
+    expect(stdout).toContain("bun init");
+    expect(fs.readdirSync(String(dir))).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
   test("bun --help create prints the create help and exits 0", async () => {
     using dir = tempDir("which-help-create", files);
     const { stdout, exitCode } = await run(String(dir), ["--help", "create"]);
@@ -682,6 +690,22 @@ describe.concurrent("global flag before subcommand", () => {
     expect(stderr).not.toContain("ReferenceError");
     expect(stdout).toContain("bun install");
     expect(exitCode).toBe(0);
+  });
+
+  test("bun --cwd -g install does not read the directory name as --global", async () => {
+    using dir = tempDir("which-cwd-dash-g", {
+      "-g/package.json": JSON.stringify({ name: "sub", dependencies: {} }),
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--cwd", "-g", "install", "--dry-run"]);
+    expect(stdout + stderr).toContain("bun install");
+    expect(stdout + stderr).not.toContain("bun add");
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun -g install is add --global", async () => {
+    using dir = tempDir("which-g-install", valueFlags);
+    const { stdout, stderr } = await run(String(dir), ["-g", "install", "--dry-run"]);
+    expect(stdout + stderr).toContain("bun add");
   });
 
   test("bun -d add is add --dev", async () => {

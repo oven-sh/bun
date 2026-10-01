@@ -1,0 +1,15 @@
+### cmd: cargo clippy -p bun_runtime --no-deps --message-format=short
+### start: 2026-10-01T08:58:46Z
+src/shell_parser/lib.rs:1:30: warning: `feature(generic_const_exprs)` is not supported with the next-generation trait solver
+warning: `bun_shell_parser` (lib) generated 1 warning
+warning: unused dependency `bun_typecheck`
+  --> src/runtime/Cargo.toml:68:1
+   |
+68 | bun_typecheck.workspace = true
+   | ^^^^^^^^^^^^^
+   |
+   = note: `cargo::unused_dependencies` is set to `warn` by default
+help: consider removing the dependency on `bun_typecheck`
+warning: `bun_runtime` (manifest) generated 1 warning
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.06s
+### finished: 2026-10-01T08:58:48Z rc=0 wall=3s

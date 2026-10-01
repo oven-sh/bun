@@ -1,0 +1,23 @@
+### cmd: env BUN_DESTRUCT_VM_ON_EXIT=1 ASAN_OPTIONS=allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1 LSAN_OPTIONS=malloc_context_size=30:print_suppressions=0:suppressions=/workspace/wt/cli/test/leaksan.supp bun bd test test/cli/lint/rules.test.ts --timeout 180000
+### start: 2026-10-01T08:03:16Z
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet test test/cli/lint/rules.test.ts --timeout "180000"
+bun test v1.4.3 (be1ebe529)
+
+test/cli/lint/rules.test.ts:
+(pass) bun --lint rules > no-compare-neg-zero [1333.18ms]
+(pass) bun --lint rules > no-debugger [1483.88ms]
+(pass) bun --lint rules > no-dupe-keys [1707.50ms]
+(pass) bun --lint rules > no-dupe-class-members [2205.49ms]
+(pass) bun --lint rules > no-duplicate-case [1963.31ms]
+(pass) bun --lint rules > no-empty-pattern [1869.52ms]
+(pass) bun --lint rules > no-self-assign [2180.82ms]
+(pass) bun --lint rules > no-sparse-arrays [1417.30ms]
+(pass) bun --lint rules > no-unsafe-negation [1558.85ms]
+(pass) bun --lint rules > use-isnan [1158.49ms]
+(pass) bun --lint rules > valid-typeof [1762.53ms]
+
+ 11 pass
+ 0 fail
+ 11 expect() calls
+Ran 11 tests across 1 file. [7.84s]
+### finished: 2026-10-01T08:03:31Z rc=0 wall=16s

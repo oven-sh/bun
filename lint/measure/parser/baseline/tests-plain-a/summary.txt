@@ -9,3 +9,8 @@ plain test/bundler/transpiler/transpiler-stack-overflow.test.ts rc=0 secs=32 :: 
 plain test/bundler/transpiler/transpiler.test.js rc=0 secs=46 ::  237 pass; 1 skip; 21 todo; 0 fail; 12 snapshots, 2043 expect() calls;Ran 259 tests across 1 file. [40.78s];
 plain test/bundler/bundler_decorator_metadata.test.ts rc=0 secs=12 ::  2 pass; 0 fail; 2 expect() calls;Ran 2 tests across 1 file. [7.67s];
 plain test/bundler/esbuild/ts.test.ts rc=0 secs=46 ::  59 pass; 16 todo; 0 fail; 43 expect() calls;Ran 75 tests across 1 file. [41.35s];
+plain test/js/bun/typescript/type-export.test.ts rc=1 secs=100 ::  63 pass; 18 skip; 7 fail; 194 expect() calls;Ran 88 tests across 1 file. [90.42s];
+plain test/js/bun/typescript/type-export.test.ts --timeout 180000 rc=0 secs=117 timed_out_lines_first_run=14 ::  70 pass; 18 skip; 0 fail; 196 expect() calls;Ran 88 tests across 1 file. [100.48s];
+plain test/cli/run/transpiler-cache.test.ts rc=1 secs=62 ::  18 pass; 2 fail; 228 expect() calls;Ran 20 tests across 1 file. [53.44s];
+plain test/cli/run/transpiler-cache.test.ts --timeout 180000 rc=0 secs=55 timed_out_lines_first_run=2 ::  20 pass; 0 fail; 233 expect() calls;Ran 20 tests across 1 file. [49.99s];
+# end 2026-10-01T09:08:16Z load=818.20 798.39 752.69

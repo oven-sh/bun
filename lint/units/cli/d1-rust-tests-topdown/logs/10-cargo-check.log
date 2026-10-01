@@ -1,0 +1,83 @@
+### cmd: cargo check -p bun_lint --message-format=short
+### start: 2026-10-01T08:03:31Z
+   Compiling proc-macro2 v1.0.106
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.45
+    Checking memchr v2.8.0
+   Compiling rustversion v1.0.22
+   Compiling libc v0.2.186
+   Compiling heck v0.5.0
+    Checking bstr v1.12.1
+    Checking allocator-api2 v0.2.21
+   Compiling thiserror v2.0.18
+   Compiling unicode-xid v0.2.6
+    Checking konst_macro_rules v0.2.19
+    Checking bun_opaque v0.0.0 (/workspace/wt/cli/src/opaque)
+    Checking bun_mimalloc_sys v0.0.0 (/workspace/wt/cli/src/mimalloc_sys)
+    Checking konst v0.2.20
+   Compiling syn v2.0.117
+    Checking bun_wyhash v0.0.0 (/workspace/wt/cli/src/wyhash)
+    Checking bun_highway v0.0.0 (/workspace/wt/cli/src/highway)
+   Compiling const_format_proc_macros v0.2.34
+   Compiling bun_core v0.0.0 (/workspace/wt/cli/src/bun_core)
+   Compiling bun_output_tags v0.0.0 (/workspace/wt/cli/src/bun_output_tags)
+    Checking bun_hash v0.0.0 (/workspace/wt/cli/src/hash)
+    Checking bun_alloc v0.0.0 (/workspace/wt/cli/src/bun_alloc)
+    Checking bytemuck v1.25.0
+    Checking bun_simdutf_sys v0.0.0 (/workspace/wt/cli/src/simdutf_sys)
+    Checking itoa v1.0.18
+    Checking scopeguard v1.2.0
+    Checking const_format v0.2.36
+   Compiling paste v1.0.15
+    Checking bun_windows_sys v0.0.0 (/workspace/wt/cli/src/windows_sys)
+    Checking hashbrown v0.15.5
+    Checking smallvec v1.15.1
+    Checking rustc-hash v2.1.2
+   Compiling ident_case v1.0.1
+   Compiling fnv v1.0.7
+    Checking bitflags v2.11.1
+   Compiling rustix v0.38.44
+    Checking linux-raw-sys v0.4.15
+   Compiling darling_core v0.21.3
+   Compiling strum_macros v0.26.4
+   Compiling thiserror-impl v2.0.18
+   Compiling bun_dispatch v0.0.0 (/workspace/wt/cli/src/dispatch)
+   Compiling bun_core_macros v0.0.0 (/workspace/wt/cli/src/bun_core_macros)
+   Compiling enum-map-derive v0.17.0
+    Checking enum-map v2.7.3
+   Compiling darling_macro v0.21.3
+    Checking strum v0.26.3
+    Checking bun_libuv_sys v0.0.0 (/workspace/wt/cli/src/libuv_sys)
+   Compiling darling v0.21.3
+   Compiling enumset_derive v0.14.0
+    Checking enumset v1.1.10
+    Checking bun_ptr v0.0.0 (/workspace/wt/cli/src/ptr)
+    Checking bun_errno v0.0.0 (/workspace/wt/cli/src/errno)
+    Checking bun_boringssl_sys v0.0.0 (/workspace/wt/cli/src/boringssl_sys)
+    Checking bun_safety v0.0.0 (/workspace/wt/cli/src/safety)
+    Checking bun_zlib_sys v0.0.0 (/workspace/wt/cli/src/zlib_sys)
+    Checking bun_base64 v0.0.0 (/workspace/wt/cli/src/base64)
+    Checking bun_paths v0.0.0 (/workspace/wt/cli/src/paths)
+    Checking bun_collections v0.0.0 (/workspace/wt/cli/src/collections)
+    Checking bun_sys v0.0.0 (/workspace/wt/cli/src/sys)
+    Checking bun_url v0.0.0 (/workspace/wt/cli/src/url)
+    Checking bun_semver v0.0.0 (/workspace/wt/cli/src/semver)
+    Checking bun_zlib v0.0.0 (/workspace/wt/cli/src/zlib)
+    Checking bun_http_types v0.0.0 (/workspace/wt/cli/src/http_types)
+    Checking bun_perf v0.0.0 (/workspace/wt/cli/src/perf)
+    Checking bun_which v0.0.0 (/workspace/wt/cli/src/which)
+    Checking bun_threading v0.0.0 (/workspace/wt/cli/src/threading)
+    Checking bun_ast v0.0.0 (/workspace/wt/cli/src/ast)
+    Checking bun_dotenv v0.0.0 (/workspace/wt/cli/src/dotenv)
+    Checking bun_uws_sys v0.0.0 (/workspace/wt/cli/src/uws_sys)
+    Checking bun_analytics v0.0.0 (/workspace/wt/cli/src/analytics)
+    Checking bun_spawn_sys v0.0.0 (/workspace/wt/cli/src/spawn_sys)
+    Checking bun_io v0.0.0 (/workspace/wt/cli/src/io)
+    Checking bun_install_types v0.0.0 (/workspace/wt/cli/src/install_types)
+    Checking bun_react_compiler v0.0.0 (/workspace/wt/cli/src/react_compiler)
+    Checking bun_crash_handler v0.0.0 (/workspace/wt/cli/src/crash_handler)
+    Checking bun_options_types v0.0.0 (/workspace/wt/cli/src/options_types)
+    Checking bun_js_parser v0.0.0 (/workspace/wt/cli/src/js_parser)
+    Checking bun_lint v0.0.0 (/workspace/wt/cli/src/lint)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 45.01s
+### finished: 2026-10-01T08:04:16Z rc=0 wall=45s

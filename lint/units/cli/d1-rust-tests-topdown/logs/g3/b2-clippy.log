@@ -1,0 +1,6 @@
+### cmd: cargo clippy -p bun_lint --all-targets --no-deps --message-format=short
+### start: 2026-10-01T08:30:11Z
+    Checking bun_lint v0.0.0 (/tmp/cli-d1/tree/src/lint)
+src/lint/lib.rs:28:1: error: items after a test module
+error: could not compile `bun_lint` (lib test) due to 1 previous error
+### finished: 2026-10-01T08:30:13Z rc=101 wall=2s

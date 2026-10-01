@@ -1,0 +1,51 @@
+### g12 queued 2026-10-01T07:33:44Z
+### g3 queued 2026-10-01T07:56:04Z
+### g12 lock acquired 2026-10-01T08:00:12Z HEAD=be1ebe5295 dirty=0
+### 00-install rc=0 wall=12s 2026-10-01T08:00:24Z
+### 01-bd-version rc=0 wall=7s 2026-10-01T08:00:31Z
+### 02-lint-test rc=0 wall=35s 2026-10-01T08:01:06Z
+### 03-diagnostics-test rc=0 wall=16s 2026-10-01T08:01:22Z
+### 04-rules-test rc=0 wall=14s 2026-10-01T08:01:37Z
+### 05-as-node-test rc=0 wall=21s 2026-10-01T08:01:58Z
+### 06-bun-options-test rc=0 wall=19s 2026-10-01T08:02:18Z
+### 07-leak-lint-test rc=0 wall=36s 2026-10-01T08:02:55Z
+### 08-leak-diagnostics-test rc=0 wall=19s 2026-10-01T08:03:15Z
+### 09-leak-rules-test rc=0 wall=16s 2026-10-01T08:03:31Z
+### 10-cargo-check rc=0 wall=45s 2026-10-01T08:04:16Z
+### 11-cargo-check-all-targets rc=0 wall=26s 2026-10-01T08:04:42Z
+### 12-cargo-clippy rc=0 wall=42s 2026-10-01T08:05:24Z
+### 13-cargo-fmt rc=0 wall=2s 2026-10-01T08:05:26Z
+### 14-cargo-test rc=101 wall=135s 2026-10-01T08:07:42Z
+### 15-cargo-miri rc=0 wall=129s 2026-10-01T08:09:51Z
+### g12 complete 2026-10-01T08:09:52Z dirty=0
+### g3 lock acquired 2026-10-01T08:25:59Z
+### applied A 2026-10-01T08:26:01Z
+### g3 a1-test rc=0 wall=108s 2026-10-01T08:27:49Z
+### g3 a2-clippy rc=0 wall=30s 2026-10-01T08:28:19Z
+### g3 a3-fmt rc=0 wall=1s 2026-10-01T08:28:20Z
+### g3 a4-miri-lib rc=0 wall=58s 2026-10-01T08:29:18Z
+### g3 a5-miri-ci-form rc=0 wall=20s 2026-10-01T08:29:39Z
+### applied AP 2026-10-01T08:29:39Z
+### g3 ap1-link-all-undefined rc=101 wall=14s 2026-10-01T08:29:53Z
+### applied B 2026-10-01T08:29:53Z
+### g3 b1-test rc=101 wall=18s 2026-10-01T08:30:11Z
+### g3 b2-clippy rc=101 wall=2s 2026-10-01T08:30:13Z
+### g3 b3-fmt rc=0 wall=2s 2026-10-01T08:30:15Z
+### g3 b4-miri-no-parse rc=0 wall=19s 2026-10-01T08:30:35Z
+### g3 b5-miri-parse rc=1 wall=7s 2026-10-01T08:30:42Z
+### applied C 2026-10-01T08:30:42Z
+### g3 c1-test rc=101 wall=13s 2026-10-01T08:30:55Z
+### g3 c2-clippy rc=0 wall=5s 2026-10-01T08:31:00Z
+### g3 c3-fmt rc=0 wall=6s 2026-10-01T08:31:06Z
+### applied B 2026-10-01T08:31:09Z
+patched
+### g3 m1-miri-parse-stackcheck-fallback rc=1 wall=18s 2026-10-01T08:31:28Z
+### applied 0 2026-10-01T08:31:29Z
+### g3 complete 2026-10-01T08:31:29Z
+### g4 queued 2026-10-01T08:32:15Z
+### g5 queued 2026-10-01T08:51:42Z
+### g4 lock acquired 2026-10-01T08:57:13Z HEAD=be1ebe5295 dirty=0
+### 20-cargo-check-runtime rc=0 wall=91s 2026-10-01T08:58:46Z
+### 21-cargo-clippy-runtime rc=0 wall=3s 2026-10-01T08:58:49Z
+### 22-cargo-fmt-runtime rc=0 wall=5s 2026-10-01T08:58:54Z
+### g4 complete 2026-10-01T08:58:55Z dirty=0

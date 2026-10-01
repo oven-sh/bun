@@ -1,0 +1,232 @@
+{"code":"if (1) {}","type":"script","reports":["1:5-1:6 Unexpected constant condition."]}
+{"code":"if ((1)) {}","type":"script","reports":["1:6-1:7 Unexpected constant condition."]}
+{"code":"if (((1)) + (2)) {}","type":"script","reports":["1:5-1:16 Unexpected constant condition."]}
+{"code":"if ((1) + 2) {}","type":"script","reports":["1:5-1:12 Unexpected constant condition."]}
+{"code":"if (1, 2) {}","type":"script","reports":["1:5-1:9 Unexpected constant condition."]}
+{"code":"if (a, 2) {}","type":"script","reports":["1:5-1:9 Unexpected constant condition."]}
+{"code":"if ((a, 2)) {}","type":"script","reports":["1:6-1:10 Unexpected constant condition."]}
+{"code":"if (a, (b, 2)) {}","type":"script","reports":["1:5-1:14 Unexpected constant condition."]}
+{"code":"if ((a, b), 2) {}","type":"script","reports":["1:5-1:14 Unexpected constant condition."]}
+{"code":"if (2, a) {}","type":"script","reports":[]}
+{"code":"if (Boolean(1)) {}","type":"script","reports":["1:5-1:15 Unexpected constant condition."]}
+{"code":"if (Boolean?.(1)) {}","type":"script","reports":[]}
+{"code":"if (Boolean()) {}","type":"script","reports":["1:5-1:14 Unexpected constant condition."]}
+{"code":"if (Boolean(...[1])) {}","type":"script","reports":["1:5-1:20 Unexpected constant condition."]}
+{"code":"if (Boolean(...a)) {}","type":"script","reports":[]}
+{"code":"if (Boolean(a)) {}","type":"script","reports":[]}
+{"code":"if (Boolean(1, a)) {}","type":"script","reports":["1:5-1:18 Unexpected constant condition."]}
+{"code":"if (Boolean(a, 1)) {}","type":"script","reports":[]}
+{"code":"if ((Boolean)(1)) {}","type":"script","reports":["1:5-1:17 Unexpected constant condition."]}
+{"code":"if (new Boolean(a)) {}","type":"script","reports":["1:5-1:19 Unexpected constant condition."]}
+{"code":"if (new Boolean) {}","type":"script","reports":["1:5-1:16 Unexpected constant condition."]}
+{"code":"if (new a) {}","type":"script","reports":["1:5-1:10 Unexpected constant condition."]}
+{"code":"if (new a.b()) {}","type":"script","reports":["1:5-1:14 Unexpected constant condition."]}
+{"code":"if (+new a) {}","type":"script","reports":[]}
+{"code":"if (undefined) {}","type":"script","reports":["1:5-1:14 Unexpected constant condition."]}
+{"code":"if ((undefined)) {}","type":"script","reports":["1:6-1:15 Unexpected constant condition."]}
+{"code":"if (void a) {}","type":"script","reports":["1:5-1:11 Unexpected constant condition."]}
+{"code":"if (typeof a) {}","type":"script","reports":["1:5-1:13 Unexpected constant condition."]}
+{"code":"if (+typeof a) {}","type":"script","reports":[]}
+{"code":"if (typeof a + 1) {}","type":"script","reports":[]}
+{"code":"if (!typeof a) {}","type":"script","reports":["1:5-1:14 Unexpected constant condition."]}
+{"code":"if (!a) {}","type":"script","reports":[]}
+{"code":"if (!1) {}","type":"script","reports":["1:5-1:7 Unexpected constant condition."]}
+{"code":"if (!!1) {}","type":"script","reports":["1:5-1:8 Unexpected constant condition."]}
+{"code":"if (-1) {}","type":"script","reports":["1:5-1:7 Unexpected constant condition."]}
+{"code":"if (-a) {}","type":"script","reports":[]}
+{"code":"if (~1) {}","type":"script","reports":["1:5-1:7 Unexpected constant condition."]}
+{"code":"if (delete a.b) {}","type":"script","reports":[]}
+{"code":"if (delete 1) {}","type":"script","reports":["1:5-1:13 Unexpected constant condition."]}
+{"code":"if (a++) {}","type":"script","reports":[]}
+{"code":"if (++a) {}","type":"script","reports":[]}
+{"code":"if (a--) {}","type":"script","reports":[]}
+{"code":"if (1n) {}","type":"script","reports":["1:5-1:7 Unexpected constant condition."]}
+{"code":"if (0n) {}","type":"script","reports":["1:5-1:7 Unexpected constant condition."]}
+{"code":"if (/a/) {}","type":"script","reports":["1:5-1:8 Unexpected constant condition."]}
+{"code":"if ('') {}","type":"script","reports":["1:5-1:7 Unexpected constant condition."]}
+{"code":"if (``) {}","type":"script","reports":["1:5-1:7 Unexpected constant condition."]}
+{"code":"if (`a`) {}","type":"script","reports":["1:5-1:8 Unexpected constant condition."]}
+{"code":"if (`${a}`) {}","type":"script","reports":[]}
+{"code":"if (`a${a}`) {}","type":"script","reports":["1:5-1:12 Unexpected constant condition."]}
+{"code":"if (`${a}b`) {}","type":"script","reports":["1:5-1:12 Unexpected constant condition."]}
+{"code":"if (`${1}`) {}","type":"script","reports":["1:5-1:11 Unexpected constant condition."]}
+{"code":"if (`${a}${1}`) {}","type":"script","reports":[]}
+{"code":"if (+`${a}b`) {}","type":"script","reports":[]}
+{"code":"if (+`a`) {}","type":"script","reports":["1:5-1:9 Unexpected constant condition."]}
+{"code":"if (tag`a`) {}","type":"script","reports":[]}
+{"code":"if (null) {}","type":"script","reports":["1:5-1:9 Unexpected constant condition."]}
+{"code":"if (true) {}","type":"script","reports":["1:5-1:9 Unexpected constant condition."]}
+{"code":"if (false) {}","type":"script","reports":["1:5-1:10 Unexpected constant condition."]}
+{"code":"if (this) {}","type":"script","reports":[]}
+{"code":"if ([]) {}","type":"script","reports":["1:5-1:7 Unexpected constant condition."]}
+{"code":"if ([a]) {}","type":"script","reports":["1:5-1:8 Unexpected constant condition."]}
+{"code":"if (+[a]) {}","type":"script","reports":[]}
+{"code":"if (+[1]) {}","type":"script","reports":["1:5-1:9 Unexpected constant condition."]}
+{"code":"if (+[,]) {}","type":"script","reports":["1:5-1:9 Unexpected constant condition."]}
+{"code":"if (+[1, , 2]) {}","type":"script","reports":["1:5-1:14 Unexpected constant condition."]}
+{"code":"if (+[...a]) {}","type":"script","reports":[]}
+{"code":"if (+[...[1]]) {}","type":"script","reports":["1:5-1:14 Unexpected constant condition."]}
+{"code":"if (+[...[a]]) {}","type":"script","reports":[]}
+{"code":"if ({}) {}","type":"script","reports":["1:5-1:7 Unexpected constant condition."]}
+{"code":"if ({a}) {}","type":"script","reports":["1:5-1:8 Unexpected constant condition."]}
+{"code":"if (+{a}) {}","type":"script","reports":["1:5-1:9 Unexpected constant condition."]}
+{"code":"if (function () {}) {}","type":"script","reports":["1:5-1:19 Unexpected constant condition."]}
+{"code":"if (() => a) {}","type":"script","reports":["1:5-1:12 Unexpected constant condition."]}
+{"code":"if (async () => a) {}","type":"script","reports":["1:5-1:18 Unexpected constant condition."]}
+{"code":"if (class {}) {}","type":"script","reports":["1:5-1:13 Unexpected constant condition."]}
+{"code":"if (class extends a {}) {}","type":"script","reports":["1:5-1:23 Unexpected constant condition."]}
+{"code":"if (a = 1) {}","type":"script","reports":["1:5-1:10 Unexpected constant condition."]}
+{"code":"if ((a = 1)) {}","type":"script","reports":["1:6-1:11 Unexpected constant condition."]}
+{"code":"if (a = b) {}","type":"script","reports":[]}
+{"code":"if (a += 1) {}","type":"script","reports":[]}
+{"code":"if (a ||= 1) {}","type":"script","reports":["1:5-1:12 Unexpected constant condition."]}
+{"code":"if (a ||= 0) {}","type":"script","reports":[]}
+{"code":"if (a &&= 0) {}","type":"script","reports":["1:5-1:12 Unexpected constant condition."]}
+{"code":"if (a &&= 1) {}","type":"script","reports":[]}
+{"code":"if (a ??= 1) {}","type":"script","reports":[]}
+{"code":"if (a ||= b || 1) {}","type":"script","reports":["1:5-1:17 Unexpected constant condition."]}
+{"code":"if (a &&= b && 0) {}","type":"script","reports":["1:5-1:17 Unexpected constant condition."]}
+{"code":"if (a ||= (b ||= 1)) {}","type":"script","reports":["1:5-1:20 Unexpected constant condition."]}
+{"code":"if (a ||= (b &&= 1)) {}","type":"script","reports":[]}
+{"code":"if (a || 1) {}","type":"script","reports":["1:5-1:11 Unexpected constant condition."]}
+{"code":"if (1 || a) {}","type":"script","reports":["1:5-1:11 Unexpected constant condition."]}
+{"code":"if (a || 0) {}","type":"script","reports":[]}
+{"code":"if (0 || a) {}","type":"script","reports":[]}
+{"code":"if (a && 0) {}","type":"script","reports":["1:5-1:11 Unexpected constant condition."]}
+{"code":"if (0 && a) {}","type":"script","reports":["1:5-1:11 Unexpected constant condition."]}
+{"code":"if (a && 1) {}","type":"script","reports":[]}
+{"code":"if (1 && a) {}","type":"script","reports":[]}
+{"code":"if (a ?? 1) {}","type":"script","reports":[]}
+{"code":"if (1 ?? a) {}","type":"script","reports":[]}
+{"code":"if (a ?? (1)) {}","type":"script","reports":[]}
+{"code":"if (1 ?? 2) {}","type":"script","reports":["1:5-1:11 Unexpected constant condition."]}
+{"code":"if (a || void b) {}","type":"script","reports":[]}
+{"code":"if (a && void b) {}","type":"script","reports":["1:5-1:16 Unexpected constant condition."]}
+{"code":"if (void a && b) {}","type":"script","reports":["1:5-1:16 Unexpected constant condition."]}
+{"code":"if (void a || b) {}","type":"script","reports":[]}
+{"code":"if (a && (b && 0)) {}","type":"script","reports":["1:5-1:18 Unexpected constant condition."]}
+{"code":"if ((a && 0) && b) {}","type":"script","reports":["1:5-1:18 Unexpected constant condition."]}
+{"code":"if (a && 0 || b) {}","type":"script","reports":[]}
+{"code":"if (a || 1 && b) {}","type":"script","reports":[]}
+{"code":"if ((a || 1) || b) {}","type":"script","reports":["1:5-1:18 Unexpected constant condition."]}
+{"code":"if (a || (b || 1)) {}","type":"script","reports":["1:5-1:18 Unexpected constant condition."]}
+{"code":"if (a || (b && 1)) {}","type":"script","reports":[]}
+{"code":"if (x = a || 1) {}","type":"script","reports":["1:5-1:15 Unexpected constant condition."]}
+{"code":"if (+(a || 1)) {}","type":"script","reports":[]}
+{"code":"if (+(1 || a)) {}","type":"script","reports":["1:5-1:14 Unexpected constant condition."]}
+{"code":"if (+(0 || a)) {}","type":"script","reports":[]}
+{"code":"if (1 + 2) {}","type":"script","reports":["1:5-1:10 Unexpected constant condition."]}
+{"code":"if (1 + a) {}","type":"script","reports":[]}
+{"code":"if (1 in {}) {}","type":"script","reports":[]}
+{"code":"if (1 instanceof 2) {}","type":"script","reports":["1:5-1:19 Unexpected constant condition."]}
+{"code":"if (1 < 2) {}","type":"script","reports":["1:5-1:10 Unexpected constant condition."]}
+{"code":"if (1 == 2) {}","type":"script","reports":["1:5-1:11 Unexpected constant condition."]}
+{"code":"if ('a' + 'b') {}","type":"script","reports":["1:5-1:14 Unexpected constant condition."]}
+{"code":"if (a.b) {}","type":"script","reports":[]}
+{"code":"if (a?.b) {}","type":"script","reports":[]}
+{"code":"if (a()) {}","type":"script","reports":[]}
+{"code":"if (a ? 1 : 2) {}","type":"script","reports":[]}
+{"code":"if (1 ? a : b) {}","type":"script","reports":["1:5-1:6 Unexpected constant condition."]}
+{"code":"if (await 1) {}","type":"module","reports":[]}
+{"code":"if (import.meta) {}","type":"module","reports":[]}
+{"code":"if (import('a')) {}","type":"script","reports":[]}
+{"code":"if (new.target) {}","type":"script","fatal":"Parsing error: 'new.target' can only be used in functions and class static block","reports":[]}
+{"code":"if (super.a) {}","type":"script","fatal":"Parsing error: 'super' keyword outside a method","reports":[]}
+{"code":"if (<a/>) {}","type":"script","jsx":true,"reports":[]}
+{"code":"a ? b : c;","type":"script","reports":[]}
+{"code":"1 ? b : c;","type":"script","reports":["1:1-1:2 Unexpected constant condition."]}
+{"code":"(1) ? b : c;","type":"script","reports":["1:2-1:3 Unexpected constant condition."]}
+{"code":"((1, 2)) ? b : c;","type":"script","reports":["1:3-1:7 Unexpected constant condition."]}
+{"code":"a ? 1 : 2;","type":"script","reports":[]}
+{"code":"a ? 1 ? 2 : 3 : 4;","type":"script","reports":["1:5-1:6 Unexpected constant condition."]}
+{"code":"`${1 ? 2 : 3}`;","type":"script","reports":["1:4-1:5 Unexpected constant condition."]}
+{"code":"while (1) {}","type":"script","reports":["1:8-1:9 Unexpected constant condition."]}
+{"code":"while (true) {}","type":"script","reports":[]}
+{"code":"while ((true)) {}","type":"script","reports":[]}
+{"code":"while (!false) {}","type":"script","reports":["1:8-1:14 Unexpected constant condition."]}
+{"code":"while (true && true) {}","type":"script","reports":["1:8-1:20 Unexpected constant condition."]}
+{"code":"while (false) {}","type":"script","reports":["1:8-1:13 Unexpected constant condition."]}
+{"code":"while (1, true) {}","type":"script","reports":["1:8-1:15 Unexpected constant condition."]}
+{"code":"while (a) {}","type":"script","reports":[]}
+{"code":"while (a = true) {}","type":"script","reports":["1:8-1:16 Unexpected constant condition."]}
+{"code":"do {} while (1)","type":"script","reports":["1:14-1:15 Unexpected constant condition."]}
+{"code":"do {} while (true)","type":"script","reports":["1:14-1:18 Unexpected constant condition."]}
+{"code":"do {} while (a)","type":"script","reports":[]}
+{"code":"for (;1;) {}","type":"script","reports":["1:7-1:8 Unexpected constant condition."]}
+{"code":"for (;true;) {}","type":"script","reports":["1:7-1:11 Unexpected constant condition."]}
+{"code":"for (;;) {}","type":"script","reports":[]}
+{"code":"for (;a;) {}","type":"script","reports":[]}
+{"code":"for (1;;) {}","type":"script","reports":[]}
+{"code":"for (;;1) {}","type":"script","reports":[]}
+{"code":"for (a in 1) {}","type":"script","reports":[]}
+{"code":"for (a of 1) {}","type":"script","reports":[]}
+{"code":"function* g() { while (1) { yield } }","type":"script","reports":[]}
+{"code":"function* g() { while (1) { yield* a } }","type":"script","reports":[]}
+{"code":"function* g() { while (1) { a = yield } }","type":"script","reports":[]}
+{"code":"function* g() { while (1) {} yield }","type":"script","reports":["1:24-1:25 Unexpected constant condition."]}
+{"code":"function* g() { yield; while (1) {} }","type":"script","reports":["1:31-1:32 Unexpected constant condition."]}
+{"code":"function* g() { while (1) { function h() {} yield } }","type":"script","reports":[]}
+{"code":"function* g() { while (1) { function* h() { yield } } }","type":"script","reports":["1:24-1:25 Unexpected constant condition."]}
+{"code":"function* g() { while (1) { (function* () { yield }) } }","type":"script","reports":["1:24-1:25 Unexpected constant condition."]}
+{"code":"function* g() { while (1) { ({ *m() { yield } }) } }","type":"script","reports":["1:24-1:25 Unexpected constant condition."]}
+{"code":"function* g() { while (1) { class A { *m() { yield } } } }","type":"script","reports":["1:24-1:25 Unexpected constant condition."]}
+{"code":"function* g() { while (1) { class A { static { } } yield } }","type":"script","reports":[]}
+{"code":"function* g() { while (1) { class A { [yield]() {} } } }","type":"script","reports":[]}
+{"code":"function* g() { while (1) { class A { x = 1 } } }","type":"script","reports":["1:24-1:25 Unexpected constant condition."]}
+{"code":"function* g() { while (1) { () => { } } }","type":"script","reports":["1:24-1:25 Unexpected constant condition."]}
+{"code":"function* g() { while (1) { while (2) { yield } } }","type":"script","reports":[]}
+{"code":"function* g() { while (1) { while (2) { } yield } }","type":"script","reports":["1:36-1:37 Unexpected constant condition."]}
+{"code":"function* g() { while (1) { yield; while (2) { } } }","type":"script","reports":["1:43-1:44 Unexpected constant condition."]}
+{"code":"function* g() { while (1) { do { yield } while (2) } }","type":"script","reports":[]}
+{"code":"function* g() { do { while (2) {} } while (yield) }","type":"script","reports":["1:29-1:30 Unexpected constant condition."]}
+{"code":"function* g() { do { } while ((yield, 1)) }","type":"script","reports":[]}
+{"code":"function* g() { for (yield; 1; ) {} }","type":"script","reports":["1:29-1:30 Unexpected constant condition."]}
+{"code":"function* g() { for (; (yield, 1); ) {} }","type":"script","reports":[]}
+{"code":"function* g() { for (; 1; yield) {} }","type":"script","reports":[]}
+{"code":"function* g() { for (; 1; ) { yield } }","type":"script","reports":[]}
+{"code":"function* g() { for (var i = yield; 1; ) {} }","type":"script","reports":["1:37-1:38 Unexpected constant condition."]}
+{"code":"function* g() { for (var i = 0; 1; i = yield) {} }","type":"script","reports":[]}
+{"code":"function* g() { while (1) { for (yield; 2;) {} } }","type":"script","reports":["1:41-1:42 Unexpected constant condition."]}
+{"code":"function* g() { for (yield; 1;) { while (2) {} } }","type":"script","reports":["1:29-1:30 Unexpected constant condition.","1:42-1:43 Unexpected constant condition."]}
+{"code":"function* g() { if (1) { yield } }","type":"script","reports":["1:21-1:22 Unexpected constant condition."]}
+{"code":"function* g() { while (1) { if (1) { yield } } }","type":"script","reports":["1:33-1:34 Unexpected constant condition."]}
+{"code":"function* g() { while (1) { 1 ? yield : 2 } }","type":"script","reports":["1:29-1:30 Unexpected constant condition."]}
+{"code":"function* g() { while (1) { yield } while (2) {} }","type":"script","reports":["1:44-1:45 Unexpected constant condition."]}
+{"code":"function* g() { while (1) { switch (yield) {} } }","type":"script","reports":[]}
+{"code":"async function* g() { while (1) { for await (const x of y) { yield x } } }","type":"script","reports":[]}
+{"code":"function f() { while (1) { (function* () { yield }) } }","type":"script","reports":["1:23-1:24 Unexpected constant condition."]}
+{"code":"function f() { for (;1;) { var o = { *g() { yield } } } }","type":"script","reports":["1:22-1:23 Unexpected constant condition."]}
+{"code":"var o = { *g() { while (1) { yield } } }","type":"script","reports":[]}
+{"code":"var o = { *g() { while (1) { } } }","type":"script","reports":["1:25-1:26 Unexpected constant condition."]}
+{"code":"class A { *g() { while (1) { yield } } }","type":"script","reports":[]}
+{"code":"class A { *g() { while (1) { } } h() { while (1) { } } static { while (1) {} } x = () => { while (1) {} } }","type":"script","reports":["1:25-1:26 Unexpected constant condition.","1:47-1:48 Unexpected constant condition.","1:72-1:73 Unexpected constant condition.","1:99-1:100 Unexpected constant condition."]}
+{"code":"var f = function* () { while (1) { yield } }","type":"script","reports":[]}
+{"code":"var f = () => { while (1) {} }","type":"script","reports":["1:24-1:25 Unexpected constant condition."]}
+{"code":"var f = () => { while (1) { function* g() { yield } } }","type":"script","reports":["1:24-1:25 Unexpected constant condition."]}
+{"code":"while (1) { function* g() { yield } }","type":"script","reports":["1:8-1:9 Unexpected constant condition."]}
+{"code":"while (1) { var f = function* () { yield } }","type":"script","reports":["1:8-1:9 Unexpected constant condition."]}
+{"code":"if (1) {} else if (2) {} else if (a) {} else if (3) {}","type":"script","reports":["1:5-1:6 Unexpected constant condition.","1:20-1:21 Unexpected constant condition.","1:50-1:51 Unexpected constant condition."]}
+{"code":"function f(undefined) { if (undefined) {} }","type":"script","reports":[]}
+{"code":"var undefined; if (undefined) {}","type":"script","reports":[]}
+{"code":"let Boolean; if (Boolean(1)) {}","type":"script","reports":[]}
+{"code":"function f() { var Boolean; } if (Boolean(1)) {}","type":"script","reports":["1:35-1:45 Unexpected constant condition."]}
+{"code":"if (Boolean(undefined)) {}","type":"script","reports":["1:5-1:23 Unexpected constant condition."]}
+{"code":"var undefined; if (Boolean(undefined)) {}","type":"script","reports":[]}
+{"code":"var Boolean; if (Boolean(undefined)) {}","type":"script","reports":[]}
+{"code":"var undefined; if (a || undefined && 0) {}","type":"script","reports":[]}
+{"code":"var undefined; if (undefined && 0) {}","type":"script","reports":["1:20-1:34 Unexpected constant condition."]}
+{"code":"var undefined; if (undefined || 1) {}","type":"script","reports":["1:20-1:34 Unexpected constant condition."]}
+{"code":"var undefined; if (1 || undefined) {}","type":"script","reports":["1:20-1:34 Unexpected constant condition."]}
+{"code":"var undefined; if (+(1 || undefined)) {}","type":"script","reports":["1:20-1:37 Unexpected constant condition."]}
+{"code":"var undefined; if (+(undefined || 1)) {}","type":"script","reports":[]}
+{"code":"var Boolean; if (Boolean(1) || 1) {}","type":"script","reports":["1:18-1:33 Unexpected constant condition."]}
+{"code":"var Boolean; if (1 && Boolean(1)) {}","type":"script","reports":[]}
+{"code":"var Boolean; if (0 && Boolean(1)) {}","type":"script","reports":["1:18-1:33 Unexpected constant condition."]}
+{"code":"var Boolean; if (Boolean(1) && 0) {}","type":"script","reports":["1:18-1:33 Unexpected constant condition."]}
+{"code":"if (a) { var undefined; } if (undefined) {}","type":"script","reports":[]}
+{"code":"import undefined from 'a'; if (undefined) {}","type":"module","reports":[]}
+{"code":"class undefined {} if (undefined) {}","type":"script","reports":[]}
+{"code":"try {} catch (undefined) { if (undefined) {} }","type":"script","reports":[]}
+{"code":"undefined: while (undefined) { break undefined; }","type":"script","reports":["1:19-1:28 Unexpected constant condition."]}
+{"code":"({ undefined: 1, Boolean: 2 }); if (undefined) {} if (Boolean(1)) {}","type":"script","reports":["1:37-1:46 Unexpected constant condition.","1:55-1:65 Unexpected constant condition."]}
+{"code":"a.undefined; a.Boolean(); if (undefined) {} if (Boolean(1)) {}","type":"script","reports":["1:31-1:40 Unexpected constant condition.","1:49-1:59 Unexpected constant condition."]}

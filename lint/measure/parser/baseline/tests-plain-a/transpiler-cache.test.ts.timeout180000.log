@@ -1,0 +1,29 @@
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet test test/cli/run/transpiler-cache.test.ts --timeout "180000"
+bun test v1.4.3 (be1ebe529)
+
+test/cli/run/transpiler-cache.test.ts:
+(pass) transpiler cache > works [1459.89ms]
+(pass) transpiler cache > works with empty files [1840.63ms]
+(pass) transpiler cache > ignores files under the minimum cache size [593.66ms]
+(pass) transpiler cache > does not cache a file whose parse logged an error [1757.09ms]
+(pass) transpiler cache > it is indeed content addressable [1674.27ms]
+(pass) transpiler cache > doing 50 buns at once does not crash [5656.61ms]
+(pass) transpiler cache > disables the cache instead of falling back to the shared temp directory [1386.79ms]
+(pass) transpiler cache > works if the cache is not user-readable [2218.96ms]
+(pass) transpiler cache > works if the cache is not user-writable [367.70ms]
+(pass) transpiler cache > a fifo in place of an entry is removed instead of opened [1130.38ms]
+(pass) transpiler cache > does not inline process.env [1055.92ms]
+(pass) transpiler cache > --feature flag invalidates cache [3471.58ms]
+(pass) transpiler cache > defines are part of the cache key > bunfig [define] invalidates cache [3012.31ms]
+(pass) transpiler cache > defines are part of the cache key > --define invalidates cache [4491.85ms]
+(pass) transpiler cache > defines are part of the cache key > --define passed to bun test invalidates cache [2954.43ms]
+(pass) transpiler cache > defines are part of the cache key > --drop invalidates cache [5690.64ms]
+(pass) transpiler cache > a cached entry point does not change how later modules load > require.extensions is still consulted [1300.44ms]
+(pass) transpiler cache > a cached entry point does not change how later modules load > unknown extensions still use the file loader [1908.41ms]
+(pass) rejects cached module records containing out-of-range string indices [3280.53ms]
+(pass) rejects a cached entry whose sourcemap section header is corrupt [1882.04ms]
+
+ 20 pass
+ 0 fail
+ 233 expect() calls
+Ran 20 tests across 1 file. [49.99s]

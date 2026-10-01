@@ -1,0 +1,25 @@
+### cmd: bun bd test test/cli/run/as-node.test.ts --timeout 180000
+### start: 2026-10-01T08:01:37Z
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet test test/cli/run/as-node.test.ts --timeout "180000"
+bun test v1.4.3 (be1ebe529)
+
+test/cli/run/as-node.test.ts:
+(pass) fake node cli > the node cli actually works [1266.15ms]
+(pass) fake node cli > doesnt resolve bins [956.83ms]
+(pass) fake node cli > doesnt resolve scripts [586.13ms]
+(pass) fake node cli > can run a script named run.js [903.35ms]
+(pass) fake node cli > entrypoint file extension picking > picks tsx over any other ext [835.08ms]
+(pass) fake node cli > entrypoint file extension picking > picks jsx over ts [834.07ms]
+(pass) fake node cli > entrypoint file extension picking > picks mts over ts [1243.22ms]
+(pass) fake node cli > entrypoint file extension picking > picks ts over js/cjs/etc [501.69ms]
+(pass) fake node cli > node -e  [1186.13ms]
+(pass) fake node cli > process args work [704.71ms]
+(pass) fake node cli > --lint is ignored and the script runs, with BUN_FEATURE_FLAG_EXPERIMENTAL_LINT set to 1 [994.77ms]
+(pass) fake node cli > --lint is ignored and the script runs, with BUN_FEATURE_FLAG_EXPERIMENTAL_LINT not set [791.05ms]
+(pass) fake node cli > no args with piped stdin errors with 'Missing script' [437.43ms]
+
+ 13 pass
+ 0 fail
+ 14 expect() calls
+Ran 13 tests across 1 file. [14.78s]
+### finished: 2026-10-01T08:01:58Z rc=0 wall=21s

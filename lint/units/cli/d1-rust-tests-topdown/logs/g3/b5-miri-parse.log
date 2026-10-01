@@ -1,0 +1,39 @@
+### cmd: cargo miri test -p bun_lint --lib probe_parse_only
+### start: 2026-10-01T08:30:35Z
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.54s
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/build/bun_lint/f5b7f9ac214d98b6/out/bun_lint-f5b7f9ac214d98b6)
+
+running 1 test
+test probe_tests::probe_parse_only_runs_the_rules ... error: unsupported operation: inline assembly is not supported
+ --> src/bun_core/util.rs:2248:16
+  |
+  = note: unsupported operation occurred here
+  |
+  = help: this is likely not a bug in the program; it indicates that the program performed an operation that Miri does not support
+  = note: this is on thread `probe_tests::pr`
+  = note: stack backtrace:
+          0: bun_core::StackCheck::frame_address
+              at src/bun_core/util.rs:2248:17: 2248:103
+          1: bun_core::StackCheck::is_safe_to_recurse
+              at src/bun_core/util.rs:2215:25: 2215:46
+          2: bun_js_parser::parse::parse_stmt::<impl bun_js_parser::P<'_, false, false>>::parse_stmt
+              at src/js_parser/parse/parse_stmt.rs:2439:13: 2439:50
+          3: bun_js_parser::parse::<impl bun_js_parser::P<'_, false, false>>::parse_stmts_up_to
+              at src/js_parser/parse/mod.rs:2131:28: 2131:59
+          4: bun_js_parser::Parser::<'_>::parse_only::<std::vec::Vec<diagnostic::Diagnostic>, {closure@src/lint/probe_tests.rs:21:21: 21:27}>
+              at src/js_parser/parse/parse_entry.rs:512:21: 512:76
+          5: probe_tests::probe_parse_only_runs_the_rules
+              at src/lint/probe_tests.rs:20:17: 21:74
+          6: probe_tests::probe_parse_only_runs_the_rules::{closure#0}
+              at src/lint/probe_tests.rs:8:37: 8:37
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+
+error: test failed, to rerun pass `-p bun_lint --lib`
+
+Caused by:
+  process didn't exit successfully: `/root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cli-d1/tree/target/miri/x86_64-unknown-linux-gnu/debug/build/bun_lint/f5b7f9ac214d98b6/out/bun_lint-f5b7f9ac214d98b6 probe_parse_only` (exit status: 1)
+note: test exited abnormally; to see the full output pass --no-capture to the harness.
+### finished: 2026-10-01T08:30:42Z rc=1 wall=7s

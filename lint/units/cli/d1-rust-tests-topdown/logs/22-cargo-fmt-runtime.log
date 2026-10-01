@@ -1,0 +1,3 @@
+### cmd: cargo fmt -p bun_runtime -p bun_ast -p bun_options_types -- --check
+### start: 2026-10-01T08:58:49Z
+### finished: 2026-10-01T08:58:54Z rc=0 wall=5s

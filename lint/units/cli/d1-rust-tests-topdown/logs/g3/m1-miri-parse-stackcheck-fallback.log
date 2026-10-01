@@ -1,0 +1,116 @@
+### cmd: cargo miri test -p bun_lint --lib probe_
+### start: 2026-10-01T08:31:09Z
+   Compiling bun_core v0.0.0 (/tmp/cli-d1/tree/src/bun_core)
+   Compiling bun_ptr v0.0.0 (/tmp/cli-d1/tree/src/ptr)
+   Compiling bun_errno v0.0.0 (/tmp/cli-d1/tree/src/errno)
+   Compiling bun_boringssl_sys v0.0.0 (/tmp/cli-d1/tree/src/boringssl_sys)
+   Compiling bun_safety v0.0.0 (/tmp/cli-d1/tree/src/safety)
+   Compiling bun_zlib_sys v0.0.0 (/tmp/cli-d1/tree/src/zlib_sys)
+   Compiling bun_base64 v0.0.0 (/tmp/cli-d1/tree/src/base64)
+   Compiling bun_paths v0.0.0 (/tmp/cli-d1/tree/src/paths)
+   Compiling bun_collections v0.0.0 (/tmp/cli-d1/tree/src/collections)
+   Compiling bun_sys v0.0.0 (/tmp/cli-d1/tree/src/sys)
+   Compiling bun_url v0.0.0 (/tmp/cli-d1/tree/src/url)
+   Compiling bun_semver v0.0.0 (/tmp/cli-d1/tree/src/semver)
+   Compiling bun_zlib v0.0.0 (/tmp/cli-d1/tree/src/zlib)
+   Compiling bun_http_types v0.0.0 (/tmp/cli-d1/tree/src/http_types)
+   Compiling bun_analytics v0.0.0 (/tmp/cli-d1/tree/src/analytics)
+   Compiling bun_perf v0.0.0 (/tmp/cli-d1/tree/src/perf)
+   Compiling bun_which v0.0.0 (/tmp/cli-d1/tree/src/which)
+   Compiling bun_threading v0.0.0 (/tmp/cli-d1/tree/src/threading)
+   Compiling bun_ast v0.0.0 (/tmp/cli-d1/tree/src/ast)
+   Compiling bun_spawn_sys v0.0.0 (/tmp/cli-d1/tree/src/spawn_sys)
+   Compiling bun_uws_sys v0.0.0 (/tmp/cli-d1/tree/src/uws_sys)
+   Compiling bun_dotenv v0.0.0 (/tmp/cli-d1/tree/src/dotenv)
+   Compiling bun_io v0.0.0 (/tmp/cli-d1/tree/src/io)
+   Compiling bun_install_types v0.0.0 (/tmp/cli-d1/tree/src/install_types)
+   Compiling bun_react_compiler v0.0.0 (/tmp/cli-d1/tree/src/react_compiler)
+   Compiling bun_options_types v0.0.0 (/tmp/cli-d1/tree/src/options_types)
+   Compiling bun_crash_handler v0.0.0 (/tmp/cli-d1/tree/src/crash_handler)
+   Compiling bun_js_parser v0.0.0 (/tmp/cli-d1/tree/src/js_parser)
+   Compiling bun_lint v0.0.0 (/tmp/cli-d1/tree/src/lint)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 13.37s
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/build/bun_lint/f5b7f9ac214d98b6/out/bun_lint-f5b7f9ac214d98b6)
+
+running 3 tests
+test probe_tests::probe_a_syntax_error_of_typescript_has_a_code ... warning: integer-to-pointer cast
+   --> src/lint/../js_parser/native_test_shims.rs:567:38
+    |
+567 |         unsafe { std::alloc::dealloc(core::ptr::with_exposed_provenance_mut(at), layout) };
+    |                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ integer-to-pointer cast
+    |
+    = help: this program is using integer-to-pointer casts or (equivalently) `ptr::with_exposed_provenance`, which means that Miri might miss pointer bugs in this program
+    = help: see https://doc.rust-lang.org/nightly/std/ptr/fn.with_exposed_provenance.html for more details on that operation
+    = help: to ensure that Miri does not miss bugs in your program, use Strict Provenance APIs (https://doc.rust-lang.org/nightly/std/ptr/index.html#strict-provenance, https://crates.io/crates/sptr) instead
+    = help: you can then set `MIRIFLAGS=-Zmiri-strict-provenance` to ensure you are not relying on `with_exposed_provenance` semantics
+    = help: Tree Borrows does not support integer-to-pointer casts, so the program is likely to go wrong when this pointer gets used
+    = note: this is on thread `probe_tests::pr`
+    = note: stack backtrace:
+            0: native_test_shims::mi_heap_destroy
+                at src/lint/../js_parser/native_test_shims.rs:567:38: 567:80
+            1: <bun_alloc::MimallocArena as std::ops::Drop>::drop
+                at src/bun_alloc/MimallocArena.rs:452:18: 452:60
+            2: std::ptr::drop_glue::<bun_alloc::MimallocArena> - shim(Some(bun_alloc::MimallocArena))
+                at /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:848:1: 850:25
+            3: probe_tests::probe_a_syntax_error_of_typescript_has_a_code
+                at src/lint/probe_tests.rs:79:1: 79:2
+            4: probe_tests::probe_a_syntax_error_of_typescript_has_a_code::{closure#0}
+                at src/lint/probe_tests.rs:60:51: 60:51
+
+ok
+test probe_tests::probe_parse_for_lint_reads_typescript ... error: Undefined Behavior: write access through <248646> at alloc82423[0x74] is forbidden
+ --> src/ast/scope.rs:68:8
+  |
+  = note: Undefined Behavior occurred here
+  |
+  = help: this indicates a potential bug in the program: it performed an invalid operation, but the Tree Borrows rules it violated are still experimental
+  = help: see https://github.com/rust-lang/unsafe-code-guidelines/blob/master/wip/tree-borrows.md for further information
+  = help: the accessed tag <248646> is a child of the conflicting tag <229205>
+  = help: the conflicting tag <229205> has state Frozen which forbids this child write access
+help: the accessed tag <248646> was created here
+ --> src/ast/scope.rs:66:12
+help: the conflicting tag <229205> was created here, in the initial state Reserved
+ --> src/bun_alloc/ast_alloc.rs:117:12
+help: the conflicting tag <229205> later transitioned to Unique due to a child write access at offsets [0x40..0xb4]
+ --> src/bun_alloc/ast_alloc.rs:329:4
+  = help: this transition corresponds to the first write to a 2-phase borrowed mutable reference
+help: the conflicting tag <229205> later transitioned to Frozen due to a reborrow (acting as a foreign read access) at offsets [0x0..0x4010]
+ --> src/bun_alloc/ast_alloc.rs:177:13
+  = help: this transition corresponds to a loss of write permissions
+  = note: this is on thread `probe_tests::pr`
+  = note: stack backtrace:
+          0: bun_ast::scope::InlineMembers::<4>::push
+              at src/ast/scope.rs:68:9: 68:30
+          1: bun_ast::scope::Members::get_or_put_hashed
+              at src/ast/scope.rs:260:37: 260:60
+          2: bun_js_parser::P::<'_, true, false>::declare_symbol
+              at src/js_parser/p.rs:5239:13: 5241:77
+          3: bun_js_parser::parse::parse_typescript::<impl bun_js_parser::P<'_, true, false>>::parse_typescript_enum_stmt
+              at src/js_parser/parse/parse_typescript.rs:670:25: 670:82
+          4: bun_js_parser::parse::parse_stmt::<impl bun_js_parser::P<'_, true, false>>::t_enum
+              at src/js_parser/parse/parse_stmt.rs:74:9: 74:48
+          5: bun_js_parser::parse::parse_stmt::<impl bun_js_parser::P<'_, true, false>>::parse_stmt
+              at src/js_parser/parse/parse_stmt.rs:2452:25: 2452:54
+          6: bun_js_parser::parse::<impl bun_js_parser::P<'_, true, false>>::parse_stmts_up_to
+              at src/js_parser/parse/mod.rs:2131:28: 2131:59
+          7: bun_js_parser::Parser::<'_>::_parse_for_lint::<true, (usize, bool, bool), {closure@src/lint/probe_tests.rs:48:25: 48:33}>
+              at src/js_parser/parse/parse_entry.rs:584:19: 584:74
+          8: bun_js_parser::Parser::<'_>::parse_for_lint_with_codes::<(usize, bool, bool), {closure@src/lint/probe_tests.rs:48:25: 48:33}>
+              at src/js_parser/parse/parse_entry.rs:540:13: 540:55
+          9: bun_js_parser::Parser::<'_>::parse_for_lint::<(usize, bool, bool), {closure@src/lint/probe_tests.rs:48:25: 48:33}>
+              at src/js_parser/parse/parse_entry.rs:529:9: 529:72
+          10: probe_tests::probe_parse_for_lint_reads_typescript
+              at src/lint/probe_tests.rs:47:18: 54:11
+          11: probe_tests::probe_parse_for_lint_reads_typescript::{closure#0}
+              at src/lint/probe_tests.rs:34:43: 34:43
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error; 1 warning emitted
+
+error: test failed, to rerun pass `-p bun_lint --lib`
+
+Caused by:
+  process didn't exit successfully: `/root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cli-d1/tree/target/miri/x86_64-unknown-linux-gnu/debug/build/bun_lint/f5b7f9ac214d98b6/out/bun_lint-f5b7f9ac214d98b6 probe_` (exit status: 1)
+note: test exited abnormally; to see the full output pass --no-capture to the harness.
+### finished: 2026-10-01T08:31:27Z rc=1 wall=18s

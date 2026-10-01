@@ -1,0 +1,118 @@
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet test test/js/bun/typescript/type-export.test.ts --timeout "180000"
+bun test v1.4.3 (be1ebe529)
+
+test/js/bun/typescript/type-export.test.ts:
+(skip) re-export with export from > import with require > run > works
+(pass) re-export with export from > import with require > build > works [2037.22ms]
+(pass) re-export with export from > import with require > compile > works [5530.74ms]
+(skip) re-export with export from > import with import star > run > works
+(pass) re-export with export from > import with import star > build > works [1720.72ms]
+(pass) re-export with export from > import with import star > compile > works [4616.47ms]
+(skip) re-export with export from > import with await import > run > works
+(pass) re-export with export from > import with await import > build > works [736.47ms]
+(pass) re-export with export from > import with await import > compile > works [4282.06ms]
+(skip) re-export with export from > import with import individual > run > works
+(pass) re-export with export from > import with import individual > build > works [647.62ms]
+(pass) re-export with export from > import with import individual > compile > works [5915.33ms]
+(skip) re-export with import then export > import with require > run > works
+(pass) re-export with import then export > import with require > build > works [756.29ms]
+(pass) re-export with import then export > import with require > compile > works [5437.66ms]
+(skip) re-export with import then export > import with import star > run > works
+(pass) re-export with import then export > import with import star > build > works [596.69ms]
+(pass) re-export with import then export > import with import star > compile > works [4591.43ms]
+(skip) re-export with import then export > import with await import > run > works
+(pass) re-export with import then export > import with await import > build > works [585.73ms]
+(pass) re-export with import then export > import with await import > compile > works [4194.58ms]
+(skip) re-export with import then export > import with import individual > run > works
+(pass) re-export with import then export > import with import individual > build > works [485.11ms]
+(pass) re-export with import then export > import with import individual > compile > works [5392.92ms]
+(skip) re-export with export star > import with require > run > works
+(pass) re-export with export star > import with require > build > works [597.34ms]
+(pass) re-export with export star > import with require > compile > works [3614.01ms]
+(skip) re-export with export star > import with import star > run > works
+(pass) re-export with export star > import with import star > build > works [1089.63ms]
+(pass) re-export with export star > import with import star > compile > works [6689.26ms]
+(skip) re-export with export star > import with await import > run > works
+(pass) re-export with export star > import with await import > build > works [1332.78ms]
+(pass) re-export with export star > import with await import > compile > works [8104.20ms]
+(skip) re-export with export star > import with import individual > run > works
+(pass) re-export with export star > import with import individual > build > works [1931.61ms]
+(pass) re-export with export star > import with import individual > compile > works [5847.37ms]
+(skip) re-export with export merge > import with require > run > works
+(pass) re-export with export merge > import with require > build > works [1283.30ms]
+(pass) re-export with export merge > import with require > compile > works [5035.82ms]
+(skip) re-export with export merge > import with import star > run > works
+(pass) re-export with export merge > import with import star > build > works [791.59ms]
+(pass) re-export with export merge > import with import star > compile > works [5105.01ms]
+(skip) re-export with export merge > import with await import > run > works
+(pass) re-export with export merge > import with await import > build > works [545.41ms]
+(pass) re-export with export merge > import with await import > compile > works [4450.82ms]
+(skip) re-export with export merge > import with import individual > run > works
+(pass) import not found > none [1258.89ms]
+(pass) import not found > type [833.23ms]
+(pass) re-export with export merge > import with import individual > build > works [1665.51ms]
+(pass) import not found > default with same name [1088.71ms]
+(pass) js file type export [782.65ms]
+(pass) js file type import [1633.66ms]
+(pass) js file type import with default export [1567.33ms]
+(pass) js file with through export 2 [1215.86ms]
+(pass) js file with through export [1622.28ms]
+(pass) through export merge > js > direct > main.js [673.56ms]
+(pass) through export merge > js > through > main.js [981.07ms]
+(pass) through export merge > js > direct > a.js [1051.60ms]
+(pass) through export merge > js > through > a.js [1214.86ms]
+(pass) re-export with export merge > import with import individual > compile > works [5327.73ms]
+(pass) through export merge > js > direct2 > a.js [990.12ms]
+(pass) through export merge > js > direct2 > main.js [1242.47ms]
+(pass) through export merge > js > ns > a.js [764.70ms]
+(pass) through export merge > js > ns > main.js [938.06ms]
+(pass) through export merge > ts > through > a.ts [525.97ms]
+(pass) through export merge > ts > direct > a.ts [663.35ms]
+(pass) through export merge > ts > direct > main.ts [1123.27ms]
+(pass) through export merge > ts > through > main.ts [1239.45ms]
+(pass) through export merge > ts > direct2 > main.ts [1218.96ms]
+(pass) through export merge > ts > direct2 > a.ts [838.95ms]
+(pass) through export merge > ts > ns > a.ts [413.46ms]
+(pass) through export merge > ts > ns > main.ts [850.98ms]
+(skip) check ownkeys from a star import > run > works
+(pass) check commonjs [1004.24ms]
+(pass) check merge [1382.20ms]
+(pass) export * from './module' > js > a.js [836.17ms]
+(pass) export * from './module' > ts > main.ts [920.85ms]
+(pass) export * as ns from './module' > js > main.js [1544.81ms]
+(pass) export * from './module' > ts > a.ts [2794.62ms]
+(pass) export * from './module' > js > main.js [4013.55ms]
+(pass) export * as ns from './module' > js > a.js [2780.71ms]
+(pass) export * as ns from './module' > ts > a.ts [733.00ms]
+(pass) export * as ns from './module' > ts > main.ts [1698.75ms]
+(pass) export type {Type} from './module' > ts > main.ts [407.61ms]
+(pass) check ownkeys from a star import > compile > works [5641.15ms]
+(pass) export type {Type} from './module' > ts > a.ts [895.64ms]
+(skip) import only used in decorator (#8439) > run > works
+(pass) import only used in decorator (#8439) > compile > works [4909.07ms]
+
+18 tests skipped:
+(skip) re-export with export from > import with require > run > works
+(skip) re-export with export from > import with import star > run > works
+(skip) re-export with export from > import with await import > run > works
+(skip) re-export with export from > import with import individual > run > works
+(skip) re-export with import then export > import with require > run > works
+(skip) re-export with import then export > import with import star > run > works
+(skip) re-export with import then export > import with await import > run > works
+(skip) re-export with import then export > import with import individual > run > works
+(skip) re-export with export star > import with require > run > works
+(skip) re-export with export star > import with import star > run > works
+(skip) re-export with export star > import with await import > run > works
+(skip) re-export with export star > import with import individual > run > works
+(skip) re-export with export merge > import with require > run > works
+(skip) re-export with export merge > import with import star > run > works
+(skip) re-export with export merge > import with await import > run > works
+(skip) re-export with export merge > import with import individual > run > works
+(skip) check ownkeys from a star import > run > works
+(skip) import only used in decorator (#8439) > run > works
+
+ 70 pass
+ 18 skip
+ 0 fail
+ 196 expect() calls
+Ran 88 tests across 1 file. [100.48s]

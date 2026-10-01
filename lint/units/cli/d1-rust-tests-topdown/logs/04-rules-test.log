@@ -1,0 +1,23 @@
+### cmd: bun bd test test/cli/lint/rules.test.ts --timeout 180000
+### start: 2026-10-01T08:01:23Z
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet test test/cli/lint/rules.test.ts --timeout "180000"
+bun test v1.4.3 (be1ebe529)
+
+test/cli/lint/rules.test.ts:
+(pass) bun --lint rules > no-compare-neg-zero [1761.87ms]
+(pass) bun --lint rules > no-debugger [1516.32ms]
+(pass) bun --lint rules > no-dupe-class-members [2418.73ms]
+(pass) bun --lint rules > no-dupe-keys [2073.45ms]
+(pass) bun --lint rules > no-duplicate-case [1881.95ms]
+(pass) bun --lint rules > no-empty-pattern [1569.47ms]
+(pass) bun --lint rules > no-self-assign [1959.46ms]
+(pass) bun --lint rules > no-sparse-arrays [970.99ms]
+(pass) bun --lint rules > no-unsafe-negation [843.99ms]
+(pass) bun --lint rules > use-isnan [881.31ms]
+(pass) bun --lint rules > valid-typeof [757.73ms]
+
+ 11 pass
+ 0 fail
+ 11 expect() calls
+Ran 11 tests across 1 file. [7.05s]
+### finished: 2026-10-01T08:01:37Z rc=0 wall=14s

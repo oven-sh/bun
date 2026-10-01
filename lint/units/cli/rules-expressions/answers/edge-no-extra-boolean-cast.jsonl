@@ -1,0 +1,107 @@
+{"code":"if (!!a) {}","type":"script","reports":["1:5-1:8 Redundant double negation."]}
+{"code":"if ((!!a)) {}","type":"script","reports":["1:6-1:9 Redundant double negation."]}
+{"code":"if (!(!a)) {}","type":"script","reports":["1:5-1:10 Redundant double negation."]}
+{"code":"if (!((!a))) {}","type":"script","reports":["1:5-1:12 Redundant double negation."]}
+{"code":"if (! !a) {}","type":"script","reports":["1:5-1:9 Redundant double negation."]}
+{"code":"if (!\n!a) {}","type":"script","reports":["1:5-2:3 Redundant double negation."]}
+{"code":"if (!!!a) {}","type":"script","reports":["1:5-1:9 Redundant double negation.","1:6-1:9 Redundant double negation."]}
+{"code":"if (!!!!a) {}","type":"script","reports":["1:5-1:10 Redundant double negation.","1:6-1:10 Redundant double negation.","1:7-1:10 Redundant double negation."]}
+{"code":"!!a","type":"script","reports":[]}
+{"code":"!!!a","type":"script","reports":["1:2-1:5 Redundant double negation."]}
+{"code":"!!!!a","type":"script","reports":["1:2-1:6 Redundant double negation.","1:3-1:6 Redundant double negation."]}
+{"code":"!(!!a)","type":"script","reports":["1:3-1:6 Redundant double negation."]}
+{"code":"!((!!a))","type":"script","reports":["1:4-1:7 Redundant double negation."]}
+{"code":"x = !!a","type":"script","reports":[]}
+{"code":"x = !!!a","type":"script","reports":["1:6-1:9 Redundant double negation."]}
+{"code":"f(!!a)","type":"script","reports":[]}
+{"code":"if (!!a, b) {}","type":"script","reports":[]}
+{"code":"if (b, !!a) {}","type":"script","reports":[]}
+{"code":"if (!!a && b) {}","type":"script","reports":[]}
+{"code":"if (b || !!a) {}","type":"script","reports":[]}
+{"code":"if (b ?? !!a) {}","type":"script","reports":[]}
+{"code":"if (b ? !!a : c) {}","type":"script","reports":[]}
+{"code":"if (!!a ? b : c) {}","type":"script","reports":["1:5-1:8 Redundant double negation."]}
+{"code":"!!a ? b : c","type":"script","reports":["1:1-1:4 Redundant double negation."]}
+{"code":"(!!a) ? b : c","type":"script","reports":["1:2-1:5 Redundant double negation."]}
+{"code":"while (!!a) {}","type":"script","reports":["1:8-1:11 Redundant double negation."]}
+{"code":"do {} while (!!a)","type":"script","reports":["1:14-1:17 Redundant double negation."]}
+{"code":"for (; !!a;) {}","type":"script","reports":["1:8-1:11 Redundant double negation."]}
+{"code":"for (!!a;;) {}","type":"script","reports":[]}
+{"code":"for (;;!!a) {}","type":"script","reports":[]}
+{"code":"for (x in !!a) {}","type":"script","reports":[]}
+{"code":"switch (!!a) { case !!b: }","type":"script","reports":[]}
+{"code":"Boolean(!!a)","type":"script","reports":["1:9-1:12 Redundant double negation."]}
+{"code":"Boolean((!!a))","type":"script","reports":["1:10-1:13 Redundant double negation."]}
+{"code":"Boolean(!!a, b)","type":"script","reports":["1:9-1:12 Redundant double negation."]}
+{"code":"Boolean(b, !!a)","type":"script","reports":[]}
+{"code":"Boolean(...!!a)","type":"script","reports":[]}
+{"code":"Boolean(...[!!a])","type":"script","reports":[]}
+{"code":"new Boolean(!!a)","type":"script","reports":["1:13-1:16 Redundant double negation."]}
+{"code":"new Boolean(b, !!a)","type":"script","reports":[]}
+{"code":"new Boolean(!!a, !!b)","type":"script","reports":["1:13-1:16 Redundant double negation."]}
+{"code":"new (Boolean)(!!a)","type":"script","reports":["1:15-1:18 Redundant double negation."]}
+{"code":"(Boolean)(!!a)","type":"script","reports":["1:11-1:14 Redundant double negation."]}
+{"code":"Boolean?.(!!a)","type":"script","reports":["1:11-1:14 Redundant double negation."]}
+{"code":"Boolean?.(!!a).b","type":"script","reports":["1:11-1:14 Redundant double negation."]}
+{"code":"Boolean.call(!!a)","type":"script","reports":[]}
+{"code":"a.Boolean(!!b)","type":"script","reports":[]}
+{"code":"new a.Boolean(!!b)","type":"script","reports":[]}
+{"code":"Boolean`${!!a}`","type":"script","reports":[]}
+{"code":"if (Boolean(a)) {}","type":"script","reports":["1:5-1:15 Redundant Boolean call."]}
+{"code":"if ((Boolean(a))) {}","type":"script","reports":["1:6-1:16 Redundant Boolean call."]}
+{"code":"if ((Boolean)(a)) {}","type":"script","reports":["1:5-1:17 Redundant Boolean call."]}
+{"code":"if (((Boolean))(a)) {}","type":"script","reports":["1:5-1:19 Redundant Boolean call."]}
+{"code":"if (Boolean()) {}","type":"script","reports":["1:5-1:14 Redundant Boolean call."]}
+{"code":"if (Boolean(a, b)) {}","type":"script","reports":["1:5-1:18 Redundant Boolean call."]}
+{"code":"if (Boolean(...a)) {}","type":"script","reports":["1:5-1:18 Redundant Boolean call."]}
+{"code":"if (new Boolean(a)) {}","type":"script","reports":[]}
+{"code":"if (Boolean?.(a)) {}","type":"script","reports":["1:5-1:17 Redundant Boolean call."]}
+{"code":"if ((Boolean?.(a))) {}","type":"script","reports":["1:6-1:18 Redundant Boolean call."]}
+{"code":"if (Boolean?.(a).b) {}","type":"script","reports":[]}
+{"code":"if (Boolean(a).b) {}","type":"script","reports":[]}
+{"code":"if (Boolean(a)?.b) {}","type":"script","reports":[]}
+{"code":"if (Boolean.a(b)) {}","type":"script","reports":[]}
+{"code":"if (a.Boolean(b)) {}","type":"script","reports":[]}
+{"code":"if (a?.Boolean(b)) {}","type":"script","reports":[]}
+{"code":"if (Boolean(a)()) {}","type":"script","reports":[]}
+{"code":"if (Boolean`a`) {}","type":"script","reports":[]}
+{"code":"!Boolean(a)","type":"script","reports":["1:2-1:12 Redundant Boolean call."]}
+{"code":"!Boolean()","type":"script","reports":["1:2-1:11 Redundant Boolean call."]}
+{"code":"!(Boolean(a))","type":"script","reports":["1:3-1:13 Redundant Boolean call."]}
+{"code":"!new Boolean(a)","type":"script","reports":[]}
+{"code":"!Boolean?.(a)","type":"script","reports":["1:2-1:14 Redundant Boolean call."]}
+{"code":"!!Boolean(a)","type":"script","reports":["1:3-1:13 Redundant Boolean call."]}
+{"code":"!!Boolean(!!a)","type":"script","reports":["1:3-1:15 Redundant Boolean call.","1:11-1:14 Redundant double negation."]}
+{"code":"Boolean(Boolean(a))","type":"script","reports":["1:9-1:19 Redundant Boolean call."]}
+{"code":"Boolean(Boolean(Boolean(a)))","type":"script","reports":["1:9-1:28 Redundant Boolean call.","1:17-1:27 Redundant Boolean call."]}
+{"code":"new Boolean(Boolean(a))","type":"script","reports":["1:13-1:23 Redundant Boolean call."]}
+{"code":"Boolean(new Boolean(a))","type":"script","reports":[]}
+{"code":"Boolean(!Boolean(a))","type":"script","reports":["1:10-1:20 Redundant Boolean call."]}
+{"code":"Boolean(a) ? b : c","type":"script","reports":["1:1-1:11 Redundant Boolean call."]}
+{"code":"(Boolean(a)) ? b : c","type":"script","reports":["1:2-1:12 Redundant Boolean call."]}
+{"code":"b ? Boolean(a) : c","type":"script","reports":[]}
+{"code":"while (Boolean(a)) {}","type":"script","reports":["1:8-1:18 Redundant Boolean call."]}
+{"code":"do {} while (Boolean(a))","type":"script","reports":["1:14-1:24 Redundant Boolean call."]}
+{"code":"for (; Boolean(a);) {}","type":"script","reports":["1:8-1:18 Redundant Boolean call."]}
+{"code":"for (Boolean(a);;) {}","type":"script","reports":[]}
+{"code":"x = Boolean(a)","type":"script","reports":[]}
+{"code":"x = Boolean(!a)","type":"script","reports":[]}
+{"code":"x = !Boolean(!!a)","type":"script","reports":["1:6-1:18 Redundant Boolean call.","1:14-1:17 Redundant double negation."]}
+{"code":"if (a) {} else if (!!b) {} else if (Boolean(c)) {}","type":"script","reports":["1:20-1:23 Redundant double negation.","1:37-1:47 Redundant Boolean call."]}
+{"code":"var Boolean; if (Boolean(a)) {} Boolean(!!a); new Boolean(!!b); !Boolean(c); if (!!d) {}","type":"script","reports":["1:82-1:85 Redundant double negation."]}
+{"code":"function f(Boolean) { if (Boolean(a)) {} } if (Boolean(b)) {}","type":"script","reports":["1:48-1:58 Redundant Boolean call."]}
+{"code":"function Boolean() {} if (Boolean(a)) {}","type":"script","reports":[]}
+{"code":"class Boolean {} new Boolean(!!a)","type":"script","reports":[]}
+{"code":"import Boolean from 'a'; Boolean(!!a)","type":"module","reports":[]}
+{"code":"import { Boolean } from 'a'; if (Boolean(a)) {}","type":"module","reports":[]}
+{"code":"import * as Boolean from 'a'; if (Boolean(a)) {}","type":"module","reports":[]}
+{"code":"try {} catch (Boolean) { if (Boolean(a)) {} }","type":"script","reports":[]}
+{"code":"Boolean: if (Boolean(a)) { break Boolean; }","type":"script","reports":["1:14-1:24 Redundant Boolean call."]}
+{"code":"({ Boolean(a) { if (Boolean(a)) {} } })","type":"script","reports":["1:21-1:31 Redundant Boolean call."]}
+{"code":"class A { Boolean() { if (Boolean(a)) {} } }","type":"script","reports":["1:27-1:37 Redundant Boolean call."]}
+{"code":"let { Boolean } = a; if (Boolean(b)) {}","type":"script","reports":[]}
+{"code":"let [Boolean] = a; if (Boolean(b)) {}","type":"script","reports":[]}
+{"code":"for (const Boolean of a) { if (Boolean(b)) {} }","type":"script","reports":[]}
+{"code":"var a = function Boolean() { if (Boolean(b)) {} }; if (Boolean(c)) {}","type":"script","reports":["1:56-1:66 Redundant Boolean call."]}
+{"code":"var a = class Boolean { m() { if (Boolean(b)) {} } }; if (Boolean(c)) {}","type":"script","reports":["1:59-1:69 Redundant Boolean call."]}
+{"code":"(Boolean) => { if (Boolean(a)) {} }; if (Boolean(c)) {}","type":"script","reports":["1:42-1:52 Redundant Boolean call."]}

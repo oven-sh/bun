@@ -1,0 +1,29 @@
+### cmd: bun bd test test/cli/lint/diagnostics.test.ts --timeout 180000
+### start: 2026-10-01T08:01:06Z
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet test test/cli/lint/diagnostics.test.ts --timeout "180000"
+bun test v1.4.3 (be1ebe529)
+
+test/cli/lint/diagnostics.test.ts:
+(pass) bun --lint diagnostics > stderr is not a terminal > a diagnostic is one line in the format of tsc, without colour [727.20ms]
+(pass) bun --lint diagnostics > stderr is not a terminal > the absolute name gives the order, the printed name is relative [676.68ms]
+(pass) bun --lint diagnostics > stderr is not a terminal > files are in the order of their names, not of the operands [938.37ms]
+(pass) bun --lint diagnostics > stderr is not a terminal > the diagnostics of a file are in the order of their positions [990.81ms]
+(pass) bun --lint diagnostics > stderr is not a terminal > what belongs to no file comes first and the other files are still read [986.20ms]
+(pass) bun --lint diagnostics > stderr is not a terminal > a file that is given more than once is reported once [925.58ms]
+(pass) bun --lint diagnostics > stderr is not a terminal > a column counts UTF-16 code units [947.34ms]
+(pass) bun --lint diagnostics > stderr is not a terminal > line and column are those of tsc where Bun's own differ [879.75ms]
+(pass) bun --lint diagnostics > the exit code > is 0 when nothing is reported [723.05ms]
+(pass) bun --lint diagnostics > the exit code > is 0 when only warnings are reported [553.51ms]
+(pass) bun --lint diagnostics > the exit code > is 2 when an operand cannot be read [318.81ms]
+(pass) bun --lint diagnostics > the exit code > is 2 when one file of several has an error [596.69ms]
+(pass) bun --lint diagnostics > the exit code > is 1 when no file is given [573.34ms]
+(pass) bun --lint diagnostics > stderr is a terminal > a diagnostic is a code frame and not a line of tsc [486.97ms]
+(pass) bun --lint diagnostics > stderr is a terminal > frames have the code before the message [399.61ms]
+(pass) bun --lint diagnostics > stderr is a terminal > related information is a note under the frame, once [524.20ms]
+(pass) bun --lint diagnostics > stderr is a terminal > the frame has colour when colour is on [421.19ms]
+
+ 17 pass
+ 0 fail
+ 27 expect() calls
+Ran 17 tests across 1 file. [5.77s]
+### finished: 2026-10-01T08:01:22Z rc=0 wall=16s

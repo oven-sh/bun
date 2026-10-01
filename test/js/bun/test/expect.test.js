@@ -4214,6 +4214,47 @@ describe("expect()", () => {
       );
     });
 
+    // Jest and Vitest have no expect.not.any()
+    if (isBun) {
+      test("expect.not.any is the complement of expect.any for primitives", () => {
+        // primitives that match any(Ctor) must NOT match not.any(Ctor)
+        expect(5).toEqual(expect.any(Number));
+        expect(5).not.toEqual(expect.not.any(Number));
+        expect("s").toEqual(expect.any(String));
+        expect("s").not.toEqual(expect.not.any(String));
+        expect(true).toEqual(expect.any(Boolean));
+        expect(true).not.toEqual(expect.not.any(Boolean));
+        expect(1n).toEqual(expect.any(BigInt));
+        expect(1n).not.toEqual(expect.not.any(BigInt));
+        expect(Symbol()).toEqual(expect.any(Symbol));
+        expect(Symbol()).not.toEqual(expect.not.any(Symbol));
+
+        // primitives that do NOT match any(Ctor) must match not.any(Ctor)
+        expect(5).not.toEqual(expect.any(String));
+        expect(5).toEqual(expect.not.any(String));
+        expect("s").not.toEqual(expect.any(Number));
+        expect("s").toEqual(expect.not.any(Number));
+
+        // boxed primitives were already correct, keep them covered
+        expect(new Number(5)).not.toEqual(expect.not.any(Number));
+        expect(new String("s")).not.toEqual(expect.not.any(String));
+
+        // any(Object) is `typeof other === "object"`: null matches, a function does not
+        expect(null).not.toEqual(expect.not.any(Object));
+        expect(() => {}).toEqual(expect.not.any(Object));
+
+        // nested inside object matching
+        expect({ a: 1 }).toEqual({ a: expect.not.any(String) });
+        expect({ a: 1 }).not.toEqual({ a: expect.not.any(Number) });
+      });
+
+      test("expect.not.any with user class", () => {
+        class Thing {}
+        expect(new Thing()).not.toEqual(expect.not.any(Thing));
+        expect({}).toEqual(expect.not.any(Thing));
+      });
+    }
+
     test("Anything matches any type", () => {
       expect(expect.anything()).toEqual("jest");
       expect(expect.anything()).toEqual(1);
@@ -4669,6 +4710,32 @@ describe("expect()", () => {
             setTimeout(() => resolve("a"), 0);
           }),
         ).toEqual(expect.resolvesTo.stringContaining("a"));
+      });
+
+      test("expect.resolvesTo.any and expect.rejectsTo.any match primitives by constructor type", async () => {
+        await expect(Promise.resolve("s")).toEqual(expect.resolvesTo.any(String));
+        await expect(Promise.resolve(5)).toEqual(expect.resolvesTo.any(Number));
+        await expect(Promise.resolve(true)).toEqual(expect.resolvesTo.any(Boolean));
+        await expect(Promise.resolve(1n)).toEqual(expect.resolvesTo.any(BigInt));
+        await expect(Promise.resolve(Symbol())).toEqual(expect.resolvesTo.any(Symbol));
+        await expect(Promise.resolve({})).toEqual(expect.resolvesTo.any(Object));
+        await expect(Promise.resolve(5)).not.toEqual(expect.resolvesTo.any(String));
+
+        await expect(Promise.reject("s")).toEqual(expect.rejectsTo.any(String));
+        await expect(Promise.reject(5)).toEqual(expect.rejectsTo.any(Number));
+        await expect(Promise.reject(5)).not.toEqual(expect.rejectsTo.any(String));
+
+        // .not is the complement
+        await expect(Promise.resolve(5)).not.toEqual(expect.not.resolvesTo.any(Number));
+        await expect(Promise.resolve(5)).toEqual(expect.not.resolvesTo.any(String));
+        await expect(Promise.reject(5)).not.toEqual(expect.not.rejectsTo.any(Number));
+        await expect(Promise.reject(5)).toEqual(expect.not.rejectsTo.any(String));
+
+        // nested in an object, and as a mock call argument
+        await expect({ a: Promise.resolve("s") }).toEqual({ a: expect.resolvesTo.any(String) });
+        const fn = jest.fn();
+        fn(Promise.resolve("s"));
+        expect(fn).toHaveBeenCalledWith(expect.resolvesTo.any(String));
       });
     }
   });

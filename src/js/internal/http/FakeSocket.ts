@@ -4,7 +4,7 @@ const { Duplex } = require("internal/stream");
 
 type FakeSocket = InstanceType<typeof FakeSocket>;
 var FakeSocket = class Socket extends Duplex {
-  [kInternalSocketData]!: [typeof Server, typeof OutgoingMessage, typeof Request];
+  [kInternalSocketData]?: [import("node:http").Server, import("node:http").ServerResponse, Request];
   bytesRead = 0;
   bytesWritten = 0;
   connecting = false;
@@ -101,9 +101,13 @@ var FakeSocket = class Socket extends Duplex {
     this.address().family = val;
   }
 
-  resetAndDestroy() {}
+  resetAndDestroy() {
+    return this;
+  }
 
-  setKeepAlive(_enable = false, _initialDelay = 0) {}
+  setKeepAlive(_enable = false, _initialDelay = 0) {
+    return this;
+  }
 
   setNoDelay(_noDelay = true) {
     return this;

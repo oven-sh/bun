@@ -4056,6 +4056,25 @@ impl<'p> Checker<'p> {
 
     /// `instantiateContextualType`, where no signature is looked for in `ty`: what waits for type parameters is what is expected of
     /// the result makes of it (`from_result`, the `returnMapper`), without `boolean`, unless that says nothing or has a hole in it.
+    /// `getApparentTypeOfContextualType` with `ContextFlagsNoConstraints`: a type variable that is all that is expected says nothing.
+    /// One that is a member of a union, as in the type of an optional parameter, is what it extends.
+    fn apparent_contextual_type_without_constraints(&mut self, ty: TypeId) -> Option<TypeId> {
+        let ty = self.force(ty);
+        if self.is_type_variable(ty) {
+            return None;
+        }
+        if !self.is_union(ty) {
+            return Some(ty);
+        }
+        Some(self.map_type(ty, |c, m| {
+            if c.is_type_variable(m) {
+                c.apparent_type(m)
+            } else {
+                m
+            }
+        }))
+    }
+
     fn instantiate_contextual_type_from_result(
         &mut self,
         ty: TypeId,
@@ -4079,6 +4098,7 @@ impl<'p> Checker<'p> {
     /// generic to construct (`Some(true)`), and nothing else.
     fn wants_plain_signature(&mut self, param: TypeId, from_result: MapperId) -> Option<bool> {
         let contextual = self.instantiate_contextual_type_from_result(param, from_result);
+        let contextual = self.apparent_contextual_type_without_constraints(contextual)?;
         let non_null = self.non_nullable(contextual);
         for construct in [false, true] {
             if self
@@ -4468,6 +4488,7 @@ impl<'p> Checker<'p> {
     ) -> Option<TypeId> {
         let own = self.sig_type_params(generic);
         let contextual_type = self.instantiate_contextual_type_from_result(param, from_result);
+        let contextual_type = self.apparent_contextual_type_without_constraints(contextual_type)?;
         let non_null = self.non_nullable(contextual_type);
         // Its type parameters can become those of the function that is returned, renamed where their names are taken.
         if self

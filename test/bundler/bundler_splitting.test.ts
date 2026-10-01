@@ -1363,6 +1363,35 @@ describe("bundler", () => {
     format: "esm",
     run: { file: "/out/index.js", stdout: "store\na\nb function\nindex s\nlazy s" },
   });
+  // lazy.js imports index.js, so that file is in a hashed chunk and the chunk of the entry point holds no file. polyfill.js is in a chunk that admin.js shares, and index.js imports it first.
+  for (const [name, exports, lazy, stdout] of [
+    ["Import", ``, `import "./index.js"; console.log("lazy");`, "polyfill\nindex true\nlazy"],
+    [
+      "Binding",
+      `export const app = { ready: globalThis.READY };`,
+      `import { app } from "./index.js"; console.log("lazy", app.ready);`,
+      "polyfill\nindex true\nlazy true",
+    ],
+  ] as const) {
+    itBundled("splitting/EntryFileThatImportTargetImportsRunsAfterChunkOfOtherEntry/" + name, {
+      files: {
+        "/index.js": /* js */ `
+          import "./polyfill.js";
+          ${exports}
+          console.log("index", globalThis.READY);
+          import("./lazy.js");
+        `,
+        "/admin.js": `import "./polyfill.js"; console.log("admin");`,
+        "/polyfill.js": `globalThis.READY = true; console.log("polyfill");`,
+        "/lazy.js": lazy,
+      },
+      entryPoints: ["/index.js", "/admin.js"],
+      splitting: true,
+      outdir: "/out",
+      format: "esm",
+      run: { file: "/out/index.js", stdout },
+    });
+  }
   itBundled("splitting/EntrySetupFilesInImportCycleRunBeforeSharedCode", {
     files: {
       ...setupBeforeShared(""),

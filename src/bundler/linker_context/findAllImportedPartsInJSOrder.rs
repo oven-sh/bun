@@ -902,13 +902,21 @@ fn reached_chunks_in_order(
     // Start where the load enters this chunk.
     let mut roots: Vec<IndexInt> = chunk.files_with_parts_in_chunk.keys().to_vec();
     roots.sort_unstable_by_key(|&source_index| order.entered[source_index as usize]);
+    // The load of an entry point's chunk starts at the entry point's file. Another chunk holds that file when an `import()` target imports it: that chunk runs the file last, so it takes the rank of the file.
+    let entry_file = chunk
+        .entry_point
+        .is_entry_point()
+        .then(|| chunk.entry_point.source_index());
 
     let mut reached: Vec<u32> = Vec::new();
     let mut reached_set = AutoBitSet::init_empty(chunks_len)?;
     let mut visited = AutoBitSet::init_empty(c.graph.files.len())?;
     let mut stack: Vec<Frame> = Vec::new();
 
-    for &root in core::iter::once(&Index::RUNTIME.value()).chain(&roots) {
+    for &root in core::iter::once(&Index::RUNTIME.value())
+        .chain(&entry_file)
+        .chain(&roots)
+    {
         stack.push(Frame::Enter(root));
         while let Some(frame) = stack.pop() {
             let source_index = match frame {
@@ -918,10 +926,10 @@ fn reached_chunks_in_order(
                     if other == u32::MAX || other == chunk_index {
                         continue;
                     }
-                    let ranks_again = c
-                        .ranks_chunk_again
-                        .as_ref()
-                        .is_some_and(|files| files.is_set(source_index as usize));
+                    let ranks_again = Some(source_index) == entry_file
+                        || c.ranks_chunk_again
+                            .as_ref()
+                            .is_some_and(|files| files.is_set(source_index as usize));
                     if ranks_again || !reached_set.is_set(other as usize) {
                         reached_set.set(other as usize);
                         reached.push(other);

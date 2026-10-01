@@ -6,12 +6,12 @@
 // the buffered extractor would produce.
 
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, readdirSorted, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, readdirSorted, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { join } from "node:path";
-import { createGzip, gzipSync } from "node:zlib";
+import { createGzip, deflateRawSync, gzipSync } from "node:zlib";
 
 setDefaultTimeout(1000 * 60 * 5);
 
@@ -1222,7 +1222,6 @@ function sparsePackage(sizes: number[], onlyLayouts?: string[]) {
   const pkgJson = Buffer.from(JSON.stringify({ name: "sparse-pkg", version: "1.0.0" }));
   const blocks: Buffer[] = [tarHeader("package/package.json", pkgJson.length, "0"), pkgJson, pad512(pkgJson.length)];
   const members: SparseMember[] = [];
-  let dataBytes = 0;
   for (const [format, build] of [
     ["gnu", oldGnuSparseMember],
     ["pax", paxSparseMember],
@@ -1233,28 +1232,53 @@ function sparsePackage(sizes: number[], onlyLayouts?: string[]) {
         const name = `${format}-${layout}-${size}.bin`;
         blocks.push(...build(`package/${name}`, size, chunks));
         members.push({ name, size, chunks });
-        dataBytes += chunks.reduce((n, c) => n + c.data.length, 0);
       }
     }
   }
   blocks.push(Buffer.alloc(1024, 0));
-  const tgz = gzipSync(Buffer.concat(blocks));
-  return { tgz, members, dataBytes, integrity: "sha512-" + createHash("sha512").update(tgz).digest("base64") };
+  const tar = Buffer.concat(blocks);
+
+  // The gzip stream starts with a stored block that ends inside the data of
+  // package.json. A body that is split after `firstPiece` bytes then gives
+  // the streaming extractor a piece that ends there, and every sparse member
+  // in the other piece: that extractor cannot resume a read that stops inside
+  // a sparse map.
+  const cut = 512 + 16;
+  const stored = Buffer.alloc(5);
+  stored.writeUInt16LE(cut, 1);
+  stored.writeUInt16LE(~cut & 0xffff, 3);
+  const trailer = Buffer.alloc(8);
+  trailer.writeUInt32LE(Bun.hash.crc32(tar), 0);
+  trailer.writeUInt32LE(tar.length, 4);
+  const head = Buffer.concat([Buffer.from([0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 3]), stored, tar.subarray(0, cut)]);
+  const tgz = Buffer.concat([head, deflateRawSync(tar.subarray(cut)), trailer]);
+  return {
+    tgz,
+    firstPiece: head.length,
+    members,
+    integrity: "sha512-" + createHash("sha512").update(tgz).digest("base64"),
+  };
 }
 
 // Compares each extracted member with what its map describes. Returns the
-// members that differ and the disk space the members take.
+// members that differ, the disk space the members take, and the most they
+// can take when no hole takes any. That limit exists where the file system
+// has sparse files and reports them: every Linux CI file system, and NTFS,
+// which rounds a chunk up to 64 KiB.
 function checkSparseMembers(root: string, members: SparseMember[]) {
   const wrong: { name: string; length: number }[] = [];
   let allocated = 0;
+  let chunkCount = 0;
   for (const { name, size, chunks } of members) {
     const expected = Buffer.alloc(size, 0);
     for (const c of chunks) c.data.copy(expected, c.offset);
     const got = readFileSync(join(root, name));
     if (!got.equals(expected)) wrong.push({ name, length: got.length });
     allocated += statSync(join(root, name)).blocks * 512;
+    chunkCount += chunks.length;
   }
-  return { wrong, allocated };
+  const allocatedLimit = isLinux || isWindows ? chunkCount * 64 * 1024 + 1024 * 1024 : Infinity;
+  return { wrong, allocated, allocatedLimit };
 }
 
 describe.concurrent("sparse tar members", () => {
@@ -1276,11 +1300,13 @@ describe.concurrent("sparse tar members", () => {
     expect(stderr).not.toContain("error:");
     expect(stderr).not.toContain("Streamed ");
 
-    const { wrong, allocated } = checkSparseMembers(join(String(dir), "node_modules", "sparse-pkg"), pkg.members);
+    const { wrong, allocated, allocatedLimit } = checkSparseMembers(
+      join(String(dir), "node_modules", "sparse-pkg"),
+      pkg.members,
+    );
     expect(wrong).toEqual([]);
-    // 33 MB of file for about 100 KB of data. Linux is the platform where
-    // every CI filesystem reports a hole as unallocated.
-    if (isLinux) expect(allocated).toBeLessThan(pkg.dataBytes + 1024 * 1024);
+    // 33 MB of file for 24 chunks of data.
+    expect(allocated).toBeLessThan(allocatedLimit);
     expect(exitCode).toBe(0);
   });
 
@@ -1290,7 +1316,7 @@ describe.concurrent("sparse tar members", () => {
     // member is 65 MiB of real disk on a filesystem without holes.
     ["65 MiB", () => sparsePackage([65 * 1024 * 1024], ["data-hole"])],
   ] as const)("streaming extract writes each member whole and leaves its holes unallocated (%s)", async (_, make) => {
-    const { tgz, members, dataBytes, integrity } = make();
+    const { tgz, firstPiece, members, integrity } = make();
 
     using dir = tempDir("sparse-streamed", {
       "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "sparse-pkg": "1.0.0" } }),
@@ -1323,14 +1349,13 @@ describe.concurrent("sparse tar members", () => {
             new ReadableStream({
               type: "direct",
               async pull(c) {
-                const half = tgz.length >> 1;
-                c.write(tgz.subarray(0, half));
+                c.write(tgz.subarray(0, firstPiece));
                 await c.flush();
                 // The streaming extractor takes the tarball only when the body
                 // arrives in more than one piece. Its first drain creates the
                 // extraction directory, so the rest waits until that exists.
                 while (!exited && !readdirSync(tmp).some(name => name.endsWith(".sparse-pkg"))) await Bun.sleep(5);
-                c.write(tgz.subarray(half));
+                c.write(tgz.subarray(firstPiece));
                 await c.flush();
                 c.close();
               },
@@ -1362,9 +1387,12 @@ describe.concurrent("sparse tar members", () => {
     expect(stderr).not.toContain("error:");
     expect(stderr).toContain("Streamed ");
 
-    const { wrong, allocated } = checkSparseMembers(join(String(dir), "node_modules", "sparse-pkg"), members);
+    const { wrong, allocated, allocatedLimit } = checkSparseMembers(
+      join(String(dir), "node_modules", "sparse-pkg"),
+      members,
+    );
     expect(wrong).toEqual([]);
-    if (isLinux) expect(allocated).toBeLessThan(dataBytes + 1024 * 1024);
+    expect(allocated).toBeLessThan(allocatedLimit);
     expect(exitCode).toBe(0);
   });
 });

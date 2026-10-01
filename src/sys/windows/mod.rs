@@ -78,6 +78,19 @@ pub mod kernel32 {
             dwFlags: DWORD,
         ) -> BOOL;
 
+        /// `lpOverlapped` may be null for a handle opened without
+        /// `FILE_FLAG_OVERLAPPED`.
+        pub fn DeviceIoControl(
+            hDevice: HANDLE,
+            dwIoControlCode: DWORD,
+            lpInBuffer: *mut c_void,
+            nInBufferSize: DWORD,
+            lpOutBuffer: *mut c_void,
+            nOutBufferSize: DWORD,
+            lpBytesReturned: *mut DWORD,
+            lpOverlapped: LPOVERLAPPED,
+        ) -> BOOL;
+
         // ── SRW locks / condition variables (`bun_threading` windows arm) ──
         pub fn ReleaseSRWLockExclusive(SRWLock: *mut SRWLOCK);
         pub fn SleepConditionVariableSRW(
@@ -131,6 +144,8 @@ pub const ENABLE_VIRTUAL_TERMINAL_PROCESSING: DWORD = 0x0004;
 pub const MOVEFILE_COPY_ALLOWED: DWORD = 0x2;
 pub const MOVEFILE_REPLACE_EXISTING: DWORD = 0x1;
 pub const MOVEFILE_WRITE_THROUGH: DWORD = 0x8;
+/// `FSCTL_SET_SPARSE` (winioctl.h).
+pub const FSCTL_SET_SPARSE: DWORD = 0x0009_00C4;
 pub use bun_windows_sys::FILETIME;
 
 pub use bun_windows_sys::DUPLICATE_SAME_ACCESS;

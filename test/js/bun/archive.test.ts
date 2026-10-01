@@ -1832,7 +1832,6 @@ describe("Bun.Archive", () => {
     };
     const members: { name: string; size: number; chunks: SparseChunk[] }[] = [];
     const parts: Buffer[] = [];
-    let dataBytes = 0;
     for (const [format, build] of [
       ["gnu", oldGnuSparseEntry],
       ["pax", paxSparseEntry],
@@ -1842,7 +1841,6 @@ describe("Bun.Archive", () => {
           const name = `${format}-${layout}-${size}.bin`;
           parts.push(build(name, size, chunks));
           members.push({ name, size, chunks });
-          dataBytes += chunks.reduce((n, c) => n + c.data.length, 0);
         }
       }
     }
@@ -1868,9 +1866,11 @@ describe("Bun.Archive", () => {
       // The length of a member comes from the end of its data, not from the
       // last block that was written: a member that ends in a hole is whole.
       expect(wrong).toEqual([]);
-      // 33 MB of file for about 100 KB of data. Linux is the platform where
-      // every CI filesystem reports a hole as unallocated.
-      if (isLinux) expect(allocated).toBeLessThan(dataBytes + 1024 * 1024);
+      // 33 MB of file for 24 chunks of data. A hole takes no disk where the
+      // file system has sparse files and reports them: every Linux CI file
+      // system, and NTFS, which rounds a chunk up to 64 KiB.
+      const chunkCount = members.reduce((n, m) => n + m.chunks.length, 0);
+      if (isLinux || isWindows) expect(allocated).toBeLessThan(chunkCount * 64 * 1024 + 1024 * 1024);
     });
 
     test("extract() does not size a file from a header that declares more than the archive holds", async () => {
@@ -1893,6 +1893,43 @@ describe("Bun.Archive", () => {
       const stat = existsSync(left) ? statSync(left) : { size: 0, blocks: 0 };
       expect(stat.size).toBeLessThan(64 * 1024);
       expect(stat.blocks * 512).toBeLessThan(64 * 1024);
+    });
+
+    // A sparse map can put a chunk where the file system cannot seek: ext4
+    // stops at 16 TiB. The child runs with a file size limit, so a build that
+    // writes zeros up to the offset stops at the limit and not at a full disk.
+    test.skipIf(isWindows)("extract() writes nothing to reach an offset the file system cannot seek to", async () => {
+      const offset = 17 * 2 ** 40;
+      using dir = tempDir("sparse-far-offset", {
+        "far.tar": Buffer.concat([
+          paxSparseEntry("far.bin", offset + 512, [{ offset, data: Buffer.alloc(512, 0x41) }]),
+          Buffer.alloc(1024),
+        ]),
+        "extract.mjs": `
+          import { existsSync, statSync } from "node:fs";
+          const settled = await new Bun.Archive(await Bun.file("far.tar").bytes()).extract(".").then(
+            () => "resolved",
+            () => "rejected",
+          );
+          const stat = existsSync("far.bin") ? statSync("far.bin") : { blocks: 0 };
+          console.log(JSON.stringify({ settled, allocated: stat.blocks * 512 }));
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        // A write past the limit raises SIGXFSZ, which must not end the child.
+        // Without the limit the child must not run.
+        cmd: ["sh", "-c", `trap '' XFSZ; ulimit -f 65536 && exec "$@"`, "sh", bunExe(), "extract.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+      // The limit is below the offset, so no file system can place the chunk.
+      expect(JSON.parse(stdout)).toEqual({ settled: "rejected", allocated: 0 });
+      expect(exitCode).toBe(0);
     });
   });
 

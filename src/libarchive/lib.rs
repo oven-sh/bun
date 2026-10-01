@@ -157,36 +157,37 @@ pub mod lib {
         pub result: Result,
     }
 
-    /// Which calls still work for placing a block in an output file. One per
-    /// extraction: a call that failed is not tried again for later entries.
+    /// Whether `pwrite` still works for placing a block in an output file. One
+    /// per extraction: once it fails, later entries do not try it again.
     pub struct WriteStrategy {
         pub pwrite: bool,
-        pub lseek: bool,
     }
 
     impl Default for WriteStrategy {
         fn default() -> Self {
-            Self {
-                pwrite: cfg!(unix),
-                lseek: true,
-            }
+            Self { pwrite: cfg!(unix) }
         }
     }
 
     /// Writes the data of one archive entry to its output file.
     ///
-    /// The entry header says how long the file is, but nothing proves the
-    /// archive holds that many bytes, and for a sparse entry it never does. So
-    /// no call here is sized from the header. A block goes to the offset
-    /// libarchive gives it, which leaves a hole where the entry has one, and
-    /// the file gets its length in [`EntryWriter::finish`], from the offset
-    /// libarchive returns once the entry's data has been read to the end.
+    /// The entry header says how long the file is, and a sparse map says where
+    /// each block goes, but nothing proves the archive holds that many bytes,
+    /// and for a sparse entry it never does. So no write and no allocation
+    /// here is sized from either. A block goes to the offset libarchive gives
+    /// it, with `pwrite` or a seek, which leaves a hole where the entry has
+    /// one. When neither reaches the offset, the entry fails: zeros are never
+    /// written to get there. The file gets its length in
+    /// [`EntryWriter::finish`], from the offset libarchive returns once the
+    /// entry's data has been read to the end.
     pub struct EntryWriter {
         fd: Fd,
         /// One past the last byte written.
         end: i64,
         /// The file position, which only `write` and `lseek` move.
         cursor: i64,
+        #[cfg(windows)]
+        marked_sparse: bool,
     }
 
     impl EntryWriter {
@@ -195,12 +196,27 @@ pub mod lib {
                 fd,
                 end: 0,
                 cursor: 0,
+                #[cfg(windows)]
+                marked_sparse: false,
             }
         }
 
         #[inline]
         pub fn fd(&self) -> Fd {
             self.fd
+        }
+
+        /// Call before the file gets a range that no block fills. NTFS gives
+        /// such a range real clusters unless the file is marked sparse.
+        #[inline]
+        fn before_hole(&mut self) {
+            #[cfg(windows)]
+            if !self.marked_sparse {
+                self.marked_sparse = true;
+                // A volume without sparse files refuses the mark. The hole
+                // then takes disk, as it does on such a volume anywhere.
+                let _ = bun_sys::set_sparse(self.fd);
+            }
         }
 
         pub fn write(
@@ -212,7 +228,8 @@ pub mod lib {
             if data.is_empty() {
                 return Ok(());
             }
-            let file = bun_sys::File::borrow(&self.fd);
+            let fd = self.fd;
+            let file = bun_sys::File::borrow(&fd);
 
             #[cfg(unix)]
             if strategy.pwrite {
@@ -229,21 +246,14 @@ pub mod lib {
                     }
                 }
             }
+            #[cfg(not(unix))]
+            let _ = strategy;
 
             if offset != self.cursor {
-                // Without lseek, zeros can fill a gap ahead. Nothing goes back.
-                let forward = offset > self.cursor;
-                if !forward || strategy.lseek {
-                    if let Err(err) = bun_sys::set_file_offset(self.fd, offset as u64) {
-                        strategy.lseek = false;
-                        if !forward {
-                            return Err(err);
-                        }
-                        Self::write_zeros(file, (offset - self.cursor) as usize)?;
-                    }
-                } else {
-                    Self::write_zeros(file, (offset - self.cursor) as usize)?;
+                if offset > self.end {
+                    self.before_hole();
                 }
+                bun_sys::set_file_offset(self.fd, offset as u64)?;
                 self.cursor = offset;
             }
 
@@ -253,24 +263,12 @@ pub mod lib {
             Ok(())
         }
 
-        fn write_zeros(file: &bun_sys::File, count: usize) -> bun_sys::Maybe<()> {
-            // Use a runtime memset (vs `[0u8; _]`) to keep .rodata small.
-            let mut zero_buf = [0u8; 16 * 1024];
-            zero_buf.fill(0);
-            let mut remaining = count;
-            while remaining > 0 {
-                let to_write = &zero_buf[..remaining.min(zero_buf.len())];
-                file.write_all(to_write)?;
-                remaining -= to_write.len();
-            }
-            Ok(())
-        }
-
         /// Call when libarchive reports the end of the entry's data. `end` is
         /// the offset it returned with `ARCHIVE_EOF`: the length of the file.
         /// When that is past the last byte written, the entry ends in a hole.
         pub fn finish(&mut self, end: i64) -> bun_sys::Maybe<()> {
             if end > self.end {
+                self.before_hole();
                 bun_sys::ftruncate(self.fd, end)?;
                 self.end = end;
             }

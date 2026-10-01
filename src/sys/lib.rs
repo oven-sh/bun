@@ -1366,7 +1366,6 @@ impl Tag {
     #[cfg(not(windows))]
     pub(crate) const fchdir: Tag = Tag(102);
     pub const fchownat: Tag = Tag(103);
-    #[cfg(not(windows))]
     pub(crate) const ioctl: Tag = Tag(104);
     #[cfg(not(windows))]
     pub(crate) const getrlimit: Tag = Tag(105);
@@ -3847,6 +3846,30 @@ mod windows_impl {
         };
         if rc != bun_windows_sys::NTSTATUS::SUCCESS {
             return Err(Error::new(rc, Tag::ftruncate).with_fd(fd));
+        }
+        Ok(())
+    }
+    /// `FSCTL_SET_SPARSE`. NTFS gives every byte below the end of a file real
+    /// clusters unless the file has this mark, so set it before a seek or an
+    /// `ftruncate` leaves a range that nothing writes to.
+    pub fn set_sparse(fd: Fd) -> Maybe<()> {
+        let mut returned: w::DWORD = 0;
+        // SAFETY: FFI; fd is a valid HANDLE, the call passes no buffer, and
+        // `returned` is valid for the call.
+        let ok = unsafe {
+            w::kernel32::DeviceIoControl(
+                fd.native(),
+                w::FSCTL_SET_SPARSE,
+                core::ptr::null_mut(),
+                0,
+                core::ptr::null_mut(),
+                0,
+                &mut returned,
+                core::ptr::null_mut(),
+            )
+        };
+        if ok == w::FALSE {
+            return Err(Error::from_win32(w::Win32Error::get(), Tag::ioctl).with_fd(fd));
         }
         Ok(())
     }

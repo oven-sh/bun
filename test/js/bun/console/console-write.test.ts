@@ -159,12 +159,14 @@ try {
 
 // With several arguments the caller gets that string and not the Promises: the script prints
 // "resolved", then dies on an unhandled EPIPE rejection.
-test.todo("an awaited console.write of several arguments rejects with EPIPE when the reader has hung up", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+test.todoIf(!isWindows).skipIf(isWindows)(
+  "an awaited console.write of several arguments rejects with EPIPE when the reader has hung up",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
 try {
   await console.write(Buffer.alloc(8 * 1024 * 1024, "x").toString(), "tail");
   console.error("resolved");
@@ -172,18 +174,19 @@ try {
   console.error("caught " + e.code);
 }
 `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const reader = proc.stdout.getReader();
-  await reader.read();
-  await reader.cancel();
+    const reader = proc.stdout.getReader();
+    await reader.read();
+    await reader.cancel();
 
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  const codes = process.platform === "darwin" ? ["EPIPE", "ENOTCONN"] : ["EPIPE"];
-  expect(stderr).toBeOneOf(codes.map(code => `caught ${code}\n`));
-  expect(exitCode).toBe(0);
-});
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const codes = process.platform === "darwin" ? ["EPIPE", "ENOTCONN"] : ["EPIPE"];
+    expect(stderr).toBeOneOf(codes.map(code => `caught ${code}\n`));
+    expect(exitCode).toBe(0);
+  },
+);

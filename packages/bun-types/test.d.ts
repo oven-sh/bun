@@ -279,10 +279,12 @@ declare module "bun:test" {
      * The first line of the template has the column names, separated by `|`.
      * Each line after it has one `${value}` for each column.
      * The describe fn gets each row as one object, with the column names as its keys.
-     * To type that object, pass it as the type argument: `describe.each<{ a: number }>`.
+     * To type that object, annotate the parameter or pass the type argument:
+     * `describe.each<{ a: number }>`.
      *
-     * A table with no `${value}`, or with a row that has too few, throws when
-     * the returned function is called.
+     * The returned function throws when the table has no `${value}`, when the
+     * number of values is not a multiple of the number of columns, or when the
+     * column names are not one line of names separated by `|`.
      *
      * @example
      * ```ts
@@ -297,11 +299,7 @@ declare module "bun:test" {
      * });
      * ```
      */
-    each<Row = Record<string, any>>(
-      strings: TemplateStringsArray,
-      value: unknown,
-      ...values: unknown[]
-    ): Describe<[Row]>;
+    each<Row = any>(strings: TemplateStringsArray, value: unknown, ...values: unknown[]): Describe<[Row]>;
     /**
      * Returns a function that runs for each item in `table`.
      *
@@ -604,10 +602,12 @@ declare module "bun:test" {
      * The first line of the template has the column names, separated by `|`.
      * Each line after it has one `${value}` for each column.
      * The test fn gets each row as one object, with the column names as its keys.
-     * To type that object, pass it as the type argument: `test.each<{ a: number }>`.
+     * To type that object, annotate the parameter or pass the type argument:
+     * `test.each<{ a: number }>`.
      *
-     * A table with no `${value}`, or with a row that has too few, throws when
-     * the returned function is called.
+     * The returned function throws when the table has no `${value}`, when the
+     * number of values is not a multiple of the number of columns, or when the
+     * column names are not one line of names separated by `|`.
      *
      * @example
      * ```ts
@@ -620,7 +620,7 @@ declare module "bun:test" {
      * });
      * ```
      */
-    each<Row = Record<string, any>>(strings: TemplateStringsArray, value: unknown, ...values: unknown[]): Test<[Row]>;
+    each<Row = any>(strings: TemplateStringsArray, value: unknown, ...values: unknown[]): Test<[Row]>;
     /**
      * Returns a function that runs for each item in `table`.
      *

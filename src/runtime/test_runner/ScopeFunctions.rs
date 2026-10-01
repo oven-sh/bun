@@ -145,73 +145,58 @@ fn is_template_strings(global: &JSGlobalObject, array: JSValue) -> JsResult<bool
     Ok(array.get_own_truthy(global, "raw")?.is_some_and(|raw| raw.is_array()))
 }
 
-/// jest-each's grammar for the heading row, `/^\n\s*[^\s]+\s*(\|\s*[^\s]+\s*)*\n/`:
-/// the end of its match in `header`.
-///
-/// A word is a run of characters that are not whitespace. A backtracking matcher
-/// leaves a word in one of two states: the word ended a heading, or its last
-/// character was the `|` between two headings. The scan goes from the last word to
-/// the first and keeps where the match ends from each state. It tries the states
-/// in the matcher's order, so it finds the same end with no backtracking.
-fn match_template_headings(header: EncodedSlice<'_>) -> Option<usize> {
+/// The headings of a template table. `header` is `strings[0]`: a newline, one row of names
+/// with `|` between them, and a newline. jest-each also takes an empty name, and a row
+/// that goes on after a `|` on the next line. Both are malformed here.
+fn template_headings(header: EncodedSlice<'_>) -> Option<Vec<BunString>> {
     let is_space = |i: usize| strings::is_js_whitespace(u32::from(header.char_at(i)));
     if header.len == 0 || header.char_at(0) != u16::from(b'\n') {
         return None;
     }
-    // Where the match ends when the word at `i` comes after a heading, or after a `|`.
-    let (mut from_heading, mut from_pipe): (Option<usize>, Option<usize>) = (None, None);
-    let mut i = header.len;
-    loop {
-        let mut newline_end = None;
-        while i > 1 && is_space(i - 1) {
-            if newline_end.is_none() && header.char_at(i - 1) == u16::from(b'\n') {
-                newline_end = Some(i);
-            }
-            i -= 1;
-        }
-        if i <= 1 {
-            return from_pipe;
-        }
-        let word_end = i;
-        while i > 1 && !is_space(i - 1) {
-            i -= 1;
-        }
-        let word_len = word_end - i;
-        let ends_with_pipe = header.char_at(word_end - 1) == u16::from(b'|');
-        // The last `len` characters of the word start with a heading. The heading takes all
-        // of them: then a `|` word follows, or the match stops at the last newline after the
-        // word. If that fails, the heading stops before a `|` that ends the word.
-        let heading_then = |len: usize| {
-            from_heading.or(newline_end).or(if ends_with_pipe && len >= 2 { from_pipe } else { None })
-        };
-        (from_heading, from_pipe) = (
-            if header.char_at(i) != u16::from(b'|') {
-                None
-            } else if word_len == 1 {
-                from_pipe
-            } else {
-                heading_then(word_len - 1)
-            },
-            heading_then(word_len),
-        );
+    let mut i = 1;
+    while i < header.len && is_space(i) {
+        i += 1;
     }
-}
-
-/// `header[..end]` without its whitespace, split on `|`.
-fn template_headings(header: EncodedSlice<'_>, end: usize) -> Vec<BunString> {
     let mut headings = Vec::new();
     let mut heading: Vec<u16> = Vec::new();
-    for i in 0..end {
+    let mut heading_ended = false;
+    loop {
+        if i == header.len {
+            return None;
+        }
         let unit = header.char_at(i);
+        if unit == u16::from(b'\n') {
+            break;
+        }
         if unit == u16::from(b'|') {
+            if heading.is_empty() {
+                return None;
+            }
             headings.push(BunString::clone_utf16(&heading));
             heading.clear();
-        } else if !strings::is_js_whitespace(u32::from(unit)) {
+            heading_ended = false;
+        } else if is_space(i) {
+            heading_ended = !heading.is_empty();
+        } else if heading_ended {
+            return None;
+        } else {
             heading.push(unit);
         }
+        i += 1;
+    }
+    if heading.is_empty() {
+        return None;
     }
     headings.push(BunString::clone_utf16(&heading));
-    headings
+    // In jest-each, a `|` that starts the next text continues the row.
+    i += 1;
+    while i < header.len && is_space(i) {
+        i += 1;
+    }
+    if i < header.len && header.char_at(i) == u16::from(b'|') {
+        return None;
+    }
+    Some(headings)
 }
 
 /// The table for `each(strings, ...values)`: one object per row, keyed by the headings in
@@ -235,9 +220,7 @@ fn template_table(
     let first = template_strings.get_index(global, 0)?;
     rooted.append(first);
     let headings = if first.is_string() {
-        let header = first.to_bun_string(global)?;
-        let header = header.to_encoded_slice();
-        match_template_headings(header).map(|end| template_headings(header, end))
+        template_headings(first.to_bun_string(global)?.to_encoded_slice())
     } else {
         None
     };

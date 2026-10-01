@@ -359,11 +359,11 @@ test.each`
 });
 ```
 
-`describe.each` accepts the same form. In the title, `$a` prints the value of column `a`, the same as for a table of objects.
+`describe.each` accepts the same form. The title takes the same `$name` placeholders as for a table of objects.
 
-Put the column names on their own line after the opening backtick. A column name has no spaces in it. Bun reads the `|` separators on that line only, and takes the values in the order they appear.
+Put the column names on one line of their own, with `|` between them. A column name has no spaces in it. Bun takes the values in the order they appear, whatever is between them.
 
-In TypeScript, pass the type of a row as the type argument:
+In TypeScript, annotate the row parameter, or pass the type of a row as the type argument:
 
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
 test.each<{ input: string; length: number }>`
@@ -379,7 +379,7 @@ Bun builds the row objects once, when `.each` runs. The call that passes the tit
 
 - the template has no `${value}`
 - the number of values is not a multiple of the number of columns
-- the first line is not a row of column names
+- the column names are not one line of names with `|` between them
 
 ### Format Specifiers
 

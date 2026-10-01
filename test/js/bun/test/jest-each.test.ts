@@ -167,15 +167,13 @@ describe("tagged template table", () => {
     Object.assign(cooked, { raw: [...cooked] }) as unknown as TemplateStringsArray;
 
   it.each(
-    strings("\n a||\ud83d\n", "", "", ""),
+    strings("\n a|\ud83d\n", "", ""),
     1,
     2,
-    3,
-  )("keeps a heading that is empty or half of a pair", row => {
+  )("keeps a heading that is half of a surrogate pair", row => {
     expect(Object.entries(row)).toEqual([
       ["a", 1],
-      ["", 2],
-      ["\ud83d", 3],
+      ["\ud83d", 2],
     ]);
   });
 
@@ -249,16 +247,31 @@ describe("tagged template table", () => {
     });
 
     it("a heading that is empty or has a space in it", () => {
-      for (const header of ["\n a b | c\n", "\n | a\n", "\n a |\n", "\n a || b\n", "\n \n"]) {
+      for (const header of ["\n a b | c\n", "\n | a\n", "\n a |\n", "\n a||b\n", "\n \n"]) {
+        expect(titleCallError(it.each(strings(header, ""), 1))).toBe(badHeadings(JSON.stringify(header)));
+      }
+    });
+
+    it("a heading row that goes on after a newline", () => {
+      for (const header of ["\n a |\n b\n", "\n a\n | b\n", "\n a\n |\n"]) {
         expect(titleCallError(it.each(strings(header, ""), 1))).toBe(badHeadings(JSON.stringify(header)));
       }
     });
   });
 
-  describe("heading grammar", () => {
-    // jest-each's, from its src/validation.ts and src/bind.ts.
+  describe("heading row", () => {
+    // The grammar of jest-each, from its src/validation.ts and src/bind.ts.
     const HEADINGS = /^\n\s*[^\s]+\s*(\|\s*[^\s]+\s*)*\n/;
-    const jestHeadings = (header: string) => header.match(HEADINGS)?.[0].replace(/\s/g, "").split("|");
+    // bun reads the headings that jest-each reads. Three shapes that jest-each takes are malformed here.
+    const expectedHeadings = (header: string) => {
+      const match = header.match(HEADINGS)?.[0];
+      if (match === undefined) return undefined;
+      const names = match.replace(/\s/g, "").split("|");
+      const emptyName = names.includes("");
+      const rowGoesOnAfterNewline = /\S\s*\n\s*\S/.test(match);
+      const pipeStartsNextText = header.slice(match.length).trimStart().startsWith("|");
+      return emptyName || rowGoesOnAfterNewline || pipeStartsNextText ? undefined : names;
+    };
 
     const headers = new Set<string>();
     const add = (prefix: string, depth: number) => {
@@ -269,15 +282,21 @@ describe("tagged template table", () => {
     for (const header of [
       "",
       " a\n",
+      "a\n",
       "\n  first | second | third\n  ",
+      "\n\n\ta|b \n c\n",
       "\n\ta\t|\tb\t\n",
       "\n a | b\r\n",
       "\n a\u00a0|\u3000b \n",
       "\n a\u2028| b\n",
-      "\n\ufeffa |\n b\n",
-      "\n a|\n b\n",
-      "\n a |b| c\n d | e\n",
+      "\n\ufeffa | b\n",
       "\n a\u200b | b\n",
+      "\n a\rb\n",
+      "\n a\u2028b | c\n",
+      "\n a |b| c\n d | e\n",
+      "\n a | b\n  | c\n",
+      "\n a |\n b\n",
+      "\n a||b\n",
       "\n 😀 | é\n",
       "\n \ud83d \n",
     ]) {
@@ -287,10 +306,10 @@ describe("tagged template table", () => {
     const mismatches: unknown[] = [];
     let accepted = 0;
     for (const header of headers) {
-      const expected = jestHeadings(header);
-      // One value more than a row takes: the error lists the headings. A table of one column takes any count.
-      const values = expected && expected.length > 1 ? Array(expected.length + 1).fill(0) : [0];
-      const each = (describe.each as any)(strings(header, ""), ...values);
+      const expected = expectedHeadings(header);
+      if (expected) accepted++;
+      // A table of one column takes the one value. With more columns, the error lists the headings.
+      const each = (describe.each as any)(strings(header, ""), 0);
       let got: unknown;
       try {
         each("one heading", (row: object) => {
@@ -302,15 +321,14 @@ describe("tagged template table", () => {
       }
       let want: unknown = "Table headings do not conform to expected format:\n\nheading1 | headingN";
       if (expected) {
-        accepted++;
         want = expected.length > 1 ? "Not enough arguments supplied for given headings:\n" + expected.join(" | ") : 1;
       }
       if (got !== want) mismatches.push([header, got, want]);
     }
 
-    it("is the grammar of jest-each", () => {
+    it("has the headings that jest-each reads, or is malformed", () => {
       expect(mismatches).toEqual([]);
-      expect({ headers: headers.size, accepted }).toEqual({ headers: 354, accepted: 137 });
+      expect({ headers: headers.size, accepted }).toEqual({ headers: 360, accepted: 53 });
     });
   });
 });

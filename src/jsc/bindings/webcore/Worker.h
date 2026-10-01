@@ -97,5 +97,7 @@ private:
 JSC::JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionPostMessage);
+// DedicatedWorkerGlobalScope.close(): installed on the Web Worker global only.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionWorkerGlobalScopeClose);
 
 } // namespace WebCore

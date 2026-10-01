@@ -115,8 +115,12 @@ pub struct WebWorker {
     /// Cloned env for the worker VM; boxed on the global heap because the arena
     /// does not run `Drop`. Reclaimed in `shutdown()`.
     worker_env_loader: Cell<*mut bun_dotenv::Loader>,
-    /// `process.exit(code)` ran; later error paths must not overwrite its code.
+    /// `process.exit(code)` or `close()` ran: the worker chose its exit code,
+    /// and later error paths must not overwrite it.
     exit_called: AtomicBool,
+    /// The entry's rejection was reported (by `spin()` or by `close()`); it is
+    /// reported once. Worker thread only.
+    entry_rejection_seen: Cell<bool>,
     /// The parent asked this thread to stop (`worker.terminate()` or an exiting
     /// parent) while its VM was live — as opposed to the thread stopping itself,
     /// or being stopped before it started. Written under the `vm_handle` lock.
@@ -204,6 +208,24 @@ extern "C" fn WebWorker__getMessagingProxy(vm: &VirtualMachine) -> *mut c_void {
     vm.worker_ref()
         .map(|w| w.messaging_proxy)
         .unwrap_or(core::ptr::null_mut())
+}
+
+/// `WorkerGlobalScope.close()`: the task that called it has ended (its
+/// checkpoint ran, the worker's 'exit' listeners too). Stop the worker as
+/// `process.exit()` does, with the exit code as it stands. Worker thread.
+///
+/// An entry that threw in that same task is reported first: once the stop
+/// closes the gate, nothing is reported to the parent any more.
+#[unsafe(no_mangle)]
+extern "C" fn WebWorker__close(vm: &VirtualMachine) {
+    let Some(worker) = vm.worker_ref() else {
+        return;
+    };
+    if let Some(promise) = vm.pending_internal_promise() {
+        // SAFETY: the VM's entry promise, held strongly by the VM.
+        let _ = unsafe { worker.observe_entry(vm, promise) };
+    }
+    worker.exit();
 }
 
 impl Drop for WebWorker {
@@ -437,6 +459,7 @@ impl WebWorker {
             arena: JsCell::new(None),
             worker_env_loader: Cell::new(core::ptr::null_mut()),
             exit_called: AtomicBool::new(false),
+            entry_rejection_seen: Cell::new(false),
             terminated_by_parent: AtomicBool::new(false),
         });
         let worker_ref = bun_ptr::ParentRef::from(worker.as_non_null());
@@ -890,31 +913,8 @@ impl WebWorker {
         // later) is the entry's uncaught error at that moment — the worker stops
         // unless a handler took it — and is reported exactly once. The loader
         // marks this promise handled, so nothing else would report it.
-        let mut entry_rejection_seen = false;
-        let mut observe_entry = |vm: &VirtualMachine| -> EntryOutcome {
-            // SAFETY: `promise` is a live JSC heap cell, rooted below for the loop's duration.
-            unsafe {
-                if entry_rejection_seen || (*promise).status() != jsc::js_promise::Status::Rejected
-                {
-                    return EntryOutcome::Continue;
-                }
-                entry_rejection_seen = true;
-                // Same rule as the main thread (run_command): a CJS worker
-                // entry's top-level throw is an uncaughtException; only an
-                // ESM entry rejection reports origin "unhandledRejection".
-                let is_rejection = !vm.as_mut().entry_point_result.evaluated_as_cjs;
-                let handled = vm.as_mut().uncaught_exception(
-                    vm.global(),
-                    (*promise).result(vm.jsc_vm()),
-                    is_rejection,
-                );
-                if handled {
-                    EntryOutcome::Continue
-                } else {
-                    EntryOutcome::Stop
-                }
-            }
-        };
+        // SAFETY: `promise` is a live JSC heap cell, rooted below for the loop's duration.
+        let observe_entry = |vm: &VirtualMachine| unsafe { self.observe_entry(vm, promise) };
         if let EntryOutcome::Stop = observe_entry(vm) {
             // exit_code is already 1 from uncaught_exception; re-setting it here
             // would clobber a process.on('exit') change to process.exitCode.
@@ -1098,6 +1098,41 @@ impl WebWorker {
     pub fn stopped_by_parent(&self) -> bool {
         self.terminated_by_parent.load(Ordering::Relaxed)
             && !self.exit_called.load(Ordering::Relaxed)
+    }
+
+    /// Report the entry's rejection as the worker's uncaught error, once.
+    /// Worker thread.
+    ///
+    /// # Safety
+    /// `promise` is the live entry promise.
+    unsafe fn observe_entry(
+        &self,
+        vm: &VirtualMachine,
+        promise: *mut jsc::JSInternalPromise,
+    ) -> EntryOutcome {
+        // SAFETY: fn contract.
+        unsafe {
+            if self.entry_rejection_seen.get()
+                || (*promise).status() != jsc::js_promise::Status::Rejected
+            {
+                return EntryOutcome::Continue;
+            }
+            self.entry_rejection_seen.set(true);
+            // Same rule as the main thread (run_command): a CJS worker
+            // entry's top-level throw is an uncaughtException; only an
+            // ESM entry rejection reports origin "unhandledRejection".
+            let is_rejection = !vm.as_mut().entry_point_result.evaluated_as_cjs;
+            let handled = vm.as_mut().uncaught_exception(
+                vm.global(),
+                (*promise).result(vm.jsc_vm()),
+                is_rejection,
+            );
+            if handled {
+                EntryOutcome::Continue
+            } else {
+                EntryOutcome::Stop
+            }
+        }
     }
 
     /// process.exit() inside the worker. Worker-thread only.

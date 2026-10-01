@@ -467,4 +467,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     return JSValue::encode(jsUndefined());
 }
 
+// https://html.spec.whatwg.org/multipage/workers.html#dom-workerglobalscope-close: the calling script runs to
+// the end of its task (a postMessage() after close() still reaches the parent), then the worker stops and
+// what was queued for it is discarded. The stop itself is made by the checkpoint that ends the task
+// (GlobalObject::drainMicrotasks), the same way process.exit() stops a worker.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionWorkerGlobalScopeClose,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))
+{
+    WebCore::clientData(lexicalGlobalObject->vm())->workerCloseRequested = true;
+    return JSValue::encode(jsUndefined());
+}
+
 } // namespace WebCore

@@ -637,6 +637,11 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                 globalObject->m_processEnvObject.set(vm, globalObject, Bun::createSharedEnvironmentVariablesMap(globalObject).getObject());
             }
 
+            // DedicatedWorkerGlobalScope.close(): on the Web Worker global only. node:worker_threads
+            // keeps the main-thread global shape (Node has no close()), as does the main thread.
+            if (options.kind == WebCore::WorkerOptions::Kind::Web)
+                globalObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "close"_s), 0, WebCore::jsFunctionWorkerGlobalScopeClose, ImplementationVisibility::Public, NoIntrinsic, 0);
+
             // Ensure that the TerminationException singleton is constructed. Workers need this so
             // that we can request their termination from another thread. For the main thread, we
             // can delay this until we are actually requesting termination (until and unless we ever
@@ -3088,6 +3093,11 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double JSC__JSGlobalObject__jsDateNow(JSC::JS
 
 // ====================== end conditional builtin globals ======================
 
+extern "C" uint8_t Bun__getExitCode(void* bunVM);
+extern "C" void Process__dispatchOnExit(Zig::GlobalObject*, uint8_t exitCode);
+// The task that called WorkerGlobalScope.close() has ended: stop the worker, as process.exit() does.
+extern "C" void WebWorker__close(void* bunVM);
+
 uint8_t GlobalObject::drainMicrotasks()
 {
     auto& vm = this->vm();
@@ -3161,11 +3171,25 @@ uint8_t GlobalObject::drainMicrotasks()
             return *result;
     }
 
+    // WorkerGlobalScope.close() was called by the task this checkpoint ends: the worker stops now, as
+    // process.exit() stops it (its 'exit' listeners, then the stop), and whatever was queued behind the
+    // task (the rest of a message batch, a timer, a completion) is discarded at the gates the stop closes.
+    auto* clientData = WebCore::clientData(vm);
+    if (clientData->workerCloseRequested) [[unlikely]] {
+        clientData->workerCloseRequested = false;
+        Process__dispatchOnExit(this, Bun__getExitCode(bunVM()));
+        if (auto result = endedByException(); result && *result == 1)
+            return 1;
+        WebWorker__close(bunVM());
+        return 1;
+    }
+
     return 0;
 }
 
 // The Rust event loop's entry to drainMicrotasks() (`EventLoop::exit()` and the
-// drains between queued items): 0 drained, 1 the VM is terminating.
+// drains between queued items): 0 drained, 1 the VM is terminating (or the worker
+// just stopped itself through close()).
 //
 // One case is answered here instead: a Rust frame can be leaving through
 // `exit()` with a (non-termination) exception pending that the dispatcher above

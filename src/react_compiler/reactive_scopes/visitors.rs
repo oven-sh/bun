@@ -9,9 +9,9 @@
 
 use crate::diagnostics::CompilerError;
 use crate::hir::{
-    EvaluationOrder, FunctionId, InstructionValue, ParamPattern, Place, PrunedReactiveScopeBlock,
-    ReactiveBlock, ReactiveFunction, ReactiveInstruction, ReactiveScopeBlock, ReactiveStatement,
-    ReactiveTerminal, ReactiveTerminalStatement, ReactiveValue, environment::Environment,
+    EvaluationOrder, FunctionId, Place, PrunedReactiveScopeBlock, ReactiveBlock, ReactiveFunction,
+    ReactiveInstruction, ReactiveScopeBlock, ReactiveStatement, ReactiveTerminal,
+    ReactiveTerminalStatement, ReactiveValue, environment::Environment,
 };
 
 // =============================================================================
@@ -41,15 +41,13 @@ pub(crate) trait ReactiveFunctionVisitor {
     fn visit_param(&self, _place: &Place, _state: &mut Self::State) {}
 
     /// Walk an inner HIR function, visiting params, instructions (with lvalues,
-    /// value-lvalues, operands, and nested functions), and terminal operands.
+    /// value-lvalues and operands), and terminal operands.
     /// TS: `visitHirFunction`
+    /// Nested functions are left to the visitor's `visit_value` override; upstream also recurses here, which walks depth `d` 2^d times.
     fn visit_hir_function(&self, func_id: FunctionId, state: &mut Self::State) {
         let inner_func = &self.env().functions[func_id.0 as usize];
         for param in &inner_func.params {
-            let place = match param {
-                ParamPattern::Place(p) => p,
-                ParamPattern::Spread(s) => &s.place,
-            };
+            let place = param.place();
             self.visit_param(place, state);
         }
         let block_ids: Vec<_> = inner_func.body.blocks.keys().copied().collect();
@@ -73,14 +71,6 @@ pub(crate) trait ReactiveFunctionVisitor {
                     loc: instr.loc,
                 };
                 self.visit_instruction(&reactive_instr, state);
-                // Recurse into nested functions
-                match &instr.value {
-                    InstructionValue::FunctionExpression { lowered_func, .. }
-                    | InstructionValue::ObjectMethod { lowered_func, .. } => {
-                        self.visit_hir_function(lowered_func.func, state);
-                    }
-                    _ => {}
-                }
             }
             for operand in &terminal_operands {
                 self.visit_place(terminal_id, operand, state);

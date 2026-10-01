@@ -5,7 +5,7 @@ sidebarTitle: Deploy on Railway
 mode: center
 ---
 
-Railway is an infrastructure platform: you provision infrastructure, develop against it locally, then deploy to the cloud. It deploys from GitHub with zero configuration, handles SSL automatically, and provisions databases.
+Railway is an infrastructure platform: you provision infrastructure, develop against it locally, then deploy to the cloud. Railway deploys from GitHub with zero configuration, handles SSL automatically, and provisions databases.
 
 This guide deploys a Bun application with an optional PostgreSQL database, the same setup the following template provides.
 
@@ -71,7 +71,7 @@ railway add --service bun-react-db --variables DATABASE_URL=\${{Postgres.DATABAS
 
 </Step>
 <Step title="Step 5">
-After the services have been created and connected, deploy the application to Railway. By default, services are only accessible within Railway's private network, so generate a public domain to make your app publicly accessible.
+After creating and connecting the services, deploy the application to Railway. By default, services are only accessible within Railway's private network, so generate a public domain to make your app publicly accessible.
 
 ```bash terminal icon="terminal"
 # Deploy your application
@@ -84,7 +84,7 @@ railway domain
 </Step>
 </Steps>
 
-Your app is now live. `railway up` deploys your local directory rather than a GitHub repository; to have Railway auto-deploy on every GitHub push, connect the service to your repository with `railway service source connect --repo <owner>/<repo> --branch <branch>`.
+Your app is now live. `railway up` deploys your local directory rather than a GitHub repository. To have Railway auto-deploy on every GitHub push, connect the service to your repository with `railway service source connect --repo <owner>/<repo> --branch <branch>`.
 
 ---
 
@@ -94,7 +94,7 @@ Your app is now live. `railway up` deploys your local directory rather than a Gi
 <Step title="Step 1">
 Create a new project
 
-1. Go to [Railway Dashboard](http://railway.com/dashboard?utm_medium=integration&utm_source=docs&utm_campaign=bun)
+1. Go to [Railway Dashboard](https://railway.com/dashboard?utm_medium=integration&utm_source=docs&utm_campaign=bun)
 2. Click **"+ New"** → **"GitHub repo"**
 3. Choose your repository
 
@@ -105,7 +105,7 @@ Add a PostgreSQL database, and connect this database to the service
 <Note>Step 2 is only necessary if your application uses a database. If you don't need PostgreSQL, skip to Step 3.</Note>
 
 1. Click **"+ New"** → **"Database"** → **"Add PostgreSQL"**
-2. After the database has been created, select your service (not the database)
+2. After Railway creates the database, select your service (not the database)
 3. Go to **"Variables"** tab
 4. Click **"+ New Variable"** → **"Add Reference"**
 5. Select `DATABASE_URL` from postgres

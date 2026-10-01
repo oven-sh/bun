@@ -4,6 +4,7 @@ pub mod error;
 pub use error::{Error, Result};
 
 use core::cell::RefCell;
+use core::mem::MaybeUninit;
 
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 use bun_core::{self, fmt as bun_fmt};
@@ -42,59 +43,53 @@ use route_param::List as ParamsList;
 // stay in tier-6 `bun_jsc` as extension methods — they need JSValue/JSGlobalObject.
 // Everything else is a thin extern-"C" wrapper around WTF::URL and is JSC-agnostic.
 pub mod whatwg {
+    use core::ptr::NonNull;
+
     use super::BunString as String;
     use super::strings;
 
-    /// Opaque handle to a heap-allocated WTF::URL (C++). Always behind `*mut URL`.
-    /// Construct via `from_string`/`from_utf8`; free via `deinit`.
-    #[repr(C)]
-    pub struct URL {
-        _opaque: [u8; 0],
+    bun_opaque::opaque_ffi! {
+        /// Opaque handle to a heap-allocated `WTF::URL` (C++); owned via
+        /// [`Parsed`].
+        pub struct URL;
     }
 
-    // Getters take `*const URL` — the C++ side (BunString.cpp) never mutates the
-    // WTF::URL on read. `URL__deinit` keeps `*mut` (it `delete`s). `BunString*` inputs stay
-    // `*mut` to match the C ABI; callers pass a mutable local copy (see below).
-    // SAFETY (safe fn): `URL` is an opaque ZST handle (never null when behind `&`);
-    // `String` is a `#[repr(C)]` Copy POD that C++ reads (`BunString::toWTFString() const`).
-    // Getters take `&URL` (C++ never mutates on read); `deinit` takes `&mut URL` (consumes).
-    // `URL__originLength` keeps a raw `(*const u8, usize)` slice pair → stays `unsafe fn`.
+    // Getters take `&URL` (C++ never mutates on read). String inputs are
+    // `const BunString*`; string returns are +1 (`Bun::toStringRef`), declared
+    // as owning `String`. `URL__deinit` frees the allocation, so it stays
+    // `unsafe fn`. `URL__getHrefFromJS` lives in `bun_jsc::URLJsc`.
     unsafe extern "C" {
-        // `URL__fromJS` / `URL__getHrefFromJS` intentionally omitted — tier-6 (bun_jsc).
-        safe fn URL__fromString(str: &mut String) -> Option<core::ptr::NonNull<URL>>;
+        safe fn URL__fromString(str: &String) -> Option<NonNull<URL>>;
         safe fn URL__protocol(url: &URL) -> String;
         safe fn URL__href(url: &URL) -> String;
+        safe fn URL__username(url: &URL) -> String;
+        safe fn URL__password(url: &URL) -> String;
+        safe fn URL__host(url: &URL) -> String;
         safe fn URL__hostname(url: &URL) -> String;
-        safe fn URL__deinit(url: &mut URL);
+        safe fn URL__port(url: &URL) -> u32;
         safe fn URL__pathname(url: &URL) -> String;
-        safe fn URL__getHref(input: &mut String) -> String;
-        safe fn URL__getFileURLString(input: &mut String) -> String;
-        safe fn URL__getHrefJoin(base: &mut String, relative: &mut String) -> String;
         safe fn URL__fragmentIdentifier(url: &URL) -> String;
-        fn URL__originLength(latin1_slice: *const u8, len: usize) -> u32;
+        fn URL__deinit(url: *mut URL);
+        safe fn URL__getHref(input: &String) -> String;
+        safe fn URL__getFileURLString(input: &String) -> String;
+        safe fn URL__pathFromFileURL(input: &String) -> String;
+        safe fn URL__getHrefJoin(base: &String, relative: &String) -> String;
+        fn URL__originLength(latin1_slice: *const u8, len: usize) -> usize;
     }
-
-    // The C ABI wants a mutable address. We take `&String` (matching existing call sites
-    // in this crate) and — since `bun_core::String: Copy` — bit-copy into a mutable
-    // local and pass `&mut local`. This avoids casting
-    // a shared-ref-derived pointer to `*mut` (read-only provenance). The C++ side
-    // (`BunString::toWTFString() const`) does not mutate, but the local-copy form is
-    // sound regardless.
 
     /// Percent-encodes the URL, punycode-encodes the hostname, and returns the normalized
     /// href. If parsing fails, the returned String's tag is `Dead`.
     pub fn href_from_string(str: &String) -> String {
-        let mut input = *str;
-        URL__getHref(&mut input)
+        URL__getHref(str)
     }
     pub fn join(base: &String, relative: &String) -> String {
-        let mut base_str = *base;
-        let mut relative_str = *relative;
-        URL__getHrefJoin(&mut base_str, &mut relative_str)
+        URL__getHrefJoin(base, relative)
     }
     pub fn file_url_from_string(str: &String) -> String {
-        let mut input = *str;
-        URL__getFileURLString(&mut input)
+        URL__getFileURLString(str)
+    }
+    pub fn path_from_file_url(str: &String) -> String {
+        URL__pathFromFileURL(str)
     }
     /// Returns the origin (`scheme://host[:port]`) prefix of `slice` as a borrowed
     /// subslice, or `None` if `slice` does not parse as a valid WHATWG URL.
@@ -106,7 +101,7 @@ pub mod whatwg {
         // to hand C++ only the leading ASCII prefix (latin1-safe).
         let first_non_ascii = strings::first_non_ascii(slice).map_or(slice.len(), |i| i as usize);
         // SAFETY: ptr/len derived from a valid slice prefix; C++ only reads.
-        let len = unsafe { URL__originLength(slice.as_ptr(), first_non_ascii) } as usize;
+        let len = unsafe { URL__originLength(slice.as_ptr(), first_non_ascii) };
         if len == 0 || len > first_non_ascii {
             return None;
         }
@@ -114,13 +109,6 @@ pub mod whatwg {
     }
 
     impl URL {
-        pub(crate) fn from_string(str: &String) -> Option<core::ptr::NonNull<URL>> {
-            let mut input = *str;
-            URL__fromString(&mut input)
-        }
-        pub fn from_utf8(input: &[u8]) -> Option<core::ptr::NonNull<URL>> {
-            Self::from_string(&String::borrow_utf8(input))
-        }
         /// The URL fragment (the part after `#`), excluding the leading '#'.
         pub fn fragment_identifier(&self) -> String {
             URL__fragmentIdentifier(self)
@@ -131,10 +119,21 @@ pub mod whatwg {
         pub fn href(&self) -> String {
             URL__href(self)
         }
-        /// Returns the host WITH the port.
+        pub fn username(&self) -> String {
+            URL__username(self)
+        }
+        pub fn password(&self) -> String {
+            URL__password(self)
+        }
+        /// The host WITHOUT the port (JS `hostname`).
         ///
-        /// Note that this does NOT match JS `hostname`, which excludes the port (that
-        /// port-less form is `bun_jsc::URL::host`).
+        /// ```text
+        /// URL("http://example.com:8080").host() => "example.com"
+        /// ```
+        pub fn host(&self) -> String {
+            URL__host(self)
+        }
+        /// The host WITH the port (JS `host`).
         ///
         /// ```text
         /// URL("http://example.com:8080").hostname() => "example.com:8080"
@@ -142,17 +141,56 @@ pub mod whatwg {
         pub fn hostname(&self) -> String {
             URL__hostname(self)
         }
+        /// `u32::MAX` if the port is not set; otherwise within `u16` range.
+        pub fn port(&self) -> u32 {
+            URL__port(self)
+        }
         pub fn pathname(&self) -> String {
             URL__pathname(self)
         }
-        pub fn deinit(&mut self) {
-            URL__deinit(self)
+    }
+
+    /// A `URL` this handle owns; `Drop` frees it.
+    pub struct Parsed(NonNull<URL>);
+
+    impl Parsed {
+        pub fn from_string(str: &String) -> Option<Self> {
+            URL__fromString(str).map(Self)
+        }
+        pub fn from_utf8(input: &[u8]) -> Option<Self> {
+            Self::from_string(&String::borrow_utf8(input))
+        }
+    }
+
+    impl core::ops::Deref for Parsed {
+        type Target = URL;
+        fn deref(&self) -> &URL {
+            // SAFETY: `self.0` is a live heap `WTF::URL` that only `Drop` frees.
+            unsafe { self.0.as_ref() }
+        }
+    }
+
+    impl Drop for Parsed {
+        fn drop(&mut self) {
+            // SAFETY: this handle is the only owner of the `WTF::URL`, so it is deleted once.
+            unsafe { URL__deinit(self.0.as_ptr()) }
         }
     }
 }
 // Re-export the free helpers at crate root so lower-tier callers can write
 // `bun_url::join(...)` / `bun_url::href_from_string(...)` (install, http, bake, js_parser).
-pub use whatwg::{file_url_from_string, href_from_string, join, origin_from_slice};
+pub use whatwg::{
+    file_url_from_string, href_from_string, join, origin_from_slice, path_from_file_url,
+};
+
+/// Where the authority ends, which is where the search for the `@` of the userinfo stops.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AuthorityEnd {
+    /// `/`, `?`, `#`, and a `\` in a special scheme. For a string that something else reads too.
+    LikeNewURL,
+    /// `/`, `?` or `#`, so a `\` stays userinfo. Only for a string this parser alone reads.
+    SlashQueryOrHash,
+}
 
 // URL is a pure view struct — every field is a slice into `href` (or a
 // literal default).
@@ -174,6 +212,8 @@ pub struct URL<'a> {
     pub(crate) search_params: Option<QueryStringMap>,
     pub username: &'a [u8],
     pub(crate) port_was_automatically_set: bool,
+    /// The rule `parse` used, so `href_without_userinfo` cuts the same bytes.
+    pub(crate) authority_end: AuthorityEnd,
 }
 
 impl<'a> Default for URL<'a> {
@@ -193,6 +233,7 @@ impl<'a> Default for URL<'a> {
             search_params: None,
             username: b"",
             port_was_automatically_set: false,
+            authority_end: AuthorityEnd::LikeNewURL,
         }
     }
 }
@@ -232,6 +273,13 @@ impl OwnedURL {
     pub fn from_href(href: Box<[u8]>) -> Self {
         Self { href }
     }
+}
+
+/// What `S3Credentials` keeps of an endpoint. See `URL::parse_s3_endpoint`.
+pub struct S3Endpoint {
+    /// `host[:port][/prefix]`, the form `URL::host_with_path` returns.
+    pub host_with_path: Box<[u8]>,
+    pub is_http: bool,
 }
 
 impl<'a> URL<'a> {
@@ -276,6 +324,7 @@ impl<'a> URL<'a> {
             search_params: self.search_params,
             username: d(self.username),
             port_was_automatically_set: self.port_was_automatically_set,
+            authority_end: self.authority_end,
         }
     }
 
@@ -322,11 +371,38 @@ impl<'a> URL<'a> {
         if href.tag() == BunStringTag::Dead {
             return Err(crate::Error::InvalidURL);
         }
-        // `to_owned_slice` is infallible so explicit
-        // ordering suffices (no error path between alloc and deref).
-        let owned = href.to_owned_slice().into_boxed_slice();
-        href.deref();
-        Ok(OwnedURL { href: owned })
+        Ok(OwnedURL {
+            href: href.to_owned_slice().into_boxed_slice(),
+        })
+    }
+
+    /// `input` is `[scheme://]host[:port][/prefix]`, `https` by default. `None` when it has no host.
+    pub fn parse_s3_endpoint(input: &[u8]) -> Option<S3Endpoint> {
+        let as_written = URL::parse(input);
+        if as_written.host_with_path().is_empty() {
+            return None;
+        }
+        let normalized = if as_written.protocol.is_empty() {
+            whatwg::Parsed::from_utf8(&[b"https://".as_slice(), input].concat())
+        } else {
+            whatwg::Parsed::from_utf8(input)
+        };
+        let Some(url) = normalized else {
+            return Some(S3Endpoint {
+                host_with_path: Box::from(as_written.host_with_path()),
+                is_http: as_written.is_http(),
+            });
+        };
+        let is_http = url.protocol().eq_ascii(b"http");
+        // `whatwg::URL::hostname` is the host with its port.
+        let mut host_with_path = url.hostname().to_owned_slice();
+        let pathname = url.pathname();
+        let path = pathname.to_utf8();
+        host_with_path.extend_from_slice(strings::without_suffix_comptime(path.slice(), b"/"));
+        Some(S3Endpoint {
+            host_with_path: host_with_path.into_boxed_slice(),
+            is_http,
+        })
     }
 
     pub fn display_protocol(&self) -> &[u8] {
@@ -356,6 +432,39 @@ impl<'a> URL<'a> {
     #[inline]
     pub fn is_http(&self) -> bool {
         strings::eql_case_insensitive_ascii(self.protocol, b"http", true)
+    }
+
+    /// The schemes WHATWG calls special: a `\` ends the authority of these, as a `/` does.
+    fn has_special_scheme(&self) -> bool {
+        strings::eql_any_case_insensitive_ascii(
+            self.protocol,
+            &[b"http", b"https", b"ws", b"wss", b"ftp", b"file"],
+        )
+    }
+
+    fn backslash_ends_authority(&self, end: AuthorityEnd) -> bool {
+        end == AuthorityEnd::LikeNewURL && self.has_special_scheme()
+    }
+
+    /// The one definition of where an authority ends, for the userinfo, the host and the port.
+    fn ends_authority(byte: u8, backslash_ends_it: bool) -> bool {
+        matches!(byte, b'/' | b'?' | b'#') || (backslash_ends_it && byte == b'\\')
+    }
+
+    /// The last `@` of the authority of `after_scheme`, the text after `scheme://`.
+    pub fn userinfo_end(&self, after_scheme: &[u8], end: AuthorityEnd) -> Option<usize> {
+        let backslash_ends_it = self.backslash_ends_authority(end);
+        let mut last_at = None;
+        // One pass over the authority, which is short.
+        for (i, &byte) in after_scheme.iter().enumerate() {
+            if Self::ends_authority(byte, backslash_ends_it) {
+                break;
+            }
+            if byte == b'@' {
+                last_at = Some(i);
+            }
+        }
+        last_at
     }
 
     pub fn display_hostname(&self) -> &[u8] {
@@ -412,6 +521,25 @@ impl<'a> URL<'a> {
         buf.into_boxed_slice()
     }
 
+    /// `href` with `user:password@` cut out of its authority.
+    pub fn href_without_userinfo(&self) -> std::borrow::Cow<'a, [u8]> {
+        use std::borrow::Cow;
+        if self.username.is_empty() && self.password.is_empty() {
+            return Cow::Borrowed(self.href);
+        }
+        let Some(authority) = strings::index_of(self.href, b"://").map(|i| i + 3) else {
+            return Cow::Borrowed(self.href);
+        };
+        let rest = &self.href[authority..];
+        let Some(at) = self.userinfo_end(rest, self.authority_end) else {
+            return Cow::Borrowed(self.href);
+        };
+        let mut out = Vec::with_capacity(self.href.len() - at - 1);
+        out.extend_from_slice(&self.href[..authority]);
+        out.extend_from_slice(&rest[at + 1..]);
+        Cow::Owned(out)
+    }
+
     pub fn has_http_like_protocol(&self) -> bool {
         self.is_http() || self.is_https()
     }
@@ -444,14 +572,12 @@ impl<'a> URL<'a> {
         !self.hostname.is_empty() && !self.pathname.is_empty()
     }
 
-    #[inline]
-    #[allow(
-        invalid_value,
-        clippy::uninit_assumed_init,
-        clippy::undocumented_unsafe_blocks
-    )]
-    fn join_buf_uninit() -> [u8; 2048] {
-        unsafe { core::mem::MaybeUninit::uninit().assume_init() }
+    /// Stack scratch for `join_normalize`. Longer joins go to the heap.
+    const JOIN_STACK_BUF_LEN: usize = 2048;
+
+    /// Length bound of the unnormalized path `join_normalize` builds.
+    fn join_needed(prefix: &[u8], dirname: &[u8], basename: &[u8], extname: &[u8]) -> usize {
+        b"/".len() + prefix.len() + dirname.len() + b"/".len() + basename.len() + extname.len()
     }
 
     pub(crate) fn join_normalize<'b>(
@@ -496,20 +622,22 @@ impl<'a> URL<'a> {
         for part in &path_parts[0..path_end] {
             total += part.len();
         }
-        let mut buf_stack = Self::join_buf_uninit();
-        let mut buf_heap: Vec<u8>;
-        let buf: &mut [u8] = if total <= buf_stack.len() {
+        let mut buf_stack = [const { MaybeUninit::<u8>::uninit() }; Self::JOIN_STACK_BUF_LEN];
+        let mut buf_heap: Vec<u8> = Vec::new();
+        let buf: &mut [MaybeUninit<u8>] = if total <= Self::JOIN_STACK_BUF_LEN {
             &mut buf_stack
         } else {
-            buf_heap = vec![0u8; total];
-            &mut buf_heap
+            buf_heap.reserve_exact(total);
+            buf_heap.spare_capacity_mut()
         };
         let mut buf_i: usize = 0;
         for part in &path_parts[0..path_end] {
-            buf[buf_i..buf_i + part.len()].copy_from_slice(part);
+            buf[buf_i..buf_i + part.len()].write_copy_of_slice(part);
             buf_i += part.len();
         }
-        resolve_path::normalize_string_buf::<false, platform::Loose, false>(&buf[0..buf_i], out)
+        // SAFETY: the loop above wrote every byte of `buf[..buf_i]`.
+        let joined = unsafe { buf[..buf_i].assume_init_ref() };
+        resolve_path::normalize_string_buf::<false, platform::Loose, false>(joined, out)
     }
 
     pub fn join_write(
@@ -520,11 +648,12 @@ impl<'a> URL<'a> {
         basename: &[u8],
         extname: &[u8],
     ) -> crate::Result<()> {
-        let needed = 2 + prefix.len() + dirname.len() + basename.len() + extname.len();
-        let mut out_stack = Self::join_buf_uninit();
+        let needed = Self::join_needed(prefix, dirname, basename, extname);
+        let mut out_pooled: bun_paths::path_buffer_pool::Guard;
         let mut out_heap: Vec<u8>;
-        let out: &mut [u8] = if needed <= out_stack.len() {
-            &mut out_stack
+        let out: &mut [u8] = if needed <= bun_paths::MAX_PATH_BYTES {
+            out_pooled = bun_paths::path_buffer_pool::get();
+            &mut out_pooled[..]
         } else {
             out_heap = vec![0u8; needed];
             &mut out_heap
@@ -554,30 +683,30 @@ impl<'a> URL<'a> {
             v.extend_from_slice(absolute_path);
             Ok(v.into_boxed_slice())
         } else {
-            let needed = 2 + prefix.len() + dirname.len() + basename.len() + extname.len();
-            let mut out_stack = Self::join_buf_uninit();
-            let mut out_heap: Vec<u8>;
-            let out: &mut [u8] = if needed <= out_stack.len() {
-                &mut out_stack
-            } else {
-                out_heap = vec![0u8; needed];
-                &mut out_heap
-            };
-            let normalized_path = Self::join_normalize(out, prefix, dirname, basename, extname);
-            let mut v = Vec::with_capacity(self.origin.len() + 1 + normalized_path.len());
-            v.extend_from_slice(self.origin);
-            v.extend_from_slice(b"/");
-            v.extend_from_slice(normalized_path);
+            let needed = Self::join_needed(prefix, dirname, basename, extname);
+            let mut v = Vec::with_capacity(self.origin.len() + 1 + needed);
+            self.join_write(&mut v, prefix, dirname, basename, extname)?;
             Ok(v.into_boxed_slice())
         }
     }
 
+    /// Reads the authority as `new URL()` reads it. See [`URL::parse_single_reader`] for the other rule.
     pub fn parse(base: &'a [u8]) -> URL<'a> {
+        Self::parse_with(base, AuthorityEnd::LikeNewURL)
+    }
+
+    /// `parse` for a string this parser alone reads, where a `\` before the `@` is userinfo.
+    pub fn parse_single_reader(base: &'a [u8]) -> URL<'a> {
+        Self::parse_with(base, AuthorityEnd::SlashQueryOrHash)
+    }
+
+    fn parse_with(base: &'a [u8], authority_end: AuthorityEnd) -> URL<'a> {
         if base.is_empty() {
             return URL::default();
         }
         let mut url = URL {
             href: base,
+            authority_end,
             ..Default::default()
         };
         let mut offset: u32 = 0;
@@ -585,6 +714,11 @@ impl<'a> URL<'a> {
             b'@' => {
                 offset += url.parse_password(&base[offset as usize..]).unwrap_or(0);
                 offset += url.parse_host(&base[offset as usize..]).unwrap_or(0);
+            }
+            // Bare bracketed IPv6 host, e.g. the `[::1]:4873/` left of an .npmrc
+            // `//[::1]:4873/:_authToken` key once its `//` is stripped.
+            b'[' => {
+                offset += url.parse_host(base).unwrap_or(0);
             }
             b'/' | b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b':' => {
                 let is_protocol_relative = base.len() > 1 && base[1] == b'/';
@@ -597,21 +731,16 @@ impl<'a> URL<'a> {
                 let is_relative_path = !is_protocol_relative && base[0] == b'/';
 
                 if !is_relative_path {
-                    // if there's no protocol or @, it's ambiguous whether the colon is a port or a username.
+                    // Without a protocol it's ambiguous whether a colon is a port or a username,
+                    // see https://github.com/oven-sh/bun/issues/1390. With one, the userinfo is
+                    // what precedes the last `@` of the authority.
                     if offset > 0 {
-                        // see https://github.com/oven-sh/bun/issues/1390
-                        let first_at =
-                            strings::index_of_char(&base[offset as usize..], b'@').unwrap_or(0);
-                        let first_colon =
-                            strings::index_of_char(&base[offset as usize..], b':').unwrap_or(0);
-
-                        if first_at > first_colon
-                            && first_at
-                                < strings::index_of_char(&base[offset as usize..], b'/')
-                                    .unwrap_or(u32::MAX)
-                        {
-                            offset += url.parse_username(&base[offset as usize..]).unwrap_or(0);
-                            offset += url.parse_password(&base[offset as usize..]).unwrap_or(0);
+                        let rest = &base[offset as usize..];
+                        if let Some(at) = url.userinfo_end(rest, authority_end) {
+                            let userinfo = &rest[..at];
+                            (url.username, url.password) =
+                                strings::split_once_char(userinfo, b':').unwrap_or((userinfo, b""));
+                            offset += u32::try_from(at + 1).expect("int cast");
                         }
                     }
 
@@ -639,7 +768,14 @@ impl<'a> URL<'a> {
             url.pathname = url.path;
         }
 
-        if let Some(q) = strings::index_of_char(&base[offset as usize..], b'?') {
+        // The fragment starts at the first `#`, so a `?` after it is part of
+        // the fragment, not the start of the query.
+        let before_hash = match strings::index_of_char(&base[offset as usize..], b'#') {
+            Some(hash) => &base[offset as usize..][..hash as usize],
+            None => &base[offset as usize..],
+        };
+
+        if let Some(q) = strings::index_of_char(before_hash, b'?') {
             offset += q;
             url.path = &base[path_offset as usize..][0..q as usize];
             can_update_path = false;
@@ -711,37 +847,18 @@ impl<'a> URL<'a> {
                 b':' => {
                     if i + 3 <= str.len() && str[i + 1] == b'/' && str[i + 2] == b'/' {
                         self.protocol = &str[0..i];
-                        return Some(u32::try_from(i + 3).expect("int cast"));
+                        // RFC 3986 §3.1: only behind `ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )` is there an authority.
+                        let is_scheme = self.protocol.first().is_some_and(u8::is_ascii_alphabetic)
+                            && self.protocol.iter().all(|byte| {
+                                matches!(byte, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'+' | b'-' | b'.')
+                            });
+                        return is_scheme.then(|| u32::try_from(i + 3).expect("int cast"));
                     }
                 }
                 _ => {}
             }
         }
 
-        None
-    }
-
-    pub(crate) fn parse_username(&mut self, str: &'a [u8]) -> Option<u32> {
-        // reset it
-        self.username = b"";
-
-        if str.len() < b"@".len() {
-            return None;
-        }
-        for i in 0..str.len() {
-            match str[i] {
-                b':' | b'@' => {
-                    // we found a username, everything before this point in the slice is a username
-                    self.username = &str[0..i];
-                    return Some(u32::try_from(i + 1).expect("int cast"));
-                }
-                // if we reach a slash or "?", there's no username
-                b'?' | b'/' => {
-                    return None;
-                }
-                _ => {}
-            }
-        }
         None
     }
 
@@ -776,6 +893,7 @@ impl<'a> URL<'a> {
 
     pub(crate) fn parse_host(&mut self, str: &'a [u8]) -> Option<u32> {
         let mut i: u32 = 0;
+        let backslash_ends_it = self.backslash_ends_authority(self.authority_end);
 
         // reset it
         self.host = b"";
@@ -799,12 +917,8 @@ impl<'a> URL<'a> {
                 } else {
                     colon_i
                 };
-                match str[i as usize] {
-                    // alright, we found the slash or "?"
-                    b'?' | b'/' => {
-                        break;
-                    }
-                    _ => {}
+                if Self::ends_authority(str[i as usize], backslash_ends_it) {
+                    break;
                 }
                 i += 1;
             }
@@ -833,12 +947,8 @@ impl<'a> URL<'a> {
                     colon_i
                 };
 
-                match str[i as usize] {
-                    // alright, we found the slash or "?"
-                    b'?' | b'/' => {
-                        break;
-                    }
-                    _ => {}
+                if Self::ends_authority(str[i as usize], backslash_ends_it) {
+                    break;
                 }
                 i += 1;
             }
@@ -855,6 +965,8 @@ impl<'a> URL<'a> {
         Some(i)
     }
 }
+
+pub use bun_core::ip_address::strip_ipv6_brackets;
 
 // ══════════════════════════════════════════════════════════════════════════
 // QueryStringMap & friends
@@ -1689,5 +1801,152 @@ impl<'a> Scanner<'a> {
                 value_needs_decoding: false,
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::URL;
+
+    const ORIGIN: &[u8] = b"http://localhost:3000";
+
+    fn join(prefix: &[u8], dirname: &[u8], basename: &[u8], extname: &[u8]) -> Vec<u8> {
+        let url = URL::parse(b"http://localhost:3000/");
+        assert_eq!(url.origin, ORIGIN);
+        let mut out = Vec::new();
+        url.join_write(&mut out, prefix, dirname, basename, extname)
+            .expect("Vec<u8> writes cannot fail");
+        let boxed = url
+            .join_alloc(prefix, dirname, basename, extname, b"/abs/unused")
+            .expect("Vec<u8> writes cannot fail");
+        assert_eq!(&*boxed, &*out, "join_alloc and join_write must agree");
+        out
+    }
+
+    #[test]
+    fn fragment_is_not_part_of_the_path_or_query() {
+        let url = URL::parse(b"http://localhost:3000/path#frag?x=1");
+        assert_eq!(url.pathname, b"/path");
+        assert_eq!(url.path, b"/path");
+        assert_eq!(url.search, b"");
+        assert_eq!(url.hash, b"#frag?x=1");
+
+        let url = URL::parse(b"http://localhost:3000/cb#access_token=abc&scope=x?y");
+        assert_eq!(url.pathname, b"/cb");
+        assert_eq!(url.hash, b"#access_token=abc&scope=x?y");
+
+        let url = URL::parse(b"http://localhost:3000/#?");
+        assert_eq!(url.pathname, b"/");
+        assert_eq!(url.hash, b"#?");
+
+        let url = URL::parse(b"http://localhost:3000/path?q=1#frag?x=2");
+        assert_eq!(url.pathname, b"/path?q=1");
+        assert_eq!(url.path, b"/path");
+        assert_eq!(url.search, b"?q=1");
+        assert_eq!(url.hash, b"#frag?x=2");
+    }
+
+    #[test]
+    fn the_authority_ends_where_new_url_ends_it() {
+        let url = URL::parse(br"http://u:p@first.example:8080\x@second.example/path");
+        assert_eq!((url.username, url.password), (&b"u"[..], &b"p"[..]));
+        assert_eq!(
+            (url.hostname, url.port),
+            (&b"first.example"[..], &b"8080"[..])
+        );
+
+        let url = URL::parse(b"HTTPS://u:p@first.example:8443#@second.example/");
+        assert_eq!((url.username, url.password), (&b"u"[..], &b"p"[..]));
+        assert_eq!(
+            (url.hostname, url.port),
+            (&b"first.example"[..], &b"8443"[..])
+        );
+
+        // In a scheme that is not special, a `\` is part of the userinfo, as for `new URL()`.
+        let url = URL::parse(br"socks5://u:p@first.example\x@second.example/");
+        assert_eq!(
+            (url.username, url.password),
+            (&b"u"[..], &br"p@first.example\x"[..])
+        );
+        assert_eq!(url.hostname, b"second.example");
+    }
+
+    #[test]
+    fn a_proxy_keeps_a_domain_login() {
+        let proxy = URL::parse_single_reader(br"http://DOMAIN\user:pass@proxy.example:8080");
+        assert_eq!(
+            (proxy.username, proxy.password),
+            (&br"DOMAIN\user"[..], &b"pass"[..])
+        );
+        assert_eq!(
+            (proxy.hostname, proxy.port),
+            (&b"proxy.example"[..], &b"8080"[..])
+        );
+        assert_eq!(
+            &*proxy.href_without_userinfo(),
+            b"http://proxy.example:8080"
+        );
+    }
+
+    #[test]
+    fn no_host_is_read_behind_a_second_scheme() {
+        let url = URL::parse(b"http:first.example://second.example/");
+        assert_eq!(url.protocol, b"http:first.example");
+        assert_eq!(url.hostname, b"http");
+
+        let url = URL::parse(b"blob:http://second.example/id");
+        assert_eq!(url.protocol, b"blob:http");
+        assert_eq!(url.hostname, b"blob");
+
+        let url = URL::parse(b"1http://second.example/");
+        assert_eq!(url.protocol, b"1http");
+        assert_eq!(url.hostname, b"1http");
+
+        let url = URL::parse(b"localhost:3000/api");
+        assert_eq!(url.protocol, b"");
+        assert_eq!((url.hostname, url.port), (&b"localhost"[..], &b"3000"[..]));
+    }
+
+    #[test]
+    fn join_normalizes_the_path() {
+        assert_eq!(
+            join(b"_next/", b"/pages//", b"index", b".js"),
+            b"http://localhost:3000/_next/pages/index.js"
+        );
+        assert_eq!(
+            join(b"", b"a/./b/..", b"d", b""),
+            b"http://localhost:3000/a/d"
+        );
+        assert_eq!(join(b"", b"", b"", b""), b"http://localhost:3000/");
+    }
+
+    #[test]
+    fn join_alloc_uplevel_dirname_uses_the_absolute_path() {
+        let url = URL::parse(b"http://localhost:3000/");
+        let boxed = url
+            .join_alloc(b"", b"../pages", b"index", b".js", b"/srv/pages/index.js")
+            .expect("Vec<u8> writes cannot fail");
+        assert_eq!(&*boxed, b"http://localhost:3000/abs:/srv/pages/index.js");
+    }
+
+    #[test]
+    fn join_at_the_stack_buffer_limit() {
+        // `/` plus the basename fills the scratch buffer exactly.
+        let basename = vec![b'a'; URL::JOIN_STACK_BUF_LEN - 1];
+        let mut expected = ORIGIN.to_vec();
+        expected.push(b'/');
+        expected.extend_from_slice(&basename);
+        assert_eq!(join(b"", b"", &basename, b""), expected);
+    }
+
+    #[test]
+    fn join_longer_than_every_stack_buffer() {
+        let len = URL::JOIN_STACK_BUF_LEN.max(bun_paths::MAX_PATH_BYTES) + 1;
+        let basename = vec![b'a'; len];
+        let mut expected = ORIGIN.to_vec();
+        expected.extend_from_slice(b"/dir/");
+        expected.extend_from_slice(&basename);
+        expected.extend_from_slice(b".js");
+        assert_eq!(join(b"", b"dir", &basename, b".js"), expected);
     }
 }

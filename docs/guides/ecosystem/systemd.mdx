@@ -17,7 +17,7 @@ touch my-app.service
 
 ---
 
-Here is a typical service file that runs an application on system start. Use it as a template for your own service. Replace `YOUR_USER` with the name of the user to run the application as. To run as `root`, replace `YOUR_USER` with `root` and `/home/YOUR_USER` with `/root` (root's home directory), though this is not recommended for security reasons.
+Here is a typical service file that runs an application on system start. Use it as a template for your own service. Replace `YOUR_USER` with the name of the user to run the application as. To run as `root`, replace `YOUR_USER` with `root` and `/home/YOUR_USER` with `/root` (root's home directory). For security reasons, we don't recommend running as `root`.
 
 Refer to the [systemd documentation](https://www.freedesktop.org/software/systemd/man/systemd.service.html) for details on each setting.
 
@@ -51,17 +51,17 @@ WantedBy=multi-user.target
 
 ---
 
-If your application starts a webserver, non-`root` users cannot listen on ports 80 or 443 by default. To allow Bun to listen on these ports when run by a non-`root` user, use the following command (this requires `sudo` permissions). This step isn't necessary when running as `root`.
+If your application starts a webserver, non-`root` users cannot listen on ports 80 or 443 by default. To allow Bun to listen on these ports when run by a non-`root` user, use the following command. The command requires `sudo` permissions. This step isn't necessary when running as `root`.
 
 ```bash terminal icon="terminal"
 setcap CAP_NET_BIND_SERVICE=+eip /home/YOUR_USER/.bun/bin/bun
 ```
 
-The capability is attached to the `bun` binary itself and is lost when the binary is replaced, for example by `bun upgrade`, so re-run the command after upgrading. Alternatively, add `AmbientCapabilities=CAP_NET_BIND_SERVICE` to the `[Service]` section of the service file instead.
+The command attaches the capability to the `bun` binary itself. Replacing the binary, for example with `bun upgrade`, removes the capability. Re-run the command after upgrading. Alternatively, add `AmbientCapabilities=CAP_NET_BIND_SERVICE` to the `[Service]` section of the service file instead.
 
 ---
 
-With the service file configured, _enable_ the service. Once enabled, it starts automatically on reboot. This requires `sudo` permissions.
+With the service file configured, _enable_ the service. Once enabled, it starts automatically on reboot. Enabling the service requires `sudo` permissions.
 
 ```bash terminal icon="terminal"
 systemctl enable my-app

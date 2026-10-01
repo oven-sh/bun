@@ -13,7 +13,7 @@ import Remove from "/snippets/cli/remove.mdx";
 bun remove ts-node
 ```
 
-The package is removed from every dependency group in `package.json` that lists it, `bun.lock` is updated, and it is deleted from `node_modules` once nothing else depends on it.
+Bun removes the package from every dependency group in `package.json` that lists it and updates `bun.lock`. Once nothing else depends on the package, Bun deletes it from `node_modules`.
 
 ## `--filter`
 

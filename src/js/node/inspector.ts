@@ -66,7 +66,7 @@ function open(port?: number, host?: string, wait?: boolean) {
     },
   };
 
-  let resolvedUrl: string | null;
+  let resolvedUrl: string | null | EvalError;
   try {
     resolvedUrl = openNodeInspector(requestedUrl, !!wait);
   } catch (e) {
@@ -77,6 +77,10 @@ function open(port?: number, host?: string, wait?: boolean) {
     const detail = raw.startsWith(prefix) ? raw.slice(prefix.length) : raw;
     process.stderr.write(`Starting inspector on ${hostname}:${portNumber} failed: ${detail}\n`);
     return disposable;
+  }
+  if (typeof resolvedUrl === "object" && resolvedUrl !== null) {
+    // --disallow-code-generation-from-strings=strict
+    throw resolvedUrl;
   }
   if (resolvedUrl === null) {
     // A prior inspector.open() success is caught by the top guard above, so
@@ -136,7 +140,7 @@ function waitForDebugger() {
 const runtimeEnabledSessions: Set<Session> = new SafeSet();
 const hookedConsoleMethods: Array<[string, Function, Function]> = [];
 
-const CONSOLE_API_TYPES: Record<string, string> = {
+const CONSOLE_API_TYPES = {
   __proto__: null,
   log: "log",
   info: "info",
@@ -293,6 +297,8 @@ function buildScriptCoverageList(
 
   for (const script of rawScripts) {
     const { scriptId, sourceLength } = script;
+    // V8 does not report empty scripts (the whole-script range would be zero-width).
+    if (sourceLength === 0) continue;
     let { url } = script;
     // V8 coverage reports file-backed scripts with file:// URLs even when the
     // script name is a plain filesystem path (e.g. a vm script filename or a
@@ -302,11 +308,12 @@ function buildScriptCoverageList(
     }
 
     // Outer functions before nested ones, so a stack-based sweep below sees
-    // enclosing ranges first.
+    // enclosing ranges first. Zero-width entries are dropped: V8 never emits
+    // startOffset === endOffset, and @bcoe/v8-coverage recurses forever on one.
     const functions = script.functions
-      .filter(([start, end]) => start >= 0 && end >= start)
+      .filter(([start, end]) => start >= 0 && end > start)
       .sort((a, b) => a[0] - b[0] || b[1] - a[1]);
-    const blocks = script.blocks.filter(([start, end]) => start >= 0 && end >= start).sort((a, b) => a[0] - b[0]);
+    const blocks = script.blocks.filter(([start, end]) => start >= 0 && end > start).sort((a, b) => a[0] - b[0]);
 
     // Assign each basic block to the innermost function range containing it.
     const blocksPerFunction: Array<Array<[number, number, number]>> = functions.map(() => []);
@@ -479,7 +486,7 @@ class Session extends EventEmitter {
 
   post(
     method: string,
-    params?: object | ((err: Error | null, result?: any) => void),
+    params?: Record<string, unknown> | ((err: Error | null, result?: any) => void),
     callback?: (err: Error | null, result?: any) => void,
   ) {
     validateString(method, "method");

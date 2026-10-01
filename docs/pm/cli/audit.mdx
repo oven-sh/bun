@@ -9,11 +9,11 @@ Run the command in a project with a `bun.lock` file:
 bun audit
 ```
 
-Bun reads the package list from `bun.lock` (no `node_modules` required), sends it to the npm advisory endpoint, and prints a report. Packages from a scoped registry are sent to that registry instead; if it has no advisory endpoint, those packages are listed as skipped and don't affect the exit code.
+Bun reads the package list from `bun.lock` (no `node_modules` required), sends it to the npm advisory endpoint, and prints a report. Bun sends packages from a scoped registry to that registry instead. If that registry has no advisory endpoint, Bun lists those packages as skipped and they don't affect the exit code.
 
 `bun audit` never modifies `package.json`, `bun.lock`, or `node_modules`. To apply fixes, use [`bun audit fix`](#bun-audit-fix).
 
-If no vulnerabilities are found, the command prints:
+If Bun finds no vulnerabilities, the command prints:
 
 ```
 No vulnerabilities found
@@ -48,7 +48,7 @@ bun audit --prod
 bun audit --omit=optional --omit=peer
 ```
 
-**`--ignore <id>`** - Ignore an advisory by GHSA ID or numeric ID. Repeatable. (CVE IDs are not in the registry data and won't match.)
+**`--ignore <id>`** - Ignore an advisory by GHSA ID or numeric ID. Repeatable. (CVE IDs are not in the registry data and don't match.)
 
 ```bash terminal icon="terminal"
 bun audit --ignore GHSA-c2qf-rxjj-qqgw --ignore 1112918
@@ -72,7 +72,7 @@ The JSON is unfiltered — `--audit-level` and `--ignore` only affect the exit c
 bun audit fix
 ```
 
-Runs the audit, then upgrades each vulnerable package to the lowest non-vulnerable version that every dependent's range allows, and installs. Only `bun.lock` and `node_modules` change, with one exception: a direct dependency pinned to an exact version is treated as `^version`, and the pin in `package.json` (or the catalog entry) is rewritten if a fix is found.
+Runs the audit, then upgrades each vulnerable package to the lowest non-vulnerable version that every dependent's range allows, and installs. Only `bun.lock` and `node_modules` change, with one exception: Bun treats a direct dependency pinned to an exact version as `^version`. If Bun finds a fix, it rewrites the pin in `package.json` (or the catalog entry).
 
 ```
 fixing:
@@ -98,13 +98,13 @@ Fixed 2 vulnerabilities in 2 packages
 - **blocked by a dependent's range** — no safe version fits a dependent's declared range. If the range is in your own `package.json` or catalog, `bun audit fix --latest` gets past it. Otherwise, update the dependent or add an [`overrides`](/pm/overrides) entry.
 - **no published version fixes** — every published version is vulnerable. Replace the package, or silence the advisory with the printed `--ignore` command.
 - If no newer version is safe but an older one is, Bun downgrades and marks the row `(downgrade)`.
-- A safe version newer than `--minimum-release-age` is still installed, marked `(newer than --minimum-release-age)`.
-- Patched dependencies (`patchedDependencies`) are upgraded like any other package; re-create the patch afterwards with `bun patch`.
+- Bun still installs a safe version newer than `--minimum-release-age` and marks the row `(newer than --minimum-release-age)`.
+- Bun upgrades patched dependencies (`patchedDependencies`) like any other package. Re-create the patch afterwards with `bun patch`.
 - After installing, Bun re-audits the new lockfile. The `remaining` count and exit code reflect that second audit, so they match what a follow-up `bun audit` would report.
 - `--dry-run` prints the plan without installing.
 - `--json` prints a single JSON object describing the plan and result (`fixes`, `blocked`, `unfixable`, `unmatched`, `unaudited`, `vulnerableAfterInstall`, `fixed`, `remaining`, `dryRun`). Pass `--ignore-scripts` if lifecycle scripts might write to stdout.
 - A [security scanner](/pm/security-scanner-api) configured in `bunfig.toml` runs on the packages about to be installed, as with `bun update`.
-- `--prod`, `--frozen-lockfile`, and `--no-save` are rejected since they prevent writing `bun.lock`.
+- Bun rejects `--prod`, `--frozen-lockfile`, and `--no-save` since they prevent writing `bun.lock`.
 
 ### `bun audit fix --latest`
 
@@ -112,10 +112,10 @@ Fixed 2 vulnerabilities in 2 packages
 bun audit fix --latest
 ```
 
-Same as `bun audit fix`, but ranges in your own `package.json` files and catalogs no longer block a fix — they are rewritten to accept the new version, keeping their style (`^5.0.0` → `^6.3.1`, `~5.7.1` → `~6.3.1`, exact stays exact). Ranges declared by third-party packages still block; use `overrides` for those.
+Same as `bun audit fix`, but ranges in your own `package.json` files and catalogs no longer block a fix. Bun rewrites them to accept the new version, keeping their style (`^5.0.0` → `^6.3.1`, `~5.7.1` → `~6.3.1`, exact stays exact). Ranges declared by third-party packages still block; use `overrides` for those.
 
 ### Exit code
 
-`0` if no vulnerabilities remain after `--audit-level` and `--ignore` are applied, `1` otherwise. For `bun audit fix`, this is based on the re-audit after installing (or the plan, with `--dry-run`).
+`0` if no vulnerabilities remain after Bun applies `--audit-level` and `--ignore`, `1` otherwise. For `bun audit fix`, this is based on the re-audit after installing (or the plan, with `--dry-run`).
 
 If the registry request fails, both commands print `audit request failed` to stderr and exit `1`.

@@ -500,12 +500,14 @@ class Driver {
 					const handler = this.virtual("CatchClause", s.catch.src, { r: "TryHandler" });
 					if (s.catch.binding) this.binding(s.catch.binding, null, false);
 					const body = this.virtual("BlockStatement", s.catch.body_src, null);
+					s.lastBlock = body;
 					this.stmts(s.catch.body);
 					this.leave(body, PLAIN);
 					this.leave(handler, PLAIN);
 				}
 				if (s.finally) {
 					const finalizer = this.virtual("BlockStatement", s.finally.src, { r: "TryFinalizer" });
+					s.lastBlock = finalizer;
 					this.stmts(s.finally.stmts);
 					this.leave(finalizer, PLAIN);
 				}

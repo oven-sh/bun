@@ -1,0 +1,242 @@
+diff --git a/test/cli/lint/conformance/sweep.ts b/test/cli/lint/conformance/sweep.ts
+index 13d8caaa1e..8b7d2ca9d6 100644
+--- a/test/cli/lint/conformance/sweep.ts
++++ b/test/cli/lint/conformance/sweep.ts
+@@ -1,21 +1,24 @@
+ // The sweep: the instances of the corpus through a check, the pass counts by directory and by diagnostic code, the lists of expectations.json and a report file.
+-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
++import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+ import { availableParallelism, tmpdir } from "node:os";
+ import { basename, dirname, join, resolve } from "node:path";
+ import { pathToFileURL } from "node:url";
+ import {
+   type Check,
++  type Corpus,
++  type CorpusFacts,
+   type Expectations,
+-  type InputResult,
+-  type Instance,
+   type InstanceFacts,
+   type Kind,
+   type ResultFacts,
+   type RunResult,
++  caseBaseName,
+   checkLists,
+   compareWithRevision,
+   expectationsAtRevision,
+   formatExpectations,
++  listCases,
++  openCorpus,
+   outcomes,
+   parseExpectations,
+   plan,
+@@ -25,22 +28,11 @@ import {
+   verify,
+ } from "./runner";
+ import { createSpawnCheck } from "./runner/check_bun_lint";
+-import { type EnumeratedInstance, enumerateCase } from "./runner/compiler_runner";
+ import { tsgoRules } from "./runner/diagnosticwriter";
+-import {
+-  type CompilerTest,
+-  type InstanceInput,
+-  type Platform,
+-  findObstacles,
+-  instanceInput,
+-  makeTemporaryDirectory,
+-} from "./runner/materialise";
+-import { type Oracle, type OracleTable, diffRootOf, loadOracleTable, oracleOf, readOracle } from "./runner/oracle";
+-import { type CorpusPaths, corpusPaths, suites } from "./runner/paths";
++import { makeTemporaryDirectory } from "./runner/materialise";
++import { corpusPaths, suites } from "./runner/paths";
+ import { readErrorBaseline } from "./runner/reader";
+ import { type BaselineFile, listErrorBaselines, roundTripFiles, roundTripReportLines } from "./runner/roundtrip";
+-import { type TestUnit, parseTestFilesAndSymlinks } from "./runner/test_case_parser";
+-import { readFile } from "./runner/vfs";
+ 
+ const usage = `usage: bun test/cli/lint/conformance/sweep.ts [options] [selector ...]
+ 
+@@ -249,122 +241,13 @@ function messageOf(error: unknown): string {
+   return error instanceof Error ? error.message : String(error);
+ }
+ 
+-// What a run takes of an instance that the reference compiles.
+-interface RunInstance extends Instance {
+-  // The path of the case below the cases of the corpus: "conformance/types/tuple/castingTuple.ts".
+-  casePath: string;
+-  // The settings of the instance: those of the case with the values of its variation; undefined for a case without a setting.
+-  config: EnumeratedInstance["config"];
+-  oracle: Oracle;
+-}
+-
+-// What the lists need to know of an instance, what --tag selects by, and what a run takes of it.
+-interface Fact extends InstanceFacts {
+-  tags: readonly Tag[];
+-  // Absent for an instance that does not run.
+-  run?: RunInstance;
+-}
+-
+-// "a(target=es2015).ts" is an instance of the case "a.ts".
+-function caseBaseName(instanceName: string): string {
+-  const m = /^(.*)\(([^()]*)\)(\.tsx?)$/s.exec(instanceName);
+-  return m === null ? instanceName : m[1] + m[3];
+-}
++// What the lists need to know of an instance, with the instance: what --tag selects by and what a run takes.
++type Fact = CorpusFacts;
+ 
+ function directoryOf(casePath: string): string {
+   return casePath.slice(0, casePath.lastIndexOf("/"));
+ }
+ 
+-// The paths of the cases below the directory of the cases, with forward slashes, in the order of their code units.
+-function listCases(casesDirectory: string): string[] {
+-  const out: string[] = [];
+-  const walk = (rel: string) => {
+-    for (const entry of readdirSync(`${casesDirectory}/${rel}`, { withFileTypes: true })) {
+-      if (entry.isDirectory()) walk(`${rel}/${entry.name}`);
+-      else if (/\.tsx?$/.test(entry.name)) out.push(`${rel}/${entry.name}`);
+-    }
+-  };
+-  for (const suite of suites) walk(suite);
+-  return out.sort();
+-}
+-
+-// An instance of the enumerator with what the baselines and the two lists of typescript-go say of it.
+-function factOf(enumerated: EnumeratedInstance, casePath: string, table: OracleTable, paths: CorpusPaths): Fact {
+-  const { name, suite } = enumerated;
+-  const diff = diffRootOf(table, suite, name);
+-  const tagged = { name, directory: directoryOf(casePath), casePath, tags: tags.filter(tag => diff[tag]) };
+-  // No list may hold an instance that does not run, whatever a platform makes of its files.
+-  const notRun = { ...tagged, kind: undefined, platformLimited: undefined };
+-  if (enumerated.status === "skip") return { ...notRun, status: "skipped", reason: enumerated.skipReason ?? "" };
+-  // The reference fails an instance whose diff is in both lists, as it fails one that it cannot set up.
+-  const stops = enumerated.status === "invalid" ? (enumerated.invalidReason ?? "") : diff.fatal;
+-  if (stops !== undefined) return { ...notRun, status: "invalid", reason: stops };
+-  const oracle = oracleOf(table, suite, name);
+-  const run: RunInstance = { name, status: "run", casePath, config: enumerated.config, oracle };
+-  let limited: { why: string | undefined } | undefined;
+-  return {
+-    ...tagged,
+-    status: "run",
+-    reason: "",
+-    kind: oracle.class,
+-    run,
+-    // Only the rules of the lists read it: an instance that a list holds, held or may take is laid out for it, once.
+-    get platformLimited() {
+-      return (limited ??= { why: platformLimitedOf(paths, run) }).why;
+-    },
+-  };
+-}
+-
+-// What a check gets of an instance with the test that its files are written from, or why the instance cannot be laid out.
+-type Layout = { ok: true; input: InstanceInput; test: CompilerTest } | { ok: false; reason: string };
+-
+-// The files of an instance as the harness lays them out; with a root they are written below it.
+-function layOut(paths: CorpusPaths, instance: RunInstance, root: string | undefined): Layout {
+-  const filename = `${paths.cases}/${instance.casePath}`;
+-  const read = readFile(filename);
+-  if (!read.ok) return { ok: false, reason: `the case cannot be read: ${filename}` };
+-  const units = parseTestFilesAndSymlinks<TestUnit>(read.contents, filename, (unitName, content) => ({
+-    value: { name: unitName, content },
+-    error: undefined,
+-  }));
+-  if (!units.ok) return { ok: false, reason: units.reason };
+-  const made = instanceInput(units, instance.config, root, { libDirectory: paths.lib });
+-  if (made.ok) return { ok: true, input: made.input, test: made.test };
+-  return {
+-    ok: false,
+-    reason: made.status === "invalid" ? `the reference fails the instance: ${made.reason}` : made.reason,
+-  };
+-}
+-
+-// The input of the check of an instance; with a root its files are written below it, and the run removes them.
+-function inputOf(paths: CorpusPaths, instance: RunInstance, root: string | undefined): InputResult {
+-  const laid = layOut(paths, instance, root);
+-  return laid.ok ? { ok: true, input: laid.input } : laid;
+-}
+-
+-// The disks of the platforms of the test run, whichever of them runs the sweep; Windows without the right to link to a file.
+-const testPlatforms: readonly Platform[] = [
+-  { os: "linux", caseSensitive: true, preservesNames: true, fileLinks: true },
+-  { os: "darwin", caseSensitive: false, preservesNames: false, fileLinks: true },
+-  { os: "win32", caseSensitive: false, preservesNames: true, fileLinks: false },
+-];
+-
+-// Why a platform of the test run cannot hold the files of an instance that runs: the first obstacle of the first such platform. Undefined: every platform holds them.
+-function platformLimitedOf(paths: CorpusPaths, instance: RunInstance): string | undefined {
+-  let laid: Layout;
+-  try {
+-    laid = layOut(paths, instance, undefined);
+-  } catch (error) {
+-    laid = { ok: false, reason: `the files cannot be laid out: ${messageOf(error)}` };
+-  }
+-  if (!laid.ok) return `every platform: ${laid.reason}`;
+-  for (const platform of testPlatforms) {
+-    const [first] = findObstacles(laid.test, platform);
+-    if (first !== undefined) return `${platform.os}: ${first.reason}${first.detail === "" ? "" : `: ${first.detail}`}`;
+-  }
+-  return undefined;
+-}
+-
+ function matcher(selector: string): (fact: Fact) => boolean {
+   if (selector.includes("*")) {
+     const parts = selector.split("*").map(part => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+@@ -395,7 +278,7 @@ function select(all: Iterable<Fact>, o: Options, listed: ReadonlySet<string>): S
+     if (!selected) continue;
+     if (o.listed && !listed.has(fact.name)) continue;
+     if (o.kind !== undefined && fact.kind !== o.kind) continue;
+-    if (o.tag !== undefined && !fact.tags.includes(o.tag)) continue;
++    if (o.tag !== undefined && !fact.instance[o.tag]) continue;
+     taken.push(fact);
+   }
+   return { taken, empty: matchers.filter(m => m.taken === 0).map(m => m.selector) };
+@@ -539,12 +422,11 @@ async function main(argv: readonly string[]): Promise<number> {
+       throw new FileError(`--report ${reportPath}: ${messageOf(error)}`);
+     }
+   }
+-  const paths = corpusPaths(corpusRoot);
+   let cases: string[];
+-  let table: OracleTable;
++  let corpus: Corpus;
+   try {
+-    cases = listCases(paths.cases);
+-    table = loadOracleTable(paths);
++    cases = listCases(corpusPaths(corpusRoot).cases);
++    corpus = openCorpus(corpusRoot);
+   } catch (error) {
+     throw new FileError(`the corpus at ${corpusRoot} cannot be read: ${messageOf(error)}`);
+   }
+@@ -572,9 +454,7 @@ async function main(argv: readonly string[]): Promise<number> {
+   const read = new Set(reached);
+   const facts = new Map<string, Fact>();
+   for (const casePath of reached) {
+-    for (const enumerated of enumerateCase(paths.cases, casePath)) {
+-      facts.set(enumerated.name, factOf(enumerated, casePath, table, paths));
+-    }
++    for (const instance of corpus.enumerateCase(casePath)) facts.set(instance.name, corpus.facts(instance));
+   }
+   const selection = select(facts.values(), o, listed);
+   if (selection.empty.length > 0) {
+@@ -641,11 +521,11 @@ async function main(argv: readonly string[]): Promise<number> {
+   try {
+     let done = 0;
+     results = await runInstances(
+-      ran.map(fact => fact.run!),
++      ran.map(fact => fact.instance),
+       checked.check,
+       {
+-        input: (instance, root) => inputOf(paths, instance as RunInstance, root),
+-        oracle: instance => readOracle((instance as RunInstance).oracle),
++        input: (instance, root) => corpus.input(instance, root),
++        oracle: instance => corpus.oracle(instance),
+         directory,
+         concurrency: o.jobs ?? availableParallelism(),
+         timeoutMs: o.timeoutMs,
+@@ -725,7 +605,7 @@ async function main(argv: readonly string[]): Promise<number> {
+   for (const fact of ranE) {
+     let all: number[];
+     try {
+-      const oracle = tsgoRules.model.fromBytes(readOracle(fact.run!.oracle));
++      const oracle = tsgoRules.model.fromBytes(corpus.oracle(fact.instance));
+       all = readErrorBaseline(tsgoRules, oracle).diagnostics.map(d => d.code);
+     } catch {
+       codesUnread.push(fact.name);

@@ -1,14 +1,16 @@
 // Which cases of the fixtures in the tree make one of the seven rules of this research report, by ESLint at the pin.
 // The test of a rule takes a line of another rule only when the fixture of that rule has the case: these are the cases to add.
-// usage: node cross.cjs [--json]   --json: one line per case and rule, { rule, from, code, jsx?, expect: [{ line, column, message }] }
+// usage: node cross.cjs [--json] [--all] [--dir=<fixtures>]   --json: one line per case and rule, { rule, from, code, jsx?, expect: [{ line, column, message }] }
 "use strict";
 const path = require("path");
 const fs = require("fs");
 const { Linter } = require("/workspace/ref/eslint/lib/linter");
 const linter = new Linter({ configType: "flat" });
 const mine = ["no-loss-of-precision", "no-octal", "no-nonoctal-decimal-escape", "no-irregular-whitespace", "no-unexpected-multiline", "no-empty", "no-empty-static-block"];
-const rules = Object.fromEntries(mine.map(r => [r, "error"]));
-const dir = "/workspace/wt/cli/test/cli/lint/rules";
+const dir = process.argv.find(a => a.startsWith("--dir="))?.slice(6) ?? "/workspace/wt/cli/test/cli/lint/rules";
+// --all: every rule that has a fixture in the directory, which is what rules.test.ts needs once the fixtures of the seven exist.
+const names = process.argv.includes("--all") ? fs.readdirSync(dir).filter(f => f.endsWith(".json")).map(f => f.slice(0, -5)) : mine;
+const rules = Object.fromEntries(names.map(r => [r, "error"]));
 const json = process.argv.includes("--json");
 const tally = {};
 let total = 0;

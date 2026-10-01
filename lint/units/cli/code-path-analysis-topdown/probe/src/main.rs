@@ -31,6 +31,8 @@ struct Walk<'p, 'a> {
     bind_ref: bool,
     /// Operands that `as`, `satisfies`, `!` or `<T>` is around.
     ts_wrapped: HashSet<ExprId>,
+    /// Members and calls that parentheses are around.
+    parenthesized: HashSet<ExprId>,
     /// Trace statements for the rule prototype.
     with_nodes: bool,
 }
@@ -394,7 +396,8 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
             ExprData::ECall(node) => node.optional_chain,
             _ => None,
         };
-        let chain_root = optional_chain.is_some() && !from_chain;
+        // Parentheses end a chain: ESTree has a ChainExpression of its own inside them.
+        let chain_root = optional_chain.is_some() && (!from_chain || self.parenthesized.contains(&ExprId::of(expr)));
         // An AssignmentPattern in an assignment target: the `=` of a default.
         let mut is_default = false;
         // processCodePathToEnter
@@ -892,6 +895,17 @@ fn trace(path: &str, with_nodes: bool) -> Option<String> {
             .filter(|record| !matches!(record.data, WrapperData::Parenthesized))
             .map(|record| ExprId::of(&record.operand))
             .collect();
+        let parenthesized = parsed
+            .sidecar
+            .wrappers
+            .records
+            .iter()
+            .filter(|record| {
+                matches!(record.data, WrapperData::Parenthesized)
+                    && matches!(record.operand.data, ExprData::EDot(_) | ExprData::EIndex(_) | ExprData::ECall(_))
+            })
+            .map(|record| ExprId::of(&record.operand))
+            .collect();
         let mut walk = Walk {
             parsed,
             out: String::new(),
@@ -903,6 +917,7 @@ fn trace(path: &str, with_nodes: bool) -> Option<String> {
             field_value: false,
             bind_ref: false,
             ts_wrapped,
+            parenthesized,
             with_nodes,
         };
         walk.op("start program");

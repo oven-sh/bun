@@ -1,0 +1,61 @@
+{"code":"01","type":"script","reports":["1:1-1:3 Octal literals should not be used."]}
+{"code":"07","type":"script","reports":["1:1-1:3 Octal literals should not be used."]}
+{"code":"08","type":"script","reports":["1:1-1:3 Octal literals should not be used."]}
+{"code":"09","type":"script","reports":["1:1-1:3 Octal literals should not be used."]}
+{"code":"010","type":"script","reports":["1:1-1:4 Octal literals should not be used."]}
+{"code":"0777","type":"script","reports":["1:1-1:5 Octal literals should not be used."]}
+{"code":"00","type":"script","reports":["1:1-1:3 Octal literals should not be used."]}
+{"code":"000","type":"script","reports":["1:1-1:4 Octal literals should not be used."]}
+{"code":"0","type":"script","reports":[]}
+{"code":"0.0","type":"script","reports":[]}
+{"code":"0.1","type":"script","reports":[]}
+{"code":"0e1","type":"script","reports":[]}
+{"code":"0x01","type":"script","reports":[]}
+{"code":"0o01","type":"script","reports":[]}
+{"code":"0b01","type":"script","reports":[]}
+{"code":"0n","type":"script","reports":[]}
+{"code":"1","type":"script","reports":[]}
+{"code":"10","type":"script","reports":[]}
+{"code":"100","type":"script","reports":[]}
+{"code":"x = -01","type":"script","reports":["1:6-1:8 Octal literals should not be used."]}
+{"code":"x = +08","type":"script","reports":["1:6-1:8 Octal literals should not be used."]}
+{"code":"x = 01 + 02","type":"script","reports":["1:5-1:7 Octal literals should not be used.","1:10-1:12 Octal literals should not be used."]}
+{"code":"({ 01: 1 })","type":"script","reports":["1:4-1:6 Octal literals should not be used."]}
+{"code":"({ 08() {} })","type":"script","reports":["1:4-1:6 Octal literals should not be used."]}
+{"code":"class A { 01() {} static 07 = 1 }","type":"script","fatal":"1:11 Parsing error: Invalid number","reports":[]}
+{"code":"a[01]","type":"script","reports":["1:3-1:5 Octal literals should not be used."]}
+{"code":"a?.[08]","type":"script","reports":["1:5-1:7 Octal literals should not be used."]}
+{"code":"var { 01: b } = c","type":"script","reports":["1:7-1:9 Octal literals should not be used."]}
+{"code":"({ 01: b } = c)","type":"script","reports":["1:4-1:6 Octal literals should not be used."]}
+{"code":"f(01, 1, 02)","type":"script","reports":["1:3-1:5 Octal literals should not be used.","1:10-1:12 Octal literals should not be used."]}
+{"code":"[01, 02]","type":"script","reports":["1:2-1:4 Octal literals should not be used.","1:6-1:8 Octal literals should not be used."]}
+{"code":"x = 08.5","type":"script","reports":["1:5-1:9 Octal literals should not be used."]}
+{"code":"x = 09e1","type":"script","reports":["1:5-1:9 Octal literals should not be used."]}
+{"code":"x = '01'","type":"script","reports":[]}
+{"code":"x = `${01}`","type":"script","reports":["1:8-1:10 Octal literals should not be used."]}
+{"code":"x = /01/","type":"script","reports":[]}
+{"code":"// 01","type":"script","reports":[]}
+{"code":"switch (a) { case 01: }","type":"script","reports":["1:19-1:21 Octal literals should not be used."]}
+{"code":"x = a ? 01 : 1","type":"script","reports":["1:9-1:11 Octal literals should not be used."]}
+{"code":"(01)","type":"script","reports":["1:2-1:4 Octal literals should not be used."]}
+{"code":"x = (01)","type":"script","reports":["1:6-1:8 Octal literals should not be used."]}
+{"code":"function f(a = 01) {}","type":"script","reports":["1:16-1:18 Octal literals should not be used."]}
+{"code":"x = (a = 01) => a","type":"script","reports":["1:10-1:12 Octal literals should not be used."]}
+{"code":"new A(01)","type":"script","reports":["1:7-1:9 Octal literals should not be used."]}
+{"code":"x = 0.01","type":"script","reports":[]}
+{"code":"x = 1.01","type":"script","reports":[]}
+{"code":"x = 10.01","type":"script","reports":[]}
+{"code":"x = .01","type":"script","reports":[]}
+{"code":"x = 1e01","type":"script","reports":[]}
+{"code":"x = a.b01","type":"script","reports":[]}
+{"code":"x = $01","type":"script","reports":[]}
+{"code":"x = _01","type":"script","reports":[]}
+{"code":"x = 0\n1","type":"script","reports":[]}
+{"code":"x = 0 .a","type":"script","reports":[]}
+{"code":"x = 0..a","type":"script","reports":[]}
+{"code":"x = 00.a","type":"script","reports":["1:5-1:7 Octal literals should not be used."]}
+{"code":"x = 01.a","type":"script","reports":["1:5-1:7 Octal literals should not be used."]}
+{"code":"<a b={01}/>","type":"script","jsx":true,"reports":["1:7-1:9 Octal literals should not be used."]}
+{"code":"<a>{08}</a>","type":"script","jsx":true,"reports":["1:5-1:7 Octal literals should not be used."]}
+{"code":"<a>01</a>","type":"script","jsx":true,"reports":[]}
+{"code":"<a b=\"01\"/>","type":"script","jsx":true,"reports":[]}

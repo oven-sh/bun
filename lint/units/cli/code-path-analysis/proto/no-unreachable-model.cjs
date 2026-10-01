@@ -32,6 +32,22 @@ function canEndWithSemicolon(s) {
 	}
 }
 
+// Whether the text of `p` ends where the text of `e` ends: `e` is `p`, or the last part of `p` down to `e`.
+function endsWith(p, e) {
+	for (;;) {
+		if (!p) return false;
+		if (p === e) return true;
+		switch (p.t) {
+			case "SIf": p = p.no || p.yes; break;
+			case "SFor": case "SForIn": case "SForOf": case "SWhile": case "SWith": p = p.body; break;
+			case "SLabel": p = p.stmt; break;
+			case "STry": p = p.lastBlock; break;
+			case "ExportNamedDeclaration": p = p.inner; break;
+			default: return false;
+		}
+	}
+}
+
 function model(ast, tokens) {
 	const reports = [];
 	// The code path events: the current segments of each path.
@@ -61,7 +77,7 @@ function model(ast, tokens) {
 		return [tokens[lo - 2], tokens[lo - 1]];
 	}
 	function isConsecutive(node, at) {
-		if (endOpen || node.prevSibling !== endNode) return false;
+		if (endOpen || !endsWith(node.prevSibling, endNode)) return false;
 		const [t0, t1] = before(at);
 		if (!t1 || t1.value !== ";" || t1.type !== "Punctuator") return true;
 		if (t0 && t0.type === "Punctuator" && t0.value === ";") return false;

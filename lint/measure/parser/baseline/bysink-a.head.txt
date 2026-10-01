@@ -1,0 +1,27 @@
+instantiation                      sink named in the symbol             syms      bytes
+(no P)                             (no sink in name)                     335    331,169
+(no P)                             Build                                  10      4,265
+(no P)                             DecoratorMetadata                       1        295
+P<false, false>                    (no sink in name)                     148    331,171
+P<false, false>+P<false, true>     (no sink in name)                       7      4,614
+P<false, false>+P<false, true>+P<true, false> (no sink in name)                       3      2,738
+P<false, false>+P<false, true>+P<true, false>+P<true, true> (no sink in name)                      40     15,537
+P<false, false>+P<true, false>     (no sink in name)                      87     61,179
+P<false, false>+P<true, false>+P<true, true> (no sink in name)                       3        447
+P<false, true>                     (no sink in name)                      43    112,829
+P<false, true>+P<true, true>       (no sink in name)                       2        561
+P<true, false>                     (no sink in name)                     237    458,778
+P<true, false>                     Build                                  14     22,880
+P<true, false>                     DecoratorMetadata                      15     11,012
+P<true, false>                     DecoratorMetadata+Discard               1        455
+P<true, false>                     Discard                                15     10,704
+P<true, false>+P<true, true>       (no sink in name)                      52     27,587
+P<true, false>+P<true, true>       Build                                   2        262
+P<true, false>+P<true, true>       DecoratorMetadata                       1        290
+P<true, false>+P<true, true>       Discard                                 2        223
+P<true, true>                      (no sink in name)                     121    228,355
+P<true, true>                      Build                                  14     22,885
+P<true, true>                      DecoratorMetadata                      15     10,975
+P<true, true>                      DecoratorMetadata+Discard               1        455
+P<true, true>                      Discard                                15     10,704
+total                                                                   1184  1,670,370

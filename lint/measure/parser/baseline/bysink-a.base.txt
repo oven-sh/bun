@@ -1,0 +1,17 @@
+instantiation                      sink named in the symbol             syms      bytes
+(no P)                             (no sink in name)                     288    316,619
+P<false, false>                    (no sink in name)                     147    332,805
+P<false, false>+P<false, true>     (no sink in name)                       5      4,187
+P<false, false>+P<false, true>+P<true, false> (no sink in name)                       3      2,738
+P<false, false>+P<false, true>+P<true, false>+P<true, true> (no sink in name)                      38     13,034
+P<false, false>+P<true, false>     (no sink in name)                      85     58,832
+P<false, false>+P<true, false>+P<true, true> (no sink in name)                       3        447
+P<false, true>                     (no sink in name)                      43    113,160
+P<false, true>+P<true, true>       (no sink in name)                       2        561
+P<true, false>                     (no sink in name)                     159    373,623
+P<true, false>                     DecoratorMetadata                       2      7,366
+P<true, false>+P<true, true>       (no sink in name)                      27     16,103
+P<true, false>+P<true, true>       Discard                                 2      3,608
+P<true, true>                      (no sink in name)                      57    150,145
+P<true, true>                      DecoratorMetadata                       2      7,350
+total                                                                    863  1,400,578

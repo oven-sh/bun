@@ -1,0 +1,113 @@
+{"code":"if (a) {} else if (a) {}","type":"script","reports":["1:20-1:21 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a) {} else if ((a)) {}","type":"script","reports":["1:21-1:22 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if ((a)) {} else if (a) {}","type":"script","reports":["1:22-1:23 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (((a))) {} else if ( ( a ) ) {}","type":"script","reports":["1:27-1:28 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a) {} else if (/* c */ a /* d */) {}","type":"script","reports":["1:28-1:29 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a) {} else if (\n  a\n) {}","type":"script","reports":["2:3-2:4 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a) {} else if (b) {} else if (a) {} else if (b) {}","type":"script","reports":["1:35-1:36 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.","1:50-1:51 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a) {} else { if (a) {} }","type":"script","reports":[]}
+{"code":"if (a) {} else if (b) {} else { if (a) {} else if (a) {} }","type":"script","reports":["1:52-1:53 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a) { if (a) {} } else if (b) { if (b) {} else if (b) {} }","type":"script","reports":["1:55-1:56 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a) {} if (a) {}","type":"script","reports":[]}
+{"code":"if (a) {} else if (b) {} if (a) {} else if (b) {}","type":"script","reports":[]}
+{"code":"x: if (a) {} else if (a) {}","type":"script","reports":["1:23-1:24 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a) {} else x: if (a) {}","type":"script","reports":[]}
+{"code":"if (a) ; else if (a) ;","type":"script","reports":["1:19-1:20 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a) b; else if (a) c; else d;","type":"script","reports":["1:20-1:21 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a) if (a) {} else if (a) {}","type":"script","reports":["1:27-1:28 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a) {} else if (b) if (a) {} else if (b) {}","type":"script","reports":[]}
+{"code":"if (a || b) {} else if (a) {}","type":"script","reports":["1:25-1:26 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a || b) {} else if (b) {}","type":"script","reports":["1:25-1:26 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a || b) {} else if (b || a) {}","type":"script","reports":["1:25-1:31 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a || b) {} else if (a || b || c) {}","type":"script","reports":[]}
+{"code":"if (a || b) {} else if (c || b || a) {}","type":"script","reports":[]}
+{"code":"if (a || b || c) {} else if (a || b) {}","type":"script","reports":["1:30-1:36 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a || b) {} else if (a && c) {}","type":"script","reports":["1:25-1:31 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a || b) {} else if (c && b) {}","type":"script","reports":["1:25-1:31 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a && b) {} else if (a) {}","type":"script","reports":[]}
+{"code":"if (a && b) {} else if (b && a) {}","type":"script","reports":["1:25-1:31 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a && b) {} else if (a && b && c) {}","type":"script","reports":["1:25-1:36 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a && b) {} else if (c && b && a) {}","type":"script","reports":["1:25-1:36 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a && b) {} else if (a || b) {}","type":"script","reports":[]}
+{"code":"if (a && b && c) {} else if (a && b) {}","type":"script","reports":[]}
+{"code":"if (a) {} else if (b) {} else if (a || b) {}","type":"script","reports":["1:35-1:41 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a) {} else if (b) {} else if (a || b || c) {}","type":"script","reports":[]}
+{"code":"if (a) {} else if (b) {} else if (c || (a || b)) {}","type":"script","reports":[]}
+{"code":"if (a) {} else if (b) {} else if ((a || b) && c) {}","type":"script","reports":["1:35-1:48 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a) {} else if (b) {} else if (c && (a || b)) {}","type":"script","reports":["1:35-1:48 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a) {} else if (b) {} else if (c && (a || d)) {}","type":"script","reports":[]}
+{"code":"if (a && b) {} else if (c) {} else if ((a || c) && b) {}","type":"script","reports":[]}
+{"code":"if (a && b) {} else if (c && b) {} else if ((a || c) && b) {}","type":"script","reports":[]}
+{"code":"if ((a || b) && c) {} else if ((b || a) && c) {}","type":"script","reports":["1:32-1:45 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if ((a || b) && c) {} else if (c && (b || a)) {}","type":"script","reports":["1:32-1:45 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if ((a && b) || c) {} else if (b && a) {}","type":"script","reports":["1:32-1:38 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if ((a && b) || c) {} else if (c || (b && a)) {}","type":"script","reports":["1:32-1:45 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a || (b && c)) {} else if ((c && b) || a) {}","type":"script","reports":["1:32-1:45 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if ((a || b) || c) {} else if (a || (b || c)) {}","type":"script","reports":["1:32-1:45 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if ((a && b) && c) {} else if (a && (b && c)) {}","type":"script","reports":["1:32-1:45 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if ((a || b) && (c || d)) {} else if ((d || c) && (b || a)) {}","type":"script","reports":["1:39-1:59 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if ((a || b) && (c || d)) {} else if ((a || c) && (b || d)) {}","type":"script","reports":[]}
+{"code":"if (((a || b) && c) || d) {} else if (d || (c && (b || a))) {}","type":"script","reports":["1:39-1:59 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a ?? b) {} else if (a ?? b) {}","type":"script","reports":["1:25-1:31 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a ?? b) {} else if (b ?? a) {}","type":"script","reports":[]}
+{"code":"if (a ?? b) {} else if ((a ?? b) && c) {}","type":"script","reports":["1:25-1:38 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if ((a ?? b) || c) {} else if (c || (a ?? b)) {}","type":"script","reports":["1:32-1:45 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a === 1) {} else if (a === 1) {}","type":"script","reports":["1:26-1:33 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a === 1) {} else if (a === 1.0) {}","type":"script","reports":[]}
+{"code":"if (a === 1) {} else if (1 === a) {}","type":"script","reports":[]}
+{"code":"if (a.b) {} else if (a['b']) {}","type":"script","reports":[]}
+{"code":"if (a.b) {} else if (a .b) {}","type":"script","reports":["1:22-1:26 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a.b) {} else if (a?.b) {}","type":"script","reports":[]}
+{"code":"if (a?.b) {} else if (a?.b) {}","type":"script","reports":["1:23-1:27 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if ('a') {} else if (\"a\") {}","type":"script","reports":[]}
+{"code":"if (`a`) {} else if (`a`) {}","type":"script","reports":["1:22-1:25 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (`a${b}c`) {} else if (`a${b}c`) {}","type":"script","reports":["1:27-1:35 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (`a${b}c`) {} else if (`a${ b }c`) {}","type":"script","reports":["1:27-1:37 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (`a${b || c}`) {} else if (`a${c || b}`) {}","type":"script","reports":[]}
+{"code":"if (/a/) {} else if (/a/) {}","type":"script","reports":["1:22-1:25 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (/a/g) {} else if (/a/) {}","type":"script","reports":[]}
+{"code":"if (/a||b/.test(c)) {} else if (/a||b/.test(c)) {}","type":"script","reports":["1:33-1:47 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a / b / c) {} else if (a / b / c) {}","type":"script","reports":["1:28-1:37 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (f(a)) {} else if (f(a)) {}","type":"script","reports":["1:23-1:27 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (f(a)) {} else if (f((a))) {}","type":"script","reports":[]}
+{"code":"if (f(a || b)) {} else if (f(b || a)) {}","type":"script","reports":[]}
+{"code":"if (f(a || b)) {} else if (f(a || b)) {}","type":"script","reports":["1:28-1:37 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if ([a || b]) {} else if ([a || b]) {}","type":"script","reports":["1:27-1:35 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if ({ a: b || c }) {} else if ({ a: b || c }) {}","type":"script","reports":["1:32-1:45 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a ? b : c) {} else if (a ? b : c) {}","type":"script","reports":["1:28-1:37 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if ((a ? b : c) || d) {} else if (d || (a ? b : c)) {}","type":"script","reports":["1:35-1:51 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a, b) {} else if (a, b) {}","type":"script","reports":["1:23-1:27 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if ((a, b)) {} else if (a, b) {}","type":"script","reports":["1:25-1:29 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a = b) {} else if (a = b) {}","type":"script","reports":["1:24-1:29 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if ((a = b)) {} else if (a = b) {}","type":"script","reports":["1:26-1:31 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if ((a = b) || c) {} else if (c || (a = b)) {}","type":"script","reports":["1:31-1:43 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (!a) {} else if (!a) {}","type":"script","reports":["1:21-1:23 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (!(a || b)) {} else if (!(b || a)) {}","type":"script","reports":[]}
+{"code":"if (!(a || b)) {} else if (!(a || b)) {}","type":"script","reports":["1:28-1:37 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a + b) {} else if (b + a) {}","type":"script","reports":[]}
+{"code":"if (a + b) {} else if (a + b) {}","type":"script","reports":["1:24-1:29 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a + b) {} else if (a+b) {}","type":"script","reports":["1:24-1:27 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (x => x || y) {} else if (x => x || y) {}","type":"script","reports":["1:30-1:41 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (function () { return a || b; }) {} else if (function () { return a || b; }) {}","type":"script","reports":["1:49-1:79 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (function () { if (a) {} else if (a) {} }) {} else if (b) {}","type":"script","reports":["1:38-1:39 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a) {} else if (function () { if (a) {} else if (a) {} }) {}","type":"script","reports":["1:53-1:54 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a\\u0062) {} else if (ab) {}","type":"script","reports":["1:26-1:28 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if ('\\x61') {} else if ('a') {}","type":"script","reports":[]}
+{"code":"if (a) {} else if (b) {} else if (c) {} else if (d) {} else if (e) {} else if (c) {} else if (f) {} else if (a || e) {}","type":"script","reports":["1:80-1:81 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.","1:110-1:116 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a && b) {} else if (a && b) {} else if (a && b) {}","type":"script","reports":["1:25-1:31 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.","1:45-1:51 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a) {} else if (a && b) {} else if (a && b && c) {}","type":"script","reports":["1:20-1:26 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.","1:40-1:51 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a) {} else if (b && a) {}","type":"script","reports":["1:20-1:26 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a) {} else if ((b && a)) {}","type":"script","reports":["1:21-1:27 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a || b) {} else if ((a && c) || (b && d)) {}","type":"script","reports":["1:25-1:45 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a || b) {} else if ((a && c) || d) {}","type":"script","reports":[]}
+{"code":"if (a) {} else if (b || (a && c)) {}","type":"script","reports":[]}
+{"code":"if (a) {} else if (b) {} else if ((a && c) || (b && d)) {}","type":"script","reports":["1:35-1:55 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (a) {} else if ((a || b) && (a || c)) {}","type":"script","reports":[]}
+{"code":"if (a && b) {} else if (b && (a || c)) {}","type":"script","reports":[]}
+{"code":"if (a) {} else if (a || b && c) {}","type":"script","reports":[]}
+{"code":"if (b && c) {} else if (a || b && c) {}","type":"script","reports":[]}
+{"code":"if (a) {} else if (b && c) {} else if (a || b && c) {}","type":"script","reports":["1:40-1:51 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"<a/>; if (<a/>) {} else if (<a/>) {}","type":"script","jsx":true,"reports":["1:29-1:33 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (<a/>) {} else if (<a />) {}","type":"script","jsx":true,"reports":["1:23-1:28 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (<a>{b}</a>) {} else if (<a>{b}</a>) {}","type":"script","jsx":true,"reports":["1:29-1:39 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."]}
+{"code":"if (<a b={c || d}/>) {} else if (<a b={d || c}/>) {}","type":"script","jsx":true,"reports":[]}

@@ -43,14 +43,17 @@ const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 //                            recv guarantees the streaming inner loop's mid-read
 //                            flush (`head_start` past the half-buffer cutoff)
 //                            fires in a single poll wake.
-//   SHELL_FAIL_EPOLL_REARM_INO=N  epoll_ctl ADD/MOD on an fd open on the FIFO
-//                            with inode N fails with ENOMEM from the
+//   SHELL_FAIL_EPOLL_REARM_DEV=D, SHELL_FAIL_EPOLL_REARM_INO=N
+//                            epoll_ctl ADD/MOD on an fd open on the FIFO with
+//                            device D and inode N fails with ENOMEM from the
 //                            SHELL_FAIL_EPOLL_REARM_FROM-th call on (1-based,
 //                            default 2: the first re-arm, i.e. right after the
 //                            first chunk was read; 3 = after the second chunk).
-//                            Keyed by inode so only the named FIFO the fixture
-//                            hands to `cat` is affected, not the capture pipes
-//                            (anonymous pipes are FIFOs too).
+//                            Keyed by (dev, ino) so only the named FIFO the
+//                            fixture hands to `cat` is affected, not the
+//                            capture pipes: anonymous pipes are FIFOs too, on
+//                            pipefs, whose inode numbers can repeat those of
+//                            the FIFO's filesystem.
 // FilePoll registers the socketpair through the raw syscall(SYS_epoll_ctl,
 // ...) wrapper, not the libc epoll_ctl symbol, so the epoll modes interpose
 // syscall(2).
@@ -83,7 +86,8 @@ static int recv_one_chunk = -1;
 static int recv_eagain_first = -1;
 static int fail_epoll_from = -1; /* 0 = off, N >= 1 = 1-based index of the first failing call */
 static int recv_bulk = -1;       /* 0 = off, N >= 1 = number of fabricated full-buffer recvs */
-static unsigned long long rearm_ino; /* 0 = off, otherwise the inode of the FIFO whose re-arms fail */
+static unsigned long long rearm_dev; /* device of the FIFO whose re-arms fail */
+static unsigned long long rearm_ino; /* 0 = off, otherwise the inode of that FIFO */
 static int rearm_from;               /* 1-based index of the first failing epoll_ctl on that FIFO */
 static int rearm_init;
 static unsigned char recv_count[MAX_FD];
@@ -109,6 +113,8 @@ static void init_modes(void) {
   if (!rearm_init) {
     const char *s = getenv("SHELL_FAIL_EPOLL_REARM_INO");
     rearm_ino = s ? strtoull(s, NULL, 10) : 0;
+    const char *dev = getenv("SHELL_FAIL_EPOLL_REARM_DEV");
+    rearm_dev = dev ? strtoull(dev, NULL, 10) : 0;
     const char *from = getenv("SHELL_FAIL_EPOLL_REARM_FROM");
     rearm_from = from ? atoi(from) : 2;
     rearm_init = 1;
@@ -117,7 +123,8 @@ static void init_modes(void) {
 
 static int is_rearm_fifo(int fd) {
   struct stat st;
-  return rearm_ino != 0 && fstat(fd, &st) == 0 && S_ISFIFO(st.st_mode) && st.st_ino == rearm_ino;
+  return rearm_ino != 0 && fstat(fd, &st) == 0 && S_ISFIFO(st.st_mode) && st.st_dev == rearm_dev &&
+         st.st_ino == rearm_ino;
 }
 
 static int is_unix_sock(int fd) {
@@ -311,7 +318,7 @@ while (leaked.length > 0 && Date.now() < deadline) {
 console.log(JSON.stringify({ exitCode: last.exitCode, stderr: last.stderr.toString().trim(), leaked }));
 `;
 
-// For SHELL_FAIL_EPOLL_REARM_INO: the builtin cat reads CAT_FIFO, either as a
+// For SHELL_FAIL_EPOLL_REARM_DEV/INO: the builtin cat reads CAT_FIFO, either as a
 // file argument or through a stdin redirect (the two states of its state
 // machine). The fixture keeps its own read/write descriptor on the FIFO so the
 // reader never sees EOF: each poll wake reads one chunk and queues it on stdout
@@ -377,9 +384,16 @@ const MODES = [
 const VALUE_MODES = [
   "SHELL_FAIL_EPOLL_FROM",
   "SHELL_RECV_BULK",
+  "SHELL_FAIL_EPOLL_REARM_DEV",
   "SHELL_FAIL_EPOLL_REARM_INO",
   "SHELL_FAIL_EPOLL_REARM_FROM",
 ] as const;
+
+// The (dev, ino) pair that selects `fifo` in the shim.
+function rearmFifoEnv(fifo: string): Record<string, string> {
+  const st = statSync(fifo, { bigint: true });
+  return { SHELL_FAIL_EPOLL_REARM_DEV: st.dev.toString(), SHELL_FAIL_EPOLL_REARM_INO: st.ino.toString() };
+}
 
 function shimEnv(
   modes: (typeof MODES)[number][],
@@ -663,7 +677,7 @@ async function expectCatReadFaultAfterChunk(via: "arg" | "redirect") {
     [],
     {
       BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1",
-      SHELL_FAIL_EPOLL_REARM_INO: statSync(fifo, { bigint: true }).ino.toString(),
+      ...rearmFifoEnv(fifo),
       CAT_FIFO: fifo,
       CAT_FIFO_VIA: via,
     },
@@ -703,7 +717,7 @@ test.concurrent.skipIf(!isLinux || !cc)(
       [],
       {
         BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1",
-        SHELL_FAIL_EPOLL_REARM_INO: statSync(fifo, { bigint: true }).ino.toString(),
+        ...rearmFifoEnv(fifo),
         SHELL_FAIL_EPOLL_REARM_FROM: "3",
         CAT_FIFO: fifo,
         CAT_FIFO_VIA: "arg",

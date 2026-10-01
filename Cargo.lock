@@ -1420,7 +1420,6 @@ dependencies = [
  "bun_parsers",
  "bun_paths",
  "bun_ptr",
- "bun_semver",
  "bun_sys",
  "bun_zstd",
  "smallvec",

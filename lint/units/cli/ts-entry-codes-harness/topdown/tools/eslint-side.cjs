@@ -51,13 +51,18 @@ function result(messages, sourceType, ext) {
 	return { fatal, messages: messages.filter(m => !m.fatal && m.ruleId !== null), sourceType, ext };
 }
 
-// ESLint's answer for the file `c.<ext>`. A `.js` file that only parses with JSX is a `.jsx` file: the result says so.
+// ESLint's answer for the file `c.<ext>`. A case without an extension of its own is a `.js` file: where ESLint rejects it
+// as a module, it is the `.cjs` file (sloppy code: `with`, a legacy octal number, `-->`) or the `.jsx` file that ESLint
+// takes, and the result names that extension. `options.sourceType` asks for one source type and tries nothing else.
 function verify(code, ext, rules, options = {}) {
 	const sourceType = options.sourceType || sourceTypeOf(ext);
 	const first = result(once(code, ext, rules, sourceType, hasJsx(ext), options.plugin), sourceType, ext);
 	if (!first.fatal || ext !== "js" || options.sourceType) return first;
-	const withJsx = result(once(code, "jsx", rules, sourceType, true, options.plugin), sourceType, "jsx");
-	return withJsx.fatal ? first : withJsx;
+	for (const other of ["cjs", "jsx"]) {
+		const next = result(once(code, other, rules, sourceTypeOf(other), hasJsx(other), options.plugin), sourceTypeOf(other), other);
+		if (!next.fatal) return next;
+	}
+	return first;
 }
 
 const key = r => (r.fatal ? null : JSON.stringify(r.messages.map(m => `${m.line}:${m.column} ${m.message}`).sort()));

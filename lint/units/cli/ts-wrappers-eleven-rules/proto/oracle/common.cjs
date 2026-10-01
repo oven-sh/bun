@@ -91,7 +91,8 @@ function run(cmd, args, cwd) {
 	return new Promise((resolve, reject) => {
 		const env = { ...process.env, BUN_FEATURE_FLAG_EXPERIMENTAL_LINT: "1", BUN_DEBUG_QUIET_LOGS: "1", NO_COLOR: "1" };
 		delete env.FORCE_COLOR;
-		env.ASAN_OPTIONS = env.ASAN_OPTIONS || "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0";
+		// The probe keeps the text of a file without a diagnostic to its end: that is no leak of the planned code.
+		env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0";
 		const child = spawn(cmd, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
 		let out = "";
 		let err = "";

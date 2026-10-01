@@ -1,5 +1,5 @@
+console.log(globalThis.preload);
+
 it("the correct file was preloaded", () => {
-  expect(globalThis.preload).toBeDefined();
-  expect(globalThis.preload).toBeArrayOfSize(1);
-  expect(globalThis.preload[0]).toEqual("mixed/preload-test.ts");
+  expect(globalThis.preload).toEqual(["mixed/preload-test.ts"]);
 });

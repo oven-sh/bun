@@ -719,9 +719,7 @@ class BunWebSocket extends EventEmitter {
     }
 
     this.#paused = true;
-
-    // deviation: we dont support pause()
-    emitWarning("pause()", "ws.WebSocket.pause() is not implemented in bun");
+    this.#ws.pause();
   }
 
   resume() {
@@ -732,9 +730,7 @@ class BunWebSocket extends EventEmitter {
     }
 
     this.#paused = false;
-
-    // deviation: we dont support resume()
-    emitWarning("resume()", "ws.WebSocket.resume() is not implemented in bun");
+    this.#ws.resume();
   }
 }
 Object.defineProperty(BunWebSocket, "name", { value: "WebSocket" });

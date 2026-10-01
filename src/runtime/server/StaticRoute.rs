@@ -21,7 +21,7 @@ use crate::webcore::headers_ref::any_blob_content_type;
 use crate::webcore::{AnyBlob, FetchHeaders, InternalBlob, Response};
 
 #[derive(bun_ptr::CellRefCounted)]
-pub struct StaticRoute {
+pub(crate) struct StaticRoute {
     ref_count: Cell<u32>,
     /// The ref that in-flight responses (whose uws userdata is this route)
     /// collectively hold: taken by the first, released with the last in
@@ -39,7 +39,7 @@ pub struct StaticRoute {
 }
 
 #[derive(Clone, Copy)]
-pub struct InitFromBytesOptions<'a> {
+pub(crate) struct InitFromBytesOptions<'a> {
     pub(crate) server: Option<AnyServer>,
     pub(crate) mime_type: Option<&'a MimeType>,
     pub(crate) status_code: u16,
@@ -117,7 +117,6 @@ impl StaticRoute {
     ) {
         let temp_route = StaticRoute::init_from_any_blob(blob, options);
         StaticRoute::on(temp_route.this_ptr(), resp);
-        temp_route.deref();
     }
 
     pub(crate) fn clone(&mut self, global_this: &JSGlobalObject) -> RefPtr<StaticRoute> {
@@ -142,7 +141,7 @@ impl StaticRoute {
         size_of::<StaticRoute>() + self.blob.memory_cost() + self.headers.memory_cost()
     }
 
-    pub fn from_js(
+    pub(crate) fn from_js(
         global_this: &JSGlobalObject,
         argument: JSValue,
     ) -> JsResult<Option<RefPtr<StaticRoute>>> {
@@ -363,10 +362,7 @@ impl StaticRoute {
         let n = this.pending_responses.get() - 1;
         this.pending_responses.set(n);
         if n == 0 {
-            let pending_ref = this.pending_ref.take();
-            if let Some(pending_ref) = pending_ref {
-                pending_ref.deref();
-            }
+            this.pending_ref.set(None);
         }
     }
 
@@ -430,11 +426,9 @@ impl StaticRoute {
         match resp {
             AnyResponse::SSL(r) => write_status::<true>(r, status),
             AnyResponse::TCP(r) => write_status::<false>(r, status),
-            AnyResponse::H3(r) => {
+            AnyResponse::H3(_) | AnyResponse::H2(_) => {
                 let mut b = bun_core::fmt::ItoaBuf::new();
-                let s = bun_core::fmt::itoa(&mut b, status);
-                // S008: `h3::Response` is an `opaque_ffi!` ZST — safe deref.
-                bun_opaque::opaque_deref_mut(r).write_status(s);
+                resp.write_status(bun_core::fmt::itoa(&mut b, status));
             }
         }
     }

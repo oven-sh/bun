@@ -169,6 +169,13 @@ __attribute__((always_inline)) int us_socket_is_established(struct us_socket_t *
     return us_internal_poll_type((struct us_poll_t *) s) != POLL_TYPE_SEMI_SOCKET;
 }
 
+int us_socket_queued_input(struct us_socket_t *s) {
+    if (s->flags.is_closed || !us_socket_is_established(s)) {
+        return LIBUS_QUEUED_INPUT_NONE;
+    }
+    return bsd_queued_input(us_poll_fd(&s->p));
+}
+
 /* Detach c from its group + drop the borrowed SSL_CTX ref, but leave c
  * allocated. After this, c->group is NULL and the embedding owner may safely
  * deinit; the only remaining link is into a loop-owned list. */
@@ -279,6 +286,7 @@ struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code
 
         if (s->flags.low_prio_state == 1) {
             /* Unlink this socket from the low-priority queue */
+            if (s == loop->data.low_prio_iterator) loop->data.low_prio_iterator = s->next;
             if (!s->prev) loop->data.low_prio_head = s->next;
             else s->prev->next = s->next;
 
@@ -355,6 +363,7 @@ struct us_socket_t *us_socket_detach(struct us_socket_t *s) {
 
         if (s->flags.low_prio_state == 1) {
             /* Unlink this socket from the low-priority queue */
+            if (s == loop->data.low_prio_iterator) loop->data.low_prio_iterator = s->next;
             if (!s->prev) loop->data.low_prio_head = s->next;
             else s->prev->next = s->next;
 
@@ -429,6 +438,7 @@ int us_socket_write2(struct us_socket_t *s, const char *header, int header_lengt
 
     int written = bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length);
     if (written != header_length + payload_length) {
+        s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
     }
 
@@ -438,7 +448,8 @@ int us_socket_write2(struct us_socket_t *s, const char *header, int header_lengt
 struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int options, int ipc) {
     struct us_poll_t *p1 = us_create_poll(group->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
     us_poll_init(p1, fd, POLL_TYPE_SOCKET);
-    int rc = us_poll_start_rc(p1, group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    int open_paused = (options & LIBUS_SOCKET_OPEN_PAUSED) && !ssl_ctx;
+    int rc = us_poll_start_rc(p1, group->loop, (open_paused ? 0 : LIBUS_SOCKET_READABLE) | LIBUS_SOCKET_WRITABLE);
     if (rc != 0) {
         us_poll_free(p1, group->loop);
         return 0;
@@ -452,13 +463,14 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->long_timeout = 255;
     s->flags.low_prio_state = 0;
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN) != 0;
-    s->flags.is_paused = 0;
+    s->flags.is_paused = open_paused;
     s->flags.is_ipc = ipc;
     s->flags.is_closed = 0;
     s->flags.adopted = 0;
     s->flags.last_write_failed = 0;
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
+    s->hangup_closes_unsent = 0;
     s->connect_state = NULL;
 
     /* We always use nodelay */
@@ -607,6 +619,13 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
         us_internal_rearm_writable(s);
     }
     return written;
+}
+
+int us_socket_writev(struct us_socket_t *s, const struct us_iovec_t *iov, int count) {
+    if (s->ssl) {
+        return us_internal_ssl_writev(s, iov, count);
+    }
+    return us_socket_raw_writev(s, iov, count);
 }
 
 int us_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, int count) {

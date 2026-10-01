@@ -2,10 +2,12 @@ use bun_collections::VecExt;
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
+use std::sync::Arc;
 
 use bun_ast::DisableStoreReset;
 use bun_ast::{E, Expr, ExprData, ExprNodeList, G, ToJSError};
 use bun_ast::{Log, Range, Source};
+use bun_bundler::options::TransformOptions;
 use bun_bundler::{Transpiler, entry_points::MacroEntryPoint};
 use bun_collections::{ArrayHashMap, HashMap};
 use bun_core::Output;
@@ -49,6 +51,7 @@ fn is_macro_path(str: &[u8]) -> bool {
 pub(crate) struct MacroContext {
     pub(crate) resolver: *mut Resolver<'static>,
     pub(crate) env: *mut DotEnvLoader,
+    pub(crate) transform_options: Arc<TransformOptions>,
     pub(crate) macros: MacroMap,
     pub(crate) remap: bun_ptr::BackRef<MacroRemap>,
     pub(crate) javascript_object: JSValue,
@@ -89,6 +92,7 @@ impl MacroContext {
             macros: MacroMap::new(),
             resolver: &raw mut transpiler.resolver,
             env: transpiler.env,
+            transform_options: Arc::clone(&transpiler.options.transform_options),
             remap: bun_ptr::BackRef::new(&transpiler.options.macro_remap),
             javascript_object: JSValue::ZERO,
             // Deferred until `call()` — see field doc.
@@ -183,6 +187,7 @@ impl MacroContext {
                 input_specifier,
                 log,
                 self.env,
+                &self.transform_options,
                 function_name,
                 &specifier_buf[0..specifier_buf_len as usize],
                 hash,
@@ -410,6 +415,7 @@ impl Macro {
         input_specifier: &[u8],
         log: &mut Log,
         env: *mut DotEnvLoader,
+        transform_options: &TransformOptions,
         function_name: &[u8],
         specifier: &[u8],
         hash: i32,
@@ -417,19 +423,17 @@ impl Macro {
         let (vm, is_new_vm): (*mut VirtualMachine, bool) = if VirtualMachine::is_loaded() {
             (VirtualMachine::get_mut_ptr(), false)
         } else {
-            // The resolver's forward-decl `BundleOptions` does not carry
-            // `transform_options` (the canonical owner is the bundler's
-            // `BundleOptions<'a>`), and
-            // `RuntimeHooks::init_runtime_state` builds the macro VM's
-            // transpiler from a fresh `TransformOptions` value rather than
-            // borrowing the caller's, so there is nothing to mutate-and-restore
-            // on `resolver.opts` here. `log`/`env_loader` *are* threaded so the
-            // CLI-path macro VM uses the caller's log sink and env loader.
+            let mut transform_options = transform_options.clone();
+            // Build-only flags about the output bundle. The macro module's own
+            // imports must still resolve.
+            transform_options.external = Vec::new();
+            transform_options.packages = None;
 
             // JSC needs to be initialized if building from CLI
             jsc::initialize(jsc::InitializeOptions::default());
 
             let _vm = VirtualMachine::init(VirtualMachineInitOptions {
+                transform_options,
                 log: Some(NonNull::from(&mut *log)),
                 env_loader: NonNull::new(env),
                 is_main_thread: false,
@@ -754,7 +758,7 @@ impl<'a> Run<'a> {
                 // SAFETY: `obj` is a live JSC heap cell; `'a` is bounded by the
                 // surrounding stack frame.
                 let obj_ref = unsafe { &*obj };
-                let mut object_iter = JSPropertyIterator::init(
+                let object_iter = JSPropertyIterator::init(
                     self.global,
                     obj_ref,
                     JSPropertyIteratorOptions::new(false, true),
@@ -765,8 +769,8 @@ impl<'a> Run<'a> {
                 let mut properties = G::PropertyList::init_capacity(object_iter.len);
                 // (errdefer clearAndFree deleted — drops on `?`)
 
-                while let Some(prop) = object_iter.next()? {
-                    let object_value = self.run(object_iter.value)?;
+                while let Some((prop, prop_value)) = object_iter.next()? {
+                    let object_value = self.run(prop_value)?;
 
                     // `EString::init` lifetime-erases its borrow
                     // (arena-owned per the parser's `Str` convention). Copy the
@@ -809,7 +813,7 @@ impl<'a> Run<'a> {
                 ));
             }
             T::String => {
-                let bun_str = bun_core::OwnedString::new(value.to_bun_string(self.global)?);
+                let bun_str = value.to_bun_string(self.global)?;
 
                 // encode into utf16 so the printer escapes the string correctly
                 // UTF-16 → memcpy, Latin-1 → byte-widen. JS-sourced WTF
@@ -1058,16 +1062,21 @@ unsafe extern "C" {
 fn expr_from_blob(
     bytes: &[u8],
     bump: &bun_alloc::Arena,
-    mime_type: &[u8],
+    content_type: &[u8],
     log: &mut Log,
     loc: bun_ast::Loc,
 ) -> crate::Result<Expr> {
     use bun_ast::{E, ExprData, StoreStr as Str};
 
-    // MimeType::Category::Json — `application/json` or `+json`/`/json` suffix.
-    let is_json = mime_type == b"application/json"
-        || mime_type.ends_with(b"+json")
-        || mime_type.ends_with(b"/json");
+    // MIME essence: `type/subtype` with the parameters cut off.
+    let essence: &[u8] = match strings::index_of_char_usize(content_type, b';') {
+        Some(semicolon) => &content_type[..semicolon],
+        None => content_type,
+    }
+    .trim_ascii();
+
+    // `+json` is the RFC 6839 structured syntax suffix: `application/ld+json`.
+    let is_json = essence.ends_with(b"/json") || essence.ends_with(b"+json");
 
     if is_json {
         let source = &Source::init_path_string(b"fetch.json", bytes);
@@ -1084,12 +1093,14 @@ fn expr_from_blob(
         return Ok(out_expr);
     }
 
-    // MimeType::Category::isTextLike — text/*, application/javascript-ish, xml.
-    let is_text_like = mime_type.starts_with(b"text/")
-        || mime_type == b"application/javascript"
-        || mime_type == b"application/x-javascript"
-        || mime_type == b"application/ecmascript"
-        || mime_type == b"application/xml";
+    let is_text_like = essence.starts_with(b"text/")
+        || matches!(
+            essence,
+            b"application/javascript"
+                | b"application/x-javascript"
+                | b"application/ecmascript"
+                | b"application/xml"
+        );
 
     if is_text_like {
         let mut output = bun_core::MutableString::init_empty();
@@ -1116,13 +1127,13 @@ fn expr_from_blob(
     let prefix = b"data:";
     let mid = b";base64,";
     let encoded_len = bun_base64::encode_len(bytes);
-    let total = prefix.len() + mime_type.len() + mid.len() + encoded_len;
+    let total = prefix.len() + content_type.len() + mid.len() + encoded_len;
     let buf: &mut [u8] = bump.alloc_slice_fill_copy(total, 0u8);
     let mut i = 0usize;
     buf[i..i + prefix.len()].copy_from_slice(prefix);
     i += prefix.len();
-    buf[i..i + mime_type.len()].copy_from_slice(mime_type);
-    i += mime_type.len();
+    buf[i..i + content_type.len()].copy_from_slice(content_type);
+    i += content_type.len();
     buf[i..i + mid.len()].copy_from_slice(mid);
     i += mid.len();
     let n = bun_base64::encode(&mut buf[i..], bytes);

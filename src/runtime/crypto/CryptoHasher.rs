@@ -3,7 +3,7 @@ use core::cell::Cell;
 use core::ffi::c_char;
 
 use bun_boringssl_sys as boring_ssl;
-use bun_core::ZigString;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     ArrayBuffer, CallFrame, ErrorCode, JSGlobalObject, JSObject, JSValue, JsCell, JsClass as _,
     JsError, JsResult,
@@ -63,7 +63,7 @@ fn is_bun_file_blob(input: &BlobOrStringOrBuffer) -> bool {
 /// `&mut T` auto-derefs to `&T` so the impls below compile against either.
 #[bun_jsc::JsClass]
 #[repr(C)]
-pub enum CryptoHasher {
+pub(crate) enum CryptoHasher {
     // HMAC_CTX contains 3 EVP_CTX, so let's store it as a pointer.
     Hmac(JsCell<Option<Box<HMAC>>>),
     // EVP_CTX is ~280 bytes; box it so the enum stays small.
@@ -156,7 +156,7 @@ impl CryptoHasher {
     }
 
     #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__update")]
-    pub fn extern_update(&self, input: &[u8]) -> bool {
+    pub(crate) fn extern_update(&self, input: &[u8]) -> bool {
         match self {
             CryptoHasher::Zig(zig) => {
                 zig.with_mut(|z| z.update(input));
@@ -171,7 +171,7 @@ impl CryptoHasher {
     }
 
     #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__digest")]
-    pub fn extern_digest(&self, global: &JSGlobalObject, digest_buf: &mut [u8]) -> u32 {
+    pub(crate) fn extern_digest(&self, global: &JSGlobalObject, digest_buf: &mut [u8]) -> u32 {
         let buf_len = digest_buf.len();
         match self {
             CryptoHasher::Zig(zig) => {
@@ -188,7 +188,7 @@ impl CryptoHasher {
     }
 
     #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__getDigestSize", no_catch)]
-    pub fn extern_digest_size(&self) -> u32 {
+    pub(crate) fn extern_digest_size(&self) -> u32 {
         match self {
             CryptoHasher::Zig(inner) => inner.get().digest_length as u32,
             CryptoHasher::Evp(inner) => inner.get().size() as u32,
@@ -197,7 +197,7 @@ impl CryptoHasher {
     }
 
     #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__isXof", no_catch)]
-    pub fn extern_is_xof(&self) -> bool {
+    pub(crate) fn extern_is_xof(&self) -> bool {
         match self {
             CryptoHasher::Zig(inner) => matches!(
                 inner.get().algorithm,
@@ -253,15 +253,16 @@ impl CryptoHasher {
             }
         };
 
-        let algorithm = {
+        let algorithm_view = {
             let Some(string_value) = next_eat() else {
                 return Err(global.throw_invalid_arguments(format_args!("Missing argument")));
             };
             if !string_value.is_string_literal() {
                 return Err(global.throw_invalid_arguments(format_args!("Expected string")));
             }
-            string_value.get_zig_string(global)?
+            string_value.to_js_string_view(global)?
         };
+        let algorithm = algorithm_view.to_utf8();
 
         // Node.BlobOrStringOrBuffer
         let Some(input_arg) = next_eat() else {
@@ -298,7 +299,7 @@ impl CryptoHasher {
             buffer.buffer = ArrayBuffer::from_typed_array(global, buffer.buffer.value);
         }
 
-        Self::hash_(global, algorithm, &input, output)
+        Self::hash_(global, algorithm.slice(), &input, output)
     }
 
     fn throw_hmac_consumed(global: &JSGlobalObject) -> JsError {
@@ -329,7 +330,7 @@ impl CryptoHasher {
                 None => return Err(Self::throw_hmac_consumed(global)),
             },
         };
-        bun_jsc::bun_string_jsc::create_utf8_for_js(global, tag)
+        bun_string_jsc::create_utf8_for_js(global, tag)
     }
 
     // `#[bun_jsc::host_fn]` (Free) emits a bare `fn_name(g, f)` call,
@@ -340,7 +341,7 @@ impl CryptoHasher {
         _: JSValue,
         _: PropertyName,
     ) -> JsResult<JSValue> {
-        bun_jsc::bun_string_jsc::to_js_array(global, evp::Algorithm::names())
+        bun_string_jsc::to_js_array(global, evp::Algorithm::names())
     }
 
     fn hash_to_encoding(
@@ -421,18 +422,18 @@ impl CryptoHasher {
 
     pub(crate) fn hash_(
         global: &JSGlobalObject,
-        algorithm: ZigString,
+        algorithm: &[u8],
         input: &BlobOrStringOrBuffer,
         output: Option<StringOrBuffer>,
     ) -> JsResult<JSValue> {
-        let mut evp = match EVP::by_name(&algorithm, global) {
+        let mut evp = match EVP::by_name(algorithm, global) {
             Some(e) => e,
-            None => match CryptoHasherZig::hash_by_name(global, &algorithm, input, output)? {
+            None => match CryptoHasherZig::hash_by_name(global, algorithm, input, output)? {
                 Some(v) => return Ok(v),
                 None => {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "Unsupported algorithm \"{}\"",
-                        algorithm
+                        bstr::BStr::new(algorithm)
                     )));
                 }
             },
@@ -483,9 +484,9 @@ impl CryptoHasher {
             return Err(global.throw_invalid_arguments(format_args!("algorithm must be a string")));
         }
 
-        let algorithm = algorithm_name.get_zig_string(global)?;
-
-        if algorithm.len == 0 {
+        let algorithm_view = algorithm_name.to_js_string_view(global)?;
+        let algorithm = algorithm_view.to_utf8();
+        if algorithm.slice().is_empty() {
             return Err(global.throw_invalid_arguments(format_args!("Invalid algorithm name")));
         }
 
@@ -504,12 +505,8 @@ impl CryptoHasher {
 
         let init = 'brk: {
             if let Some(key) = &hmac_key {
-                // Inlined `JSValue::to_enum_from_map` (the `is_string` guard
-                // already ran above) so the lookup goes through the
-                // length-gated `evp::lookup_ignore_case` directly.
                 let chosen_algorithm: evp::Algorithm = {
-                    let slice = algorithm_name.to_slice(global)?;
-                    match evp::lookup_ignore_case(slice.slice()) {
+                    match evp::lookup_ignore_case(algorithm.slice()) {
                         Some(v) => v,
                         None => {
                             return Err(global.throw_invalid_arguments(format_args!(
@@ -539,14 +536,14 @@ impl CryptoHasher {
             }
 
             break 'brk CryptoHasher::Evp(Box::new(JsCell::new(
-                match EVP::by_name(&algorithm, global) {
+                match EVP::by_name(algorithm.slice(), global) {
                     Some(e) => e,
-                    None => match CryptoHasherZig::constructor(&algorithm) {
+                    None => match CryptoHasherZig::constructor(algorithm.slice()) {
                         Some(h) => return Ok(h),
                         None => {
                             return Err(global.throw_invalid_arguments(format_args!(
                                 "Unsupported algorithm {}",
-                                algorithm
+                                bstr::BStr::new(algorithm.slice())
                             )));
                         }
                     },
@@ -785,7 +782,7 @@ impl CryptoHasher {
 // CryptoHasherZig
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct CryptoHasherZig {
+pub(crate) struct CryptoHasherZig {
     pub(crate) algorithm: evp::Algorithm,
     pub(crate) state: Box<dyn Any>,
     pub(crate) digest_length: u8,
@@ -884,12 +881,11 @@ macro_rules! for_each_zig_algo {
 impl CryptoHasherZig {
     pub(crate) fn hash_by_name(
         global: &JSGlobalObject,
-        algorithm: &ZigString,
+        algorithm: &[u8],
         input: &BlobOrStringOrBuffer,
         output: Option<StringOrBuffer>,
     ) -> JsResult<Option<JSValue>> {
-        let name = algorithm.to_slice();
-        let Some(algo) = evp::lookup_ignore_case(name.slice()) else {
+        let Some(algo) = evp::lookup_ignore_case(algorithm) else {
             return Ok(None);
         };
         macro_rules! arm {
@@ -1004,10 +1000,8 @@ impl CryptoHasherZig {
         }
     }
 
-    fn constructor(algorithm: &ZigString) -> Option<Box<CryptoHasher>> {
-        let name = algorithm.to_slice();
-        Self::init(name.slice())
-            .map(|inner| CryptoHasher::new(CryptoHasher::Zig(JsCell::new(inner))))
+    fn constructor(algorithm: &[u8]) -> Option<Box<CryptoHasher>> {
+        Self::init(algorithm).map(|inner| CryptoHasher::new(CryptoHasher::Zig(JsCell::new(inner))))
     }
 
     pub(crate) fn init(name: &[u8]) -> Option<CryptoHasherZig> {
@@ -1090,7 +1084,7 @@ impl CryptoHasherZig {
 
 /// Trait abstracting over the `bun_sha_hmac::sha::evp::*` hasher types.
 /// `hash()` takes the VM-owned BoringSSL ENGINE*.
-pub trait StaticHasher: 'static {
+pub(crate) trait StaticHasher: 'static {
     const NAME: &'static str;
     const DIGEST: usize;
     type Digest: AsRef<[u8]> + AsMut<[u8]>; // = [u8; Self::DIGEST]
@@ -1169,7 +1163,7 @@ impl_static_hasher!(hashers::SHA512_256, "SHA512_256", JSSHA512_256, 32);
 // `hashing` is mutated by `update`/`final_` → `JsCell<H>`; `digested` is a
 // Copy flag → `Cell<bool>`.
 #[repr(C)]
-pub struct StaticCryptoHasher<H: StaticHasher> {
+pub(crate) struct StaticCryptoHasher<H: StaticHasher> {
     pub(crate) hashing: JsCell<H>,
     pub(crate) digested: Cell<bool>,
 }
@@ -1498,11 +1492,11 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
     }
 }
 
-pub type MD4 = StaticCryptoHasher<hashers::MD4>;
-pub type MD5 = StaticCryptoHasher<hashers::MD5>;
-pub type SHA1 = StaticCryptoHasher<hashers::SHA1>;
-pub type SHA224 = StaticCryptoHasher<hashers::SHA224>;
-pub type SHA256 = StaticCryptoHasher<hashers::SHA256>;
-pub type SHA384 = StaticCryptoHasher<hashers::SHA384>;
-pub type SHA512 = StaticCryptoHasher<hashers::SHA512>;
-pub type SHA512_256 = StaticCryptoHasher<hashers::SHA512_256>;
+pub(crate) type MD4 = StaticCryptoHasher<hashers::MD4>;
+pub(crate) type MD5 = StaticCryptoHasher<hashers::MD5>;
+pub(crate) type SHA1 = StaticCryptoHasher<hashers::SHA1>;
+pub(crate) type SHA224 = StaticCryptoHasher<hashers::SHA224>;
+pub(crate) type SHA256 = StaticCryptoHasher<hashers::SHA256>;
+pub(crate) type SHA384 = StaticCryptoHasher<hashers::SHA384>;
+pub(crate) type SHA512 = StaticCryptoHasher<hashers::SHA512>;
+pub(crate) type SHA512_256 = StaticCryptoHasher<hashers::SHA512_256>;

@@ -22,10 +22,6 @@
     improper_ctypes, improper_ctypes_definitions, clippy::missing_safety_doc, clippy::not_unsafe_ptr_arg_deref,
     clippy::redundant_closure, clippy::unused_unit)]
 
-// Generated `generated_host_exports.rs` may spell `bun_core::String` or
-// `bun_core::String` depending on which side of the merge the codegen ran on;
-// alias here so both resolve.
-
 include!(concat!(
     env!("BUN_CODEGEN_DIR"),
     "/generated_host_exports.rs"

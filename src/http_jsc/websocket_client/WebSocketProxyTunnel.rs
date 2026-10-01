@@ -25,7 +25,6 @@
 
 use core::cell::{Cell, OnceCell};
 
-use bun_boringssl as boringssl;
 use bun_io::StreamBuffer;
 use bun_ptr::{BackRef, JsCell, RefPtr, Root, ThisPtr};
 use bun_uws::ssl_wrapper::{Handlers as SslHandlers, SslWrapper};
@@ -149,7 +148,9 @@ impl WebSocketProxyTunnel {
             wrapper: OnceCell::new(),
             socket,
             write_buffer: JsCell::new(StreamBuffer::default()),
-            sni_hostname: Some(Box::<[u8]>::from(sni_hostname)),
+            sni_hostname: Some(Box::<[u8]>::from(bun_http::strip_ipv6_brackets(
+                sni_hostname,
+            ))),
             reject_unauthorized,
         })
     }
@@ -187,12 +188,18 @@ impl WebSocketProxyTunnel {
                 // SSL off the parked session/keylog queues entirely.
                 on_session: None,
                 on_keylog: None,
+                server_identity: Some(Self::server_identity),
             },
         )
         .map_err(|_| crate::Error::InvalidOptions)?;
 
         debug_assert!(this.wrapper.get().is_none(), "start() called twice");
         let wrapper = this.wrapper.get_or_init(|| wrapper);
+        // The inner connection's form of the `set_inline_reject` call in
+        // `WebSocketUpgradeClient::handle_open`.
+        if this.reject_unauthorized {
+            wrapper.set_inline_reject();
+        }
         let ssl = wrapper.ssl.get();
 
         // Configure SNI with hostname.
@@ -234,15 +241,26 @@ impl WebSocketProxyTunnel {
     }
 
     /// SSLWrapper callback: Called before TLS handshake starts
+    fn server_identity(
+        this: ThisPtr<Self>,
+        ssl: &mut bun_boringssl::c::SSL,
+    ) -> bun_boringssl::ServerIdentity {
+        let hostname = this
+            .sni_hostname
+            .as_deref()
+            .filter(|_| this.reject_unauthorized);
+        bun_boringssl::server_identity(ssl, hostname)
+    }
+
     fn on_open(this: ThisPtr<Self>) {
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
         bun_core::scoped_log!(WebSocketProxyTunnel, "onOpen");
         // SNI configuration is done in `start()` before the wrapper is driven.
     }
 
     /// SSLWrapper callback: Called with decrypted data from the network
     fn on_data(this: ThisPtr<Self>, decrypted_data: &[u8]) {
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
 
         bun_core::scoped_log!(
             WebSocketProxyTunnel,
@@ -273,7 +291,7 @@ impl WebSocketProxyTunnel {
 
     /// SSLWrapper callback: Called after TLS handshake completes
     fn on_handshake(this: ThisPtr<Self>, success: bool, ssl_error: us_bun_verify_error_t) {
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
 
         bun_core::scoped_log!(WebSocketProxyTunnel, "onHandshake: success={}", success);
 
@@ -302,7 +320,7 @@ impl WebSocketProxyTunnel {
             // Verify server identity.
             let ssl = this.wrapper.get().and_then(|w| w.ssl.get());
             let failed_identity = match (ssl, this.sni_hostname.as_deref()) {
-                (Some(ssl_ptr), Some(hostname)) => !boringssl::check_server_identity(
+                (Some(ssl_ptr), Some(hostname)) => !bun_uws::check_server_identity(
                     bun_opaque::opaque_deref_mut(ssl_ptr.as_ptr()),
                     hostname,
                 ),
@@ -320,7 +338,7 @@ impl WebSocketProxyTunnel {
 
     /// SSLWrapper callback: Called when connection is closing
     fn on_close(this: ThisPtr<Self>) {
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
 
         bun_core::scoped_log!(WebSocketProxyTunnel, "onClose");
 
@@ -333,7 +351,7 @@ impl WebSocketProxyTunnel {
         // If we have a connected WebSocket client, notify it of the close
         if let Some(ws) = connected_websocket {
             let ws = ws.this_ptr();
-            let _ws_guard = ws.ref_guard();
+            let _guard = RefPtr::from_this(ws);
             ws.fail(ErrorCode::Ended);
             return;
         }
@@ -402,7 +420,7 @@ impl WebSocketProxyTunnel {
     /// `handle_tunnel_writable()` re-enters `tunnel.write()`, either of which
     /// can reach a close path that drops a ref on the tunnel.
     pub(crate) fn on_writable(this: ThisPtr<Self>) {
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
 
         // Flush the SSL state machine; no borrow of `*this` other than
         // `wrapper` spans the synchronous `write_encrypted` re-entry.
@@ -449,7 +467,7 @@ impl WebSocketProxyTunnel {
     /// `on_data`/`on_handshake`/`on_close`/`write_encrypted`, which can reach a
     /// close path that drops a ref on the tunnel.
     pub(crate) fn receive(this: ThisPtr<Self>, data: &[u8]) {
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
 
         if let Some(w) = this.wrapper.get() {
             w.receive_data(data);
@@ -463,7 +481,7 @@ impl WebSocketProxyTunnel {
     pub(crate) fn write(this: ThisPtr<Self>, data: &[u8]) -> crate::Result<usize> {
         // The caller's ref (the client's `proxy`/`proxy_tunnel` field) can be
         // released from inside `write_data` via `on_close`; keep `w` alive.
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
         if let Some(w) = this.wrapper.get() {
             return w
                 .write_data(data)
@@ -477,7 +495,7 @@ impl WebSocketProxyTunnel {
     /// Takes `ThisPtr<Self>` because `shutdown()` may fire
     /// `on_close(ctx)`/`write_encrypted(ctx)`.
     pub(crate) fn shutdown(this: ThisPtr<Self>) {
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
         if let Some(w) = this.wrapper.get() {
             let _ = w.shutdown(true); // Fast shutdown
         }
@@ -486,6 +504,26 @@ impl WebSocketProxyTunnel {
     /// Check if the tunnel has backpressure
     pub(crate) fn has_backpressure(&self) -> bool {
         self.write_buffer.get().is_not_empty()
+    }
+
+    pub(crate) fn buffered_amount(&self) -> usize {
+        self.write_buffer.get().size()
+    }
+
+    pub(crate) fn pause_stream(&self) -> bool {
+        match &self.socket {
+            SocketUnion::Tcp(s) => s.pause_stream(),
+            SocketUnion::Ssl(s) => s.pause_stream(),
+            SocketUnion::None => false,
+        }
+    }
+
+    pub(crate) fn resume_stream(&self) -> bool {
+        match &self.socket {
+            SocketUnion::Tcp(s) => s.resume_stream(),
+            SocketUnion::Ssl(s) => s.resume_stream(),
+            SocketUnion::None => false,
+        }
     }
 }
 

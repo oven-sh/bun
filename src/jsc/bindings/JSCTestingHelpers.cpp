@@ -26,6 +26,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsUTF16String,
     JSC::JSValue value = callframe->argument(0);
     if (value.isString()) {
         WTF::String string = value.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         if (string.is8Bit()) {
             return JSValue::encode(jsBoolean(false));
         }
@@ -46,6 +47,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsLatin1String,
     JSC::JSValue value = callframe->argument(0);
     if (value.isString()) {
         WTF::String string = value.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         if (string.is8Bit()) {
             return JSValue::encode(jsBoolean(true));
         }

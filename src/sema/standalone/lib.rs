@@ -192,6 +192,23 @@ pub fn instructions_and_cycles() -> (u64, u64) {
     (0, 0)
 }
 
+/// How much memory the process has right now, as the system counts it against it. 0 where it cannot be told.
+pub fn memory_now() -> u64 {
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: all zeros is a `rusage_info_v4`.
+        let mut info: libc::rusage_info_v4 = unsafe { core::mem::zeroed() };
+        // SAFETY: `info` is what `RUSAGE_INFO_V4` fills in, and outlives the call.
+        let failed = unsafe {
+            libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast())
+        };
+        if failed == 0 {
+            return info.ri_phys_footprint;
+        }
+    }
+    0
+}
+
 /// How many columns the terminal standard output goes to has. 0 if it goes elsewhere.
 pub fn terminal_width() -> usize {
     // SAFETY: all zeros is a `winsize`, which the call fills in.
@@ -203,6 +220,24 @@ pub fn terminal_width() -> usize {
             0
         }
     }
+}
+
+/// The most memory the process has had at any time, as the system counts it against it. What has been given back and not been taken yet, which
+/// `getrusage` counts, is not in it.
+pub fn peak_memory() -> u64 {
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: all zeros is a `rusage_info_v4`.
+        let mut info: libc::rusage_info_v4 = unsafe { core::mem::zeroed() };
+        // SAFETY: `info` is what `RUSAGE_INFO_V4` fills in, and outlives the call.
+        let failed = unsafe {
+            libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast())
+        };
+        if failed == 0 {
+            return info.ri_lifetime_max_phys_footprint;
+        }
+    }
+    peak_rss()
 }
 
 pub fn peak_rss() -> u64 {

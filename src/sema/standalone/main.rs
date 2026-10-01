@@ -269,8 +269,9 @@ fn print_loaded_sizes(program: &bun_sema::check::Program) {
     let mb = |n: usize| n as f64 / (1 << 20) as f64;
     let (room, used): (usize, usize) = rows.iter().fold((0, 0), |a, r| (a.0 + r.1, a.1 + r.2));
     eprintln!(
-        "after loading: peak {:.2} GB; source text {:.0} MB; the modules themselves {:.0} MB; vectors {:.0} MB, of which in use {:.0} MB",
-        bun_sema_standalone::peak_rss() as f64 / (1u64 << 30) as f64,
+        "after loading: now {:.2} GB, peak {:.2} GB; source text {:.0} MB; the modules themselves {:.0} MB; vectors {:.0} MB, of which in use {:.0} MB",
+        bun_sema_standalone::memory_now() as f64 / (1u64 << 30) as f64,
+        bun_sema_standalone::peak_memory() as f64 / (1u64 << 30) as f64,
         mb(text),
         mb(headers),
         mb(room),
@@ -292,8 +293,9 @@ fn print_checked_sizes(program: &bun_sema::check::Program) {
     rows.sort_by_key(|r| std::cmp::Reverse(r.2));
     let total: usize = rows.iter().map(|r| r.2).sum();
     eprintln!(
-        "after checking: peak {:.2} GB; accounted for below {:.0} MB",
-        bun_sema_standalone::peak_rss() as f64 / (1u64 << 30) as f64,
+        "after checking: now {:.2} GB, peak {:.2} GB; accounted for below {:.0} MB",
+        bun_sema_standalone::memory_now() as f64 / (1u64 << 30) as f64,
+        bun_sema_standalone::peak_memory() as f64 / (1u64 << 30) as f64,
         total as f64 / (1 << 20) as f64
     );
     for (name, count, bytes) in rows {
@@ -472,7 +474,7 @@ fn main() {
             let start = std::time::Instant::now();
             let files = bun_sema_standalone::load_tree(&tree, &["src"], threads);
             let loaded = start.elapsed();
-            let after_load = bun_sema_standalone::peak_rss();
+            let after_load = bun_sema_standalone::peak_memory();
             let with_errors = args.iter().any(|a| a == "--check");
             let program = bun_sema::check::Program::new(files);
             let prefix = format!("{tree}/");
@@ -505,7 +507,7 @@ fn main() {
             println!(
                 "peak memory: {:.2} GB after loading, {:.2} GB at the end",
                 after_load as f64 / (1u64 << 30) as f64,
-                bun_sema_standalone::peak_rss() as f64 / (1u64 << 30) as f64
+                bun_sema_standalone::peak_memory() as f64 / (1u64 << 30) as f64
             );
             println!(
                 "threads {threads}: {} files loaded in {:.2}s; {} sites of {} files resolved in {:.2}s ({} unresolved); {} types",
@@ -537,6 +539,20 @@ fn main() {
                 .to_string_lossy()
                 .into_owned();
             let lib_dir = std::env::var("BUN_SEMA_TS_LIB").ok();
+            // `--memory-curve`: how much memory there is, ten times a second.
+            if args.iter().any(|a| a == "--memory-curve") {
+                let began = std::time::Instant::now();
+                std::thread::spawn(move || {
+                    loop {
+                        eprintln!(
+                            "MEMORY {:.1}s {:.2} GB",
+                            began.elapsed().as_secs_f64(),
+                            bun_sema_standalone::memory_now() as f64 / (1u64 << 30) as f64
+                        );
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
+                });
+            }
             let report =
                 bun_sema_driver::check(&bun_sema_driver::Request {
                     cwd: &cwd,
@@ -591,7 +607,7 @@ fn main() {
                     report.load_time.as_secs_f64(),
                     report.files_checked,
                     report.check_time.as_secs_f64(),
-                    bun_sema_standalone::peak_rss() as f64 / (1u64 << 30) as f64
+                    bun_sema_standalone::peak_memory() as f64 / (1u64 << 30) as f64
                 );
                 let (instructions, cycles) = bun_sema_standalone::instructions_and_cycles();
                 eprintln!(
@@ -700,7 +716,7 @@ fn main() {
                 program.files.modules.len(),
                 loaded.as_secs_f64(),
                 start.elapsed().as_secs_f64(),
-                bun_sema_standalone::peak_rss() as f64 / (1u64 << 30) as f64
+                bun_sema_standalone::peak_memory() as f64 / (1u64 << 30) as f64
             );
         }
         Some("at") => {

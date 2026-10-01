@@ -515,7 +515,16 @@ describe.concurrent("bun check", () => {
   });
 
   describe("project references", () => {
-    const options = { strict: true, composite: true, target: "esnext", module: "esnext", moduleResolution: "bundler", lib: ["esnext"], types: [], skipLibCheck: true };
+    const options = {
+      strict: true,
+      composite: true,
+      target: "esnext",
+      module: "esnext",
+      moduleResolution: "bundler",
+      lib: ["esnext"],
+      types: [],
+      skipLibCheck: true,
+    };
     const monorepo = (extra: Record<string, string> = {}) =>
       project({
         // A solution file: no files of its own.
@@ -543,7 +552,9 @@ describe.concurrent("bun check", () => {
     test("errors in a project that is only reached through another one", async () => {
       using dir = monorepo({ "packages/lib/src/broken.ts": `export const wrong: string = 1;\n` });
       const { stdout, exitCode } = await check(dir);
-      expect(stdout).toMatchInlineSnapshot(`"packages/lib/src/broken.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'."`);
+      expect(stdout).toMatchInlineSnapshot(
+        `"packages/lib/src/broken.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'."`,
+      );
       expect(exitCode).toBe(1);
     });
 
@@ -554,12 +565,17 @@ describe.concurrent("bun check", () => {
         "packages/app/src/loose.ts": `import { f } from "../../lib/src/loose";\nexport function g(x) {\n  return f(x);\n}\n`,
       });
       const { stdout } = await check(dir);
-      expect(stdout).toMatchInlineSnapshot(`"packages/lib/src/loose.ts(1,19): error TS7006: Parameter 'x' implicitly has an 'any' type."`);
+      expect(stdout).toMatchInlineSnapshot(
+        `"packages/lib/src/loose.ts(1,19): error TS7006: Parameter 'x' implicitly has an 'any' type."`,
+      );
     });
 
     test("a reference that does not exist", async () => {
       using dir = monorepo({
-        "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "packages/app" }, { path: "packages/gone" }] }),
+        "tsconfig.json": JSON.stringify({
+          files: [],
+          references: [{ path: "packages/app" }, { path: "packages/gone" }],
+        }),
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`"error TS6053: File '<dir>/packages/gone/tsconfig.json' not found."`);

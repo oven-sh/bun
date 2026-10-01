@@ -1070,7 +1070,12 @@ it.skipIf(isWindows || isMacOS)(
 );
 
 it("an absolute dir with '..' in it names routes like its normalized spelling", async () => {
-  const { dir } = make([`pages/index.tsx`, `pages/a-long-directory-name/deeper/page.tsx`, `other/keep.tsx`]);
+  const { dir } = make([
+    `pages/index.tsx`,
+    `pages/api/x.tsx`,
+    `pages/a-long-directory-name/deeper/page.tsx`,
+    `other/keep.tsx`,
+  ]);
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1083,9 +1088,13 @@ it("an absolute dir with '..' in it names routes like its normalized spelling", 
     ],
     env: bunEnv,
     stdout: "pipe",
-    stderr: "inherit",
+    stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  const routes = ["/", "/a-long-directory-name/deeper/page"];
-  expect({ stdout, exitCode }).toEqual({ stdout: JSON.stringify([routes, routes]) + "\n", exitCode: 0 });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const routes = ["/", "/a-long-directory-name/deeper/page", "/api/x"];
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: JSON.stringify([routes, routes]) + "\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });

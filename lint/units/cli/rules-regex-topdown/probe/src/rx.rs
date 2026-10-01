@@ -79,7 +79,7 @@ impl Rx<'_, '_, '_> {
         if !ident && tracked == 0 {
             return;
         }
-        let plain = self.ctx.plain(target).is_some();
+        let plain = self.ctx.plain_callee(target).is_some();
         let mut list = Vec::new();
         for arg in args {
             let kind = match &arg.data {
@@ -218,9 +218,43 @@ impl<'ast> Visitor<'ast> for Rx<'_, '_, '_> {
 }
 
 pub fn run(ctx: &Ctx<'_, '_>, text: &[u8], stmts: &[Stmt]) -> Vec<String> {
+    use bun_js_parser::parse::erased::{ErasedData, ErasedMemberData, ModuleName};
     let mut rx = Rx { ctx, text, out: Vec::new(), jsx_attr: Vec::new() };
     for stmt in stmts {
         rx.visit_stmt(stmt);
+    }
+    let erased = &ctx.parsed.sidecar.erased;
+    for record in &erased.statements {
+        match &record.data {
+            ErasedData::Declaration(stmt) => rx.visit_stmt(stmt),
+            ErasedData::Module(module) => {
+                if let ModuleName::String(name) = &module.name {
+                    rx.string_at(name.start as i32, "module");
+                }
+                if let Some(body) = &module.body {
+                    for stmt in body.slice() {
+                        rx.visit_stmt(stmt);
+                    }
+                }
+            }
+            ErasedData::Import(import) => rx.string_at(import.module_specifier.start as i32, "import type"),
+            ErasedData::Export(export) => {
+                if let Some(specifier) = &export.module_specifier {
+                    rx.string_at(specifier.start as i32, "export type");
+                }
+            }
+            _ => {}
+        }
+    }
+    for member in &erased.members {
+        if let ErasedMemberData::Property(property) = &member.data {
+            for decorator in property.ts_decorators.iter() {
+                rx.visit_decorator(decorator);
+            }
+            for expr in [&property.key, &property.value, &property.initializer].into_iter().flatten() {
+                rx.visit_expr(expr);
+            }
+        }
     }
     rx.out.push(format!("{{\"k\":\"seam\",\"RegExp\":{},\"globalThis\":{}}}", ctx.is_global(b"RegExp"), ctx.is_global(b"globalThis")));
     rx.out

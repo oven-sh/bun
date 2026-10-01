@@ -3173,12 +3173,17 @@ impl<'p> Checker<'p> {
         if let Some(known) = self.p.literal_prop_types.get(file, p.idx()) {
             return known;
         }
+        if let Some(held) = self.held_for_now(file, p) {
+            return held;
+        }
         if !self.enter(Query::LiteralProp(file, p)) {
             return TypeId::UNRESOLVED;
         }
         let ty = self.type_of_literal_prop_uncached(file, p);
         if self.leave() {
             self.p.literal_prop_types.set(file, p.idx(), ty);
+        } else {
+            self.hold_for_now(file, p, ty);
         }
         ty
     }

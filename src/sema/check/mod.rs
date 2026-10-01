@@ -69,6 +69,14 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 pub use call::ResolvedCall;
 pub use shape::Members;
 
+/// An answer that holds while the question at `depth` on the stack is the one numbered `serial`.
+#[derive(Copy, Clone)]
+struct Held {
+    ty: TypeId,
+    depth: usize,
+    serial: u64,
+}
+
 /// One slot for each node of one kind of one file. 0 is "not computed".
 struct Slots(Vec<Box<[AtomicU32]>>);
 
@@ -290,6 +298,8 @@ impl Program {
             deadline: None,
             constraint_stack: Vec::new(),
             trap_on_timeout: std::env::var_os("BUN_SEMA_TIME_TRAP").is_some(),
+            serials: Vec::new(),
+            held_for_now: FxHashMap::default(),
             explains: false,
             notes: Default::default(),
             timed_out: false,
@@ -479,6 +489,10 @@ pub struct Checker<'p> {
     /// The `stack` of `getResolvedBaseConstraint`: what the constraints being worked out, one for the sake of the other, are instances of.
     constraint_stack: Vec<relate::RecursionId>,
     trap_on_timeout: bool,
+    /// For each question on `stack`, a number no other question has had.
+    serials: Vec<u64>,
+    /// The types of properties of object literals that only hold for now: see `hold_for_now`.
+    held_for_now: FxHashMap<(FileId, PropId), Held>,
     /// What is noted of errors is kept: somebody is going to read it.
     explains: bool,
     notes: std::cell::RefCell<Vec<explain::Note>>,
@@ -784,6 +798,7 @@ impl<'p> Checker<'p> {
         }
         self.last_enter = EnterOutcome::Entered;
         self.stack.push(q);
+        self.serials.push(self.work);
         self.tainted.push(false);
         self.circular.push(false);
         self.entry_depths.push(self.instantiation_depth);
@@ -1104,11 +1119,48 @@ impl<'p> Checker<'p> {
     /// Whether the answer holds whoever asks, and so may be kept.
     fn leave(&mut self) -> bool {
         self.stack.pop();
+        self.serials.pop();
         self.entry_depths.pop();
         self.last_enter = EnterOutcome::Entered;
         let tainted = self.tainted.pop().unwrap();
         self.left_a_circle = self.circular.pop().unwrap();
         !tainted
+    }
+
+    /// An answer that was worked out while something it rests on was still open (a question it came back to, a candidate being tried
+    /// out) does not hold for good. It does hold for as long as the outermost question that does not hold for good either is open:
+    /// until then everything it rests on stays as it is. Asked again meanwhile, it is not worked out again. Without this, questions
+    /// that each lead to all the others, like the rows of a table that is expected to be an array of its own rows, are gone through
+    /// in every order there is.
+    fn hold_for_now(&mut self, file: FileId, p: PropId, ty: TypeId) {
+        if let Some(outermost) = self.tainted.iter().position(|&tainted| tainted) {
+            self.held_for_now.insert(
+                (file, p),
+                Held {
+                    ty,
+                    depth: outermost,
+                    serial: self.serials[outermost],
+                },
+            );
+        }
+    }
+
+    /// What `hold_for_now` was told, if it still holds. Whatever is being worked out from it does not hold for good either.
+    fn held_for_now(&mut self, file: FileId, p: PropId) -> Option<TypeId> {
+        if self.held_for_now.is_empty() {
+            return None;
+        }
+        if self.stack.is_empty() {
+            self.held_for_now.clear();
+            return None;
+        }
+        let held = *self.held_for_now.get(&(file, p))?;
+        if self.serials.get(held.depth) != Some(&held.serial) {
+            self.held_for_now.remove(&(file, p));
+            return None;
+        }
+        self.taint_from(held.depth);
+        Some(held.ty)
     }
 
     /// Something that only holds while a candidate is tried out was just read: what is being computed from it, up to

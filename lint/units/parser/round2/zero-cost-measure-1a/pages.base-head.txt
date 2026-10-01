@@ -1,0 +1,10 @@
+# fresh mimalloc pages by block size, base -> head (gdbpages.py, breakpoint mi_arenas_page_alloc_fresh, $rdx)
+## tsx, --iterations=1 (100 parses)
+320 2 320 102
+## js-control, --iterations=1 (1 parse)
+80 2 80 6
+96 7 96 2
+320 3 320 16
+384 20 384 4
+640 2 640 4
+768 5 768 3

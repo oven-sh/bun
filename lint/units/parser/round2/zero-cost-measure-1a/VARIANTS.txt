@@ -1,0 +1,1 @@
+variants linked: v2bh (head + patch_v2.py + patch_v2b.py), v2b (patch_v1.py + patch_v2.py + patch_v2b.py), v2c (v2bh + patch_v2c.py; linked in the slot named v3). The rlib of patch_v3.py (reader of the base for Discard) is /tmp/zc1a/seam/out/v3flat and was not linked.

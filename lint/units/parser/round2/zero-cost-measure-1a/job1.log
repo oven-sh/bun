@@ -1,0 +1,12 @@
+queued 2026-10-01T19:01:47Z
+lock acquired 2026-10-01T19:41:36Z load 444.28 439.02 399.75
+cache seeded from /tmp/zcm-td (1579 files)
+v2bh full rc 0 seconds 180 load 362.00
+cgbench v2bh rc=0 19:45:58
+tests v2bh rc=0 19:46:01
+v2b full rc 0 seconds 197 load 272.39
+cgbench v2b rc=0 19:50:38
+v3 full rc 0 seconds 159 load 369.69
+cgbench v3 rc=0 19:54:38
+tests v3 rc=0 19:54:46
+done 2026-10-01T19:54:46Z load 430.85 364.84 368.79

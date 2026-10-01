@@ -1,0 +1,18 @@
+(todo) bundler > ts/EnumDefine
+
+ 667 pass
+ 1 skip
+ 37 todo
+ 0 fail
+ 12 snapshots, 2679 expect() calls
+Ran 705 tests across 7 files. [3.17s]
+
+--- v2c
+(todo) bundler > ts/EnumDefine
+
+ 667 pass
+ 1 skip
+ 37 todo
+ 0 fail
+ 12 snapshots, 2679 expect() calls
+Ran 705 tests across 7 files. [7.18s]

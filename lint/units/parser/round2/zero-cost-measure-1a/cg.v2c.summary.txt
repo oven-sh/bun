@@ -1,0 +1,5 @@
+v3 bun-types {"events": ["Ir", "Bc", "Bcm", "Bi", "Bim"], "total": {"Ir": 506055629, "Bc": 96975914, "Bi": 5348835}, "match": "bun_js_parser", "matched_symbols": 151, "matched": {"Ir": 324731139, "Bc": 46556438, "Bi": 4335371}}
+v3 typescript-lib {"events": ["Ir", "Bc", "Bcm", "Bi", "Bim"], "total": {"Ir": 1703595958, "Bc": 340133447, "Bi": 16613398}, "match": "bun_js_parser", "matched_symbols": 122, "matched": {"Ir": 1159995579, "Bc": 170183298, "Bi": 14324731}}
+v3 src-js {"events": ["Ir", "Bc", "Bcm", "Bi", "Bim"], "total": {"Ir": 7491248095, "Bc": 1122183469, "Bi": 73791099}, "match": "bun_js_parser", "matched_symbols": 278, "matched": {"Ir": 4441248166, "Bc": 513649106, "Bi": 47397650}}
+v3 tsx {"events": ["Ir", "Bc", "Bcm", "Bi", "Bim"], "total": {"Ir": 2105878945, "Bc": 337264868, "Bi": 19484192}, "match": "bun_js_parser", "matched_symbols": 225, "matched": {"Ir": 1185311157, "Bc": 140187479, "Bi": 12810990}}
+v3 js-control {"events": ["Ir", "Bc", "Bcm", "Bi", "Bim"], "total": {"Ir": 5112839565, "Bc": 706109329, "Bi": 53857378}, "match": "bun_js_parser", "matched_symbols": 161, "matched": {"Ir": 2901946283, "Bc": 312467438, "Bi": 35874170}}

@@ -2976,28 +2976,13 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     ASSERT_WITH_MESSAGE(JSC::isJSArray(result), "Expected an array from getStdioWriteStream");
     JSC::JSArray* resultObject = uncheckedDowncast<JSC::JSArray>(result);
 
-    // process.stdout and process.stderr differ from other Node.js streams in important ways:
-    // 1. They are used internally by console.log() and console.error(), respectively.
-    // 2. Writes may be synchronous depending on what the stream is connected to and whether the system is Windows or POSIX:
-    // Files: synchronous on Windows and POSIX
-    // TTYs (Terminals): asynchronous on Windows, synchronous on POSIX
-    // Pipes (and sockets): synchronous on Windows, asynchronous on POSIX
-    bool forceSync = false;
-#if OS(WINDOWS)
-    forceSync = fdType == BunProcessStdinFdType::file || fdType == BunProcessStdinFdType::pipe;
-#else
-    // Note: files are always sync anyway.
-    // forceSync = fdType == BunProcessStdinFdType::file || bun_stdio_tty[fd];
-
+    // process.stdout and process.stderr are used internally by console.log() and console.error(), and
+    // their writes are synchronous whatever they are connected to.
     // TODO: once console.* is wired up to write/read through the same buffering mechanism as FileSink for process.stdout, process.stderr, we can make this non-blocking for sockets on POSIX.
     // Until then, we have to force it to be sync EVEN for sockets or else console.log() may flush at a different time than process.stdout.write.
-    forceSync = true;
-#endif
-    if (forceSync) {
-        JSValue sink = resultObject->getIndex(globalObject, 1);
-        RETURN_IF_EXCEPTION(scope, jsUndefined());
-        Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalObject, JSValue::encode(sink));
-    }
+    JSValue sink = resultObject->getIndex(globalObject, 1);
+    RETURN_IF_EXCEPTION(scope, jsUndefined());
+    Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalObject, JSValue::encode(sink));
 
     JSValue stream = resultObject->getIndex(globalObject, 0);
     RETURN_IF_EXCEPTION(scope, jsUndefined());

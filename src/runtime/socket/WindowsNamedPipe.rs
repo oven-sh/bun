@@ -524,32 +524,20 @@ impl WindowsNamedPipe {
         }
     }
 
-    fn call_write_or_end(&self, data: Option<&[u8]>, msg_more: bool) {
-        if let Some(bytes) = data {
-            if !bytes.is_empty() {
-                if self.flags.get().disconnected() {
-                    // enqueue to be sent after connecting
-                    self.writer
-                        .with_mut(|w| bun_core::handle_oom(w.outgoing.write(bytes)));
-                } else {
-                    // write will enqueue the data if it cannot be sent
-                    let _ = self.writer.with_mut(|w| w.write(bytes));
-                }
-            }
-        }
-
-        if !msg_more {
-            let _ = self.with_wrapper(|w| {
-                let _ = w.shutdown(false);
-            });
-            self.with_writer(|w| w.end());
-        }
-    }
-
     fn internal_write(&self, encoded_data: &[u8]) {
         self.reset_timeout();
 
-        self.call_write_or_end(Some(encoded_data), true);
+        if encoded_data.is_empty() {
+            return;
+        }
+        if self.flags.get().disconnected() {
+            // enqueue to be sent after connecting
+            self.writer
+                .with_mut(|w| bun_core::handle_oom(w.outgoing.write(encoded_data)));
+        } else {
+            // write will enqueue the data if it cannot be sent
+            let _ = self.writer.with_mut(|w| w.write(encoded_data));
+        }
     }
 
     /// The open pipe; `None` before the connect completes and once closed.
@@ -1025,7 +1013,6 @@ impl bun_io::pipe_writer::WindowsWriterParent for WindowsNamedPipe {
 }
 
 impl bun_io::pipe_writer::WindowsStreamingWriterParent for WindowsNamedPipe {
-    const HAS_ON_WRITABLE: bool = true;
     #[inline]
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
         // SAFETY: BACKREF set via `set_parent`; the callbacks take `&self`.

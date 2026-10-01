@@ -112,6 +112,9 @@ unsafe extern "C" {
     /// `FILE_SKIP_COMPLETION_PORT_ON_SUCCESS`). The loop balances it when the
     /// packet is dequeued, and does not close the port while any are out.
     pub fn us_iocp_op_submitted(loop_: *mut Loop);
+    /// The packet of a submitted op will not come: a thread that cannot be
+    /// stopped was left to finish the op by itself, and frees it.
+    pub fn us_iocp_op_abandoned(loop_: *mut Loop);
     /// `op`'s `complete` runs from the loop's next tick, before that tick
     /// takes packets from the port. Loop thread only; counted like a packet.
     pub fn us_iocp_op_ready(loop_: *mut Loop, op: *mut Op);

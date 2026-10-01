@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <time.h>
 
-uint64_t uv__hrtime(uv_clocktype_t type)
+uint64_t uv__hrtime(void)
 {
     struct timespec t;
 

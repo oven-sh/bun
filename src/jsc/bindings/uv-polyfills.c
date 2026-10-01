@@ -15,7 +15,7 @@ void __bun_throw_not_implemented(const char* symbol_name)
 
 // Internals
 
-uint64_t uv__hrtime(uv_clocktype_t type);
+uint64_t uv__hrtime(void);
 
 #if defined(__linux__)
 #include "uv-polyfills-linux.c"
@@ -45,7 +45,7 @@ UV_EXTERN void uv_once(uv_once_t* guard, void (*callback)(void))
 
 UV_EXTERN uint64_t uv_hrtime(void)
 {
-    return uv__hrtime(UV_CLOCK_PRECISE);
+    return uv__hrtime();
 }
 
 // Copy-pasted from libuv

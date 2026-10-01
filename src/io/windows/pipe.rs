@@ -1487,7 +1487,6 @@ impl Inner {
                     (*op).posted = Some((*op).lane.take_back((*this).handle, &raw mut (*op).op));
                     return Ok(false);
                 }
-                super::wait_submitted(loop_);
                 return Ok(true);
             }
             (*op).posted = Some(if ok == 0 {
@@ -1888,7 +1887,6 @@ impl Inner {
                                 &raw mut (*op).op,
                             ) == 0
                             {
-                                super::wait_submitted(loop_);
                                 (*this).event_write = op;
                                 return None;
                             }
@@ -2062,7 +2060,7 @@ impl Inner {
                         {
                             (*this).read_op = ptr::null_mut();
                             (*this).pending -= 1;
-                            super::settle((*this).link.loop_);
+                            super::op_abandoned((*this).link.loop_);
                         }
                         Mode::Sync | Mode::Unknown => {}
                     },
@@ -2172,12 +2170,11 @@ impl ReadOp {
         }
     }
 
-    unsafe extern "C" fn complete(loop_: *mut Loop, op: *mut Op) {
+    unsafe extern "C" fn complete(_loop: *mut Loop, op: *mut Op) {
         let this = op.cast::<ReadOp>();
         // SAFETY: `op` is the first field of the `ReadOp` this packet was
         // submitted for; the packet is what kept it allocated.
         unsafe {
-            super::op_dequeued(loop_);
             let pipe = (*this).pipe;
             (*pipe).pending -= 1;
             if (*this).state == ReadState::Delivering {
@@ -2962,12 +2959,11 @@ impl SyncShared {
 }
 
 impl WriteOp {
-    unsafe extern "C" fn complete(loop_: *mut Loop, op: *mut Op) {
+    unsafe extern "C" fn complete(_loop: *mut Loop, op: *mut Op) {
         let this = op.cast::<WriteOp>();
         // SAFETY: `op` is the first field of the `WriteOp` this packet was
         // submitted for; the packet is what kept it allocated.
         unsafe {
-            super::op_dequeued(loop_);
             let pipe = (*this).pipe;
             // Its thread let go of the job before it posted this packet.
             if let Some(mut write) = (*pipe).sync_write.take()
@@ -3415,12 +3411,11 @@ struct FlushOp {
 }
 
 impl FlushOp {
-    unsafe extern "C" fn complete(loop_: *mut Loop, op: *mut Op) {
+    unsafe extern "C" fn complete(_loop: *mut Loop, op: *mut Op) {
         let this = op.cast::<FlushOp>();
         // SAFETY: `op` is the first field of the `FlushOp` this packet was
         // submitted for; the packet is what kept it allocated.
         unsafe {
-            super::op_dequeued(loop_);
             let this = bun_core::heap::take(this);
             let pipe = this.pipe;
             (*pipe).pending -= 1;
@@ -3696,7 +3691,6 @@ impl ConnectOp {
         // SAFETY: `op` is the first field of the `ConnectOp` this packet was
         // posted for; the packet is what kept it allocated.
         unsafe {
-            super::op_dequeued(loop_);
             let state: &ConnectState = &(*this).state;
             let abandoned = state.abandoned.get();
             if state.device.get() != INVALID_HANDLE_VALUE {

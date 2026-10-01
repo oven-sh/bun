@@ -9,9 +9,9 @@ use crate::lockfile_real::package::scripts::List as ScriptsList;
 use crate::package_manager_real::ProgressStrings;
 use bun_core::{Global, Output};
 use bun_io::BufferedReader;
-use bun_io::heap as io_heap;
 #[cfg(unix)]
-use bun_io::{FilePollFlag, ReaderFlags};
+use bun_io::ReaderFlags;
+use bun_io::heap as io_heap;
 
 use bun_core::ZStr;
 use bun_spawn::SpawnResultExt as _;
@@ -634,22 +634,14 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     continue;
                 }
                 (*this).remaining_fds += 1;
-                // POSIX: the parent end is a socketpair half.
+                // POSIX: the parent end is a socketpair half, which spawn made nonblocking.
                 #[cfg(unix)]
-                {
-                    let _ = bun_sys::set_nonblocking(fd);
-                    Self::reset_output_flags(&mut *output, fd);
-                }
+                Self::reset_output_flags(&mut *output, fd);
                 if let Err(err) = (*output).start(fd, true) {
                     // Windows only: POSIX reports a failed start through
                     // `on_reader_error` itself. The reader did not take `fd`.
                     fd.close();
                     (*this).on_reader_error(&err);
-                    continue;
-                }
-                #[cfg(unix)]
-                if let Some(poll) = (*output).handle.get_poll() {
-                    poll.set_flag(FilePollFlag::Socket);
                 }
             }
 

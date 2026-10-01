@@ -2201,11 +2201,6 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
                     this.set_err(format_args!("Failed to start reading stdout"));
                     return Err(());
                 }
-                this.stdout_reader().with_mut(|r| {
-                    if let Some(p) = r.handle.get_poll() {
-                        p.set_flag(bun_io::FilePollFlag::Socket);
-                    }
-                });
             } else {
                 this.stdout_reader().with_mut(|r| {
                     r.set_parent(this_ptr);

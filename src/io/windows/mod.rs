@@ -33,65 +33,13 @@ pub use tty::Tty;
 // ──────────────────────────────────────────────────────────────────────────
 
 /// A packet that leads to `op` is now owed to `loop_`, which must keep turning
-/// and must not close its port until it is dequeued.
-///
-/// # Safety
-/// `loop_` is the live loop of the calling thread.
-#[inline]
-pub(crate) unsafe fn op_submitted(loop_: *mut Loop) {
-    // SAFETY: caller contract.
-    unsafe {
-        (*loop_).inc();
-        iocp::us_iocp_op_submitted(loop_);
-    }
-}
-
-/// As [`op_submitted`] for a wait started with `us_iocp_wait_start`, which
-/// does the port accounting itself.
-///
-/// # Safety
-/// `loop_` is the live loop of the calling thread.
-#[inline]
-pub(crate) unsafe fn wait_submitted(loop_: *mut Loop) {
-    // SAFETY: caller contract.
-    unsafe { (*loop_).inc() };
-}
-
-/// The packet accounted by [`op_submitted`] / [`wait_submitted`] was dequeued
-/// (or its wait was removed before firing).
-///
-/// # Safety
-/// `loop_` is the live loop of the calling thread.
-#[inline]
-pub(crate) unsafe fn op_dequeued(loop_: *mut Loop) {
-    // SAFETY: caller contract.
-    unsafe { (*loop_).dec() };
-}
+/// and must not close its port until it is dequeued. The loop takes it off the
+/// count as it dequeues it. (`us_iocp_wait_start` counts its own.)
+pub(crate) use iocp::us_iocp_op_submitted as op_submitted;
 
 /// The packet counted by [`op_submitted`] will not come: a helper thread that
 /// cannot be stopped was left to finish the operation by itself, and frees it.
-/// The count is taken off as the loop collects its packets, in their order.
-///
-/// # Safety
-/// `loop_` is the live loop of the calling thread, with one such packet owed.
-pub(crate) unsafe fn settle(loop_: *mut Loop) {
-    #[repr(C)]
-    struct Settle {
-        op: iocp::Op,
-    }
-    unsafe extern "C" fn complete(loop_: *mut Loop, op: *mut iocp::Op) {
-        // SAFETY: `op` is the first field of the `Settle` made below.
-        unsafe {
-            op_dequeued(loop_);
-            drop(bun_core::heap::take(op.cast::<Settle>()));
-        }
-    }
-    let settle = bun_core::heap::into_raw(Box::new(Settle {
-        op: iocp::Op::new(complete),
-    }));
-    // SAFETY: caller contract; `settle` is freed by its completion.
-    unsafe { iocp::us_iocp_op_ready(loop_, &raw mut (*settle).op) };
-}
+pub(crate) use iocp::us_iocp_op_abandoned as op_abandoned;
 
 /// Have `op`'s `complete` run from the loop rather than re-entrantly: from
 /// its next tick, before that tick takes packets from the port, in the order of

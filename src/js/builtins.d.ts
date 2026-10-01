@@ -303,7 +303,6 @@ declare function $resolveSync(
 ): string;
 declare function $self(): TODO;
 declare function $size(): TODO;
-declare function $start(): TODO;
 declare function $status(): TODO;
 declare function $stream(): TODO;
 declare function $syscall(): TODO;

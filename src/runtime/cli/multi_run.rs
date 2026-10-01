@@ -195,7 +195,6 @@ impl<'a> ProcessHandle<'a> {
             (stderr_fd, &mut self.stderr_reader.reader),
         ] {
             let Some(fd) = fd else { continue };
-            let _ = bun_sys::set_nonblocking(fd);
             if let Err(err) = reader.start(fd, true) {
                 // A reader that fails to start (Windows only) has not taken the fd.
                 fd.close();

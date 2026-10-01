@@ -235,6 +235,10 @@ void us_iocp_op_submitted(struct us_loop_t *loop) {
     InterlockedIncrement((volatile LONG *) &loop->pending_ops);
 }
 
+void us_iocp_op_abandoned(struct us_loop_t *loop) {
+    InterlockedDecrement((volatile LONG *) &loop->pending_ops);
+}
+
 void us_iocp_op_ready(struct us_loop_t *loop, struct us_iocp_op *op) {
     op->next_ready = NULL;
     if (loop->ready_ops_tail) {
@@ -722,7 +726,7 @@ static void slow_req_orphan(struct us_loop_t *loop, struct us_internal_slow_poll
     }
     /* `req` is the thread's from here on. */
     slow_req_unlink(loop, poll, req, prev, next);
-    InterlockedDecrement((volatile LONG *) &loop->pending_ops);
+    us_iocp_op_abandoned(loop);
 }
 
 static void slow_poll_complete(struct us_loop_t *loop, struct us_iocp_op *op) {

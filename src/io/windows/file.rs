@@ -18,7 +18,7 @@ use std::sync::Arc;
 use bun_sys::{self as sys, E, Fd, FdExt as _, Tag};
 use bun_threading::work_pool::{IntrusiveWorkTask as _, Task, WorkPool};
 use bun_uws_sys::Loop;
-use bun_uws_sys::iocp::{self, Op};
+use bun_uws_sys::iocp::Op;
 
 use super::pipe::ReadEvent;
 use super::{Callback, Link, Port, ReadCallback};
@@ -320,36 +320,6 @@ impl Drop for File {
     }
 }
 
-/// Carries to the loop's teardown drain the bookkeeping of a request that was
-/// orphaned: what [`Inner::schedule`] added is taken off as it is dequeued.
-#[repr(C)]
-struct Settle {
-    op: Op,
-}
-
-impl Settle {
-    /// # Safety
-    /// `loop_` is the live loop of the calling thread, with one
-    /// [`Inner::schedule`] to undo.
-    unsafe fn post(loop_: *mut Loop) {
-        let settle = bun_core::heap::into_raw(Box::new(Settle {
-            op: Op::new(Settle::complete),
-        }));
-        // SAFETY: caller contract; `settle` is freed by its completion. The
-        // loop already counts the request's packet as owed.
-        unsafe { iocp::us_iocp_op_ready(loop_, &raw mut (*settle).op) };
-    }
-
-    unsafe extern "C" fn complete(loop_: *mut Loop, op: *mut Op) {
-        // SAFETY: `op` is the first field of the `Settle` posted above.
-        unsafe {
-            super::op_dequeued(loop_);
-            (*loop_).sub_active(1);
-            drop(bun_core::heap::take(op.cast::<Settle>()));
-        }
-    }
-}
-
 impl Inner {
     /// [`Link::shut`]: the loop is about to be freed.
     unsafe fn shut(link: *mut Link) {
@@ -386,7 +356,9 @@ impl Inner {
                     }
                 }
             }
-            Settle::post((*this).link.loop_);
+            // What `schedule` added.
+            super::op_abandoned((*this).link.loop_);
+            (*(*this).link.loop_).sub_active(1);
             if (*this).owner_gone {
                 Self::release(this);
             }
@@ -560,7 +532,6 @@ impl Inner {
         // SAFETY: `op` is the first field of the `Inner` whose worker posted
         // this packet; the worker is done with it.
         unsafe {
-            super::op_dequeued(loop_);
             (*loop_).sub_active(1);
             (*this).state.store(IDLE, Ordering::Release);
             (*this).completing = true;

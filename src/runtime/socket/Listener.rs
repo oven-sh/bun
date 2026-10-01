@@ -1816,14 +1816,9 @@ impl WindowsNamedPipeListeningContext {
     ///
     /// # Safety
     /// `this` is the live context given to `PipeServer::listen`.
-    unsafe fn on_connection(this: *mut Self, (): ()) {
+    unsafe fn on_connection(this: *mut Self, pipe: bun_io::windows::Pipe) {
         // SAFETY: fn contract; the borrows end before any handler runs.
-        let (pipe, listener_ref, ssl_ctx) = unsafe {
-            let Some(pipe) = (*this).server.as_mut().and_then(|server| server.accept()) else {
-                return;
-            };
-            (pipe, (*this).listener, (*this).ctx.get().clone())
-        };
+        let (listener_ref, ssl_ctx) = unsafe { ((*this).listener, (*this).ctx.get().clone()) };
         // `BackRef` deref — owner `Listener` outlives this context (see field doc).
         let listener: &Listener = listener_ref.get();
         // An accepted pipe is the listening script's.

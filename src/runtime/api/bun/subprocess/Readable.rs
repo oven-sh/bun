@@ -99,13 +99,6 @@ impl Readable {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let mut stdio = stdio;
-        #[cfg(unix)]
-        {
-            if matches!(stdio, Stdio::Pipe) {
-                let _ = bun_sys::set_nonblocking(result.unwrap());
-            }
-        }
-
         match &stdio {
             Stdio::Inherit => Readable::Inherit,
             Stdio::Ignore | Stdio::Ipc | Stdio::Path(..) => Readable::Ignore,

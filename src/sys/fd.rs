@@ -14,12 +14,6 @@ use crate as sys;
 
 bun_core::define_scoped_log!(log, SYS, visible);
 
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum ErrorCase {
-    CloseOnFail,
-    LeakFdOnFail,
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // FdExt — syscall-touching methods on `bun_core::Fd`.
 //
@@ -49,13 +43,9 @@ pub trait FdExt: Copy + Sized {
     /// EBADF must surface to the caller. Consider fd the raw close method.
     fn close_allowing_standard_io(self, return_address: Option<usize>) -> Option<sys::Error>;
     /// Give a HANDLE a slot in the C runtime's fd table, for an fd that JS
-    /// gets to see. `EMFILE` when the table is full; `error_case` says whether
-    /// the HANDLE is closed then.
-    fn make_crt_owned_for_syscall(
-        self,
-        syscall_tag: sys::Tag,
-        error_case: ErrorCase,
-    ) -> sys::Result<Fd>;
+    /// gets to see. `EMFILE` from `open` when the table is full, and the HANDLE
+    /// is closed then.
+    fn make_crt_owned_for_syscall(self) -> sys::Result<Fd>;
     fn make_path_u8(self, subpath: &[u8]) -> sys::Maybe<()>;
     fn delete_tree(self, subpath: &[u8]) -> sys::Maybe<()>;
 }
@@ -199,14 +189,9 @@ impl FdExt for Fd {
         result
     }
 
-    fn make_crt_owned_for_syscall(
-        self,
-        syscall_tag: sys::Tag,
-        error_case: ErrorCase,
-    ) -> sys::Result<Fd> {
+    fn make_crt_owned_for_syscall(self) -> sys::Result<Fd> {
         #[cfg(not(windows))]
         {
-            let _ = (syscall_tag, error_case);
             Ok(self)
         }
         #[cfg(windows)]
@@ -220,14 +205,8 @@ impl FdExt for Fd {
                     if n != -1 {
                         return Ok(Fd::from_crt(n));
                     }
-                    if matches!(error_case, ErrorCase::CloseOnFail) {
-                        self.close();
-                    }
-                    Err(sys::Error {
-                        errno: sys::E::EMFILE as _,
-                        syscall: syscall_tag,
-                        ..Default::default()
-                    })
+                    self.close();
+                    Err(sys::Error::from_code(sys::E::EMFILE, sys::Tag::open))
                 }
             }
         }

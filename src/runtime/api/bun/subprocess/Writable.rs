@@ -139,13 +139,6 @@ impl<'a> Writable<'a> {
                 .cast::<()>(),
         );
 
-        #[cfg(unix)]
-        {
-            if matches!(stdio, Stdio::Pipe) {
-                let _ = bun_sys::set_nonblocking(result.unwrap());
-            }
-        }
-
         match stdio {
             Stdio::Dup2(_) => panic!("TODO dup2 stdio"),
             Stdio::Pipe | Stdio::ReadableStream(_) => {

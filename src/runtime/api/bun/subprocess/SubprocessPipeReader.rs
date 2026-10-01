@@ -2,8 +2,6 @@ use core::ptr::NonNull;
 
 use crate::webcore::ReadableStream;
 use bun_io::BufferedReader;
-#[cfg(unix)]
-use bun_io::FilePollFlag;
 use bun_io::Loop as AsyncLoop;
 use bun_io::max_buf::MaxBuf;
 use bun_io::pipe_reader::ReaderFlags;
@@ -174,10 +172,6 @@ impl PipeReader {
                 // onReaderError already ran; `_guard`'s Drop on return
                 // will drop the last ref and deinit() closes the handle.
                 return;
-            }
-            if let Some(poll) = self.reader.handle.get_poll() {
-                poll.set_flag(FilePollFlag::Socket);
-                poll.set_flag(FilePollFlag::Nonblocking);
             }
             self.reader
                 .flags

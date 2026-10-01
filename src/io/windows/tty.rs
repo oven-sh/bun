@@ -970,7 +970,7 @@ impl Inner {
                 {
                     (*this).line_op = ptr::null_mut();
                     (*this).pending -= 1;
-                    super::settle((*this).link.loop_);
+                    super::op_abandoned((*this).link.loop_);
                 } else {
                     (*this).close_fd = (*line).own.take();
                 }
@@ -1068,7 +1068,6 @@ impl WaitOp {
             if iocp::us_iocp_wait_start((*op).wait, handle, &raw mut (*op).op) != 0 {
                 return Err(win::last_error());
             }
-            super::wait_submitted(loop_);
             (*op).armed = true;
             (*tty).pending += 1;
             Ok(())
@@ -1086,7 +1085,6 @@ impl WaitOp {
                 // Removed before it fired: no packet will come for it.
                 (*op).armed = false;
                 let tty = (*op).tty;
-                super::op_dequeued((*tty).link.loop_);
                 (*tty).pending -= 1;
             }
         }
@@ -1097,11 +1095,10 @@ impl WaitOp {
     ///
     /// # Safety
     /// `op` is the first field of a `WaitOp` whose wait fired.
-    unsafe fn fired(loop_: *mut Loop, op: *mut Op) -> Option<*mut Inner> {
+    unsafe fn fired(op: *mut Op) -> Option<*mut Inner> {
         let wait = op.cast::<WaitOp>();
         // SAFETY: caller contract; the tty outlives its packets (`pending`).
         unsafe {
-            super::op_dequeued(loop_);
             (*wait).armed = false;
             let this = (*wait).tty;
             (*this).pending -= 1;
@@ -1115,10 +1112,10 @@ impl WaitOp {
 
     /// [`LINE_MODE`] was set: the console's input is not this reader's to wait
     /// on any more.
-    unsafe extern "C" fn line_mode_set(loop_: *mut Loop, op: *mut Op) {
+    unsafe extern "C" fn line_mode_set(_loop: *mut Loop, op: *mut Op) {
         // SAFETY: `op` is the first field of the `WaitOp` whose wait fired.
         unsafe {
-            let Some(this) = Self::fired(loop_, op) else {
+            let Some(this) = Self::fired(op) else {
                 return;
             };
             if current_mode() == Mode::Normal {
@@ -1129,10 +1126,10 @@ impl WaitOp {
     }
 
     /// The console's input queue holds records.
-    unsafe extern "C" fn input_ready(loop_: *mut Loop, op: *mut Op) {
+    unsafe extern "C" fn input_ready(_loop: *mut Loop, op: *mut Op) {
         // SAFETY: `op` is the first field of the `WaitOp` whose wait fired.
         unsafe {
-            let Some(this) = Self::fired(loop_, op) else {
+            let Some(this) = Self::fired(op) else {
                 return;
             };
             // Not reading: the records stay queued (the handle stays
@@ -1342,13 +1339,12 @@ impl LineOp {
         0
     }
 
-    unsafe extern "C" fn complete(loop_: *mut Loop, op: *mut Op) {
+    unsafe extern "C" fn complete(_loop: *mut Loop, op: *mut Op) {
         let line = op.cast::<LineOp>();
         // SAFETY: `op` is the first field of the `LineOp` whose helper thread
         // posted this packet and is done with it; the tty outlives its
         // packets (`pending`).
         unsafe {
-            super::op_dequeued(loop_);
             (*line).in_flight = false;
             let this = (*line).tty;
             (*this).pending -= 1;
@@ -1414,11 +1410,10 @@ impl Inner {
 }
 
 impl PostedOp {
-    unsafe extern "C" fn complete(loop_: *mut Loop, op: *mut Op) {
+    unsafe extern "C" fn complete(_loop: *mut Loop, op: *mut Op) {
         // SAFETY: `op` is the first field of the `PostedOp` of a tty, which
         // outlives its packets (`pending`).
         unsafe {
-            super::op_dequeued(loop_);
             let this = (*op.cast::<PostedOp>()).tty;
             (*this).posted.out = false;
             (*this).pending -= 1;

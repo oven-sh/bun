@@ -1774,7 +1774,6 @@ pub trait WindowsStreamingWriterParent: WindowsWriterParent {
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_error(this: *mut Self, err: sys::Error);
-    const HAS_ON_WRITABLE: bool;
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_writable(_this: *mut Self) {}
@@ -2101,10 +2100,8 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         // process pending outgoing data if any
         Self::r(this).process_send();
 
-        if Parent::HAS_ON_WRITABLE {
-            // SAFETY: parent BACKREF valid.
-            unsafe { Parent::on_writable(Self::r(this).parent()) };
-        }
+        // SAFETY: parent BACKREF valid.
+        unsafe { Parent::on_writable(Self::r(this).parent()) };
     }
 
     /// Report a failure to start a write like a failed write.
@@ -2465,7 +2462,6 @@ macro_rules! impl_streaming_writer_parent {
         #[cfg(windows)]
         impl $($gen)* $crate::pipe_writer::WindowsStreamingWriterParent for $Ty {
             // Same body as POSIX `on_ready`.
-            const HAS_ON_WRITABLE: bool = true;
             #[inline]
             unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {
                 // SAFETY: BACKREF set via `set_parent`; see borrow-mode note.

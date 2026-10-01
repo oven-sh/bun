@@ -822,13 +822,7 @@ extern "C" void bun_initialize_process()
 #endif
 }
 
-#if OS(WINDOWS)
-extern "C" int32_t open_as_nonblocking_tty(int32_t fd, int32_t mode)
-{
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-#else
+#if !OS(WINDOWS)
 
 static bool can_open_as_nonblocking_tty(int32_t fd)
 {

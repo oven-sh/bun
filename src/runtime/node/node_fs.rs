@@ -5388,9 +5388,7 @@ impl NodeFS {
         // JS sees a CRT fd on Windows. Running out of those is this call's
         // `EMFILE`, so the conversion happens where the path is known.
         sys::open(path, args.flags.as_int(), args.mode)
-            .and_then(|fd| {
-                fd.make_crt_owned_for_syscall(sys::Tag::open, sys::ErrorCase::CloseOnFail)
-            })
+            .and_then(|fd| fd.make_crt_owned_for_syscall())
             .map_err(|err| err.with_path(args.path.slice()))
     }
 

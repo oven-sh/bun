@@ -12,7 +12,7 @@ use bun_core::{Output, strings};
 use bun_event_loop::EventLoopHandle;
 use bun_io::BufferedReader;
 #[cfg(unix)]
-use bun_io::{FilePollFlag, ReaderFlags};
+use bun_io::ReaderFlags;
 use bun_paths as Path;
 use bun_ptr::{BackRef, JsCell, RefPtr, ThisPtr};
 use bun_spawn::SpawnResultExt as _;
@@ -638,28 +638,18 @@ impl GitSubprocess {
                 continue;
             }
             this.remaining_fds.set(this.remaining_fds.get() + 1);
-            // POSIX: the parent end is a socketpair half.
+            // POSIX: the parent end is a socketpair half, which spawn made nonblocking.
             #[cfg(unix)]
-            {
-                let _ = bun_sys::set_nonblocking(fd);
-                reader.with_mut(|r| {
-                    r.flags
-                        .insert(ReaderFlags::NONBLOCKING | ReaderFlags::SOCKET)
-                });
-            }
+            reader.with_mut(|r| {
+                r.flags
+                    .insert(ReaderFlags::NONBLOCKING | ReaderFlags::SOCKET)
+            });
             if let Err(err) = reader.with_mut(|r| r.start(fd, true)) {
                 // Windows only: POSIX reports a failed start through `on_reader_error`
                 // itself. The reader did not take `fd`.
                 fd.close();
                 Self::on_reader_error(this, err);
-                continue;
             }
-            #[cfg(unix)]
-            reader.with_mut(|r| {
-                if let Some(poll) = r.handle.get_poll() {
-                    poll.set_flag(FilePollFlag::Socket);
-                }
-            });
         }
 
         debug_assert!(this.process.get().is_none());

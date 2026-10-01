@@ -39,7 +39,6 @@ interface NativeReadable extends NodeReadable {
     length: number;
   };
   $bunNativePtr: NativePtr | undefined;
-  $start?: typeof ensureConstructed;
   ref: typeof ref;
   unref: typeof unref;
   [kRefCount]: number;
@@ -92,10 +91,6 @@ function constructNativeReadable(readableStream: ReadableStream, options): Nativ
 
   stream.ref = ref;
   stream.unref = unref;
-  if (process.platform === "win32") {
-    // Only used by node:tty on Windows
-    stream.$start = ensureConstructed;
-  }
 
   // https://github.com/oven-sh/bun/pull/12801
   // https://github.com/oven-sh/bun/issues/9555
@@ -107,17 +102,6 @@ function constructNativeReadable(readableStream: ReadableStream, options): Nativ
   $debug(`[${stream.debugId}] constructed!`);
 
   return stream;
-}
-
-function ensureConstructed(this: NativeReadable, cb: null | (() => void)) {
-  $debug(`[${this.debugId}] ensureConstructed`);
-  if (this[kConstructed]) return;
-  this[kConstructed] = true;
-  const ptr = this.$bunNativePtr;
-  if (!ptr) return;
-  $assert(typeof ptr.start === "function", "NativeReadable.start is not a function");
-  ptr.start(this[kHighWaterMark]);
-  if (cb) cb();
 }
 
 // maxToRead can be the highWaterMark (by default) or the remaining amount of the stream to read

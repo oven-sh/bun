@@ -144,6 +144,9 @@ HANDLE us_loop_iocp(struct us_loop_t *loop);
  * pending, or success without FILE_SKIP_COMPLETION_PORT_ON_SUCCESS); the loop
  * balances it when the packet is dequeued. */
 void us_iocp_op_submitted(struct us_loop_t *loop);
+/* The packet of a submitted op will not come: a thread that cannot be stopped
+ * was left to finish the op by itself, and frees it. */
+void us_iocp_op_abandoned(struct us_loop_t *loop);
 
 /* For an op whose outcome its owner already knows (the call that would have
  * started it failed or finished on the spot) and whose `complete` has to run

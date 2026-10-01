@@ -1918,7 +1918,6 @@ impl bun_io::pipe_writer::WindowsWriterParent for Terminal {
 
 #[cfg(windows)]
 impl bun_io::pipe_writer::WindowsStreamingWriterParent for Terminal {
-    const HAS_ON_WRITABLE: bool = true;
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
         Self::from_parent_ptr(this).on_write(amount, status);
     }

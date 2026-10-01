@@ -1,5 +1,5 @@
 //! A named-pipe server: a fixed number of instances wait for clients, and each
-//! one a client takes is replaced when it is accepted.
+//! one a client takes is replaced.
 //!
 //! A slot whose instance cannot be made to wait for a client is left idle and
 //! tried again at the start of each tick of the loop ([`Starved`]); the owner
@@ -35,9 +35,7 @@ struct Inner {
     is_starved: bool,
     name: Vec<u16>,
     slots: Vec<*mut AcceptOp>,
-    /// Connected instances nobody has accepted yet.
-    connected: Vec<HANDLE>,
-    on_connection: Callback<()>,
+    on_connection: Callback<Pipe>,
     closing: bool,
     owner_gone: bool,
     pending: u32,
@@ -57,9 +55,8 @@ struct AcceptOp {
 }
 
 impl PipeServer {
-    /// Create the pipe `name` and wait for clients. `on_connection(ctx, ())`
-    /// runs from the loop each time a client has connected;
-    /// [`accept`](Self::accept) hands it over.
+    /// Create the pipe `name` and wait for clients. `on_connection(ctx, pipe)`
+    /// runs from the loop each time a client has connected.
     ///
     /// `EADDRINUSE` when another server already owns the name, `EACCES` when
     /// the name is not one a pipe can have.
@@ -67,7 +64,7 @@ impl PipeServer {
         loop_: *mut Loop,
         name: &[u8],
         ctx: *mut T,
-        on_connection: unsafe fn(*mut T, ()),
+        on_connection: unsafe fn(*mut T, Pipe),
     ) -> sys::Result<PipeServer> {
         if name.is_empty() || bun_core::strings::contains_char(name, 0) {
             return Err(sys::Error::from_code(E::EINVAL, Tag::listen));
@@ -94,7 +91,6 @@ impl PipeServer {
             is_starved: false,
             name,
             slots: Vec::with_capacity(PENDING_INSTANCES),
-            connected: Vec::new(),
             on_connection: Callback::new(ctx, on_connection),
             closing: false,
             owner_gone: false,
@@ -124,16 +120,6 @@ impl PipeServer {
             Ok(PipeServer {
                 inner: NonNull::new_unchecked(inner),
             })
-        }
-    }
-
-    /// Take a connected client. `None` when none is waiting.
-    pub fn accept(&mut self) -> Option<Pipe> {
-        let this = self.inner.as_ptr();
-        // SAFETY: `inner` is live while the owner's `PipeServer` is.
-        unsafe {
-            let handle = (*this).connected.pop()?;
-            Some(Pipe::from_associated((*this).link.loop_, handle))
         }
     }
 }
@@ -300,9 +286,6 @@ impl Inner {
     unsafe fn stop(this: *mut Inner) {
         // SAFETY: caller contract.
         unsafe {
-            for handle in (*this).connected.drain(..) {
-                win::CloseHandle(handle);
-            }
             // Closed now, not when the packets come back: the name is free
             // for the next listener as soon as this returns. Closing aborts
             // the pending `ConnectNamedPipe`, whose packet still arrives.
@@ -323,10 +306,8 @@ impl Inner {
             if !(*this).closing || (*this).pending > 0 || (*this).pins > 0 {
                 return;
             }
+            // `stop` closed their instances.
             for slot in (*this).slots.drain(..) {
-                if (*slot).handle != INVALID_HANDLE_VALUE {
-                    win::CloseHandle((*slot).handle);
-                }
                 drop(bun_core::heap::take(slot));
             }
             if !(*this).owner_gone {
@@ -344,7 +325,6 @@ impl AcceptOp {
         // SAFETY: `op` is the first field of the `AcceptOp` this packet was
         // submitted for. The server outlives its slots' packets (`pending`).
         unsafe {
-            super::op_dequeued(loop_);
             let this = (*slot).server;
             (*slot).in_flight = false;
             (*this).pending -= 1;
@@ -362,7 +342,7 @@ impl AcceptOp {
                 return;
             }
 
-            (*this).connected.push((*slot).handle);
+            let pipe = Pipe::from_associated(loop_, (*slot).handle);
             (*slot).handle = INVALID_HANDLE_VALUE;
             // A fresh instance waits for the next client before the owner
             // hears of this one.
@@ -370,7 +350,7 @@ impl AcceptOp {
             Inner::update_starved(this);
             let on_connection = (*this).on_connection;
             (*this).pins += 1;
-            on_connection.invoke(());
+            on_connection.invoke(pipe);
             (*this).pins -= 1;
             Inner::maybe_finish(this);
         }

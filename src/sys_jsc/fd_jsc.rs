@@ -4,7 +4,7 @@ use core::ffi::c_int;
 
 #[cfg(windows)]
 use bun_sys::FdKind;
-use bun_sys::{ErrorCase, Fd, FdExt, Tag};
+use bun_sys::{Fd, FdExt};
 
 use crate::{JSGlobalObject, JSValue, JsResult, RangeErrorOptions, SystemErrorJsc as _};
 
@@ -77,8 +77,7 @@ impl FdJsc for Fd {
         if !self.is_valid() {
             return JSValue::js_number_from_int32(-1);
         }
-        let crt_owned_fd = match self.make_crt_owned_for_syscall(Tag::open, ErrorCase::CloseOnFail)
-        {
+        let crt_owned_fd = match self.make_crt_owned_for_syscall() {
             Ok(fd) => fd,
             Err(err) => {
                 let _ = global.throw_value(err.to_system_error().to_error_instance(global));

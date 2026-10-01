@@ -14,7 +14,7 @@
 #[cfg(windows)]
 pub extern crate bun_core as bun_str;
 pub mod fd;
-pub use fd::{ErrorCase, FdExt, RawFd};
+pub use fd::{FdExt, RawFd};
 #[path = "Error.rs"]
 mod error;
 pub use error::Error;
@@ -5805,7 +5805,6 @@ pub struct NtCreateFileOptions {
     pub disposition: u32,
     pub options: u32,
     pub attributes: u32,
-    pub sharing_mode: u32,
 }
 #[cfg(windows)]
 impl Default for NtCreateFileOptions {
@@ -5815,7 +5814,6 @@ impl Default for NtCreateFileOptions {
             disposition: 0,
             options: 0,
             attributes: bun_windows_sys::FILE_ATTRIBUTE_NORMAL,
-            sharing_mode: SHARE_ALL,
         }
     }
 }
@@ -6360,7 +6358,7 @@ pub(crate) fn open_file_at_windows_nt_path(
                 &mut io,
                 core::ptr::null_mut(),
                 attributes,
-                options.sharing_mode,
+                SHARE_ALL,
                 options.disposition,
                 options.options,
                 core::ptr::null_mut(),

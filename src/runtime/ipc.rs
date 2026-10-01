@@ -1791,7 +1791,7 @@ impl SendQueue {
                         let start = bytes.as_ptr() as usize - base;
                         events.push(FrameEvent::Data(start..start + bytes.len()));
                     }
-                    ipc_frame::Event::SocketTransfer { info, .. } => {
+                    ipc_frame::Event::SocketTransfer { info } => {
                         events.push(FrameEvent::Socket(import_transferred_socket(info)));
                     }
                 })

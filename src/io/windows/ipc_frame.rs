@@ -43,10 +43,7 @@ pub enum Event<'a> {
     /// A socket the peer handed over. It exists as soon as the peer sent it:
     /// a receiver that does not want it still has to materialize it
     /// (`WSASocketW(FROM_PROTOCOL_INFO…)`) and close it.
-    SocketTransfer {
-        info: &'a [u8; SOCKET_TRANSFER_LEN],
-        is_connection: bool,
-    },
+    SocketTransfer { info: &'a [u8; SOCKET_TRANSFER_LEN] },
 }
 
 /// Incremental decoder for the receiving side. Input may be split anywhere.
@@ -56,7 +53,6 @@ pub struct Decoder {
     transfer: Option<Box<[u8; SOCKET_TRANSFER_LEN]>>,
     transfer_len: usize,
     transfer_remaining: usize,
-    transfer_is_connection: bool,
     payload_remaining: usize,
 }
 
@@ -74,7 +70,6 @@ impl Decoder {
             transfer: None,
             transfer_len: 0,
             transfer_remaining: 0,
-            transfer_is_connection: false,
             payload_remaining: 0,
         }
     }
@@ -98,10 +93,7 @@ impl Decoder {
                 input = &input[take..];
                 if self.transfer_remaining == 0 {
                     self.transfer_len = 0;
-                    sink(Event::SocketTransfer {
-                        info: transfer,
-                        is_connection: self.transfer_is_connection,
-                    });
+                    sink(Event::SocketTransfer { info: transfer });
                 }
                 continue;
             }
@@ -138,7 +130,6 @@ impl Decoder {
             }
             if flags & FLAG_HAS_SOCKET_TRANSFER != 0 {
                 self.transfer_remaining = SOCKET_TRANSFER_LEN;
-                self.transfer_is_connection = flags & FLAG_TRANSFER_IS_CONNECTION != 0;
             }
             self.payload_remaining = data_length as usize;
         }

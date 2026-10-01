@@ -1,14 +1,13 @@
 #include "root.h"
 
 #include "BunDebugger.h"
+#include "CodeGenerationFromStrings.h"
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/InspectorFrontendChannel.h>
 #include <JavaScriptCore/JSGlobalObjectDebuggable.h>
 #include <JavaScriptCore/JSGlobalObjectDebugger.h>
 #include <JavaScriptCore/Debugger.h>
-#include <JavaScriptCore/HeapIterationScope.h>
-#include <JavaScriptCore/IsoCellSetInlines.h>
 #include <wtf/Condition.h>
 #include <wtf/NeverDestroyed.h>
 #include "ScriptExecutionContext.h"
@@ -329,35 +328,6 @@ public:
         wait.condition.notifyAll();
     }
 
-    // Debugger.setBreakpointsActive triggers Debugger::setBreakpointsActivated
-    // → recompileAllJSFunctions → vm.deleteAllCode, which iterates each
-    // ScriptExecutable subspace's clearableCodeSet and calls clearCode. For
-    // ModuleProgramExecutable, clearCode drops m_unlinkedCodeBlock and
-    // m_moduleEnvironmentSymbolTable; the next executeModuleProgram (a
-    // top-level-await resume, or a linked-but-not-yet-evaluated module)
-    // regenerates the unlinked code block under the now-different
-    // CodeGenerationMode::Debugger, whose module-environment / generator-frame
-    // layout no longer matches the live JSModuleEnvironment, and the next
-    // op_put_to_scope writes past it. This is the invariant documented in
-    // UnlinkedModuleProgramCodeBlock.h. Module bodies execute once, so dropping
-    // their unlinked code block cannot recover debug hooks for the body anyway
-    // (inner functions are recompiled independently via
-    // deleteAllUnlinkedCodeBlocks); pre-removing every module executable from
-    // the clearableCodeSet makes deleteAllCodeBlocks skip them and keeps the
-    // original bytecode in place. Registered via whenIdle so it runs ahead of
-    // any deferred deleteAllCode callback regardless of whether the dispatch
-    // happens with a VMEntryScope on the stack (the run-while-paused case).
-    static void protectModuleExecutablesFromClearCode(JSC::VM& vm)
-    {
-        if (auto* spaceAndSet = vm.heap.m_moduleProgramExecutableSpace.get()) {
-            JSC::HeapIterationScope iterationScope(vm.heap);
-            auto& set = spaceAndSet->clearableCodeSet;
-            set.forEachLiveCell([&](JSC::HeapCell* cell, JSC::HeapCell::Kind) {
-                set.remove(cell);
-            });
-        }
-    }
-
     void receiveMessagesOnInspectorThread(ScriptExecutionContext& context, Zig::GlobalObject* globalObject, bool connectIfNeeded)
     {
         // Connect before swapping the queue: doConnect recursively calls this
@@ -376,13 +346,6 @@ public:
         {
             Locker<Lock> locker(jsThreadMessagesLock);
             this->jsThreadMessages.swap(messages);
-        }
-
-        if (!messages.isEmpty()) {
-            auto& vm = globalObject->vm();
-            vm.whenIdle([&vm] {
-                protectModuleExecutablesFromClearCode(vm);
-            });
         }
 
         auto& dispatcher = globalObject->inspectorDebuggable();
@@ -824,6 +787,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_openNodeInspector, (JSGlobalObject * globalO
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // The debugger evaluates what its client sends, whatever the engine's eval setting. Returned
+    // for open() to throw: what is thrown from here it reports as a port that could not be bound.
+    if (Bun::mayNotMakeScriptFromStrings()) [[unlikely]]
+        return JSValue::encode(Bun::createCodeGenerationFromStringsError(globalObject));
 
     String requestedUrl = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});

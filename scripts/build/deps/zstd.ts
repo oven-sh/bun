@@ -36,10 +36,15 @@ export const zstd: Dependency = {
   versionMacro: "ZSTD_HASH",
 
   source: () => ({
-    kind: "github",
+    kind: "github-archive",
     repo: "facebook/zstd",
     commit: ZSTD_COMMIT,
   }),
+
+  // x64 targets nehalem, so zstd picks its BMI2 kernels at run time and
+  // probes CPUID in every CCtx/DCtx init. CPUID is a VM exit under a
+  // hypervisor (about 2 us each, two per init). Probe once instead.
+  patches: ["patches/zstd/bmi2-probe-once.patch"],
 
   build: cfg => {
     const sources = [...SOURCES];

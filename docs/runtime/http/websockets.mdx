@@ -286,9 +286,11 @@ Bun.serve({
 });
 ```
 
-The idle timer restarts every time the client sends something. By default, messages the server sends to the client restart it too, so Bun never treats a connection the server keeps pushing to as idle. With `sendPings` enabled (the default), Bun pings the client before the deadline. Bun closes the connection with code `1006` if nothing has come back from the client by the deadline.
+The idle timer restarts on activity from the client: the client sends something, or data that Bun queued for a slow client drains to it. By default, messages the server sends to the client restart the timer too. A server that keeps sending can therefore hold a connection open after its client has gone away.
 
-Set `resetIdleTimeoutOnSend: false` to count only traffic received from the client. Use this on servers that mostly push data, such as tickers or chat fan-out. Bun then closes a client that has been silent for `idleTimeout` seconds, no matter how much the server sent to it in the meantime.
+With `sendPings` enabled (the default), Bun pings the client before the deadline. After the ping, only activity from the client keeps the connection open. Messages the server sends do not cancel the deadline. If the client shows no activity by the deadline, Bun closes the connection with code `1006`.
+
+Set `resetIdleTimeoutOnSend: false` so that only activity from the client restarts the timer. Use this on servers that mostly push data, such as tickers or chat fan-out. Bun then closes a client that shows no activity for `idleTimeout` seconds, however often the server sends to it.
 
 ```ts
 Bun.serve({

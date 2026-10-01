@@ -2761,20 +2761,33 @@ describe.concurrent("idleTimeout while the server keeps sending", () => {
 
   const reaped = { code: 1006, reason: "WebSocket timed out from inactivity", serverWasSending: true };
 
+  // Both tests wait for the second 4 second tick, about 8 seconds after the
+  // upgrade. 8 is the smallest `idleTimeout`, so no setting closes sooner and
+  // the default 5 second test timeout is too short for them.
+  const twoTicksTimeout = 20_000;
+
   // With an 8 second idleTimeout the idle part is a single tick, so the ping
   // goes out even though every send() re-arms the idle timer. The sends made
   // after the ping must not cancel the ping deadline: the client never answered.
-  it("a ping the client does not answer closes the connection even though the server keeps sending (default options)", async () => {
-    expect(await reapSilentClient({})).toEqual({ ...reaped, pings: 1 });
-  }, 20_000);
+  it(
+    "a ping the client does not answer closes the connection even though the server keeps sending (default options)",
+    async () => {
+      expect(await reapSilentClient({})).toEqual({ ...reaped, pings: 1 });
+    },
+    twoTicksTimeout,
+  );
 
   // Without pings the idle part is the whole 8 seconds (two ticks), which the
   // default reset-on-send keeps re-arming forever while the server is sending.
-  // resetIdleTimeoutOnSend: false makes only the client's traffic count.
-  it("resetIdleTimeoutOnSend: false closes a silent client on idleTimeout regardless of what the server sends", async () => {
-    expect(await reapSilentClient({ sendPings: false, resetIdleTimeoutOnSend: false })).toEqual({
-      ...reaped,
-      pings: 0,
-    });
-  }, 20_000);
+  // With resetIdleTimeoutOnSend: false the server's sends stop re-arming it.
+  it(
+    "resetIdleTimeoutOnSend: false closes a silent client on idleTimeout regardless of what the server sends",
+    async () => {
+      expect(await reapSilentClient({ sendPings: false, resetIdleTimeoutOnSend: false })).toEqual({
+        ...reaped,
+        pings: 0,
+      });
+    },
+    twoTicksTimeout,
+  );
 });

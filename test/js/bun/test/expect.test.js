@@ -316,7 +316,7 @@ describe("expect()", () => {
       expect({}).not.toStrictEqual(make());
       expect(make()).not.toEqual(new Plain());
       expect(make()).not.toEqual(Object.create(null));
-      expect(() => expect(make()).toEqual({})).toThrow();
+      expect(() => expect(make()).toEqual({})).toThrow("toEqual");
     });
 
     test.each(notPlainObjects)("%s nested in a container does not equal {}", (_, make) => {

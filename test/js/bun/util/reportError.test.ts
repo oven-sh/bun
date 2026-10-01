@@ -123,10 +123,7 @@ test("native error printer handles lone surrogates in message and stack frame na
   expect(exitCode).toBe(1);
 });
 
-// Formatting this value for the error printer runs a user
-// toString/Symbol.toPrimitive that throws. The printer has to clear that
-// exception. Left pending, it ended module evaluation early, was reported as a
-// second uncaught error, and dropped the AggregateError members after it.
+// The error printer formats this value. Its toString throws, which must not leave an exception pending.
 const hostile = `Object.assign(new String("q"), { toString() { throw 1; }, [Symbol.toPrimitive]() { throw 1; } })`;
 
 test.concurrent.each([

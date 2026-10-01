@@ -84,10 +84,7 @@ test("toBeWithin() with missing or non-number arguments fails the test without c
   expect(exitCode).toBe(1);
 });
 
-// Printing the failure for a test or hook that rejects with a boxed primitive
-// or RegExp whose own toString/Symbol.toPrimitive throws used to leave that
-// second exception pending on the VM. The next test callback then aborted the
-// runner, or was reported as passed without running its body.
+// Printing a failure formats the rejection value. A toString that throws must not leave an exception pending.
 test.concurrent("a rejection whose toString/Symbol.toPrimitive throws does not break later tests", async () => {
   using dir = tempDir("test-hostile-rejection", {
     "hostile.test.js": `
@@ -158,9 +155,7 @@ test.concurrent("a rejection whose toString/Symbol.toPrimitive throws does not b
   expect(exitCode).toBe(1);
 });
 
-// A flaky test first rejects with an object that holds a value whose inspection throws. Printing that failure
-// left the exception of the hook pending. The next test was then reported as passed without running, and the
-// run exited 0.
+// The same for the failure of a retried attempt, where the value holds an object whose [inspect.custom] throws.
 test.concurrent("a retried rejection with a value whose inspection throws does not skip the next test", async () => {
   using dir = tempDir("test-hostile-retry", {
     "retry.test.js": `

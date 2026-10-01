@@ -1,0 +1,88 @@
+== TS1477 instantiation expression before a property access
+ts "a<b>?.`x`;" | parses | lint: "Expected identifier but found \"`x`\"" @[6,9) => TS1003 [6,9) | 6,9) => TS1003 [6,9)    [LINT-REJECTS-ONLY
+js "a!<b>.c;" | TS1109 [5,6) | lint: "Unexpected !" @[1,2) => no entry | 1,2) => no entry    [DIFFERS
+== TS17007 and TS17006 operand of **
+js "<A>x ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>(x) ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>x.y ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>x++ ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A> x ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js " <A>x ** 2;" | TS17008 [2,3) (+1) | lint: "Unexpected <" @[1,2) => no entry | 1,2) => no entry    [DIFFERS
+js "/*c*/ <A>x ** 2;" | TS17008 [7,8) (+1) | lint: "Unexpected <" @[6,7) => no entry | 6,7) => no entry    [DIFFERS
+js "<A>x /*c*/ ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>(x) => x ** 2;" | TS1382 [8,9) (+2) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A><B>x ** 2;" | TS17008 [4,5) (+3) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>-x ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "-<A>x ** 2;" | TS17008 [2,3) (+1) | lint: "Unexpected <" @[1,2) => no entry | 1,2) => no entry    [DIFFERS
+js "- <A>x ** 2;" | TS17008 [3,4) (+1) | lint: "Unexpected <" @[2,3) => no entry | 2,3) => no entry    [DIFFERS
+js "y = <A>x ** 2;" | TS17008 [5,6) (+1) | lint: "Unexpected <" @[4,5) => no entry | 4,5) => no entry    [DIFFERS
+js "f(<A>x ** 2);" | TS17008 [3,4) (+1) | lint: "Unexpected <" @[2,3) => no entry | 2,3) => no entry    [DIFFERS
+js "2 ** <A>x ** 2;" | TS17008 [6,7) (+1) | lint: "Unexpected <" @[5,6) => no entry | 5,6) => no entry    [DIFFERS
+js "(<A>x) ** 2;" | TS17008 [2,3) (+1) | lint: "Unexpected <" @[1,2) => no entry | 1,2) => no entry    [DIFFERS
+js "<A>(x ** 2);" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+ts "<A>x **= 2;" | TS1005 [5,8) | lint: parses | LINT-ACCEPTS
+js "<A>x **= 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>x\n** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>new X ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>x! ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>x as B ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>await x ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+ts "await ** 2;" | TS17006 [0,5) | lint: "Unexpected **" @[6,8) => TS1109 [6,8) | 6,8) => TS1109 [6,8)    [DIFFERS
+js "await ** 2;" | TS17006 [0,5) | lint: "Unexpected **" @[6,8) => TS1109 [6,8) | 6,8) => TS1109 [6,8)    [DIFFERS
+ts "y = await ** 2;" | TS17006 [4,9) | lint: "Unexpected **" @[10,12) => TS1109 [10,12) | 10,12) => TS1109 [10,12)    [DIFFERS
+js "y = await ** 2;" | TS17006 [4,9) | lint: "Unexpected **" @[10,12) => TS1109 [10,12) | 10,12) => TS1109 [10,12)    [DIFFERS
+ts "-x **= 2;" | TS1005 [3,6) | lint: parses | LINT-ACCEPTS
+js "-x **= 2;" | TS1005 [3,6) | lint: parses | LINT-ACCEPTS
+js "-x!.y ** 2;" | TS17006 [0,5) | lint: "Unexpected !" @[2,3) => no entry | 2,3) => no entry    [DIFFERS
+js "-x as any ** 2;" | parses | lint: "Expected \";\" but found \"as\"" @[3,5) => TS1005 [3,5) | 3,5) => TS1005 [3,5)    [LINT-REJECTS-ONLY
+js "-(x as any) ** 2;" | TS17006 [0,11) | lint: "Expected \")\" but found \"as\"" @[4,6) => TS1005 [4,6) | 4,6) => TS1005 [4,6)    [DIFFERS
+== TS1209 optional chain from new
+js "new A?.<T>();" | TS1209 [5,7) (+2) | lint: "Expected identifier but found \"<\"" @[7,8) => TS1003 [7,8) | 7,8) => TS1003 [7,8)    [DIFFERS
+js "new A!?.b();" | TS1209 [6,8) | lint: "Unexpected !" @[5,6) => no entry | 5,6) => no entry    [DIFFERS
+ts "new import.meta?.x();" | TS1109 [4,10) | lint: "Invalid optional chain from new expression. Did you mean to call 'import.meta()'?" @[15,17) => TS1209 [15,17) | 15,17) => TS1209 [15,17)    [DIFFERS
+js "new import.meta?.x();" | TS1109 [4,10) | lint: "Invalid optional chain from new expression. Did you mean to call 'import.meta()'?" @[15,17) => TS1209 [15,17) | 15,17) => TS1209 [15,17)    [DIFFERS
+js "new A?.b<T>();" | TS1209 [5,7) (+1) | lint: "Unexpected )" @[12,13) => TS1109 [12,13) | 12,13) => TS1109 [12,13)    [DIFFERS
+js "new (A)!?.b();" | TS1209 [8,10) | lint: "Unexpected !" @[7,8) => no entry | 7,8) => no entry    [DIFFERS
+ts "new <T>A?.b();" | TS1109 [4,5) | lint: "Invalid optional chain from new expression. Did you mean to call '<T>A()'?" @[8,10) => TS1209 [8,10) | 8,10) => TS1209 [8,10)    [DIFFERS
+js "new <T>A?.b();" | TS1109 [4,5) | lint: "Unexpected <" @[4,5) => no entry | 4,5) => no entry    [DIFFERS
+== TS18030 private identifier in an optional chain
+js "class C { #b = 1; m(a) { a?.x!.#b; } }" | TS18030 [31,33) | lint: "Unexpected !" @[29,30) => no entry | 29,30) => no entry    [DIFFERS
+js "class C { #b = 1; m(a) { a?.x!!.#b; } }" | TS18030 [32,34) | lint: "Unexpected !" @[29,30) => no entry | 29,30) => no entry    [DIFFERS
+js "class C { #b = 1; m(a) { (a?.x)!.#b; } }" | parses | lint: "Unexpected !" @[31,32) => no entry | 31,32) => no entry    [LINT-REJECTS-ONLY
+js "class C { #b = 1; m(a) { a!?.#b; } }" | TS18030 [29,31) | lint: "Unexpected !" @[26,27) => no entry | 26,27) => no entry    [DIFFERS
+ts "a.#b;" | parses | lint: "Expected identifier but found \"#b\"" @[2,4) => TS1003 [2,4) | 2,4) => TS1003 [2,4)    [LINT-REJECTS-ONLY
+js "a.#b;" | parses | lint: "Expected identifier but found \"#b\"" @[2,4) => TS1003 [2,4) | 2,4) => TS1003 [2,4)    [LINT-REJECTS-ONLY
+js "class C { #b = 1; m(a) { (a?.x as any).#b; } }" | parses | lint: "Expected \")\" but found \"as\"" @[31,33) => TS1005 [31,33) | 31,33) => TS1005 [31,33)    [LINT-REJECTS-ONLY
+js "class C { #b = 1; m(a) { a?.x as any; } }" | parses | lint: "Expected \";\" but found \"as\"" @[30,32) => TS1005 [30,32) | 30,32) => TS1005 [30,32)    [LINT-REJECTS-ONLY
+== TS2754 and TS1034 super
+ts "class A extends B { m() { super.#x; } }" | parses | lint: "Expected identifier but found \"#x\"" @[32,34) => TS1003 [32,34) | 32,34) => TS1003 [32,34)    [LINT-REJECTS-ONLY
+js "class A extends B { m() { super.#x; } }" | parses | lint: "Expected identifier but found \"#x\"" @[32,34) => TS1003 [32,34) | 32,34) => TS1003 [32,34)    [LINT-REJECTS-ONLY
+== TS1011 element access without an argument
+js "class C { []() {} }" | TS1005 [12,13) (+2) | lint: "Unexpected ]" @[11,12) => TS1109 [11,12) | 11,12) => TS1109 [11,12)    [DIFFERS
+js "class C { static [] = 1 }" | TS1005 [20,21) | lint: "Unexpected ]" @[18,19) => TS1109 [18,19) | 18,19) => TS1109 [18,19)    [DIFFERS
+js "a![];" | TS1011 [3,3) | lint: "Unexpected !" @[1,2) => no entry | 1,2) => no entry    [DIFFERS
+js "let x: A[] = a[];" | TS1011 [15,15) | lint: "Expected \";\" but found \":\"" @[5,6) => TS1005 [5,6) | 5,6) => TS1005 [5,6)    [DIFFERS
+js "type T = { []: number };" | parses | lint: "Expected \";\" but found \"T\"" @[5,6) => TS1005 [5,6) | 5,6) => TS1005 [5,6)    [LINT-REJECTS-ONLY
+js "type T = A[ ];" | parses | lint: "Expected \";\" but found \"T\"" @[5,6) => TS1005 [5,6) | 5,6) => TS1005 [5,6)    [LINT-REJECTS-ONLY
+js "let x: { [ ]: 1 };" | parses | lint: "Expected \";\" but found \":\"" @[5,6) => TS1005 [5,6) | 5,6) => TS1005 [5,6)    [LINT-REJECTS-ONLY
+ts "enum E { [] }" | TS1109 [10,11) | lint: "Expected identifier but found \"[\"" @[9,10) => TS1003 [9,10) | \"" @[9,10) => TS1003 [9,10)    [DIFFERS
+js "enum E { [] }" | TS1109 [10,11) | lint: "Unexpected enum" @[0,4) => no entry | 0,4) => no entry    [DIFFERS
+ts "@a[] class C {}" | TS1146 [2,2) (+1) | lint: "Expected \"class\" but found \"[\"" @[2,3) => TS1005 [2,3) | \"" @[2,3) => TS1005 [2,3)    [DIFFERS
+js "@a[] class C {}" | TS1146 [2,2) (+1) | lint: "Unexpected @" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "class C { @a[] m() {} }" | TS1005 [15,16) | lint: "Expected identifier but found \"@\"" @[10,11) => TS1003 [10,11) | 10,11) => TS1003 [10,11)    [DIFFERS
+ts "await[];" | TS1011 [6,6) | lint: parses | LINT-ACCEPTS
+js "await[];" | TS1011 [6,6) | lint: parses | LINT-ACCEPTS
+== for head with using and of
+js "for (using of: T = null;;) {}" | parses | lint: "Expected \";\" but found \":\"" @[13,14) => TS1005 [13,14) | 13,14) => TS1005 [13,14)    [LINT-REJECTS-ONLY
+ts "for (using {} of y) {}" | parses | lint: "Expected \";\" but found \"{\"" @[11,12) => TS1005 [11,12) | 11,12) => TS1005 [11,12)    [LINT-REJECTS-ONLY
+js "for (using {} of y) {}" | parses | lint: "Expected \";\" but found \"{\"" @[11,12) => TS1005 [11,12) | 11,12) => TS1005 [11,12)    [LINT-REJECTS-ONLY
+ts "for (using of = 1 of []) {}" | parses | lint: "for-of loop variables cannot have an initializer" @[16,16) => no entry | 16,16) => no entry    [LINT-REJECTS-ONLY
+js "for (using of = 1 of []) {}" | parses | lint: "for-of loop variables cannot have an initializer" @[16,16) => no entry | 16,16) => no entry    [LINT-REJECTS-ONLY
+ts "using of of [];" | TS1005 [9,11) (+1) | lint: "The declaration \"of\" must be initialized" @[6,8) => no entry | 6,8) => no entry    [DIFFERS
+js "using of of [];" | TS1005 [9,11) (+1) | lint: "The declaration \"of\" must be initialized" @[6,8) => no entry | 6,8) => no entry    [DIFFERS
+ts "{ using of of []; }" | TS1005 [11,13) (+1) | lint: "The declaration \"of\" must be initialized" @[8,10) => no entry | 8,10) => no entry    [DIFFERS
+js "{ using of of []; }" | TS1005 [11,13) (+1) | lint: "The declaration \"of\" must be initialized" @[8,10) => no entry | 8,10) => no entry    [DIFFERS
+ts "for (async of []) {}" | parses | lint: "For loop initializers cannot start with \"async of\"" @[5,13) => no entry | 5,13) => no entry    [LINT-REJECTS-ONLY
+js "for (async of []) {}" | parses | lint: "Expected \"=>\" but found \"[\"" @[14,15) => TS1005 [14,15) | \"" @[14,15) => TS1005 [14,15)    [LINT-REJECTS-ONLY
+ts "for (let.x of []) {}" | TS1134 [8,9) | lint: "\"let\" must be wrapped in parentheses to be used as an expression here" @[5,8) => no entry | 5,8) => no entry    [DIFFERS
+js "for (let.x of []) {}" | TS1134 [8,9) | lint: "\"let\" must be wrapped in parentheses to be used as an expression here" @[5,8) => no entry | 5,8) => no entry    [DIFFERS

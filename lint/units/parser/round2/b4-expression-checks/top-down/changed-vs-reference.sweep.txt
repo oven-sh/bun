@@ -1,0 +1,77 @@
+38518 sources changed: 34198 now have the first diagnostic of the reference (code and range) or parse as it does, 7 had it at the head, 4320 have another
+  1113  ref TS1109  |  proto "Unexpected <token>"  => TS17006  |  head "Unexpected <token>"  => no entry
+          js "class K extends B { #p; async m(a) { new -a ** c; } }"
+          js "class K extends B { #p; async m(a) { new typeof a ** c; } }"
+          js "class K extends B { #p; async m(a) { new await a ** c; } }"
+   560  ref TS1109  |  proto "Unexpected <token>"  => TS1011  |  head "Unexpected <token>"  => TS1109
+          js "class K extends B { #p; async m(a) { new -a[]; } }"
+          js "class K extends B { #p; async m(a) { new -a[] ** c; } }"
+          js "class K extends B { #p; async m(a) { new -a[] + c; } }"
+   511  ref TS1005  |  proto "Unexpected <token>"  => TS17006  |  head "Unexpected <token>"  => no entry
+          js "class K extends B { #p; async m(a) { -a++.b ** c; } }"
+          js "class K extends B { #p; async m(a) { typeof a++.b ** c; } }"
+          js "class K extends B { #p; async m(a) { await a++.b ** c; } }"
+   438  ref TS1109  |  proto "An optional chain cannot contain private identifiers."  => TS18030  |  head parses
+          js "class K extends B { #p; async m(a) { new -a?.#p; } }"
+          js "class K extends B { #p; async m(a) { new -a?.#p + c; } }"
+          js "class K extends B { #p; async m(a) { new -a?.#p = c; } }"
+   392  ref TS1005  |  proto "Unexpected <token>"  => TS1011  |  head "Unexpected <token>"  => TS1109
+          js "class K extends B { #p; async m(a) { a++[]; } }"
+          js "class K extends B { #p; async m(a) { a++[] ** c; } }"
+          js "class K extends B { #p; async m(a) { a++[] + c; } }"
+   343  ref TS1005  |  proto "An optional chain cannot contain private identifiers."  => TS18030  |  head parses
+          js "class K extends B { #p; async m(a) { a++?.#p; } }"
+          js "class K extends B { #p; async m(a) { a++?.#p ** c; } }"
+          js "class K extends B { #p; async m(a) { a++?.#p + c; } }"
+   156  ref TS1109  |  proto "Unexpected <token>"  => TS17007  |  head parses
+          ts "class K extends B { #p; async m(a) { <T>a++<T> ** c; } }"
+          ts "class K extends B { #p; async m(a) { <T>a.b++<T> ** c; } }"
+          ts "class K extends B { #p; async m(a) { <T>f()++<T> ** c; } }"
+   147  ref TS18030  |  proto "Unexpected <token>"  => TS17006  |  head "Unexpected <token>"  => no entry
+          js "class K extends B { #p; async m(a) { -a?.b.#p ** c; } }"
+          js "class K extends B { #p; async m(a) { typeof a?.b.#p ** c; } }"
+          js "class K extends B { #p; async m(a) { await a?.b.#p ** c; } }"
+   144  ref TS1209  |  proto "Unexpected <token>"  => TS1011  |  head "Unexpected <token>"  => TS1109
+          js "class K extends B { #p; async m(a) { new a?.b[]; } }"
+          js "class K extends B { #p; async m(a) { new a?.b[] ** c; } }"
+          js "class K extends B { #p; async m(a) { new a?.b[] + c; } }"
+   126  ref TS1209  |  proto "Unexpected <token>"  => TS17006  |  head "Unexpected <token>"  => no entry
+          js "class K extends B { #p; async m(a) { -new a?.b ** c; } }"
+          js "class K extends B { #p; async m(a) { typeof new a?.b ** c; } }"
+          js "class K extends B { #p; async m(a) { await new a?.b ** c; } }"
+    98  ref TS1109  |  proto "An optional chain cannot contain private identifiers."  => TS18030  |  head "Unexpected <token>"  => no entry
+          js "class K extends B { #p; async m(a) { new -a?.#p ** c; } }"
+          js "class K extends B { #p; async m(a) { new typeof a?.#p ** c; } }"
+          js "class K extends B { #p; async m(a) { new await a?.#p ** c; } }"
+    78  ref TS1109  |  proto "Invalid optional chain from new expression. Did you mean to call '…'?"  => TS1209  |  head parses
+          ts "class K extends B { #p; async m(a) { new <T>a?.b; } }"
+          ts "class K extends B { #p; async m(a) { new <T>a?.b + c; } }"
+          ts "class K extends B { #p; async m(a) { new <T>a?.b = c; } }"
+    77  ref TS1005  |  proto "Unexpected <token>"  => TS17007  |  head parses
+          ts "class K extends B { #p; async m(a) { <T>a++.b ** c; } }"
+          ts "class K extends B { #p; async m(a) { <T>a++?.b ** c; } }"
+          ts "class K extends B { #p; async m(a) { <T>a++.#p ** c; } }"
+    49  ref TS1005  |  proto "An optional chain cannot contain private identifiers."  => TS18030  |  head "Unexpected <token>"  => no entry
+          js "class K extends B { #p; async m(a) { -a++?.#p ** c; } }"
+          js "class K extends B { #p; async m(a) { typeof a++?.#p ** c; } }"
+          js "class K extends B { #p; async m(a) { await a++?.#p ** c; } }"
+    21  ref TS18030  |  proto "Unexpected <token>"  => TS17007  |  head parses
+          ts "class K extends B { #p; async m(a) { <T>a?.b.#p ** c; } }"
+          ts "class K extends B { #p; async m(a) { <T>a?.[0].#p ** c; } }"
+          ts "class K extends B { #p; async m(a) { <T>a?.().#p ** c; } }"
+    21  ref TS17007  |  proto "Template literals cannot have an optional chain as a tag"  => no entry  |  head "Template literals cannot have an optional chain as a tag"  => no entry
+          ts "class K extends B { #p; async m(a) { <T>a?.b`x` ** c; } }"
+          ts "class K extends B { #p; async m(a) { <T>a?.[0]`x` ** c; } }"
+          ts "class K extends B { #p; async m(a) { <T>a?.()`x` ** c; } }"
+    21  ref parses  |  proto "Unexpected <token>"  => TS17006  |  head "Unexpected <token>"  => no entry
+          ts "class K extends B { #p; async m(a) { -a++<T>(1) ** c; } }"
+          ts "class K extends B { #p; async m(a) { typeof a++<T>(1) ** c; } }"
+          ts "class K extends B { #p; async m(a) { await a++<T>(1) ** c; } }"
+    18  ref TS1209  |  proto "Unexpected <token>"  => TS17007  |  head parses
+          ts "class K extends B { #p; async m(a) { <T>new a?.b ** c; } }"
+          ts "class K extends B { #p; async m(a) { <T>new a?.#p ** c; } }"
+          ts "class K extends B { #p; async m(a) { <T>new a?.[0] ** c; } }"
+     7  ref parses  |  proto "Unexpected <token>"  => TS17007  |  head parses
+          ts "class K extends B { #p; async m(a) { <T>a++<T>(1) ** c; } }"
+          ts "class K extends B { #p; async m(a) { <T>a.b++<T>(1) ** c; } }"
+          ts "class K extends B { #p; async m(a) { <T>f()++<T>(1) ** c; } }"

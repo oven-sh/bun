@@ -1,0 +1,124 @@
+== for head corners
+ts "for (using\nof = null;;) {}" | parses | lint: "Unexpected =" @[14,15) => TS1109 [14,15) | 14,15) => TS1109 [14,15)    [LINT-REJECTS-ONLY
+js "for (using\nof = null;;) {}" | parses | lint: "Unexpected =" @[14,15) => TS1109 [14,15) | 14,15) => TS1109 [14,15)    [LINT-REJECTS-ONLY
+== new corners
+js "new A?.[<T>x]();" | TS1209 [5,7) (+2) | lint: "Unexpected <" @[8,9) => no entry | 8,9) => no entry    [DIFFERS
+js "new A!<T>?.b();" | TS1109 [9,11) | lint: "Unexpected !" @[5,6) => no entry | 5,6) => no entry    [DIFFERS
+js "new a.b!?.c();" | TS1209 [8,10) | lint: "Unexpected !" @[7,8) => no entry | 7,8) => no entry    [DIFFERS
+== pow corners
+js "<A><B>x ** 2;" | TS17008 [4,5) (+3) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>(<B>x ** 2);" | TS17008 [5,6) (+3) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>f(<B>x ** 2);" | TS17008 [6,7) (+3) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>[<B>x ** 2];" | TS17008 [5,6) (+3) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "a > <B>x ** 2;" | TS17008 [5,6) (+1) | lint: "Unexpected <" @[4,5) => no entry | 4,5) => no entry    [DIFFERS
+ts "++<A>x ** 2;" | TS1109 [2,3) | lint: "Unexpected **" @[7,9) => TS17007 [2,6) | 7,9) => TS17007 [2,6)    [DIFFERS
+js "++<A>x ** 2;" | TS1109 [2,3) | lint: "Unexpected <" @[2,3) => no entry | 2,3) => no entry    [DIFFERS
+ts "new <A>x ** 2;" | TS1109 [4,5) | lint: "Unexpected **" @[9,11) => TS17007 [4,8) | 9,11) => TS17007 [4,8)    [DIFFERS
+js "new <A>x ** 2;" | TS1109 [4,5) | lint: "Unexpected <" @[4,5) => no entry | 4,5) => no entry    [DIFFERS
+ts "<A>x => x ** 2;" | TS1005 [5,7) | lint: parses | LINT-ACCEPTS
+js "<A>x => x ** 2;" | TS1382 [6,7) (+2) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>(x) ** 2 ** 3;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "(<A>x ** 2);" | TS17008 [2,3) (+1) | lint: "Unexpected <" @[1,2) => no entry | 1,2) => no entry    [DIFFERS
+js "y = -<A>x ** 2;" | TS17008 [6,7) (+1) | lint: "Unexpected <" @[5,6) => no entry | 5,6) => no entry    [DIFFERS
+js "typeof <A>x ** 2;" | TS17008 [8,9) (+1) | lint: "Unexpected <" @[7,8) => no entry | 7,8) => no entry    [DIFFERS
+js "async function f() { await <A>x ** 2; }" | TS1381 [38,39) (+2) | lint: "Unexpected <" @[27,28) => no entry | 27,28) => no entry    [DIFFERS
+js "<A>async function () {} ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>x?.y ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>x`t` ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>x-- ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>--x ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>x.y() ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>new x.y() ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>(x)(y) ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>(x).y ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>(x)\n** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<const>x ** 2;" | TS17008 [1,6) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "function* g() { yield <A>x ** 2; }" | TS1381 [33,34) (+2) | lint: "Unexpected <" @[22,23) => no entry | 22,23) => no entry    [DIFFERS
+js "x = y ? <A>z ** 2 : w;" | TS17008 [9,10) (+1) | lint: "Unexpected <" @[8,9) => no entry | 8,9) => no entry    [DIFFERS
+js "<A>{} ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>function(){} ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>class{} ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>`a` ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>1 ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>this ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>super.x ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>/a/ ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>[] ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>x!.y! ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "<A>x /*c*/ . y ** 2;" | TS17008 [1,2) (+1) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+ts "await ** 2;" | TS17006 [0,5) | lint: "Unexpected **" @[6,8) => TS1109 [6,8) | 6,8) => TS1109 [6,8)    [DIFFERS
+js "await ** 2;" | TS17006 [0,5) | lint: "Unexpected **" @[6,8) => TS1109 [6,8) | 6,8) => TS1109 [6,8)    [DIFFERS
+ts "await.x ** 2;" | TS17006 [0,7) | lint: "Unexpected ." @[5,6) => TS1109 [5,6) | 5,6) => TS1109 [5,6)    [DIFFERS
+js "await.x ** 2;" | TS17006 [0,7) | lint: "Unexpected ." @[5,6) => TS1109 [5,6) | 5,6) => TS1109 [5,6)    [DIFFERS
+ts "await() ** 2;" | TS17006 [0,7) | lint: "Unexpected )" @[6,7) => TS1109 [6,7) | 6,7) => TS1109 [6,7)    [DIFFERS
+js "await() ** 2;" | TS17006 [0,7) | lint: "Unexpected )" @[6,7) => TS1109 [6,7) | 6,7) => TS1109 [6,7)    [DIFFERS
+ts "await++ ** 2;" | TS17006 [0,7) | lint: "Unexpected **" @[8,10) => TS1109 [8,10) | 8,10) => TS1109 [8,10)    [DIFFERS
+js "await++ ** 2;" | TS17006 [0,7) | lint: "Unexpected **" @[8,10) => TS1109 [8,10) | 8,10) => TS1109 [8,10)    [DIFFERS
+ts "(await) ** 2;" | parses | lint: "Unexpected )" @[6,7) => TS1109 [6,7) | 6,7) => TS1109 [6,7)    [LINT-REJECTS-ONLY
+js "(await) ** 2;" | parses | lint: "Unexpected )" @[6,7) => TS1109 [6,7) | 6,7) => TS1109 [6,7)    [LINT-REJECTS-ONLY
+ts "await /*c*/ ** 2;" | TS17006 [0,5) | lint: "Unexpected **" @[12,14) => TS1109 [12,14) | 12,14) => TS1109 [12,14)    [DIFFERS
+js "await /*c*/ ** 2;" | TS17006 [0,5) | lint: "Unexpected **" @[12,14) => TS1109 [12,14) | 12,14) => TS1109 [12,14)    [DIFFERS
+ts "delete await ** 2;" | TS17006 [0,12) | lint: "Unexpected **" @[13,15) => TS1109 [13,15) | 13,15) => TS1109 [13,15)    [DIFFERS
+js "delete await ** 2;" | TS17006 [0,12) | lint: "Unexpected **" @[13,15) => TS1109 [13,15) | 13,15) => TS1109 [13,15)    [DIFFERS
+ts "-await ** 2;" | TS17006 [0,6) | lint: "Unexpected **" @[7,9) => TS1109 [7,9) | 7,9) => TS1109 [7,9)    [DIFFERS
+js "-await ** 2;" | TS17006 [0,6) | lint: "Unexpected **" @[7,9) => TS1109 [7,9) | 7,9) => TS1109 [7,9)    [DIFFERS
+ts "x = await\n** 2;" | TS17006 [4,9) | lint: "Unexpected **" @[10,12) => TS1109 [10,12) | 10,12) => TS1109 [10,12)    [DIFFERS
+js "x = await\n** 2;" | TS17006 [4,9) | lint: "Unexpected **" @[10,12) => TS1109 [10,12) | 10,12) => TS1109 [10,12)    [DIFFERS
+== super corners
+== private chain corners
+js "class C { #b = 1; m(a) { a?.b![0].#b; } }" | TS18030 [34,36) | lint: "Unexpected !" @[29,30) => no entry | 29,30) => no entry    [DIFFERS
+ts "class C { #b = 1; m(a) { a?.b`x`.#b; } }" | TS18030 [33,35) | lint: "Template literals cannot have an optional chain as a tag" @[29,32) => no entry | 29,32) => no entry    [DIFFERS
+js "class C { #b = 1; m(a) { a?.b`x`.#b; } }" | TS18030 [33,35) | lint: "Template literals cannot have an optional chain as a tag" @[29,32) => no entry | 29,32) => no entry    [DIFFERS
+js "class C { #b = 1; m(a) { a?.b.c!.#b; } }" | TS18030 [33,35) | lint: "Unexpected !" @[31,32) => no entry | 31,32) => no entry    [DIFFERS
+js "class C { #b = 1; m(a) { a!?.b!.#b; } }" | TS18030 [32,34) | lint: "Unexpected !" @[26,27) => no entry | 26,27) => no entry    [DIFFERS
+js "class C { #b = 1; m(a) { a?.b as any; } }" | parses | lint: "Expected \";\" but found \"as\"" @[30,32) => TS1005 [30,32) | 30,32) => TS1005 [30,32)    [LINT-REJECTS-ONLY
+js "class C { #b = 1; m(a) { (a?.b)!.#b; } }" | parses | lint: "Unexpected !" @[31,32) => no entry | 31,32) => no entry    [LINT-REJECTS-ONLY
+js "class C { #b = 1; m(a) { (<any>a?.b).#b; } }" | TS1381 [41,42) (+5) | lint: "Unexpected <" @[26,27) => no entry | 26,27) => no entry    [DIFFERS
+js "class C { #b = 1; m(a) { <any>a?.b.#b; } }" | TS1381 [39,40) (+5) | lint: "Unexpected <" @[25,26) => no entry | 25,26) => no entry    [DIFFERS
+ts "a.#b;" | parses | lint: "Expected identifier but found \"#b\"" @[2,4) => TS1003 [2,4) | 2,4) => TS1003 [2,4)    [LINT-REJECTS-ONLY
+js "a.#b;" | parses | lint: "Expected identifier but found \"#b\"" @[2,4) => TS1003 [2,4) | 2,4) => TS1003 [2,4)    [LINT-REJECTS-ONLY
+== element access corners
+js "a[<{ []: 1 }>x];" | TS1109 [2,3) (+1) | lint: "Unexpected <" @[2,3) => no entry | 2,3) => no entry    [DIFFERS
+js "a[x as { []: 1 }];" | parses | lint: "Expected \"]\" but found \"as\"" @[4,6) => TS1005 [4,6) | 4,6) => TS1005 [4,6)    [LINT-REJECTS-ONLY
+js "a[class { []() {} }];" | TS1005 [12,13) (+3) | lint: "Unexpected ]" @[11,12) => TS1109 [11,12) | 11,12) => TS1109 [11,12)    [DIFFERS
+js "class C { a = b; [] }" | parses | lint: "Unexpected ]" @[18,19) => TS1109 [18,19) | 18,19) => TS1109 [18,19)    [LINT-REJECTS-ONLY
+js "class C { a\n[] }" | parses | lint: "Unexpected ]" @[13,14) => TS1109 [13,14) | 13,14) => TS1109 [13,14)    [LINT-REJECTS-ONLY
+js "a![];" | TS1011 [3,3) | lint: "Unexpected !" @[1,2) => no entry | 1,2) => no entry    [DIFFERS
+js "enum E { A = a[] }" | TS1011 [15,15) | lint: "Unexpected enum" @[0,4) => no entry | 0,4) => no entry    [DIFFERS
+ts "@a.b[] class C {}" | TS1146 [4,4) (+1) | lint: "Expected \"class\" but found \"[\"" @[4,5) => TS1005 [4,5) | \"" @[4,5) => TS1005 [4,5)    [DIFFERS
+js "@a.b[] class C {}" | TS1146 [4,4) (+1) | lint: "Unexpected @" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "@(a[]) class C {}" | TS1011 [4,4) | lint: "Unexpected @" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "class C { @(a[]) m() {} }" | TS1011 [14,14) | lint: "Expected identifier but found \"@\"" @[10,11) => TS1003 [10,11) | 10,11) => TS1003 [10,11)    [DIFFERS
+js "type T = typeof a[];" | parses | lint: "Expected \";\" but found \"T\"" @[5,6) => TS1005 [5,6) | 5,6) => TS1005 [5,6)    [LINT-REJECTS-ONLY
+js "let x: typeof a[] = a[];" | TS1011 [22,22) | lint: "Expected \";\" but found \":\"" @[5,6) => TS1005 [5,6) | 5,6) => TS1005 [5,6)    [DIFFERS
+js "let x = <T>a[];" | TS17008 [9,10) (+1) | lint: "Unexpected <" @[8,9) => no entry | 8,9) => no entry    [DIFFERS
+ts "a[/];" | TS1161 [2,3) | lint: "Syntax Error" @[2,2) => no entry | 2,2) => no entry    [DIFFERS
+js "a[/];" | TS1161 [2,3) | lint: "Syntax Error" @[2,2) => no entry | 2,2) => no entry    [DIFFERS
+ts "a[=>];" | TS1005 [2,4) (+1) | lint: "Unexpected =>" @[2,4) => TS1109 [2,4) | 2,4) => TS1109 [2,4)    [DIFFERS
+js "a[=>];" | TS1005 [2,4) (+1) | lint: "Unexpected =>" @[2,4) => TS1109 [2,4) | 2,4) => TS1109 [2,4)    [DIFFERS
+== instantiation corners
+js "class C extends A<T>.b {}" | TS1005 [20,21) | lint: "Expected \"{\" but found \"<\"" @[17,18) => TS1005 [17,18) | 17,18) => TS1005 [17,18)    [code-same-range-differs
+js "class C extends A<T>.b<U> {}" | TS1005 [20,21) | lint: "Expected \"{\" but found \"<\"" @[17,18) => TS1005 [17,18) | 17,18) => TS1005 [17,18)    [code-same-range-differs
+js "class C extends A.b<T> {}" | parses | lint: "Expected \"{\" but found \"<\"" @[19,20) => TS1005 [19,20) | 19,20) => TS1005 [19,20)    [LINT-REJECTS-ONLY
+js "class C implements A<T>.b {}" | TS1005 [23,24) | lint: "Expected \"{\" but found \"implements\"" @[8,18) => TS1005 [8,18) | 8,18) => TS1005 [8,18)    [code-same-range-differs
+ts "interface I extends A<T>.b {}" | TS1477 [21,24) | lint: parses | LINT-ACCEPTS
+js "interface I extends A<T>.b {}" | TS1005 [24,25) | lint: "Expected \";\" but found \"I\"" @[10,11) => TS1005 [10,11) | 10,11) => TS1005 [10,11)    [code-same-range-differs
+js "@a<b>.c class C {}" | TS1146 [2,2) (+2) | lint: "Unexpected @" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "@a<b>.c() class C {}" | TS1146 [2,2) (+2) | lint: "Unexpected @" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+js "class C { @a<b>.c m() {} }" | TS1146 [12,12) (+3) | lint: "Expected identifier but found \"@\"" @[10,11) => TS1003 [10,11) | 10,11) => TS1003 [10,11)    [DIFFERS
+ts "await<b>.c;" | TS1477 [5,8) | lint: "Unexpected ." @[8,9) => TS1109 [8,9) | 8,9) => TS1109 [8,9)    [DIFFERS
+js "await<b>.c;" | TS1109 [8,9) | lint: "Unexpected <" @[5,6) => no entry | 5,6) => no entry    [DIFFERS
+js "a<b><c>.d;" | TS17008 [5,6) (+1) | lint: "Unexpected <" @[4,5) => no entry | 4,5) => no entry    [DIFFERS
+js "<T,>() => a<b>.c;" | TS1109 [14,15) | lint: "Unexpected <" @[0,1) => no entry | 0,1) => no entry    [DIFFERS
+ts "type T = typeof a<b>.c;" | TS1005 [20,21) | lint: parses | LINT-ACCEPTS
+js "type T = typeof a<b>.c;" | TS1005 [20,21) | lint: "Expected \";\" but found \"T\"" @[5,6) => TS1005 [5,6) | 5,6) => TS1005 [5,6)    [code-same-range-differs
+ts "let x: typeof a<b>.c;" | TS1005 [18,19) | lint: "Unexpected c" @[19,20) => no entry | 19,20) => no entry    [DIFFERS
+js "let x: typeof a<b>.c;" | TS1005 [18,19) | lint: "Expected \";\" but found \":\"" @[5,6) => TS1005 [5,6) | 5,6) => TS1005 [5,6)    [code-same-range-differs
+js "let x: typeof a.b<c>;" | parses | lint: "Expected \";\" but found \":\"" @[5,6) => TS1005 [5,6) | 5,6) => TS1005 [5,6)    [LINT-REJECTS-ONLY
+ts "let x: a<b>.c;" | TS1005 [11,12) | lint: "Unexpected c" @[12,13) => no entry | 12,13) => no entry    [DIFFERS
+js "let x: a<b>.c;" | TS1005 [11,12) | lint: "Expected \";\" but found \":\"" @[5,6) => TS1005 [5,6) | 5,6) => TS1005 [5,6)    [code-same-range-differs
+js "import x = a<b>.c;" | TS1005 [12,13) (+2) | lint: "Expected \"from\" but found \"=\" (token: TEquals)" @[9,9) => TS1005 [9,9) | 9,9) => TS1005 [9,9)    [code-same-range-differs
+js "export = a<b>.c;" | TS1109 [13,14) | lint: "Unexpected =" @[7,8) => no entry | 7,8) => no entry    [DIFFERS
+js "enum E { A = a<b>.c }" | TS1109 [17,18) | lint: "Unexpected enum" @[0,4) => no entry | 0,4) => no entry    [DIFFERS
+js "namespace N { a<b>.c; }" | TS1109 [18,19) | lint: "Expected \";\" but found \"N\"" @[10,11) => TS1005 [10,11) | 10,11) => TS1005 [10,11)    [DIFFERS
+js "declare const x: any; x<b>.c;" | TS1109 [26,27) | lint: "Expected \";\" but found \"const\"" @[8,13) => TS1005 [8,13) | 8,13) => TS1005 [8,13)    [DIFFERS

@@ -1,0 +1,38 @@
+150708 sources, 150251 with the same first error (or both parse), 457 changed, in 7 classes
+
+   419  "Unexpected \"…\"" (no entry)  ==>  "Unexpected \"…\"" TS1034
+          ts "class C extends super {}"
+          ts "super class C { x; }"
+          ts "super C { x; }"
+          ts "super class C { x = 1; y: number; z?: string; w!: number; }"
+
+    14  "Unexpected <token>" TS1109  ==>  "Unexpected <token>" TS1011
+          ts "class C implements I[] {}"
+          ts "class C { [a[ ] = 1; [b]() {} static [c]; get [d]() { return 1 } }"
+          ts "class C { [a] = 1; [b[ ]() {} static [c]; get [d]() { return 1 } }"
+          ts "class C { [a] = 1; [b]() {} static [c[ ]; get [d]() { return 1 } }"
+
+     9  "Unexpected \"…\"" (no entry)  ==>  parses
+          ts "class C extends super.B {}"
+          ts "class C extends super() {}"
+          ts "class C { @super.a x }"
+          ts "class C { @dec x; @super() m() {} @a @b static s = 1; @dec accessor y; }"
+
+     8  parses  ==>  "An instantiation expression cannot be followed by a property access." TS1477
+          ts "class C extends B<T>.D {}"
+          ts "class C implements a.b<T>.c {}"
+          ts "class C { static {} static { this<T> .x = 1; } }"
+          ts "class C extends a<T> .b.c<T, U> {}"
+
+     3  "Expected \"…\" but found \"…\"" TS1005  ==>  "An instantiation expression cannot be followed by a property access." TS1477
+          ts "class C<T> extends B<T> . implements I<T>, a.J {}"
+          ts "class C<T> extends B<T> . I<T>, a.J {}"
+          ts "const k = class K<T> extends B<T> . implements I {};"
+
+     3  "Unexpected \"…\"" (no entry)  ==>  "Expected \"…\" but found \"…\"" TS1005
+          ts "const f = super (a, b) {};"
+          ts "const a = super (x, y = 1, ...z) => x;"
+          ts "const b = super (x: number, y?: string) => x;"
+
+     1  "Unexpected \"…\"" (no entry)  ==>  "Unexpected \"…\"" TS2754
+          ts "const d = super <T,>(x: T): T => x;"

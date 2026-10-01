@@ -1,5 +1,5 @@
 diff --git a/test/cli/lint/conformance.test.ts b/test/cli/lint/conformance.test.ts
-index 0f294fa055..cd241f5ee8 100644
+index 0f294fa055..c59677acf3 100644
 --- a/test/cli/lint/conformance.test.ts
 +++ b/test/cli/lint/conformance.test.ts
 @@ -1,5 +1,5 @@
@@ -26,6 +26,15 @@ index 0f294fa055..cd241f5ee8 100644
  
  // One of every n names, the same on every platform and without an order of the directory entries.
  const sampled = (name: string, n: number) => Bun.hash.crc32(name) % n === 0;
+@@ -187,7 +193,7 @@ async function failuresOf(batch: readonly { name: string; list: "E" | "C" }[], c
+     ...corpusRun,
+     directory,
+     concurrency: Math.min(8, availableParallelism()),
+-    timeoutMs: small ? 60_000 : 10_000,
++    timeoutMs: checkTimeout,
+   });
+   for (const r of results) {
+     if (r.outcome === "pass") continue;
 @@ -237,130 +243,142 @@ describe("reference", () => {
      });
    });
@@ -291,13 +300,11 @@ index 0f294fa055..cd241f5ee8 100644
    );
  
    test("45 cases are left out by name and 8 are run for their diagnostics alone", () => {
-@@ -458,8 +477,8 @@ describe("enumerator", () => {
-     ).toEqual(emitOnly.map(name => ({ name, run: true, flagged: true })));
+@@ -459,7 +478,7 @@ describe("enumerator", () => {
    });
  
--  // The whole corpus is a second of work in a release build and minutes in a debug build; the time limit is for a machine under load.
+   // The whole corpus is a second of work in a release build and minutes in a debug build; the time limit is for a machine under load.
 -  test.skipIf(small)(
-+  // The whole corpus is a second of work in a release build and minutes in a debug build; the time limit is the one that CI gives a test.
 +  test.skipIf(!whole)(
      "every instance is its line of the list, and the counts are those of the reference",
      () => {
@@ -457,3 +464,11 @@ index 0f294fa055..cd241f5ee8 100644
  
    test("a name in the list of the other class, a skipped instance and a name of no instance are failures", async () => {
      using dir = tempDir("lint-conformance", {});
+@@ -1150,6 +1188,6 @@ describe("expectations.json", () => {
+       // The first failures in full and the number of all: a binary that cannot lint fails every name for one reason.
+       expect({ failed: failures.length, first: failures.slice(0, 5) }).toEqual({ failed: 0, first: [] });
+     },
+-    small ? 120_000 : 30_000,
++    spawnTimeout,
+   );
+ });

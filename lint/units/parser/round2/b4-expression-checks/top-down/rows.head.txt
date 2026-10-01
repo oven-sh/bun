@@ -1,0 +1,949 @@
+
+// TS17006: the operand of ** is a unary expression (error path of nine sites)
+FAIL ts "-x ** 2;"  want TS17006 [0,2)  got: "Unexpected **" @[3,5) => no entry (1 messages)
+FAIL js "-x ** 2;"  want TS17006 [0,2)  got: "Unexpected **" @[3,5) => no entry (1 messages)
+FAIL ts "+x ** 2;"  want TS17006 [0,2)  got: "Unexpected **" @[3,5) => no entry (1 messages)
+FAIL js "+x ** 2;"  want TS17006 [0,2)  got: "Unexpected **" @[3,5) => no entry (1 messages)
+FAIL ts "~x ** 2;"  want TS17006 [0,2)  got: "Unexpected **" @[3,5) => no entry (1 messages)
+FAIL js "~x ** 2;"  want TS17006 [0,2)  got: "Unexpected **" @[3,5) => no entry (1 messages)
+FAIL ts "!x ** 2;"  want TS17006 [0,2)  got: "Unexpected **" @[3,5) => no entry (1 messages)
+FAIL js "!x ** 2;"  want TS17006 [0,2)  got: "Unexpected **" @[3,5) => no entry (1 messages)
+FAIL ts "typeof x ** 2;"  want TS17006 [0,8)  got: "Unexpected **" @[9,11) => no entry (1 messages)
+FAIL js "typeof x ** 2;"  want TS17006 [0,8)  got: "Unexpected **" @[9,11) => no entry (1 messages)
+FAIL ts "void x ** 2;"  want TS17006 [0,6)  got: "Unexpected **" @[7,9) => no entry (1 messages)
+FAIL js "void x ** 2;"  want TS17006 [0,6)  got: "Unexpected **" @[7,9) => no entry (1 messages)
+FAIL ts "delete x.y ** 2;"  want TS17006 [0,10)  got: "Unexpected **" @[11,13) => no entry (1 messages)
+FAIL js "delete x.y ** 2;"  want TS17006 [0,10)  got: "Unexpected **" @[11,13) => no entry (1 messages)
+FAIL ts "async function f() { await x ** 2; }"  want TS17006 [21,28)  got: "Unexpected **" @[29,31) => no entry (1 messages)
+FAIL js "async function f() { await x ** 2; }"  want TS17006 [21,28)  got: "Unexpected **" @[29,31) => no entry (1 messages)
+FAIL ts "async function f() { y = await x ** 2; }"  want TS17006 [25,32)  got: "Unexpected **" @[33,35) => no entry (1 messages)
+FAIL js "async function f() { y = await x ** 2; }"  want TS17006 [25,32)  got: "Unexpected **" @[33,35) => no entry (1 messages)
+FAIL ts "a - -x ** 2;"  want TS17006 [4,6)  got: "Unexpected **" @[7,9) => no entry (1 messages)
+FAIL js "a - -x ** 2;"  want TS17006 [4,6)  got: "Unexpected **" @[7,9) => no entry (1 messages)
+FAIL ts "2 ** -x ** 2;"  want TS17006 [5,7)  got: "Unexpected **" @[8,10) => no entry (1 messages)
+FAIL js "2 ** -x ** 2;"  want TS17006 [5,7)  got: "Unexpected **" @[8,10) => no entry (1 messages)
+FAIL ts "x = -y ** 2;"  want TS17006 [4,6)  got: "Unexpected **" @[7,9) => no entry (1 messages)
+FAIL js "x = -y ** 2;"  want TS17006 [4,6)  got: "Unexpected **" @[7,9) => no entry (1 messages)
+FAIL ts "f(-x ** 2);"  want TS17006 [2,4)  got: "Unexpected **" @[5,7) => no entry (1 messages)
+FAIL js "f(-x ** 2);"  want TS17006 [2,4)  got: "Unexpected **" @[5,7) => no entry (1 messages)
+FAIL ts "-x.y ** 2;"  want TS17006 [0,4)  got: "Unexpected **" @[5,7) => no entry (1 messages)
+FAIL js "-x.y ** 2;"  want TS17006 [0,4)  got: "Unexpected **" @[5,7) => no entry (1 messages)
+FAIL ts "-x() ** 2;"  want TS17006 [0,4)  got: "Unexpected **" @[5,7) => no entry (1 messages)
+FAIL js "-x() ** 2;"  want TS17006 [0,4)  got: "Unexpected **" @[5,7) => no entry (1 messages)
+FAIL ts "-x++ ** 2;"  want TS17006 [0,4)  got: "Unexpected **" @[5,7) => no entry (1 messages)
+FAIL js "-x++ ** 2;"  want TS17006 [0,4)  got: "Unexpected **" @[5,7) => no entry (1 messages)
+FAIL ts "-x\n** 2;"  want TS17006 [0,2)  got: "Unexpected **" @[3,5) => no entry (1 messages)
+FAIL js "-x\n** 2;"  want TS17006 [0,2)  got: "Unexpected **" @[3,5) => no entry (1 messages)
+FAIL ts "- new A() ** 2;"  want TS17006 [0,9)  got: "Unexpected **" @[10,12) => no entry (1 messages)
+FAIL js "- new A() ** 2;"  want TS17006 [0,9)  got: "Unexpected **" @[10,12) => no entry (1 messages)
+FAIL ts "-(x) ** 2;"  want TS17006 [0,4)  got: "Unexpected **" @[5,7) => no entry (1 messages)
+FAIL js "-(x) ** 2;"  want TS17006 [0,4)  got: "Unexpected **" @[5,7) => no entry (1 messages)
+FAIL ts "-x ** 2 ** 3;"  want TS17006 [0,2)  got: "Unexpected **" @[3,5) => no entry (1 messages)
+FAIL js "-x ** 2 ** 3;"  want TS17006 [0,2)  got: "Unexpected **" @[3,5) => no entry (1 messages)
+FAIL ts "for (const k in -x ** 2) {}"  want TS17006 [16,18)  got: "Unexpected **" @[19,21) => no entry (1 messages)
+FAIL js "for (const k in -x ** 2) {}"  want TS17006 [16,18)  got: "Unexpected **" @[19,21) => no entry (1 messages)
+FAIL ts "x ? -y ** 2 : z;"  want TS17006 [4,6)  got: "Unexpected **" @[7,9) => no entry (1 messages)
+FAIL js "x ? -y ** 2 : z;"  want TS17006 [4,6)  got: "Unexpected **" @[7,9) => no entry (1 messages)
+FAIL ts "typeof import('a') ** 2;"  want TS17006 [0,18)  got: "Unexpected **" @[19,21) => no entry (1 messages)
+FAIL js "typeof import('a') ** 2;"  want TS17006 [0,18)  got: "Unexpected **" @[19,21) => no entry (1 messages)
+FAIL ts "-a.b.c(d)[e] ** 2;"  want TS17006 [0,12)  got: "Unexpected **" @[13,15) => no entry (1 messages)
+FAIL js "-a.b.c(d)[e] ** 2;"  want TS17006 [0,12)  got: "Unexpected **" @[13,15) => no entry (1 messages)
+FAIL ts "-x!.y ** 2;"  want TS17006 [0,5)  got: "Unexpected **" @[6,8) => no entry (1 messages)
+FAIL ts "-(x as any) ** 2;"  want TS17006 [0,11)  got: "Unexpected **" @[12,14) => no entry (1 messages)
+
+// TS17006: the operator before the operand is the one the reference names (Err arm of the operand of each unary site)
+FAIL ts "- -x ** 2;"  want TS17006 [0,4)  got: "Unexpected **" @[5,7) => no entry (1 messages)
+FAIL js "- -x ** 2;"  want TS17006 [0,4)  got: "Unexpected **" @[5,7) => no entry (1 messages)
+FAIL ts "-+x ** 2;"  want TS17006 [0,3)  got: "Unexpected **" @[4,6) => no entry (1 messages)
+FAIL js "-+x ** 2;"  want TS17006 [0,3)  got: "Unexpected **" @[4,6) => no entry (1 messages)
+FAIL ts "!-x ** 2;"  want TS17006 [0,3)  got: "Unexpected **" @[4,6) => no entry (1 messages)
+FAIL js "!-x ** 2;"  want TS17006 [0,3)  got: "Unexpected **" @[4,6) => no entry (1 messages)
+FAIL ts "typeof -x ** 2;"  want TS17006 [0,9)  got: "Unexpected **" @[10,12) => no entry (1 messages)
+FAIL js "typeof -x ** 2;"  want TS17006 [0,9)  got: "Unexpected **" @[10,12) => no entry (1 messages)
+FAIL ts "void typeof x ** 2;"  want TS17006 [0,13)  got: "Unexpected **" @[14,16) => no entry (1 messages)
+FAIL js "void typeof x ** 2;"  want TS17006 [0,13)  got: "Unexpected **" @[14,16) => no entry (1 messages)
+FAIL ts "- - -x ** 2;"  want TS17006 [0,6)  got: "Unexpected **" @[7,9) => no entry (1 messages)
+FAIL js "- - -x ** 2;"  want TS17006 [0,6)  got: "Unexpected **" @[7,9) => no entry (1 messages)
+FAIL ts "async function f() { await -x ** 2; }"  want TS17006 [21,29)  got: "Unexpected **" @[30,32) => no entry (1 messages)
+FAIL js "async function f() { await -x ** 2; }"  want TS17006 [21,29)  got: "Unexpected **" @[30,32) => no entry (1 messages)
+FAIL ts "async function f() { -await x ** 2; }"  want TS17006 [21,29)  got: "Unexpected **" @[30,32) => no entry (1 messages)
+FAIL js "async function f() { -await x ** 2; }"  want TS17006 [21,29)  got: "Unexpected **" @[30,32) => no entry (1 messages)
+FAIL ts "async function f() { y = typeof await x ** 2; }"  want TS17006 [25,39)  got: "Unexpected **" @[40,42) => no entry (1 messages)
+FAIL js "async function f() { y = typeof await x ** 2; }"  want TS17006 [25,39)  got: "Unexpected **" @[40,42) => no entry (1 messages)
+FAIL ts "-<A>x ** 2;"  want TS17006 [0,5)  got: "Unexpected **" @[6,8) => no entry (1 messages)
+FAIL ts "- <A>x ** 2;"  want TS17006 [0,6)  got: "Unexpected **" @[7,9) => no entry (1 messages)
+FAIL ts "typeof <A>x ** 2;"  want TS17006 [0,11)  got: "Unexpected **" @[12,14) => no entry (1 messages)
+FAIL ts "async function f() { await <A>x ** 2; }"  want TS17006 [21,31)  got: "Unexpected **" @[32,34) => no entry (1 messages)
+FAIL ts "y = -<A>x ** 2;"  want TS17006 [4,9)  got: "Unexpected **" @[10,12) => no entry (1 messages)
+
+// TS17006 and TS17007: a comment before ** or after the operator (needs the comments of the lint parse)
+FAIL ts "-x /*c*/ ** 2;"  want TS17006 [0,2)  got: "Unexpected **" @[9,11) => no entry (1 messages)
+FAIL js "-x /*c*/ ** 2;"  want TS17006 [0,2)  got: "Unexpected **" @[9,11) => no entry (1 messages)
+FAIL ts "- /*c*/ x ** 2;"  want TS17006 [0,9)  got: "Unexpected **" @[10,12) => no entry (1 messages)
+FAIL js "- /*c*/ x ** 2;"  want TS17006 [0,9)  got: "Unexpected **" @[10,12) => no entry (1 messages)
+FAIL ts "- (x) /*c*/ ** 2;"  want TS17006 [0,5)  got: "Unexpected **" @[12,14) => no entry (1 messages)
+FAIL js "- (x) /*c*/ ** 2;"  want TS17006 [0,5)  got: "Unexpected **" @[12,14) => no entry (1 messages)
+FAIL ts "- /*c*/ -x ** 2;"  want TS17006 [0,10)  got: "Unexpected **" @[11,13) => no entry (1 messages)
+FAIL js "- /*c*/ -x ** 2;"  want TS17006 [0,10)  got: "Unexpected **" @[11,13) => no entry (1 messages)
+FAIL ts "<A>x /*c*/ ** 2;"  want TS17007 [0,4)  got: parses
+FAIL ts "<A>x /*c*/ . y ** 2;"  want TS17007 [0,14)  got: parses
+
+// TS17007: the operand of ** is a type assertion (lint twin of <T>x)
+FAIL ts "<A>x ** 2;"  want TS17007 [0,4)  got: parses
+FAIL ts "<A>(x) ** 2;"  want TS17007 [0,6)  got: parses
+FAIL ts "<A>x.y ** 2;"  want TS17007 [0,6)  got: parses
+FAIL ts "<A>x++ ** 2;"  want TS17007 [0,6)  got: parses
+FAIL ts "<A> x ** 2;"  want TS17007 [0,5)  got: parses
+FAIL ts " <A>x ** 2;"  want TS17007 [1,5)  got: parses
+FAIL ts "/*c*/ <A>x ** 2;"  want TS17007 [6,10)  got: parses
+FAIL ts "y = <A>x ** 2;"  want TS17007 [4,8)  got: parses
+FAIL ts "f(<A>x ** 2);"  want TS17007 [2,6)  got: parses
+FAIL ts "2 ** <A>x ** 2;"  want TS17007 [5,9)  got: parses
+FAIL ts "<A>x\n** 2;"  want TS17007 [0,4)  got: parses
+FAIL ts "<A>new X ** 2;"  want TS17007 [0,8)  got: parses
+FAIL ts "<A>x! ** 2;"  want TS17007 [0,5)  got: parses
+FAIL ts "<A>(x)(y) ** 2;"  want TS17007 [0,9)  got: parses
+FAIL ts "<A>(x).y ** 2;"  want TS17007 [0,8)  got: parses
+FAIL ts "<A>(x) ** 2 ** 3;"  want TS17007 [0,6)  got: parses
+FAIL ts "(<A>x ** 2);"  want TS17007 [1,5)  got: parses
+FAIL ts "a > <B>x ** 2;"  want TS17007 [4,8)  got: parses
+FAIL ts "<const>x ** 2;"  want TS17007 [0,8)  got: parses
+FAIL ts "function* g() { yield <A>x ** 2; }"  want TS17007 [22,26)  got: parses
+FAIL ts "x = y ? <A>z ** 2 : w;"  want TS17007 [8,12)  got: parses
+FAIL ts "<A>{} ** 2;"  want TS17007 [0,5)  got: parses
+FAIL ts "<A>[] ** 2;"  want TS17007 [0,5)  got: parses
+FAIL ts "<A>`a` ** 2;"  want TS17007 [0,6)  got: parses
+FAIL ts "<A>x?.y ** 2;"  want TS17007 [0,7)  got: parses
+FAIL ts "<A>x`t` ** 2;"  want TS17007 [0,7)  got: parses
+FAIL ts "<A>(<B>x ** 2);"  want TS17007 [4,8)  got: parses
+FAIL ts "<A>f(<B>x ** 2);"  want TS17007 [5,9)  got: parses
+FAIL ts "<A>[<B>x ** 2];"  want TS17007 [4,8)  got: parses
+
+// TS17007: the outer assertion is the one the reference names (Err arm of the operand in the twin)
+FAIL ts "<A><B>x ** 2;"  want TS17007 [0,7)  got: parses
+FAIL ts "<A>-x ** 2;"  want TS17007 [0,5)  got: "Unexpected **" @[6,8) => no entry (1 messages)
+FAIL ts "<A>--x ** 2;"  want TS17007 [0,6)  got: parses
+FAIL ts "async function f() { <A>await x ** 2; }"  want TS17007 [21,31)  got: "Unexpected **" @[32,34) => no entry (1 messages)
+FAIL ts "<A><B><C>x ** 2;"  want TS17007 [0,10)  got: parses
+FAIL ts "<A>typeof x ** 2;"  want TS17007 [0,11)  got: "Unexpected **" @[12,14) => no entry (1 messages)
+
+// TS1477: a property access after an instantiation expression (lint_type_arguments_in_expression)
+FAIL ts "a<b>.c;"  want TS1477 [1,4)  got: parses
+FAIL ts "a<b>?.c;"  want TS1477 [1,4)  got: parses
+FAIL ts "a<b>.c<d>.e;"  want TS1477 [1,4)  got: parses
+FAIL ts "a<b>.c<d>(e);"  want TS1477 [1,4)  got: parses
+FAIL ts "new A<T>.b();"  want TS1477 [5,8)  got: parses
+FAIL ts "new A<T>.b;"  want TS1477 [5,8)  got: parses
+FAIL ts "a<b, c>.d;"  want TS1477 [1,7)  got: parses
+FAIL ts "a<b> .c;"  want TS1477 [1,4)  got: parses
+FAIL ts "a<b>\n.c;"  want TS1477 [1,4)  got: parses
+FAIL ts "a< b /*x*/ > /*y*/ .c;"  want TS1477 [1,12)  got: parses
+FAIL ts "a<b>.#c;"  want TS1477 [1,4)  got: "Expected identifier but found \"#c\"" @[5,7) => TS1003 [5,7) "Identifier expected." (1 messages)
+FAIL ts "class C { #b = 1; m(a) { a<b>.#b; } }"  want TS1477 [26,29)  got: parses
+FAIL ts "a.b<c>.d;"  want TS1477 [3,6)  got: parses
+FAIL ts "f()<b>.c;"  want TS1477 [3,6)  got: parses
+FAIL ts "a?.b<c>.d;"  want TS1477 [4,7)  got: parses
+FAIL ts "a<b>.c = 1;"  want TS1477 [1,4)  got: parses
+FAIL ts "a<<T>(x: T) => void>.c;"  want TS1477 [1,20)  got: parses
+FAIL ts "a<b<c>>.d;"  want TS1477 [1,7)  got: parses
+FAIL ts "a<b<c<d>>>.e;"  want TS1477 [1,10)  got: parses
+FAIL ts "x = a<b>.c;"  want TS1477 [5,8)  got: parses
+FAIL ts "f(a<b>.c);"  want TS1477 [3,6)  got: parses
+FAIL ts "a<>.c;"  want TS1477 [1,3)  got: parses
+FAIL ts "a<b,>.c;"  want TS1477 [1,5)  got: parses
+FAIL ts "this<T>.x;"  want TS1477 [4,7)  got: parses
+FAIL ts "a!<b>.c;"  want TS1477 [2,5)  got: parses
+FAIL ts "import.meta<T>.x;"  want TS1477 [11,14)  got: parses
+FAIL ts "a<b>.c`x`;"  want TS1477 [1,4)  got: parses
+FAIL ts "a`x`<b>.c;"  want TS1477 [4,7)  got: parses
+FAIL ts "a<b>.then<c>(d);"  want TS1477 [1,4)  got: parses
+FAIL ts "a<b>.class;"  want TS1477 [1,4)  got: parses
+FAIL ts "a<b>?.\nc;"  want TS1477 [1,4)  got: parses
+FAIL ts "async<b>.c;"  want TS1477 [5,8)  got: parses
+FAIL ts "typeof a<b>.c;"  want TS1477 [8,11)  got: parses
+FAIL ts "new a<b>.c();"  want TS1477 [5,8)  got: parses
+FAIL ts "a<b>?.c?.d;"  want TS1477 [1,4)  got: parses
+FAIL ts "class C extends A<T>.b {}"  want TS1477 [17,20)  got: parses
+FAIL ts "class C implements A<T>.b {}"  want TS1477 [20,23)  got: parses
+FAIL ts "@a<b>.c class C {}"  want TS1477 [2,5)  got: parses
+FAIL ts "export default a<b>.c;"  want TS1477 [16,19)  got: parses
+FAIL ts "enum E { A = a<b>.c }"  want TS1477 [14,17)  got: parses
+FAIL ts "new a.b<c>.d?.e();"  want TS1477 [7,10)  got: parses
+
+// TS1003 and TS18030 come first after an instantiation expression
+pass ts "a<b>.;"  want TS1003 [5,6)  got: "Expected identifier but found \";\"" @[5,6) => TS1003 [5,6) "Identifier expected." (1 messages)
+pass ts "a<b>?.;"  want TS1003 [6,7)  got: "Expected identifier but found \";\"" @[6,7) => TS1003 [6,7) "Identifier expected." (1 messages)
+pass ts "a<b>..c;"  want TS1003 [5,6)  got: "Expected identifier but found \".\"" @[5,6) => TS1003 [5,6) "Identifier expected." (1 messages)
+FAIL ts "a<b>?.#c;"  want TS18030 [6,8)  got: "Expected identifier but found \"#c\"" @[6,8) => TS1003 [6,8) "Identifier expected." (1 messages)
+FAIL ts "class C { #b = 1; m(a) { a<b>?.#b; } }"  want TS18030 [31,33)  got: parses
+
+// TS1011: an element access without an argument (Err arm of the two sites)
+FAIL ts "a[];"  want TS1011 [2,2)  got: "Unexpected ]" @[2,3) => TS1109 [2,3) "Expression expected." (1 messages)
+FAIL js "a[];"  want TS1011 [2,2)  got: "Unexpected ]" @[2,3) => TS1109 [2,3) "Expression expected." (1 messages)
+FAIL ts "a[ ];"  want TS1011 [2,2)  got: "Unexpected ]" @[3,4) => TS1109 [3,4) "Expression expected." (1 messages)
+FAIL js "a[ ];"  want TS1011 [2,2)  got: "Unexpected ]" @[3,4) => TS1109 [3,4) "Expression expected." (1 messages)
+FAIL ts "a[\n];"  want TS1011 [2,2)  got: "Unexpected ]" @[3,4) => TS1109 [3,4) "Expression expected." (1 messages)
+FAIL js "a[\n];"  want TS1011 [2,2)  got: "Unexpected ]" @[3,4) => TS1109 [3,4) "Expression expected." (1 messages)
+FAIL ts "a?.[];"  want TS1011 [4,4)  got: "Unexpected ]" @[4,5) => TS1109 [4,5) "Expression expected." (1 messages)
+FAIL js "a?.[];"  want TS1011 [4,4)  got: "Unexpected ]" @[4,5) => TS1109 [4,5) "Expression expected." (1 messages)
+FAIL ts "a?.[ ];"  want TS1011 [4,4)  got: "Unexpected ]" @[5,6) => TS1109 [5,6) "Expression expected." (1 messages)
+FAIL js "a?.[ ];"  want TS1011 [4,4)  got: "Unexpected ]" @[5,6) => TS1109 [5,6) "Expression expected." (1 messages)
+FAIL ts "a[][0];"  want TS1011 [2,2)  got: "Unexpected ]" @[2,3) => TS1109 [2,3) "Expression expected." (1 messages)
+FAIL js "a[][0];"  want TS1011 [2,2)  got: "Unexpected ]" @[2,3) => TS1109 [2,3) "Expression expected." (1 messages)
+FAIL ts "a[b[]];"  want TS1011 [4,4)  got: "Unexpected ]" @[4,5) => TS1109 [4,5) "Expression expected." (1 messages)
+FAIL js "a[b[]];"  want TS1011 [4,4)  got: "Unexpected ]" @[4,5) => TS1109 [4,5) "Expression expected." (1 messages)
+FAIL ts "a[] = 1;"  want TS1011 [2,2)  got: "Unexpected ]" @[2,3) => TS1109 [2,3) "Expression expected." (1 messages)
+FAIL js "a[] = 1;"  want TS1011 [2,2)  got: "Unexpected ]" @[2,3) => TS1109 [2,3) "Expression expected." (1 messages)
+FAIL ts "new A[];"  want TS1011 [6,6)  got: "Unexpected ]" @[6,7) => TS1109 [6,7) "Expression expected." (1 messages)
+FAIL js "new A[];"  want TS1011 [6,6)  got: "Unexpected ]" @[6,7) => TS1109 [6,7) "Expression expected." (1 messages)
+FAIL ts "new A[]();"  want TS1011 [6,6)  got: "Unexpected ]" @[6,7) => TS1109 [6,7) "Expression expected." (1 messages)
+FAIL js "new A[]();"  want TS1011 [6,6)  got: "Unexpected ]" @[6,7) => TS1109 [6,7) "Expression expected." (1 messages)
+FAIL ts "x = a[];"  want TS1011 [6,6)  got: "Unexpected ]" @[6,7) => TS1109 [6,7) "Expression expected." (1 messages)
+FAIL js "x = a[];"  want TS1011 [6,6)  got: "Unexpected ]" @[6,7) => TS1109 [6,7) "Expression expected." (1 messages)
+FAIL ts "a.b[];"  want TS1011 [4,4)  got: "Unexpected ]" @[4,5) => TS1109 [4,5) "Expression expected." (1 messages)
+FAIL js "a.b[];"  want TS1011 [4,4)  got: "Unexpected ]" @[4,5) => TS1109 [4,5) "Expression expected." (1 messages)
+FAIL ts "a()[];"  want TS1011 [4,4)  got: "Unexpected ]" @[4,5) => TS1109 [4,5) "Expression expected." (1 messages)
+FAIL js "a()[];"  want TS1011 [4,4)  got: "Unexpected ]" @[4,5) => TS1109 [4,5) "Expression expected." (1 messages)
+FAIL ts "for (const x of y[]) {}"  want TS1011 [18,18)  got: "Unexpected ]" @[18,19) => TS1109 [18,19) "Expression expected." (1 messages)
+FAIL js "for (const x of y[]) {}"  want TS1011 [18,18)  got: "Unexpected ]" @[18,19) => TS1109 [18,19) "Expression expected." (1 messages)
+FAIL ts "a[].b;"  want TS1011 [2,2)  got: "Unexpected ]" @[2,3) => TS1109 [2,3) "Expression expected." (1 messages)
+FAIL js "a[].b;"  want TS1011 [2,2)  got: "Unexpected ]" @[2,3) => TS1109 [2,3) "Expression expected." (1 messages)
+FAIL ts "a[]();"  want TS1011 [2,2)  got: "Unexpected ]" @[2,3) => TS1109 [2,3) "Expression expected." (1 messages)
+FAIL js "a[]();"  want TS1011 [2,2)  got: "Unexpected ]" @[2,3) => TS1109 [2,3) "Expression expected." (1 messages)
+FAIL ts "a[]\n[];"  want TS1011 [2,2)  got: "Unexpected ]" @[2,3) => TS1109 [2,3) "Expression expected." (1 messages)
+FAIL js "a[]\n[];"  want TS1011 [2,2)  got: "Unexpected ]" @[2,3) => TS1109 [2,3) "Expression expected." (1 messages)
+FAIL ts "f(a[]);"  want TS1011 [4,4)  got: "Unexpected ]" @[4,5) => TS1109 [4,5) "Expression expected." (1 messages)
+FAIL js "f(a[]);"  want TS1011 [4,4)  got: "Unexpected ]" @[4,5) => TS1109 [4,5) "Expression expected." (1 messages)
+FAIL ts "[a[]];"  want TS1011 [3,3)  got: "Unexpected ]" @[3,4) => TS1109 [3,4) "Expression expected." (1 messages)
+FAIL js "[a[]];"  want TS1011 [3,3)  got: "Unexpected ]" @[3,4) => TS1109 [3,4) "Expression expected." (1 messages)
+FAIL ts "`${a[]}`;"  want TS1011 [5,5)  got: "Unexpected ]" @[5,6) => TS1109 [5,6) "Expression expected." (1 messages)
+FAIL js "`${a[]}`;"  want TS1011 [5,5)  got: "Unexpected ]" @[5,6) => TS1109 [5,6) "Expression expected." (1 messages)
+FAIL ts "(a[]);"  want TS1011 [3,3)  got: "Unexpected ]" @[3,4) => TS1109 [3,4) "Expression expected." (1 messages)
+FAIL js "(a[]);"  want TS1011 [3,3)  got: "Unexpected ]" @[3,4) => TS1109 [3,4) "Expression expected." (1 messages)
+FAIL ts "a[[]][];"  want TS1011 [6,6)  got: "Unexpected ]" @[6,7) => TS1109 [6,7) "Expression expected." (1 messages)
+FAIL js "a[[]][];"  want TS1011 [6,6)  got: "Unexpected ]" @[6,7) => TS1109 [6,7) "Expression expected." (1 messages)
+FAIL ts "let [] = a[];"  want TS1011 [11,11)  got: "Unexpected ]" @[11,12) => TS1109 [11,12) "Expression expected." (1 messages)
+FAIL js "let [] = a[];"  want TS1011 [11,11)  got: "Unexpected ]" @[11,12) => TS1109 [11,12) "Expression expected." (1 messages)
+FAIL ts "a?.b[];"  want TS1011 [5,5)  got: "Unexpected ]" @[5,6) => TS1109 [5,6) "Expression expected." (1 messages)
+FAIL js "a?.b[];"  want TS1011 [5,5)  got: "Unexpected ]" @[5,6) => TS1109 [5,6) "Expression expected." (1 messages)
+FAIL ts "class A extends B { m() { super[]; } }"  want TS1011 [32,32)  got: "Unexpected ]" @[32,33) => TS1109 [32,33) "Expression expected." (1 messages)
+FAIL js "class A extends B { m() { super[]; } }"  want TS1011 [32,32)  got: "Unexpected ]" @[32,33) => TS1109 [32,33) "Expression expected." (1 messages)
+FAIL ts "this[];"  want TS1011 [5,5)  got: "Unexpected ]" @[5,6) => TS1109 [5,6) "Expression expected." (1 messages)
+FAIL js "this[];"  want TS1011 [5,5)  got: "Unexpected ]" @[5,6) => TS1109 [5,6) "Expression expected." (1 messages)
+FAIL ts "import.meta[];"  want TS1011 [12,12)  got: "Unexpected ]" @[12,13) => TS1109 [12,13) "Expression expected." (1 messages)
+FAIL js "import.meta[];"  want TS1011 [12,12)  got: "Unexpected ]" @[12,13) => TS1109 [12,13) "Expression expected." (1 messages)
+FAIL ts "async[];"  want TS1011 [6,6)  got: "Unexpected ]" @[6,7) => TS1109 [6,7) "Expression expected." (1 messages)
+FAIL js "async[];"  want TS1011 [6,6)  got: "Unexpected ]" @[6,7) => TS1109 [6,7) "Expression expected." (1 messages)
+FAIL ts "of[];"  want TS1011 [3,3)  got: "Unexpected ]" @[3,4) => TS1109 [3,4) "Expression expected." (1 messages)
+FAIL js "of[];"  want TS1011 [3,3)  got: "Unexpected ]" @[3,4) => TS1109 [3,4) "Expression expected." (1 messages)
+FAIL ts "function* g() { (yield)[]; }"  want TS1011 [24,24)  got: "Unexpected ]" @[24,25) => TS1109 [24,25) "Expression expected." (1 messages)
+FAIL js "function* g() { (yield)[]; }"  want TS1011 [24,24)  got: "Unexpected ]" @[24,25) => TS1109 [24,25) "Expression expected." (1 messages)
+FAIL ts "a[b?.[]];"  want TS1011 [6,6)  got: "Unexpected ]" @[6,7) => TS1109 [6,7) "Expression expected." (1 messages)
+FAIL js "a[b?.[]];"  want TS1011 [6,6)  got: "Unexpected ]" @[6,7) => TS1109 [6,7) "Expression expected." (1 messages)
+FAIL ts "a?.[b[]];"  want TS1011 [6,6)  got: "Unexpected ]" @[6,7) => TS1109 [6,7) "Expression expected." (1 messages)
+FAIL js "a?.[b[]];"  want TS1011 [6,6)  got: "Unexpected ]" @[6,7) => TS1109 [6,7) "Expression expected." (1 messages)
+FAIL ts "a[(b[])];"  want TS1011 [5,5)  got: "Unexpected ]" @[5,6) => TS1109 [5,6) "Expression expected." (1 messages)
+FAIL js "a[(b[])];"  want TS1011 [5,5)  got: "Unexpected ]" @[5,6) => TS1109 [5,6) "Expression expected." (1 messages)
+FAIL ts "a[b, c[]];"  want TS1011 [7,7)  got: "Unexpected ]" @[7,8) => TS1109 [7,8) "Expression expected." (1 messages)
+FAIL js "a[b, c[]];"  want TS1011 [7,7)  got: "Unexpected ]" @[7,8) => TS1109 [7,8) "Expression expected." (1 messages)
+FAIL ts "x = a\n[];"  want TS1011 [7,7)  got: "Unexpected ]" @[7,8) => TS1109 [7,8) "Expression expected." (1 messages)
+FAIL js "x = a\n[];"  want TS1011 [7,7)  got: "Unexpected ]" @[7,8) => TS1109 [7,8) "Expression expected." (1 messages)
+FAIL ts "class C { a = b\n[] }"  want TS1011 [17,17)  got: "Unexpected ]" @[17,18) => TS1109 [17,18) "Expression expected." (1 messages)
+FAIL js "class C { a = b\n[] }"  want TS1011 [17,17)  got: "Unexpected ]" @[17,18) => TS1109 [17,18) "Expression expected." (1 messages)
+FAIL ts "({ a: b[] });"  want TS1011 [8,8)  got: "Unexpected ]" @[8,9) => TS1109 [8,9) "Expression expected." (1 messages)
+FAIL js "({ a: b[] });"  want TS1011 [8,8)  got: "Unexpected ]" @[8,9) => TS1109 [8,9) "Expression expected." (1 messages)
+FAIL ts "let { [a[]]: x } = y;"  want TS1011 [9,9)  got: "Unexpected ]" @[9,10) => TS1109 [9,10) "Expression expected." (1 messages)
+FAIL js "let { [a[]]: x } = y;"  want TS1011 [9,9)  got: "Unexpected ]" @[9,10) => TS1109 [9,10) "Expression expected." (1 messages)
+FAIL ts "if (a[]) {}"  want TS1011 [6,6)  got: "Unexpected ]" @[6,7) => TS1109 [6,7) "Expression expected." (1 messages)
+FAIL js "if (a[]) {}"  want TS1011 [6,6)  got: "Unexpected ]" @[6,7) => TS1109 [6,7) "Expression expected." (1 messages)
+FAIL ts "(a)[];"  want TS1011 [4,4)  got: "Unexpected ]" @[4,5) => TS1109 [4,5) "Expression expected." (1 messages)
+FAIL js "(a)[];"  want TS1011 [4,4)  got: "Unexpected ]" @[4,5) => TS1109 [4,5) "Expression expected." (1 messages)
+FAIL ts "[][];"  want TS1011 [3,3)  got: "Unexpected ]" @[3,4) => TS1109 [3,4) "Expression expected." (1 messages)
+FAIL js "[][];"  want TS1011 [3,3)  got: "Unexpected ]" @[3,4) => TS1109 [3,4) "Expression expected." (1 messages)
+FAIL ts "x = {}[];"  want TS1011 [7,7)  got: "Unexpected ]" @[7,8) => TS1109 [7,8) "Expression expected." (1 messages)
+FAIL js "x = {}[];"  want TS1011 [7,7)  got: "Unexpected ]" @[7,8) => TS1109 [7,8) "Expression expected." (1 messages)
+FAIL ts "'a'[];"  want TS1011 [4,4)  got: "Unexpected ]" @[4,5) => TS1109 [4,5) "Expression expected." (1 messages)
+FAIL js "'a'[];"  want TS1011 [4,4)  got: "Unexpected ]" @[4,5) => TS1109 [4,5) "Expression expected." (1 messages)
+FAIL ts "1[];"  want TS1011 [2,2)  got: "Unexpected ]" @[2,3) => TS1109 [2,3) "Expression expected." (1 messages)
+FAIL js "1[];"  want TS1011 [2,2)  got: "Unexpected ]" @[2,3) => TS1109 [2,3) "Expression expected." (1 messages)
+FAIL ts "`a`[];"  want TS1011 [4,4)  got: "Unexpected ]" @[4,5) => TS1109 [4,5) "Expression expected." (1 messages)
+FAIL js "`a`[];"  want TS1011 [4,4)  got: "Unexpected ]" @[4,5) => TS1109 [4,5) "Expression expected." (1 messages)
+FAIL ts "for (a[] of b) {}"  want TS1011 [7,7)  got: "Unexpected ]" @[7,8) => TS1109 [7,8) "Expression expected." (1 messages)
+FAIL js "for (a[] of b) {}"  want TS1011 [7,7)  got: "Unexpected ]" @[7,8) => TS1109 [7,8) "Expression expected." (1 messages)
+FAIL ts "for (;a[];) {}"  want TS1011 [8,8)  got: "Unexpected ]" @[8,9) => TS1109 [8,9) "Expression expected." (1 messages)
+FAIL js "for (;a[];) {}"  want TS1011 [8,8)  got: "Unexpected ]" @[8,9) => TS1109 [8,9) "Expression expected." (1 messages)
+FAIL ts "a![];"  want TS1011 [3,3)  got: "Unexpected ]" @[3,4) => TS1109 [3,4) "Expression expected." (1 messages)
+FAIL ts "let x: A[] = a[];"  want TS1011 [15,15)  got: "Unexpected ]" @[15,16) => TS1109 [15,16) "Expression expected." (1 messages)
+FAIL ts "a[] as any;"  want TS1011 [2,2)  got: "Unexpected ]" @[2,3) => TS1109 [2,3) "Expression expected." (1 messages)
+FAIL ts "let x = <T>a[];"  want TS1011 [13,13)  got: "Unexpected ]" @[13,14) => TS1109 [13,14) "Expression expected." (1 messages)
+FAIL ts "enum E { A = a[] }"  want TS1011 [15,15)  got: "Unexpected ]" @[15,16) => TS1109 [15,16) "Expression expected." (1 messages)
+FAIL ts "a[]<b>;"  want TS1011 [2,2)  got: "Unexpected ]" @[2,3) => TS1109 [2,3) "Expression expected." (1 messages)
+FAIL ts "@(a[]) class C {}"  want TS1011 [4,4)  got: "Unexpected ]" @[4,5) => TS1109 [4,5) "Expression expected." (1 messages)
+FAIL ts "class C { @(a[]) m() {} }"  want TS1011 [14,14)  got: "Unexpected ]" @[14,15) => TS1109 [14,15) "Expression expected." (1 messages)
+
+// TS1011: a comment between the brackets (needs the comments of the lint parse)
+FAIL ts "a[/*c*/];"  want TS1011 [2,2)  got: "Unexpected ]" @[7,8) => TS1109 [7,8) "Expression expected." (1 messages)
+FAIL js "a[/*c*/];"  want TS1011 [2,2)  got: "Unexpected ]" @[7,8) => TS1109 [7,8) "Expression expected." (1 messages)
+FAIL ts "a[ /*c*/ ];"  want TS1011 [2,2)  got: "Unexpected ]" @[9,10) => TS1109 [9,10) "Expression expected." (1 messages)
+FAIL js "a[ /*c*/ ];"  want TS1011 [2,2)  got: "Unexpected ]" @[9,10) => TS1109 [9,10) "Expression expected." (1 messages)
+FAIL ts "a[ // c\n];"  want TS1011 [2,2)  got: "Unexpected ]" @[8,9) => TS1109 [8,9) "Expression expected." (1 messages)
+FAIL js "a[ // c\n];"  want TS1011 [2,2)  got: "Unexpected ]" @[8,9) => TS1109 [8,9) "Expression expected." (1 messages)
+FAIL ts "a?.[/*c*/];"  want TS1011 [4,4)  got: "Unexpected ]" @[9,10) => TS1109 [9,10) "Expression expected." (1 messages)
+FAIL js "a?.[/*c*/];"  want TS1011 [4,4)  got: "Unexpected ]" @[9,10) => TS1109 [9,10) "Expression expected." (1 messages)
+FAIL ts "a [ /*1*/ /*2*/ ] ;"  want TS1011 [3,3)  got: "Unexpected ]" @[16,17) => TS1109 [16,17) "Expression expected." (1 messages)
+FAIL js "a [ /*1*/ /*2*/ ] ;"  want TS1011 [3,3)  got: "Unexpected ]" @[16,17) => TS1109 [16,17) "Expression expected." (1 messages)
+
+// TS1109 stays where no element access misses its argument
+pass ts "a[{ []: 1 }];"  want TS1109 [5,6)  got: "Unexpected ]" @[5,6) => TS1109 [5,6) "Expression expected." (1 messages)
+pass js "a[{ []: 1 }];"  want TS1109 [5,6)  got: "Unexpected ]" @[5,6) => TS1109 [5,6) "Expression expected." (1 messages)
+pass ts "({ []: 1 });"  want TS1109 [4,5)  got: "Unexpected ]" @[4,5) => TS1109 [4,5) "Expression expected." (1 messages)
+pass js "({ []: 1 });"  want TS1109 [4,5)  got: "Unexpected ]" @[4,5) => TS1109 [4,5) "Expression expected." (1 messages)
+pass ts "a[({ [] : b }) => 0];"  want TS1109 [6,7)  got: "Unexpected ]" @[6,7) => TS1109 [6,7) "Expression expected." (1 messages)
+pass js "a[({ [] : b }) => 0];"  want TS1109 [6,7)  got: "Unexpected ]" @[6,7) => TS1109 [6,7) "Expression expected." (1 messages)
+pass ts "a[,];"  want TS1109 [2,3)  got: "Unexpected ," @[2,3) => TS1109 [2,3) "Expression expected." (1 messages)
+pass js "a[,];"  want TS1109 [2,3)  got: "Unexpected ," @[2,3) => TS1109 [2,3) "Expression expected." (1 messages)
+pass ts "a["  want TS1109 [2,2)  got: "Unexpected end of file" @[2,2) => TS1109 [2,2) "Expression expected." (1 messages)
+pass js "a["  want TS1109 [2,2)  got: "Unexpected end of file" @[2,2) => TS1109 [2,2) "Expression expected." (1 messages)
+pass ts "a[;"  want TS1109 [2,3)  got: "Unexpected ;" @[2,3) => TS1109 [2,3) "Expression expected." (1 messages)
+pass js "a[;"  want TS1109 [2,3)  got: "Unexpected ;" @[2,3) => TS1109 [2,3) "Expression expected." (1 messages)
+pass ts "a[)"  want TS1109 [2,3)  got: "Unexpected )" @[2,3) => TS1109 [2,3) "Expression expected." (1 messages)
+pass js "a[)"  want TS1109 [2,3)  got: "Unexpected )" @[2,3) => TS1109 [2,3) "Expression expected." (1 messages)
+pass ts "a[(]"  want TS1109 [3,4)  got: "Unexpected ]" @[3,4) => TS1109 [3,4) "Expression expected." (1 messages)
+pass js "a[(]"  want TS1109 [3,4)  got: "Unexpected ]" @[3,4) => TS1109 [3,4) "Expression expected." (1 messages)
+pass ts "a[in b];"  want TS1109 [2,4)  got: "Unexpected in" @[2,4) => TS1109 [2,4) "Expression expected." (1 messages)
+pass js "a[in b];"  want TS1109 [2,4)  got: "Unexpected in" @[2,4) => TS1109 [2,4) "Expression expected." (1 messages)
+
+// for head: using before of is a name (lint edit after the using test), and of [] is TS1011
+FAIL ts "for (using of of []) {}"  want TS1011 [18,18)  got: parses
+FAIL js "for (using of of []) {}"  want TS1011 [18,18)  got: parses
+FAIL ts "for (using of\nof []) {}"  want TS1011 [18,18)  got: parses
+FAIL js "for (using of\nof []) {}"  want TS1011 [18,18)  got: parses
+FAIL ts "for (using\nof of []) {}"  want TS1011 [18,18)  got: "Unexpected ]" @[18,19) => TS1109 [18,19) "Expression expected." (1 messages)
+FAIL js "for (using\nof of []) {}"  want TS1011 [18,18)  got: "Unexpected ]" @[18,19) => TS1109 [18,19) "Expression expected." (1 messages)
+FAIL ts "for (using of of\n[]) {}"  want TS1011 [18,18)  got: parses
+FAIL js "for (using of of\n[]) {}"  want TS1011 [18,18)  got: parses
+FAIL ts "for (using of of [ ]) {}"  want TS1011 [18,18)  got: parses
+FAIL js "for (using of of [ ]) {}"  want TS1011 [18,18)  got: parses
+FAIL ts "for (using of of x) {}"  want TS1005 [17,18)  got: parses
+FAIL js "for (using of of x) {}"  want TS1005 [17,18)  got: parses
+FAIL ts "for (using of in x) {}"  want TS1109 [14,16)  got: parses
+FAIL js "for (using of in x) {}"  want TS1109 [14,16)  got: parses
+FAIL ts "for (using of of of) {}"  want TS1005 [17,19)  got: parses
+FAIL js "for (using of of of) {}"  want TS1005 [17,19)  got: parses
+FAIL ts "for (using of, x;;) {}"  want TS1109 [13,14)  got: parses
+FAIL js "for (using of, x;;) {}"  want TS1109 [13,14)  got: parses
+FAIL ts "for (using of) {}"  want TS1109 [13,14)  got: "Expected \";\" but found \")\"" @[13,14) => TS1005 [13,14) "';' expected." (2 messages)
+FAIL js "for (using of) {}"  want TS1109 [13,14)  got: "Expected \";\" but found \")\"" @[13,14) => TS1005 [13,14) "';' expected." (2 messages)
+FAIL ts "for (using of! of []) {}"  want TS1011 [19,19)  got: "Expected \":\" but found \"of\"" @[15,17) => TS1005 [15,17) "':' expected." (3 messages)
+FAIL js "for (using of! of []) {}"  want TS1011 [19,19)  got: "Expected \";\" but found \"!\"" @[13,14) => TS1005 [13,14) "';' expected." (2 messages)
+FAIL ts "async function f() { for await (using of of []) {} }"  want TS1011 [45,45)  got: parses
+FAIL js "async function f() { for await (using of of []) {} }"  want TS1011 [45,45)  got: parses
+FAIL ts "async function f() { for await (using of of x) {} }"  want TS1005 [44,45)  got: parses
+FAIL js "async function f() { for await (using of of x) {} }"  want TS1005 [44,45)  got: parses
+FAIL ts "for (using of as any of []) {}"  want TS1005 [17,20)  got: "Expected \";\" but found \"as\"" @[14,16) => TS1005 [14,16) "';' expected." (2 messages)
+
+// for head: a comment before the second of (needs the comments of the lint parse)
+FAIL ts "for (using of /*c*/ of []) {}"  want TS1011 [24,24)  got: parses
+FAIL js "for (using of /*c*/ of []) {}"  want TS1011 [24,24)  got: parses
+FAIL ts "for (using of of [/*c*/]) {}"  want TS1011 [18,18)  got: parses
+FAIL js "for (using of of [/*c*/]) {}"  want TS1011 [18,18)  got: parses
+
+// TS2754: type arguments after super (error path of pfx_t_super, TypeScript only)
+FAIL ts "class A extends B { constructor() { super<T>(); } }"  want TS2754 [41,44)  got: "Unexpected \"super\"" @[36,41) => no entry (1 messages)
+FAIL ts "class A extends B { constructor() { super <T>(); } }"  want TS2754 [41,45)  got: "Unexpected \"super\"" @[36,41) => no entry (1 messages)
+FAIL ts "class A extends B { constructor() { super /*c*/ <T> /*d*/ (); } }"  want TS2754 [41,51)  got: "Unexpected \"super\"" @[36,41) => no entry (1 messages)
+FAIL ts "class A extends B { constructor() { super<T, U>(); } }"  want TS2754 [41,47)  got: "Unexpected \"super\"" @[36,41) => no entry (1 messages)
+FAIL ts "class A extends B { constructor() { super<>(); } }"  want TS2754 [41,43)  got: "Unexpected \"super\"" @[36,41) => no entry (1 messages)
+FAIL ts "class A extends B { constructor() { super<T,>(); } }"  want TS2754 [41,45)  got: "Unexpected \"super\"" @[36,41) => no entry (1 messages)
+FAIL ts "class A extends B { constructor() { super<T>(1).x; } }"  want TS2754 [41,44)  got: "Unexpected \"super\"" @[36,41) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super<T>.x; } }"  want TS2754 [31,34)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super<T>.x(); } }"  want TS2754 [31,34)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super<T>; } }"  want TS2754 [31,34)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super\n<T>(); } }"  want TS2754 [31,35)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super<T>`x`; } }"  want TS2754 [31,34)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super < T > (x); } }"  want TS2754 [31,37)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super<A<B>>(); } }"  want TS2754 [31,37)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super<T>?.x; } }"  want TS2754 [31,34)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super<T>\nx; } }"  want TS2754 [31,34)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super<T> = 1; } }"  want TS2754 [31,34)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super<T> as any; } }"  want TS2754 [31,34)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super<T[]>(); } }"  want TS2754 [31,36)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super<{ a: 1 }>(); } }"  want TS2754 [31,41)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super<A | B>(); } }"  want TS2754 [31,38)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "super<T>();"  want TS2754 [5,8)  got: "Unexpected \"super\"" @[0,5) => no entry (1 messages)
+FAIL ts "super<T>.x;"  want TS2754 [5,8)  got: "Unexpected \"super\"" @[0,5) => no entry (1 messages)
+FAIL ts "function f() { super<T>(); }"  want TS2754 [20,23)  got: "Unexpected \"super\"" @[15,20) => no entry (1 messages)
+FAIL ts "class A extends B { x = super<T>(); }"  want TS2754 [29,32)  got: "Unexpected \"super\"" @[24,29) => no entry (1 messages)
+
+// TS1034: super before what is no argument list and no member access (error path of pfx_t_super)
+FAIL ts "class A extends B { m() { super; } }"  want TS1034 [31,32)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL js "class A extends B { m() { super; } }"  want TS1034 [31,32)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super + 1; } }"  want TS1034 [32,33)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL js "class A extends B { m() { super + 1; } }"  want TS1034 [32,33)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super`x`; } }"  want TS1034 [31,34)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL js "class A extends B { m() { super`x`; } }"  want TS1034 [31,34)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { return super } } }"  want TS1034 [39,40)  got: "Unexpected \"super\"" @[33,38) => no entry (2 messages)
+FAIL js "class A extends B { m() { return super } } }"  want TS1034 [39,40)  got: "Unexpected \"super\"" @[33,38) => no entry (2 messages)
+FAIL ts "class A extends B { m() { return super; } }"  want TS1034 [38,39)  got: "Unexpected \"super\"" @[33,38) => no entry (1 messages)
+FAIL js "class A extends B { m() { return super; } }"  want TS1034 [38,39)  got: "Unexpected \"super\"" @[33,38) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super?.x; } }"  want TS1034 [31,33)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL js "class A extends B { m() { super?.x; } }"  want TS1034 [31,33)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super?.(); } }"  want TS1034 [31,33)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL js "class A extends B { m() { super?.(); } }"  want TS1034 [31,33)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { x = super; } }"  want TS1034 [35,36)  got: "Unexpected \"super\"" @[30,35) => no entry (1 messages)
+FAIL js "class A extends B { m() { x = super; } }"  want TS1034 [35,36)  got: "Unexpected \"super\"" @[30,35) => no entry (1 messages)
+FAIL ts "class A extends B { m() { f(super); } }"  want TS1034 [33,34)  got: "Unexpected \"super\"" @[28,33) => no entry (1 messages)
+FAIL js "class A extends B { m() { f(super); } }"  want TS1034 [33,34)  got: "Unexpected \"super\"" @[28,33) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super = 1; } }"  want TS1034 [32,33)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL js "class A extends B { m() { super = 1; } }"  want TS1034 [32,33)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super++; } }"  want TS1034 [31,33)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL js "class A extends B { m() { super++; } }"  want TS1034 [31,33)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { (super); } }"  want TS1034 [32,33)  got: "Unexpected \"super\"" @[27,32) => no entry (1 messages)
+FAIL js "class A extends B { m() { (super); } }"  want TS1034 [32,33)  got: "Unexpected \"super\"" @[27,32) => no entry (1 messages)
+FAIL ts "class A extends B { m() { typeof super; } }"  want TS1034 [38,39)  got: "Unexpected \"super\"" @[33,38) => no entry (1 messages)
+FAIL js "class A extends B { m() { typeof super; } }"  want TS1034 [38,39)  got: "Unexpected \"super\"" @[33,38) => no entry (1 messages)
+FAIL ts "class A extends B { m() { [super]; } }"  want TS1034 [32,33)  got: "Unexpected \"super\"" @[27,32) => no entry (1 messages)
+FAIL js "class A extends B { m() { [super]; } }"  want TS1034 [32,33)  got: "Unexpected \"super\"" @[27,32) => no entry (1 messages)
+FAIL ts "class A extends B { m() { `${super}`; } }"  want TS1034 [34,35)  got: "Unexpected \"super\"" @[29,34) => no entry (1 messages)
+FAIL js "class A extends B { m() { `${super}`; } }"  want TS1034 [34,35)  got: "Unexpected \"super\"" @[29,34) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super => 1; } }"  want TS1034 [32,34)  got: "Unexpected \"super\"" @[26,31) => no entry (2 messages)
+FAIL js "class A extends B { m() { super => 1; } }"  want TS1034 [32,34)  got: "Unexpected \"super\"" @[26,31) => no entry (2 messages)
+FAIL ts "class A extends B { m() { super ? 1 : 2; } }"  want TS1034 [32,33)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL js "class A extends B { m() { super ? 1 : 2; } }"  want TS1034 [32,33)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super, 1; } }"  want TS1034 [31,32)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL js "class A extends B { m() { super, 1; } }"  want TS1034 [31,32)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super\n; } }"  want TS1034 [32,33)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL js "class A extends B { m() { super\n; } }"  want TS1034 [32,33)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super } }"  want TS1034 [32,33)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL js "class A extends B { m() { super } }"  want TS1034 [32,33)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "super;"  want TS1034 [5,6)  got: "Unexpected \"super\"" @[0,5) => no entry (1 messages)
+FAIL js "super;"  want TS1034 [5,6)  got: "Unexpected \"super\"" @[0,5) => no entry (1 messages)
+FAIL ts "x = super;"  want TS1034 [9,10)  got: "Unexpected \"super\"" @[4,9) => no entry (1 messages)
+FAIL js "x = super;"  want TS1034 [9,10)  got: "Unexpected \"super\"" @[4,9) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super in x; } }"  want TS1034 [32,34)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL js "class A extends B { m() { super in x; } }"  want TS1034 [32,34)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super instanceof A; } }"  want TS1034 [32,42)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL js "class A extends B { m() { super instanceof A; } }"  want TS1034 [32,42)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super<T>[0]; } }"  want TS1034 [31,32)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super<T } } }"  want TS1034 [31,32)  got: "Unexpected \"super\"" @[26,31) => no entry (2 messages)
+FAIL ts "class A extends B { m() { super<T; } }"  want TS1034 [31,32)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super<T>x; } }"  want TS1034 [31,32)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super<T>1; } }"  want TS1034 [31,32)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super!.x; } }"  want TS1034 [31,32)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super as any; } }"  want TS1034 [32,34)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super<T>>(); } }"  want TS1034 [31,32)  got: "Unexpected \"super\"" @[26,31) => no entry (2 messages)
+FAIL ts "class A extends B { m() { super<<T>() => void>(); } }"  want TS1034 [31,33)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super<T>!.x; } }"  want TS1034 [31,32)  got: "Unexpected \"super\"" @[26,31) => no entry (2 messages)
+FAIL ts "class A extends B { m() { super<T> + 1; } }"  want TS1034 [31,32)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super<T>++; } }"  want TS1034 [31,32)  got: "Unexpected \"super\"" @[26,31) => no entry (2 messages)
+FAIL ts "class A extends B { m() { super<T,; } }"  want TS1034 [31,32)  got: "Unexpected \"super\"" @[26,31) => no entry (2 messages)
+FAIL ts "class A extends B { m() { super<; } }"  want TS1034 [31,32)  got: "Unexpected \"super\"" @[26,31) => no entry (2 messages)
+FAIL ts "class A extends B { m() { super<T>=x; } }"  want TS1034 [31,32)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "super<T"  want TS1034 [5,6)  got: "Unexpected \"super\"" @[0,5) => no entry (1 messages)
+FAIL js "class A extends B { constructor() { super<T>(); } }"  want TS1034 [41,42)  got: "Unexpected \"super\"" @[36,41) => no entry (2 messages)
+FAIL js "class A extends B { m() { super<T>.x; } }"  want TS1034 [31,32)  got: "Unexpected \"super\"" @[26,31) => no entry (2 messages)
+FAIL js "class A extends B { m() { super <T>(); } }"  want TS1034 [32,33)  got: "Unexpected \"super\"" @[26,31) => no entry (2 messages)
+
+// TS1034: a comment before the token (needs the comments of the lint parse: none, the token is the one the lexer is on)
+FAIL ts "class A extends B { m() { super /*c*/ ; } }"  want TS1034 [38,39)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL js "class A extends B { m() { super /*c*/ ; } }"  want TS1034 [38,39)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+
+// TS18030: a private name after ?. (the name arm of sfx_t_question_dot; outside a class its error path)
+FAIL ts "a?.#b;"  want TS18030 [3,5)  got: "Expected identifier but found \"#b\"" @[3,5) => TS1003 [3,5) "Identifier expected." (1 messages)
+FAIL js "a?.#b;"  want TS18030 [3,5)  got: "Expected identifier but found \"#b\"" @[3,5) => TS1003 [3,5) "Identifier expected." (1 messages)
+FAIL ts "this?.#a;"  want TS18030 [6,8)  got: "Expected identifier but found \"#a\"" @[6,8) => TS1003 [6,8) "Identifier expected." (1 messages)
+FAIL js "this?.#a;"  want TS18030 [6,8)  got: "Expected identifier but found \"#a\"" @[6,8) => TS1003 [6,8) "Identifier expected." (1 messages)
+FAIL ts "a ?. #b;"  want TS18030 [5,7)  got: "Expected identifier but found \"#b\"" @[5,7) => TS1003 [5,7) "Identifier expected." (1 messages)
+FAIL js "a ?. #b;"  want TS18030 [5,7)  got: "Expected identifier but found \"#b\"" @[5,7) => TS1003 [5,7) "Identifier expected." (1 messages)
+FAIL ts "class C { #b = 1; m(a) { a?.#b; } }"  want TS18030 [28,30)  got: parses
+FAIL js "class C { #b = 1; m(a) { a?.#b; } }"  want TS18030 [28,30)  got: parses
+FAIL ts "class C { #b = 1; m(a) { a?.#b = 1; } }"  want TS18030 [28,30)  got: parses
+FAIL js "class C { #b = 1; m(a) { a?.#b = 1; } }"  want TS18030 [28,30)  got: parses
+FAIL ts "class C { #b = 1; m(a) { a ?. #b; } }"  want TS18030 [30,32)  got: parses
+FAIL js "class C { #b = 1; m(a) { a ?. #b; } }"  want TS18030 [30,32)  got: parses
+FAIL ts "class C { #b = 1; m(a) { a?.\n#b; } }"  want TS18030 [29,31)  got: parses
+FAIL js "class C { #b = 1; m(a) { a?.\n#b; } }"  want TS18030 [29,31)  got: parses
+FAIL ts "class C { #b = 1; m(a) { a?.#b(); } }"  want TS18030 [28,30)  got: parses
+FAIL js "class C { #b = 1; m(a) { a?.#b(); } }"  want TS18030 [28,30)  got: parses
+FAIL ts "class C { #b = 1; m(a) { a?.#b.#b; } }"  want TS18030 [28,30)  got: parses
+FAIL js "class C { #b = 1; m(a) { a?.#b.#b; } }"  want TS18030 [28,30)  got: parses
+FAIL ts "class C { #b = 1; m(a) { a.x?.#b; } }"  want TS18030 [30,32)  got: parses
+FAIL js "class C { #b = 1; m(a) { a.x?.#b; } }"  want TS18030 [30,32)  got: parses
+FAIL ts "class C { #b = 1; m(a) { a?.b?.#b; } }"  want TS18030 [31,33)  got: parses
+FAIL js "class C { #b = 1; m(a) { a?.b?.#b; } }"  want TS18030 [31,33)  got: parses
+FAIL ts "class C { #b = 1; m(a) { a?.[0]?.#b; } }"  want TS18030 [33,35)  got: parses
+FAIL js "class C { #b = 1; m(a) { a?.[0]?.#b; } }"  want TS18030 [33,35)  got: parses
+FAIL ts "class C { #b = 1; m(a) { this?.#b; } }"  want TS18030 [31,33)  got: parses
+FAIL js "class C { #b = 1; m(a) { this?.#b; } }"  want TS18030 [31,33)  got: parses
+FAIL ts "class C { #b = 1; m(a) { delete a?.#b; } }"  want TS18030 [35,37)  got: "Deleting the private name \"#b\" is forbidden" @[32,34) => no entry (1 messages)
+FAIL js "class C { #b = 1; m(a) { delete a?.#b; } }"  want TS18030 [35,37)  got: "Deleting the private name \"#b\" is forbidden" @[32,34) => no entry (1 messages)
+FAIL ts "class C { #b = 1; m(a) { a?.#b`x`; } }"  want TS18030 [28,30)  got: "Template literals cannot have an optional chain as a tag" @[30,33) => no entry (1 messages)
+FAIL js "class C { #b = 1; m(a) { a?.#b`x`; } }"  want TS18030 [28,30)  got: "Template literals cannot have an optional chain as a tag" @[30,33) => no entry (1 messages)
+FAIL ts "class C { #b = 1; m(a) { a?.#b++; } }"  want TS18030 [28,30)  got: parses
+FAIL js "class C { #b = 1; m(a) { a?.#b++; } }"  want TS18030 [28,30)  got: parses
+FAIL ts "class C { #b = 1; m(a) { x = a?.#b ?? 1; } }"  want TS18030 [32,34)  got: parses
+FAIL js "class C { #b = 1; m(a) { x = a?.#b ?? 1; } }"  want TS18030 [32,34)  got: parses
+FAIL ts "class C { #b = 1; m(a) { a?.#c; } }"  want TS18030 [28,30)  got: parses
+FAIL js "class C { #b = 1; m(a) { a?.#c; } }"  want TS18030 [28,30)  got: parses
+FAIL ts "class C { #b = 1; m(a) { new (a?.#b)(); } }"  want TS18030 [33,35)  got: parses
+FAIL js "class C { #b = 1; m(a) { new (a?.#b)(); } }"  want TS18030 [33,35)  got: parses
+FAIL ts "class C { #b; [a?.#b] = 1; }"  want TS18030 [18,20)  got: parses
+FAIL js "class C { #b; [a?.#b] = 1; }"  want TS18030 [18,20)  got: parses
+FAIL ts "class C { #b = 1; m(a) { a!?.#b; } }"  want TS18030 [29,31)  got: parses
+FAIL ts "class C { #b = 1; m(a) { a<T>?.#b; } }"  want TS18030 [31,33)  got: parses
+
+// TS18030: a private name later in an optional chain (the walk; outside a class the error path of sfx_t_dot)
+FAIL ts "a?.x.#b;"  want TS18030 [5,7)  got: "Expected identifier but found \"#b\"" @[5,7) => TS1003 [5,7) "Identifier expected." (1 messages)
+FAIL js "a?.x.#b;"  want TS18030 [5,7)  got: "Expected identifier but found \"#b\"" @[5,7) => TS1003 [5,7) "Identifier expected." (1 messages)
+FAIL ts "a?.b.#c.d;"  want TS18030 [5,7)  got: "Expected identifier but found \"#c\"" @[5,7) => TS1003 [5,7) "Identifier expected." (2 messages)
+FAIL js "a?.b.#c.d;"  want TS18030 [5,7)  got: "Expected identifier but found \"#c\"" @[5,7) => TS1003 [5,7) "Identifier expected." (2 messages)
+FAIL ts "class C { #b = 1; m(a) { a?.x.#b; } }"  want TS18030 [30,32)  got: parses
+FAIL js "class C { #b = 1; m(a) { a?.x.#b; } }"  want TS18030 [30,32)  got: parses
+FAIL ts "class C { #b = 1; m(a) { a?.[0].#b; } }"  want TS18030 [32,34)  got: parses
+FAIL js "class C { #b = 1; m(a) { a?.[0].#b; } }"  want TS18030 [32,34)  got: parses
+FAIL ts "class C { #b = 1; m(a) { a?.().#b; } }"  want TS18030 [31,33)  got: parses
+FAIL js "class C { #b = 1; m(a) { a?.().#b; } }"  want TS18030 [31,33)  got: parses
+FAIL ts "class C { #b = 1; m(a) { a?.x.y.#b; } }"  want TS18030 [32,34)  got: parses
+FAIL js "class C { #b = 1; m(a) { a?.x.y.#b; } }"  want TS18030 [32,34)  got: parses
+FAIL ts "class C { #b = 1; m(a) { a?.x.y.#b.z; } }"  want TS18030 [32,34)  got: parses
+FAIL js "class C { #b = 1; m(a) { a?.x.y.#b.z; } }"  want TS18030 [32,34)  got: parses
+FAIL ts "class C { #b = 1; m(a) { a?.x.y().z[0].#b; } }"  want TS18030 [39,41)  got: parses
+FAIL js "class C { #b = 1; m(a) { a?.x.y().z[0].#b; } }"  want TS18030 [39,41)  got: parses
+FAIL ts "class C { #b = 1; m(a) { a?.b.#b = 1; } }"  want TS18030 [30,32)  got: parses
+FAIL js "class C { #b = 1; m(a) { a?.b.#b = 1; } }"  want TS18030 [30,32)  got: parses
+FAIL ts "class C { #b; m = (a) => a?.x.#b; }"  want TS18030 [30,32)  got: parses
+FAIL js "class C { #b; m = (a) => a?.x.#b; }"  want TS18030 [30,32)  got: parses
+FAIL ts "class C { #b = 1; m(a) { a?.x!.#b; } }"  want TS18030 [31,33)  got: parses
+FAIL ts "class C { #b = 1; m(a) { a?.x!!.#b; } }"  want TS18030 [32,34)  got: parses
+FAIL ts "class C { #b = 1; m(a) { a?.<T>().#b; } }"  want TS18030 [34,36)  got: parses
+FAIL ts "class C { #b = 1; m(a) { a?.b![0].#b; } }"  want TS18030 [34,36)  got: parses
+FAIL ts "class C { #b = 1; m(a) { a?.b<T>().#b; } }"  want TS18030 [35,37)  got: parses
+FAIL ts "class C { #b = 1; m(a) { a?.b.c!.#b; } }"  want TS18030 [33,35)  got: parses
+FAIL ts "class C { #b = 1; m(a) { a!?.b!.#b; } }"  want TS18030 [32,34)  got: parses
+FAIL ts "class C { #b = 1; m(a) { <any>a?.b.#b; } }"  want TS18030 [35,37)  got: parses
+
+// TS18030: a comment before the name (needs the comments of the lint parse: none, the range is the name)
+FAIL ts "class C { #b = 1; m(a) { a ?. /*c*/ #b; } }"  want TS18030 [36,38)  got: parses
+FAIL js "class C { #b = 1; m(a) { a ?. /*c*/ #b; } }"  want TS18030 [36,38)  got: parses
+
+// TS1209: ?. before the arguments of new (the two branches of sfx_t_question_dot that end the target of new)
+FAIL ts "new A?.();"  want TS1209 [5,7)  got: parses
+FAIL js "new A?.();"  want TS1209 [5,7)  got: parses
+FAIL ts "new (A?.b)?.();"  want TS1209 [10,12)  got: parses
+FAIL js "new (A?.b)?.();"  want TS1209 [10,12)  got: parses
+FAIL ts "new a.b?.();"  want TS1209 [7,9)  got: parses
+FAIL js "new a.b?.();"  want TS1209 [7,9)  got: parses
+FAIL ts "x = new A?.();"  want TS1209 [9,11)  got: parses
+FAIL js "x = new A?.();"  want TS1209 [9,11)  got: parses
+FAIL ts "new A?.`x`;"  want TS1209 [5,7)  got: "Expected identifier but found \"`x`\"" @[7,10) => TS1003 [7,10) "Identifier expected." (1 messages)
+FAIL js "new A?.`x`;"  want TS1209 [5,7)  got: "Expected identifier but found \"`x`\"" @[7,10) => TS1003 [7,10) "Identifier expected." (1 messages)
+FAIL ts "new (A)?.();"  want TS1209 [7,9)  got: parses
+FAIL js "new (A)?.();"  want TS1209 [7,9)  got: parses
+FAIL ts "new A ?. ();"  want TS1209 [6,8)  got: parses
+FAIL js "new A ?. ();"  want TS1209 [6,8)  got: parses
+FAIL ts "new  a . b ?.();"  want TS1209 [11,13)  got: parses
+FAIL js "new  a . b ?.();"  want TS1209 [11,13)  got: parses
+FAIL ts "new A?.<T>();"  want TS1209 [5,7)  got: parses
+FAIL ts "new A<T>?.();"  want TS1209 [8,10)  got: parses
+
+// TS1209: a template after an optional chain in the target of new (error path of the two template handlers)
+FAIL ts "new A?.b`x`;"  want TS1209 [5,7)  got: "Template literals cannot have an optional chain as a tag" @[8,11) => no entry (1 messages)
+FAIL js "new A?.b`x`;"  want TS1209 [5,7)  got: "Template literals cannot have an optional chain as a tag" @[8,11) => no entry (1 messages)
+FAIL ts "new A?.b`x${1}`;"  want TS1209 [5,7)  got: "Template literals cannot have an optional chain as a tag" @[8,12) => no entry (1 messages)
+FAIL js "new A?.b`x${1}`;"  want TS1209 [5,7)  got: "Template literals cannot have an optional chain as a tag" @[8,12) => no entry (1 messages)
+FAIL ts "new a.b?.c`x`;"  want TS1209 [7,9)  got: "Template literals cannot have an optional chain as a tag" @[10,13) => no entry (1 messages)
+FAIL js "new a.b?.c`x`;"  want TS1209 [7,9)  got: "Template literals cannot have an optional chain as a tag" @[10,13) => no entry (1 messages)
+FAIL ts "new A?.[0]`x`;"  want TS1209 [5,7)  got: "Template literals cannot have an optional chain as a tag" @[10,13) => no entry (1 messages)
+FAIL js "new A?.[0]`x`;"  want TS1209 [5,7)  got: "Template literals cannot have an optional chain as a tag" @[10,13) => no entry (1 messages)
+
+// TS17006: the name await before ** (the walk)
+FAIL ts "function f() { await ** 2; }"  want TS17006 [15,20)  got: parses
+FAIL js "function f() { await ** 2; }"  want TS17006 [15,20)  got: parses
+FAIL ts "function f() { return await ** 2; }"  want TS17006 [22,27)  got: parses
+FAIL js "function f() { return await ** 2; }"  want TS17006 [22,27)  got: parses
+FAIL ts "function f(await) { return await ** 2; }"  want TS17006 [27,32)  got: parses
+FAIL js "function f(await) { return await ** 2; }"  want TS17006 [27,32)  got: parses
+FAIL ts "function f() { await.x ** 2; }"  want TS17006 [15,22)  got: parses
+FAIL js "function f() { await.x ** 2; }"  want TS17006 [15,22)  got: parses
+FAIL ts "function f() { await() ** 2; }"  want TS17006 [15,22)  got: parses
+FAIL js "function f() { await() ** 2; }"  want TS17006 [15,22)  got: parses
+FAIL ts "function f() { await++ ** 2; }"  want TS17006 [15,22)  got: parses
+FAIL js "function f() { await++ ** 2; }"  want TS17006 [15,22)  got: parses
+FAIL ts "function f() { x = await\n** 2; }"  want TS17006 [19,24)  got: parses
+FAIL js "function f() { x = await\n** 2; }"  want TS17006 [19,24)  got: parses
+FAIL ts "function f() { y = await[0] ** 2 ** 3; }"  want TS17006 [19,27)  got: parses
+FAIL js "function f() { y = await[0] ** 2 ** 3; }"  want TS17006 [19,27)  got: parses
+FAIL ts "function f() { await`x` ** 2; }"  want TS17006 [15,23)  got: parses
+FAIL js "function f() { await`x` ** 2; }"  want TS17006 [15,23)  got: parses
+FAIL ts "function f() { await! ** 2; }"  want TS17006 [15,21)  got: parses
+FAIL ts "function f() { await<T>(x) ** 2; }"  want TS17006 [15,26)  got: parses
+
+// TS17006: the name await before a comment and ** (needs the comments of the lint parse)
+FAIL ts "function f() { await /*c*/ ** 2; }"  want TS17006 [15,20)  got: parses
+FAIL js "function f() { await /*c*/ ** 2; }"  want TS17006 [15,20)  got: parses
+
+// TS1209: an optional chain in the target of new (the walk)
+FAIL ts "new A?.b();"  want TS1209 [5,7)  got: parses
+FAIL js "new A?.b();"  want TS1209 [5,7)  got: parses
+FAIL ts "new A?.b;"  want TS1209 [5,7)  got: parses
+FAIL js "new A?.b;"  want TS1209 [5,7)  got: parses
+FAIL ts "new A.B?.c();"  want TS1209 [7,9)  got: parses
+FAIL js "new A.B?.c();"  want TS1209 [7,9)  got: parses
+FAIL ts "new (A)?.b();"  want TS1209 [7,9)  got: parses
+FAIL js "new (A)?.b();"  want TS1209 [7,9)  got: parses
+FAIL ts "new A?.[0];"  want TS1209 [5,7)  got: parses
+FAIL js "new A?.[0];"  want TS1209 [5,7)  got: parses
+FAIL ts "new A?.[0]();"  want TS1209 [5,7)  got: parses
+FAIL js "new A?.[0]();"  want TS1209 [5,7)  got: parses
+FAIL ts "new A?.b.c();"  want TS1209 [5,7)  got: parses
+FAIL js "new A?.b.c();"  want TS1209 [5,7)  got: parses
+FAIL ts "new A?.b?.c();"  want TS1209 [5,7)  got: parses
+FAIL js "new A?.b?.c();"  want TS1209 [5,7)  got: parses
+FAIL ts "new new A?.b()();"  want TS1209 [9,11)  got: parses
+FAIL js "new new A?.b()();"  want TS1209 [9,11)  got: parses
+FAIL ts "new A ?.b();"  want TS1209 [6,8)  got: parses
+FAIL js "new A ?.b();"  want TS1209 [6,8)  got: parses
+FAIL ts "new A\n?.b();"  want TS1209 [6,8)  got: parses
+FAIL js "new A\n?.b();"  want TS1209 [6,8)  got: parses
+FAIL ts "new a.b.c?.d();"  want TS1209 [9,11)  got: parses
+FAIL js "new a.b.c?.d();"  want TS1209 [9,11)  got: parses
+FAIL ts "new A`x`?.b();"  want TS1209 [8,10)  got: parses
+FAIL js "new A`x`?.b();"  want TS1209 [8,10)  got: parses
+FAIL ts "new this?.b();"  want TS1209 [8,10)  got: parses
+FAIL js "new this?.b();"  want TS1209 [8,10)  got: parses
+FAIL ts "new class {}?.b();"  want TS1209 [12,14)  got: parses
+FAIL js "new class {}?.b();"  want TS1209 [12,14)  got: parses
+FAIL ts "new function () {}?.b();"  want TS1209 [18,20)  got: parses
+FAIL js "new function () {}?.b();"  want TS1209 [18,20)  got: parses
+FAIL ts "new A['x']?.b();"  want TS1209 [10,12)  got: parses
+FAIL js "new A['x']?.b();"  want TS1209 [10,12)  got: parses
+FAIL ts "class C { #b = 1; m(a) { new a?.#b(); } }"  want TS1209 [30,32)  got: parses
+FAIL js "class C { #b = 1; m(a) { new a?.#b(); } }"  want TS1209 [30,32)  got: parses
+FAIL ts "class C { #b = 1; m(a) { new a.#b?.c(); } }"  want TS1209 [33,35)  got: parses
+FAIL js "class C { #b = 1; m(a) { new a.#b?.c(); } }"  want TS1209 [33,35)  got: parses
+FAIL ts "x = new A?.b();"  want TS1209 [9,11)  got: parses
+FAIL js "x = new A?.b();"  want TS1209 [9,11)  got: parses
+FAIL ts "f(new A?.b());"  want TS1209 [7,9)  got: parses
+FAIL js "f(new A?.b());"  want TS1209 [7,9)  got: parses
+FAIL ts "new  A . B ?.c();"  want TS1209 [11,13)  got: parses
+FAIL js "new  A . B ?.c();"  want TS1209 [11,13)  got: parses
+FAIL ts "new A?.b = 1;"  want TS1209 [5,7)  got: parses
+FAIL js "new A?.b = 1;"  want TS1209 [5,7)  got: parses
+FAIL ts "new A?.b++;"  want TS1209 [5,7)  got: parses
+FAIL js "new A?.b++;"  want TS1209 [5,7)  got: parses
+FAIL ts "new (new A)?.b();"  want TS1209 [11,13)  got: parses
+FAIL js "new (new A)?.b();"  want TS1209 [11,13)  got: parses
+FAIL ts "new new A?.b();"  want TS1209 [9,11)  got: parses
+FAIL js "new new A?.b();"  want TS1209 [9,11)  got: parses
+FAIL ts "new (a, b)?.c();"  want TS1209 [10,12)  got: parses
+FAIL js "new (a, b)?.c();"  want TS1209 [10,12)  got: parses
+FAIL ts "new A.b?.[c]?.d();"  want TS1209 [7,9)  got: parses
+FAIL js "new A.b?.[c]?.d();"  want TS1209 [7,9)  got: parses
+FAIL ts "new 'a'?.b();"  want TS1209 [7,9)  got: parses
+FAIL js "new 'a'?.b();"  want TS1209 [7,9)  got: parses
+FAIL ts "new 1?.b();"  want TS1209 [5,7)  got: parses
+FAIL js "new 1?.b();"  want TS1209 [5,7)  got: parses
+FAIL ts "new []?.b();"  want TS1209 [6,8)  got: parses
+FAIL js "new []?.b();"  want TS1209 [6,8)  got: parses
+FAIL ts "new {}?.b();"  want TS1209 [6,8)  got: parses
+FAIL js "new {}?.b();"  want TS1209 [6,8)  got: parses
+FAIL ts "new /a/?.b();"  want TS1209 [7,9)  got: parses
+FAIL js "new /a/?.b();"  want TS1209 [7,9)  got: parses
+FAIL ts "new `a`?.b();"  want TS1209 [7,9)  got: parses
+FAIL js "new `a`?.b();"  want TS1209 [7,9)  got: parses
+FAIL ts "new async?.b();"  want TS1209 [9,11)  got: parses
+FAIL js "new async?.b();"  want TS1209 [9,11)  got: parses
+FAIL ts "class X extends Y { m() { new super.x?.y(); } }"  want TS1209 [37,39)  got: parses
+FAIL js "class X extends Y { m() { new super.x?.y(); } }"  want TS1209 [37,39)  got: parses
+FAIL ts "new (a?.b)?.c();"  want TS1209 [10,12)  got: parses
+FAIL js "new (a?.b)?.c();"  want TS1209 [10,12)  got: parses
+FAIL ts "new a[b?.c]?.[d]();"  want TS1209 [11,13)  got: parses
+FAIL js "new a[b?.c]?.[d]();"  want TS1209 [11,13)  got: parses
+FAIL ts "new A?.[(0)]();"  want TS1209 [5,7)  got: parses
+FAIL js "new A?.[(0)]();"  want TS1209 [5,7)  got: parses
+FAIL ts "new A ?. [ 0 ]();"  want TS1209 [6,8)  got: parses
+FAIL js "new A ?. [ 0 ]();"  want TS1209 [6,8)  got: parses
+FAIL ts "x = new A?.b()?.c;"  want TS1209 [9,11)  got: parses
+FAIL js "x = new A?.b()?.c;"  want TS1209 [9,11)  got: parses
+FAIL ts "new A?.b\n;"  want TS1209 [5,7)  got: parses
+FAIL js "new A?.b\n;"  want TS1209 [5,7)  got: parses
+FAIL ts "new A<T>?.b();"  want TS1209 [8,10)  got: parses
+FAIL ts "new A!?.b();"  want TS1209 [6,8)  got: parses
+FAIL ts "new (A)!?.b();"  want TS1209 [8,10)  got: parses
+FAIL ts "new A?.b<T>();"  want TS1209 [5,7)  got: parses
+FAIL ts "new A <T> ?.b();"  want TS1209 [10,12)  got: parses
+FAIL ts "new A!<T>?.b();"  want TS1209 [9,11)  got: parses
+FAIL ts "new a.b!?.c();"  want TS1209 [8,10)  got: parses
+FAIL ts "new A?.[<T>x]();"  want TS1209 [5,7)  got: parses
+
+// TS1209: a comment in the target or before ?. (needs the comments of the lint parse)
+FAIL ts "new A /*c*/ ?.b();"  want TS1209 [12,14)  got: parses
+FAIL js "new A /*c*/ ?.b();"  want TS1209 [12,14)  got: parses
+FAIL ts "new a /*c*/ . b /*d*/ ?.c();"  want TS1209 [22,24)  got: parses
+FAIL js "new a /*c*/ . b /*d*/ ?.c();"  want TS1209 [22,24)  got: parses
+
+// the same in a TSX and in a JSX file
+FAIL tsx "a<b>.c;"  want TS1477 [1,4)  got: parses
+FAIL tsx "-x ** 2;"  want TS17006 [0,2)  got: "Unexpected **" @[3,5) => no entry (1 messages)
+FAIL tsx "typeof -x ** 2;"  want TS17006 [0,9)  got: "Unexpected **" @[10,12) => no entry (1 messages)
+FAIL tsx "new A?.b();"  want TS1209 [5,7)  got: parses
+FAIL tsx "new A?.();"  want TS1209 [5,7)  got: parses
+FAIL tsx "a[];"  want TS1011 [2,2)  got: "Unexpected ]" @[2,3) => TS1109 [2,3) "Expression expected." (1 messages)
+FAIL tsx "class A extends B { m() { super; } }"  want TS1034 [31,32)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL tsx "class A extends B { constructor() { super<T>(); } }"  want TS2754 [41,44)  got: "Unexpected \"super\"" @[36,41) => no entry (1 messages)
+FAIL tsx "for (using of of []) {}"  want TS1011 [18,18)  got: parses
+FAIL tsx "class C { #b = 1; m(a) { a?.#b; } }"  want TS18030 [28,30)  got: parses
+FAIL tsx "class C { #b = 1; m(a) { a?.x.#b; } }"  want TS18030 [30,32)  got: parses
+FAIL tsx "a?.#b;"  want TS18030 [3,5)  got: "Expected identifier but found \"#b\"" @[3,5) => TS1003 [3,5) "Identifier expected." (1 messages)
+FAIL jsx "-x ** 2;"  want TS17006 [0,2)  got: "Unexpected **" @[3,5) => no entry (1 messages)
+FAIL jsx "typeof -x ** 2;"  want TS17006 [0,9)  got: "Unexpected **" @[10,12) => no entry (1 messages)
+FAIL jsx "new A?.b();"  want TS1209 [5,7)  got: parses
+FAIL jsx "new A?.();"  want TS1209 [5,7)  got: parses
+FAIL jsx "a[];"  want TS1011 [2,2)  got: "Unexpected ]" @[2,3) => TS1109 [2,3) "Expression expected." (1 messages)
+FAIL jsx "class A extends B { m() { super; } }"  want TS1034 [31,32)  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL jsx "for (using of of []) {}"  want TS1011 [18,18)  got: parses
+FAIL jsx "class C { #b = 1; m(a) { a?.#b; } }"  want TS18030 [28,30)  got: parses
+FAIL jsx "class C { #b = 1; m(a) { a?.x.#b; } }"  want TS18030 [30,32)  got: parses
+FAIL jsx "a?.#b;"  want TS18030 [3,5)  got: "Expected identifier but found \"#b\"" @[3,5) => TS1003 [3,5) "Identifier expected." (1 messages)
+
+// parses: what the reference reads and a lint parse must read
+pass ts "(-x) ** 2;"  want parses  got: parses
+pass js "(-x) ** 2;"  want parses  got: parses
+pass ts "-(x ** 2);"  want parses  got: parses
+pass js "-(x ** 2);"  want parses  got: parses
+pass ts "2 ** -x;"  want parses  got: parses
+pass js "2 ** -x;"  want parses  got: parses
+pass ts "++x ** 2;"  want parses  got: parses
+pass js "++x ** 2;"  want parses  got: parses
+pass ts "x++ ** 2;"  want parses  got: parses
+pass js "x++ ** 2;"  want parses  got: parses
+pass ts "a-x ** 2;"  want parses  got: parses
+pass js "a-x ** 2;"  want parses  got: parses
+pass ts "async function f() { (await x) ** 2; }"  want parses  got: parses
+pass js "async function f() { (await x) ** 2; }"  want parses  got: parses
+pass ts "new A()?.b;"  want parses  got: parses
+pass js "new A()?.b;"  want parses  got: parses
+pass ts "new A()?.b();"  want parses  got: parses
+pass js "new A()?.b();"  want parses  got: parses
+pass ts "new (A?.b)();"  want parses  got: parses
+pass js "new (A?.b)();"  want parses  got: parses
+pass ts "new (A?.b);"  want parses  got: parses
+pass js "new (A?.b);"  want parses  got: parses
+pass ts "function f() { (await) ** 2; }"  want parses  got: parses
+pass js "function f() { (await) ** 2; }"  want parses  got: parses
+pass ts "function f() { (await.x) ** 2; }"  want parses  got: parses
+pass js "function f() { (await.x) ** 2; }"  want parses  got: parses
+pass ts "function f() { awaited ** 2; }"  want parses  got: parses
+pass js "function f() { awaited ** 2; }"  want parses  got: parses
+pass ts "function f() { a.await ** 2; }"  want parses  got: parses
+pass js "function f() { a.await ** 2; }"  want parses  got: parses
+pass ts "new A?.3:1;"  want parses  got: parses
+pass js "new A?.3:1;"  want parses  got: parses
+pass ts "new A().b?.c();"  want parses  got: parses
+pass js "new A().b?.c();"  want parses  got: parses
+pass ts "(new A)?.b();"  want parses  got: parses
+pass js "(new A)?.b();"  want parses  got: parses
+pass ts "new (a?.b).c();"  want parses  got: parses
+pass js "new (a?.b).c();"  want parses  got: parses
+pass ts "function f() { new.target?.b(); }"  want parses  got: parses
+pass js "function f() { new.target?.b(); }"  want parses  got: parses
+pass ts "a[[]];"  want parses  got: parses
+pass js "a[[]];"  want parses  got: parses
+pass ts "a[of];"  want parses  got: parses
+pass js "a[of];"  want parses  got: parses
+pass ts "x = a;\n[];"  want parses  got: parses
+pass js "x = a;\n[];"  want parses  got: parses
+pass ts "class C { #b = 1; m(a) { a.#b; } }"  want parses  got: parses
+pass js "class C { #b = 1; m(a) { a.#b; } }"  want parses  got: parses
+pass ts "class C { #b = 1; m(a) { a.#b?.c; } }"  want parses  got: parses
+pass js "class C { #b = 1; m(a) { a.#b?.c; } }"  want parses  got: parses
+pass ts "class C { #b = 1; m(a) { (a?.x).#b; } }"  want parses  got: parses
+pass js "class C { #b = 1; m(a) { (a?.x).#b; } }"  want parses  got: parses
+pass ts "class C { #b = 1; m(a) { return #b in a?.x; } }"  want parses  got: parses
+pass js "class C { #b = 1; m(a) { return #b in a?.x; } }"  want parses  got: parses
+pass ts "class C { #b = 1; m(a) { new a.#b(); } }"  want parses  got: parses
+pass js "class C { #b = 1; m(a) { new a.#b(); } }"  want parses  got: parses
+pass ts "class C { #b = 1; m(a) { (a?.b).c.#b; } }"  want parses  got: parses
+pass js "class C { #b = 1; m(a) { (a?.b).c.#b; } }"  want parses  got: parses
+pass ts "for (using of of [1]) {}"  want parses  got: parses
+pass js "for (using of of [1]) {}"  want parses  got: parses
+FAIL ts "for (using of of) {}"  want parses  got: "Unexpected )" @[16,17) => TS1109 [16,17) "Expression expected." (1 messages)
+FAIL js "for (using of of) {}"  want parses  got: "Unexpected )" @[16,17) => TS1109 [16,17) "Expression expected." (1 messages)
+FAIL ts "for (using of [1]) {}"  want parses  got: "Expected \";\" but found \"[\"" @[14,15) => TS1005 [14,15) "';' expected." (2 messages)
+FAIL js "for (using of [1]) {}"  want parses  got: "Expected \";\" but found \"[\"" @[14,15) => TS1005 [14,15) "';' expected." (2 messages)
+FAIL ts "for (using of []) {}"  want parses  got: "Expected \";\" but found \"[\"" @[14,15) => TS1005 [14,15) "';' expected." (2 messages)
+FAIL js "for (using of []) {}"  want parses  got: "Expected \";\" but found \"[\"" @[14,15) => TS1005 [14,15) "';' expected." (2 messages)
+FAIL ts "for (using of x) {}"  want parses  got: "Expected \";\" but found \"x\"" @[14,15) => TS1005 [14,15) "';' expected." (2 messages)
+FAIL js "for (using of x) {}"  want parses  got: "Expected \";\" but found \"x\"" @[14,15) => TS1005 [14,15) "';' expected." (2 messages)
+pass ts "for (using x of y) {}"  want parses  got: parses
+pass js "for (using x of y) {}"  want parses  got: parses
+pass ts "for (using of = null;;) {}"  want parses  got: parses
+pass js "for (using of = null;;) {}"  want parses  got: parses
+pass ts "for (using of;;) {}"  want parses  got: parses
+pass js "for (using of;;) {}"  want parses  got: parses
+pass ts "for (using in x) {}"  want parses  got: parses
+pass js "for (using in x) {}"  want parses  got: parses
+pass ts "for (using;;) {}"  want parses  got: parses
+pass js "for (using;;) {}"  want parses  got: parses
+pass ts "for (using = 1;;) {}"  want parses  got: parses
+pass js "for (using = 1;;) {}"  want parses  got: parses
+pass ts "for (using.x of y) {}"  want parses  got: parses
+pass js "for (using.x of y) {}"  want parses  got: parses
+pass ts "for (using[0] of y) {}"  want parses  got: parses
+pass js "for (using[0] of y) {}"  want parses  got: parses
+pass ts "for (using x = y;;) {}"  want parses  got: parses
+pass js "for (using x = y;;) {}"  want parses  got: parses
+pass ts "for (using [a] of y) {}"  want parses  got: parses
+pass js "for (using [a] of y) {}"  want parses  got: parses
+FAIL ts "for (using of of.x) {}"  want parses  got: "Unexpected ." @[16,17) => TS1109 [16,17) "Expression expected." (1 messages)
+FAIL js "for (using of of.x) {}"  want parses  got: "Unexpected ." @[16,17) => TS1109 [16,17) "Expression expected." (1 messages)
+FAIL ts "for (using of of()) {}"  want parses  got: "Expected \"=>\" but found \")\"" @[18,19) => TS1005 [18,19) "'=>' expected." (1 messages)
+FAIL js "for (using of of()) {}"  want parses  got: "Expected \"=>\" but found \")\"" @[18,19) => TS1005 [18,19) "'=>' expected." (1 messages)
+FAIL ts "for (using of of?.[0]) {}"  want parses  got: "Unexpected ?." @[16,18) => TS1109 [16,18) "Expression expected." (1 messages)
+FAIL js "for (using of of?.[0]) {}"  want parses  got: "Unexpected ?." @[16,18) => TS1109 [16,18) "Expression expected." (1 messages)
+FAIL ts "for (using of of => of) {}"  want parses  got: "Unexpected =>" @[17,19) => TS1109 [17,19) "Expression expected." (1 messages)
+FAIL js "for (using of of => of) {}"  want parses  got: "Unexpected =>" @[17,19) => TS1109 [17,19) "Expression expected." (1 messages)
+pass ts "for (using x in y) {}"  want parses  got: parses
+pass js "for (using x in y) {}"  want parses  got: parses
+pass ts "async function f() { for (await using of of []) {} }"  want parses  got: parses
+pass js "async function f() { for (await using of of []) {} }"  want parses  got: parses
+pass ts "async function f() { for (await using of of x) {} }"  want parses  got: parses
+pass js "async function f() { for (await using of of x) {} }"  want parses  got: parses
+pass ts "async function f() { for (await using x of y) {} }"  want parses  got: parses
+pass js "async function f() { for (await using x of y) {} }"  want parses  got: parses
+pass ts "async function f() { for await (using x of y) {} }"  want parses  got: parses
+pass js "async function f() { for await (using x of y) {} }"  want parses  got: parses
+pass ts "using of = null;"  want parses  got: parses
+pass js "using of = null;"  want parses  got: parses
+pass ts "for (of of []) {}"  want parses  got: parses
+pass js "for (of of []) {}"  want parses  got: parses
+pass ts "class A extends B { constructor() { super(); } }"  want parses  got: parses
+pass js "class A extends B { constructor() { super(); } }"  want parses  got: parses
+pass ts "class A extends B { m() { super.x; } }"  want parses  got: parses
+pass js "class A extends B { m() { super.x; } }"  want parses  got: parses
+pass ts "class A extends B { m() { super[0]; } }"  want parses  got: parses
+pass js "class A extends B { m() { super[0]; } }"  want parses  got: parses
+pass ts "class A extends B { m() { super\n.x; } }"  want parses  got: parses
+pass js "class A extends B { m() { super\n.x; } }"  want parses  got: parses
+pass ts "class A extends B { m() { delete super.x; } }"  want parses  got: parses
+pass js "class A extends B { m() { delete super.x; } }"  want parses  got: parses
+pass ts "class A extends B { constructor() { super()();  } }"  want parses  got: parses
+pass js "class A extends B { constructor() { super()();  } }"  want parses  got: parses
+pass ts "class A extends B { constructor() { -super(); } }"  want parses  got: parses
+pass js "class A extends B { constructor() { -super(); } }"  want parses  got: parses
+pass ts "class A extends B { constructor() { super().x; } }"  want parses  got: parses
+pass js "class A extends B { constructor() { super().x; } }"  want parses  got: parses
+pass ts "<A>(x) => x ** 2;"  want parses  got: parses
+pass ts "(<A>x) ** 2;"  want parses  got: parses
+pass ts "<A>(x ** 2);"  want parses  got: parses
+pass ts "<A>x as B ** 2;"  want parses  got: parses
+pass ts "-x as any ** 2;"  want parses  got: parses
+pass ts "a<b>?.[c];"  want parses  got: parses
+pass ts "a<b>?.();"  want parses  got: parses
+pass ts "a<b>['c'];"  want parses  got: parses
+pass ts "(a<b>).c;"  want parses  got: parses
+pass ts "a<b>`x`.c;"  want parses  got: parses
+pass ts "a<b>(c).d;"  want parses  got: parses
+pass ts "a<b>[];"  want parses  got: parses
+pass ts "a<b>.1;"  want parses  got: parses
+pass ts "a<b>?.3:1;"  want parses  got: parses
+pass ts "class C extends A.b<T> {}"  want parses  got: parses
+pass ts "a<b> as any;"  want parses  got: parses
+pass ts "a<b>;"  want parses  got: parses
+pass ts "a?.<b>().c;"  want parses  got: parses
+pass ts "class C { #b = 1; m(a) { (a?.x)!.#b; } }"  want parses  got: parses
+pass ts "class C { #b = 1; m(a) { (a?.x as any).#b; } }"  want parses  got: parses
+pass ts "class C { #b = 1; m(a) { (<any>a?.b).#b; } }"  want parses  got: parses
+pass ts "class A extends B { m() { super.x<T>(); } }"  want parses  got: parses
+pass ts "for (using of: T = null;;) {}"  want parses  got: parses
+pass ts "type T = A[ ];"  want parses  got: parses
+pass ts "class C { a = b; [] }"  want parses  got: parses
+
+// parses: super where only the checker of the reference objects (a parse without lint reports Unexpected "super")
+FAIL ts "super();"  want parses  got: "Unexpected \"super\"" @[0,5) => no entry (1 messages)
+FAIL js "super();"  want parses  got: "Unexpected \"super\"" @[0,5) => no entry (1 messages)
+FAIL ts "super.x;"  want parses  got: "Unexpected \"super\"" @[0,5) => no entry (1 messages)
+FAIL js "super.x;"  want parses  got: "Unexpected \"super\"" @[0,5) => no entry (1 messages)
+FAIL ts "super[0]();"  want parses  got: "Unexpected \"super\"" @[0,5) => no entry (1 messages)
+FAIL js "super[0]();"  want parses  got: "Unexpected \"super\"" @[0,5) => no entry (1 messages)
+FAIL ts "super.x?.y;"  want parses  got: "Unexpected \"super\"" @[0,5) => no entry (1 messages)
+FAIL js "super.x?.y;"  want parses  got: "Unexpected \"super\"" @[0,5) => no entry (1 messages)
+FAIL ts "class A { m() { super(); } }"  want parses  got: "Unexpected \"super\"" @[16,21) => no entry (1 messages)
+FAIL js "class A { m() { super(); } }"  want parses  got: "Unexpected \"super\"" @[16,21) => no entry (1 messages)
+FAIL ts "class A { constructor() { super(); } }"  want parses  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL js "class A { constructor() { super(); } }"  want parses  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super(); } }"  want parses  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL js "class A extends B { m() { super(); } }"  want parses  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { static { super(); } }"  want parses  got: "Unexpected \"super\"" @[29,34) => no entry (1 messages)
+FAIL js "class A extends B { static { super(); } }"  want parses  got: "Unexpected \"super\"" @[29,34) => no entry (1 messages)
+FAIL ts "class A extends B { x = super(); }"  want parses  got: "Unexpected \"super\"" @[24,29) => no entry (1 messages)
+FAIL js "class A extends B { x = super(); }"  want parses  got: "Unexpected \"super\"" @[24,29) => no entry (1 messages)
+FAIL ts "class A extends B { [super.x]() {} }"  want parses  got: "Unexpected \"super\"" @[21,26) => no entry (1 messages)
+FAIL js "class A extends B { [super.x]() {} }"  want parses  got: "Unexpected \"super\"" @[21,26) => no entry (1 messages)
+FAIL ts "function f() { super.x; }"  want parses  got: "Unexpected \"super\"" @[15,20) => no entry (1 messages)
+FAIL js "function f() { super.x; }"  want parses  got: "Unexpected \"super\"" @[15,20) => no entry (1 messages)
+FAIL ts "function f() { super(); }"  want parses  got: "Unexpected \"super\"" @[15,20) => no entry (1 messages)
+FAIL js "function f() { super(); }"  want parses  got: "Unexpected \"super\"" @[15,20) => no entry (1 messages)
+FAIL ts "({ m() { super(); } });"  want parses  got: "Unexpected \"super\"" @[9,14) => no entry (1 messages)
+FAIL js "({ m() { super(); } });"  want parses  got: "Unexpected \"super\"" @[9,14) => no entry (1 messages)
+FAIL ts "({ m: function () { super.x; } });"  want parses  got: "Unexpected \"super\"" @[20,25) => no entry (1 messages)
+FAIL js "({ m: function () { super.x; } });"  want parses  got: "Unexpected \"super\"" @[20,25) => no entry (1 messages)
+FAIL ts "class A extends B { constructor() { function g() { super(); } } }"  want parses  got: "Unexpected \"super\"" @[51,56) => no entry (1 messages)
+FAIL js "class A extends B { constructor() { function g() { super(); } } }"  want parses  got: "Unexpected \"super\"" @[51,56) => no entry (1 messages)
+FAIL ts "class A extends B { m() { new super; } }"  want parses  got: "Unexpected \"super\"" @[30,35) => no entry (1 messages)
+FAIL js "class A extends B { m() { new super; } }"  want parses  got: "Unexpected \"super\"" @[30,35) => no entry (1 messages)
+FAIL ts "class A extends B { m() { new super(); } }"  want parses  got: "Unexpected \"super\"" @[30,35) => no entry (1 messages)
+FAIL js "class A extends B { m() { new super(); } }"  want parses  got: "Unexpected \"super\"" @[30,35) => no entry (1 messages)
+FAIL ts "class A extends B { constructor() { new super(); } }"  want parses  got: "Unexpected \"super\"" @[40,45) => no entry (1 messages)
+FAIL js "class A extends B { constructor() { new super(); } }"  want parses  got: "Unexpected \"super\"" @[40,45) => no entry (1 messages)
+FAIL ts "new super[0]();"  want parses  got: "Unexpected \"super\"" @[4,9) => no entry (1 messages)
+FAIL js "new super[0]();"  want parses  got: "Unexpected \"super\"" @[4,9) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super\n(); } }"  want parses  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL js "class A extends B { m() { super\n(); } }"  want parses  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { super /*c*/ (); } }"  want parses  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL js "class A extends B { m() { super /*c*/ (); } }"  want parses  got: "Unexpected \"super\"" @[26,31) => no entry (1 messages)
+FAIL ts "class A extends B { m() { new super<T>(); } }"  want parses  got: "Unexpected \"super\"" @[30,35) => no entry (1 messages)
+FAIL ts "new super<T>;"  want parses  got: "Unexpected \"super\"" @[4,9) => no entry (1 messages)
+FAIL ts "new super.x<T>();"  want parses  got: "Unexpected \"super\"" @[4,9) => no entry (1 messages)
+
+// TS1011 and TS1209 behind super where only the checker objects
+FAIL ts "super[];"  want TS1011 [6,6)  got: "Unexpected \"super\"" @[0,5) => no entry (2 messages)
+FAIL js "super[];"  want TS1011 [6,6)  got: "Unexpected \"super\"" @[0,5) => no entry (2 messages)
+FAIL ts "new super?.x();"  want TS1209 [9,11)  got: "Unexpected \"super\"" @[4,9) => no entry (1 messages)
+FAIL js "new super?.x();"  want TS1209 [9,11)  got: "Unexpected \"super\"" @[4,9) => no entry (1 messages)
+FAIL ts "new super.x?.y();"  want TS1209 [11,13)  got: "Unexpected \"super\"" @[4,9) => no entry (1 messages)
+FAIL js "new super.x?.y();"  want TS1209 [11,13)  got: "Unexpected \"super\"" @[4,9) => no entry (1 messages)
+FAIL ts "<A>super.x ** 2;"  want TS17007 [0,10)  got: "Unexpected \"super\"" @[3,8) => no entry (1 messages)
+
+// summary
+//   50  FAIL  TS17006: the operand of ** is a unary expression (error path of nine sites)
+//   23  FAIL  TS17006: the operator before the operand is the one the reference names (Err arm of the operand of each unary site)
+//   10  FAIL  TS17006 and TS17007: a comment before ** or after the operator (needs the comments of the lint parse)
+//   29  FAIL  TS17007: the operand of ** is a type assertion (lint twin of <T>x)
+//    6  FAIL  TS17007: the outer assertion is the one the reference names (Err arm of the operand in the twin)
+//   41  FAIL  TS1477: a property access after an instantiation expression (lint_type_arguments_in_expression)
+//    3  pass  TS1003 and TS18030 come first after an instantiation expression
+//    2  FAIL  TS1003 and TS18030 come first after an instantiation expression
+//  102  FAIL  TS1011: an element access without an argument (Err arm of the two sites)
+//   10  FAIL  TS1011: a comment between the brackets (needs the comments of the lint parse)
+//   18  pass  TS1109 stays where no element access misses its argument
+//   27  FAIL  for head: using before of is a name (lint edit after the using test), and of [] is TS1011
+//    4  FAIL  for head: a comment before the second of (needs the comments of the lint parse)
+//   25  FAIL  TS2754: type arguments after super (error path of pfx_t_super, TypeScript only)
+//   67  FAIL  TS1034: super before what is no argument list and no member access (error path of pfx_t_super)
+//    2  FAIL  TS1034: a comment before the token (needs the comments of the lint parse: none, the token is the one the lexer is on)
+//   42  FAIL  TS18030: a private name after ?. (the name arm of sfx_t_question_dot; outside a class its error path)
+//   28  FAIL  TS18030: a private name later in an optional chain (the walk; outside a class the error path of sfx_t_dot)
+//    2  FAIL  TS18030: a comment before the name (needs the comments of the lint parse: none, the range is the name)
+//   18  FAIL  TS1209: ?. before the arguments of new (the two branches of sfx_t_question_dot that end the target of new)
+//    8  FAIL  TS1209: a template after an optional chain in the target of new (error path of the two template handlers)
+//   20  FAIL  TS17006: the name await before ** (the walk)
+//    2  FAIL  TS17006: the name await before a comment and ** (needs the comments of the lint parse)
+//   92  FAIL  TS1209: an optional chain in the target of new (the walk)
+//    4  FAIL  TS1209: a comment in the target or before ?. (needs the comments of the lint parse)
+//   22  FAIL  the same in a TSX and in a JSX file
+//  135  pass  parses: what the reference reads and a lint parse must read
+//   16  FAIL  parses: what the reference reads and a lint parse must read
+//   45  FAIL  parses: super where only the checker of the reference objects (a parse without lint reports Unexpected "super")
+//    7  FAIL  TS1011 and TS1209 behind super where only the checker objects
+// 860 rows, 704 failed

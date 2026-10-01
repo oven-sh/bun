@@ -1,0 +1,11 @@
+457 sources changed: 449 now have the first diagnostic of the reference (code and range) or parse as it does, 0 had it at the head, 8 have another
+     4  ref TS1005  |  proto "Unexpected \"…\""  => TS1034  |  head "Unexpected \"…\""  => no entry
+          ts "const b = async (x: number, y?super : string) => x;"
+          ts "const b = async (x: number, y?super string) => x;"
+          ts "const d = <T,>(super x: T): T => x;"
+     2  ref TS1109  |  proto "Unexpected \"…\""  => TS1034  |  head "Unexpected \"…\""  => no entry
+          ts "const a = (x, y = 1, ...super z) => x;"
+          ts "const a = (x, y = 1, ...super) => x;"
+     2  ref TS1390  |  proto "Unexpected \"…\""  => TS1034  |  head "Unexpected \"…\""  => no entry
+          ts "const b = async (x: number, super y?: string) => x;"
+          ts "const b = async (x: number, super?: string) => x;"

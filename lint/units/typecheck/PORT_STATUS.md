@@ -21,7 +21,7 @@ declares it in `lib.rs`:
   No `cargo check` and no `cargo test` was run with that commit: the survey of round 2 is the first cargo compile of
   the 18 files, and their tests have run from the scratch root only. `0aa0a67449` adds a 19th file, `golang.rs`
   (`GoIndex` and `List`: no upstream file, `std` only), and its two lines of `mod.rs`: the last `core` row of the
-  table, with its state under "Node table" below.
+  table, with its state under "Node table" below. `a9b14ab2d6` adds `Text` to that file ("Binder" below).
 - `jsnum`: declared by `80dcacd6db` (`pub mod jsnum;`, its four files are unchanged since `1e45ca9abb`). It names
   `crate::stringutil`, which the same commit declares. The line was written without a cargo run: the survey of
   round 2 is the first cargo compile of the four files, and the seven tests of `jsnum` have run from the scratch
@@ -62,7 +62,7 @@ declares it in `lib.rs`:
 | `core/semaphore.go`, `core/workgroup.go` | | not ported | one checker, one thread |
 | `core/bfs.go`, `buildoptions.go`, `context.go`, `projectreference.go`, `textchange.go`, `typeacquisition.go`, `version.go`, `watchoptions.go` | | not started | binder and checker do not call them |
 | `core/nodemodules.go` | `core/nodemodules.rs` | tested (own test) | came in with `404d95dbe9`: `checker.go` 15206 calls `core.NodeCoreModules()` (see "K3 steps 6 to 8" below) |
-| no upstream file: a Go slice as a value (`[]T` with the nil slice, a `Copy` header, `len` as Go's `int`, the zero value for an index out of range, `core.Same` as `List::same`, `s[lo:hi]` as `List::sub` with the bounds clamped) | `core/golang.rs` (`GoIndex`, `List`: lines 7 to 81 of `checker-data-model-contract/bottom-up/crate/src/tscore/golang.rs`, byte for byte but for the body of `List::sub`: a part of the nil list is the nil list, as Go's slice expression and as `sub_list` of `checker/types.rs` have it, where the contract's answers an empty list that is not nil; own test `list_is_a_go_slice`) | translated (commits `0aa0a67449` and `2caaa157eb`; what was checked is under "Node table" below) | the other values of the contract's file: `Text`, `SliceBuf`, `LiveList`, `Map`, `Memo`, `compare_strings`, `compare_f64`. No file that cargo compiles names them; `binder` and `checker` import `Text`, `Map`, `LiveList` and `Memo` from `crate::core`. Its `OrderedMap`, `Set`, `OrderedSet` and `Tristate` are names that `collections/` and `core/tristate.rs` have in another form |
+| no upstream file: a Go slice as a value (`[]T` with the nil slice, a `Copy` header, `len` as Go's `int`, the zero value for an index out of range, `core.Same` as `List::same`, `s[lo:hi]` as `List::sub` with the bounds clamped), and a Go `string` that a record keeps or a function hands on (`Text<'a> = &'a [u8]`) | `core/golang.rs` (`Text`: line 5 of `checker-data-model-contract/bottom-up/crate/src/tscore/golang.rs`; `GoIndex`, `List`: lines 7 to 81 of that file, byte for byte but for the body of `List::sub`: a part of the nil list is the nil list, as Go's slice expression and as `sub_list` of `checker/types.rs` have it, where the contract's answers an empty list that is not nil; own test `list_is_a_go_slice`) | translated (`GoIndex` and `List`: commits `0aa0a67449` and `2caaa157eb`, what was checked is under "Node table" below, and the survey of round 5 compiled them with cargo; `Text`: commit `a9b14ab2d6`, which no compiler has seen, see "Binder" below) | the other values of the contract's file: `SliceBuf`, `LiveList`, `Map`, `Memo`, `compare_strings`, `compare_f64`. No file that cargo compiles names them; `checker` imports `Map`, `LiveList` and `Memo` from `crate::core`. Its `OrderedMap`, `Set`, `OrderedSet` and `Tristate` are names that `collections/` and `core/tristate.rs` have in another form |
 | `collections/ordered_map.go` 15-213, 295-316 | `collections/ordered_map.rs` | tested (upstream's `TestOrderedMap`) | `noCopy` |
 | `collections/ordered_map.go` 215-293 (JSON) | | not ported | `internal/json` |
 | `collections/ordered_set.go` | `collections/ordered_set.rs` | tested (upstream's `TestOrderedSet`) | |
@@ -190,8 +190,8 @@ about a body.
 | upstream file, lines | Rust module under `src/typecheck/` | state | not ported |
 | --- | --- | --- | --- |
 | `ast/kind_generated.go`, `ast/ast_generated.go` (the kinds, the node records, their constructors, the `Is` and `As` functions, the children of a node) | `ast/kind_generated.rs`, `ast/ast_generated.rs` (written by `ast/generate.ts` from `ast/ast.json`), `ast/layout.rs` | translated | by name, 1,348 of the 1,386 functions of `ast_generated.go`; the other 38 are `computeSubtreeFacts` of a node |
-| no upstream file: the ids, the table of a file, the tree context and the open store that stand for upstream's pointers | `ast/ids.rs`, `ast/file.rs`, `ast/reader.rs` (`Ast`), `ast/open.rs`, `ast/stable.rs`, `ast/builder.rs`, `ast/factory.rs`, `ast/publish.rs`, `ast/flags.rs` | translated | `ast/ids.go` (`NodeId`, `SymbolId` as `uint64`): an id of the table is a `u32` and is the identity of its object |
-| `ast/ast.go` (the hand-written part, 307 functions) | `ast/node_methods.rs` (the methods of `Node`), `ast/ast.rs` (write access, the records beside a source file, pragmas) | translated | by name, 137 are in `ast/`, 4 only in other directories (`visit`, `NewNodeFactory`, `Node.Type`, `SourceFile.copyFrom`) and 166 nowhere in the tree: 102 that compute or propagate subtree facts (1210-2355, 2834), and 64 others that the script lists, among them the accessors of Go's node representation (`AsNode`, `DeclarationData`, `FlowNodeData`, ...), the data that a program, a content mapper or the language service keeps at a source file (2413-2990: `SourceFile.Diagnostics`, `GetNameTable`, `GetPositionMap`, `GetOrCreateToken`, `GetDeclarationMap`, ...), `newNode`, `UpdateSourceFile`, `ReleaseArenas`. Which of the 64 the binder or the checker calls was not looked at |
+| no upstream file: the ids, the table of a file, the tree context and the open store that stand for upstream's pointers | `ast/ids.rs`, `ast/file.rs`, `ast/reader.rs` (`Ast`), `ast/open.rs`, `ast/stable.rs`, `ast/builder.rs`, `ast/factory.rs`, `ast/publish.rs`, `ast/flags.rs` | translated; the survey of round 5 compiled the nine files with cargo as they were at `2caaa157eb`. Layer 4 added to four of them what no compiler has seen ("Binder" below): `DiagnosticId` in `ids.rs` (`a9b14ab2d6`); the diagnostics that a file keeps in `file.rs`, `open.rs` and `publish.rs` (`d0230a94c6`) | `ast/ids.go` (`NodeId`, `SymbolId` as `uint64`): an id of the table is a `u32` and is the identity of its object |
+| `ast/ast.go` (the hand-written part, 307 functions) | `ast/node_methods.rs` (the methods of `Node`), `ast/ast.rs` (write access, the records beside a source file, pragmas) | translated | by name, 140 are in `ast/`, 4 only in other directories (`visit`, `NewNodeFactory`, `Node.Type`, `SourceFile.copyFrom`) and 163 nowhere in the tree: 102 that compute or propagate subtree facts (1210-2355, 2834), and 61 others that the script lists, among them the accessors of Go's node representation (`AsNode`, `DeclarationData`, `FlowNodeData`, ...), the data that a program, a content mapper or the language service keeps at a source file (2413-2990: `SourceFile.SetDiagnostics`, `JSDiagnostics`, `JSDocDiagnostics`, `GetNameTable`, `GetPositionMap`, `GetOrCreateToken`, `GetDeclarationMap`, ...), `newNode`, `UpdateSourceFile`, `ReleaseArenas`. Which of the 61 the binder or the checker calls was not looked at. Three came in with layer 4 (`d0230a94c6`, "Binder" below): `SourceFile.Diagnostics` (2726) is `SourceFile::diagnostics` of `ast/file.rs` and `SetBindDiagnostics` (2789) is `Ast::set_bind_diagnostics` of `ast/publish.rs`, the two that `binder/binder.rs` calls; `BindDiagnostics` (2785) is `SourceFile::bind_diagnostics` of `ast/file.rs`, which reads what the setter stored |
 | `ast/utilities.go` (416 functions) | `ast/utilities.rs` | translated | by name, 414; `SetImportsOfSourceFile` (906) and `ContainsObjectRestOrSpread` (3987) are nowhere in the tree |
 | `ast/symbol.go`, `ast/symbolflags.go`, `ast/checkflags.go` | `ast/symbol.rs`, `ast/symbolflags.rs`, `ast/checkflags.rs` | translated | by name, the 7 functions of `symbol.go` |
 | `ast/flow.go` | `ast/flow.rs` | translated | by name, its 3 functions |
@@ -199,7 +199,8 @@ about a body.
 | `ast/subtreefacts.go` 1-87 (the flags) | `ast/subtreefacts.rs` | translated | 89-133, the seven `propagate...SubtreeFacts` functions: the binder and the checker do not read subtree facts |
 | `ast/precedence.go` | `ast/precedence.rs` | translated | by name, its 6 functions |
 | `ast/visitor.go` | `ast/visitor.rs` | translated | by name, its 18 functions |
-| `ast/diagnostic.go`: the `any` of `args ...any` (194, 208, 215) | `ast/diagnostic.rs` (`Arg::{Str, Int, Bool}` with `Default` and seven `From` impls: lines 18 to 66 of `checker-data-model-contract/bottom-up/crate/src/ast_diagnostic.rs`, byte for byte) | translated | the rest of the file, 15-503: `RepopulateDiagnosticKind`, `RepopulateDiagnosticInfo`, `Diagnostic` and its accessors, `NewDiagnosticFromSerialized` to `NewExternalDiagnostic`, `DiagnosticsCollection`, `EqualDiagnostics`, `CompareDiagnostics`. The contract's file holds a port of them on paths that the tree does not have (`crate::tscore`). No file that cargo compiles names them; `binder` and `checker` name `DiagnosticId`, `DiagnosticStore`, `Diagnostics`, `DiagnosticsCollection`, `RepopulateDiagnosticInfo` and `RepopulateDiagnosticKind` of `crate::ast` |
+| `ast/diagnostic.go`: the `any` of `args ...any` (194, 208, 215) | `ast/diagnostic.rs` (`Arg::{Str, Int, Bool}` with `Default` and seven `From` impls: lines 18 to 66 of `checker-data-model-contract/bottom-up/crate/src/ast_diagnostic.rs`, byte for byte) | translated; the survey of round 5 compiled it with cargo | |
+| `ast/diagnostic.go` 34-73, 76-79, 88-122, 194-217 (`Diagnostic`, its accessors and setters, `SetMessageChain`, `AddMessageChain`, `SetRelatedInfo`, `AddRelatedInfo`, `Clone`, `Localize`, `NewDiagnostic`, `NewDiagnosticChain`, `NewCompilerDiagnostic`), and `diagnostics.StringifyArgs` (`diagnostics/diagnostics.go` 136-150) | `ast/diagnostic.rs` since `d0230a94c6` (`Diagnostic`, `DiagnosticStore`, `InvalidPlaceholderFault`, `stringify_args`: lines 68 to 335 of the contract's `ast_diagnostic.rs`, with three differences that API.md lists under "Binder: the wiring of `binder`"), and `DiagnosticId` in `ast/ids.rs` since `a9b14ab2d6` | translated: no compiler has seen the two commits ("Binder" below) | `RepopulateDiagnosticKind`, `RepopulateDiagnosticInfo`, `RepopulateInfo`, `SetRepopulateInfo` (15-30, 74, 80), `SetExternalData` (82), `String` (125), `displayMessageArgs` (134: `Localize` prints the stored arguments), `NewDiagnosticFromSerialized` (166), `NewExternalDiagnostic` (223), `DiagnosticsCollection` (234-364), `EqualDiagnostics` to `CompareDiagnostics` (366-503). The contract's file has a port of the collection and of the comparisons (its lines 10-16 and 337-739: `SourceFiles`, `Diagnostics { store, files }`, `DiagnosticsCollection`) that needs Go's `slices` sorting (`tscore/slices.rs`), which the tree does not have. No file that cargo compiles names them; `checker` names `Diagnostics`, `DiagnosticsCollection`, `RepopulateDiagnosticInfo` and `RepopulateDiagnosticKind` of `crate::ast` |
 | `ast/deepclone.go`, `ast/parseoptions.go`, `ast/positionmap.go` | | not started in `ast/` | `DeepCloneReparse`, `DeepCloneReparseModifiers` and the statement loop of `isFileProbablyExternalModule` are in `importer/javascript/tree.rs` (rows under "Parser pieces"); one file of `printer/` names `crate::ast::deep_clone_node`, which no file defines |
 | `ast/kind_stringer_generated.go`, `ast/*_test.go` | | not started | `ast/tests.rs` holds tests of the node table, not upstream's |
 
@@ -248,6 +249,70 @@ outside the text answers -1 or an empty text where Go panics.
 | `scanner/utilities.go` | `scanner/utilities.rs` (with Go's `strings.TrimLeftFunc`, `strings.TrimRightFunc` and `unicode.IsSpace`) | translated | `debug.FailBadSyntaxKind` is `Ast::unhandled`, and the text as read is the answer |
 | `scanner/regexp.go`, `scanner/unicodeproperties.go` | | not started | the flags and the pattern of a regular expression literal |
 | `scanner/scanner_test.go` | | not started | |
+
+## Binder (`binder`)
+
+`binder/binder.rs` (3,947 lines), `binder/nameresolver.rs` (771), `binder/referenceresolver.rs` (423) and
+`binder/mod.rs` (8) came in with `b52442e510`; `2c971fdc00` wrote the calls of `core` and `scanner` helpers by their
+signatures. `mod.rs` declares the three files and re-exports them. Layer 4 of round 2 declares the directory: the line
+`pub mod binder;` of `lib.rs` is `d0230a94c6`. The four files are as they were before that line. They name
+`crate::{ast, collections, core, diagnostics, internal, scanner, tspath}` and `bun_core::StackCheck`, so
+`src/typecheck/Cargo.toml` is unchanged. Five things that they name were in no file of the tree, all of them in
+`core/` and `ast/`. They came in with `a9b14ab2d6` and `d0230a94c6` (both written by the job that commits the
+worktree, under its message "typecheck: compile the port, work in progress"):
+
+- `crate::core::Text` (`core/golang.rs`, `a9b14ab2d6`): the last `core` row under "Leaf packages".
+- `crate::ast::DiagnosticId` (`ast/ids.rs`, `a9b14ab2d6`): one more id of `define_id!`, as the contract's
+  `tscore/ids.rs` has it.
+- `crate::ast::DiagnosticStore`, with `Diagnostic`, `InvalidPlaceholderFault` and `stringify_args`
+  (`ast/diagnostic.rs`, `d0230a94c6`): the second row of `ast/diagnostic.go` under "Node table".
+- `Ast::set_bind_diagnostics(file, store, diagnostics)` (`ast/publish.rs`, `d0230a94c6`): the store of the binder and
+  the ids of its diagnostics go into `BindOverlay` (`ast/open.rs`) and from there, when the binding ends, into `Bound`
+  (`ast/file.rs`: `bind_diagnostics`, `bind_diagnostic_store`). `SourceFile::bind_diagnostics()` and
+  `SourceFile::bind_diagnostic_store()` read them.
+- `SourceFile::diagnostics()` (`ast/file.rs`, `d0230a94c6`): the parse diagnostics of the file, which are two new
+  fields of `SourceFileData` (`diagnostics`, `diagnostic_store`), with `SourceFile::diagnostic_store()`. No file of the
+  tree sets the two fields: the producers are of layer 5 and keep their parse diagnostics beside the file (API.md,
+  "Binder: the wiring of `binder`", "What waits").
+
+No compiler has seen `a9b14ab2d6` and `d0230a94c6`: no `cargo check`, no `cargo clippy`, no `cargo test`, and no
+`rustc` alone. The survey that follows them is the first compile of the four files of `binder/` in the real crate and
+the first compile of what the two commits add to `core/` and `ast/`, so the state below is `translated` until that run
+passes. What was checked before:
+
+- The look-ahead of the round-5 survey (`rustc` alone from a scratch root in `/tmp`: the four files read in place
+  beside layers 1 to 3 at `2caaa157eb`, against the real `bun_core` and `bun_collections`, the rust lints of the
+  workspace denied). With stand-ins of the five names that have the signatures the tree has now (empty bodies for the
+  two methods): exit 0, no warning. With the contract's `ast_diagnostic.rs` but for its lines 18 to 66 (`Arg`) and
+  with its `records.rs` and `slices.rs`, on the tree's paths and with `undefined_text_range()`: exit 0, no warning.
+  Neither run is the tree of `d0230a94c6`: there the store keeps its diagnostics in a `Vec` and not in the contract's
+  `Records`, and the bodies of `set_bind_diagnostics` and `diagnostics`, the fields behind them and the three other
+  readers are new.
+- `diff` of lines 56 to 361 of `ast/diagnostic.rs` against lines 68 to 335 of the contract's file: the differences are
+  five comment lines, `derive(Debug)` and a written `Default` for the derived one, the store's `Vec` and its sink in
+  place of `Records`, the bodies of `Index` and `IndexMut`, `alloc`, `std::` for `core::`, and
+  `undefined_text_range()`.
+- `rustfmt --check --edition 2024 src/typecheck/lib.rs`, which follows every `mod` line: exit 0.
+  `python3 /workspace/notes/lint/tools/undeclared.py src/typecheck`: 80 of 179 files are reached, and no file of
+  `binder/` is outside.
+- The four files and what the two commits add have no `unsafe`, `unwrap()`, `expect(`, `panic!`, `todo!`,
+  `unimplemented!`, `unreachable!` and no `allow(`, and no run of two comment lines.
+- Not run on these bytes: clippy. No test was added, and none was run: the package has no test of its own.
+
+Compared with upstream when the directory was declared, by name: each of the 167 functions of `binder.go`, the 13 of
+`nameresolver.go` and the 15 of `referenceresolver.go` has a function of its name in `binder/`
+(`python3 round2-layer4-binder/names.py <file.go>` of the notes). Read side by side, because they are the places that
+call what layer 4 added: `binder.go` 95-125 (`BindSourceFile` to `bindSourceFile`), 215-262 (the messages of a
+declaration that conflicts, in `declareSymbolEx`), 1299-1330 (`checkContextualIdentifier`, `checkPrivateIdentifier`)
+and 2709-2728 (`errorOnNode` to `addDiagnostic`): no difference was found there besides the ones of the last column.
+No other body was compared when the directory was declared.
+
+| upstream file, lines | Rust module under `src/typecheck/` | state | not ported |
+| --- | --- | --- | --- |
+| `binder/binder.go` (167 functions) | `binder/binder.rs` (`a: Ast` first where a function is no method of the binder; a node, a symbol, a table and a flow node are ids) | translated | `binderPool`: every file gets a new binder (`get_binder`, `put_binder`). The symbols, flow nodes and flow lists are objects of the open store of `Ast`, not arenas of the binder. `addDiagnostic` keeps the id in the binder, and `bind_source_file` hands the store and the ids to the file once (`Ast::set_bind_diagnostics`), as it does with the pattern ambient modules; upstream appends to the file at each one. The `debug.Assert` of 153 and the panics of 294, 336, 446, 1077 and 1133 are faults of the open store (`Ast::fault`, `Ast::unhandled`) and the function goes on. A recursion that follows the depth of the tree ends with the fault `StackLimit` when the thread has no stack left (four places) |
+| `binder/nameresolver.go` | `binder/nameresolver.rs` | translated | the row of 25-498 under "Checker: symbol merging, name resolution, aliases and modules" |
+| `binder/referenceresolver.go` (15 functions) | `binder/referenceresolver.rs` | translated | no body was compared when the directory was declared |
+| `binder/binder_test.go` (`BenchmarkBind`) | | not started | |
 
 ## Checker: signatures, instantiation, types of symbols, widening (K3 steps 18 to 21)
 

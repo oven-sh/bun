@@ -175,7 +175,8 @@ Seen in files of other packages on 2026-09-30, for whoever owns them:
 - `crate::core::{List, Map, Text, binary_search_func, sort_stable_func}`: Go's slice and map values and Go's
   `slices` sorting are not upstream's `internal/core` and are not in this commit. `core/mod.rs` is where a module
   that holds them is declared and re-exported. Since `0aa0a67449` that module is `core/golang.rs`, with `List` and
-  `GoIndex` ("Node table: the wiring of `ast`" below); `Map` and `Text` are not in it yet.
+  `GoIndex` ("Node table: the wiring of `ast`" below), and since `a9b14ab2d6` with `Text` ("Binder: the wiring of
+  `binder`" below); `Map` and the two sorting functions are not in it yet.
 - `checker/nodebuilderimpl.rs` writes `ModuleKind::ESNext`, `ModuleKind::None`, `ModuleKind::CommonJS`,
   `LanguageVariant::Standard`, `ModuleResolutionKind::NodeNext`, `ModuleResolutionKind::Node16`: the constants are
   `ES_NEXT`, `NONE`, `COMMON_JS`, `STANDARD`, `NODE_NEXT`, `NODE16`, as the other files write them.
@@ -185,8 +186,9 @@ Seen in files of other packages on 2026-09-30, for whoever owns them:
 Commits `2d9e7ee843` (the files) and `a53def3305` (`pub mod diagnostics;`). The port of `internal/diagnostics`: the
 message table and what formats a message. The three Rust files are those of
 `checker-data-model-contract/bottom-up/crate/src/diagnostics/`, byte for byte. The diagnostic itself (`ast.Diagnostic`,
-its arguments, its chain and related information) is `internal/ast/diagnostic.go` and is not in the tree; since
-`a8b48548a6` the type of one argument, `ast::Arg`, is (`ast/diagnostic.rs`), and nothing else of that file.
+its arguments, its chain and related information) is `internal/ast/diagnostic.go` and was not in the tree at these
+commits; since `a8b48548a6` the type of one argument, `ast::Arg`, is (`ast/diagnostic.rs`), and since `d0230a94c6` the
+diagnostic and its store ("Binder: the wiring of `binder`" below).
 
 ### How a caller writes the calls
 
@@ -289,6 +291,8 @@ This section says what the crate got so that cargo compiles them; the rows are i
 - `ast/diagnostic.rs` is lines 18 to 66 of the contract's `ast_diagnostic.rs` and not the rest (the diagnostic, its
   store, the collection, the comparison): that port names `crate::tscore::{ids, records, slices, text}`, and the tree
   has no module of those paths.
+- Layer 4 changed two of these three points: `Text`, the diagnostic and its store are in the tree since `a9b14ab2d6`
+  and `d0230a94c6` ("Binder: the wiring of `binder`" below).
 
 ### Verified
 
@@ -313,9 +317,105 @@ This section says what the crate got so that cargo compiles them; the rows are i
 - `crate::core::{Text, Map, LiveList, Memo}` and `crate::ast::{DiagnosticId, DiagnosticStore, Diagnostics,
   DiagnosticsCollection, RepopulateDiagnosticInfo, RepopulateDiagnosticKind, deep_clone_node}`: files of the layers
   after this one name them and no file defines them (the probe of the round-4 survey). The contract's
-  `tscore/golang.rs` and `ast_diagnostic.rs` hold all but `deep_clone_node`.
+  `tscore/golang.rs` and `ast_diagnostic.rs` hold all but `deep_clone_node`. Layer 4 brought `Text`, `DiagnosticId` and
+  `DiagnosticStore`; the others wait ("Binder: the wiring of `binder`" below).
 - `lowering::ParseDiagnostic` and `importer::javascript::ParseDiagnostic` stay two types until `ast/diagnostic.rs` has
-  the diagnostic itself.
+  the diagnostic itself. It has since `d0230a94c6`; the two types are still there.
+
+## Binder: the wiring of `binder`
+
+Commits `a9b14ab2d6` (`core/golang.rs`, `ast/ids.rs`) and `d0230a94c6` (`ast/diagnostic.rs`, `ast/file.rs`,
+`ast/open.rs`, `ast/publish.rs`, and `pub mod binder;` in `lib.rs`), both written by the job that commits the worktree.
+The four files of `binder/` are those of round 1, unchanged. This section says what the crate got so that cargo
+compiles them; the rows are in PORT_STATUS.md, "Binder" and "Node table".
+
+### How a caller writes the calls
+
+- `crate::core::Text<'a>` is `&'a [u8]`: a Go `string` that a record keeps or a function hands on. The bytes are in
+  the text of a file, in an arena (`Open::arena` for a name that the binder builds) or in a constant.
+- `crate::ast::DiagnosticId` is a diagnostic: its index in the `DiagnosticStore` that made it. It has what every id of
+  `ast/ids.rs` has (`NIL`, `is_nil()`, `Default`, `Ord`, `Hash`), and bit 31 is never set. An id says nothing without
+  its store: two stores give out the same ids.
+- `crate::ast::DiagnosticStore` holds the diagnostics of one parser, one binder or one checker.
+  `DiagnosticStore::default()` is the empty store.
+  - `new_diagnostic(file: NodeId, loc: TextRange, message: MessageId, args: &[Arg<'_>]) -> DiagnosticId` is
+    `ast.NewDiagnostic`: `file` is the root of a source file, or `NodeId::NIL`. Beside it
+    `new_diagnostic_chain(chain, message, args)`, `new_compiler_diagnostic(message, args)`, and
+    `new_ad_hoc_diagnostic(file, loc, text)` for a diagnostic of `diagnostics.NewAdHocMessage(text)`.
+  - A method of upstream's `*Diagnostic` that stores a pointer is a method of the store: `add_message_chain(d, chain)`,
+    `set_message_chain(d, Vec<DiagnosticId>)`, `add_related_info(d, related)`, `set_related_info(d, Vec<DiagnosticId>)`
+    (each returns `d`; a nil `chain` or `related` adds nothing), and `clone_diagnostic(d)` for `Clone`.
+  - `store[id]` is the `Diagnostic`: `file()`, `pos()`, `end()`, `len()`, `loc()`, `code()`, `category()`, `source()`,
+    `message()` (the `MessageId`), `message_text()`, `message_key()`, `message_args()`, `message_chain()`,
+    `related_information()`, `reports_unnecessary()`, `reports_deprecated()`, `skipped_on_no_emit()`,
+    `localize(Locale)`; and through `store[id]` as a place that is written: `set_file`, `set_location`, `set_category`,
+    `set_skipped_on_no_emit`.
+  - A read through `DiagnosticId::NIL`, or through an id that the store did not give, is the zero `Diagnostic`; a write
+    through one lands in a scratch value. Upstream dereferences nil there.
+  - `fault_count()` and `take_faults() -> Vec<InvalidPlaceholderFault>`: a message that got arguments, but fewer than
+    its highest placeholder needs, is a panic of upstream's `Format`. `new_diagnostic` makes the diagnostic as written,
+    counts the fault and keeps the first 64.
+- The diagnostics of a file, through the view `a.as_source_file(root)`:
+  - `diagnostics() -> &[DiagnosticId]` is `SourceFile.Diagnostics()`, the parse diagnostics, and
+    `diagnostic_store() -> Option<&DiagnosticStore>` is the store that they are ids of. The producer of the file sets
+    both, as the fields `diagnostics` and `diagnostic_store` of `SourceFileData`: in the value that it hands to
+    `FileBuilder::finish`, or in `File::source_file` afterwards.
+  - `bind_diagnostics() -> &[DiagnosticId]` is `SourceFile.BindDiagnostics()`, and
+    `bind_diagnostic_store() -> Option<&DiagnosticStore>` is the store of the binder of the file. Until the binding of
+    the file has ended the first is empty and the second is `None`.
+  - `Ast::set_bind_diagnostics(root, store, diagnostics)` is `SourceFile.SetBindDiagnostics`: the binder calls it once,
+    at the end, with its whole store. As every write of a binder about its file, it records a fault when `root` is not
+    the root of the file that the context binds.
+- `binder::bind_source_file_exported(file: &File, ids: &IdAllocator)` is `BindSourceFile` (`bindSourceFile` has the
+  same snake case name). After it `file.bound()` is `Some`.
+
+### Differences from the contract
+
+- `DiagnosticStore` keeps its diagnostics in a `Vec` of its own and not in `Records<DiagnosticId, Diagnostic>` of the
+  contract's `tscore/records.rs`. `Records` counts the reads through nil in a `Cell`, so a store with it is not `Sync`;
+  and a store is now a part of a file (`SourceFileData`) and of what its binder left (`Bound`), which the programs and
+  the checkers of a process share (`ast/file.rs` asserts that `File` is `Sync`). What a caller sees is the same: index
+  0 is the nil diagnostic, a write through nil lands in a scratch value, and the id space ends at the open bit. The
+  two counters of `Records` are gone: no method of the contract's store showed them.
+- `DiagnosticStore` derives `Debug`, because `SourceFileData` does.
+- `new_compiler_diagnostic` calls `core::undefined_text_range()`: the `TextRange` of the tree has no `undefined()`.
+- Lines 10 to 16 and 337 to 739 of the contract's `ast_diagnostic.rs` are not in the tree: the trait `SourceFiles`,
+  `Diagnostics { store, files }` with the comparisons, and `DiagnosticsCollection`. They need Go's `slices` sorting
+  (the contract's `tscore/slices.rs`), and no file of layers 1 to 4 names them.
+- The contract does not say where the diagnostics of a file are. `set_bind_diagnostics` and `SourceFile::diagnostics`
+  are the two names that `binder/binder.rs` calls; the fields behind them and the three other readers are new.
+
+### Verified
+
+No compiler has seen the two commits: no `cargo check`, no `cargo clippy`, no `cargo test`, no `rustc` alone. The survey
+that follows them is the first compile of `binder/` in the real crate and of what the commits add. PORT_STATUS.md,
+"Binder", lists what was checked instead: the look-ahead of the round-5 survey with stand-ins of the same signatures
+and with the contract's store, a `diff` against the contract's text, `rustfmt --check`, `undeclared.py`, the names of
+the functions, and the four places of `binder.go` that call what was added, read beside the Rust.
+
+### What waits
+
+- No producer sets `SourceFileData::diagnostics`. `lowering` and `importer::javascript` (layer 5) return their parse
+  diagnostics beside the file, as their two `ParseDiagnostic` types. Until they put them into the store of the file,
+  `SourceFile::diagnostics()` is empty for every file: the binder then reports its strict mode errors and the one of
+  `#constructor` also in a file with parse errors (binder.go 1303 and 1326 ask for none), and a
+  `has_parse_diagnostics` of the checker that reads it answers false.
+- `FileBuilder::finish` does not do `attachFileToDiagnostics` (parser.go 6445). A producer that makes its diagnostics
+  before `finish` sets their file when it has the `File`: `store[d].set_file(root)`, and the same for each related one.
+- `SourceFile.JSDiagnostics` and `JSDocDiagnostics` (ast.go 2734, 2742) have no field yet.
+- A diagnostic of a file and a diagnostic of a checker are ids of two stores. Upstream puts the bind diagnostics of a
+  file in front of the checker's (`compiler/program.go` 1465) and sorts all of them together later; the contract's
+  `sort_and_deduplicate_diagnostics` works on one store. Nothing copies a diagnostic, with its chain and its related
+  information, from one store into another yet.
+- The faults of the store of a binder stay in that store, where `fault_count()` reads their number. They are not among
+  `Bound::faults()`.
+- When the ids of a binding cannot be given (`File::bind_once` with the id space used up), the bind diagnostics are
+  dropped with everything else of the binding.
+- `Bound::heap_bytes` does not count the diagnostics.
+- `crate::core::{Map, LiveList, Memo}` and `crate::ast::{Diagnostics, DiagnosticsCollection, RepopulateDiagnosticInfo,
+  RepopulateDiagnosticKind, deep_clone_node}`: files of later layers name them and no file defines them.
+- No test reads what was added. The tests of the contract's diagnostics block (`diagnostics_tests.rs`) need the
+  comparisons and the writer, which are not in the tree.
 
 ## Checker: signatures, instantiation, types of symbols, widening (K3 steps 18 to 21)
 

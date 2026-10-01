@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # usage: knobs.py <path to conformance.test.ts>
 # Lays the time limits and the flag of the whole corpus over conformance.test.ts as it is at 3110ce85cf (with or without the optional test of
-# corpus-glue): the import of isCI, the constants whole, spawnTimeout, checkTimeout and slowTimeout, and their uses. Every place must be there
+# corpus-glue): the import of isCI, the constants whole, spawnTimeout, checkTimeout and slowTimeout, and their uses; the limits of the listed instances (failuresOf and the batches of expectations.json) stay as they are. Every place must be there
 # exactly once, or nothing is written. Run prettier over the file afterwards: the trailing arguments are left on the closing line.
 import sys
 path = sys.argv[1]
@@ -26,10 +26,6 @@ const spawnTimeout = small ? 120_000 : 30_000;
 const checkTimeout = small ? 100_000 : 20_000;
 // A debug build needs seconds for a pass over the list, a group of cases or a group of baselines, which a release build makes in milliseconds.
 const slowTimeout = small ? 60_000 : undefined;
-''')
-# failuresOf: the time of one listed instance
-sub('''    timeoutMs: small ? 60_000 : 10_000,
-''', '''    timeoutMs: checkTimeout,
 ''')
 # reference > the list
 sub('''    expect(reasons).toEqual(reference().instances.skippedBecause);
@@ -61,8 +57,10 @@ sub('''      expect(got.sort()).toEqual(want.sort());
   );
 ''')
 # enumerator > the whole corpus
-sub('''  test.skipIf(small)(
-    "every instance is its line of the list, and the counts are those of the reference",''', '''  test.skipIf(!whole)(
+sub('''  // The whole corpus is a second of work in a release build and minutes in a debug build; the time limit is for a machine under load.
+  test.skipIf(small)(
+    "every instance is its line of the list, and the counts are those of the reference",''', '''  // The whole corpus is a second of work in a release build and minutes in a debug build; the time limit is the one that CI gives a test.
+  test.skipIf(!whole)(
     "every instance is its line of the list, and the counts are those of the reference",''')
 sub('''      }
     },
@@ -125,14 +123,6 @@ sub('''    expect(silent.map(f => [f.name, f.outcome])).toEqual(E.map(name => [n
   });
 ''', '''    expect(silent.map(f => [f.name, f.outcome])).toEqual(E.map(name => [name, "fail"]));
   }, slowTimeout);
-''')
-# expectations.json > the batches
-sub('''    small ? 120_000 : 30_000,
-  );
-});
-''', '''    spawnTimeout,
-  );
-});
 ''')
 open(path, "w", encoding="utf8").write(s)
 print(f"{n} places changed")

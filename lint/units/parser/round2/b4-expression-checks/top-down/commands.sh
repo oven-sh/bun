@@ -30,9 +30,17 @@ node make-test-rows.cjs > test-rows.txt
 node rows-head.cjs test-rows.txt > rows.head-lint.txt
 
 # 6. The prototype (proto/apply.py, proto/b4_helpers.rs.inc) and the head, each as a test binary of a scratch copy with proto/zz_probe.rs.
-/workspace/tools/lk sh proto/build-scratch.sh head /workspace/wt/parser "$W/scratch"
-/workspace/tools/lk sh proto/build-scratch.sh proto /workspace/wt/parser "$W/scratch"
-node rows-run.cjs "$W/scratch/out/bun_js_parser.proto" test-rows.txt > rows.proto.txt
+#    "proto" turns the comment list of the lexer on in a lint parse (what B1 does), "proto-nocomments" leaves it as the head has it.
+#    Each build is one rustc of the crate (about 6 s of processor time): the first two were run under the lock, the last three outside it.
+sh proto/build-scratch.sh head /workspace/wt/parser "$W/scratch"
+sh proto/build-scratch.sh proto /workspace/wt/parser "$W/scratch"
+sh proto/build-scratch.sh proto-nocomments /workspace/wt/parser "$W/scratch"
+node rows-run.cjs "$W/scratch/out/bun_js_parser.proto" test-rows.txt > rows.proto.txt                       # 860 rows, 0 failed
+B4_TLA=1 node rows-run.cjs "$W/scratch/out/bun_js_parser.proto" test-rows.txt > rows.proto.tla.txt          # 860 rows, 0 failed
+node rows-run.cjs "$W/scratch/out/bun_js_parser.head" test-rows.txt > rows.head.txt                          # 860 rows, 704 failed
+node rows-run.cjs "$W/scratch/out/bun_js_parser.proto-nocomments" test-rows.txt | grep -E '^FAIL|^// ' > rows.proto-nocomments.failed.txt   # 25 failed
+#    every test of the crate with the prototype: a test run, under the lock
+/workspace/tools/lk "$W/scratch/out/bun_js_parser.proto"
 #    the lint parse of the prototype against the first diagnostic of typescript-go for every source of both input files
 PROBE="$W/scratch/out/bun_js_parser.proto" PROBE_ENV=B4 node lint-any.cjs ../bottom-up/inputs.cjs > proto-lint.inputs.txt
 PROBE="$W/scratch/out/bun_js_parser.proto" PROBE_ENV=B4 node lint-any.cjs extra1.cjs > proto-lint.extra1.txt

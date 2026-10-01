@@ -118,6 +118,10 @@ const groups = [
   ["TS1209: a comment in the target or before ?. (needs the comments of the lint parse)", [
     ...["new A /*c*/ ?.b();", "new a /*c*/ . b /*d*/ ?.c();"].flatMap(both),
   ]],
+  ["the same in a TSX and in a JSX file", [
+    ...["a<b>.c;", "-x ** 2;", "typeof -x ** 2;", "new A?.b();", "new A?.();", "a[];", D("super;"), K("super<T>();"), "for (using of of []) {}", C("a?.#b;"), C("a?.x.#b;"), "a?.#b;"].map(s => ["tsx", s]),
+    ...["-x ** 2;", "typeof -x ** 2;", "new A?.b();", "new A?.();", "a[];", D("super;"), "for (using of of []) {}", C("a?.#b;"), C("a?.x.#b;"), "a?.#b;"].map(s => ["jsx", s]),
+  ]],
   ["parses: what the reference reads and a lint parse must read", [
     ...["(-x) ** 2;", "-(x ** 2);", "2 ** -x;", "++x ** 2;", "x++ ** 2;", "a-x ** 2;", F("(await x) ** 2;"), "new A()?.b;", "new A()?.b();", "new (A?.b)();", "new (A?.b);", "function f() { (await) ** 2; }", "function f() { (await.x) ** 2; }", "function f() { awaited ** 2; }", "function f() { a.await ** 2; }", "new A?.3:1;", "new A().b?.c();",
       "(new A)?.b();", "new (a?.b).c();", "function f() { new.target?.b(); }", "a[[]];", "a[of];", "x = a;\n[];", C("a.#b;"), C("a.#b?.c;"), C("(a?.x).#b;"),
@@ -147,7 +151,7 @@ const input = rows.map((r, id) => JSON.stringify({ id, name: "a." + r.loader, sr
 const run = spawnSync(bin, [], { input, encoding: "utf8", maxBuffer: 1 << 28 });
 if (run.status !== 0) throw new Error("parsediag failed: " + run.stderr);
 for (const line of run.stdout.split("\n")) { if (!line) continue; const o = JSON.parse(line); rows[o.id].go = o.panic ? null : o.diags.map(d => [d[0], d[1], d[2], d[5]]); }
-const kinds = { ts: ts.ScriptKind.TS, js: ts.ScriptKind.JS };
+const kinds = { ts: ts.ScriptKind.TS, js: ts.ScriptKind.JS, tsx: ts.ScriptKind.TSX, jsx: ts.ScriptKind.JSX };
 const lit = s => 'b"' + s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n") + '"';
 const str = s => '"' + s.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
 let group = null, bad = 0;
@@ -156,7 +160,7 @@ for (const r of rows) {
   if (r.group !== group) { group = r.group; console.log(`\n// ${group}`); }
   const sf = ts.createSourceFile("/a." + r.loader, r.src, ts.ScriptTarget.ESNext, true, kinds[r.loader]);
   const t = sf.parseDiagnostics.map(d => [d.code, d.start, d.length, ts.flattenDiagnosticMessageText(d.messageText, "\n")]);
-  const loader = r.loader === "ts" ? "Loader::Ts" : "Loader::Js";
+  const loader = { ts: "Loader::Ts", js: "Loader::Js", tsx: "Loader::Tsx", jsx: "Loader::Jsx" }[r.loader];
   if (!r.go) { console.log(`// PANIC of typescript-go: ${lit(r.src)}`); bad++; continue; }
   const parses = group.startsWith("parses");
   if (parses) {

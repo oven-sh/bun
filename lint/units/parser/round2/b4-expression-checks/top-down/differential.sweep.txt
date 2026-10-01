@@ -1,0 +1,91 @@
+93400 sources, 54882 with the same first error (or both parse), 38518 changed, in 15 classes
+
+ 11172  "Unexpected <token>" TS1109  ==>  "Unexpected <token>" TS1011
+          js "class K extends B { #p; async m(a) { a[]; } }"
+          js "class K extends B { #p; async m(a) { a[] ** c; } }"
+          js "class K extends B { #p; async m(a) { a[] + c; } }"
+          js "class K extends B { #p; async m(a) { a[] = c; } }"
+
+  9639  "Unexpected <token>" (no entry)  ==>  "Unexpected <token>" TS17006
+          js "class K extends B { #p; async m(a) { -a ** c; } }"
+          js "class K extends B { #p; async m(a) { typeof a ** c; } }"
+          js "class K extends B { #p; async m(a) { await a ** c; } }"
+          js "class K extends B { #p; async m(a) { !a ** c; } }"
+
+  8793  parses  ==>  "An optional chain cannot contain private identifiers." TS18030
+          js "class K extends B { #p; async m(a) { a?.#p; } }"
+          js "class K extends B { #p; async m(a) { a?.#p ** c; } }"
+          js "class K extends B { #p; async m(a) { a?.#p + c; } }"
+          js "class K extends B { #p; async m(a) { a?.#p = c; } }"
+
+  4260  parses  ==>  "Invalid optional chain from new expression. Did you mean to call '…'?" TS1209
+          js "class K extends B { #p; async m(a) { new a?.b; } }"
+          js "class K extends B { #p; async m(a) { new a?.b ** c; } }"
+          js "class K extends B { #p; async m(a) { new a?.b + c; } }"
+          js "class K extends B { #p; async m(a) { new a?.b = c; } }"
+
+  1470  parses  ==>  "Unexpected <token>" TS17007
+          ts "class K extends B { #p; async m(a) { a<T><T>(1) ** c; } }"
+          ts "class K extends B { #p; async m(a) { a.b<T><T>(1) ** c; } }"
+          ts "class K extends B { #p; async m(a) { f()<T><T>(1) ** c; } }"
+          ts "class K extends B { #p; async m(a) { (a)<T><T>(1) ** c; } }"
+
+  1407  "Unexpected <token>" (no entry)  ==>  "An optional chain cannot contain private identifiers." TS18030
+          js "class K extends B { #p; async m(a) { -a?.#p ** c; } }"
+          js "class K extends B { #p; async m(a) { typeof a?.#p ** c; } }"
+          js "class K extends B { #p; async m(a) { await a?.#p ** c; } }"
+          js "class K extends B { #p; async m(a) { !a?.#p ** c; } }"
+
+   501  parses  ==>  "An instantiation expression cannot be followed by a property access." TS1477
+          ts "class K extends B { #p; async m(a) { a<T>.b; } }"
+          ts "class K extends B { #p; async m(a) { a<T>.b ** c; } }"
+          ts "class K extends B { #p; async m(a) { a<T>.b + c; } }"
+          ts "class K extends B { #p; async m(a) { a<T>.b = c; } }"
+
+   344  "Unexpected <token>" TS1109  ==>  "An optional chain cannot contain private identifiers." TS18030
+          js "class K extends B { #p; async m(a) { a?.#p[]; } }"
+          js "class K extends B { #p; async m(a) { a?.#p[] ** c; } }"
+          js "class K extends B { #p; async m(a) { a?.#p[] + c; } }"
+          js "class K extends B { #p; async m(a) { a?.#p[] = c; } }"
+
+   344  "Template literals cannot have an optional chain as a tag" (no entry)  ==>  "An optional chain cannot contain private identifiers." TS18030
+          js "class K extends B { #p; async m(a) { a?.#p`x`; } }"
+          js "class K extends B { #p; async m(a) { a?.#p`x` ** c; } }"
+          js "class K extends B { #p; async m(a) { a?.#p`x` + c; } }"
+          js "class K extends B { #p; async m(a) { a?.#p`x` = c; } }"
+
+   270  "Unexpected <token>" (no entry)  ==>  "Unexpected <token>" TS17007
+          ts "class K extends B { #p; async m(a) { <T>-a ** c; } }"
+          ts "class K extends B { #p; async m(a) { <T>typeof a ** c; } }"
+          ts "class K extends B { #p; async m(a) { <T>await a ** c; } }"
+          ts "class K extends B { #p; async m(a) { <T>-a.b ** c; } }"
+
+   144  "Template literals cannot have an optional chain as a tag" (no entry)  ==>  "Invalid optional chain from new expression. Did you mean to call '…'?" TS1209
+          js "class K extends B { #p; async m(a) { new a?.b`x`; } }"
+          js "class K extends B { #p; async m(a) { new a?.b`x` ** c; } }"
+          js "class K extends B { #p; async m(a) { new a?.b`x` + c; } }"
+          js "class K extends B { #p; async m(a) { new a?.b`x` = c; } }"
+
+    63  "Unexpected <token>" (no entry)  ==>  "An instantiation expression cannot be followed by a property access." TS1477
+          ts "class K extends B { #p; async m(a) { -a<T>.b ** c; } }"
+          ts "class K extends B { #p; async m(a) { typeof a<T>.b ** c; } }"
+          ts "class K extends B { #p; async m(a) { await a<T>.b ** c; } }"
+          ts "class K extends B { #p; async m(a) { -a<T>?.b ** c; } }"
+
+    48  "Unexpected <token>" TS1109  ==>  "Invalid optional chain from new expression. Did you mean to call '…'?" TS1209
+          js "class K extends B { #p; async m(a) { new a?.()[]; } }"
+          js "class K extends B { #p; async m(a) { new a?.()[] ** c; } }"
+          js "class K extends B { #p; async m(a) { new a?.()[] + c; } }"
+          js "class K extends B { #p; async m(a) { new a?.()[] = c; } }"
+
+    42  "Unexpected <token>" (no entry)  ==>  "Invalid optional chain from new expression. Did you mean to call '…'?" TS1209
+          js "class K extends B { #p; async m(a) { -new a?.() ** c; } }"
+          js "class K extends B { #p; async m(a) { typeof new a?.() ** c; } }"
+          js "class K extends B { #p; async m(a) { await new a?.() ** c; } }"
+          js "class K extends B { #p; async m(a) { !new a?.() ** c; } }"
+
+    21  "Template literals cannot have an optional chain as a tag" (no entry)  ==>  "Template literals cannot have an optional chain as a tag" (no entry)
+          ts "class K extends B { #p; async m(a) { <T>a?.b`x` ** c; } }"
+          ts "class K extends B { #p; async m(a) { <T>a?.[0]`x` ** c; } }"
+          ts "class K extends B { #p; async m(a) { <T>a?.()`x` ** c; } }"
+          ts "class K extends B { #p; async m(a) { <T>a.b?.b`x` ** c; } }"

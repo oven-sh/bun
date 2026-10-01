@@ -319,7 +319,14 @@ describe("frozen arrays keep their elements in the vector", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ threw: true, rejected: [true, true], own: false, length: 0, frozen: true, blank: true });
+    expect(JSON.parse(stdout)).toEqual({
+      threw: true,
+      rejected: [true, true],
+      own: false,
+      length: 0,
+      frozen: true,
+      blank: true,
+    });
     expect(exitCode).toBe(0);
   });
 });

@@ -1,4 +1,5 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 const NUMBERS = [
   [1, 1, 2],
@@ -329,6 +330,119 @@ describe("tagged template table", () => {
     it("has the headings that jest-each reads, or is malformed", () => {
       expect(mismatches).toEqual([]);
       expect({ headers: headers.size, accepted }).toEqual({ headers: 360, accepted: 53 });
+    });
+  });
+
+  describe.concurrent("in a test run", () => {
+    // Runs one test file. `results` has the line of each test, without the duration.
+    async function run(contents: string, ...args: string[]) {
+      using dir = tempDir("jest-each-template", { "table.test.ts": contents });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "./table.test.ts", ...args],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const results = stderr
+        .split(/\r?\n/)
+        .filter(line => /^\((pass|fail|skip|todo)\) /.test(line))
+        .map(line => line.replace(/ \[[\d.]+m?s\]$/, ""));
+      return { results, stderr: stderr.replaceAll("\r\n", "\n"), exitCode };
+    }
+
+    // The first table is from https://github.com/oven-sh/bun/issues/6364. The rows of the second one have to fail.
+    const tables = `
+      import { test, expect } from "bun:test";
+      test.each\`
+        a    | b    | expected
+        \${1} | \${2} | \${3}
+        \${2} | \${2} | \${4}
+      \`("$a and $b add up to $expected", ({ a, b, expected }) => {
+        expect(a + b).toBe(expected);
+      });
+      const price = { apple: 3, pear: 4 };
+      test.each\`
+        fruit      | expected
+        \${"apple"} | \${999}
+        \${"pear"}  | \${999}
+      \`("price of $fruit is $expected", ({ fruit, expected }) => {
+        expect(price[fruit]).toBe(expected);
+      });
+    `;
+
+    test("runs one test for each row, with the values of the row in the title", async () => {
+      const { results, exitCode } = await run(tables);
+      expect({ results, exitCode }).toEqual({
+        results: [
+          "(pass) 1 and 2 add up to 3",
+          "(pass) 2 and 2 add up to 4",
+          "(fail) price of apple is 999",
+          "(fail) price of pear is 999",
+        ],
+        exitCode: 1,
+      });
+    });
+
+    test("matches -t against the title of each row", async () => {
+      const { results, exitCode } = await run(tables, "-t", "2 and 2|of pear");
+      expect({ results, exitCode }).toEqual({
+        results: ["(pass) 2 and 2 add up to 4", "(fail) price of pear is 999"],
+        exitCode: 1,
+      });
+    });
+
+    const noValues =
+      "`.each` called with a Tagged Template Literal with no data, remember to interpolate with ${expression} syntax.";
+    test.each([
+      ["headings and no values", "test.each`\n a | b\n`", [], noValues],
+      ["no text", "test.each``", [], "`.each` called with an empty Tagged Template Literal of table data."],
+      ["an invalid escape and no values", "test.each`\\unicode`", [], noValues],
+      [
+        "values that do not fill the last row",
+        "test.each`\n a | b\n ${1} | ${2}\n ${3}\n`",
+        [],
+        "Not enough arguments supplied for given headings:\na | b\n\nReceived:\n[ 1, 2, 3 ]\n\nMissing 1 argument",
+      ],
+      [
+        "headings on the line of the backtick",
+        "test.each`a | b\n ${1} | ${2}\n`",
+        [],
+        'Table headings do not conform to expected format:\n\nheading1 | headingN\n\nReceived:\n\n"a | b\\n "',
+      ],
+      ["test.skip.each", "test.skip.each`\n a | b\n`", [], noValues],
+      ["test.todo.each", "test.todo.each`\n a | b\n`", [], noValues],
+      ["test.failing.each", "test.failing.each`\n a | b\n`", [], noValues],
+      ["describe.each", "describe.each`\n a | b\n`", [], noValues],
+      ["a modifier after .each", "test.each`\n a | b\n`.skip", [], noValues],
+      ["a title that -t filters out", "test.each`\n a | b\n`", ["-t", "sentinel"], noValues],
+    ])("fails the file for a malformed table: %s", async (_, each, args, message) => {
+      const { results, stderr, exitCode } = await run(
+        `
+          import { test, describe } from "bun:test";
+          ${each}("row $a", () => {});
+          test("sentinel", () => {});
+        `,
+        ...args,
+      );
+      expect(stderr).toContain(`error: ${message}\n`);
+      expect({ rows: results.filter(line => line.includes("row")), exitCode }).toEqual({ rows: [], exitCode: 1 });
+    });
+
+    test("a malformed table that gets no title does not fail the file", async () => {
+      const { results, exitCode } = await run(`
+        import { test } from "bun:test";
+        test.each\`
+          a | b
+        \`;
+        test.each\`
+          a | b
+          \${1}
+        \`;
+        test("sentinel", () => {});
+      `);
+      expect({ results, exitCode }).toEqual({ results: ["(pass) sentinel"], exitCode: 0 });
     });
   });
 });

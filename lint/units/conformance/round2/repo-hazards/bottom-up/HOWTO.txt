@@ -1,0 +1,35 @@
+What is here, and how each number was made. Everything ran on Linux x64 on 2026-10-01, in a scratch clone of
+the unit branch at 3110ce85cf that shares the objects of /workspace/bun and holds the corpus as sync.sh
+writes it (UPSTREAM from corpus-layout-and-sync/top-down/prototype). The unit's worktree was not changed.
+
+  conformance.test.ts.repository-describe.patch
+      The describe("repository") for test/cli/lint/conformance.test.ts, against 3110ce85cf: one import line
+      and 173 lines after describe("reference"). It is formatted with the repository's prettier command and
+      clean under oxlint.json and under tsc with the options of test/tsconfig.json (../../typecheck.sh).
+  candidates/describe.release-walk.ts, candidates/repository.release-walk.candidate.ts
+      The same describe alone, and as a test file of its own for a clone with the corpus.
+  candidates/repository.every-build.candidate.ts
+      The form that was measured and not taken: every name in every build, path functions by slice.
+  NEEDS.files-no-unit-owns.txt
+      The text for NEEDS.md of the unit: the files that no unit owns, the checks at a merge, what only CI
+      can verify.
+
+  probes/debug-cost.ts, probes/debug-cost.sh            observed/debug-cost.txt
+      The parts of the walk and of the rule, timed in the debug build and in the release build.
+  probes/verify-release-walk.sh                         observed/release-walk.txt, observed/release-walk/
+      The describe alone under the release build, ten mutations of the clone, alone under the debug build
+      with the leak check of CI, and the whole test file with the describe in it under both builds (the
+      binding of ../../corpus-glue/bottom-up laid over the runner).
+  probes/time-every-build.sh                            observed/every-build.txt
+  probes/debug-run.sh, probes/mutations-and-whole-file.sh, probes/integrate.sh
+                                                        observed/first-candidate-*.txt
+      The first form (names by join, four tests): 27 to 43 seconds for its walk in the debug build.
+  probes/tsc-list.sh                                    observed/tsc-list.txt
+      tsc 6.0.2 --listFilesOnly on test/tsconfig.json as it is and with the entry of RP-1. The scratch clone
+      held two files more than the branch will (a test file of the probes and runner/corpus.ts).
+  probes/comment_runs.py                                observed/comment-runs.txt
+  probes/refusal/line263.sh with taken.txt and harmless.txt
+      A refusal for sync.sh line 263 that stops every name that the runner of CI or `bun test` takes.
+  observed/oxlint.txt, observed/pull-request-file-order.txt
+
+Every run of the debug binary and of the whole test file went through the machine lock.

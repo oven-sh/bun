@@ -1,0 +1,147 @@
+6586 parses in 31 groups
+  936 ts   932 tsx  935 sources  TS1005 ',' expected.  (the parse pass without lint rejects 38)
+        [ts] "let x: a is A;"  tsc at 9..11 (+1 more: TS1005)
+        [ts] "let x: x is A;"  tsc at 9..11 (+1 more: TS1005)
+        [ts] "f<[a is A]>(x);"  tsc at 5..7 (+1 more: TS1005)
+        prods tuple:532 type-literal:334 predicate:318 conditional:136 operator:128 union:122 function-type:104 infer:80 | ctxs iextends:1412 arrowret:62 var:42 param:42 ctor:42 fnparam:42 arrowparam:42 as:42
+  696 ts   690 tsx  694 sources  TS1109 Expression expected.  (the parse pass without lint rejects 58)
+        [ts] "f<[in]>(x);"  tsc at 3..5 (+1 more: TS1109)
+        [ts] "f< const>(x);"  tsc at 3..8 (+1 more: TS1134)
+        [ts] "f<[in: A]>(x);"  tsc at 3..5 (+1 more: TS1109)
+        prods query:438 function-type:380 tuple:202 union:100 constructor-type:64 conditional:30 literal:28 infer:28 | ctxs iextends:1073 heritage:229 as:20 satisfies:20 targ:20 ternary:16 tparam:4 null:4
+  664 ts   621 tsx  664 sources  TS1110 Type expected.  (the parse pass without lint rejects 659)
+        [ts] "f<[,]>(x);"  tsc at 3..4
+        [ts] "let x: [in];"  tsc at 8..10 (+1 more: TS1109)
+        [ts] "f<[, B]>(x);"  tsc at 3..4
+        prods tuple:775 operator:225 contextual:128 function-type:50 union:28 query:27 parenthesized:27 predicate:23 | ctxs var:96 field:96 param:96 ctor:96 fnparam:96 arrowparam:96 as:96 satisfies:96
+  228 ts   228 tsx  228 sources  TS1131 Property or signature expected.  (the parse pass without lint rejects 4)
+        [ts] "type X = { a A };"  tsc at 11..12 (+1 more: TS1128)
+        [ts] "type X = { a b };"  tsc at 11..12 (+1 more: TS1128)
+        [ts] "type X = { 1 A };"  tsc at 11..12 (+2 more: TS1005,TS1128)
+        prods type-literal:374 operator:24 mapped:18 function-type:16 conditional:6 contextual:4 tuple:4 infer:4 | ctxs alias:420 ret:16 fnret:16 iextends:4
+  207 ts   206 tsx  207 sources  TS1005 ')' expected.
+        [ts] "(a!: A) => a;"  tsc at 3..4 (+3 more: TS1434,TS1128)
+        [ts] "f<(a is A)>(x);"  tsc at 5..7 (+3 more: TS1434,TS1128)
+        [ts] "let x: (a is A);"  tsc at 10..12 (+2 more: TS1005,TS1005)
+        prods function-type:320 parenthesized:39 constructor-type:22 infer:18 conditional:8 indexed:2 import-type:2 03-arrows-functions:2 | ctxs iextends:380 alias:4 var:2 field:2 param:2 ctor:2 ret:2 fnparam:2
+  104 ts   104 tsx  104 sources  TS1005 ':' expected.
+        [ts] "interface I extends { in } {}"  tsc at 25..26
+        [ts] "interface I extends { new } {}"  tsc at 26..27
+        [ts] "interface I extends { var } {}"  tsc at 26..27
+        prods type-literal:160 import-type:34 mapped:14 | ctxs iextends:188 alias:20
+   74 ts    74 tsx  74 sources  TS1005 ';' expected.  (the parse pass without lint rejects 6)
+        [ts] "a<b>>=c;"  tsc at 3..6
+        [ts] "a<b>>>=c;"  tsc at 3..7
+        [ts] "(a!) => a;"  tsc at 5..7
+        prods predicate:68 import-type:16 operator:14 query:10 type-literal:10 reference:4 contextual:4 conditional:4 | ctxs alias:90 targ:48 null:6 ternary:4
+   67 ts    67 tsx  66 sources  TS1011 An element access expression should take an argument.
+        [ts] "interface I extends A[] {}"  tsc at 22..22
+        [ts] "interface I extends 1[] {}"  tsc at 22..22
+        [ts] "interface I extends A [] {}"  tsc at 23..23
+        prods operator:28 tuple:22 array:18 indexed:18 parenthesized:14 conditional:10 import-type:8 predicate:4 | ctxs iextends:132 null:2
+   67 ts    67 tsx  67 sources  TS1136 Property assignment expected.
+        [ts] "interface I extends { () } {}"  tsc at 22..23 (+1 more: TS1005)
+        [ts] "interface I extends { (); } {}"  tsc at 22..23 (+2 more: TS1005,TS1109)
+        [ts] "interface I extends { (b) } {}"  tsc at 22..23 (+1 more: TS1005)
+        prods type-literal:74 mapped:54 function-type:6 | ctxs iextends:134
+   38 ts    38 tsx  38 sources  TS1005 ']' expected.
+        [ts] "interface I extends A[keyof A] {}"  tsc at 28..29 (+1 more: TS1005)
+        [ts] "interface I extends { [k: K]: A } {}"  tsc at 24..25 (+2 more: TS1005,TS1136)
+        [ts] "interface I extends readonly [a: A] {}"  tsc at 31..32 (+1 more: TS1005)
+        prods type-literal:46 mapped:20 infer:4 indexed:4 tuple:2 | ctxs iextends:76
+   37 ts    37 tsx  37 sources  TS1005 '(' expected.  (the parse pass without lint rejects 4)
+        [ts] "f<<B>>(x);"  tsc at 5..6
+        [ts] "f<<A>>(x);"  tsc at 5..6
+        [ts] "f<new A>(x);"  tsc at 6..7
+        prods type-literal:36 tuple:14 reference:12 import-type:2 function-type:2 constructor-type:2 indexed:2 query:2 | ctxs iextends:32 targ:20 alias:16 heritage:4 null:2
+   37 ts    35 tsx  37 sources  TS1003 Identifier expected.
+        [ts] "f<infer>(x);"  tsc at 7..8
+        [ts] "f<infer >(x);"  tsc at 8..9
+        [ts] "f< infer>(x);"  tsc at 8..9
+        prods query:40 jsdoc:8 tuple:6 reference:6 contextual:2 union:2 infer:2 indexed:2 | ctxs targ:27 iextends:10 heritage:6 alias:2 var:2 field:2 param:2 ctor:2
+   33 ts    33 tsx  33 sources  TS1137 Expression or comma expected.  (the parse pass without lint rejects 30)
+        [ts] "f<[var]>(x);"  tsc at 3..6 (+2 more: TS1134,TS1134)
+        [ts] "f<[enum]>(x);"  tsc at 3..7 (+2 more: TS1003,TS1109)
+        [ts] "f<[const]>(x);"  tsc at 3..8 (+2 more: TS1134,TS1134)
+        prods tuple:66 | ctxs targ:32 ternary:24 iextends:10
+   23 ts    23 tsx  23 sources  TS1005 '{' expected.  (the parse pass without lint rejects 12)
+        [ts] "f<[class]>(x);"  tsc at 8..9
+        [ts] "f<[class: A]>(x);"  tsc at 8..9
+        [ts] "f<[class?: A]>(x);"  tsc at 8..9 (+1 more: TS1109)
+        prods tuple:20 type-literal:14 import-type:4 query:4 01-contextual-keywords:2 05-declarations:2 | ctxs iextends:18 targ:12 ternary:8 null:4 tparam:2 heritage:2
+   19 ts    19 tsx  19 sources  TS1477 An instantiation expression cannot be followed by a property access.
+        [ts] "f<A>.b;"  tsc at 1..4
+        [ts] "f<A>?.b;"  tsc at 1..4
+        [ts] "f<A>.b();"  tsc at 1..4
+        prods reference:14 query:12 02-expressions:10 04-classes:2 | ctxs targ:14 null:12 heritage:6 iextends:6
+   30 ts     8 tsx  30 sources  TS1005 '>' expected.  (the parse pass without lint rejects 4)
+        [ts] "f<[A<B]>(x);"  tsc at 6..7
+        [ts] "f<(a<B)>(x);"  tsc at 6..7
+        [ts] "f<[A<B<C>]>(x);"  tsc at 9..10
+        prods predicate:17 operator:6 reference:4 tuple:4 import-type:4 parenthesized:2 conditional:1 | ctxs angle:22 targ:6 tparam:2 alias:2 iextends:2 as:2 satisfies:2
+   19 ts    19 tsx  19 sources  TS1442 Expected '=' for property initializer.
+        [ts] "class C { @d a: b is A }"  tsc at 18..20 (+1 more: TS1128)
+        [ts] "class C { @d x: a is A; }"  tsc at 18..20 (+1 more: TS1128)
+        [ts] "class C { @d x: x is A; }"  tsc at 18..20 (+1 more: TS1128)
+        prods predicate:34 conditional:2 07-decorator-metadata:2 | ctxs field:36 null:2
+   18 ts    17 tsx  18 sources  TS1005 '?' expected.
+        [ts] "type X = { [K in T]+: V };"  tsc at 20..21
+        [ts] "type X = { [K in T]-: V };"  tsc at 20..21
+        [ts] "type X = { [K in T]- : V };"  tsc at 21..22
+        prods infer:25 mapped:10 | ctxs alias:12 var:2 field:2 param:2 ctor:2 ret:2 fnparam:2 fnret:2
+    6 ts     6 tsx  6 sources  TS1005 '[' expected.
+        [ts] "type X = { -readonly : A };"  tsc at 21..22
+        [ts] "type X = { -readonly a A };"  tsc at 21..22 (+2 more: TS1005,TS1005)
+        [ts] "type X = { +readonly : A };"  tsc at 21..22
+        prods mapped:12 | ctxs alias:12
+    6 ts     6 tsx  6 sources  TS1144 '{' or ';' expected.
+        [ts] "function f(): a is a is A { return x; }"  tsc at 21..23 (+1 more: TS1434)
+        [ts] "function f(): keyof new () => A { return x; }"  tsc at 24..25 (+1 more: TS1005)
+        [ts] "class C { @d m(): a is a is A { return x; } }"  tsc at 25..27 (+2 more: TS1434,TS1128)
+        prods operator:4 predicate:4 conditional:4 | ctxs ret:6 fnret:6
+    4 ts     4 tsx  4 sources  TS1005 'with' expected.
+        [ts] "f<import('x', {})>(x);"  tsc at 15..16
+        [ts] "type X = import('x', {});"  tsc at 22..23
+        [ts] "type X = import('x', { a: { b 'c' } });"  tsc at 23..24 (+3 more: TS1434,TS1128)
+        prods import-type:8 | ctxs alias:6 targ:2
+    3 ts     3 tsx  3 sources  TS1005 '}' expected.
+        [ts] "interface I extends `${infer U}` {}"  tsc at 29..30 (+2 more: TS1005,TS1160)
+        [ts] "interface I extends A extends `${infer H}${infer T}` ? H : T {}"  tsc at 39..40 (+4 more: TS1005,TS1434)
+        [ts] "interface I extends A extends `${infer H extends number}` ? H : never {}"  tsc at 39..40 (+2 more: TS1005,TS1160)
+        prods infer:4 template:2 | ctxs iextends:6
+    3 ts     3 tsx  3 sources  TS1385 Function type notation must be parenthesized when used in a union type.
+        [ts] "type X = A |  () => B;"  tsc at 12..21
+        [ts] "type X =  | () => void;"  tsc at 11..22
+        [ts] "type X = A | () => void;"  tsc at 12..23
+        prods union:6 | ctxs alias:6
+    2 ts     2 tsx  2 sources  TS1386 Constructor type notation must be parenthesized when used in a union type.
+        [ts] "type X =  | new () => B;"  tsc at 11..23
+        [ts] "type X = A | new () => B;"  tsc at 12..24
+        prods union:4 | ctxs alias:4
+    2 ts     2 tsx  2 sources  TS1441 Cannot start a function call in a type annotation.
+        [ts] "class C { m!(): void {} }"  tsc at 12..13 (+4 more: TS1068,TS1068)
+        [ts] "class C { @d x: keyof new () => A; }"  tsc at 26..27 (+2 more: TS1068,TS1068)
+        prods operator:2 04-classes:2 | ctxs field:2 null:2
+    2 ts     2 tsx  2 sources  TS1359 Identifier expected. 'this' is a reserved word that cannot be used here.
+        [ts] "type X = (...this: []) => void;"  tsc at 13..17
+        [ts] "type X = (...this: A[]) => void;"  tsc at 13..17
+        prods function-type:4 | ctxs alias:4
+    2 ts     2 tsx  2 sources  TS1034 'super' must be followed by an argument list or member access.  (the parse pass without lint rejects 2)
+        [ts] "class C implements super {}"  tsc at 25..26
+        [ts] "function f<U extends super>() {}"  tsc at 26..27
+        prods junk:4 | ctxs tparam:2 heritage:2
+    2 ts     2 tsx  2 sources  TS1128 Declaration or statement expected.
+        [ts] "export declare;"  tsc at 0..6
+        [ts] "type X = ('x')\n.A;"  tsc at 15..16
+        prods import-type:2 05-declarations:2 | ctxs alias:2 null:2
+    0 ts     3 tsx  3 sources  TS1434 Unexpected keyword or identifier.
+        [tsx] "f</a/>(x);"  tsc at 0..1 (+2 more: TS1128,TS1109)
+        [tsx] "f</a/g>(x);"  tsc at 0..1 (+1 more: TS1128)
+        [tsx] "f<//c\nA>(x);"  tsc at 0..1 (+2 more: TS1128,TS1161)
+        prods junk:3 | ctxs targ:3
+    1 ts     1 tsx  1 sources  TS1005 '=>' expected.
+        [ts] "f<(A, B)>(x);"  tsc at 8..9
+        prods parenthesized:2 | ctxs targ:2
+    1 ts     1 tsx  1 sources  TS1357 An enum member name must be followed by a ',', '=', or '}'.
+        [ts] "enum E { A;B }"  tsc at 10..11
+        prods 05-declarations:2 | ctxs null:2

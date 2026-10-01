@@ -1,0 +1,509 @@
+4808 parses in 94 groups
+  416 ts   416 tsx   416 src  semantic TS2500 A class can only implement an identifier/qualified-name with optional type arguments.
+        corpora: small: 832 | without lint: accepts: 784, rejects: 46, accepts [lint parse rejects only with the options of --lint]: 2
+        lint: TS1005 Expected "{" but found "}": 462 | TS1005 Expected "}" but found "?": 88 | TS1005 Expected "}" but found <name>: 48 | TS1005 Expected ":" but found "?": 44 | +60 more
+        [ts] "class C implements { a? } {}" @22
+        [ts] "class C implements [await] {}" @25
+        [ts] "class C implements { a() } {}" @25
+  286 ts   264 tsx   286 src  semantic TS1228 A type predicate is only allowed in return type position for functions and methods.
+        corpora: small: 548, targeted: 2 | without lint: rejects: 544, accepts: 6
+        lint: TS1005 Expected ";" but found <name>: 142 | TS1005 Expected ")" but found <name>: 117 | TS1005 Expected "]" but found <name>: 87 | TS1005 Expected ">" but found <name>: 33 | +11 more
+        [ts] "f<asserts a>(x);" @10
+        [ts] "f<asserts x>(x);" @10
+        [ts] "let x: asserts a;" @15
+  267 ts   253 tsx   267 src  checker grammar TS17020 '{0}' at the start of a type is not valid TypeScript syntax. Did you mean to write '{1}'?
+        corpora: targeted09: 367, small: 153 | without lint: rejects: 520
+        lint: TS1110 Unexpected ?: 234 | TS1110 Unexpected !: 102 | TS1005 Expected ">" but found "?": 41 | TS1109 Unexpected ?: 38 | +13 more
+        [ts] "<?A>x" @1
+        [ts] "x as ?A" @5
+        [ts] "f<?A>();" @2
+  197 ts   184 tsx   197 src  checker grammar TS8020 JSDoc types can only be used inside documentation comments.
+        corpora: small: 205, targeted09: 176 | without lint: rejects: 373, accepts: 8
+        lint: TS1110 Unexpected ?: 94 | TS1110 Unexpected *: 89 | TS1005 Expected ";" but found "(": 60 | TS1109 Unexpected *: 28 | +9 more
+        [ts] "<*>x" @1
+        [ts] "x as *" @5
+        [ts] "f<*>();" @2
+  153 ts   143 tsx   153 src  checker grammar TS17019 '{0}' at the end of a type is not valid TypeScript syntax. Did you mean to write '{1}'?
+        corpora: targeted09: 269, small: 27 | without lint: rejects: 296
+        lint: TS1005 Expected ">" but found "?": 60 | TS1005 Expected ")" but found "?": 56 | TS1005 Expected ";" but found "?": 42 | TS1109 Unexpected >: 24 | +13 more
+        [ts] "<A?>x" @2
+        [ts] "x as A?" @7
+        [ts] "f<A?>();" @4
+  142 ts   134 tsx   142 src  checker grammar TS1005 '{0}' expected.
+        corpora: small: 157, targeted09: 115, targeted: 4 | without lint: rejects: 276
+        lint: TS1005 Expected "]" but found <name>: 83 | TS1005 Expected ";" but found <name>: 24 | TS1005 Expected ";" but found "unique": 24 | TS1005 Expected ";" but found "string": 16 | +17 more
+        [ts] "f<unique A>(x);" @9
+        [ts] "({ m(a: A); });" @10
+        [ts] "let x: unique A;" @14
+  122 ts   122 tsx   122 src  checker grammar TS1497 Expression must be enclosed in parentheses to be used as a decorator.
+        corpora: targeted09: 238, targeted: 6 | without lint: parse pass accepts, visit rejects [lint parse rejects only with the options of --lint]: 232, rejects: 12
+        lint: TS1359 Expected identifier but found "new": 32 | no code Optional chaining is not allowed in decorator expressions; wrap the expression in parentheses to use it as a decorator: 24 | TS1003 Expected identifier but found <literal>: 24 | no code A decorator call expression cannot be followed by a property access; wrap the expression in parentheses to use it as a decorator: 18 | +19 more
+        [ts] "@1 class C {}" @1
+        [ts] "@{} class C {}" @1
+        [ts] "@\"s\" class C {}" @1
+  123 ts   119 tsx   124 src  nothing but unknown names
+        corpora: small: 224, targeted: 18 | without lint: accepts: 84, accepts [lint parse rejects only with the options of --lint]: 80, rejects: 77, rejects [lint parse rejects only with the options of --lint]: 1
+        lint: no code Cannot use "yield" or "await" here.: 56 | TS1003 Expected identifier but found "<": 56 | TS1003 Expected identifier but found <#name>: 29 | TS1005 Expected ";" but found ":": 22 | +18 more
+        [ts] "declare 1;" @8
+        [ts] "declare a;" @8
+        [ts] "declare {};" @8
+  119 ts   107 tsx   119 src  checker grammar TS1274 '{0}' modifier can only appear on a type parameter of a class, interface or type alias
+        corpora: targeted09: 174, small: 51, targeted: 1 | without lint: rejects: 226
+        lint: no code The modifier "in" is not valid here: 110 | no code The modifier "out" is not valid here: 66 | TS1110 Unexpected in: 34 | TS1005 Expected ")" but found <name>: 12 | +2 more
+        [ts] "<out T>(a: T) => a" @1
+        [ts] "type X = { [ in T] };" @13
+        [ts] "type X = { [ in T]; };" @13
+   84 ts    84 tsx    84 src  checker grammar TS1206 Decorators are not valid here.
+        corpora: targeted09: 154, targeted: 14 | without lint: rejects: 88, parse pass accepts, visit rejects [lint parse rejects only with the options of --lint]: 80
+        lint: TS1003 Expected identifier but found "@": 24 | TS1003 Expected identifier but found <literal>: 10 | TS1359 Expected identifier but found "new": 10 | TS1005 Expected "class" but found "const": 8 | +36 more
+        [ts] "@d let a;" @3
+        [ts] "@d enum E {}" @3
+        [ts] "@d var a = 1;" @3
+   78 ts    51 tsx    78 src  checker grammar TS1273 '{0}' modifier cannot appear on a type parameter
+        corpora: targeted09: 129 | without lint: rejects: 129
+        lint: TS1005 Expected ">" but found <name>: 119 | TS1005 Expected ";" but found <name>: 9 | TS1005 Expected ";" but found "=>": 1
+        [ts] "<async T>(a: T) => a" @7
+        [ts] "<public T>(a: T) => a" @8
+        [ts] "<static T>(a: T) => a" @8
+   49 ts    49 tsx    49 src  checker grammar TS1098 Type parameter list cannot be empty.
+        corpora: small: 88, targeted09: 10 | without lint: rejects: 98
+        lint: TS1003 Expected identifier but found ">": 98
+        [ts] "type X = <>() => A;" @10
+        [ts] "type X = <>() => as;" @10
+        [ts] "type X = <>() => is;" @10
+   31 ts    25 tsx    31 src  semantic TS1262 Identifier expected. '{0}' is a reserved word at the top-level of a module.
+        corpora: small: 56 | without lint: accepts [lint parse rejects only with the options of --lint]: 56
+        lint: no code Cannot use "yield" or "await" here.: 42 | TS1109 Unexpected :: 4 | TS1109 Unexpected ...: 4 | TS1109 Unexpected ): 2 | +2 more
+        [ts] "f<(await) => void>(x);" @8
+        [ts] "let x: (await) => void;" @8
+        [ts] "f<(await: A) => void>(x);" @8
+   24 ts    24 tsx    24 src  checker grammar TS1090 '{0}' modifier cannot appear on a parameter.
+        corpora: targeted09: 36, small: 8, targeted: 4 | without lint: rejects: 48
+        lint: TS1005 Expected ")" but found <name>: 38 | TS1005 Expected ")" but found "static": 4 | TS1359 Expected identifier but found "export": 2 | TS1109 Unexpected export: 2 | +1 more
+        [ts] "function f(async a: A) {}" @17
+        [ts] "function f(static a: A) {}" @18
+        [ts] "function f(export a: A) {}" @11
+   23 ts    23 tsx    23 src  semantic TS2499 An interface can only extend an identifier/qualified-name with optional type arguments.
+        corpora: small: 46 | without lint: rejects: 46
+        lint: no code Expected string but found ")": 26 | TS1003 Expected identifier but found ">": 16 | no code Unexpected *: 2 | no code Unexpected =: 2
+        [ts] "interface I extends import() {}" @27
+        [ts] "interface I extends { a = 1 } {}" @24
+        [ts] "interface I extends import\n() {}" @28
+   21 ts    21 tsx    21 src  checker grammar TS1013 A rest parameter or binding pattern may not have a trailing comma.
+        corpora: targeted09: 42 | without lint: rejects: 42
+        lint: TS1005 Expected ")" but found ",": 20 | no code Unexpected "," after rest pattern: 18 | no code Unexpected trailing comma after rest element: 4
+        [ts] "function f(...a,) {}" @15
+        [ts] "var v = (...a,) => 1;" @13
+        [ts] "class C { m(...a,) {} }" @16
+   21 ts    21 tsx    21 src  checker grammar TS1048 A rest parameter cannot have an initializer.
+        corpora: targeted09: 42 | without lint: rejects: 42
+        lint: TS1005 Expected ")" but found "=": 30 | no code A rest argument cannot have a default initializer: 8 | no code Invalid binding pattern: 4
+        [ts] "function f(...a = []) {}" @16
+        [ts] "var v = (...a = []) => 1;" @14
+        [ts] "function f(...[a] = []) {}" @18
+   18 ts    17 tsx    18 src  checker grammar TS1354 'readonly' type modifier is only permitted on array and tuple literal types.
+        corpora: small: 35 | without lint: rejects: 35
+        lint: TS1110 Unexpected ?: 23 | TS1005 Expected ";" but found ":": 4 | TS1005 Expected ":" but found "]": 4 | TS1005 Expected "]" but found <name>: 2 | +1 more
+        [ts] "f<[readonly? A]>(x);" @14
+        [ts] "let x: [readonly? A];" @16
+        [ts] "type X = [readonly? A];" @20
+   15 ts    14 tsx    15 src  checker grammar TS1070 '{0}' modifier cannot appear on a type member.
+        corpora: small: 29 | without lint: accepts: 29
+        lint: TS1005 Expected ";" but found <name>: 23 | TS1005 Expected ":" but found <name>: 4 | TS1005 Expected ";" but found ":": 2
+        [ts] "f<{ export a: A }>(x);" @11
+        [ts] "let x: { export a: A };" @16
+        [ts] "let v = <{ export a: A }>x;" @18
+   14 ts    14 tsx    14 src  checker grammar TS1044 '{0}' modifier cannot appear on a module or namespace element.
+        corpora: targeted09: 28 | without lint: rejects: 28
+        lint: TS1005 Expected ";" but found "class": 8 | TS1005 Expected ";" but found "interface": 4 | TS1005 Expected ";" but found "namespace": 4 | TS1005 Expected ";" but found "enum": 4 | +4 more
+        [ts] "static enum E {}" @7
+        [ts] "public enum E {}" @7
+        [ts] "static class C {}" @7
+   13 ts    13 tsx    13 src  checker grammar TS1242 'abstract' modifier can only appear on a class, method, or property declaration.
+        corpora: targeted09: 14, targeted: 10, small: 2 | without lint: rejects: 26
+        lint: TS1005 Expected ")" but found <name>: 10 | TS1005 Expected ";" but found "type": 4 | TS1005 Expected ";" but found "interface": 2 | TS1005 Expected ";" but found "enum": 2 | +4 more
+        [ts] "abstract var a;" @9
+        [ts] "abstract enum E {}" @9
+        [ts] "abstract type X = A;" @9
+   12 ts    12 tsx    12 src  checker grammar TS1097 '{0}' list cannot be empty.
+        corpora: targeted09: 14, small: 8, targeted: 2 | without lint: rejects: 24
+        lint: TS1005 Expected "{" but found end of file: 10 | TS1110 Unexpected extends: 6 | TS1109 Unexpected extends: 4 | TS1005 Expected "{" but found ";": 2 | +1 more
+        [ts] "class C extends {}" @18
+        [ts] "class C extends  {}" @19
+        [ts] "class C implements {}" @21
+    9 ts     9 tsx     9 src  checker grammar TS1042 '{0}' modifier cannot be used here.
+        corpora: targeted09: 10, targeted: 8 | without lint: rejects: 18
+        lint: TS1005 Expected "}" but found <name>: 8 | TS1005 Expected ";" but found "interface": 2 | TS1005 Expected ";" but found "type": 2 | TS1005 Expected ";" but found "class": 2 | +2 more
+        [ts] "async enum E {}" @6
+        [ts] "async class C {}" @6
+        [ts] "async type X = A;" @6
+    9 ts     9 tsx     9 src  checker grammar TS1035 Only ambient modules can use quoted names.
+        corpora: targeted: 10, targeted09: 8 | without lint: rejects: 18
+        lint: TS1005 Expected ";" but found ""m"": 10 | TS1005 Expected ";" but found <literal>: 8
+        [ts] "module 'm'" @7
+        [ts] "module \"m\"" @7
+        [ts] "module 'm';" @7
+    9 ts     9 tsx     9 src  checker grammar TS1235 A namespace declaration is only allowed at the top level of a namespace or module.
+        corpora: targeted09: 10, targeted: 8 | without lint: rejects: 18
+        lint: TS1005 Expected ";" but found <name>: 18
+        [ts] "{ module M {} }" @9
+        [ts] "{ namespace N {} }" @12
+        [ts] "if (a) namespace N {}" @17
+    8 ts     8 tsx     8 src  checker grammar TS1110 Type expected.
+        corpora: small: 16 | without lint: rejects: 16
+        lint: TS1110 Unexpected /: 4 | TS1110 Unexpected +: 2 | no code Expected number but found <name>: 2 | no code Expected number but found "true": 2 | +3 more
+        [ts] "function f<U extends +1>() {}" @21
+        [ts] "function f<U extends -a>() {}" @22
+        [ts] "function f<U extends ~A>() {}" @21
+    8 ts     8 tsx     7 src  checker grammar TS1173 'extends' clause must precede 'implements' clause.
+        corpora: small: 12, targeted: 2, targeted09: 2 | without lint: rejects: 16
+        lint: TS1005 Expected "{" but found "extends": 16
+        [ts] "class C implements A extends {}" @21
+        [ts] "class C implements A extends  {}" @21
+        [ts] "class C implements A extends B {}" @21
+    8 ts     8 tsx     8 src  checker grammar TS1200 Line terminator not permitted before arrow.
+        corpora: small: 12, targeted: 4 | without lint: rejects: 16
+        lint: no code Unexpected newline before "=>": 16
+        [ts] "(a): A\n=> a;" @7
+        [ts] "async (a: A)\n=> a;" @13
+        [ts] "let f = (a): A//c\n => a;" @19
+    8 ts     8 tsx     8 src  checker grammar TS1275 'accessor' modifier can only appear on a property declaration.
+        corpora: targeted09: 8, targeted: 6, small: 2 | without lint: rejects: 16
+        lint: TS1005 Expected ")" but found <name>: 10 | no code auto-accessor properties cannot have a method body: 2 | TS1005 Expected ";" but found <name>: 2 | TS1005 Expected ";" but found "class": 2
+        [ts] "accessor class C {}" @9
+        [ts] "class C { accessor m() {} }" @19
+        [ts] "function f(accessor a: A) {}" @20
+    8 ts     8 tsx     8 src  checker grammar TS1014 A rest parameter must be last in a parameter list.
+        corpora: targeted09: 16 | without lint: rejects: 16
+        lint: TS1005 Expected ")" but found ",": 10 | no code Unexpected "," after rest pattern: 4 | TS1005 Expected ")" but found <name>: 2
+        [ts] "function f(...a, b) {}" @15
+        [ts] "var v = (...a, b) => 1;" @13
+        [ts] "class C { m(...a, b) {} }" @16
+    7 ts     7 tsx     7 src  semantic TS1141 String literal expected.
+        corpora: small: 12, targeted: 2 | without lint: rejects: 14
+        lint: no code Expected string but found <name>: 8 | no code Expected string but found <literal>: 2 | TS1005 Expected ")" but found "|": 2 | no code Expected string but found "|": 2
+        [ts] "type X = import(x);" @16
+        [ts] "type X = import(AB);" @16
+        [ts] "type X = import(`x`);" @16
+    7 ts     7 tsx     7 src  checker grammar TS1308 'await' expressions are only allowed within async functions and at the top levels of modules.
+        corpora: targeted09: 14 | without lint: rejects: 14
+        lint: no code "await" can only be used inside an "async" function: 14
+        [ts] "enum E { A = await 1 }" @19
+        [ts] "namespace N { await a }" @20
+        [ts] "function f(a = await b) {}" @21
+    6 ts     6 tsx     6 src  checker grammar TS1187 A parameter property may not be declared using a binding pattern.
+        corpora: targeted09: 8, targeted: 4 | without lint: rejects: 12
+        lint: TS1005 Expected ")" but found "{": 4 | TS1003 Expected identifier but found "{": 2 | TS1003 Expected identifier but found "[": 2 | TS1005 Expected ")" but found ":": 2 | +1 more
+        [ts] "function f(public [a]: A) {}" @18
+        [ts] "type X = (public [a]: A) => R;" @20
+        [ts] "function f(public { a }: A) {}" @18
+    6 ts     6 tsx     6 src  checker grammar TS1191 An import declaration cannot have modifiers.
+        corpora: targeted09: 8, targeted: 4 | without lint: rejects: 12
+        lint: TS1005 Expected "=" but found "from": 4 | TS1003 Expected identifier but found "{": 4 | TS1003 Expected identifier but found <literal>: 2 | TS1003 Expected identifier but found "*": 2
+        [ts] "export import 'm';" @14
+        [ts] "export import A from 'a';" @16
+        [ts] "export import a from 'm';" @16
+    6 ts     6 tsx     6 src  checker grammar TS1186 A rest element cannot have an initializer.
+        corpora: targeted09: 12 | without lint: rejects: 10, accepts: 2
+        lint: TS1005 Expected "}" but found "=": 10 | TS1131 Unexpected ...: 2
+        [ts] "function f({ ...a = 1 }) {}" @18
+        [ts] "class C { m({ ...a = 1 }) {} }" @19
+        [ts] "var v = { m({ ...a = 1 }) {} };" @19
+    5 ts     5 tsx     5 src  checker grammar TS1030 '{0}' modifier already seen.
+        corpora: targeted09: 6, targeted: 4 | without lint: rejects: 10
+        lint: no code Unexpected export: 4 | TS1005 Expected ";" but found <name>: 2 | TS1005 Expected ";" but found "abstract": 2 | TS1005 Expected ")" but found "readonly": 2
+        [ts] "export export const a = 1;" @7
+        [ts] "abstract abstract class C {}" @9
+        [ts] "var v = (readonly readonly a: A) => 1;" @18
+    5 ts     5 tsx     5 src  checker grammar TS1174 Classes can only extend a single class.
+        corpora: targeted09: 8, targeted: 2 | without lint: rejects: 10
+        lint: TS1005 Expected "{" but found ",": 10
+        [ts] "class C extends A, B {}" @17
+        [ts] "class C extends D, E {}" @17
+        [ts] "class C extends A<B>, C<D> {}" @20
+    5 ts     5 tsx     5 src  checker grammar TS1211 A class declaration without the 'default' modifier must have a name.
+        corpora: targeted09: 6, targeted: 4 | without lint: rejects: 10
+        lint: TS1359 Expected identifier but found "extends": 4 | TS1003 Expected identifier but found "{": 4 | TS1005 Expected "{" but found <name>: 2
+        [ts] "declare class {}" @14
+        [ts] "declare class { }" @14
+        [ts] "class extends A {}" @6
+    4 ts     4 tsx     4 src  checker grammar TS1024 'readonly' modifier can only appear on a property declaration or index signature.
+        corpora: targeted09: 6, small: 2 | without lint: rejects: 6, accepts: 2
+        lint: TS1005 Expected "}" but found "get": 2 | TS1005 Expected ";" but found "class": 2 | TS1005 Expected ";" but found "namespace": 2 | TS1005 Expected ";" but found "enum": 2
+        [ts] "readonly enum E {}" @9
+        [ts] "readonly class C {}" @9
+        [ts] "readonly namespace N {}" @9
+    4 ts     4 tsx     4 src  checker grammar TS18016 Private identifiers are not allowed outside class bodies.
+        corpora: targeted09: 6, small: 2 | without lint: rejects: 8
+        lint: no code Unexpected <#name>: 4 | TS1003 Expected identifier but found <#name>: 4
+        [ts] "f<#a>(x);" @2
+        [ts] "a < b > #c in d" @8
+        [ts] "@d.#e class C {}" @3
+    4 ts     4 tsx     4 src  checker grammar TS1155 '{0}' declarations must be initialized.
+        corpora: targeted: 6, targeted09: 2 | without lint: rejects: 8
+        lint: no code The constant <name> must be initialized: 8
+        [ts] "const a;" @6
+        [ts] "const a: A;" @6
+        [ts] "const a!: A;" @6
+    4 ts     4 tsx     4 src  checker grammar TS1029 '{0}' modifier must precede '{1}' modifier.
+        corpora: targeted09: 6, targeted: 2 | without lint: rejects: 8
+        lint: TS1005 Expected ")" but found "public": 4 | TS1005 Expected ";" but found <name>: 2 | no code Unexpected "export": 2
+        [ts] "declare export default class {}" @8
+        [ts] "class C { accessor static a: A }" @26
+        [ts] "var v = (readonly public a: A) => 1;" @18
+    4 ts     4 tsx     4 src  checker grammar TS1009 Trailing comma not allowed.
+        corpora: targeted09: 6, targeted: 2 | without lint: rejects: 8
+        lint: TS1005 Expected "{" but found end of file: 4 | TS1005 Expected "{" but found ",": 4
+        [ts] "class C extends A, {}" @17
+        [ts] "class C implements A, {}" @24
+        [ts] "var v = class extends A, {};" @23
+    4 ts     4 tsx     4 src  checker grammar TS1491 '{0}' modifier cannot appear on a 'using' declaration.
+        corpora: targeted09: 6, targeted: 2 | without lint: rejects: 8
+        lint: no code Cannot use "declare" with a "using" declaration: 4 | no code Unexpected using: 4
+        [ts] "declare using a: A;" @8
+        [ts] "declare using a = b;" @8
+        [ts] "export using a: A = b;" @7
+    4 ts     4 tsx     4 src  checker grammar TS1363 A type-only import can specify a default import or named bindings, but not both.
+        corpora: targeted: 4, targeted09: 4 | without lint: rejects: 8
+        lint: TS1005 Expected "from" but found ",": 8
+        [ts] "import type A, { B } from 'a';" @13
+        [ts] "import type A, { B } from \"m\";" @13
+        [ts] "import type A, * as B from 'a';" @13
+    4 ts     4 tsx     4 src  checker grammar TS1184 Modifiers cannot appear here.
+        corpora: targeted: 4, targeted09: 4 | without lint: rejects: 8
+        lint: no code Unexpected export: 4 | TS1005 Expected "class" but found "as": 2 | TS1005 Expected "class" but found "abstract": 2
+        [ts] "{ export type A = 1; }" @2
+        [ts] "@d export as namespace A;" @10
+        [ts] "var v = @d abstract class {};" @11
+    4 ts     4 tsx     4 src  checker grammar TS1123 Variable declaration list cannot be empty.
+        corpora: targeted09: 8 | without lint: rejects: 8
+        lint: TS1003 Expected identifier but found end of file: 4 | TS1003 Expected identifier but found ";": 2 | no code Unexpected "let": 2
+        [ts] "declare var" @11
+        [ts] "declare let" @8
+        [ts] "declare var;" @11
+    3 ts     3 tsx     3 src  checker grammar TS1255 A definite assignment assertion '!' is not permitted in this context.
+        corpora: targeted: 4, small: 2 | without lint: rejects: 4, accepts: 2
+        lint: TS1005 Expected "}" but found "!": 6
+        [ts] "({ a!: 1 });" @4
+        [ts] "({ m!() {} });" @4
+        [ts] "f<{ a!: A }>(x);" @5
+    3 ts     3 tsx     3 src  nothing
+        corpora: small: 4, targeted: 2 | without lint: accepts [lint parse rejects only with the options of --lint]: 4, rejects: 2
+        lint: no code Cannot use "yield" or "await" here.: 4 | TS1005 Expected ")" but found "=": 2
+        [ts] "try {} catch (e: any = 1) {}" @21
+        [ts] "let f = (a: (...await: []) => void) => a;" @16
+        [ts] "function f<U extends (...await: []) => void>() {}" @25
+    3 ts     3 tsx     3 src  checker grammar TS1172 'extends' clause already seen.
+        corpora: targeted09: 4, targeted: 2 | without lint: rejects: 6
+        lint: TS1005 Expected "{" but found "extends": 6
+        [ts] "class C extends A extends B {}" @18
+        [ts] "class C extends D extends E {}" @18
+        [ts] "class C extends D implements I extends E {}" @31
+    3 ts     3 tsx     3 src  checker grammar TS1319 A default export can only be used in an ECMAScript-style module.
+        corpora: targeted09: 4, targeted: 2 | without lint: rejects: 6
+        lint: no code Unexpected default: 6
+        [ts] "namespace N { export default 1 }" @21
+        [ts] "namespace N { export default a }" @21
+        [ts] "namespace N { export default class {} }" @21
+    3 ts     3 tsx     3 src  semantic TS1194 Export declarations are not permitted in a namespace.
+        corpora: targeted: 6 | without lint: rejects: 6
+        lint: no code Unexpected {: 4 | no code Unexpected *: 2
+        [ts] "namespace N { export {} }" @21
+        [ts] "namespace N { export { a } }" @21
+        [ts] "namespace N { export * from 'a' }" @21
+    3 ts     3 tsx     3 src  checker grammar TS1079 A '{0}' modifier cannot be used with an import declaration.
+        corpora: targeted09: 4, targeted: 2 | without lint: rejects: 6
+        lint: no code Unexpected "import": 6
+        [ts] "declare import 'm';" @8
+        [ts] "declare import a from 'a';" @8
+        [ts] "declare import a from 'm';" @8
+    3 ts     3 tsx     3 src  checker grammar TS1193 An export declaration cannot have modifiers.
+        corpora: targeted09: 4, targeted: 2 | without lint: rejects: 6
+        lint: no code Unexpected "export": 6
+        [ts] "declare export {};" @8
+        [ts] "declare export { a };" @8
+        [ts] "declare export * from 'm';" @8
+    3 ts     3 tsx     3 src  checker grammar TS18058 Default imports are not allowed in a deferred import.
+        corpora: targeted09: 4, targeted: 2 | without lint: rejects: 6
+        lint: TS1005 Expected "from" but found <name>: 4 | no code Expected string but found "from": 2
+        [ts] "import defer a from 'a';" @13
+        [ts] "import defer a from \"m\";" @13
+        [ts] "import defer from from \"m\";" @18
+    3 ts     3 tsx     3 src  checker grammar TS1231 An export assignment must be at the top level of a file or module declaration.
+        corpora: targeted09: 6 | without lint: rejects: 6
+        lint: no code Unexpected export: 6
+        [ts] "{ export = A }" @2
+        [ts] "if (a) export = A;" @7
+        [ts] "function f() { export = A }" @15
+    3 ts     3 tsx     3 src  checker grammar TS1163 A 'yield' expression is only allowed in a generator body.
+        corpora: targeted09: 6 | without lint: rejects: 6
+        lint: no code Cannot use "yield" outside a generator function: 6
+        [ts] "@(yield d) class C {}" @2
+        [ts] "class C { @(yield d) a }" @12
+        [ts] "class C { @(yield d) m() {} }" @12
+    3 ts     3 tsx     3 src  checker grammar TS1451 Private identifiers are only allowed in class bodies and may only be used as part of a class member declaration, property access, or on the left-hand-side of an 'in' expression
+        corpora: targeted09: 6 | without lint: rejects: 6
+        lint: TS1003 Expected identifier but found <#name>: 6
+        [ts] "@#d class C {}" @1
+        [ts] "class C { @#d a }" @11
+        [ts] "class C { @#d m() {} }" @11
+    2 ts     2 tsx     2 src  semantic TS2660 'super' can only be referenced in members of derived classes or object literal expressions.
+        corpora: small: 2, targeted: 2 | without lint: rejects: 4
+        lint: no code Unexpected "super": 4
+        [ts] "super.a!;" @0
+        [ts] "f<super.a>(x);" @2
+    2 ts     2 tsx     2 src  checker grammar TS7061 A mapped type may not declare properties or methods.
+        corpora: small: 4 | without lint: rejects: 4
+        lint: TS1110 Unexpected in: 4
+        [ts] "type X = { [ in T]: V; [L in U]: W };" @13
+        [ts] "type X = { [K in T]: V; [ in U]: W };" @26
+    2 ts     2 tsx     2 src  semantic TS2369 A parameter property is only allowed in a constructor implementation.
+        corpora: targeted: 4 | without lint: rejects: 4
+        lint: TS1005 Expected ")" but found <name>: 4
+        [ts] "(public a: A) => a;" @8
+        [ts] "(readonly a: A) => a;" @10
+    2 ts     2 tsx     2 src  checker grammar TS1162 An object member cannot be declared optional.
+        corpora: targeted: 4 | without lint: rejects: 4
+        lint: TS1005 Expected "}" but found "?": 4
+        [ts] "({ a?: 1 });" @4
+        [ts] "({ m?() {} });" @4
+    2 ts     2 tsx     2 src  checker grammar TS1317 A parameter property cannot be declared using a rest parameter.
+        corpora: targeted: 2, targeted09: 2 | without lint: rejects: 4
+        lint: TS1005 Expected ")" but found "...": 4
+        [ts] "function f(public ...a: A[]) {}" @18
+        [ts] "class C { constructor(public ...a: A[]) {} }" @29
+    2 ts     2 tsx     2 src  checker grammar TS1175 'implements' clause already seen.
+        corpora: targeted: 2, targeted09: 2 | without lint: rejects: 4
+        lint: TS1005 Expected "{" but found "implements": 4
+        [ts] "class C implements A implements B {}" @21
+        [ts] "class C implements I implements J {}" @21
+    2 ts     2 tsx     2 src  semantic TS2452 An enum member cannot have a numeric name.
+        corpora: targeted: 4 | without lint: rejects: 4
+        lint: TS1003 Expected identifier but found <literal>: 4
+        [ts] "enum E { 1 = 1 }" @9
+        [ts] "enum E { 1n = 1 }" @9
+    2 ts     2 tsx     2 src  semantic TS2670 Augmentations for the global scope should have 'declare' modifier unless they appear in already ambient context.
+        corpora: targeted: 4 | without lint: rejects: 4
+        lint: TS1005 Expected ";" but found "{": 4
+        [ts] "global {}" @7
+        [ts] "global { interface Window {} }" @7
+    2 ts     2 tsx     2 src  checker grammar TS1120 An export assignment cannot have modifiers.
+        corpora: targeted: 2, targeted09: 2 | without lint: rejects: 4
+        lint: no code Unexpected "export": 4
+        [ts] "declare export = A;" @8
+        [ts] "declare export default a;" @8
+    2 ts     2 tsx     2 src  checker grammar TS1108 A 'return' statement can only be used within a function body.
+        corpora: targeted: 2, targeted09: 2 | without lint: rejects: 4
+        lint: no code Unexpected "return": 2 | no code A return statement cannot be used here: 2
+        [ts] "declare return;" @8
+        [ts] "namespace N { return }" @14
+    2 ts     2 tsx     2 src  checker grammar TS18059 Named imports are not allowed in a deferred import.
+        corpora: targeted: 2, targeted09: 2 | without lint: rejects: 4
+        lint: TS1005 Expected "from" but found "{": 4
+        [ts] "import defer { a } from 'a';" @13
+        [ts] "import defer { a } from \"m\";" @13
+    2 ts     2 tsx     2 src  semantic TS2567 Enum declarations can only merge with namespace or other enum declarations.
+        corpora: targeted: 4 | without lint: rejects: 4
+        lint: no code <name> has already been declared: 4
+        [ts] "enum E {} let E;" @14
+        [ts] "enum E {} class E {}" @16
+    2 ts     2 tsx     2 src  checker grammar TS1015 Parameter cannot have question mark and initializer.
+        corpora: targeted09: 4 | without lint: rejects: 4
+        lint: TS1109 Unexpected =: 4
+        [ts] "var v = (a? = 1) => 1;" @12
+        [ts] "var v = async (a? = 1) => 1;" @18
+    2 ts     2 tsx     2 src  checker grammar TS1028 Accessibility modifier already seen.
+        corpora: targeted09: 4 | without lint: rejects: 4
+        lint: TS1005 Expected ")" but found "private": 2 | TS1005 Expected ")" but found "public": 2
+        [ts] "var v = (public public a: A) => 1;" @16
+        [ts] "var v = (public private a: A) => 1;" @16
+    2 ts     2 tsx     2 src  checker grammar TS1326 This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments.
+        corpora: targeted09: 4 | without lint: rejects: 4
+        lint: no code Unexpected <: 4
+        [ts] "import<A>('m')" @6
+        [ts] "import<A>(\"m\");" @6
+    2 ts     2 tsx     2 src  checker grammar TS8038 Decorators may not appear after 'export' or 'export default' if they also appear before 'export'.
+        corpora: targeted09: 4 | without lint: rejects: 4
+        lint: TS1005 Expected "class" but found "@": 4
+        [ts] "@d export @e class C {}" @10
+        [ts] "@d export default @e class C {}" @18
+    1 ts     1 tsx     1 src  checker grammar TS1018 An index signature parameter cannot have an accessibility modifier.
+        corpora: small: 2 | without lint: rejects: 2
+        lint: TS1005 Expected "]" but found <name>: 2
+        [ts] "type X = { [public k: string]: A };" @19
+    1 ts     1 tsx     1 src  checker grammar TS1312 Did you mean to use a ':'? An '=' can only follow a property name when the containing object literal is part of a destructuring pattern.
+        corpora: small: 2 | without lint: rejects: 2
+        lint: no code Unexpected "=": 2
+        [ts] "f<{ a = 1 }>(x);" @6
+    1 ts     1 tsx     1 src  semantic TS2730 An arrow function cannot have a 'this' parameter.
+        corpora: targeted: 2 | without lint: rejects: 2
+        lint: no code Invalid binding pattern: 2
+        [ts] "(this: A) => a;" @1
+    1 ts     1 tsx     1 src  checker grammar TS1243 '{0}' modifier cannot be used with '{1}' modifier.
+        corpora: targeted: 2 | without lint: rejects: 2
+        lint: TS1005 Expected ";" but found <name>: 2
+        [ts] "class C { accessor readonly a: A }" @28
+    1 ts     1 tsx     1 src  semantic TS1213 Identifier expected. '{0}' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+        corpora: targeted: 2 | without lint: rejects: 2
+        lint: TS1005 Expected "{" but found ";": 2
+        [ts] "let x = class implements {};" @27
+    1 ts     1 tsx     1 src  semantic TS1164 Computed property names are not allowed in enums.
+        corpora: targeted: 2 | without lint: rejects: 2
+        lint: TS1003 Expected identifier but found "[": 2
+        [ts] "enum E { [a] = 1 }" @9
+    1 ts     1 tsx     1 src  semantic TS18024 An enum member cannot be named with a private identifier.
+        corpora: targeted: 2 | without lint: rejects: 2
+        lint: TS1003 Expected identifier but found <#name>: 2
+        [ts] "enum E { #a = 1 }" @9
+    1 ts     1 tsx     1 src  semantic TS1147 Import declarations in a namespace cannot reference a module.
+        corpora: targeted: 2 | without lint: rejects: 2
+        lint: TS1005 Expected "=" but found "from": 2
+        [ts] "namespace N { import a from 'a' }" @23
+    1 ts     1 tsx     1 src  checker grammar TS1495 '{0}' modifier cannot appear on an 'await using' declaration.
+        corpora: targeted: 2 | without lint: rejects: 2
+        lint: no code Cannot use "declare" with an "await using" declaration: 2
+        [ts] "declare await using a: A;" @8
+    1 ts     1 tsx     1 src  checker grammar TS1264 Declarations with definite assignment assertions must also have type annotations.
+        corpora: targeted: 2 | without lint: rejects: 2
+        lint: TS1005 Expected ":" but found ";": 2
+        [ts] "let a!;" @6
+    1 ts     1 tsx     1 src  checker grammar TS1263 Declarations with initializers cannot also have definite assignment assertions.
+        corpora: targeted: 2 | without lint: rejects: 2
+        lint: TS1005 Expected ":" but found "=": 2
+        [ts] "let a! = 1;" @7
+    1 ts     1 tsx     1 src  checker grammar TS1492 '{0}' declarations may not have binding patterns.
+        corpora: targeted: 2 | without lint: rejects: 2
+        lint: TS1005 Expected ";" but found "{": 2
+        [ts] "using { a }: A = b;" @6
+    1 ts     1 tsx     1 src  checker grammar TS1232 An import declaration can only be used at the top level of a namespace or module.
+        corpora: targeted: 2 | without lint: rejects: 2
+        lint: no code Unexpected type: 2
+        [ts] "{ import type { A } from 'a'; }" @9
+    1 ts     1 tsx     1 src  checker grammar TS1234 An ambient module declaration is only allowed at the top level in a file.
+        corpora: targeted: 2 | without lint: rejects: 2
+        lint: TS1005 Expected ";" but found <literal>: 2
+        [ts] "function f() { declare module 'm' {} }" @30
+    1 ts     1 tsx     1 src  checker grammar TS2304 Cannot find name '{0}'.
+        corpora: targeted09: 2 | without lint: rejects: 2
+        lint: TS1003 Expected identifier but found <#name>: 2
+        [ts] "type X = typeof #a;" @16
+    1 ts     1 tsx     1 src  checker grammar TS1450 Dynamic imports can only accept a module specifier and an optional set of attributes as arguments
+        corpora: targeted09: 2 | without lint: rejects: 2
+        lint: TS1005 Expected ")" but found <literal>: 2
+        [ts] "f<import(\"m\", { with: {} }, 1)>(x);" @28
+    1 ts     1 tsx     1 src  checker grammar TS1183 An implementation cannot be declared in ambient contexts.
+        corpora: targeted09: 2 | without lint: accepts: 2
+        lint: TS1005 Expected ";" but found "{": 2
+        [ts] "class K { @d p: { get a(): A {} }; }" @29
+    1 ts     1 tsx     1 src  checker grammar TS1197 Catch clause variable cannot have an initializer.
+        corpora: targeted09: 2 | without lint: rejects: 2
+        lint: TS1005 Expected ")" but found "=": 2
+        [ts] "try {} catch (e = 1) {}" @16
+    1 ts     1 tsx     1 src  checker grammar TS1358 Tagged template expressions are not permitted in an optional chain.
+        corpora: targeted09: 2 | without lint: rejects: 2
+        lint: TS1005 Expected "(" but found <literal>: 2
+        [ts] "a?.<b>`t`" @6
+    1 ts     1 tsx     1 src  checker grammar TS1036 Statements are not allowed in ambient contexts.
+        corpora: targeted09: 2 | without lint: rejects: 2
+        lint: no code A return statement cannot be used here: 2
+        [ts] "declare namespace N { return }" @22

@@ -181,13 +181,15 @@ Ask: the functions `isJavaScript`, `isNodeTest`, `isClusterTest`, `isTest`, `isT
 
 Why. `getTests` (lines 2500 to 2519) walks all of `test/` and leaves out only a path below `node_modules` or
 `node.js` and a name that starts with a dot. So the corpus is walked, and only its names keep it out of a
-test run. `conformance.test.ts` proves that for every name below `test/cli/lint/conformance`, with the
-functions themselves: it cuts them out of the source of the runner, holds their text in a snapshot and
-evaluates them.
+test run. `conformance.test.ts` cuts these functions out of the source of the runner, holds their text in a
+snapshot in every build, and in a release build evaluates them on every name below
+`test/cli/lint/conformance` (a tenth of a second; a debug build would take half a minute, because the
+functions cost it a millisecond a name).
 
 Until then: a change of one of these functions, or of `getTests`, fails the snapshot of
-`conformance.test.ts`, and `bun bd test test/cli/lint/conformance.test.ts -u` takes the new text. Then the
-next test of that file says whether a name of the corpus is a test by the new rule.
+`conformance.test.ts`, and `bun bd test test/cli/lint/conformance.test.ts -u` takes the new text. A release
+build then says whether a name of the corpus is a test by the new rule. With the export, the snapshot goes and
+the test imports the functions.
 
 ## The checks of the integrator at a merge
 

@@ -379,9 +379,7 @@ snapshots:
   });
 
   test("migrates a lockfile whose aliases chain into a deep tree", async () => {
-    // Each anchor holds the one before it, so the tree is 22,200 levels deep
-    // while the parser never recurses past 300. The migration used to copy the
-    // tree with a recursion that had no stack check.
+    // Each anchor holds the one before it: the tree is 22,200 levels deep, one line is 300.
     const level = Buffer.alloc(300, "[").toString() + "*a" + Buffer.alloc(300, "]").toString();
     using dir = tempDir("pnpm-alias-chain", {
       "package.json": JSON.stringify({ name: "alias-chain", version: "1.0.0" }),

@@ -11927,11 +11927,7 @@ describe.concurrent("registry manifest with an unexpected shape", () => {
   });
 });
 
-// The package.json cache used to copy the parsed manifest with a recursion that
-// had no stack check. A manifest that the parser accepted could run that copy
-// off the stack and end the process with a signal. The depth where that
-// happened follows the frame sizes of the build, so this walks a ladder of
-// depths: each one must install or fail with the parser's error.
+// Each depth on the ladder must install or fail with the parser's error, never with a signal.
 it.concurrent("installs with a deeply nested value in package.json", async () => {
   const depths = Array.from({ length: 8 }, (_, i) => 384 << i);
   const outcomes = await Promise.all(

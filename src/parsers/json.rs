@@ -85,7 +85,7 @@ struct InStore;
 /// Nodes and lists in the caller's arena.
 struct InArena;
 
-/// Nodes in the caller's arena, lists through `AstAlloc`: for one arena per document.
+/// Nodes in the arena, lists through `AstAlloc`: one arena per document pays a page per list size.
 struct NodesInArena;
 
 impl Dest for InStore {

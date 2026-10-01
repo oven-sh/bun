@@ -6385,11 +6385,7 @@ describe("same-target destructuring with an unstable target", () => {
   });
 });
 
-// The define loader used to copy the parsed value with a recursion that had no
-// stack check. A value that the parser accepted could run that copy off the
-// stack and end the process with a signal. The depths in this block come from a
-// search in the child for the deepest value that loads: on the way, every probe
-// must load or fail with the parser's error.
+// The depth limit follows the build, the platform and the thread, so each child searches for it.
 describe.concurrent("a deeply nested define value", () => {
   const nested = depth => Buffer.alloc(depth, "[").toString() + "1" + Buffer.alloc(depth, "]").toString();
   const searchSource = `
@@ -6467,8 +6463,7 @@ describe.concurrent("a deeply nested define value", () => {
     expect(await measureWorkerLimit()).toBeGreaterThanOrEqual(64);
   });
 
-  // A depth that the copy could not hold is longer than the 32K command line of
-  // Windows. bunfig.toml covers it there.
+  // 3/4 of the limit is longer than the 32K command line of Windows. bunfig.toml covers it.
   it.skipIf(isWindows)("loads from --define", async () => {
     const depth = ((await measureMainThreadLimit()) * 3) >> 2;
     const files = { "entry.js": `console.log(JSON.stringify(SHALLOW));` };
@@ -6518,8 +6513,6 @@ describe.concurrent("a deeply nested define value", () => {
   });
 
   it("is freed with its transpiler", async () => {
-    // The copy left its list buffers on the global heap, where nothing frees
-    // them: about 115 KB for each transpiler with this define.
     const script = `
       const entries = {};
       for (let i = 0; i < 150; i++) entries["key" + i] = ["value" + i, i, { n: i }];
@@ -6536,13 +6529,12 @@ describe.concurrent("a deeply nested define value", () => {
       construct(100);
       console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
     `;
-    // The leak was 11 MiB here. Without it the growth is under 2 MiB.
+    // 100 transpilers that leak this define grow RSS by 11 MiB. Freed, the growth is under 2 MiB.
     await expectRssDeltaBelow(["--smol", "-e", script], { release: 6, debug: 6 });
   });
 
   it("that is empty is not shared with an empty macro result", async () => {
-    // Both used one static object. The macro marked it as a macro result, and
-    // the Worker then inlined the define at each use as a fresh literal.
+    // An empty define and the empty result of a macro must be two objects.
     const files = {
       "bunfig.toml": `[define]\n"EMPTYX" = ""\n`,
       "macro.js": `

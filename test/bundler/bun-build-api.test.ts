@@ -1046,11 +1046,7 @@ describe("Bun.build", () => {
   });
 
   test.concurrent("a deeply nested define value builds", async () => {
-    // The define loader used to copy the parsed value with a recursion that
-    // had no stack check, and the bundler thread has a small stack. The child
-    // searches for the deepest value that builds: on the way, every probe must
-    // build or fail with the parser's error. The last build reads SHALLOW from
-    // two files, after the thread reset its per-file allocations.
+    // The child searches for the deepest define that builds, then reads SHALLOW from two files.
     using dir = tempDir("build-api-deep-define", {
       "a.ts": `console.log(SHALLOW.a);`,
       "b.ts": `console.log(SHALLOW.a[1]);`,

@@ -3148,6 +3148,9 @@ impl<'p> Checker<'p> {
             return declared;
         }
         let declared = self.narrowable_type(file, e, declared);
+        if self.bound(file).is_beyond_flow(e) {
+            return declared;
+        }
         // `checkIdentifier`: a variable that is not known to hold anything where its flow starts may be `undefined` there.
         let assume_initialized = self.assumes_initialized(file, e, declared);
         self.starts_unassigned = !assume_initialized;
@@ -3177,7 +3180,23 @@ impl<'p> Checker<'p> {
             return declared;
         }
         let declared = self.narrowable_type(file, e, declared);
+        if self.starts_beyond_flow(file, e) {
+            return declared;
+        }
         self.flow_type_of(file, e, declared)
+    }
+
+    /// Whether the access `e` is `a.b`, `a[0].c!.d` and so on, with an `a` that the flow of control has nothing to say about.
+    fn starts_beyond_flow(&self, file: FileId, mut e: ExprId) -> bool {
+        let hir = self.hir(file);
+        loop {
+            e = match hir[e].kind {
+                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
+                ExprKind::NonNull(inner) => inner,
+                ExprKind::Ident(_) => return self.bound(file).is_beyond_flow_as_root(e),
+                _ => return false,
+            };
+        }
     }
 
     /// The type of `e`, the initializer of a variable that is declared by a pattern and without a type, for the `...rest` of the

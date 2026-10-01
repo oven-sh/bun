@@ -1452,7 +1452,7 @@ impl<'f> Binder<'f> {
         };
         // `containsArgumentsReference`
         let mut refer_to_arguments = Vec::new();
-        for (expr, scope) in idents {
+        for &(expr, scope) in &idents {
             let ExprKind::Ident(name) = self.f[expr].kind else {
                 continue;
             };
@@ -1525,9 +1525,227 @@ impl<'f> Binder<'f> {
         let mut seen = crate::util::FxHashSet::default();
         self.b.specifiers.retain(|s| seen.insert(*s));
         self.b.ambient_specifiers.retain(|s| seen.insert(*s));
+        self.mark_what_is_beyond_flow(&idents);
         self.b.symbols.shrink_to_fit();
         self.b.flow.shrink_to_fit();
         self.b
+    }
+
+    /// Going back through the flow of control from a reference finds out more than its declaration says only if something on the way is
+    /// about the reference. Most names are never written in such a place, and then there is no need to go.
+    ///
+    /// It errs on the side of going. What TypeScript narrows without the name being written in the condition is allowed for:
+    /// - `const ok = typeof x === "string"; if (ok) x`, `const k = o.kind`, `const { kind } = o`: what a constant is initialized with counts as
+    ///   written where the constant is (`getCandidateDiscriminantPropertyAccess`, `narrowType` of an identifier).
+    /// - `const { kind, payload } = a`, `(kind, payload) => ..`: what a pattern binds, or the parameters of a function, go together
+    ///   (`getNarrowedTypeOfSymbol`).
+    /// - `let done = false`: declared `boolean`, and `false` after the declaration (`getTypeAtFlowAssignment`). Likewise with an annotation.
+    /// - A variable read before its declaration has run, which a `switch` makes possible further down too, is `undefined`.
+    fn mark_what_is_beyond_flow(&mut self, idents: &[(ExprId, ScopeId)]) {
+        // Assignments declare things in JavaScript.
+        if self.f.is_js {
+            return;
+        }
+        let (f, b) = (self.f, &self.b);
+        let words = f.exprs.len().div_ceil(32);
+        let set = |bits: &mut [u32], i: usize| bits[i / 32] |= 1 << (i % 32);
+        let get = |bits: &[u32], i: usize| bits[i / 32] & 1 << (i % 32) != 0;
+
+        let mut looked_at = vec![0u32; words];
+        for node in &b.flow {
+            match *node {
+                Flow::Cond { expr, .. }
+                | Flow::Call { call: expr, .. }
+                | Flow::ArrayMutation { expr, .. }
+                | Flow::Assign {
+                    target: FlowTarget::Expr(expr),
+                    ..
+                } => {
+                    if expr.is_some() {
+                        set(&mut looked_at, expr.idx());
+                    }
+                }
+                Flow::Switch { stmt, .. } => {
+                    if let StmtKind::Switch { expr, cases } = f[stmt].kind {
+                        if expr.is_some() {
+                            set(&mut looked_at, expr.idx());
+                        }
+                        for case in cases.iter() {
+                            if f[case].test.is_some() {
+                                set(&mut looked_at, f[case].test.idx());
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // What is mentioned: symbols of the file, and names that mean nothing in it.
+        let mut symbols = vec![0u32; b.symbols.len().div_ceil(32)];
+        let mut free: Vec<Atom> = Vec::new();
+        // The identifiers in the initializer of a declaration, which are mentioned if what it declares is.
+        let mut in_initializers: Vec<(ExprId, VarDeclId)> = Vec::new();
+        let mention = |symbols: &mut [u32], free: &mut Vec<Atom>, e: ExprId| -> bool {
+            let symbol = b.expr_symbol[e.idx()];
+            if symbol.is_some() {
+                let was = get(symbols, symbol.idx());
+                set(symbols, symbol.idx());
+                return !was;
+            }
+            let ExprKind::Ident(name) = f[e].kind else {
+                return false;
+            };
+            let was = free.contains(&name);
+            if !was {
+                free.push(name);
+            }
+            !was
+        };
+        for &(e, _) in idents {
+            let mut at = e;
+            loop {
+                if get(&looked_at, at.idx()) {
+                    mention(&mut symbols, &mut free, e);
+                    break;
+                }
+                at = match b.expr_parent[at.idx()] {
+                    Parent::Expr(parent) | Parent::Key(parent) => parent,
+                    Parent::Prop(prop) => b.prop_owner[prop.idx()],
+                    Parent::VarInit(decl) => {
+                        if f[decl].kind == VarKind::Const {
+                            in_initializers.push((e, decl));
+                        }
+                        break;
+                    }
+                    _ => break,
+                };
+                if at.is_none() {
+                    break;
+                }
+            }
+        }
+        // The declaration a pattern is (part) of the pattern of.
+        let declaration_of = |mut pat: PatId| loop {
+            match b.pat_parent[pat.idx()] {
+                PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => pat = outer,
+                PatParent::Var(decl) => return Some(decl),
+                _ => return None,
+            }
+        };
+        if !in_initializers.is_empty() {
+            let mut declares_mentioned = vec![0u32; f.var_decls.len().div_ceil(32)];
+            loop {
+                for (i, pat) in f.pats.iter().enumerate() {
+                    let symbol = b.pat_symbol[i];
+                    if matches!(pat.kind, PatKind::Ident(_))
+                        && symbol.is_some()
+                        && get(&symbols, symbol.idx())
+                        && let Some(decl) = declaration_of(PatId(i as u32))
+                    {
+                        set(&mut declares_mentioned, decl.idx());
+                    }
+                }
+                let mut changed = false;
+                for &(e, decl) in &in_initializers {
+                    if get(&declares_mentioned, decl.idx()) {
+                        changed |= mention(&mut symbols, &mut free, e);
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
+        }
+
+        // The functions one of whose parameters is mentioned.
+        let mut with_mentioned_parameter = vec![0u32; f.fns.len().div_ceil(32)];
+        for (i, param) in f.params.iter().enumerate() {
+            let symbol = b.pat_symbol[param.pat.idx()];
+            // What a pattern binds is not simple to begin with.
+            if symbol.is_some() && get(&symbols, symbol.idx()) {
+                set(&mut with_mentioned_parameter, b.param_fn[i].idx());
+            }
+        }
+
+        let mut as_root = vec![0u32; words];
+        let mut alone = vec![0u32; words];
+        for &(e, _) in idents {
+            let ExprKind::Ident(name) = f[e].kind else {
+                continue;
+            };
+            let symbol = b.expr_symbol[e.idx()];
+            let is_mentioned = if symbol.is_some() {
+                get(&symbols, symbol.idx())
+            } else {
+                free.contains(&name)
+            };
+            if is_mentioned {
+                continue;
+            }
+            set(&mut as_root, e.idx());
+            // Declared in another file, where the flow of control of this one does not get.
+            if symbol.is_none() {
+                set(&mut alone, e.idx());
+                continue;
+            }
+            let info = &b.symbols[symbol.idx()];
+            let is_simple = !info.flags.contains(SymFlags::ASSIGNED)
+                && match info.decls[..] {
+                    [Decl::Param(pat)] => match b.pat_parent[pat.idx()] {
+                        // One that may be left out is declared with `undefined`, which it is rid of where the function starts
+                        // if it has a default (`removeOptionalityFromDeclaredType`).
+                        PatParent::Param(param) => {
+                            f[param].default.is_none()
+                                && !f[param].flags.contains(Flags::OPTIONAL)
+                                && !get(&with_mentioned_parameter, b.param_fn[param.idx()].idx())
+                        }
+                        _ => false,
+                    },
+                    [Decl::Var(pat)] => match b.pat_parent[pat.idx()] {
+                        PatParent::Var(decl) => {
+                            let d = &f[decl];
+                            let stmt = b.var_stmt[decl.idx()];
+                            d.kind == VarKind::Const
+                                && d.ty.is_none()
+                                && d.init.is_some()
+                                && f[e].pos > f[d.init].pos
+                                && stmt.is_some()
+                                && !matches!(b.stmt_parent[stmt.idx()], Parent::Case(_))
+                                && !self.is_within(e, d.init)
+                        }
+                        _ => false,
+                    },
+                    // What is no variable is what it is declared as.
+                    [Decl::Var(_) | Decl::Param(_) | Decl::Require(_), ..] | [] => false,
+                    _ => !info
+                        .decls
+                        .iter()
+                        .any(|d| matches!(d, Decl::Var(_) | Decl::Param(_) | Decl::Require(_))),
+                };
+            if is_simple {
+                set(&mut alone, e.idx());
+            }
+        }
+        self.b.beyond_flow_as_root = as_root;
+        self.b.beyond_flow = alone;
+    }
+
+    /// Whether `e` is `ancestor` or part of it, functions written in it aside.
+    fn is_within(&self, mut e: ExprId, ancestor: ExprId) -> bool {
+        loop {
+            if e == ancestor {
+                return true;
+            }
+            e = match self.b.expr_parent[e.idx()] {
+                Parent::Expr(parent) | Parent::Key(parent) => parent,
+                Parent::Prop(prop) => self.b.prop_owner[prop.idx()],
+                _ => return false,
+            };
+            if e.is_none() {
+                return false;
+            }
+        }
     }
 
     fn list(&mut self, items: &[u32]) -> (u32, u32) {

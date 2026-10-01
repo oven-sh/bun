@@ -1,0 +1,55 @@
+base 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (209628 sources)
+next 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (209628 sources)
+3144420 records compared, 944611 differ, in 80711 sources
+!!      541  A>A          unexplained  
+              t.ts.plain       "f<A<B>.C>(x);"
+                base ["o","f(x);\n"]
+                next ["o","f < A.C > x;\n"]
+              t.ts.exp         "f<A<B>.C>(x);"
+                base ["o","f(x);\n"]
+                next ["o","f < A.C > x;\n"]
+              t.ts.deco        "f<A<B>.C>(x);"
+                base ["o","f(x);\n"]
+                next ["o","f < A.C > x;\n"]
+              t.tsx.plain      "f<A<B>.C>(x);"
+                base ["o","f(x);\n"]
+                next ["o","f < A.C > x;\n"]
+!!   166660  A>R          unexplained  
+              t.ts.plain       "class C implements void {}"
+                base ["o","class C {\n}\n"]
+                next ["e",[["Expected \"{\" but found end of file",1,26]]]
+              t.ts.exp         "class C implements void {}"
+                base ["o","class C {\n}\n"]
+                next ["e",[["Expected \"{\" but found end of file",1,26]]]
+              t.ts.deco        "class C implements void {}"
+                base ["o","class C {\n}\n"]
+                next ["e",[["Expected \"{\" but found end of file",1,26]]]
+              t.tsx.plain      "class C implements void {}"
+                base ["o","class C {\n}\n"]
+                next ["e",[["Expected \"{\" but found end of file",1,26]]]
+!!    32647  R>A          unexplained  
+              t.ts.plain       "type X = A<B,>;"
+                base ["e",[["Unexpected >",1,14]]]
+                next ["o",""]
+              t.ts.exp         "type X = A<B,>;"
+                base ["e",[["Unexpected >",1,14]]]
+                next ["o",""]
+              t.ts.deco        "type X = A<B,>;"
+                base ["e",[["Unexpected >",1,14]]]
+                next ["o",""]
+              t.tsx.plain      "type X = A<B,>;"
+                base ["e",[["Unexpected >",1,14]]]
+                next ["o",""]
+!!   744763  R>R          unexplained  
+              t.ts.deco        "class C { @d x: +1; }"
+                base ["e",[["Unexpected +",1,17]]]
+                next ["e",[["Unexpected +",1,17],["Unexpected +",1,17]]]
+              t.tsx.deco       "class C { @d x: +1; }"
+                base ["e",[["Unexpected +",1,17]]]
+                next ["e",[["Unexpected +",1,17],["Unexpected +",1,17]]]
+              t.ts.deco.keep   "class C { @d x: +1; }"
+                base ["e",[["Unexpected +",1,17]]]
+                next ["e",[["Unexpected +",1,17],["Unexpected +",1,17]]]
+              t.ts.deco.trim   "class C { @d x: +1; }"
+                base ["e",[["Unexpected +",1,17]]]
+                next ["e",[["Unexpected +",1,17],["Unexpected +",1,17]]]

@@ -1,0 +1,42 @@
+base 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (2405 sources)
+next 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (2405 sources)
+36075 records compared, 377 differ, in 31 sources
+!!       91  A>R          unexplained  
+              t.ts.plain       "f<A | >(x);"
+                base ["o","f(x);\n"]
+                next ["e",[["Unexpected >",1,7]]]
+              t.ts.exp         "f<A | >(x);"
+                base ["o","f(x);\n"]
+                next ["e",[["Unexpected >",1,7]]]
+              t.ts.deco        "f<A | >(x);"
+                base ["o","f(x);\n"]
+                next ["e",[["Unexpected >",1,7]]]
+              t.tsx.plain      "f<A | >(x);"
+                base ["o","f(x);\n"]
+                next ["e",[["Unexpected >",1,7]]]
+!!      154  R>A          unexplained  
+              t.ts.plain       "type A<out in T> = T;"
+                base ["e",[["The modifier \"in\" is not valid here",1,12]]]
+                next ["o",""]
+              t.ts.exp         "type A<out in T> = T;"
+                base ["e",[["The modifier \"in\" is not valid here",1,12]]]
+                next ["o",""]
+              t.ts.deco        "type A<out in T> = T;"
+                base ["e",[["The modifier \"in\" is not valid here",1,12]]]
+                next ["o",""]
+              t.tsx.plain      "type A<out in T> = T;"
+                base ["e",[["The modifier \"in\" is not valid here",1,12]]]
+                next ["o",""]
+!!      132  R>R          unexplained  
+              t.ts.plain       "type A<in> = 1;"
+                base ["e",[["Expected identifier but found \">\"",1,10],["Expected \">\" but found \";\"",1,15],["Unexpected end of file",1,15]]]
+                next ["e",[["Expected identifier but found \"in\"",1,8]]]
+              t.ts.exp         "type A<in> = 1;"
+                base ["e",[["Expected identifier but found \">\"",1,10],["Expected \">\" but found \";\"",1,15],["Unexpected end of file",1,15]]]
+                next ["e",[["Expected identifier but found \"in\"",1,8]]]
+              t.ts.deco        "type A<in> = 1;"
+                base ["e",[["Expected identifier but found \">\"",1,10],["Expected \">\" but found \";\"",1,15],["Unexpected end of file",1,15]]]
+                next ["e",[["Expected identifier but found \"in\"",1,8]]]
+              t.tsx.plain      "type A<in> = 1;"
+                base ["e",[["Expected identifier but found \">\"",1,10],["Expected \">\" but found \";\"",1,15],["Unexpected end of file",1,15]]]
+                next ["e",[["Expected identifier but found \"in\"",1,8]]]

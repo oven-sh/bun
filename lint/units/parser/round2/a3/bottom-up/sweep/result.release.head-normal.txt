@@ -1,0 +1,12 @@
+config 0: ok 3198 fail 8 totalms 1490 sentinel {"index":-1,"config":0,"sourceLength":22,"sourceHash":"e98f84819477a6df","length":7,"hash":"2c4748bd19e712af","ms":9}
+  FAIL test/bundler/transpiler/macro-test.test.ts :: Macro "./macro.ts" not found
+  FAIL test/integration/bun-types/fixture/bundle.ts :: `feature` from "bun:bundle" may only be imported once
+  FAIL test/js/bun/test/fake-timers/sinonjs/fake-timers.test.ts :: "timersModule" has already been declared
+  FAIL test/js/node/test/fixtures/typescript/ts/test-invalid-syntax.ts :: "await" can only be used inside an "async" function
+  FAIL test/js/third_party/prisma/prisma/types.d.ts :: The constant "prismaVersion" must be initialized
+  FAIL test/regression/issue/14477/builtin-mismatch.tsx :: Expected closing JSX tag to match opening tag "<div>"
+  FAIL test/regression/issue/14477/component-mismatch.tsx :: Expected closing JSX tag to match opening tag "<Foo>"
+  FAIL test/regression/issue/14477/non-identifier-mismatch.tsx :: Expected closing JSX tag to match opening tag "<div-:button>"
+config 1: ok 3197 fail 9 totalms 1672 sentinel null
+fail differs between configs: [ "test/bundler/transpiler/esbuild-decorator-tests.ts" ]
+config1 output equals config0 output: 3185 differs: 12

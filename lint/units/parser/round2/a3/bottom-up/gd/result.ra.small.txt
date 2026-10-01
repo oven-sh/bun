@@ -1,0 +1,29 @@
+R>A where tsc rejects: forms 61
+  28 TS1110 Type expected.
+         "[in: A]"                                            var,field,param,ctor,ret,fnparam,fnret,a t.ts,t.tsx,s.ts,s.tsx | N ["Unexpected in",1,9] | L "let x;\n"
+         "[in?: A]"                                           var,field,param,ctor,ret,fnparam,fnret,a t.ts,t.tsx,s.ts,s.tsx | N ["Unexpected in",1,9] | L "let x;\n"
+         "[in]"                                               var,field,param,ctor,ret,fnparam,fnret,a t.ts,t.tsx,s.ts,s.tsx | N ["Unexpected in",1,9] | L "let x;\n"
+         "[class: A]"                                         var,field,param,ctor,ret,fnparam,fnret,a t.ts,t.tsx,s.ts,s.tsx | N ["Unexpected class",1,9] | L "let x;\n"
+  14 TS1109 Expression expected.
+         "#a"                                                 heritage                                 t.ts,t.tsx,s.ts,s.tsx | N ["Unexpected {",1,23] | L "class C {\n}\n"
+         "typeof a<>"                                         heritage,iextends                        t.ts,t.tsx,s.ts,s.tsx | N ["Unexpected >",1,29] | L "class C {\n}\n"
+         "typeof a.b<>"                                       heritage,iextends                        t.ts,t.tsx,s.ts,s.tsx | N ["Unexpected >",1,31] | L "class C {\n}\n"
+         "typeof a<>[]"                                       iextends                                 t.ts,t.tsx,s.ts,s.tsx | N ["Unexpected >",1,30] | L ""
+  11 TS1005 ',' expected.
+         "A.B.C<>[]"                                          iextends                                 t.ts,t.tsx,s.ts,s.tsx | N ["Unexpected >",1,27] | L ""
+         "A<>[]"                                              iextends                                 t.ts,t.tsx,s.ts,s.tsx | N ["Unexpected >",1,23] | L ""
+         "A<>[][]"                                            iextends                                 t.ts,t.tsx,s.ts,s.tsx | N ["Unexpected >",1,23] | L ""
+         "[a<>: A]"                                           alias,iextends                           t.ts,t.tsx,s.ts,s.tsx | N ["Unexpected >",1,13] | L ""
+   3 TS1005 ';' expected.
+         "A<>.C"                                              alias                                    t.ts,t.tsx,s.ts,s.tsx | N ["Unexpected >",1,12] | L ""
+         "intrinsic<>"                                        alias                                    t.ts,t.tsx,s.ts,s.tsx | N ["Unexpected >",1,20] | L ""
+         "typeof a<>.c"                                       alias                                    t.ts,t.tsx,s.ts,s.tsx | N ["Unexpected >",1,19] | L ""
+   2 TS1005 '(' expected.
+         "function"                                           heritage                                 t.ts,t.tsx,s.ts,s.tsx | N ["Unexpected {",1,29] | L "class C {\n}\n"
+         " function"                                          heritage                                 t.ts,t.tsx,s.ts,s.tsx | N ["Unexpected {",1,30] | L "class C {\n}\n"
+   1 TS1034 'super' must be followed by an argument list or member access.
+         "super"                                              heritage                                 t.ts,t.tsx,s.ts,s.tsx | N ["Unexpected {",1,26] | L "class C {\n}\n"
+   1 TS1005 '>' expected.
+         "A< extends C ? D : E>"                              alias,iextends                           t.ts,t.tsx,s.ts,s.tsx | N ["Unexpected extends",1,13] | L ""
+   1 TS1005 '{' expected.
+         " class"                                             heritage                                 t.ts,t.tsx,s.ts,s.tsx | N ["Unexpected {",1,27] | L "class C {\n}\n"

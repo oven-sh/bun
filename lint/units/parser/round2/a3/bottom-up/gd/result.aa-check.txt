@@ -1,0 +1,32 @@
+  5 tsc rejects (1477); lint reads as tsc; normal reads otherwise 
+       "f<A<B>.C>(x);"  "f<typeof a<B>.c>(x);"  "f<A<>.C>(x);"  "f< a<B>.c>(x);"  "f<typeof a<>.c>(x);"
+ 14 tsc rejects (1110); lint reads otherwise; normal reads as tsc 
+       "f<keyof.A>(x);"  "f<readonly.A>(x);"  "f<[,]>(x);"  "f<[A,,B]>(x);"  "f<[keyof]>(x);"  "f<[readonly]>(x);"  "f<[, B]>(x);"  "f<[,,B]>(x);"  "f<[A,,]>(x);"  "f<[, B | C]>(x);"  "f<[keyof ]>(x);"  "f<(keyof )[B]>(x);"  "f<keyof  | B>(x);"  "f<keyof .B>(x);"
+ 31 tsc accepts; lint reads as tsc; normal reads otherwise 
+       "f<{ [K in T]: V, }>(x);"  "class C implements keyof { a: A } {}"  "class C implements readonly { a: A } {}"  "f<import('x', { with: { 'resolution-mode': 'import' } },)>(x);"  "f<import('x', { a: { b: 'c' } })>(x);"  "f<import(`x`)>(x);"  "f<import(x)>(x);"  "f<import(A.B)>(x);"  "f<import('x' | 'y')>(x);"  "f<(A).B>(x);"  "f<{ [k = 1]: A }>(x);"  "f<{ 1n: A }>(x);"  "f<{ [a + b]: A }>(x);"  "f<{ [a as B]: A }>(x);"  "f<{ a: A = 1 }>(x);"  "f<this.a>(x);"  "f<A!.B>(x);"  "f< this.a>(x);"  "f< this.a.b>(x);"  "f<('x').A>(x);"  "f<('x').A.B>(x);"  "f<('x').A<B>>(x);"  "f<('x').A.B<C, D>>(x);"  "f<import(AB)>(x);"  "f<('x').default>(x);"  "f<('x').new>(x);"  "f<('x')\n.A>(x);"  "f<('x').\nA>(x);"  "f<{ [k `a${string}`]: A }>(x);"  "f<{ [ + b]: A }>(x);"  "function f(): asserts is is  { return x; }"
+  1 tsc rejects (1005); lint reads otherwise; normal reads as tsc 
+       "f<import('x', {})>(x);"
+  1 tsc accepts; lint reads otherwise; normal reads as tsc 
+       "class C implements class {} {}"
+  1 tsc accepts; lint reads otherwise; normal reads otherwise 
+       "class C { @d m(): asserts is is  { return x; } }"
+OTHER "class C implements keyof { a: A } {}" 
+   tsc  "class C {\n    a;\n}\n{ }\n" 
+   N    "class C {\n}\n" 
+   L    "class C {\n  a;\n}\n{}\n"
+OTHER "class C implements readonly { a: A } {}" 
+   tsc  "class C {\n    a;\n}\n{ }\n" 
+   N    "class C {\n}\n" 
+   L    "class C {\n  a;\n}\n{}\n"
+OTHER "class C implements class {} {}" 
+   tsc  "class C {\n}\n" 
+   N    "class C {\n}\n" 
+   L    "class C {\n}\n{}\n"
+OTHER "class C { @d m(): asserts is is  { return x; } }" 
+   tsc  "var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {\n    var c 
+   N    "class C {\n}\n" 
+   L    "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadat
+OTHER "function f(): asserts is is  { return x; }" 
+   tsc  "function f() { return x; }\n" 
+   N    "" 
+   L    "function f() {\n  return x;\n}\n"

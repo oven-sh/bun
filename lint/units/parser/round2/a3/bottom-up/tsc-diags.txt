@@ -1,0 +1,4 @@
+TS17002 test/regression/issue/14477/builtin-mismatch.tsx:1:20 (1) Expected corresponding JSX closing tag for 'div'.
+TS17002 test/regression/issue/14477/component-mismatch.tsx:2:20 (1) Expected corresponding JSX closing tag for 'Foo'.
+TS17002 test/regression/issue/14477/non-identifier-mismatch.tsx:3:28 (1) Expected corresponding JSX closing tag for 'div-:button'.
+{"typescript":"6.0.2","files":3206,"withDiagnostics":3}

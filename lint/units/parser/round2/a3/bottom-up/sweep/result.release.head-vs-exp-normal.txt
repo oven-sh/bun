@@ -1,0 +1,3 @@
+config 0 sentinel A: 7 B: 7
+config 0: {"total":3206,"equal":3198,"differ":0,"bothFail":8,"bothFailSameMessage":8,"onlyA":0,"onlyB":0,"missing":0}
+config 1: {"total":3206,"equal":3197,"differ":0,"bothFail":9,"bothFailSameMessage":9,"onlyA":0,"onlyB":0,"missing":0}

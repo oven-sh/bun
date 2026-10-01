@@ -1,0 +1,4 @@
+== A>R: 166660 records in 12956 sources; tsc parser: every api invalid 12423, every api valid 533, valid for one loader 0, no oracle 0
+== R>R: 744763 records in 65101 sources; tsc parser: every api invalid 64873, every api valid 228, valid for one loader 0, no oracle 0
+== R>A: 32647 records in 2724 sources; tsc parser: every api invalid 422, every api valid 2302, valid for one loader 0, no oracle 0
+== A>A: 541 records in 53 sources; tsc parser: every api invalid 20, every api valid 33, valid for one loader 0, no oracle 0

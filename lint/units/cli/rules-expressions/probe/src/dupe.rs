@@ -29,6 +29,9 @@ pub struct Ctx<'p, 'a> {
     /// `isConstant` and `isLogicalIdentity` for its own operator of a binary expression, by its address and the flag it was asked with.
     pub folded: std::collections::BTreeMap<(usize, bool), (bool, bool)>,
     pub reports: Vec<(&'static str, u32, Vec<u8>)>,
+    /// The last answer of `start_of_node` for a binary expression: the `loc` it was asked for, the `loc` of the right operand
+    /// of the link whose left operand has the opening record, and that opening.
+    last_start: core::cell::Cell<Option<(i32, i32, u32)>>,
 }
 
 impl<'p, 'a> Ctx<'p, 'a> {
@@ -47,7 +50,7 @@ impl<'p, 'a> Ctx<'p, 'a> {
                 declared |= 1u128 << at;
             }
         }
-        Ctx { parsed, source, arena, index, has_ts, stack_check: StackCheck::init(), declared, folded: Default::default(), reports: Vec::new() }
+        Ctx { parsed, source, arena, index, has_ts, stack_check: StackCheck::init(), declared, folded: Default::default(), reports: Vec::new(), last_start: Default::default() }
     }
 
     pub fn wrappers<'s>(&'s self, expr: &Expr) -> impl Iterator<Item = &'s Wrapper> + 's {
@@ -75,10 +78,32 @@ impl<'p, 'a> Ctx<'p, 'a> {
 
     /// Where the node `expr` starts for ESLint, its own wrappers aside: at the `(` or the `<` of its first operand.
     pub fn start_of_node(&self, expr: &Expr) -> u32 {
+        let own = expr.loc.start;
+        // Every first operand below `expr` has the `loc` of `expr`: with no record at that `loc`, nothing opens before it.
+        let at = self.index.partition_point(|(key, _)| key.0 < own);
+        if self.index.get(at).is_none_or(|(key, _)| key.0 != own) {
+            return own as u32;
+        }
+        // The links of a chain of binary expressions are asked one after the other, the outer one first: the last answer holds
+        // for every link down to the one whose first operand has the record.
+        let asked = match &expr.data {
+            ExprData::EBinary(node) => Some(node.right.loc.start),
+            _ => None,
+        };
+        if let (Some(asked), Some((loc, boundary, start))) = (asked, self.last_start.get()) {
+            if loc == own && asked >= boundary {
+                return start;
+            }
+        }
         let mut e = expr;
+        // The `loc` of the right operand of the binary expression that `child` is the left operand of.
+        let mut boundary = None;
         loop {
             let child = match &e.data {
-                ExprData::EBinary(node) => &node.left,
+                ExprData::EBinary(node) => {
+                    boundary = Some(node.right.loc.start);
+                    &node.left
+                }
                 ExprData::EDot(node) => &node.target,
                 ExprData::EIndex(node) => &node.target,
                 ExprData::ECall(node) => &node.target,
@@ -90,13 +115,19 @@ impl<'p, 'a> Ctx<'p, 'a> {
                 ExprData::EUnary(node) if matches!(node.op, OpCode::UnPostDec | OpCode::UnPostInc) => &node.value,
                 _ => break,
             };
+            if !matches!(e.data, ExprData::EBinary(_)) {
+                boundary = None;
+            }
             let open = self.wrappers(child).filter(|w| matches!(w.data, WrapperData::Parenthesized | WrapperData::TypeAssertion(_))).map(|w| w.op).min();
             if let Some(open) = open {
+                if let (Some(_), Some(boundary)) = (asked, boundary) {
+                    self.last_start.set(Some((own, boundary, open)));
+                }
                 return open;
             }
             e = child;
         }
-        expr.loc.start as u32
+        own as u32
     }
 
     /// Where what ESLint has at the place of `expr` starts: the wrappers up to the outermost TypeScript one belong to it.

@@ -369,11 +369,7 @@ impl CopyFile {
             return self.fallback_read_write(remain, unknown_size, &mut total_written);
         }
 
-        // copy_file_range(2), sendfile(2) and splice(2) refuse a destination
-        // whose open file description has O_APPEND (EBADF or EINVAL). Bun
-        // never opens its own destination that way, but an inherited fd can
-        // carry it: `bun x.js >> log`, a GNU make recipe, `fs.openSync(p, "a")`.
-        // The description is shared with the parent, so the flag must stay.
+        // The kernel copies reject an O_APPEND destination (`>> log`, make, an "a" fd); the description is shared, so keep the flag.
         if matches!(
             self.destination_file_store.pathlike,
             PathOrFileDescriptor::Fd(_)

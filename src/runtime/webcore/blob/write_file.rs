@@ -395,10 +395,7 @@ impl WriteFile {
             .is_path()
     }
 
-    /// Preallocating grows the file from offset 0. A caller's fd opened
-    /// O_APPEND (`>> log`, `fs.openSync(p, "a")`) writes after the grown end,
-    /// which leaves a hole of NUL bytes before the data. Bun opens its own
-    /// destination with O_TRUNC, so only a caller's fd can append.
+    /// `fallocate` on a caller's O_APPEND fd leaves a hole of NUL bytes before the appended data.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn appends_to_caller_fd(&self, fd: Fd) -> bool {
         !self.is_allowed_to_close()

@@ -1859,17 +1859,9 @@ impl Checker<'_> {
                 return 2576;
             }
         }
-        // It is what is promised that has it: `await` was forgotten. The same message, with a hint. `GetPromisedTypeOfPromise`
-        let promised = match self.is_global_ref(containing, known::Promise) {
-            _ if is_private => None,
-            Some(&[promised]) => Some(promised),
-            _ => self.thenable_value(containing),
-        };
-        if let Some(promised) = promised {
-            let promised = self.apparent_type(promised);
-            if self.has_property_of_type(promised, name) {
-                return 2339;
-            }
+        // The same message, with a hint.
+        if self.is_property_of_what_is_promised(containing, name) {
+            return 2339;
         }
         let apparent = self.apparent_type(containing);
         if self.library_with_property(apparent, name).is_some() {
@@ -1903,6 +1895,25 @@ impl Checker<'_> {
             return 2812;
         }
         2339
+    }
+
+    /// It is what `containing` promises that has `name`: `await` was forgotten. `GetPromisedTypeOfPromise`
+    fn is_property_of_what_is_promised(&mut self, containing: TypeId, name: Atom) -> bool {
+        // It is asked for a `#x` by its text, which is the name of no property.
+        if self.files().atoms.bytes(name).first() == Some(&b'#') {
+            return false;
+        }
+        let promised = match self.is_global_ref(containing, known::Promise) {
+            Some(&[promised]) => Some(promised),
+            _ => self.thenable_value(containing),
+        };
+        match promised {
+            Some(promised) => {
+                let promised = self.apparent_type(promised);
+                self.has_property_of_type(promised, name)
+            }
+            None => false,
+        }
     }
 
     /// `getSuggestedLibForNonExistentProperty`: the version of the library that `name` came to `apparent` with. It goes by the symbol
@@ -1994,6 +2005,18 @@ impl Checker<'_> {
                 _ => Vec::new(),
             }
         });
+        if code == 2339 {
+            self.relate(start, code, |c| {
+                if !c.is_property_of_what_is_promised(containing, name) {
+                    return Vec::new();
+                }
+                vec![super::explain::Related {
+                    at: Some(c.place_of_token(file, start)),
+                    code: 2773,
+                    args: Vec::new(),
+                }]
+            });
+        }
     }
 
     /// `elaborateNeverIntersection`: why there is nothing that is a `ty`, if that is so. At level 1.

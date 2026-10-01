@@ -212,7 +212,21 @@ impl Checker<'_> {
                 self.note(start, self.error_end_of(file, options), 1324, Vec::new());
                 continue;
             }
-            // No argument: 1450, which is a message and not an error.
+            // Of the arguments only the first two are kept.
+            let has_a_third = options.is_some_and(|options| {
+                let comma = skip_trivia(&hir.text, self.end_of_expr(file, options) as usize);
+                hir.text.get(comma) == Some(&b',')
+                    && hir.text.get(skip_trivia(&hir.text, comma + 1)) != Some(&b')')
+            });
+            if has_a_third || matches!(hir[specifier].kind, ExprKind::Missing) {
+                out.push(Diagnostic {
+                    start: e.pos,
+                    code: 1450,
+                });
+                let end = self.end_inside_parentheses(file, id);
+                self.note(e.pos, end, 1450, Vec::new());
+                continue;
+            }
             if let Some(spread) = [Some(specifier), options]
                 .into_iter()
                 .flatten()

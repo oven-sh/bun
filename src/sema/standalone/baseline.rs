@@ -499,11 +499,176 @@ fn runes(bytes: &[u8]) -> usize {
     String::from_utf8_lossy(bytes).chars().count()
 }
 
+const RESET: &str = "\u{1b}[0m";
+const GREY: &str = "\u{1b}[90m";
+const YELLOW: &str = "\u{1b}[93m";
+const CYAN: &str = "\u{1b}[96m";
+/// `gutterStyleSequence`
+const GUTTER: &str = "\u{1b}[7m";
+
+/// `getCategoryFormat`
+fn category_color(category: Category) -> &'static str {
+    match category {
+        Category::Error => "\u{1b}[91m",
+        Category::Warning => YELLOW,
+        Category::Suggestion => GREY,
+        Category::Message => "\u{1b}[94m",
+    }
+}
+
+/// `WriteLocation`
+fn write_location(out: &mut String, d: &Diagnostic) {
+    out.push_str(&format!(
+        "{CYAN}{}{RESET}:{YELLOW}{}{RESET}:{YELLOW}{}{RESET}",
+        d.path, d.line, d.column
+    ));
+}
+
+/// `writeCodeSnippet`
+fn write_code_snippet(out: &mut String, d: &Diagnostic, color: &str, indent: &str) {
+    let utf16_len = |text: &str| text.encode_utf16().count();
+    let (first_line, first_char) = (d.line as usize - 1, d.column as usize - 1);
+    let (last_line, mut last_char) = (d.end_line as usize - 1, d.end_column as usize - 1);
+    // Without length, what comes right after is pointed at.
+    if d.end <= d.start {
+        last_char += 1;
+    }
+    let is_long = last_line - first_line >= 4;
+    let mut width = (last_line + 1).to_string().len();
+    if is_long {
+        width = width.max("...".len());
+    }
+    let mut i = first_line;
+    while i <= last_line {
+        out.push('\n');
+        // Of five lines or more the first two and the last two are shown.
+        if is_long && first_line + 1 < i && i < last_line - 1 {
+            out.push_str(&format!("{indent}{GUTTER}{:>width$}{RESET} \n", "..."));
+            i = last_line - 1;
+        }
+        let line = d
+            .source
+            .get((i + 1).saturating_sub(d.source_line as usize))
+            .map_or("", |line| line.as_str());
+        let line = line.trim_end().replace('\t', " ");
+        out.push_str(&format!(
+            "{indent}{GUTTER}{:>width$}{RESET} {line}\n",
+            i + 1
+        ));
+        out.push_str(&format!("{indent}{GUTTER}{:>width$}{RESET} {color}", ""));
+        let (blanks, tildes) = if i == first_line {
+            let end = if i == last_line {
+                last_char
+            } else {
+                utf16_len(&line)
+            };
+            (first_char, end.saturating_sub(first_char))
+        } else if i == last_line {
+            (0, last_char)
+        } else {
+            (0, utf16_len(&line))
+        };
+        out.push_str(&" ".repeat(blanks));
+        out.push_str(&"~".repeat(tildes));
+        out.push_str(RESET);
+        i += 1;
+    }
+}
+
+/// `FormatDiagnosticsWithColorAndContext`, with `\n` for `\r\n`.
+fn with_color_and_context(diagnostics: &[Diagnostic]) -> String {
+    let mut out = String::new();
+    for (i, d) in diagnostics.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        if !d.path.is_empty() {
+            write_location(&mut out, d);
+            out.push_str(" - ");
+        }
+        out.push_str(&format!(
+            "{}{}{RESET}{GREY} TS{}: {RESET}{}",
+            category_color(d.category),
+            category_name(d.category),
+            d.code,
+            d.text
+        ));
+        // `File_appears_to_be_binary`
+        if !d.path.is_empty() && d.code != 1490 {
+            out.push('\n');
+            write_code_snippet(&mut out, d, category_color(d.category), "");
+            out.push('\n');
+        }
+        for related in &d.related {
+            if !related.path.is_empty() {
+                out.push_str("\n  ");
+                write_location(&mut out, related);
+                out.push_str(" - ");
+                out.push_str(&related.text);
+                write_code_snippet(&mut out, related, CYAN, "    ");
+            }
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// `WriteErrorSummaryText`, with `\n` for `\r\n`.
+fn error_summary(diagnostics: &[Diagnostic]) -> String {
+    let errors: Vec<&Diagnostic> = diagnostics
+        .iter()
+        .filter(|d| d.category == Category::Error)
+        .collect();
+    if errors.is_empty() {
+        return String::new();
+    }
+    // By file, in the order of their names: how many, and `prettyPathForFileError`.
+    let mut by_file: BTreeMap<&str, (usize, String)> = BTreeMap::new();
+    for &d in &errors {
+        if !d.path.is_empty() {
+            by_file
+                .entry(d.path.as_str())
+                .or_insert_with(|| (0, format!("{}{GREY}:{}{RESET}", d.path, d.line)))
+                .0 += 1;
+        }
+    }
+    let first = by_file.values().next().map_or("", |file| file.1.as_str());
+    let message = match (errors.len(), by_file.len()) {
+        (1, 0) => "Found 1 error.".to_owned(),
+        (1, _) => format!("Found 1 error in {first}"),
+        (count, 0) => format!("Found {count} errors."),
+        (count, 1) => format!("Found {count} errors in the same file, starting at: {first}"),
+        (count, files) => format!("Found {count} errors in {files} files."),
+    };
+    let mut out = format!("\n{message}\n\n");
+    // `writeTabularErrorsDisplay`
+    if by_file.len() > 1 {
+        let most = by_file.values().map(|file| file.0).max().unwrap_or(0);
+        let digits = most.to_string().len();
+        let goal = digits.max("Errors".len());
+        out.push_str(&" ".repeat(digits.saturating_sub("Errors".len())));
+        out.push_str("Errors  Files\n");
+        for (count, name) in by_file.values() {
+            out.push_str(&format!("{count:>goal$}  {name}\n"));
+        }
+        out.push('\n');
+    }
+    out
+}
+
 /// `GetErrorBaseline`, with `\n` for `\r\n`.
-fn render(diagnostics: &[Diagnostic], inputs: &[(String, Vec<u8>)], lib_dir: &str) -> Vec<u8> {
+fn render(
+    diagnostics: &[Diagnostic],
+    inputs: &[(String, Vec<u8>)],
+    lib_dir: &str,
+    pretty: bool,
+) -> Vec<u8> {
     let clean = |text: &str| without_prefixes(text, lib_dir);
     let mut out: Vec<u8> = Vec::new();
-    for d in diagnostics {
+    if pretty {
+        out.extend_from_slice(clean(&with_color_and_context(diagnostics)).as_bytes());
+    }
+    for d in diagnostics.iter().filter(|_| !pretty) {
         let mut line = String::new();
         if !d.path.is_empty() {
             if is_default_library(&d.path) {
@@ -599,6 +764,9 @@ fn render(diagnostics: &[Diagnostic], inputs: &[(String, Vec<u8>)], lib_dir: &st
                 }
             }
         }
+    }
+    if pretty {
+        out.extend_from_slice(clean(&error_summary(diagnostics)).as_bytes());
     }
     out
 }
@@ -1040,6 +1208,9 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                                         &report.diagnostics,
                                         &inputs,
                                         setup.lib_dir,
+                                        settings
+                                            .get("pretty")
+                                            .is_some_and(|v| v.eq_ignore_ascii_case("true")),
                                     ))
                                     .into_owned()
                                 };

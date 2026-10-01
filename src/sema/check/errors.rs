@@ -165,7 +165,9 @@ impl Checker<'_> {
         pass!(check_x_signatures);
         pass!(check_x_operators);
         pass!(check_x_enums_names);
+        pass!(check_reflect_collisions);
         pass!(check_type_arguments_of_jsdoc_primitives);
+        pass!(check_external_emit_helpers);
         // It takes back what has been said of decorators that are out of place.
         pass!(check_decorators);
         // `checkWithStatement`, `checkReturnStatement`, `checkExportAssignment`: what they never look at is taken back, whoever said it.
@@ -376,9 +378,14 @@ impl Checker<'_> {
 
     // ───────────────────────────── modules ─────────────────────────────
 
-    /// `CreateModuleNotFoundChain`, but for `AlternateResult`: what to do about `spec`, which leads into `package`, where nothing declares
-    /// its types.
-    fn module_not_found_hint(&self, spec: &str, package: &str) -> super::explain::Line {
+    /// `CreateModuleNotFoundChain`: what to do about `spec`, which leads into `package`, where nothing declares its types.
+    /// `alternate`: `AlternateResult`.
+    fn module_not_found_hint(
+        &self,
+        spec: &str,
+        package: &str,
+        alternate: Option<String>,
+    ) -> super::explain::Line {
         // `MangleScopedPackageName`
         let mangled = match package
             .strip_prefix('@')
@@ -387,6 +394,18 @@ impl Checker<'_> {
             Some((scope, name)) => format!("{scope}__{name}"),
             None => package.to_owned(),
         };
+        if let Some(types) = alternate {
+            let package = if types.contains("/node_modules/@types/") {
+                format!("@types/{mangled}")
+            } else {
+                package.to_owned()
+            };
+            return super::explain::Line {
+                code: 6278,
+                args: vec![types, package],
+                level: 1,
+            };
+        }
         // `GetPackagesMap`
         let (types, own) = (
             format!("/node_modules/@types/{mangled}/"),
@@ -1077,7 +1096,13 @@ impl Checker<'_> {
                 && (!is_refused || is_jsx_file || options.files.contains(path))
             {
                 out.push(Diagnostic { start, code: 2306 });
-                self.explain(start, 2306, |_| vec![path.clone()]);
+                self.explain(start, 2306, |c| {
+                    let mut redirected = module.redirected_imports.iter();
+                    match redirected.find(|r| (r.0, r.1) == (spec, mode)) {
+                        Some(r) => vec![c.atom_text(r.2)],
+                        None => vec![path.clone()],
+                    }
+                });
             }
             return;
         }
@@ -1087,7 +1112,12 @@ impl Checker<'_> {
         // `GetResolutionDiagnostic`, `needAllowArbitraryExtensions`
         if module.arbitrary_extension_imports.contains(&(spec, mode)) {
             out.push(Diagnostic { start, code: 6263 });
-            self.explain(start, 6263, |c| vec![c.atom_text(spec)]);
+            let at = module
+                .arbitrary_extension_imports
+                .iter()
+                .position(|&u| u == (spec, mode));
+            let path = module.arbitrary_extension_files[at.unwrap()];
+            self.explain(start, 6263, |c| vec![c.atom_text(spec), c.atom_text(path)]);
             return;
         }
         // The specifier resolves to JavaScript that is not in the program.
@@ -1113,8 +1143,15 @@ impl Checker<'_> {
                 if let Some(package) = package
                     && !crate::resolve::is_relative(&self.atom_text(spec))
                 {
+                    let alternate = module
+                        .untyped_import_alternates
+                        .iter()
+                        .find(|a| (a.0, a.1) == (spec, mode))
+                        .map(|a| a.2);
                     self.explain_chain(start, 7016, |c| {
-                        vec![c.module_not_found_hint(&c.atom_text(spec), &c.atom_text(package))]
+                        let alternate = alternate.map(|types| c.atom_text(types));
+                        let (spec, package) = (c.atom_text(spec), c.atom_text(package));
+                        vec![c.module_not_found_hint(&spec, &package, alternate)]
                     });
                 }
             }
@@ -3732,11 +3769,11 @@ fn explain_operator_error(
     is_related: Option<Related>,
 ) {
     let end = c.end_inside_parentheses(file, e);
+    let mut would_work_with_await = false;
     c.explain_to(start, end, code, |c| {
         let (mut effective_left, mut effective_right) = (left, right);
         if let Some(is_related) = is_related {
-            let would_work_with_await = match (c.awaited_no_alias(left), c.awaited_no_alias(right))
-            {
+            would_work_with_await = match (c.awaited_no_alias(left), c.awaited_no_alias(right)) {
                 (Some(l), Some(r)) if (l, r) != (left, right) => is_related(c, l, r),
                 _ => false,
             };
@@ -3755,6 +3792,16 @@ fn explain_operator_error(
         let is_assignment = matches!(c.hir(file)[e].kind, ExprKind::Assign { .. });
         vec![operator_text(op, is_assignment), left, right]
     });
+    // `errorAndMaybeSuggestAwait`
+    if would_work_with_await {
+        c.relate(start, code, |_| {
+            vec![super::explain::Related {
+                at: Some((file, start, end)),
+                code: 2773,
+                args: Vec::new(),
+            }]
+        });
+    }
 }
 
 /// `GetViableKeywordSuggestions`
@@ -4325,6 +4372,36 @@ impl Checker<'_> {
                 "true"
             };
             self.note(start, end, 2845, vec![always.to_owned()]);
+            let location = if self.is_global_nan(file, left) {
+                right
+            } else {
+                left
+            };
+            if !self.is_global_nan(file, location) {
+                self.relate(start, 2845, |c| {
+                    let hir = c.hir(file);
+                    // `IsEntityNameExpression`, of it less the parentheses around it.
+                    let mut first = location;
+                    while let ExprKind::Dot { obj, name, .. } = hir[first].kind
+                        && c.files().atoms.bytes(name).first() != Some(&b'#')
+                        && !c.is_written_in_parentheses(file, obj)
+                    {
+                        first = obj;
+                    }
+                    let name = if matches!(hir[first].kind, ExprKind::Ident(_)) {
+                        entity_name_text(c, file, location)
+                    } else {
+                        "...".to_owned()
+                    };
+                    let not = if always == "true" { "!" } else { "" };
+                    let (from, to) = c.error_range_of_expr(file, location);
+                    vec![super::explain::Related {
+                        at: Some((file, from, to)),
+                        code: 1369,
+                        args: vec![format!("{not}Number.isNaN({name})")],
+                    }]
+                });
+            }
         }
         // What cannot be written to is in error, and can be anything.
         let is_refused = matches!(self.hir(file)[e].kind, ExprKind::Assign { .. })
@@ -4749,7 +4826,29 @@ impl Checker<'_> {
         if !fits {
             let start = self.error_start_of(file, operand);
             out.push(Diagnostic { start, code });
-            self.note(start, self.error_end_of(file, operand), code, Vec::new());
+            let end = self.error_end_of(file, operand);
+            self.note(start, end, code, Vec::new());
+            // `isAwaitValid`: not for what `++` and `--` work on.
+            if code != 2356 {
+                self.relate(start, code, |c| {
+                    // `getAwaitedTypeOfPromise`
+                    let awaited = c
+                        .thenable_value(ty)
+                        .and_then(|promised| c.awaited_or_none(promised));
+                    match awaited {
+                        Some(awaited)
+                            if c.is_known(awaited) && c.is_assignable(awaited, numeric) =>
+                        {
+                            vec![super::explain::Related {
+                                at: Some((file, start, end)),
+                                code: 2773,
+                                args: Vec::new(),
+                            }]
+                        }
+                        _ => Vec::new(),
+                    }
+                });
+            }
         }
         fits
     }

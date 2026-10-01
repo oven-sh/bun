@@ -2146,6 +2146,8 @@ struct IterationReport {
     said: Vec<Diagnostic>,
     /// `diagnosticOutput`: what is said only if there turns out to be something to go through.
     held: Vec<Diagnostic>,
+    /// What becomes of that if there turns out to be nothing to go through: related information.
+    held_as_related: Vec<super::explain::Related>,
     /// Something on the way could not be found out: nothing is to be said.
     unknown: bool,
 }
@@ -2158,6 +2160,7 @@ impl IterationReport {
             node,
             said: Vec::new(),
             held: Vec::new(),
+            held_as_related: Vec::new(),
             unknown: false,
         }
     }
@@ -2215,9 +2218,19 @@ fn check_iterated_type(
             // `reportTypeNotIterableError`
             if iterable_exists {
                 let code = if usage.allows_async() { 2504 } else { 2488 };
+                // What `check_iteration` has said of it is not said again.
+                let is_said = out.iter().any(|d| d.start == at && d.code == code);
                 out.push(Diagnostic { start: at, code });
-                let end = error_end(c, file, node);
-                c.explain_to(at, end, code, |c| vec![c.type_to_string(input)]);
+                if !is_said {
+                    let end = error_end(c, file, node);
+                    c.explain_to(at, end, code, |c| vec![c.type_to_string(input)]);
+                    c.relate(at, code, |c| {
+                        c.hint_to_await_what_is_gone_through(input, usage.allows_async(), at, end)
+                    });
+                }
+                // `getIterationTypesOfIterableWorker`: what was found on the way goes with it.
+                let found = std::mem::take(&mut report.held_as_related);
+                c.relate(at, code, |_| found);
             }
         } else if !cached.contains(&key) {
             cached.push(key);
@@ -2484,6 +2497,34 @@ fn iteration_types_of_iterable_slow(
         }
     }
     if iterators.is_empty() {
+        // `checkTypeAssignableToEx(t, getGlobalIterableTypeChecked(), errorNode, nil, diagnosticOutput)`
+        let iterable = if is_async {
+            known::AsyncIterable
+        } else {
+            known::Iterable
+        };
+        if reports
+            && c.explains
+            && !c.signatures(method, false).is_empty()
+            && let Some(iterable) = c.global_type_of_arity(iterable, 3)
+        {
+            let target = c.declared_type(iterable);
+            let lines = c.assignability_lines(t, target, 0);
+            if let Some((first, under)) = lines.split_first() {
+                let mut args = first.args.clone();
+                args.extend(under.iter().map(|line| {
+                    let template = crate::messages::message(line.code).map_or("", |m| m.1);
+                    let said = crate::messages::format(template, &line.args);
+                    format!("\n{}{said}", "  ".repeat(line.level as usize))
+                }));
+                let end = error_end(c, report.file, report.node);
+                report.held_as_related.push(super::explain::Related {
+                    at: Some((report.file, report.at, end)),
+                    code: first.code,
+                    args,
+                });
+            }
+        }
         return Iteration::default();
     }
     let iterator = c.intersection(&iterators);
@@ -2612,6 +2653,15 @@ fn iteration_types_of_method(
             });
             let end = error_end(c, report.file, report.node);
             c.note(report.at, end, code, vec![c.atom_text(name)]);
+            report.held_as_related.push(super::explain::Related {
+                at: Some((report.file, report.at, end)),
+                code,
+                args: if is_next {
+                    Vec::new()
+                } else {
+                    vec![c.atom_text(name)]
+                },
+            });
         }
         return Iteration::default();
     }

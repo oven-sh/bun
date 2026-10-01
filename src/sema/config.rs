@@ -178,6 +178,27 @@ fn parse_config(
             }
         }
     };
+    // `convertConfigFileToObject`
+    let json = match json {
+        Json::Object(_) => json,
+        other => {
+            let first_object = match other {
+                Json::Array(items) => items
+                    .into_iter()
+                    .find(|item| matches!(item, Json::Object(_))),
+                _ => None,
+            };
+            first_object.unwrap_or_else(|| {
+                let name = if path.ends_with("/jsconfig.json") {
+                    "jsconfig.json"
+                } else {
+                    "tsconfig.json"
+                };
+                errors.push(ConfigError::new(5092, &[name]));
+                Json::Object(Vec::new())
+            })
+        }
+    };
     let base = parent_dir(path);
     let mut own = Raw::default();
     // `getDefaultCompilerOptions`

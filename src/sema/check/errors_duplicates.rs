@@ -61,6 +61,24 @@ fn code_of_refusal(flags: u32, includes: u32) -> u32 {
     }
 }
 
+/// `getExcludedSymbolFlags`, of what members make of a name.
+fn excluded_by_member_flags(flags: u32) -> u32 {
+    let mut excluded = 0;
+    if flags & PROPERTY != 0 {
+        excluded |= VALUE & !(PROPERTY | ACCESSOR);
+    }
+    if flags & METHOD != 0 {
+        excluded |= VALUE & !METHOD;
+    }
+    if flags & GET_ACCESSOR != 0 {
+        excluded |= VALUE & !(SET_ACCESSOR | PROPERTY);
+    }
+    if flags & SET_ACCESSOR != 0 {
+        excluded |= VALUE & !(GET_ACCESSOR | PROPERTY);
+    }
+    excluded
+}
+
 impl Checker<'_> {
     pub(super) fn check_duplicates(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let bound = self.bound(file);
@@ -105,6 +123,10 @@ impl Checker<'_> {
                         start: hir[p].pos,
                         code: 2300,
                     });
+                    if hir[p].name == known::empty {
+                        let missing = vec!["(Missing)".to_owned()];
+                        self.note(hir[p].pos, super::explain::NO_LENGTH, 2300, missing);
+                    }
                 }
             }
         }
@@ -327,28 +349,120 @@ impl Checker<'_> {
                 && let Some(start) = self.declaration_name_start(of, decl)
             {
                 out.push(Diagnostic { start, code });
+                // `getDisplayName`. What 2649 says is noted where it is reported.
+                if code != 2649 && self.is_declaration_name_missing(of, decl) {
+                    let missing = vec!["(Missing)".to_owned()];
+                    self.note(start, super::explain::NO_LENGTH, code, missing);
+                }
             }
         }
     }
 
-    /// `reportMergeSymbolError`: reports `code` at every declaration of both symbols. Skips a symbol whose first declaration is in a
-    /// plain JavaScript file.
+    /// Whether the name of `decl` is an identifier that is not there.
+    fn is_declaration_name_missing(&self, file: FileId, decl: Decl) -> bool {
+        let hir = self.hir(file);
+        let name = match decl {
+            Decl::Var(pat) | Decl::Param(pat) | Decl::Require(pat) => match hir[pat].kind {
+                PatKind::Ident(name) => name,
+                _ => return false,
+            },
+            Decl::Fn(f) => hir[f].name,
+            Decl::Class(c) => hir[c].name,
+            Decl::Interface(i) => hir[i].name,
+            Decl::Alias(a) => hir[a].name,
+            Decl::Enum(e) => hir[e].name,
+            Decl::TypeParam(p) => hir[p].name,
+            Decl::ImportDefault(i) => hir[i].default,
+            Decl::ImportNamespace(i) => hir[i].namespace,
+            Decl::ImportSpec(s) => hir[s].local,
+            Decl::ImportEquals(i) => hir[i].name,
+            _ => return false,
+        };
+        name == known::empty
+    }
+
+    /// `reportMergeSymbolError`: reports `code` at every declaration of both symbols, and says where the other symbol is declared. Skips
+    /// a symbol whose first declaration is in a plain JavaScript file. `named`: what goes by the name of `source`.
     fn report_merge_symbol_error(
-        &self,
+        &mut self,
         file: FileId,
         target: &[Declaration],
         source: &[Declaration],
+        named: Sym,
         code: u32,
         out: &mut Vec<Diagnostic>,
     ) {
-        for symbol in [source, target] {
-            if symbol
-                .first()
-                .is_some_and(|first| !self.is_plain_js(first.0))
-            {
-                self.report_declarations(file, symbol.iter(), code, out);
+        if !target.iter().chain(source).any(|d| d.0 == file) {
+            return;
+        }
+        // `symbolToString(source)`
+        let mut name = if self.explains {
+            self.symbol_to_string(named)
+        } else {
+            String::new()
+        };
+        // A missing name has no length.
+        let mut end = 0;
+        if name.is_empty() {
+            name = "(Missing)".to_owned();
+            end = super::explain::NO_LENGTH;
+        }
+        for (symbol, other) in [(source, target), (target, source)] {
+            if symbol.first().is_none_or(|first| self.is_plain_js(first.0)) {
+                continue;
+            }
+            for &(of, decl, _) in symbol {
+                if of == file
+                    && let Some(start) = self.declaration_name_start(of, decl)
+                {
+                    let others = other
+                        .iter()
+                        .filter_map(|d| self.place_of_declaration(d.0, d.1));
+                    let at = (start, end);
+                    self.add_duplicate_declaration_error(file, at, others, &name, code, out);
+                }
             }
         }
+    }
+
+    /// `addDuplicateDeclarationError`: reports `code` at `at`, which is in `file` (an end of 0: the token there), and says where else
+    /// the name is declared.
+    fn add_duplicate_declaration_error(
+        &self,
+        file: FileId,
+        at: (u32, u32),
+        others: impl Iterator<Item = super::related::Place>,
+        name: &str,
+        code: u32,
+        out: &mut Vec<Diagnostic>,
+    ) {
+        let (start, end) = at;
+        let is_again = self.explains && out.iter().any(|d| d.start == start && d.code == code);
+        out.push(Diagnostic { start, code });
+        if !self.explains {
+            return;
+        }
+        let mut related: Vec<super::explain::Related> = Vec::new();
+        for other in others {
+            if (other.0, other.1) == (file, start)
+                || related.len() >= 5
+                || related.iter().any(|r| r.at == Some(other))
+            {
+                continue;
+            }
+            let (code, args) = if related.is_empty() {
+                (6203, vec![name.to_owned()])
+            } else {
+                (6204, Vec::new())
+            };
+            related.push(super::explain::Related {
+                at: Some(other),
+                code,
+                args,
+            });
+        }
+        self.note(start, end, code, vec![name.to_owned()]);
+        self.relate_reports_merged(start, code, is_again, related);
     }
 
     /// The declarations of `sym`: those of each file as `declareSymbolEx` puts them in a table, then the files one after the other as
@@ -419,6 +533,10 @@ impl Checker<'_> {
                         continue;
                     }
                     // What is refused gets a symbol of its own, which is not in the table.
+                    if part.file == file {
+                        let code = code_of_refusal(flags, includes);
+                        self.relate_export_type_without_braces(file, decl, code, out);
+                    }
                     self.report_declarations(
                         file,
                         source.iter().chain(std::iter::once(&this)),
@@ -451,6 +569,7 @@ impl Checker<'_> {
                     file,
                     &target,
                     &source,
+                    sym,
                     code_of_refusal(target_flags | flags, 0),
                     out,
                 );
@@ -548,6 +667,7 @@ impl Checker<'_> {
                         } else {
                             code_of_refusal(flags, mark)
                         };
+                        self.relate_export_type_without_braces(file, decl, code, out);
                         self.report_declarations(
                             file,
                             accepted.iter().chain(std::iter::once(&(file, decl, true))),
@@ -560,6 +680,42 @@ impl Checker<'_> {
                 from = to;
             }
         }
+    }
+
+    /// `declareSymbolEx`: `export type T;`, which is about to be refused with `code`, may have been meant to be `export type { T }`.
+    /// `out`: what has been reported so far.
+    fn relate_export_type_without_braces(
+        &mut self,
+        file: FileId,
+        decl: Decl,
+        code: u32,
+        out: &[Diagnostic],
+    ) {
+        let Decl::Alias(a) = decl else { return };
+        let hir = self.hir(file);
+        let alias = &hir[a];
+        if !alias.flags.contains(Flags::EXPORT) || alias.flags.contains(Flags::REPARSED) {
+            return;
+        }
+        // `NodeIsMissing(node.Type())`
+        let mut next = self.skip_trivia_from(file, self.end_of_name_at(file, alias.name_pos));
+        if hir.text.get(next as usize) == Some(&b'=') {
+            next = self.skip_trivia_from(file, next + 1);
+        }
+        if !matches!(hir.text.get(next as usize), None | Some(b';' | b'}'))
+            || out
+                .iter()
+                .any(|d| d.start == alias.name_pos && d.code == code)
+        {
+            return;
+        }
+        self.relate(alias.name_pos, code, |c| {
+            vec![super::explain::Related {
+                at: Some(c.place_of_token(file, alias.name_pos)),
+                code: 1369,
+                args: vec![format!("export type {{ {} }}", c.atom_text(alias.name))],
+            }]
+        });
     }
 
     /// `mergeSymbol`: reports the pairs of symbols that `Files::merge` refused to merge. The target is an alias, an export reached
@@ -600,7 +756,7 @@ impl Checker<'_> {
             } else {
                 2300
             };
-            self.report_merge_symbol_error(file, &declarations(target), &added, code, out);
+            self.report_merge_symbol_error(file, &declarations(target), &added, source, code, out);
         }
     }
 
@@ -624,7 +780,12 @@ impl Checker<'_> {
 
     /// From `checkModuleDeclaration`: 2433 2434, a namespace comes after the class or function it adds to, in the same file.
     /// From `checkFunctionOrConstructorSymbol`: 2813 2814, a function merges with a class only if the class is ambient.
-    fn check_what_merges(&self, file: FileId, decls: &[Declaration], out: &mut Vec<Diagnostic>) {
+    fn check_what_merges(
+        &mut self,
+        file: FileId,
+        decls: &[Declaration],
+        out: &mut Vec<Diagnostic>,
+    ) {
         if !decls
             .iter()
             .any(|d| matches!(d.1, Decl::Class(_) | Decl::Fn(_)))
@@ -683,6 +844,13 @@ impl Checker<'_> {
         );
         // The symbol has to be a function, which what is only listed with it does not make it.
         if has_class && decls.iter().any(|d| d.2 && matches!(d.1, Decl::Fn(_))) {
+            let classes: Vec<(FileId, u32)> = decls
+                .iter()
+                .filter_map(|&(of, decl, _)| match decl {
+                    Decl::Class(c) => Some((of, self.hir(of)[c].name_pos)),
+                    _ => None,
+                })
+                .collect();
             for &(of, decl, _) in decls {
                 if of != file {
                     continue;
@@ -690,26 +858,52 @@ impl Checker<'_> {
                 match decl {
                     Decl::Class(c) => {
                         let class = &self.hir(of)[c];
-                        out.push(Diagnostic {
-                            start: class.name_pos,
-                            code: 2813,
-                        });
                         // `symbol.Name`
                         let name = if class.flags.contains(Flags::DEFAULT) {
                             known::default
                         } else {
                             class.name
                         };
-                        self.note(class.name_pos, 0, 2813, vec![self.atom_text(name)]);
+                        self.report_class_with_function(class.name_pos, 2813, name, &classes, out);
                     }
-                    Decl::Fn(f) => out.push(Diagnostic {
-                        start: self.hir(of)[f].name_pos,
-                        code: 2814,
-                    }),
+                    Decl::Fn(f) => {
+                        let start = self.hir(of)[f].name_pos;
+                        self.report_class_with_function(start, 2814, Atom::NONE, &classes, out);
+                    }
                     _ => {}
                 }
             }
         }
+    }
+
+    /// 2813, which names the symbol `name`, or 2814, which names nothing. Both say of each of `classes`, the class declarations of the
+    /// symbol, that it could be declared only.
+    fn report_class_with_function(
+        &mut self,
+        start: u32,
+        code: u32,
+        name: Atom,
+        classes: &[(FileId, u32)],
+        out: &mut Vec<Diagnostic>,
+    ) {
+        let is_again = out.iter().any(|d| d.start == start && d.code == code);
+        out.push(Diagnostic { start, code });
+        if is_again {
+            return;
+        }
+        if name.is_some() {
+            self.note(start, 0, code, vec![self.atom_text(name)]);
+        }
+        self.relate(start, code, |c| {
+            classes
+                .iter()
+                .map(|&(of, at)| super::explain::Related {
+                    at: Some(c.place_of_token(of, at)),
+                    code: 6506,
+                    args: Vec::new(),
+                })
+                .collect()
+        });
     }
 
     /// What a member makes of its name and what that does not go with.
@@ -784,6 +978,7 @@ impl Checker<'_> {
             return;
         }
         if lists.len() > 1 {
+            #[derive(Default)]
             struct Entry {
                 flags: u32,
                 /// Which declaration, in which file, and where.
@@ -834,38 +1029,69 @@ impl Checker<'_> {
                     repeated.push(same[0]);
                 }
             }
-            // One for each of `repeated`.
-            let mut entries: Vec<Entry> = repeated
-                .iter()
-                .map(|_| Entry {
-                    flags: 0,
-                    accepted: Vec::new(),
-                })
-                .collect();
-            for &(at, of, name, includes, excludes, pos) in &declared {
-                let Ok(index) = repeated.binary_search(&name) else {
-                    continue;
-                };
-                let entry = &mut entries[index];
-                if entry.flags & excludes == 0 {
-                    entry.flags |= includes;
-                    entry.accepted.push((at, of, pos));
-                    continue;
-                }
-                // Within one declaration it has been said.
-                if !entry.accepted.iter().all(|a| a.0 == at) {
-                    for &(_, other, start) in
-                        entry.accepted.iter().chain(std::iter::once(&(at, of, pos)))
-                    {
-                        if other == file {
-                            out.push(Diagnostic { start, code: 2300 });
-                            self.note_duplicate_name(file, start, start);
+            // One for each of `repeated`: what the files so far have come to.
+            let mut entries: Vec<Entry> = repeated.iter().map(|_| Entry::default()).collect();
+            // What one file declares is one symbol to the binder, with one table of members.
+            for of_one_file in declared.chunk_by(|a, b| a.1 == b.1) {
+                let mut own: Vec<Entry> = repeated.iter().map(|_| Entry::default()).collect();
+                for &(at, of, name, includes, excludes, pos) in of_one_file {
+                    let Ok(index) = repeated.binary_search(&name) else {
+                        continue;
+                    };
+                    let entry = &mut own[index];
+                    if entry.flags & excludes == 0 {
+                        entry.flags |= includes;
+                        entry.accepted.push((at, of, pos));
+                        continue;
+                    }
+                    // Within one declaration it has been said.
+                    if !entry.accepted.iter().all(|a| a.0 == at) {
+                        for &(_, other, start) in
+                            entry.accepted.iter().chain(std::iter::once(&(at, of, pos)))
+                        {
+                            if other == file {
+                                out.push(Diagnostic { start, code: 2300 });
+                                self.note_duplicate_name(file, start, start);
+                            }
                         }
                     }
+                    // After an accessor met something else, nothing goes with it any more.
+                    if entry.flags & ACCESSOR != 0 && entry.flags & ACCESSOR != includes & ACCESSOR
+                    {
+                        entry.flags |= ACCESSOR;
+                    }
                 }
-                // After an accessor met something else, nothing goes with it any more.
-                if entry.flags & ACCESSOR != 0 && entry.flags & ACCESSOR != includes & ACCESSOR {
-                    entry.flags |= ACCESSOR;
+                // `mergeSymbolTable`
+                for (target, source) in entries.iter_mut().zip(own) {
+                    if target.flags & excluded_by_member_flags(source.flags) == 0 {
+                        target.flags |= source.flags;
+                        target.accepted.extend(source.accepted);
+                        continue;
+                    }
+                    // `reportMergeSymbolError`. `symbolToString(source)`: as its first declaration writes it.
+                    let (_, named_in, named_at) = source.accepted[0];
+                    let named_to = self.end_of_name_at(named_in, named_at);
+                    let name = self.source_text(named_in, named_at, named_to);
+                    for (symbol, other) in [
+                        (&source.accepted, &target.accepted),
+                        (&target.accepted, &source.accepted),
+                    ] {
+                        if self.is_plain_js(symbol[0].1) {
+                            continue;
+                        }
+                        for &(_, of, start) in symbol {
+                            if of != file {
+                                continue;
+                            }
+                            let others = other
+                                .iter()
+                                .map(|&(_, of, at)| (of, at, self.end_of_name_at(of, at).max(at)));
+                            let at = (start, self.end_of_name_at(file, start));
+                            self.add_duplicate_declaration_error(
+                                file, at, others, &name, 2300, out,
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -910,6 +1136,25 @@ impl Checker<'_> {
                         continue;
                     };
                     if theirs & excludes == 0 && includes & they_exclude == 0 {
+                        continue;
+                    }
+                    // Between files it is `mergeSymbol` that refuses, and says where the other is.
+                    if of != at.0 {
+                        let written = c.atom_text(name);
+                        let exported_at = c.place_of_token(of, start);
+                        let member_at = (at.0, at.1, c.end_of_name_at(at.0, at.1).max(at.1));
+                        for (here, other) in [(exported_at, member_at), (member_at, exported_at)] {
+                            if here.0 == file {
+                                c.add_duplicate_declaration_error(
+                                    file,
+                                    (here.1, here.2),
+                                    std::iter::once(other),
+                                    &written,
+                                    2300,
+                                    out,
+                                );
+                            }
+                        }
                         continue;
                     }
                     if of == file {
@@ -1244,19 +1489,23 @@ impl Checker<'_> {
                     .iter()
                     .any(|d| d.includes == CLASS && !d.is_ambient)
             {
+                let classes: Vec<(FileId, u32)> = accepted
+                    .iter()
+                    .filter(|d| d.includes == CLASS)
+                    .map(|d| (file, d.start))
+                    .collect();
                 for d in &accepted {
                     match d.includes {
                         CLASS => {
-                            out.push(Diagnostic {
-                                start: d.start,
-                                code: 2813,
-                            });
-                            self.note(d.start, 0, 2813, vec![self.atom_text(name)]);
+                            self.report_class_with_function(d.start, 2813, name, &classes, out)
                         }
-                        FUNCTION => out.push(Diagnostic {
-                            start: d.start,
-                            code: 2814,
-                        }),
+                        FUNCTION => self.report_class_with_function(
+                            d.start,
+                            2814,
+                            Atom::NONE,
+                            &classes,
+                            out,
+                        ),
                         _ => {}
                     }
                 }
@@ -1603,20 +1852,38 @@ impl Checker<'_> {
                 .iter()
                 .copied()
                 .find(|at| late_bound.contains(at));
+            // `combineSymbolTables`: what the binder names is one symbol, what is bound late another. Where the first of the latter is.
+            let merged_with_late = match (late_before, late_bound.contains(&pos)) {
+                (Some(first), false) => Some(first),
+                (None, true) => Some(pos),
+                _ => None,
+            };
             for &start in entry.accepted.iter().chain(std::iter::once(&pos)) {
+                // `reportMergeSymbolError`: `symbolToString` of the symbol that is bound late.
+                if let Some(named_at) = merged_with_late {
+                    let name =
+                        self.source_text(file, named_at, self.end_of_name_at(file, named_at));
+                    let is_late = late_bound.contains(&start);
+                    let others = entry
+                        .accepted
+                        .iter()
+                        .chain(std::iter::once(&pos))
+                        .filter(|&other| late_bound.contains(other) != is_late)
+                        .map(|&other| (file, other, self.end_of_name_at(file, other)));
+                    let at = (start, self.end_of_name_at(file, start));
+                    self.add_duplicate_declaration_error(file, at, others, &name, 2300, out);
+                    continue;
+                }
                 out.push(Diagnostic { start, code: 2300 });
-                match (late_before, late_bound.contains(&pos)) {
+                match late_before {
                     // The binder names each as it is written.
-                    (None, false) => self.note_duplicate_name(file, start, start),
+                    None => self.note_duplicate_name(file, start, start),
                     // `lateBindMember`
-                    (Some(_), true) if !self.files().atoms.is_symbol_name(name) => {
+                    Some(_) if !self.files().atoms.is_symbol_name(name) => {
                         let end = self.end_of_name_at(file, start);
                         self.note(start, end, 2300, vec![self.atom_text(name)]);
                     }
-                    (Some(_), true) => self.note_duplicate_name(file, start, pos),
-                    // `reportMergeSymbolError`: `symbolToString` of the symbol that is bound late.
-                    (Some(first), false) => self.note_duplicate_name(file, start, first),
-                    (None, true) => self.note_duplicate_name(file, start, pos),
+                    Some(_) => self.note_duplicate_name(file, start, pos),
                 }
             }
             // After an accessor met something else, nothing goes with it any more.

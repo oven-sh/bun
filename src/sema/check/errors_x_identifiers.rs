@@ -4368,7 +4368,12 @@ impl Pass<'_, '_> {
                 let (file, start, property) = (self.file, hir[prop.value].pos, prop.pos);
                 self.report(start, 2842);
                 let is_missing = matches!(hir[prop.value].kind, PatKind::Ident(name) if self.c.files().atoms.bytes(name).is_empty());
-                self.c.explain(start, 2842, |c| {
+                let end = if is_missing {
+                    super::explain::NO_LENGTH
+                } else {
+                    0
+                };
+                self.c.explain_to(start, end, 2842, |c| {
                     let name = if is_missing {
                         "(Missing)".to_owned()
                     } else {
@@ -4376,6 +4381,25 @@ impl Pass<'_, '_> {
                     };
                     vec![name, c.declaration_name_at(file, property)]
                 });
+                // `WalkUpBindingElementsAndPatterns`
+                let mut outermost = prop.value;
+                while let PatParent::Prop(outer, _) | PatParent::Elem(outer, _) =
+                    bound.pat_parent[outermost.idx()]
+                {
+                    outermost = outer;
+                }
+                if let PatParent::Param(param) = bound.pat_parent[outermost.idx()]
+                    && hir[param].ty.is_none()
+                {
+                    self.c.relate(start, 2842, |c| {
+                        let end = c.end_of_param(file, param);
+                        vec![super::explain::Related {
+                            at: Some((file, end, end)),
+                            code: 2843,
+                            args: vec![c.declaration_name_at(file, property)],
+                        }]
+                    });
+                }
             }
         }
         if !self.no_implicit_any {

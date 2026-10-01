@@ -11,6 +11,15 @@ use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, SymbolId};
 use smallvec::{SmallVec, smallvec};
 
+/// `typeOnlyDeclaration`: what says `type` on the way from an alias to what it stands for.
+#[derive(Copy, Clone)]
+enum TypeOnlyStep {
+    /// This declaration of this alias.
+    Declaration(Sym, Decl),
+    /// An `export type *`, the only way this module has this name.
+    Star(Sym, Atom),
+}
+
 impl Checker<'_> {
     pub(super) fn check_names_and_exports(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         self.check_computed_names(file, out);
@@ -467,12 +476,8 @@ impl Checker<'_> {
         }
         // `declareSymbolEx` declares `default` in `GetExports(container.Symbol())`: the file has one table, and all blocks of a namespace or
         // an ambient module share one.
-        report_default_export_conflicts(
-            self,
-            file,
-            self.default_exports(file, hir.body).iter(),
-            out,
-        );
+        let defaults = self.default_exports(file, hir.body);
+        report_default_export_conflicts(self, file, defaults.iter(), out);
         let mut blocks: Vec<(SymbolId, u32, SmallVec<[DefaultExport; 2]>)> = Vec::new();
         for (m, module) in hir.modules.iter().enumerate() {
             let defaults = self.default_exports(file, module.body);
@@ -566,7 +571,12 @@ impl Checker<'_> {
                         PROPERTY
                     };
                     let start = self.export_assignment_name_start(file, s);
-                    let statement = if start == hir[s].pos { s } else { StmtId::NONE };
+                    let is_missing = matches!(hir[e].kind, ExprKind::Missing);
+                    let statement = if start == hir[s].pos || is_missing {
+                        s
+                    } else {
+                        StmtId::NONE
+                    };
                     declare(start, statement, includes, u8::MAX, 2528);
                 }
                 StmtKind::Fn(f) if hir[f].flags.contains(Flags::DEFAULT) => {
@@ -721,11 +731,36 @@ impl Checker<'_> {
     /// `getTypeOnlyAliasDeclarationEx`, asked about values: the first step on the way from the alias `sym` to what it stands for that is
     /// only about types, and whether that step is an export.
     pub(super) fn type_only_alias_declaration(&self, sym: Sym) -> Option<bool> {
-        self.type_only_step(sym, &mut 32)
+        self.type_only_step(sym, &mut 32).map(|step| step.0)
     }
 
-    /// `fuel`: how many more aliases are looked at, which is what ends a circle.
-    fn type_only_step(&self, mut sym: Sym, fuel: &mut u32) -> Option<bool> {
+    /// `addTypeOnlyDeclarationRelatedInfo`: 1376 or 1377 at that step. `name`: what the alias goes by where the error is.
+    pub(super) fn type_only_declaration_related(
+        &self,
+        sym: Sym,
+        name: String,
+    ) -> Vec<super::explain::Related> {
+        let Some((is_export, step)) = self.type_only_step(sym, &mut 32) else {
+            return Vec::new();
+        };
+        let place = match step {
+            TypeOnlyStep::Declaration(alias, decl) => self.place_of_alias_declaration(alias, decl),
+            TypeOnlyStep::Star(module, exported) => {
+                self.place_of_type_only_export_star(module, exported)
+            }
+        };
+        match place {
+            Some(at) => vec![super::explain::Related {
+                at: Some(at),
+                code: if is_export { 1377 } else { 1376 },
+                args: vec![name],
+            }],
+            None => Vec::new(),
+        }
+    }
+
+    /// Whether the step is an export, and the step. `fuel`: how many more aliases are looked at, which is what ends a circle.
+    fn type_only_step(&self, mut sym: Sym, fuel: &mut u32) -> Option<(bool, TypeOnlyStep)> {
         let files = self.files();
         loop {
             // What is a value itself is that value, whatever else it stands for.
@@ -828,7 +863,7 @@ impl Checker<'_> {
                 {
                     // `getTargetOfImportEqualsDeclaration`, `getTargetOfModuleDefault`: the `export =` is what the alias stands for.
                     if says_type {
-                        return Some(is_export);
+                        return Some((is_export, TypeOnlyStep::Declaration(sym, decl)));
                     }
                     next = equals;
                 } else {
@@ -840,14 +875,14 @@ impl Checker<'_> {
                     }
                     // `getTargetOfImportClause`: nothing is made of the default of a module that is not there.
                     if says_type && !matches!(decl, Decl::ImportDefault(_)) {
-                        return Some(is_export);
+                        return Some((is_export, TypeOnlyStep::Declaration(sym, decl)));
                     }
                     // `getExportOfModule`: `typeOnlyExportStarMap`. A default never gets here.
                     if name.is_some()
                         && let Some(module) = module
                         && files.is_type_only_star_export(module, name)
                     {
-                        return Some(true);
+                        return Some((true, TypeOnlyStep::Star(module, name)));
                     }
                 }
             }
@@ -953,6 +988,10 @@ impl Checker<'_> {
             out.push(Diagnostic {
                 start: hir[e].pos,
                 code,
+            });
+            self.relate(hir[e].pos, code, |c| {
+                let name = c.atom_text(bound.symbols[local.idx()].name);
+                c.type_only_declaration_related(c.files().sym(file, local), name)
             });
         }
     }
@@ -1075,7 +1114,8 @@ impl Checker<'_> {
 struct DefaultExport {
     /// The start of its error span.
     start: u32,
-    /// The statement, if the error span is all of it. `NONE`: it is one token.
+    /// The statement, if the error span is all of it, or is a missing name, which starts later and has no length. `NONE`: it is one
+    /// token.
     statement: StmtId,
     /// The symbol flags it adds.
     includes: u8,
@@ -1088,28 +1128,75 @@ struct DefaultExport {
 /// `declareSymbolEx`, for the declarations of `default` in one table of exports: 2528, 2300. A conflict is reported at the new
 /// declaration and at every declaration of the symbol in the table. The new declaration does not join that symbol.
 fn report_default_export_conflicts<'a>(
-    c: &Checker<'_>,
+    c: &mut Checker<'_>,
     file: FileId,
     defaults: impl Iterator<Item = &'a DefaultExport>,
     out: &mut Vec<Diagnostic>,
 ) {
+    use super::explain::{NO_LENGTH, Related};
+    // Where the error span of a declaration ends.
+    let end_of = |c: &Checker<'_>, d: &DefaultExport| {
+        if d.statement.is_none() {
+            c.end_of_token_at(file, d.start)
+        } else if d.start == c.hir(file)[d.statement].pos {
+            c.end_of_stmt(file, d.statement)
+        } else {
+            NO_LENGTH
+        }
+    };
+    let related_at = |c: &Checker<'_>, d: &DefaultExport, code: u32| {
+        let end = match end_of(c, d) {
+            NO_LENGTH => d.start,
+            end => end,
+        };
+        Related {
+            at: Some((file, d.start, end)),
+            code,
+            args: Vec::new(),
+        }
+    };
     let mut flags = 0;
     let mut accepted: SmallVec<[&DefaultExport; 2]> = SmallVec::new();
+    // Each report: on what, with which code, and what goes with it.
+    let mut reports: Vec<(&DefaultExport, u32, Vec<Related>)> = Vec::new();
     for d in defaults {
         if flags & d.excludes == 0 {
             flags |= d.includes;
             accepted.push(d);
             continue;
         }
-        for declared in accepted.iter().copied().chain(std::iter::once(d)) {
-            out.push(Diagnostic {
-                start: declared.start,
-                code: d.code,
-            });
-            if declared.statement.is_some() {
-                let end = c.end_of_stmt(file, declared.statement);
-                c.note(declared.start, end, d.code, Vec::new());
+        // `multipleDefaultExports`
+        let are_defaults = d.code == 2528;
+        let mut firsts = Vec::new();
+        for (index, declared) in accepted.iter().copied().enumerate() {
+            let mut another = Vec::new();
+            if are_defaults {
+                another.push(related_at(&*c, d, if index == 0 { 2753 } else { 6204 }));
+                firsts.push(related_at(&*c, declared, 2752));
             }
+            reports.push((declared, d.code, another));
+        }
+        reports.push((d, d.code, firsts));
+    }
+    out.extend(reports.iter().map(|report| Diagnostic {
+        start: report.0.start,
+        code: report.1,
+    }));
+    // `compactAndMergeRelatedInfos`: the reports of one error are one, with what goes with any of them in the order of errors.
+    reports.sort_by_key(|report| (report.0.start, report.1));
+    for same in reports.chunk_by(|a, b| (a.0.start, a.1) == (b.0.start, b.1)) {
+        let (declared, code) = (same[0].0, same[0].1);
+        let mut related: Vec<Related> = same.iter().flat_map(|r| r.2.iter().cloned()).collect();
+        if same.len() > 1 {
+            related.sort_by_key(|r| (r.at, r.code));
+            related.dedup();
+        }
+        if declared.statement.is_some() {
+            let end = end_of(&*c, declared);
+            c.note(declared.start, end, code, Vec::new());
+        }
+        if !related.is_empty() {
+            c.relate(declared.start, code, |_| related);
         }
     }
 }

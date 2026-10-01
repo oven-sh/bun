@@ -1030,6 +1030,9 @@ impl Checker<'_> {
                         start: hir.exprs[i].pos,
                         code: 2683,
                     });
+                    self.relate(hir.exprs[i].pos, 2683, |c| {
+                        c.declaration_shadowing_this(file, parent)
+                    });
                 }
             }
         }

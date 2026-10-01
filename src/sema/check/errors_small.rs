@@ -888,6 +888,16 @@ impl Checker<'_> {
                 // `getTypeNameForErrorDisplay`: two types that read the same are both written with qualified names.
                 vec![c.type_names_for_error_display(ty, ty).0]
             });
+            // `errorAndMaybeSuggestAwait`
+            if is_promise {
+                self.relate(start, code, |_| {
+                    vec![super::explain::Related {
+                        at: Some((file, start, end)),
+                        code: 2773,
+                        args: Vec::new(),
+                    }]
+                });
+            }
         }
     }
 

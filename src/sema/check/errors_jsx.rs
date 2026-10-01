@@ -1109,6 +1109,8 @@ impl Checker<'_> {
                 }
                 if always {
                     let start = hir[overwritten].pos;
+                    // Errors that differ in nothing but what they are related to are made one: `compactAndMergeRelatedInfos`.
+                    let is_said = out.iter().any(|d| d.start == start && d.code == 2783);
                     out.push(Diagnostic { start, code: 2783 });
                     // `GetErrorRangeForNode`: a method is pointed at by its name, anything else as a whole.
                     let owner = self.bound(file).prop_owner[overwritten.idx()];
@@ -1119,7 +1121,24 @@ impl Checker<'_> {
                     } else {
                         self.end_of_prop(file, overwritten)
                     };
-                    self.explain_to(start, end, 2783, |c| vec![c.atom_text(name)]);
+                    if !is_said {
+                        self.explain_to(start, end, 2783, |c| vec![c.atom_text(name)]);
+                    }
+                    self.relate(start, 2783, |c| {
+                        // The spread starts at its `...`, that of an attribute at the `{`.
+                        let value = c.start_of(file, prop.value);
+                        let from = if owner.is_some() && matches!(hir[owner].kind, ExprKind::Jsx(_))
+                        {
+                            brace_before(hir, value, true)
+                        } else {
+                            dots_before(hir, value)
+                        };
+                        vec![super::explain::Related {
+                            at: Some((file, from.unwrap_or(value), c.end_of_prop(file, p))),
+                            code: 2785,
+                            args: Vec::new(),
+                        }]
+                    });
                 }
             }
         }
@@ -1436,6 +1455,12 @@ fn brace_before(hir: &hir::File, start: u32, is_spread: bool) -> Option<u32> {
         before = trim_trivia_end(before.strip_suffix(b"...")?);
     }
     before.ends_with(b"{").then(|| before.len() as u32 - 1)
+}
+
+/// Where the `...` before what starts at `start` is.
+fn dots_before(hir: &hir::File, start: u32) -> Option<u32> {
+    let before = trim_trivia_end(hir.text.get(..start as usize)?);
+    before.ends_with(b"...").then(|| before.len() as u32 - 3)
 }
 
 /// `SkipTrivia`: past white space and comments.

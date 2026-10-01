@@ -161,6 +161,65 @@ impl Checker<'_> {
         }
     }
 
+    /// `relate` for a place that only has `&self`.
+    pub(super) fn relate_by_ref(
+        &self,
+        start: u32,
+        code: u32,
+        related: impl FnOnce(&Self) -> Vec<Related>,
+    ) {
+        if !self.explains {
+            return;
+        }
+        let related = related(self);
+        let mut notes = self.notes.borrow_mut();
+        match notes
+            .iter_mut()
+            .rev()
+            .find(|n| n.start == start && n.code == code)
+        {
+            Some(note) => note.related.extend(related),
+            None => notes.push(Note {
+                start,
+                code,
+                end: 0,
+                args: Vec::new(),
+                chain: Vec::new(),
+                related,
+                is_another: false,
+            }),
+        }
+    }
+
+    /// `compactAndMergeRelatedInfos`: adds related information to what was first noted of the error `code` at `start`, which is what is
+    /// shown. `is_again`: the error has been reported before. Then what goes with any of the reports is put in the order of errors,
+    /// each thing once.
+    pub(super) fn relate_reports_merged(
+        &self,
+        start: u32,
+        code: u32,
+        is_again: bool,
+        related: Vec<Related>,
+    ) {
+        let files = self.files();
+        let mut notes = self.notes.borrow_mut();
+        let Some(note) = notes
+            .iter_mut()
+            .find(|n| n.start == start && n.code == code)
+        else {
+            return;
+        };
+        note.related.extend(related);
+        if is_again {
+            let place = |r: &Related| {
+                r.at.map(|(file, from, to)| (&files.module(file).path[..], from, to))
+            };
+            note.related
+                .sort_by(|a, b| (place(a), a.code, &a.args).cmp(&(place(b), b.code, &b.args)));
+            note.related.dedup();
+        }
+    }
+
     /// `name` as it is written in a message.
     pub(super) fn atom_text(&self, name: crate::atom::Atom) -> String {
         String::from_utf8_lossy(self.files().atoms.bytes(name)).into_owned()
@@ -318,11 +377,16 @@ impl Checker<'_> {
                 .map(|related| {
                     let (category, template) = messages::message(related.code)
                         .unwrap_or((Category::Message, "Unknown error."));
+                    let mut text = messages::format(template, &related.args);
+                    // An argument that starts on a new line is a line under the message.
+                    for line in related.args.iter().filter(|arg| arg.starts_with('\n')) {
+                        text.push_str(line);
+                    }
                     RelatedExplained {
                         at: related.at,
                         code: related.code,
                         category,
-                        text: messages::format(template, &related.args),
+                        text,
                     }
                 })
                 .collect(),

@@ -552,10 +552,52 @@ impl Checker<'_> {
             out.push(Diagnostic { start: at, code });
             let end = end(&*self);
             self.explain_to(at, end, code, |c| vec![c.type_to_string(given)]);
+            self.relate(at, code, |c| {
+                c.hint_to_await_what_is_gone_through(given, allows_async, at, end)
+            });
             return None;
         }
         let iterated = self.iterated_type(given, allows_async);
         self.is_known(iterated).then_some(iterated)
+    }
+
+    /// The end of `reportTypeNotIterableError`: 2773 at the node from `at` to `end` of the file that is checked, whose type `given`
+    /// cannot be gone through, if an `await` may be what is missing.
+    pub(super) fn hint_to_await_what_is_gone_through(
+        &mut self,
+        given: TypeId,
+        allows_async: bool,
+        at: u32,
+        end: u32,
+    ) -> Vec<super::explain::Related> {
+        let Some(file) = self.checking else {
+            return Vec::new();
+        };
+        // `getAwaitedTypeOfPromise`
+        let mut suggests_await = self
+            .thenable_value(given)
+            .and_then(|promised| self.awaited_or_none(promised))
+            .is_some_and(|awaited| self.is_known(awaited));
+        if !suggests_await && !allows_async {
+            // `errorNode.Parent.Expression() == errorNode`
+            let is_what_a_loop_goes_through = self.hir(file).stmts.iter().any(|s| {
+                matches!(s.kind, StmtKind::ForOf { expr, .. } if self.start_of_error_about(file, expr) == at)
+            });
+            if is_what_a_loop_goes_through
+                && self.global_type_of_arity(known::AsyncIterable, 3).is_some()
+            {
+                let any_async_iterable = self.global_ref(known::AsyncIterable, &[TypeId::ANY; 3]);
+                suggests_await = self.is_assignable(given, any_async_iterable);
+            }
+        }
+        if !suggests_await {
+            return Vec::new();
+        }
+        vec![super::explain::Related {
+            at: Some((file, at, end)),
+            code: 2773,
+            args: Vec::new(),
+        }]
     }
 
     /// `checkDestructuringAssignment`: `source` is taken apart into `target`, or assigned to it.

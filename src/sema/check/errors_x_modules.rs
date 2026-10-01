@@ -244,6 +244,7 @@ impl Checker<'_> {
         );
         self.xm_statements_in_blocks(&cx, out);
         self.xm_static_blocks(&cx, out);
+        self.xm_collisions_of_declarations(&cx, out);
         self.xm_import_calls_and_types(&cx, out);
         self.check_import_attribute_types(&cx, out);
         self.check_members_of_export_equals(&cx, out);
@@ -331,6 +332,208 @@ impl Checker<'_> {
             ResolutionMode::Require => true,
             ResolutionMode::Import => false,
             ResolutionMode::None => self.p.files.options.module == ModuleKind::CommonJs,
+        }
+    }
+
+    /// `GetEmitModuleFormatOfFile`
+    fn xm_emit_module_format(&self, file: FileId) -> ModuleKind {
+        match self.files().module(file).implied_format {
+            ResolutionMode::Require => ModuleKind::CommonJs,
+            ResolutionMode::Import => ModuleKind::EsNext,
+            ResolutionMode::None => self.p.files.options.module,
+        }
+    }
+
+    /// `checkCollisionWithRequireExportsInGeneratedCode`, `checkCollisionWithGlobalObjectInGeneratedCode` and
+    /// `checkCollisionWithGlobalPromiseInGeneratedCode`: 2441 2529, of `name`, written at `pos`, which a declaration at the top of the
+    /// file that is not ambient gives to something.
+    fn xm_collision_with_generated_code(
+        &self,
+        cx: &Cx<'_>,
+        name: Atom,
+        pos: u32,
+        is_class: bool,
+        out: &mut Vec<Diagnostic>,
+    ) {
+        let options = &self.p.files.options;
+        // `errorSkippedOnNoEmit`
+        if !cx.is_module || options.nothing_is_emitted {
+            return;
+        }
+        let format = self.xm_emit_module_format(cx.file);
+        // `NodeFlagsHasAsyncFunctions`
+        let has_async_functions = || {
+            self.hir(cx.file).fns.iter().any(|f| {
+                f.flags.contains(Flags::ASYNC)
+                    && !f.flags.intersects(Flags::GENERATOR | Flags::AMBIENT)
+                    && !matches!(f.body, FnBody::None)
+                    && matches!(
+                        f.kind,
+                        FnKind::Decl | FnKind::Expr | FnKind::Arrow | FnKind::Method
+                    )
+            })
+        };
+        let code = match name {
+            known::require | known::exports if format < ModuleKind::Es2015 => 2441,
+            known::Object if format == ModuleKind::CommonJs && !is_class => 2441,
+            known::Promise
+                if options.target != crate::resolve::ScriptTarget::None
+                    && options.target < crate::resolve::ScriptTarget::ES2017
+                    && has_async_functions() =>
+            {
+                2529
+            }
+            _ => return,
+        };
+        out.push(Diagnostic { start: pos, code });
+        let name = self.atom_text(name);
+        self.note(pos, 0, code, vec![name.clone(), name]);
+    }
+
+    /// `checkImportBinding`, of `import name = ..`: `checkCollisionsForDeclarationName`.
+    fn xm_collision_of_import_equals(
+        &self,
+        cx: &Cx<'_>,
+        import: &ImportEquals,
+        around: Around,
+        out: &mut Vec<Diagnostic>,
+    ) {
+        if around.module.is_none()
+            && !around.is_ambient
+            && !import.flags.intersects(Flags::TYPE_ONLY | Flags::AMBIENT)
+        {
+            self.xm_collision_with_generated_code(cx, import.name, import.name_pos, false, out);
+        }
+    }
+
+    /// `ModuleInstanceStateConstEnumOnly`, of a namespace that is instantiated: nothing in it is more of a value than a `const enum`.
+    fn xm_is_const_enum_only(&self, file: FileId, m: ModuleId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        hir[m].has_body
+            && hir.ids(hir[m].body).all(|s| match hir[s].kind {
+                StmtKind::Interface(_) | StmtKind::TypeAlias(_) | StmtKind::Import(_) => true,
+                StmtKind::Enum(e) => hir[e].flags.contains(Flags::CONST),
+                StmtKind::ImportEquals(i) => !hir[i].flags.contains(Flags::EXPORT),
+                StmtKind::Module(inner) => {
+                    !bound.module_instantiated[inner.idx()]
+                        || self.xm_is_const_enum_only(file, inner)
+                }
+                _ => false,
+            })
+    }
+
+    /// `checkCollisionsForDeclarationName`, of what the statements at the top of the file declare, imports aside. And
+    /// `checkGrammarForEsModuleMarkerInBindingName`: 1216.
+    fn xm_collisions_of_declarations(&self, cx: &Cx<'_>, out: &mut Vec<Diagnostic>) {
+        /// The names `pat` binds, and where they are.
+        fn bound_names(hir: &hir::File, pat: PatId, names: &mut Vec<(Atom, u32)>) {
+            match hir[pat].kind {
+                PatKind::Ident(name) => names.push((name, hir[pat].pos)),
+                PatKind::Object(props) => {
+                    for p in props.iter() {
+                        bound_names(hir, hir[p].value, names);
+                    }
+                }
+                PatKind::Array(elems) => {
+                    for x in elems.iter() {
+                        bound_names(hir, hir[x].pat, names);
+                    }
+                }
+                PatKind::Missing => {}
+            }
+        }
+        /// Where `pat` binds `marker`. Of a pattern, only the first element that has a name is looked into.
+        fn es_module_marker(hir: &hir::File, marker: Atom, pat: PatId) -> Option<u32> {
+            match hir[pat].kind {
+                PatKind::Ident(name) => (name == marker).then_some(hir[pat].pos),
+                PatKind::Object(props) => {
+                    es_module_marker(hir, marker, hir[props.iter().next()?].value)
+                }
+                PatKind::Array(elems) => {
+                    let first = elems
+                        .iter()
+                        .map(|x| hir[x].pat)
+                        .find(|&p| !matches!(hir[p].kind, PatKind::Missing))?;
+                    es_module_marker(hir, marker, first)
+                }
+                PatKind::Missing => None,
+            }
+        }
+        let (hir, bound) = (self.hir(cx.file), self.bound(cx.file));
+        if hir.kind == FileKind::Declaration
+            || !cx.is_module
+            || self.p.files.options.nothing_is_emitted
+        {
+            return;
+        }
+        // `grammarErrorOnNodeSkippedOnNoEmit`
+        let marker = self
+            .files()
+            .atoms
+            .lookup(b"__esModule")
+            .filter(|_| cx.grammar && self.xm_emit_module_format(cx.file) < ModuleKind::System);
+        let mut names = Vec::new();
+        for s in hir.ids(hir.body) {
+            // `GetDeclarationContainer`: what the head of a loop declares is declared where the loop is.
+            let kind = match hir[s].kind {
+                StmtKind::For { init: head, .. }
+                | StmtKind::ForIn { left: head, .. }
+                | StmtKind::ForOf { left: head, .. }
+                    if head.is_some() =>
+                {
+                    hir[head].kind
+                }
+                kind => kind,
+            };
+            match kind {
+                StmtKind::Var(decls) => {
+                    for d in decls.iter() {
+                        let decl = hir[d];
+                        if decl.flags.contains(Flags::AMBIENT) {
+                            continue;
+                        }
+                        if decl.flags.contains(Flags::EXPORT)
+                            && let Some(marker) = marker
+                            && let Some(start) = es_module_marker(hir, marker, decl.pat)
+                        {
+                            out.push(Diagnostic { start, code: 1216 });
+                        }
+                        // `checkVariableLikeDeclaration` is done with `const a = require("m")` before it looks at the name.
+                        if self.external_module_require_argument(cx.file, d).is_some() {
+                            continue;
+                        }
+                        names.clear();
+                        bound_names(hir, decl.pat, &mut names);
+                        for &(name, pos) in &names {
+                            self.xm_collision_with_generated_code(cx, name, pos, false, out);
+                        }
+                    }
+                }
+                StmtKind::Fn(f) if !hir[f].flags.contains(Flags::AMBIENT) => {
+                    let (name, pos) = (hir[f].name, hir[f].name_pos);
+                    self.xm_collision_with_generated_code(cx, name, pos, false, out);
+                }
+                StmtKind::Class(c) if !hir[c].flags.contains(Flags::AMBIENT) => {
+                    let (name, pos) = (hir[c].name, hir[c].name_pos);
+                    self.xm_collision_with_generated_code(cx, name, pos, true, out);
+                }
+                StmtKind::Enum(e) if !hir[e].flags.contains(Flags::AMBIENT) => {
+                    let (name, pos) = (hir[e].name, hir[e].name_pos);
+                    self.xm_collision_with_generated_code(cx, name, pos, false, out);
+                }
+                // `ModuleInstanceStateInstantiated`
+                StmtKind::Module(m) => {
+                    if let ModuleName::Ident(name) = hir[m].name
+                        && !hir[m].flags.contains(Flags::AMBIENT)
+                        && bound.module_instantiated[m.idx()]
+                        && !self.xm_is_const_enum_only(cx.file, m)
+                    {
+                        let pos = hir[m].name_pos;
+                        self.xm_collision_with_generated_code(cx, name, pos, false, out);
+                    }
+                }
+                _ => {}
+            }
         }
     }
 
@@ -1172,6 +1375,22 @@ impl Checker<'_> {
                 self.xm_is_collected(cx, import.spec, around),
                 out,
             );
+            // `checkImportBinding`: `checkCollisionsForDeclarationName`. `needCollisionCheckForIdentifier` lets a name that is only
+            // about types pass, but not that of a namespace import.
+            if !is_clause_refused && around.module.is_none() && !around.is_ambient {
+                if !import.type_only {
+                    let (name, at) = (import.default, import.default_pos);
+                    self.xm_collision_with_generated_code(cx, name, at, false, out);
+                }
+                let (name, at) = (import.namespace, import.namespace_pos);
+                self.xm_collision_with_generated_code(cx, name, at, false, out);
+                for s in import.named.iter() {
+                    if !is_missing && !import.type_only && !hir[s].type_only {
+                        let (name, at) = (hir[s].local, hir[s].pos);
+                        self.xm_collision_with_generated_code(cx, name, at, false, out);
+                    }
+                }
+            }
             // `checkImportBinding`, `checkAliasSymbol`: of the names that stand for something.
             if !is_missing
                 && !is_clause_refused
@@ -1222,6 +1441,14 @@ impl Checker<'_> {
                         cx.members_of_export_equals
                             .borrow_mut()
                             .push((files.sym(cx.file, id), s));
+                    }
+                }
+            }
+            // `checkImportBinding`: `checkModuleExportName`, of the name before `as`.
+            if !is_missing && !is_clause_refused {
+                for s in import.named.iter() {
+                    if hir[s].imported_pos != hir[s].pos {
+                        self.xm_module_export_name(cx, hir[s].imported_pos, out);
                     }
                 }
             }
@@ -1282,6 +1509,7 @@ impl Checker<'_> {
         let names = match import.target {
             ImportEqualsTarget::Require(spec) => {
                 if self.xm_is_in_place(cx, pos, spec, false, around, out) {
+                    self.xm_collision_of_import_equals(cx, &import, around, out);
                     self.xm_module_is_missing(
                         cx,
                         pos,
@@ -1299,6 +1527,7 @@ impl Checker<'_> {
             }
             ImportEqualsTarget::Entity(names) => names,
         };
+        self.xm_collision_of_import_equals(cx, &import, around, out);
         let scope = bound.import_equals_scope[i.idx()];
         let mut path = [Atom::NONE; 8];
         if scope.is_none() || names.is_empty() || names.len() > path.len() {
@@ -1363,6 +1592,24 @@ impl Checker<'_> {
         }
     }
 
+    /// `checkModuleExportName`, of the name of an import or an export written at `pos`, where a string will do: 18057.
+    fn xm_module_export_name(&self, cx: &Cx<'_>, pos: u32, out: &mut Vec<Diagnostic>) {
+        if cx.grammar
+            && matches!(
+                self.p.files.options.module,
+                ModuleKind::Es2015 | ModuleKind::Es2020
+            )
+            && self.hir(cx.file).kind != FileKind::Declaration
+            && let Some(end) = string_end(cx.text, pos as usize)
+        {
+            out.push(Diagnostic {
+                start: pos,
+                code: 18057,
+            });
+            self.note(pos, end as u32, 18057, Vec::new());
+        }
+    }
+
     /// `checkExportDeclaration`, of `export { .. }`
     fn xm_export_named(
         &self,
@@ -1391,6 +1638,13 @@ impl Checker<'_> {
                     out,
                 )
             };
+            // `checkExportSpecifier`: `checkModuleExportName`, of both names. Without `from`, a string before `as` is a 1003.
+            for s in export.items.iter() {
+                if export.spec.is_some() && hir[s].local_pos != hir[s].pos {
+                    self.xm_module_export_name(cx, hir[s].local_pos, out);
+                }
+                self.xm_module_export_name(cx, hir[s].pos, out);
+            }
             // `checkExportSpecifier`, `checkAliasSymbol`
             if !is_missing
                 && cx.verbatim_commonjs
@@ -1500,6 +1754,22 @@ impl Checker<'_> {
                     self.note(star as u32, end, cx.esm_syntax_code, Vec::new());
                 }
             }
+            // `checkModuleExportName`, of the name in `export * as name`, unless 2498 was all there is to say.
+            let asterisk = if is_type_only {
+                skip_trivia(cx.text, word_end(cx.text, star))
+            } else {
+                star
+            };
+            if alias.is_some()
+                && cx.text.get(asterisk) == Some(&b'*')
+                && !self
+                    .xm_module_of_specifier(cx.file, spec)
+                    .is_some_and(|module| files.export(module, known::export_equals).is_some())
+            {
+                let word = skip_trivia(cx.text, asterisk + 1);
+                let name = skip_trivia(cx.text, word_end(cx.text, word));
+                self.xm_module_export_name(cx, name as u32, out);
+            }
         } else {
             let may_be_used = around.module.is_none()
                 || alias.is_some() && self.xm_follows_a_dot_somewhere(cx, alias);
@@ -1596,6 +1866,10 @@ impl Checker<'_> {
                 report(1291, 1292);
             } else if type_only.is_some_and(|of| of != cx.file) {
                 report(1289, 1290);
+                let code = if is_export_equals { 1289 } else { 1290 };
+                self.relate_by_ref(hir[e].pos, code, |c| {
+                    c.type_only_declaration_related(sym, c.atom_text(name))
+                });
             }
         }
     }

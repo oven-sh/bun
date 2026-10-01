@@ -240,8 +240,12 @@ pub struct Options {
     pub emit_decorator_metadata: bool,
     /// `importHelpers`
     pub import_helpers: bool,
+    /// `noEmit` itself.
+    pub no_emit_said: bool,
     /// `allowArbitraryExtensions`
     pub allow_arbitrary_extensions: bool,
+    /// `noEmit`
+    pub nothing_is_emitted: bool,
     /// JavaScript is written next to its source: none of `noEmit`, `emitDeclarationOnly`, `outDir`.
     pub writes_js_beside_source: bool,
     /// Declaration files are written next to their source: `GetEmitDeclarations`, and none of `noEmit`, `declarationDir`, `outDir`.
@@ -250,6 +254,10 @@ pub struct Options {
     pub jsx_factory: String,
     pub jsx_fragment_factory: String,
     pub react_namespace: String,
+    /// `outDir`, `declarationDir`, `rootDir`, as absolute paths. Empty if they are not said.
+    pub emit_out_dir: String,
+    pub emit_declaration_dir: String,
+    pub emit_root_dir: String,
 }
 
 impl Options {
@@ -412,7 +420,9 @@ impl Options {
         options.erasable_syntax_only = flag("erasableSyntaxOnly");
         options.emit_decorator_metadata = flag("emitDecoratorMetadata");
         options.import_helpers = flag("importHelpers");
+        options.no_emit_said = flag("noEmit");
         options.allow_arbitrary_extensions = flag("allowArbitraryExtensions");
+        options.nothing_is_emitted = flag("noEmit");
         options.reports_unreachable_code =
             compiler.get("allowUnreachableCode").and_then(Json::as_bool) == Some(false);
         options.reports_unused_labels =
@@ -543,6 +553,13 @@ impl Options {
         options.jsx_factory = text("jsxFactory");
         options.jsx_fragment_factory = text("jsxFragmentFactory");
         options.react_namespace = text("reactNamespace");
+        let directory = |name: &str| match text(name) {
+            said if said.is_empty() => said,
+            said => join(base_dir, &said),
+        };
+        options.emit_out_dir = directory("outDir");
+        options.emit_declaration_dir = directory("declarationDir");
+        options.emit_root_dir = directory("rootDir");
         if let Some(source) = compiler.get("jsxImportSource").and_then(Json::as_str) {
             options.jsx_import_source = source.to_owned();
         }
@@ -716,6 +733,12 @@ struct Look<'a> {
     /// `resolved.extension` is `.d.css.ts`, `.d.json.ts` or the like, which `GetResolutionDiagnostic` takes `allowArbitraryExtensions` for.
     /// Set like `using_ts_extension`.
     arbitrary_extension: &'a Cell<bool>,
+    /// `resolvedPackageDirectory`: the `package.json` of a package by the name that is looked for has been come upon.
+    found_package: &'a Cell<bool>,
+    /// `IsExternalLibraryImport`, of what was found for a name that is not relative.
+    is_external: &'a Cell<bool>,
+    /// Not `NodeResolutionFeaturesExports`: what the `exports` of a package in `node_modules` say is passed over.
+    ignores_exports: bool,
 }
 
 impl Look<'_> {
@@ -772,9 +795,13 @@ pub struct Resolver<'h> {
     packages: RwLock<FxHashMap<String, Option<Arc<Package>>>>,
     dirs: RwLock<FxHashMap<String, bool>>,
     files: RwLock<FxHashMap<String, bool>>,
+    /// `AlternateResult`, by the key of `resolved`.
+    alternates: RwLock<FxHashMap<String, String>>,
     /// What `resolve_module_and_extension` found. By the directory, `//`, the mode as a digit, and the specifier: no directory has `//`
     /// in it.
     resolved: ShardedMap<String, Option<(String, bool, bool)>>,
+    /// `resolutionState.diagnostics`, of all that was looked for: whether it is about `imports`, the entry, and the `package.json`.
+    ambiguous_roots: std::sync::Mutex<Vec<(bool, String, String)>>,
 }
 
 /// `extensionsToRemove`: the extensions that mean something, in the order they are looked for at the end of a name.
@@ -815,7 +842,9 @@ impl<'h> Resolver<'h> {
             packages: RwLock::default(),
             dirs: RwLock::default(),
             files: RwLock::default(),
+            alternates: RwLock::default(),
             resolved: ShardedMap::default(),
+            ambiguous_roots: Default::default(),
         }
     }
 
@@ -906,26 +935,51 @@ impl<'h> Resolver<'h> {
         from: &str,
         mode: ResolutionMode,
     ) -> Option<(String, bool, bool)> {
-        // Of `from`, only the directory counts.
-        let key = [
-            parent_dir(from),
-            match mode {
-                ResolutionMode::None => "//0",
-                ResolutionMode::Import => "//1",
-                ResolutionMode::Require => "//2",
-            },
-            spec,
-        ]
-        .concat();
+        let key = resolution_key(spec, from, mode);
         if let Some(known) = self.resolved.get_ref(key.as_str()) {
             return known.clone();
         }
         let (using_ts_extension, arbitrary_extension) = (Cell::new(false), Cell::new(false));
-        let look = self.look(mode, true, &using_ts_extension, &arbitrary_extension);
+        let (found_package, is_external) = (Cell::new(false), Cell::new(false));
+        let look = self.look(
+            mode,
+            true,
+            &using_ts_extension,
+            &arbitrary_extension,
+            &found_package,
+            &is_external,
+        );
         let found = self
             .resolve_with(spec, from, look)
             .map(|found| (found, using_ts_extension.get(), arbitrary_extension.get()));
+        // `resolveNodeLike`: whether there would be types but for the `exports` of the package.
+        if let Some((path, ..)) = &found
+            && found_package.get()
+            && is_external.get()
+            && self.options.resolve_package_json_exports
+            && look.import
+            && !is_relative(spec)
+            && is_javascript(path)
+        {
+            let without_exports = Look {
+                ignores_exports: true,
+                ..look.for_types()
+            };
+            is_external.set(false);
+            if let Some(types) = self.resolve_with(spec, from, without_exports)
+                && is_external.get()
+            {
+                self.alternates.write().unwrap().insert(key.clone(), types);
+            }
+        }
         self.resolved.insert_ref(key, found).clone()
+    }
+
+    /// `AlternateResult` of what `resolve_module_and_extension` found: the file with the types of a package whose `exports` only lead
+    /// to JavaScript, found by passing them over.
+    pub fn alternate_result(&self, spec: &str, from: &str, mode: ResolutionMode) -> Option<String> {
+        let alternates = self.alternates.read().unwrap();
+        alternates.get(&resolution_key(spec, from, mode)).cloned()
     }
 
     /// `newResolutionState`. `is_module`: the name is a module specifier. Otherwise it is the name in a `/// <reference types>`, which
@@ -936,6 +990,8 @@ impl<'h> Resolver<'h> {
         is_module: bool,
         using_ts_extension: &'a Cell<bool>,
         arbitrary_extension: &'a Cell<bool>,
+        found_package: &'a Cell<bool>,
+        is_external: &'a Cell<bool>,
     ) -> Look<'a> {
         let like_node = self.options.resolves_like_node;
         Look {
@@ -949,6 +1005,9 @@ impl<'h> Resolver<'h> {
             ending_from_config: false,
             using_ts_extension,
             arbitrary_extension,
+            found_package,
+            is_external,
+            ignores_exports: false,
         }
     }
 
@@ -958,7 +1017,9 @@ impl<'h> Resolver<'h> {
         // `createResolvedModuleHandlingSymlink`: what is in a package is where the links to it lead.
         let follows_links = !self.options.preserve_symlinks;
         let real = |found: String| {
-            if follows_links && found.contains("/node_modules/") {
+            let is_in_package = found.contains("/node_modules/");
+            look.is_external.set(is_in_package);
+            if follows_links && is_in_package {
                 self.host.realpath(&found)
             } else {
                 found
@@ -1046,6 +1107,24 @@ impl<'h> Resolver<'h> {
         }
     }
 
+    /// `loadSourceFileMetaData`: the `package.json` nearest to the file at `path` (`PackageJsonDirectory`), if there is one and no
+    /// `PackageJsonType` comes of it.
+    pub fn package_json_without_type(&self, path: &str) -> Option<String> {
+        let (dir, package) = self.package_scope(parent_dir(path))?;
+        let is_asked = self.options.resolves_like_node
+            && ![".mts", ".cts", ".mjs", ".cjs"]
+                .iter()
+                .any(|e| path.ends_with(e))
+            || path.contains("/node_modules/");
+        let says_type = is_asked
+            && package
+                .json
+                .get("type")
+                .and_then(Json::as_str)
+                .is_some_and(|said| !said.is_empty());
+        (!says_type).then(|| inside(dir, "package.json"))
+    }
+
     /// Under `module: node16` and later: whether the file at `path` is an ECMAScript module, going by its extension, or else by
     /// the `package.json` nearest to it.
     pub fn is_ecmascript_module(&self, path: &str) -> bool {
@@ -1112,7 +1191,7 @@ impl<'h> Resolver<'h> {
     ) -> Option<String> {
         // `ResolvedTypeReferenceDirective` has no `ResolvedUsingTsExtension`.
         let ignored = Cell::new(false);
-        let look = self.look(mode, false, &ignored, &ignored);
+        let look = self.look(mode, false, &ignored, &ignored, &ignored, &ignored);
         let has_roots = self.options.type_roots.is_some();
         // First where types are kept, wherever the reference is written.
         let primary = if has_roots {
@@ -1566,7 +1645,7 @@ impl<'h> Resolver<'h> {
         let exports = package
             .as_ref()
             .and_then(|p| p.json.get("exports"))
-            .filter(|_| self.options.resolve_package_json_exports);
+            .filter(|_| self.options.resolve_package_json_exports && !look.ignores_exports);
         // A directory in a package that has a `package.json` of its own goes by that, unless the package says what it exports.
         if !rest.is_empty()
             && exports.is_none()
@@ -1576,6 +1655,9 @@ impl<'h> Resolver<'h> {
                 .or_else(|| self.package_entry(&candidate, look))
         {
             return Found::File(found);
+        }
+        if package.is_some() {
+            look.found_package.set(true);
         }
         // What a package exports is all there is to it: no file, no directory, no `typesVersions`. `"exports": null` says nothing.
         if let Some(exports) = exports
@@ -1731,7 +1813,11 @@ impl<'h> Resolver<'h> {
                 if path.split('/').skip(1).any(leads_away) || subpath.split('/').any(leads_away) {
                     return Found::No;
                 }
-                Found::of(self.named_file(&join(package_dir, &filled), path, look))
+                let named = join(package_dir, &filled);
+                match self.input_file_for(&named, subpath, package_dir, is_imports, look) {
+                    Found::No => Found::of(self.named_file(&named, path, look)),
+                    found => found,
+                }
             }
             // The first condition that holds and has an answer.
             Json::Object(conditions) => {
@@ -1773,6 +1859,94 @@ impl<'h> Resolver<'h> {
         }
     }
 
+    /// `tryLoadInputFileForPath`: `path`, which the `exports` or the `imports` of the `package.json` in `package_dir` lead to, may be
+    /// what the project itself writes to `outDir` or `declarationDir`. Then it stands for the file it is made from. `entry`: what the
+    /// `*` of the key stands for, or what follows the key.
+    fn input_file_for(
+        &self,
+        path: &str,
+        entry: &str,
+        package_dir: &str,
+        is_imports: bool,
+        look: Look,
+    ) -> Found {
+        let options = self.options;
+        let is_case_sensitive = self.host.is_case_sensitive();
+        if options.emit_out_dir.is_empty() && options.emit_declaration_dir.is_empty()
+            || path.contains("/node_modules/")
+            || options.has_config_file
+                && !contains_path(package_dir, &options.base_dir, is_case_sensitive)
+        {
+            return Found::No;
+        }
+        let root_dir = if !options.emit_root_dir.is_empty() {
+            options.emit_root_dir.as_str()
+        } else if options.has_config_file {
+            options.base_dir.as_str()
+        } else {
+            let entry = if entry.is_empty() { "." } else { entry };
+            self.ambiguous_roots.lock().unwrap().push((
+                is_imports,
+                entry.to_owned(),
+                inside(package_dir, "package.json"),
+            ));
+            return Found::Blocked;
+        };
+        // `resolutionState.extensions`: all kinds of file, whichever of them this part of the search is for.
+        let look = Look {
+            typescript: true,
+            declarations: true,
+            js: true,
+            ..look
+        };
+        // `getOutputDirectoriesForBaseDirectory`
+        let mut written_to = vec![options.emit_declaration_dir.as_str()];
+        if options.emit_out_dir != options.emit_declaration_dir {
+            written_to.push(options.emit_out_dir.as_str());
+        }
+        for dir in written_to {
+            if dir.is_empty() || !contains_path(dir, path, is_case_sensitive) {
+                continue;
+            }
+            let input = join(root_dir, path.get(dir.len() + 1..).unwrap_or(""));
+            let written = known_extension(&input);
+            // `GetPossibleOriginalInputExtensionForExtension`
+            let extensions: &[&str] = match written {
+                ".mjs" | ".d.mts" => &[".mts", ".mjs"],
+                ".cjs" | ".d.cts" => &[".cts", ".cjs"],
+                ".js" | ".json" | ".d.ts" => &[".tsx", ".ts", ".jsx", ".js"],
+                _ => continue,
+            };
+            let stem = &input[..input.len() - written.len()];
+            for extension in extensions {
+                let candidate = [stem, *extension].concat();
+                if self.is_file(&candidate)
+                    && let Some(found) = self.named_file(&candidate, "", look)
+                {
+                    return Found::File(found);
+                }
+            }
+        }
+        Found::No
+    }
+
+    /// `ResolutionDiagnostics`, of all that was looked for, each once: 2209 2210.
+    pub fn resolution_problems(&self) -> Vec<crate::verify::Problem> {
+        let mut roots = self.ambiguous_roots.lock().unwrap().clone();
+        roots.sort();
+        roots.dedup();
+        roots
+            .iter()
+            .map(|(is_imports, entry, package_json)| {
+                crate::verify::Problem::new(
+                    if *is_imports { 2210 } else { 2209 },
+                    &[entry.as_str(), package_json.as_str()],
+                    crate::verify::Place::Nowhere,
+                )
+            })
+            .collect()
+    }
+
     /// `conditionMatches`, of what `GetConditions` gives. (See `version_in_range` for `types@<range>`.)
     fn condition_matches(&self, condition: &str, look: Look) -> bool {
         let by_mode = if look.import { "import" } else { "require" };
@@ -1805,6 +1979,22 @@ impl<'h> Resolver<'h> {
     }
 }
 
+/// `ContainsPath`, of two paths that are absolute and normalized: `child` is `parent`, or is in it.
+fn contains_path(parent: &str, child: &str, is_case_sensitive: bool) -> bool {
+    let Some(start) = child.get(..parent.len()) else {
+        return false;
+    };
+    let is_same = if is_case_sensitive {
+        start == parent
+    } else {
+        start.eq_ignore_ascii_case(parent)
+    };
+    is_same
+        && (child.len() == parent.len()
+            || parent.ends_with('/')
+            || child.as_bytes()[parent.len()] == b'/')
+}
+
 /// `IsFalsy`, of a value in a `package.json`.
 fn is_falsy(json: &Json) -> bool {
     match json {
@@ -1813,6 +2003,20 @@ fn is_falsy(json: &Json) -> bool {
         Json::Number(n) => *n == 0.0,
         _ => false,
     }
+}
+
+/// What `Resolver::resolved` goes by. Of `from`, only the directory counts.
+fn resolution_key(spec: &str, from: &str, mode: ResolutionMode) -> String {
+    [
+        parent_dir(from),
+        match mode {
+            ResolutionMode::None => "//0",
+            ResolutionMode::Import => "//1",
+            ResolutionMode::Require => "//2",
+        },
+        spec,
+    ]
+    .concat()
 }
 
 /// `MatchPatternOrExact`: what `table` has for `name`: under that very name, or else under the pattern that fits it with the longest
@@ -2289,6 +2493,43 @@ mod tests {
         for spec in ["./internal/foo.js", "#foo.ts", "#x/foo.ts", "@y/foo"] {
             assert_eq!(flag(spec), Some(false), "{spec}");
         }
+    }
+
+    #[test]
+    fn output_paths_stand_for_their_inputs() {
+        let host = Fake(&[
+            (
+                "/p/package.json",
+                r##"{ "name": "pkg", "exports": { "./*": "./dist/*" }, "imports": { "#a": "./dist/a.js" } }"##,
+            ),
+            ("/p/src/a.ts", ""),
+            ("/p/src/b.mts", ""),
+        ]);
+        let options = Options {
+            emit_out_dir: "/p/dist".to_owned(),
+            emit_root_dir: "/p/src".to_owned(),
+            ..like_node()
+        };
+        let resolver = Resolver::new(&host, &options);
+        let find =
+            |spec: &str| resolver.resolve_module(spec, "/p/src/a.ts", ResolutionMode::Import);
+        assert_eq!(find("#a").as_deref(), Some("/p/src/a.ts"));
+        assert_eq!(find("pkg/b.mjs").as_deref(), Some("/p/src/b.mts"));
+        assert_eq!(find("pkg/c.js"), None);
+        assert!(resolver.resolution_problems().is_empty());
+        // Without `rootDir` and without a configuration file there is no telling where the input is.
+        let options = Options {
+            emit_out_dir: "/p/dist".to_owned(),
+            ..like_node()
+        };
+        let resolver = Resolver::new(&host, &options);
+        assert_eq!(
+            resolver.resolve_module("#a", "/p/src/a.ts", ResolutionMode::Import),
+            None
+        );
+        let problems = resolver.resolution_problems();
+        let codes: Vec<u32> = problems.iter().map(|problem| problem.code).collect();
+        assert_eq!(codes, [2210]);
     }
 
     #[test]

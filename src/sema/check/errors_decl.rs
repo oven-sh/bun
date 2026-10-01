@@ -844,6 +844,32 @@ impl Checker<'_> {
                             c.type_to_string(again),
                         ]
                     });
+                    // `symbol.ValueDeclaration`
+                    let first = merged[0];
+                    self.relate(start, code, |c| {
+                        // `GetErrorRangeForNode`: all of a parameter, the name of a member.
+                        let at = if first.member.is_none() {
+                            (
+                                first.file,
+                                c.hir(first.file)[first.param].pos,
+                                c.end_of_param(first.file, first.param),
+                            )
+                        } else {
+                            let from = c.hir(first.file)[first.member].pos;
+                            // The text of the default library is not kept.
+                            let to = if c.hir(first.file).text.is_empty() {
+                                from
+                            } else {
+                                c.end_of_member_name(first.file, first.member)
+                            };
+                            (first.file, from, to)
+                        };
+                        vec![super::explain::Related {
+                            at: Some(at),
+                            code: 6203,
+                            args: vec![c.source_text(file, start, end)],
+                        }]
+                    });
                 }
             }
         }

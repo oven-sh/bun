@@ -1192,6 +1192,8 @@ impl Checker<'_> {
             // `declareModuleMember`: what is kept and what is exported are two symbols, each with a first declaration of its own.
             // `Some(None)`: there is one, and nothing is held against it.
             let mut firsts: [Option<Option<TypeId>>; 2] = [None, None];
+            // `symbol.ValueDeclaration` of each.
+            let mut first_names = [(file, PatId::NONE); 2];
             for &(of, decl) in &decls {
                 let (Decl::Var(pat) | Decl::Param(pat)) = decl else {
                     continue;
@@ -1210,6 +1212,7 @@ impl Checker<'_> {
                         (self.is_known(ty) && !self.is_declared_in_error(of, pat, ty))
                             .then_some(ty),
                     );
+                    first_names[slot] = (of, pat);
                     continue;
                 };
                 let Some(declared) = first else { continue };
@@ -1233,6 +1236,23 @@ impl Checker<'_> {
                         c.type_to_string(declared),
                         c.type_to_string(here),
                     ]
+                });
+                let (first_of, first_name) = first_names[slot];
+                self.relate(start, 2403, |c| {
+                    // `GetErrorRangeForNode`: all of a parameter, the name of anything else.
+                    let at = match c.bound(first_of).pat_parent[first_name.idx()] {
+                        crate::bind::PatParent::Param(p) => (
+                            first_of,
+                            c.hir(first_of)[p].pos,
+                            c.end_of_param(first_of, p),
+                        ),
+                        _ => c.place_of_token(first_of, c.hir(first_of)[first_name].pos),
+                    };
+                    vec![super::explain::Related {
+                        at: Some(at),
+                        code: 6203,
+                        args: vec![c.source_text(of, start, end)],
+                    }]
                 });
             }
         }

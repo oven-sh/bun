@@ -47,6 +47,8 @@ enum TypeOnlyKind {
 struct TypeOnly {
     file: FileId,
     kind: TypeOnlyKind,
+    /// The alias that says `type`, and the declaration of it that does. For an `export type *`, those that came through it.
+    alias: (Sym, Decl),
 }
 
 /// `AliasSymbolLinks` of every alias looked at, and what `typeResolutions` has of aliases.
@@ -202,6 +204,79 @@ impl Checker<'_> {
         }
     }
 
+    /// `GetErrorRangeForNode` of the declaration `decl` of the alias `sym`, in the file of `sym`. `None`: it declares no alias.
+    pub(super) fn place_of_alias_declaration(
+        &self,
+        sym: Sym,
+        decl: Decl,
+    ) -> Option<(FileId, u32, u32)> {
+        let file = sym.file;
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let stmt = match decl {
+            Decl::ExportStarAs(s) | Decl::ExportExpr(s) | Decl::UmdGlobal(s) => s,
+            _ => {
+                let holds_it = |s: &Stmt| match (s.kind, decl) {
+                    (StmtKind::Import(x), Decl::ImportDefault(of) | Decl::ImportNamespace(of)) => {
+                        x == of
+                    }
+                    (StmtKind::Import(x), Decl::ImportSpec(spec)) => {
+                        hir[x].named.range().contains(&spec.idx())
+                    }
+                    (StmtKind::ImportEquals(x), Decl::ImportEquals(of)) => x == of,
+                    (StmtKind::ExportNamed(x), Decl::ExportSpec(spec)) => {
+                        hir[x].items.range().contains(&spec.idx())
+                    }
+                    _ => false,
+                };
+                let s = (0..hir.stmts.len()).find(|&s| {
+                    holds_it(&hir.stmts[s]) && !matches!(bound.stmt_parent[s], Parent::None)
+                })?;
+                StmtId(s as u32)
+            }
+        };
+        let start = alias_node_start(hir, decl, hir[stmt].pos);
+        let node = AliasNode {
+            sym,
+            decl,
+            start,
+            stmt,
+        };
+        let end = match self.xa_alias_node_end(file, &node) {
+            0 => self.end_of_token_at(file, start),
+            end => end,
+        };
+        Some((file, start, end))
+    }
+
+    /// Where the `export type *` of `file` is that `name` comes through. Of several the last: each takes the place of what the one
+    /// before it has put in `typeOnlyExportStarMap`.
+    fn xa_place_of_export_type_star(&self, file: FileId, name: Atom) -> Option<(FileId, u32, u32)> {
+        let (files, hir) = (self.files(), self.hir(file));
+        let pos = hir.stmts.iter().rev().find_map(|s| match s.kind {
+            StmtKind::ExportStar { spec, alias, .. }
+                if alias.is_none()
+                    && says_export_type(&hir.text, s.pos)
+                    && files
+                        .module_of_specifier(file, spec)
+                        .is_some_and(|module| files.module_export(module, name).is_some()) =>
+            {
+                Some(s.pos)
+            }
+            _ => None,
+        })?;
+        Some((file, pos, self.xa_statement_end(file, pos)))
+    }
+
+    /// `typeOnlyExportStarMap[name]` of `module`: where the `export type *` is that is the only way `name` gets out.
+    pub(super) fn place_of_type_only_export_star(
+        &self,
+        module: Sym,
+        name: Atom,
+    ) -> Option<(FileId, u32, u32)> {
+        let file = self.xa_type_only_export_star(module, name, &mut AliasLinks::default())?;
+        self.xa_place_of_export_type_star(file, name)
+    }
+
     // ───────────────────────────── resolving aliases ─────────────────────────────
 
     /// `IsNonLocalAlias`: an alias and nothing else.
@@ -346,8 +421,41 @@ impl Checker<'_> {
                 TypeOnly {
                     file: sym.file,
                     kind,
+                    alias: (sym, decl),
                 },
             );
+        }
+    }
+
+    /// `addTypeOnlyDeclarationRelatedInfo`: 1377 at `type_only` if `is_export`, or else 1376.
+    fn xa_type_only_related(
+        &self,
+        type_only: TypeOnly,
+        is_export: bool,
+        name: String,
+    ) -> Vec<super::explain::Related> {
+        let (alias, decl) = type_only.alias;
+        let place = if type_only.kind == TypeOnlyKind::ExportStar {
+            let hir = self.hir(alias.file);
+            match decl {
+                Decl::ImportSpec(s) => {
+                    self.xa_place_of_export_type_star(type_only.file, hir[s].imported)
+                }
+                Decl::ExportSpec(s) => {
+                    self.xa_place_of_export_type_star(type_only.file, hir[s].local)
+                }
+                _ => None,
+            }
+        } else {
+            self.place_of_alias_declaration(alias, decl)
+        };
+        match place {
+            Some(at) => vec![super::explain::Related {
+                at: Some(at),
+                code: if is_export { 1377 } else { 1376 },
+                args: vec![name],
+            }],
+            None => Vec::new(),
         }
     }
 
@@ -557,12 +665,14 @@ impl Checker<'_> {
                 Some(kind) => Some(TypeOnly {
                     file: sym.file,
                     kind,
+                    alias: (sym, decl),
                 }),
                 None => self
                     .xa_type_only_export_star(module, name, links)
                     .map(|file| TypeOnly {
                         file,
                         kind: TypeOnlyKind::ExportStar,
+                        alias: (sym, decl),
                     }),
             };
             if let Some(type_only) = type_only {
@@ -1056,7 +1166,6 @@ impl Checker<'_> {
         for (x, export) in hir.exports.iter().enumerate().rev() {
             export_spec_stmts[export.items.range()].fill(export_stmts[x]);
         }
-        let text = &hir.text[..];
         let mut nodes: Vec<AliasNode> = Vec::new();
         for (i, symbol) in bound.symbols.iter().enumerate() {
             if !symbol.flags.contains(SymFlags::ALIAS) {
@@ -1075,21 +1184,7 @@ impl Checker<'_> {
                 if stmt.is_none() {
                     continue;
                 }
-                // `getErrorSpanForNode`: the name of `* as ns`, and where each of the others starts.
-                let pos = hir[stmt].pos;
-                let start = match decl {
-                    Decl::ImportDefault(x) => eat_word(text, pos as usize, b"import")
-                        .map_or(hir[x].default_pos, |end| skip_trivia(text, end) as u32),
-                    Decl::ImportNamespace(x) => hir[x].namespace_pos,
-                    Decl::ImportSpec(s) => {
-                        specifier_start(text, hir[s].imported_pos, hir[s].type_only)
-                    }
-                    Decl::ExportSpec(s) => {
-                        specifier_start(text, hir[s].local_pos, hir[s].type_only)
-                    }
-                    Decl::ExportStarAs(_) => namespace_export_start(text, pos),
-                    _ => pos,
-                };
+                let start = alias_node_start(hir, decl, hir[stmt].pos);
                 nodes.push(AliasNode {
                     sym,
                     decl,
@@ -1329,6 +1424,13 @@ impl Checker<'_> {
                             code,
                             vec![self.atom_text(property_name)],
                         );
+                        if !is_type && let Some(type_only) = type_only_alias {
+                            self.relate(start, code, |c| {
+                                let is_export = type_only.kind != TypeOnlyKind::Import;
+                                let name = c.atom_text(property_name);
+                                c.xa_type_only_related(type_only, is_export, name)
+                            });
+                        }
                     }
                     if is_type
                         && matches!(decl, Decl::ImportEquals(x) if hir[x].flags.contains(Flags::EXPORT))
@@ -1358,6 +1460,13 @@ impl Checker<'_> {
                             1448,
                             vec![self.atom_text(property_name), flag_name()],
                         );
+                        if let Some(type_only) = type_only_alias {
+                            self.relate(start, 1448, |c| {
+                                let is_export = type_only.kind != TypeOnlyKind::Import;
+                                let name = c.atom_text(property_name);
+                                c.xa_type_only_related(type_only, is_export, name)
+                            });
+                        }
                     }
                 }
                 _ => {}
@@ -1386,7 +1495,7 @@ impl Checker<'_> {
 
     /// `checkAndReportErrorForResolvingImportAliasToTypeOnlySymbol`: 1379 1380
     fn xa_import_alias_of_type_only(
-        &self,
+        &mut self,
         file: FileId,
         x: ImportEqualsId,
         names: IdList<Atom>,
@@ -1436,6 +1545,16 @@ impl Checker<'_> {
                 code,
                 Vec::new(),
             );
+            let type_only = *type_only;
+            self.relate(start as u32, code, |c| {
+                // An `export type *` has no name.
+                let name = if type_only.kind == TypeOnlyKind::ExportStar {
+                    "*".to_owned()
+                } else {
+                    c.atom_text(c.files().symbol(type_only.alias.0).name)
+                };
+                c.xa_type_only_related(type_only, is_export, name)
+            });
             return;
         }
     }
@@ -1620,7 +1739,7 @@ impl Checker<'_> {
 
     /// `markDecoratorAliasReferenced`, `markEntityNameOrEntityExpressionAsReference`: 1272 at each type of a decorated signature that
     /// `emitDecoratorMetadata` writes out by name, if the name is an import that stands for no value and does not say `type`.
-    fn xa_decorator_metadata(&self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn xa_decorator_metadata(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let files = self.files();
         let (hir, bound) = (self.hir(file), self.bound(file));
         let options = &files.options;
@@ -1774,6 +1893,23 @@ impl Checker<'_> {
                 1272,
                 Vec::new(),
             );
+            self.relate(start, 1272, |c| {
+                // The first of its declarations that declares an alias.
+                let declared = c
+                    .files()
+                    .symbol(root)
+                    .decls
+                    .iter()
+                    .find_map(|&d| c.place_of_alias_declaration(root, d));
+                match declared {
+                    Some(at) => vec![super::explain::Related {
+                        at: Some(at),
+                        code: 1376,
+                        args: vec![c.atom_text(hir.id_at(name, 0))],
+                    }],
+                    None => Vec::new(),
+                }
+            });
         }
     }
 
@@ -2214,8 +2350,12 @@ impl Checker<'_> {
         out.push(Diagnostic { start, code });
         self.note(start, 0, code, vec![text.to_string()]);
         if code != 1471 {
-            self.explain_chain(start, code, |_| {
-                mode_mismatch_details(&importing.path).into_iter().collect()
+            self.explain_chain(start, code, |c| {
+                let package_json = importing.package_json_without_type;
+                let package_json = package_json.is_some().then(|| c.atom_text(package_json));
+                mode_mismatch_details(&importing.path, package_json)
+                    .into_iter()
+                    .collect()
             });
         }
     }
@@ -2779,6 +2919,21 @@ fn specifier_start(text: &[u8], name_pos: u32, type_only: bool) -> u32 {
     }
 }
 
+/// The start of `GetErrorRangeForNode` of the declaration `decl` of an alias, which is in the statement at `pos`: the name of
+/// `* as ns` in an import, and where each of the others starts.
+fn alias_node_start(hir: &hir::File, decl: Decl, pos: u32) -> u32 {
+    let text = &hir.text[..];
+    match decl {
+        Decl::ImportDefault(x) => eat_word(text, pos as usize, b"import")
+            .map_or(hir[x].default_pos, |end| skip_trivia(text, end) as u32),
+        Decl::ImportNamespace(x) => hir[x].namespace_pos,
+        Decl::ImportSpec(s) => specifier_start(text, hir[s].imported_pos, hir[s].type_only),
+        Decl::ExportSpec(s) => specifier_start(text, hir[s].local_pos, hir[s].type_only),
+        Decl::ExportStarAs(_) => namespace_export_start(text, pos),
+        _ => pos,
+    }
+}
+
 /// Where the specifier of `import("m")` or `typeof import("m")`, the type at `pos`, is.
 fn import_type_specifier(text: &[u8], pos: u32) -> Option<u32> {
     let mut at = pos as usize;
@@ -2871,19 +3026,25 @@ fn relative_path_from_file(from: &str, to: &str) -> String {
     }
 }
 
-/// `CreateModeMismatchDetails`, of the file at `path`, for an extension `resolveExternalModule` asks it about. Which `package.json` the
-/// file goes by is not kept: it is taken to say `type`, or not to be there.
-fn mode_mismatch_details(path: &str) -> Option<super::explain::Line> {
-    let (code, args) = if path.ends_with(".d.ts") {
+/// `CreateModeMismatchDetails`, of the file at `path`, for an extension `resolveExternalModule` asks it about. `package_json`: the
+/// `package.json` the file goes by, if that says no `type`.
+fn mode_mismatch_details(path: &str, package_json: Option<String>) -> Option<super::explain::Line> {
+    let target_extension = if path.ends_with(".d.ts") {
         return None;
     } else if path.ends_with(".ts") {
-        (1480, vec![".mts".to_owned()])
+        Some(".mts".to_owned())
     } else if path.ends_with(".js") {
-        (1480, vec![".mjs".to_owned()])
+        Some(".mjs".to_owned())
     } else if path.ends_with(".tsx") || path.ends_with(".jsx") {
-        (1483, Vec::new())
+        None
     } else {
         return None;
+    };
+    let (code, args) = match (target_extension, package_json) {
+        (Some(extension), Some(package_json)) => (1481, vec![extension, package_json]),
+        (None, Some(package_json)) => (1482, vec![package_json]),
+        (Some(extension), None) => (1480, vec![extension]),
+        (None, None) => (1483, Vec::new()),
     };
     Some(super::explain::Line {
         code,

@@ -724,6 +724,9 @@ impl Checker<'_> {
                             }
                             AwaitPlace::Elsewhere if !is_refused => {
                                 out.push(Diagnostic { start, code: 1103 });
+                                self.relate(start, 1103, |c| {
+                                    c.function_to_mark_async(file, Parent::Stmt(s), true)
+                                });
                                 is_await_misplaced = true;
                             }
                             _ => {}
@@ -1274,9 +1277,64 @@ impl Checker<'_> {
         }
     }
 
+    /// 1356 at the function that what `from` stands for is written in: `getContainingFunctionOrClassStaticBlock`,
+    /// `GetContainingFunction`. Nothing for a constructor. `is_loop`: a `for await` does not ask whether the function says `async`.
+    fn function_to_mark_async(
+        &self,
+        file: FileId,
+        from: Parent,
+        is_loop: bool,
+    ) -> Vec<super::explain::Related> {
+        use crate::bind::FnOwner;
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut at = from;
+        let func = loop {
+            at = match at {
+                Parent::FnBody(f) => break f,
+                Parent::ParamDefault(p) => break bound.param_fn[p.idx()],
+                Parent::Key(object) if object.is_some() => Parent::Expr(object),
+                // The name and the decorators of a method are written in the method, and which one that is is not kept track of.
+                Parent::None
+                | Parent::File
+                | Parent::Module(_)
+                | Parent::EnumInit(_)
+                | Parent::Key(_)
+                | Parent::MemberKey
+                | Parent::Decorator(_, DecoratorOwner::Member(_) | DecoratorOwner::Param(_)) => {
+                    return Vec::new();
+                }
+                Parent::Expr(x) if x.is_none() => return Vec::new(),
+                other => self.outward(file, other),
+            };
+        };
+        if func.is_none() {
+            return Vec::new();
+        }
+        let f = &hir[func];
+        if matches!(f.kind, FnKind::Constructor | FnKind::StaticBlock)
+            || !is_loop && f.flags.contains(Flags::ASYNC)
+        {
+            return Vec::new();
+        }
+        // `GetErrorRangeForNode`
+        let (start, end) = match bound.fns[func.idx()].owner {
+            FnOwner::Stmt(s) => self.error_range_of_stmt(file, s),
+            FnOwner::Expr(owner) if matches!(f.kind, FnKind::Expr | FnKind::Arrow) => (
+                self.error_start_inside_parentheses(file, owner),
+                self.error_end_inside_parentheses(file, owner),
+            ),
+            _ => self.error_range_of_fn(file, func),
+        };
+        vec![super::explain::Related {
+            at: Some((file, start, end)),
+            code: 1356,
+            args: Vec::new(),
+        }]
+    }
+
     /// `checkGrammarAwaitOrAwaitUsing`, of `await` expressions.
     fn check_await_expressions_are_in_place(
-        &self,
+        &mut self,
         file: FileId,
         parses: bool,
         index: &ExprsByKind,
@@ -1306,7 +1364,12 @@ impl Checker<'_> {
                     self.note(start, end, 18037, Vec::new());
                 }
                 AwaitPlace::TopLevel(_) if parses => rules.object(start, 1375, 1378, out),
-                AwaitPlace::Elsewhere if parses => out.push(Diagnostic { start, code: 1308 }),
+                AwaitPlace::Elsewhere if parses => {
+                    out.push(Diagnostic { start, code: 1308 });
+                    self.relate(start, 1308, |c| {
+                        c.function_to_mark_async(file, Parent::Expr(e), false)
+                    });
+                }
                 _ => {}
             }
             if self.xs_is_in_parameter_initializer(file, e) {

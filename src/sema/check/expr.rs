@@ -2033,6 +2033,10 @@ impl<'p> Checker<'p> {
 
     /// `isInParameterInitializerBeforeContainingFunction`: of whichever function is nearest, an arrow function too.
     fn is_in_parameter_initializer(&self, file: FileId, e: ExprId) -> bool {
+        // A statement, which no expression stands for, is in none.
+        if e.is_none() {
+            return false;
+        }
         let mut parent = self.bound(file).expr_parent[e.idx()];
         loop {
             parent = match parent {
@@ -2210,6 +2214,33 @@ impl<'p> Checker<'p> {
             }
             FnOwner::Stmt(_) => true,
             _ => false,
+        }
+    }
+
+    /// `tryGetThisTypeAt(container)`, as `checkThisExpression` asks it about the container of a `this` nothing is said of: whether
+    /// around what is directly in `parent` something says what `this` is, and it is not `globalThis`. `below`: the expression
+    /// `parent` is the parent of, if it is one.
+    pub(super) fn is_this_said_around(
+        &mut self,
+        file: FileId,
+        parent: Parent,
+        below: ExprId,
+    ) -> bool {
+        match self.this_container_or_end(file, parent, below, false, false) {
+            Ok(Err(_)) => true,
+            Ok(Ok(func)) => match self.declared_type_of_this(file, below, Ok(func)) {
+                Some(this) => !matches!(
+                    self.data(this),
+                    TypeData::Anon {
+                        origin: Origin::GlobalThis,
+                        ..
+                    }
+                ),
+                None => false,
+            },
+            // At the top of a module it is `undefined`.
+            Err(Parent::File) => self.hir(file).has_module_syntax,
+            Err(_) => false,
         }
     }
 

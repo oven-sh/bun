@@ -1044,7 +1044,10 @@ impl<'p> Checker<'p> {
             return ty;
         };
         let mut shape = Shape::default();
+        // Where each property is declared. What is made up is declared where what it is made after is (`createSymbolWithType`).
+        let mut places: Vec<(u8, FileId, u32)> = Vec::new();
         for prop in &members.shape().props {
+            places.push(self.order_of_property(prop));
             let mut prop_ty = self.type_of_prop(prop, members.mapper);
             if !prop.flags.intersects(as_they_are) {
                 if self.contains_object_literal(prop_ty, 0) {
@@ -1083,16 +1086,30 @@ impl<'p> Checker<'p> {
                 continue;
             };
             for prop in &theirs.shape().props {
-                if shape.prop(prop.name).is_none() {
-                    shape.props.push(Prop {
-                        name: prop.name,
-                        // `createSymbolWithType`
-                        flags: PropFlags::OPTIONAL | (prop.flags & PropFlags::READONLY),
-                        source: PropSource::Type(missing),
-                        mapper: MapperId::IDENTITY,
-                    });
+                match shape.props.iter().position(|p| p.name == prop.name) {
+                    None => {
+                        shape.props.push(Prop {
+                            name: prop.name,
+                            // `createSymbolWithType`
+                            flags: PropFlags::OPTIONAL | (prop.flags & PropFlags::READONLY),
+                            source: PropSource::Type(missing),
+                            mapper: MapperId::IDENTITY,
+                        });
+                        places.push(self.order_of_property(prop));
+                    }
+                    // `getPropertiesOfContext`: it is made after the last there is of the name.
+                    Some(made) if made >= members.shape().props.len() => {
+                        places[made] = self.order_of_property(prop);
+                    }
+                    Some(_) => {}
                 }
             }
+        }
+        // `getNamedMembers`: in the order they are declared in (`compareSymbols`).
+        if places.iter().all(|place| place.0 == 0) {
+            let mut order: Vec<usize> = (0..places.len()).collect();
+            order.sort_by_key(|&i| places[i]);
+            shape.props = order.into_iter().map(|i| shape.props[i].clone()).collect();
         }
         for info in &members.shape().index {
             let value = self.instantiate(info.value, members.mapper);

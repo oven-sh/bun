@@ -52,10 +52,16 @@ pub struct Module {
     pub implied_format: ResolutionMode,
     /// `getEmitSyntaxForUsageLocationWorker` of a plain `import` in it: what that is emitted as, which is also how it is resolved.
     pub default_mode: ResolutionMode,
+    /// The `package.json` in `PackageJsonDirectory`, if no `PackageJsonType` goes with it. `NONE` otherwise, and unless `module` is
+    /// `node16` or `node18`: nothing else asks.
+    pub package_json_without_type: Atom,
     /// The specifiers that lead to JavaScript nothing declares the types of, and the way they are looked for when they do.
     pub untyped_imports: Few<(Atom, ResolutionMode)>,
     /// For each of `untyped_imports`: the file it leads to, and `PackageId.Name` of the package that file is in.
     pub untyped_import_files: Few<(Atom, Option<Atom>)>,
+    /// `AlternateResult`, of those of `untyped_imports` that have one: the file with the types that is found if the `exports` of the
+    /// package are passed over.
+    pub untyped_import_alternates: Few<(Atom, ResolutionMode, Atom)>,
     /// Those of `untyped_imports` that lead to a `.jsx` file, which takes `jsx` (`GetResolutionDiagnostic`).
     pub jsx_imports: Few<(Atom, ResolutionMode)>,
     /// Those of `untyped_imports` that resolve to a file inside a package. With `allowJs` such a file is loaded only up to
@@ -67,9 +73,13 @@ pub struct Module {
     /// `GetResolutionDiagnostic`: the specifiers that resolve to a `.d.css.ts` file or the like without `allowArbitraryExtensions`, with
     /// the mode they are resolved in. They lead to no file (6263).
     pub arbitrary_extension_imports: Few<(Atom, ResolutionMode)>,
+    /// For each of `arbitrary_extension_imports`: the file it resolves to.
+    pub arbitrary_extension_files: Few<Atom>,
     /// The relative specifiers without an extension, when modules are resolved like Node does, which wants one of `import`; and
     /// whether there is a file that could be meant.
     pub extensionless_imports: Few<(Atom, bool)>,
+    /// `ResolvedFileName`, of those of `imports` that resolve to a copy of a file of a package that is in the program under another path.
+    pub redirected_imports: Few<(Atom, ResolutionMode, Atom)>,
     /// The files it refers to, in the order it does: `/// <reference>`s, then imports.
     pub edges: Vec<FileId>,
     /// Nothing refers to it, and it adds nothing to what all files see. So `hir` and `bound` are only there while a thread has it at hand:
@@ -631,6 +641,16 @@ fn unsupported_extension_problem(options: &Options, code: u32, path: &str) -> Pr
     Problem::new(code, &[path, &quoted.join(", ")], Place::Nowhere)
 }
 
+/// `resolveTripleslashPathReference`: where the `/// <reference path>` that says `written` in the file at `from` points to.
+fn referenced_path(written: &str, from: &str) -> String {
+    let written = written.replace('\\', "/");
+    match written.as_bytes() {
+        // `c:/a` is `/c:/a` here.
+        [drive, b':', b'/', ..] if drive.is_ascii_alphabetic() => join("/", &written),
+        _ => join(parent_dir(from), &written),
+    }
+}
+
 /// `getSourceFileFromReference`: the file a `/// <reference path>` in `from` means, `name` being where it points to; or else what is
 /// said of it.
 fn referenced_file(
@@ -1051,6 +1071,7 @@ impl Files {
                 modules[id.idx()] = Some(loaded.module);
             }
         }
+        program_errors.extend(resolver.resolution_problems());
         for (id, spec, mode, path) in only_found {
             if let Some(&target) = by_path.get(&path)
                 && let Some(module) = &mut modules[id.idx()]
@@ -1059,6 +1080,29 @@ impl Files {
             }
         }
 
+        // `redirectFilesByPath`: the paths that stand for a file that is kept under another.
+        let kept: FxHashMap<FileId, String> = by_path
+            .iter()
+            .filter_map(|(path, &id)| {
+                let kept = &modules[id.idx()].as_ref()?.path;
+                (kept != path).then(|| (id, kept.clone()))
+            })
+            .collect();
+        if !kept.is_empty() {
+            for module in modules.iter_mut().flatten() {
+                let mut redirected = Vec::new();
+                for (&(spec, mode), target) in &module.imports {
+                    if let Some(kept) = kept.get(target)
+                        && let Some(found) =
+                            resolver.resolve_module(&atoms.text(spec), &module.path, mode)
+                        && found != *kept
+                    {
+                        redirected.push((spec, mode, atoms.intern(found.as_bytes())));
+                    }
+                }
+                module.redirected_imports = redirected.into();
+            }
+        }
         drop(resolver);
         let mut modules: Vec<ModuleCell> = modules
             .into_iter()
@@ -1355,22 +1399,45 @@ impl Files {
         let is_esm = options.resolves_like_node && says_esm;
         let implied_format = resolver.implied_format(path);
         let default_mode = options.default_mode(implied_format);
+        let package_json_without_type =
+            if matches!(options.module, ModuleKind::Node16 | ModuleKind::Node18) {
+                resolver
+                    .package_json_without_type(path)
+                    .map_or(Atom::NONE, |found| atoms.intern(found.as_bytes()))
+            } else {
+                Atom::NONE
+            };
         let (hir, bound) = Self::parse_and_bind(host, options, atoms, path, is_lib, says_esm, text);
         let mut imports = Vec::new();
         let (mut untyped_imports, mut jsx_imports, mut untyped_package_imports) =
             (Vec::new(), Vec::new(), Vec::new());
         let mut untyped_import_files = Vec::new();
+        let mut untyped_import_alternates = Vec::new();
         let mut ts_extension_imports = Vec::new();
         let mut arbitrary_extension_imports = Vec::new();
+        let mut arbitrary_extension_files = Vec::new();
         let mut extensionless_imports = Vec::new();
         // `resolveImportsAndModuleAugmentations`: with `importHelpers`, a file that can be emitted with helpers imports `tslib`.
         if options.import_helpers
             && (hir.is_js
                 || hir.kind != FileKind::Declaration
                     && (options.isolated_modules || hir.has_module_syntax))
-            && let Some(found) = resolver.resolve_as("tslib", path, default_mode)
+            && let Some(found) = resolver.resolve_module("tslib", path, default_mode)
         {
-            imports.push((atoms.intern_str("tslib"), default_mode, found, true));
+            let tslib = atoms.intern_str("tslib");
+            if is_javascript(&found) {
+                untyped_imports.push((tslib, default_mode));
+                let package = resolver.package_id(&found);
+                untyped_import_files.push((
+                    atoms.intern(found.as_bytes()),
+                    package
+                        .as_deref()
+                        .and_then(|id| Some(&id[..1 + id.get(1..)?.find('@')?]))
+                        .map(|name| atoms.intern(name.as_bytes())),
+                ));
+            } else {
+                imports.push((tslib, default_mode, found, true));
+            }
         }
         // Only a file that can have tags in it, going by its name, imports what they are made with.
         if (path.ends_with(".tsx") || path.ends_with(".jsx"))
@@ -1463,6 +1530,10 @@ impl Files {
                 match resolver.resolve_module_and_extension(&text, path, mode) {
                     Some((found, _, _)) if is_javascript(&found) => {
                         untyped_imports.push((spec, mode));
+                        if let Some(types) = resolver.alternate_result(&text, path, mode) {
+                            let types = atoms.intern(types.as_bytes());
+                            untyped_import_alternates.push((spec, mode, types));
+                        }
                         let package = resolver.package_id(&found);
                         untyped_import_files.push((
                             atoms.intern(found.as_bytes()),
@@ -1493,11 +1564,12 @@ impl Files {
                         }
                     }
                     // `needAllowArbitraryExtensions`: the file is refused, even if it is in the program for another reason.
-                    Some((_, _, true))
+                    Some((found, _, true))
                         if hir.kind != FileKind::Declaration
                             && !options.allow_arbitrary_extensions =>
                     {
                         arbitrary_extension_imports.push((spec, mode));
+                        arbitrary_extension_files.push(atoms.intern(found.as_bytes()));
                     }
                     Some((found, using_ts_extension, _)) => {
                         if using_ts_extension {
@@ -1520,7 +1592,7 @@ impl Files {
             let value = atoms.text(value);
             match kind {
                 ReferenceKind::Path => {
-                    match referenced_file(host, options, &join(parent_dir(path), &value), path) {
+                    match referenced_file(host, options, &referenced_path(&value, path), path) {
                         Ok(found) => references.push((found, false, false)),
                         Err(code) => missing_references.push((pos, code)),
                     }
@@ -1566,17 +1638,21 @@ impl Files {
             imports: FxHashMap::default(),
             untyped_imports: untyped_imports.into(),
             untyped_import_files: untyped_import_files.into(),
+            untyped_import_alternates: untyped_import_alternates.into(),
             jsx_imports: jsx_imports.into(),
             untyped_package_imports: untyped_package_imports.into(),
             ts_extension_imports: ts_extension_imports.into(),
             arbitrary_extension_imports: arbitrary_extension_imports.into(),
+            arbitrary_extension_files: arbitrary_extension_files.into(),
             extensionless_imports: extensionless_imports.into(),
             missing_references: missing_references.into(),
             is_esm,
             says_esm,
             implied_format,
             default_mode,
+            package_json_without_type,
             edges: Vec::new(),
+            redirected_imports: Few::default(),
             is_transient: false,
             adds_nothing: false,
             is_dropped: false,

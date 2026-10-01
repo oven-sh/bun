@@ -111,6 +111,7 @@ impl Checker<'_> {
                             start: hir[e].pos,
                             code: 2683,
                         });
+                        self.relate(hir[e].pos, 2683, |c| c.container_shadowing_this(file, e));
                     }
                 }
                 _ => {}
@@ -466,6 +467,86 @@ impl Checker<'_> {
             ) => true,
             _ => false,
         }
+    }
+
+    /// The end of `checkThisExpression`: 2738 at the function the `this` at `e` belongs to, if something says what `this` is around
+    /// that function.
+    fn container_shadowing_this(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+    ) -> Vec<super::explain::Related> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let container = if bound.is_in_type_query(e) {
+            match self.this_container_of_type_query(file, e) {
+                Some(QueriedThisContainer::Fn(f)) => Some(f),
+                _ => None,
+            }
+        } else {
+            match self.this_container(file, e) {
+                Some(Ok(f)) => Some(f),
+                _ => None,
+            }
+        };
+        let Some(func) = container else {
+            return Vec::new();
+        };
+        // What is around it, and its `GetErrorRangeForNode`.
+        let (around, below, (from, to)) = match bound.fns[func.idx()].owner {
+            FnOwner::Stmt(s) => (
+                bound.stmt_parent[s.idx()],
+                ExprId::NONE,
+                self.error_range_of_stmt(file, s),
+            ),
+            FnOwner::Expr(owner) => {
+                let range = if hir[func].kind == FnKind::Expr {
+                    (
+                        self.error_start_inside_parentheses(file, owner),
+                        self.error_end_inside_parentheses(file, owner),
+                    )
+                } else {
+                    self.error_range_of_fn(file, func)
+                };
+                (bound.expr_parent[owner.idx()], owner, range)
+            }
+            _ => return Vec::new(),
+        };
+        if !self.is_this_said_around(file, around, below) {
+            return Vec::new();
+        }
+        vec![super::explain::Related {
+            at: Some((file, from, to)),
+            code: 2738,
+            args: Vec::new(),
+        }]
+    }
+
+    /// The same for a `this` in the body of a namespace or in an enum, which is what `container` stands for.
+    pub(super) fn declaration_shadowing_this(
+        &mut self,
+        file: FileId,
+        container: Parent,
+    ) -> Vec<super::explain::Related> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let declares_it = |s: &Stmt| match (s.kind, container) {
+            (StmtKind::Module(m), Parent::Module(of)) => m == of,
+            (StmtKind::Enum(e), Parent::EnumInit(member)) => {
+                e == bound.enum_member_owner[member.idx()]
+            }
+            _ => false,
+        };
+        let Some(s) = hir.stmts.iter().position(declares_it) else {
+            return Vec::new();
+        };
+        if !self.is_this_said_around(file, bound.stmt_parent[s], ExprId::NONE) {
+            return Vec::new();
+        }
+        let (from, to) = self.error_range_of_stmt(file, StmtId(s as u32));
+        vec![super::explain::Related {
+            at: Some((file, from, to)),
+            code: 2738,
+            args: Vec::new(),
+        }]
     }
 
     /// `getSyntacticTruthySemantics`

@@ -281,8 +281,6 @@ impl FileRoute {
             return;
         };
 
-        // Every non-streaming branch returns `Serve::Done`, which releases
-        // the fd and the route ref here.
         match route.serve(fd, path, &mut req, resp, method) {
             Serve::Done => {
                 #[cfg(windows)]
@@ -400,9 +398,7 @@ impl FileRoute {
         resp.write_mark();
         self.write_headers(resp);
 
-        // Bodiless responses end before the range switch so a 304 carries no
-        // Content-Range. 1xx/204/304 end at the blank line (RFC 9112 §6.3).
-        // 205 and 412 need `Content-Length: 0`.
+        // 1xx/204/304 end at the blank line (RFC 9112 §6.3). 205 and 412 carry Content-Length: 0.
         if HTTPStatusText::is_null_body(status_code) && status_code != 205 {
             resp.end_without_body(resp.should_close_connection());
             return Serve::Done;

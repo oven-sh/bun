@@ -6300,10 +6300,9 @@ describe.concurrent.each(["tcp", "tls"] as const)("%s shutdown() after end(data)
   const TAIL = 4 * 1024 * 1024;
 
   it("sends the FIN after the queued tail", async () => {
+    // The whole stream is `step` again and again: byte `p` is `step[p % STEP]`.
     const step = randomFillSync(Buffer.allocUnsafe(STEP));
-    const tail = randomFillSync(Buffer.allocUnsafe(TAIL));
     const received = Promise.withResolvers<void>();
-    let filled = 0;
     let got = 0;
     let mismatchAt = -1;
     using server = Bun.listen({
@@ -6312,15 +6311,10 @@ describe.concurrent.each(["tcp", "tls"] as const)("%s shutdown() after end(data)
       tls: transport === "tls" ? { key: tls.key, cert: tls.cert } : undefined,
       socket: {
         data(_, chunk) {
-          // The stream is `step` again and again up to `filled` (only the last write is short), then `tail`.
           for (let offset = 0; mismatchAt === -1 && offset < chunk.byteLength; ) {
-            const at = got + offset;
-            const source =
-              at < filled ? step.subarray(at % STEP, (at % STEP) + filled - at) : tail.subarray(at - filled);
+            const source = step.subarray((got + offset) % STEP);
             const length = Math.min(source.byteLength, chunk.byteLength - offset);
-            if (length === 0 || !chunk.subarray(offset, offset + length).equals(source.subarray(0, length))) {
-              mismatchAt = at;
-            }
+            if (!chunk.subarray(offset, offset + length).equals(source.subarray(0, length))) mismatchAt = got + offset;
             offset += length;
           }
           got += chunk.byteLength;
@@ -6330,6 +6324,7 @@ describe.concurrent.each(["tcp", "tls"] as const)("%s shutdown() after end(data)
       },
     });
     const closed = Promise.withResolvers<void>();
+    let filled = 0;
     let kernelFull = false;
     let endReturned = -2;
     await Bun.connect({
@@ -6345,6 +6340,9 @@ describe.concurrent.each(["tcp", "tls"] as const)("%s shutdown() after end(data)
             filled += Math.max(took, 0);
           }
           kernelFull = took !== STEP;
+          // The tail goes on where the short write stopped, like the retry of a write does.
+          const tail = Buffer.allocUnsafe(TAIL);
+          for (let offset = 0; offset < TAIL; ) offset += step.copy(tail, offset, (filled + offset) % STEP);
           endReturned = s.end(tail);
           s.shutdown();
         },

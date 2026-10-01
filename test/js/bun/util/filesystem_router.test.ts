@@ -1068,3 +1068,24 @@ it.skipIf(isWindows || isMacOS)(
     expect(exitCode).toBe(0);
   },
 );
+
+it("an absolute dir with '..' in it names routes like its normalized spelling", async () => {
+  const { dir } = make([`pages/index.tsx`, `pages/a-long-directory-name/deeper/page.tsx`, `other/keep.tsx`]);
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const routes = dir => Object.keys(new Bun.FileSystemRouter({ dir, style: "nextjs" }).routes).sort();
+      console.log(JSON.stringify([routes(process.argv[1] + "/pages"), routes(process.argv[1] + "/other/../pages")]));
+      `,
+      dir,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const routes = ["/", "/a-long-directory-name/deeper/page"];
+  expect({ stdout, exitCode }).toEqual({ stdout: JSON.stringify([routes, routes]) + "\n", exitCode: 0 });
+});

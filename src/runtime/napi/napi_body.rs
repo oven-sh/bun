@@ -2903,7 +2903,8 @@ impl ThreadSafeFunction {
     fn call(&self, js: &TsfnJsSide, item: AddonData) -> Result<(), bun_jsc::Stopped> {
         js.target.with_taken(|target| {
             let Some(target) = target else {
-                // env torn down; nothing to call into.
+                // A dequeued payload still belongs to the addon after env teardown.
+                self.hand_back_item(item);
                 return Ok(());
             };
             self.deliver(target, item)
@@ -2946,13 +2947,17 @@ impl ThreadSafeFunction {
     /// JS is no longer reachable" (Node's ThreadSafeFunction::EmptyQueue). A
     /// function created without a call_js_cb has nothing to give back.
     fn hand_back(&self, mut items: TsfnQueue) {
+        while let Some(item) = items.read_item() {
+            self.hand_back_item(item);
+        }
+    }
+
+    fn hand_back_item(&self, item: AddonData) {
         let Some(call_js) = self.call_js else {
             return;
         };
-        while let Some(item) = items.read_item() {
-            // SAFETY: as in `deliver`.
-            unsafe { call_js(ptr::null_mut(), napi_value(0), self.ctx, item) };
-        }
+        // SAFETY: as in `deliver`; null env/callback returns ownership to the addon.
+        unsafe { call_js(ptr::null_mut(), napi_value(0), self.ctx, item) };
     }
 
     /// Runs on an addon thread (Node's `Push`).

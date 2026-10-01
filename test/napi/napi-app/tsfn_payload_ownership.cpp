@@ -22,6 +22,8 @@ static std::atomic<unsigned> accepted{0}, delivered{0}, returned{0},
 static std::atomic<unsigned> at_finalize{0}, duplicates{0}, late{0},
     released{0};
 static std::atomic<uint64_t> seen{0};
+static std::atomic<unsigned> checkpoint{0}, returned_after_checkpoint{0},
+    checkpoint_at_finalize{0};
 
 struct Context {
   napi_threadsafe_function fn;
@@ -47,6 +49,7 @@ static void finish(napi_env env, void *data, void *) {
     context->producer.join();
   }
   at_finalize.store(delivered.load() + returned.load());
+  checkpoint_at_finalize.store(checkpoint.load());
   finalized.fetch_add(1);
   current = nullptr;
   delete context;
@@ -63,6 +66,8 @@ static void call_js(napi_env env, napi_value callback, void *, void *data) {
   if (!env) {
     CHECK(callback == nullptr);
     returned.fetch_add(1);
+    if (checkpoint.load())
+      returned_after_checkpoint.fetch_add(1);
     return;
   }
   delivered.fetch_add(1);
@@ -146,7 +151,17 @@ static napi_value stats(napi_env env, napi_callback_info) {
   FIELD(duplicates);
   FIELD(late);
   FIELD(released);
+  FIELD(checkpoint);
+  FIELD(returned_after_checkpoint);
+  FIELD(checkpoint_at_finalize);
 #undef FIELD
+  return result;
+}
+
+static napi_value mark_checkpoint(napi_env env, napi_callback_info) {
+  checkpoint.fetch_add(1);
+  napi_value result;
+  napi_get_undefined(env, &result);
   return result;
 }
 
@@ -158,7 +173,9 @@ NAPI_MODULE_INIT() {
        nullptr},
       {"stats", nullptr, stats, nullptr, nullptr, nullptr, napi_default,
        nullptr},
+      {"markCheckpoint", nullptr, mark_checkpoint, nullptr, nullptr, nullptr,
+       napi_default, nullptr},
   };
-  napi_define_properties(env, exports, 3, properties);
+  napi_define_properties(env, exports, 4, properties);
   return exports;
 }

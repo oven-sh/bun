@@ -1239,25 +1239,23 @@ mod draft {
     // ──────────────────────────────────────────────────────────────────────────
 
     /// npm's Boolean coercion: `@npmcli/config` parse-field, then nopt `validateBoolean`.
-    fn npm_config_bool(value: &[u8]) -> bool {
-        let value = bun_core::trim(value, b" \n\r\t");
-        if value == b"false" || value == b"null" || value == b"undefined" {
-            return false;
-        }
-        let numeric_zero = core::str::from_utf8(value)
-            .ok()
-            .and_then(|s| s.parse::<f64>().ok())
-            .is_some_and(|n| n == 0.0);
-        !numeric_zero
-    }
-
     fn npmrc_bool(expr: &Expr) -> Option<bool> {
         match &expr.data {
             ExprData::EBoolean(b) => Some(b.value),
             ExprData::ENull(_) => Some(false),
             // a single-quoted `'1'` is JSON-parsed to a number, as in ini
             ExprData::ENumber(_) => expr.as_number().map(|n| n != 0.0),
-            ExprData::EString(_) => expr.as_utf8_string_literal().map(npm_config_bool),
+            ExprData::EString(_) => {
+                let value = bun_core::trim(expr.as_utf8_string_literal()?, b" \n\r\t");
+                if value.is_empty() {
+                    return Some(true);
+                }
+                if value == b"false" || value == b"null" || value == b"undefined" {
+                    return Some(false);
+                }
+                // nopt: a numeric string is `!!Number(value)`, any other string is true
+                Some(expr.data.to_number() != Some(0.0))
+            }
             _ => None,
         }
     }

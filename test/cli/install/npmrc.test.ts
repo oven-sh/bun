@@ -590,9 +590,18 @@ registry=http://127.0.0.1:4873/ ; default registry
     ["ignore-scripts=00", false],
     ["ignore-scripts=0.0", false],
     ["ignore-scripts=-0", false],
+    // a numeric string is `!!Number(value)`
+    ["ignore-scripts=0x0", false],
+    ["ignore-scripts=0o0", false],
+    ["ignore-scripts=0b0", false],
+    ["ignore-scripts=0e5", false],
+    ["ignore-scripts=0x1", true],
+    ["ignore-scripts=-0x0", true],
+    ["ignore-scripts=Infinity", true],
     ["ignore-scripts=undefined", false],
     ["ignore-scripts= 0 ", false],
     ["ignore-scripts= 1 ", true],
+    ['ignore-scripts=" 0x0 "', false],
     // ini JSON-parses a single-quoted value, so these reach the loader as numbers
     ["ignore-scripts='1'", true],
     ["ignore-scripts='0'", false],

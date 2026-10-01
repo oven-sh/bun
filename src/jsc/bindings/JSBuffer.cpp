@@ -2111,9 +2111,8 @@ JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObjec
     case WebCore::BufferEncodingType::base64:
     case WebCore::BufferEncodingType::base64url:
     case WebCore::BufferEncodingType::hex: {
-        // Only the UTF-8 decoder reads its input twice. base64 and hex size
-        // their output from the byte count and read each byte once, so a byte
-        // that changes under them alters the text and nothing else.
+        // Only UTF-8 reads its input twice; base64 and hex size their output
+        // from the byte count alone.
         EncodedJSValue res = (encoding == WebCore::BufferEncodingType::utf8 && stability == Bun::InputStability::CanChange)
             ? Bun__encoding__toStringUnstable(bytes.data(), bytes.size(), lexicalGlobalObject, static_cast<uint8_t>(encoding))
             : Bun__encoding__toString(bytes.data(), bytes.size(), lexicalGlobalObject, static_cast<uint8_t>(encoding));
@@ -2159,8 +2158,7 @@ JSC::EncodedJSValue jsBufferToString(JSC::JSGlobalObject* lexicalGlobalObject, T
         length = byteLength - offset;
     }
 
-    // The bytes belong to a JS ArrayBuffer, so another thread can write them
-    // while the decoder runs.
+    // A view's bytes: another thread can write them mid-decode.
     return jsBufferToStringFromBytes(lexicalGlobalObject, scope, castedThis->span().subspan(offset, length), encoding, Bun::InputStability::CanChange);
 }
 

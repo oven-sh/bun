@@ -1067,6 +1067,10 @@ void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStr
         }
         return;
     }
+    if (exceedsStringLimit(bytes.size())) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
     WTF::Vector<uint8_t> storage;
     bytes = Bun::stableBytes(globalObject, scope, bytes, storage);
     RETURN_IF_EXCEPTION(scope, void());

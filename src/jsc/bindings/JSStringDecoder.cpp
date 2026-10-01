@@ -420,8 +420,7 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_writeBody(JSC
 
         return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "buf"_s, "Buffer, TypedArray, or DataView"_s, buffer);
     }
-    // Reject before the copy: input this long cannot become a string, and the
-    // decode below would raise the same error after allocating for nothing.
+    // Reject before the copy: this cannot become a string either way.
     if (view->byteLength() > WTF::String::MaxLength) [[unlikely]]
         return Bun::ERR::STRING_TOO_LONG(throwScope, lexicalGlobalObject);
     WTF::Vector<uint8_t> storage;

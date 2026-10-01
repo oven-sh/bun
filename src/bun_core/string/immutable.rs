@@ -2584,12 +2584,9 @@ pub fn to_utf16_alloc(
         )
     };
     if res.is_successful() && out_length > 0 {
-        // `res.count` is what simdutf wrote. It equals `out_length` for the
-        // stable input this function requires; committing the length pass's
-        // count instead would publish uninitialised units if they disagree.
+        // Commit what simdutf wrote, not what the length pass predicted.
         let written = res.count.min(out.capacity());
-        // SAFETY: simdutf initialised `res.count` u16s at the start of `out`'s
-        // allocation, and `written <= capacity`.
+        // SAFETY: simdutf initialised `res.count` u16s and `written <= capacity`.
         unsafe { out.set_len(written) };
         if sentinel {
             out.push(0);

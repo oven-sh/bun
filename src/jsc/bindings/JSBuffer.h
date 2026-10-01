@@ -33,8 +33,7 @@
 extern "C" JSC::EncodedJSValue JSBuffer__bufferFromLength(JSC::JSGlobalObject* lexicalGlobalObject, int64_t length);
 extern "C" JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalObject* lexicalGlobalObject, char* ptr, size_t length, void* ctx, JSTypedArrayBytesDeallocator bytesDeallocator);
 extern "C" JSC::EncodedJSValue Bun__encoding__toString(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject, Encoding encoding);
-// `Bun__encoding__toString` for bytes another thread can write while it runs.
-// Decodes a copy, because the UTF-8 decoder reads its input twice.
+// `Bun__encoding__toString` that decodes a copy. See `InputStability`.
 extern "C" JSC::EncodedJSValue Bun__encoding__toStringUnstable(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject, Encoding encoding);
 extern "C" JSC::EncodedJSValue Bun__encoding__toStringUTF8(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject);
 extern "C" bool Bun__Buffer_fill(EncodedSlice*, void*, size_t, WebCore::BufferEncodingType);
@@ -57,11 +56,8 @@ enum class InputStability : uint8_t {
     CanChange,
 };
 
-// A copy of `bytes` in `storage`, for a decoder that reads its input more than
-// once. Every byte of a JS ArrayBuffer can change under a native read: a
-// SharedArrayBuffer from another thread's JS, and an ordinary one from a pool
-// thread that an async operation pinned it for. Throws OutOfMemoryError and
-// returns an empty span if the copy fails.
+// A copy of `bytes` in `storage`, for a decoder that reads its input twice.
+// Throws OutOfMemoryError and returns an empty span if the copy fails.
 std::span<const uint8_t> stableBytes(JSC::JSGlobalObject*, JSC::ThrowScope&, std::span<const uint8_t> bytes, WTF::Vector<uint8_t>& storage);
 
 namespace Buffer {

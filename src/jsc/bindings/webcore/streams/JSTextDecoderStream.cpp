@@ -347,6 +347,10 @@ static std::optional<std::span<const uint8_t>> textDecoderStreamBytes(JSGlobalOb
         Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "chunk"_s, "BufferSource"_s, chunk);
         return std::nullopt;
     }
+    if (exceedsStringLimit(bytes.size())) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return std::nullopt;
+    }
     bytes = Bun::stableBytes(globalObject, scope, bytes, storage);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
     return bytes;

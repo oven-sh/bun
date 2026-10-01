@@ -148,13 +148,13 @@ impl FileSystemRouter {
             if !(root_dir_path_.slice().is_empty() || root_dir_path_.slice() == b".") {
                 // An absolute path is normalized too: a route is named by what follows this
                 // path in the resolver's spelling of its directory, which is normalized.
-                let Some(joined) = path::resolve_path::join_abs_string_buf_checked::<
-                    path::platform::Auto,
-                >(
-                    Fs::FileSystem::instance().top_level_dir,
-                    &mut out_buf,
-                    &[root_dir_path_.slice()],
-                ) else {
+                let Some(joined) =
+                    path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
+                        Fs::FileSystem::instance().top_level_dir,
+                        &mut out_buf,
+                        &[root_dir_path_.slice()],
+                    )
+                else {
                     return Err(global_this.throw(format_args!(
                         "Unable to find directory: {}",
                         bstr::BStr::new(root_dir_path_.slice())

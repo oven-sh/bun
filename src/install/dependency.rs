@@ -16,8 +16,23 @@ use crate::{PackageManager, PackageNameHash};
 // `PackageManager` surface.
 // ──────────────────────────────────────────────────────────────────────────
 
+/// A registered `npm:` alias re-targets the same-named plain dependencies of
+/// every package in the install (`enqueue_dependency_with_main_and_success_fn`).
+/// A manifest registers one only when it is the project's own: the package.json
+/// of the root or of a workspace. The manifest of a dependency (a registry
+/// packument, or the package.json of a git, tarball or folder package) parses
+/// with `None`, and its rows clone with [`NoAliases`].
 pub trait NpmAliasRegistry {
     fn record_npm_alias(&mut self, hash: PackageNameHash, version: &Version);
+}
+
+/// Registers nothing. For dependency rows that are not the root's or a workspace's, and for
+/// scoped override rules, which must not redirect every edge of the target name.
+pub(crate) struct NoAliases;
+
+impl NpmAliasRegistry for NoAliases {
+    #[inline]
+    fn record_npm_alias(&mut self, _hash: PackageNameHash, _version: &Version) {}
 }
 
 impl NpmAliasRegistry for PackageManager {

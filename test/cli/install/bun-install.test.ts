@@ -3729,6 +3729,267 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  // "kept" is an `npm:` alias that a dependency of the project declares for itself. It names a
+  // package for that dependency alone: no other package's "kept" follows it, and only a peer of
+  // the declarer's own dependencies is served by it. Every registry package gets the same fixture
+  // tarball, so `packages` (the section of bun.lock, name -> resolution) tells which package a
+  // folder holds. A packument listed in `hold` is answered when the request named by its value
+  // arrives, which fixes the order in which bun reads the packuments.
+  const holder = { "1.0.0": { dependencies: { kept: "npm:short@1.0.0" } } };
+  const kept = { "1.0.0": {} };
+  const short = { "1.0.0": {} };
+  it.each<{
+    name: string;
+    files: Record<string, object>;
+    registry: Record<string, Record<string, object>>;
+    hold?: Record<string, string>;
+    packages: Record<string, string>;
+    requests: string[];
+  }>([
+    {
+      name: "does not replace the project's own dependency when bun reads the alias first",
+      files: { "package.json": { name: "foo", dependencies: { holder: "1.0.0", kept: "^1.0.0" } } },
+      registry: { holder, kept, short },
+      hold: { kept: "short" },
+      packages: { "holder": "holder@1.0.0", "kept": "kept@1.0.0", "holder/kept": "short@1.0.0" },
+      requests: ["holder", "holder-1.0.0.tgz", "kept", "kept-1.0.0.tgz", "short", "short-1.0.0.tgz"],
+    },
+    {
+      name: "gives the same packages when bun reads the alias last",
+      files: { "package.json": { name: "foo", dependencies: { holder: "1.0.0", kept: "^1.0.0" } } },
+      registry: { holder, kept, short },
+      hold: { holder: "kept-1.0.0.tgz" },
+      packages: { "holder": "holder@1.0.0", "kept": "kept@1.0.0", "holder/kept": "short@1.0.0" },
+      requests: ["holder", "holder-1.0.0.tgz", "kept", "kept-1.0.0.tgz", "short", "short-1.0.0.tgz"],
+    },
+    {
+      // the alias lists versions that the project could ask for, and its package has none of them
+      name: "does not replace a version that the project pins and overrides",
+      files: {
+        "package.json": {
+          name: "foo",
+          dependencies: { holder: "1.0.0", kept: "1.1.0" },
+          overrides: { kept: "1.1.0" },
+        },
+      },
+      registry: {
+        holder: { "1.0.0": { dependencies: { kept: "npm:payload@0.0.1 || 1.0.0 || 1.1.0 || 2.0.0" } } },
+        kept: { "1.0.0": {}, "1.1.0": {}, "2.0.0": {} },
+        payload: { "0.0.1": {} },
+      },
+      hold: { kept: "payload" },
+      packages: { "holder": "holder@1.0.0", "kept": "kept@1.1.0", "holder/kept": "payload@0.0.1" },
+      requests: ["holder", "holder-1.0.0.tgz", "kept", "kept-1.1.0.tgz", "payload", "payload-0.0.1.tgz"],
+    },
+    {
+      name: "does not replace the project's peer dependency",
+      files: {
+        "package.json": { name: "foo", dependencies: { holder: "1.0.0" }, peerDependencies: { kept: "^1.0.0" } },
+      },
+      registry: { holder, kept, short },
+      packages: { "holder": "holder@1.0.0", "kept": "kept@1.0.0", "holder/kept": "short@1.0.0" },
+      requests: ["holder", "holder-1.0.0.tgz", "kept", "kept-1.0.0.tgz", "short", "short-1.0.0.tgz"],
+    },
+    {
+      name: "does not replace a workspace's dependency",
+      files: {
+        "package.json": { name: "foo", workspaces: ["moo"], dependencies: { holder: "1.0.0" } },
+        "moo/package.json": { name: "moo", dependencies: { kept: "^1.0.0" } },
+      },
+      registry: { holder, kept, short },
+      hold: { kept: "short" },
+      packages: {
+        "holder": "holder@1.0.0",
+        "kept": "kept@1.0.0",
+        "moo": "moo@workspace:moo",
+        "holder/kept": "short@1.0.0",
+      },
+      requests: ["holder", "holder-1.0.0.tgz", "kept", "kept-1.0.0.tgz", "short", "short-1.0.0.tgz"],
+    },
+    {
+      name: "does not replace the dependency of another registry package",
+      files: { "package.json": { name: "foo", dependencies: { holder: "1.0.0", other: "1.0.0" } } },
+      registry: { holder, kept, short, other: { "1.0.0": { dependencies: { kept: "^1.0.0" } } } },
+      hold: { kept: "short" },
+      packages: {
+        "holder": "holder@1.0.0",
+        "kept": "short@1.0.0",
+        "other": "other@1.0.0",
+        "other/kept": "kept@1.0.0",
+      },
+      requests: [
+        "holder",
+        "holder-1.0.0.tgz",
+        "kept",
+        "kept-1.0.0.tgz",
+        "other",
+        "other-1.0.0.tgz",
+        "short",
+        "short-1.0.0.tgz",
+      ],
+    },
+    {
+      // bun reads the dependencies of `absent` to lock them, and installs none of them
+      name: "does not replace a dependency when its declarer is not installed on this platform",
+      files: {
+        "package.json": { name: "foo", dependencies: { kept: "^2.0.0" }, optionalDependencies: { absent: "1.0.0" } },
+      },
+      registry: {
+        absent: { "1.0.0": { os: ["aix"], dependencies: { kept: "npm:short@2.0.0" } } },
+        kept: { "1.0.0": {}, "2.0.0": {} },
+        short: { "2.0.0": {} },
+      },
+      hold: { kept: "short" },
+      packages: { "absent": "absent@1.0.0", "kept": "kept@2.0.0", "absent/kept": "short@2.0.0" },
+      requests: ["absent", "kept", "kept-2.0.0.tgz", "short"],
+    },
+    {
+      name: "does not replace a dependency when a file: dependency declares it",
+      files: {
+        "package.json": { name: "foo", dependencies: { holder: "file:./holder", kept: "^1.0.0" } },
+        "holder/package.json": { name: "holder", version: "1.0.0", dependencies: { kept: "npm:short@1.0.0" } },
+      },
+      registry: { kept, short },
+      packages: { "holder": "holder@file:holder", "kept": "kept@1.0.0", "holder/kept": "short@1.0.0" },
+      requests: ["kept", "kept-1.0.0.tgz", "short", "short-1.0.0.tgz"],
+    },
+    {
+      // "asker" sorts before "holder", so the hoisted tree places the package of its peer first
+      name: "is not given to a peer of a package that the declarer does not depend on",
+      files: { "package.json": { name: "foo", dependencies: { asker: "1.0.0", holder: "1.0.0" } } },
+      registry: { holder, kept, short, asker: { "1.0.0": { peerDependencies: { kept: "^1.0.0" } } } },
+      packages: {
+        "asker": "asker@1.0.0",
+        "holder": "holder@1.0.0",
+        "kept": "kept@1.0.0",
+        "holder/kept": "short@1.0.0",
+      },
+      requests: [
+        "asker",
+        "asker-1.0.0.tgz",
+        "holder",
+        "holder-1.0.0.tgz",
+        "kept",
+        "kept-1.0.0.tgz",
+        "short",
+        "short-1.0.0.tgz",
+      ],
+    },
+    {
+      // the registry has no "kept", and bun does not ask for it
+      name: "is given to a peer of the declarer's own dependency",
+      files: { "package.json": { name: "foo", dependencies: { holder: "1.0.0" } } },
+      registry: {
+        holder: { "1.0.0": { dependencies: { inner: "1.0.0", kept: "npm:short@1.0.0" } } },
+        inner: { "1.0.0": { peerDependencies: { kept: "^1.0.0" } } },
+        short,
+      },
+      packages: { "holder": "holder@1.0.0", "inner": "inner@1.0.0", "kept": "short@1.0.0" },
+      requests: ["holder", "holder-1.0.0.tgz", "inner", "inner-1.0.0.tgz", "short", "short-1.0.0.tgz"],
+    },
+    {
+      // the project's own "kept" is another version of the package of that name
+      name: "is given to a peer of the declarer's own dependency before a package out of the peer's range",
+      files: { "package.json": { name: "foo", dependencies: { holder: "1.0.0", kept: "2.0.0" } } },
+      registry: {
+        holder: { "1.0.0": { dependencies: { inner: "1.0.0", kept: "npm:short@1.0.0" } } },
+        inner: { "1.0.0": { peerDependencies: { kept: "^1.0.0" } } },
+        kept: { "1.0.0": {}, "2.0.0": {} },
+        short,
+      },
+      packages: {
+        "holder": "holder@1.0.0",
+        "inner": "inner@1.0.0",
+        "kept": "kept@2.0.0",
+        "holder/kept": "short@1.0.0",
+      },
+      requests: [
+        "holder",
+        "holder-1.0.0.tgz",
+        "inner",
+        "inner-1.0.0.tgz",
+        "kept",
+        "kept-2.0.0.tgz",
+        "short",
+        "short-1.0.0.tgz",
+      ],
+    },
+    {
+      // what the project itself declares still serves every package
+      name: "of the project is still given to the dependency of a registry package",
+      files: { "package.json": { name: "foo", dependencies: { kept: "npm:short@1.0.0", other: "1.0.0" } } },
+      registry: { kept, short, other: { "1.0.0": { dependencies: { kept: "^1.0.0" } } } },
+      packages: { "kept": "short@1.0.0", "other": "other@1.0.0" },
+      requests: ["other", "other-1.0.0.tgz", "short", "short-1.0.0.tgz"],
+    },
+  ])("an npm: alias that a dependency declares $name", async ({ files, registry, hold = {}, packages, requests }) => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      const arrivals = new Map<string, PromiseWithResolvers<void>>();
+      const arrival = (path: string) => {
+        let entry = arrivals.get(path);
+        if (!entry) arrivals.set(path, (entry = Promise.withResolvers<void>()));
+        return entry;
+      };
+      setContextHandler(ctx, async request => {
+        const path = new URL(request.url).pathname.replace(`/${ctx.id}/`, "");
+        urls.push(path);
+        arrival(path).resolve();
+        if (path.endsWith(".tgz")) {
+          return new Response(file(join(import.meta.dir, "baz-0.0.3.tgz")));
+        }
+        if (!(path in registry)) return new Response(null, { status: 404 });
+        if (path in hold) await arrival(hold[path]).promise;
+        const versions: Record<string, object> = {};
+        for (const [version, fields] of Object.entries(registry[path])) {
+          versions[version] = {
+            name: path,
+            version,
+            dist: { tarball: `${ctx.registry_url}${path}-${version}.tgz` },
+            ...fields,
+          };
+        }
+        return new Response(
+          JSON.stringify({ name: path, versions, "dist-tags": { latest: Object.keys(versions).at(-1) } }),
+        );
+      });
+      await Promise.all(
+        Object.entries({
+          "bunfig.toml": { install: { cache: false, registry: ctx.registry_url, linker: "hoisted" } },
+          ...files,
+        }).map(([path, contents]) =>
+          write(
+            join(ctx.package_dir, path),
+            path.endsWith(".toml") ? Bun.TOML.stringify(contents) : JSON.stringify(contents),
+          ),
+        ),
+      );
+
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "ignore",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("incorrect peer dependency");
+      expect(err).toContain("Saved lockfile");
+
+      const locked = Bun.JSONC.parse(await file(join(ctx.package_dir, "bun.lock")).text()).packages as Record<
+        string,
+        [string, ...unknown[]]
+      >;
+      expect({
+        packages: Object.fromEntries(Object.entries(locked).map(([name, [resolution]]) => [name, resolution])),
+        requests: urls.sort(),
+      }).toEqual({ packages, requests });
+      expect(exitCode).toBe(0);
+    });
+  });
+
   it("should not apply overrides to package name of aliased package", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];

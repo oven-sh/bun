@@ -11,7 +11,7 @@ use bun_semver::version::VersionInt;
 use bun_semver::{self as semver, ExternalString, String, Version as SemverVersion};
 
 use crate::bun_json::{E, Expr, ExprData};
-use crate::dependency::{Behavior, DependencyExt as _, TagExt as _};
+use crate::dependency::{Behavior, DependencyExt as _, NoAliases, TagExt as _};
 use crate::repository::RepositoryExt as _;
 use crate::{
     self as install, Aligner, Bin, Dependency, ExternalStringList, ExternalStringMap, Features,
@@ -571,8 +571,16 @@ impl Package<u64> {
             let dependencies: &mut [Dependency] =
                 &mut new.buffers.dependencies[prev_len as usize..end as usize];
             debug_assert_eq!(old_dependencies.len(), dependencies.len());
+            let registers_aliases = matches!(
+                self.resolution.tag,
+                ResolutionTag::Root | ResolutionTag::Workspace
+            );
             for (old_dep, new_dep) in old_dependencies.iter().zip(dependencies.iter_mut()) {
-                *new_dep = old_dep.clone_in(cloner.manager, old_string_buf, &mut *builder)?;
+                *new_dep = if registers_aliases {
+                    old_dep.clone_in(cloner.manager, old_string_buf, &mut *builder)?
+                } else {
+                    old_dep.clone_in(&mut NoAliases, old_string_buf, &mut *builder)?
+                };
             }
         }
 
@@ -631,7 +639,6 @@ impl Package<u64> {
     }
 
     pub(crate) fn from_npm(
-        pm: &mut PackageManager,
         lockfile: &mut Lockfile,
         log: &mut bun_ast::Log,
         manifest: &Npm::PackageManifest,
@@ -809,7 +816,7 @@ impl Package<u64> {
                             sliced.slice,
                             &sliced,
                             Some(&mut *log),
-                            Some(&mut *pm),
+                            None,
                         )
                         .unwrap_or_default(),
                     };
@@ -1784,6 +1791,12 @@ impl Package<u64> {
             unsafe { bun_ptr::detach_lifetime(string_builder.string_bytes.as_slice()) };
         let sliced = external_version.sliced(buf);
 
+        let alias_registry: Option<&mut PackageManager> =
+            if features.is_main || features.is_workspace {
+                Some(&mut *pm)
+            } else {
+                None
+            };
         let mut dependency_version = Dependency::parse_with_optional_tag(
             external_alias.value,
             Some(external_alias.hash),
@@ -1791,7 +1804,7 @@ impl Package<u64> {
             tag,
             &sliced,
             Some(&mut *log),
-            Some(&mut *pm),
+            alias_registry,
         )
         .unwrap_or_default();
         let mut workspace_range: Option<semver::query::Group> = None;

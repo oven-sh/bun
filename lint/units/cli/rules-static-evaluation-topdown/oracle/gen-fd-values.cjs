@@ -1,7 +1,7 @@
-// Research scratch of "rules-static-evaluation" (top-down pass). Writes cases/fd-values.json: for-direction cases whose report
+// Research scratch of "rules-static-evaluation" (top-down pass). Writes cases/td2-edge-for-direction.json: for-direction cases whose report
 // depends on one static value each, so that the evaluation is seen from outside: `for (var i = 0; i < 10; i -= (E));` is
 // reported exactly when E has a static value that is a number, a boolean or a BigInt above zero.
-// usage: node gen-fd-values.cjs > ../cases/fd-values.json
+// usage: node gen-fd-values.cjs > ../cases/td2-edge-for-direction.json
 "use strict";
 const T = [ // expressions that are true in JavaScript
 	// ToNumber of a string

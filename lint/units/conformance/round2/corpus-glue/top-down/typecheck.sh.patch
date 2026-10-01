@@ -1,0 +1,9 @@
+--- a/typecheck.sh
++++ b/typecheck.sh
+@@ -35,5 +35,5 @@
+ }
+ EOF
+ "$wt/node_modules/.bin/tsc" -p "$tmp/tsconfig.json" > "$tmp/out.txt" 2>&1 || true
+-if grep "/test/cli/lint/" "$tmp/out.txt"; then exit 1; fi
++if grep -E '(^|/)test/cli/lint/' "$tmp/out.txt"; then exit 1; fi
+ echo "no type error below test/cli/lint ($(grep -c 'error TS' "$tmp/out.txt" || true) elsewhere, in files that these import)"

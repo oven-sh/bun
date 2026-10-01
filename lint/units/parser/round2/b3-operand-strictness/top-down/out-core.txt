@@ -1,0 +1,94 @@
+## the list of L2 and of the brief
+"a + b = c;" [ts]
+    go : TS1005@6+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @0+0 Invalid assignment target
+"-a = b;" [ts]
+    go : TS1005@3+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @0+0 Invalid assignment target
+"a++ = b;" [ts]
+    go : TS1005@4+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @0+0 Invalid assignment target
+"async function f() { await x = y; }" [ts]
+    go : TS1005@29+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @21+0 Invalid assignment target
+"<T>a = c;" [ts]
+    go : TS1005@5+1 "';' expected." <<=>>   [tsc first: same]
+    bun: accepts => "a = c;\n"
+"a++ ++;" [ts]
+    go : TS1005@4+2 "';' expected." <<++>> | TS1109@6+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @0+0 Invalid assignment target
+"a--.b;" [ts]
+    go : TS1005@3+1 "';' expected." <<.>>   [tsc first: same]
+    bun: accepts => "(a--).b;\n"
+"++ delete a.b;" [ts]
+    go : TS1109@3+6 "Expression expected." <<delete>>   [tsc first: same]
+    bun: parse ok, visit ERR @3+0 Invalid assignment target
+"function* g() { yield*; }" [ts]
+    go : TS1109@22+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: accepts => "function* g() {\n  yield;\n}\n"
+"a.\nb in c;" [ts]
+    go : TS1003@2+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "a.b in c;\n"
+"(a + b = c);" [ts]
+    go : TS1005@7+1 "')' expected." <<=>> | TS1005@10+1 "';' expected." <<)>>   [tsc first: same]
+    bun: parse ok, visit ERR @1+0 Invalid assignment target
+"f(a + b = c);" [ts]
+    go : TS1005@8+1 "',' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @2+0 Invalid assignment target
+"(a + b) = c;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: parse ok, visit ERR @1+0 Invalid assignment target
+"a! = c;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "a = c;\n"
+"a + b = c;" [js]
+    go : TS1005@6+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @0+0 Invalid assignment target
+"-a = b;" [js]
+    go : TS1005@3+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @0+0 Invalid assignment target
+"a++ = b;" [js]
+    go : TS1005@4+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @0+0 Invalid assignment target
+"async function f() { await x = y; }" [js]
+    go : TS1005@29+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @21+0 Invalid assignment target
+"a++ ++;" [js]
+    go : TS1005@4+2 "';' expected." <<++>> | TS1109@6+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @0+0 Invalid assignment target
+"a--.b;" [js]
+    go : TS1005@3+1 "';' expected." <<.>>   [tsc first: same]
+    bun: accepts => "(a--).b;\n"
+"++ delete a.b;" [js]
+    go : TS1109@3+6 "Expression expected." <<delete>>   [tsc first: same]
+    bun: parse ok, visit ERR @3+0 Invalid assignment target
+"function* g() { yield*; }" [js]
+    go : TS1109@22+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: accepts => "function* g() {\n  yield;\n}\n"
+"a.\nb in c;" [js]
+    go : TS1003@2+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "a.b in c;\n"
+"(a + b = c);" [js]
+    go : TS1005@7+1 "')' expected." <<=>> | TS1005@10+1 "';' expected." <<)>>   [tsc first: same]
+    bun: parse ok, visit ERR @1+0 Invalid assignment target
+"f(a + b = c);" [js]
+    go : TS1005@8+1 "',' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @2+0 Invalid assignment target
+"(a + b) = c;" [js]
+    go : (parses)   [tsc first: same]
+    bun: parse ok, visit ERR @1+0 Invalid assignment target
+"a + b = c;" [tsx]
+    go : TS1005@6+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @0+0 Invalid assignment target
+"a++ ++;" [tsx]
+    go : TS1005@4+2 "';' expected." <<++>> | TS1109@6+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @0+0 Invalid assignment target
+"a--.b;" [tsx]
+    go : TS1005@3+1 "';' expected." <<.>>   [tsc first: same]
+    bun: accepts => "(a--).b;\n"
+"a + b = c;" [jsx]
+    go : TS1005@6+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ok, visit ERR @0+0 Invalid assignment target
+"a.\nb in c;" [jsx]
+    go : TS1003@2+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "a.b in c;\n"

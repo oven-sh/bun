@@ -1,0 +1,40 @@
+RESEARCH OF D3, "rules-static-evaluation", the pass that starts from the goal: no-constant-condition, no-constant-binary-expression,
+for-direction, the static evaluation they share, and the seam "is this name the global". Nothing here is in the tree.
+The other pass of the same research has its own directory, ../rules-static-evaluation/ (its probe has `sv`, the static value of an
+expression, and `fd`, for-direction: /tmp/rse/probe); this pass only reads it.
+
+The oracle is ESLint at the pin of src/lint/UPSTREAM_PORTED (/workspace/ref/eslint) and the parser of typescript-eslint
+(/workspace/ref/tseslint): sh ../tools/eslint-oracle-setup.sh restores both.
+
+probe/             A NATIVE BINARY against the rlibs of the debug build of /workspace/wt/cli (be1ebe5295): the probe of
+                   ../rules-expressions/probe with the seam as it is to be written.
+  build.py         /workspace/tools/lk python3 probe/build.py /tmp/rse-td/probe
+  src/seam.rs      declared_names: the names of ECMASCRIPT_GLOBALS that a file declares anywhere, known BEFORE the walk: every
+                   symbol of the parse pass, and what leaves no symbol (what follows `declare`, an ambient module and its body,
+                   `import x = `, `import type`, a name with `type` in an import clause).
+  src/dupe.rs      Ctx: `declared` from seam.rs, `detached`, `plain` that knows type arguments, `plain_callee`.
+  src/six.rs       is_global (sourceCode.isGlobalReference), is_global_variable (isReferenceToGlobalVariable of ast-utils: false
+                   where `detached`), the walk that sets `detached` (the discriminant of a switch, the object of a with, a decorator
+                   of a class, a decorator of a parameter) and clears it in a function, an arrow function and a class, and that
+                   walks what the parse pass keeps beside the statements.
+  run:             ASAN_OPTIONS=detect_leaks=0 /tmp/rse-td/probe six <file>...      `path(line,col): rule: message`
+
+oracle/native.cjs          node oracle/native.cjs [--show] <list.json>...   the probe against ESLint, case by case (the six rules of
+                           ../rules-expressions). A list: codes, or { code, ext? }, or { valid, invalid }.
+oracle/gen-fd-values.cjs   node oracle/gen-fd-values.cjs > cases/td2-edge-for-direction.json
+
+cases/seam.json, seam-ts.json      the cases of the seam: where ESLint looks a reference up in another scope, which report of
+                                   no-constant-binary-expression is printed when a name is no global, every kind of declaration.
+cases/td2-edge-<rule>.json, td2-ts-<rule>.json   the same cases by rule, for a fixture (the names that regen.cjs of
+                                   ../ts-entry-codes-harness/topdown/tools takes with --cases).
+cases/td2-edge-for-direction.json  378 cases `for (var i = 0; i < 10; i -= (E));`: each is reported exactly when E has a static value
+                                   above zero, so the evaluation shows from outside.
+answers/eslint-seam.txt, eslint-seam-ts.txt   ESLint over the seam cases.
+answers/native-seam.txt            native.cjs over them: 214 cases, 203 the same; 8 missing and 1 other text (a name declared in
+                                   another scope), 2 extra (`import { type X }`: the parser records no such name at be1ebe5295).
+answers/native-td-lists.txt        native.cjs over the lists of ../rules-expressions/cases: 1450 cases, 1440 the same, 9 missing, 1 extra.
+                                   Over /tmp/rx/random1.json, random2.json, random3.json: 7039 cases, all the same.
+answers/fd-values.txt              ESLint over td2-edge-for-direction.json: 335 of 378 reported.
+answers/fd-values-native-1a.txt    the probe of the other pass (fd) over them: 331 the same, 47 missing (calls, arrays, objects, `new`,
+                                   a BigInt beyond 128 bits, a constant of the file), no extra.
+answers/fd-lists-native-1a.txt     the same over ESLint's own cases of for-direction (100, 99 the same, 1 missing) and the other lists.

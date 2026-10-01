@@ -1,0 +1,2 @@
+119 rows checked, 0 mismatches, 0 rows skipped
+130 rows checked, 0 mismatches, 2 rows skipped (the token is no assignment operator)

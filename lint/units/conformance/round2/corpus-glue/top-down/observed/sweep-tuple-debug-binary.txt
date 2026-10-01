@@ -1,0 +1,44 @@
+instances 34: run 34 (E 23, C 11), skipped 0
+check /workspace/wt/conformance/build/debug/bun-debug --lint
+pass: E 0 of 23, C 11 of 11
+by outcome, E: fail 23
+by outcome, C: pass 11
+      23  fail: no diagnostic where the oracle has a baseline
+
+by directory: instances that pass, of those whose oracle has errors (E) and of those whose oracle has none (C)
+  conformance/types/tuple              E     0 of 20     C     7 of 7
+  conformance/types/tuple/emptyTuples  E     0 of 2      C     0 of 0
+  conformance/types/tuple/named        E     0 of 1      C     4 of 4
+
+by diagnostic code: 30 codes; instances that pass, of those whose oracle has the code
+  TS2322       0 of 13
+  TS2493       0 of 7
+  TS2345       0 of 4
+  TS1257       0 of 3
+  TS2339       0 of 2
+  TS2344       0 of 2
+  TS2352       0 of 2
+  TS2403       0 of 2
+  TS2574       0 of 2
+  TS2741       0 of 2
+  TS4104       0 of 2
+  TS17019      0 of 2
+  TS1265       0 of 1
+  TS1266       0 of 1
+  TS1354       0 of 1
+  TS2304       0 of 1
+  TS2454       0 of 1
+  TS2456       0 of 1
+  TS2488       0 of 1
+  TS2514       0 of 1
+  TS2540       0 of 1
+  TS2542       0 of 1
+  TS2555       0 of 1
+  TS5085       0 of 1
+  TS5086       0 of 1
+  and 5 more codes in the report
+
+listed: E 0, C 0; of them run 0, not passing 0
+11 instances pass and may not enter a list: quota 11
+
+exit 0

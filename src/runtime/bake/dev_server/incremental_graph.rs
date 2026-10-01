@@ -1425,9 +1425,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         if !found_existing {
             self.edge_lists.push(EdgeLists::default());
         }
-        if self.stale_files.bit_length > file_index.get() as usize {
-            self.stale_files.unset(file_index.get() as usize);
-        }
         *ctx.get_cached_index(Side::Server, index) =
             CachedFileIndex::from(Some::<FileIndex<SIDE>>(file_index));
         Ok(())

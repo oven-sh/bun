@@ -2330,9 +2330,10 @@ impl<AtRule> StyleSheet<AtRule> {
 }
 
 /// Longest input the parser accepts: positions are `i32`, and `len + 1` must fit.
-pub(crate) const MAX_INPUT_LEN: usize = i32::MAX as usize - 1;
+pub const MAX_INPUT_LEN: usize = i32::MAX as usize - 1;
 
-fn check_input_len(code: &[u8]) -> Maybe<(), Err<ParserError>> {
+/// Every entry point that builds a [`Parser`] over user bytes calls this first.
+pub fn check_input_len(code: &[u8]) -> Maybe<(), Err<ParserError>> {
     if code.len() > MAX_INPUT_LEN {
         return Err(Err {
             kind: ParserError::input_too_large,

@@ -166,4 +166,35 @@ describe.skipIf(memory < 10 * 1024 ** 3)("stylesheet of 2 GiB or more", () => {
     },
     CHILD_TIMEOUT,
   );
+
+  // `Bun.color` builds its own parser over the UTF-8 of the string. The longest
+  // JS string, 2**31 - 1 ASCII chars, is MAX_INPUT_LEN + 1 bytes. Before the
+  // bound this input parsed as an invalid color and returned null.
+  test(
+    "Bun.color throws",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const input = Buffer.alloc(2 ** 31 - 1, 0x20).toString("latin1");
+            try {
+              console.log(JSON.stringify(Bun.color(input, "css")));
+            } catch (error) {
+              console.log(error.message);
+            }
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("color() input is too large to parse (2 GiB maximum)\n");
+      expect(exitCode).toBe(0);
+    },
+    CHILD_TIMEOUT,
+  );
 });

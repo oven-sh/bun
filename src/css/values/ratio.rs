@@ -5,8 +5,8 @@ use crate::values::number::{CSSNumber, CSSNumberFns};
 /// representing the ratio of two numeric values.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Ratio {
-    pub numerator: CSSNumber,
-    pub denominator: CSSNumber,
+    pub(crate) numerator: CSSNumber,
+    pub(crate) denominator: CSSNumber,
 }
 
 impl Ratio {

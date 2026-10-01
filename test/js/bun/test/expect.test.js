@@ -677,6 +677,39 @@ describe("expect()", () => {
         expect(p1).toStrictEqual(p2);
       }
     });
+
+    // JSC::isArray() can throw for a Proxy (revoked, or with a throwing trap), so
+    // expect.any(Array), toMatchObject, and toHaveProperty must check for an
+    // exception right after it. A missing check aborts a debug build under
+    // BUN_JSC_validateExceptionChecks=1 (a no-op on release builds).
+    test("expect.any(Array)/toMatchObject/toHaveProperty check the isArray() exception for Proxy values", async () => {
+      const { bunEnv, bunExe } = require("harness");
+      const src = `
+        const { expect } = require("bun:test");
+        try { expect(new Proxy({}, {})).toEqual(expect.any(Array)); } catch {}
+        try { expect(new Proxy([], {})).toEqual(expect.any(Array)); } catch {}
+        try { expect(new Proxy([], {})).toMatchObject([]); } catch {}
+        try { expect([]).toMatchObject(new Proxy([], {})); } catch {}
+        try { expect(new Proxy([], {})).toMatchObject(new Proxy([], {})); } catch {}
+        try { expect({ a: 1 }).toHaveProperty(new Proxy(["a"], {})); } catch {}
+        try { expect({ a: 1 }).toHaveProperty(new Proxy(new Set(["a"]), {})); } catch {}
+        const rp = Proxy.revocable({}, {}); rp.revoke();
+        try { expect(rp.proxy).toEqual(expect.any(Array)); } catch {}
+        console.log("ok");
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toMatchObject({
+        stdout: "ok\n",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
   }
 
   test("deepEquals works with sets/maps/dates/strings", () => {
@@ -898,6 +931,21 @@ describe("expect()", () => {
         throw new Error("bar");
       }).toThrow(/baz/),
     ).toThrow("/baz/");
+
+    // If matching the message against the RegExp throws, that error propagates
+    // instead of being read as the match result.
+    for (const not of [false, true]) {
+      const re = /bar/;
+      re.test = () => {
+        throw new Error("from test()");
+      };
+      expect(() => {
+        const e = expect(() => {
+          throw new Error("bar");
+        });
+        (not ? e.not : e).toThrow(re);
+      }).toThrow("from test()");
+    }
 
     expect(() => {
       return true;
@@ -1712,6 +1760,18 @@ describe("expect()", () => {
     const ab1 = new SharedArrayBuffer(1);
     expect(ab1).toEqual(new SharedArrayBuffer(1));
     expect(ab1).not.toEqual(new ArrayBuffer(1));
+  });
+
+  test("toEqual detached ArrayBuffer is not equal to a zero-length ArrayBuffer", () => {
+    function detached() {
+      const buf = new ArrayBuffer(4);
+      buf.transfer();
+      return buf;
+    }
+    expect(detached()).not.toEqual(new ArrayBuffer(0));
+    expect(detached()).not.toEqual(detached());
+    expect(detached()).not.toStrictEqual(new ArrayBuffer(0));
+    expect({ x: detached() }).not.toEqual({ x: new ArrayBuffer(0) });
   });
 
   test("symbol based keys in arrays are processed correctly", () => {
@@ -4154,6 +4214,47 @@ describe("expect()", () => {
       );
     });
 
+    // Jest and Vitest have no expect.not.any()
+    if (isBun) {
+      test("expect.not.any is the complement of expect.any for primitives", () => {
+        // primitives that match any(Ctor) must NOT match not.any(Ctor)
+        expect(5).toEqual(expect.any(Number));
+        expect(5).not.toEqual(expect.not.any(Number));
+        expect("s").toEqual(expect.any(String));
+        expect("s").not.toEqual(expect.not.any(String));
+        expect(true).toEqual(expect.any(Boolean));
+        expect(true).not.toEqual(expect.not.any(Boolean));
+        expect(1n).toEqual(expect.any(BigInt));
+        expect(1n).not.toEqual(expect.not.any(BigInt));
+        expect(Symbol()).toEqual(expect.any(Symbol));
+        expect(Symbol()).not.toEqual(expect.not.any(Symbol));
+
+        // primitives that do NOT match any(Ctor) must match not.any(Ctor)
+        expect(5).not.toEqual(expect.any(String));
+        expect(5).toEqual(expect.not.any(String));
+        expect("s").not.toEqual(expect.any(Number));
+        expect("s").toEqual(expect.not.any(Number));
+
+        // boxed primitives were already correct, keep them covered
+        expect(new Number(5)).not.toEqual(expect.not.any(Number));
+        expect(new String("s")).not.toEqual(expect.not.any(String));
+
+        // any(Object) is `typeof other === "object"`: null matches, a function does not
+        expect(null).not.toEqual(expect.not.any(Object));
+        expect(() => {}).toEqual(expect.not.any(Object));
+
+        // nested inside object matching
+        expect({ a: 1 }).toEqual({ a: expect.not.any(String) });
+        expect({ a: 1 }).not.toEqual({ a: expect.not.any(Number) });
+      });
+
+      test("expect.not.any with user class", () => {
+        class Thing {}
+        expect(new Thing()).not.toEqual(expect.not.any(Thing));
+        expect({}).toEqual(expect.not.any(Thing));
+      });
+    }
+
     test("Anything matches any type", () => {
       expect(expect.anything()).toEqual("jest");
       expect(expect.anything()).toEqual(1);
@@ -4610,6 +4711,32 @@ describe("expect()", () => {
           }),
         ).toEqual(expect.resolvesTo.stringContaining("a"));
       });
+
+      test("expect.resolvesTo.any and expect.rejectsTo.any match primitives by constructor type", async () => {
+        await expect(Promise.resolve("s")).toEqual(expect.resolvesTo.any(String));
+        await expect(Promise.resolve(5)).toEqual(expect.resolvesTo.any(Number));
+        await expect(Promise.resolve(true)).toEqual(expect.resolvesTo.any(Boolean));
+        await expect(Promise.resolve(1n)).toEqual(expect.resolvesTo.any(BigInt));
+        await expect(Promise.resolve(Symbol())).toEqual(expect.resolvesTo.any(Symbol));
+        await expect(Promise.resolve({})).toEqual(expect.resolvesTo.any(Object));
+        await expect(Promise.resolve(5)).not.toEqual(expect.resolvesTo.any(String));
+
+        await expect(Promise.reject("s")).toEqual(expect.rejectsTo.any(String));
+        await expect(Promise.reject(5)).toEqual(expect.rejectsTo.any(Number));
+        await expect(Promise.reject(5)).not.toEqual(expect.rejectsTo.any(String));
+
+        // .not is the complement
+        await expect(Promise.resolve(5)).not.toEqual(expect.not.resolvesTo.any(Number));
+        await expect(Promise.resolve(5)).toEqual(expect.not.resolvesTo.any(String));
+        await expect(Promise.reject(5)).not.toEqual(expect.not.rejectsTo.any(Number));
+        await expect(Promise.reject(5)).toEqual(expect.not.rejectsTo.any(String));
+
+        // nested in an object, and as a mock call argument
+        await expect({ a: Promise.resolve("s") }).toEqual({ a: expect.resolvesTo.any(String) });
+        const fn = jest.fn();
+        fn(Promise.resolve("s"));
+        expect(fn).toHaveBeenCalledWith(expect.resolvesTo.any(String));
+      });
     }
   });
 
@@ -4860,37 +4987,37 @@ describe("expect()", () => {
   test("toHaveBeenLastCalledWith to return undefined", () => {
     expect(expect(mocked).toHaveBeenLastCalledWith()).toBeUndefined();
   });
-  test.todo("toHaveBeenNthCalledWith to return undefined", () => {
-    expect(expect(() => {}).toHaveBeenNthCalledWith()).toBeUndefined();
+  test("toHaveBeenNthCalledWith to return undefined", () => {
+    expect(expect(mocked).toHaveBeenNthCalledWith(1)).toBeUndefined();
   });
-  test.todo("toHaveLastReturnedWith to return undefined", () => {
-    expect(expect(() => {}).toHaveLastReturnedWith()).toBeUndefined();
+  test("toHaveLastReturnedWith to return undefined", () => {
+    expect(expect(mocked).toHaveLastReturnedWith(undefined)).toBeUndefined();
   });
   test("toHaveLength to return undefined", () => {
     expect(expect([1]).toHaveLength(1)).toBeUndefined();
   });
-  test.todo("toHaveNthReturnedWith to return undefined", () => {
-    expect(expect(() => {}).toHaveNthReturnedWith()).toBeUndefined();
+  test("toHaveNthReturnedWith to return undefined", () => {
+    expect(expect(mocked).toHaveNthReturnedWith(1, undefined)).toBeUndefined();
   });
-  test.todo("toHaveProperty to return undefined", () => {
-    expect(expect({}).toHaveProperty()).toBeUndefined();
+  test("toHaveProperty to return undefined", () => {
+    expect(expect({ a: 1 }).toHaveProperty("a")).toBeUndefined();
   });
-  test.todo("toHaveReturnedTimes to return undefined", () => {
-    expect(expect(() => {}).toHaveReturnedTimes()).toBeUndefined();
+  test("toHaveReturnedTimes to return undefined", () => {
+    expect(expect(mocked).toHaveReturnedTimes(1)).toBeUndefined();
   });
-  test.todo("toHaveReturnedWith to return undefined", () => {
-    expect(expect(() => {}).toHaveReturnedWith()).toBeUndefined();
+  test("toHaveReturnedWith to return undefined", () => {
+    expect(expect(mocked).toHaveReturnedWith(undefined)).toBeUndefined();
   });
   test("toInclude to return undefined", () => {
     expect(expect("abc").toInclude("a")).toBeUndefined();
   });
-  test.todo("toIncludeRepeated to return undefined", () => {
-    expect(expect("abc").toIncludeRepeated("a")).toBeUndefined();
+  test("toIncludeRepeated to return undefined", () => {
+    expect(expect("abc").toIncludeRepeated("a", 1)).toBeUndefined();
   });
   test("toMatch to return undefined", () => {
     expect(expect("abc").toMatch("a")).toBeUndefined();
   });
-  test.todo("toMatchInlineSnapshot to return undefined", () => {
+  test("toMatchInlineSnapshot to return undefined", () => {
     expect(expect("abc").toMatchInlineSnapshot('"abc"')).toBeUndefined();
   });
   test("toMatchObject to return undefined", () => {

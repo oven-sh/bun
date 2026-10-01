@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast } from "harness";
+import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast, tempDir } from "harness";
 
 // Chrome backend works on any platform with Chrome/Chromium installed.
 // Mark tests todo if no Chrome found (CI may not have it). Mirrors
-// ChromeProcess.zig's findChrome() — $PATH names, then hardcoded absolute
-// paths, then Playwright cache — so the test detects Chrome whenever the
-// runtime would.
+// ChromeProcess.rs's find_chrome() ($PATH names, then hardcoded absolute
+// paths, then the Playwright cache) so the test detects Chrome whenever the
+// runtime would. On Windows that is usually the preinstalled Edge.
 import { dlopen, FFIType, ptr } from "bun:ffi";
 import { accessSync, constants as fsConstants, readdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
@@ -43,7 +43,18 @@ function findChrome(): string | undefined {
   }
 
   // $PATH — same as `which google-chrome` etc.
-  const names = ["google-chrome-stable", "google-chrome", "chromium-browser", "chromium", "microsoft-edge", "chrome"];
+  const names =
+    process.platform === "win32"
+      ? ["chrome", "chromium", "brave", "msedge"]
+      : [
+          "google-chrome-stable",
+          "google-chrome",
+          "chromium-browser",
+          "chromium",
+          "brave-browser",
+          "microsoft-edge",
+          "chrome",
+        ];
   for (const n of names) {
     const found = Bun.which(n);
     if (found) return found;
@@ -70,16 +81,42 @@ function findChrome(): string | undefined {
       "/usr/bin/chromium-browser",
       "/usr/bin/chromium",
       "/snap/bin/chromium",
+      "/usr/bin/brave-browser",
+      "/snap/bin/brave",
       "/usr/bin/microsoft-edge",
     ];
     for (const c of absolute) if (isExecutable(c)) return c;
-  } // Windows TODO — ChromeProcess.zig doesn't support it yet
+  } else if (process.platform === "win32") {
+    // Installer layout: <root>\<Vendor>\<Channel>\Application\<exe>. Same
+    // candidate order and roots as find_chrome(); Edge lives under
+    // "Program Files (x86)" even on 64-bit Windows.
+    const relative = [
+      "Google\\Chrome\\Application\\chrome.exe",
+      "Google\\Chrome Beta\\Application\\chrome.exe",
+      "Google\\Chrome Dev\\Application\\chrome.exe",
+      "Google\\Chrome SxS\\Application\\chrome.exe",
+      "Chromium\\Application\\chrome.exe",
+      "BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+      "Microsoft\\Edge\\Application\\msedge.exe",
+    ];
+    const roots = [process.env.ProgramFiles, process.env["ProgramFiles(x86)"], process.env.LOCALAPPDATA].filter(
+      (root): root is string => !!root,
+    );
+    for (const rel of relative) {
+      for (const root of roots) {
+        const candidate = join(root, rel);
+        if (isExecutable(candidate)) return candidate;
+      }
+    }
+  }
 
-  // Playwright cache fallback — mirrors findPlaywrightShell().
+  // Playwright cache fallback — mirrors find_playwright_shell().
   const cacheDir =
     process.platform === "darwin"
       ? join(homedir(), "Library/Caches/ms-playwright")
-      : join(homedir(), ".cache/ms-playwright");
+      : process.platform === "win32"
+        ? join(process.env.LOCALAPPDATA ?? "", "ms-playwright")
+        : join(homedir(), ".cache/ms-playwright");
   let bestRev = 0;
   let bestName = "";
   try {
@@ -94,7 +131,10 @@ function findChrome(): string | undefined {
   if (!bestRev) return undefined;
   const arch = process.arch === "arm64" ? "arm64" : "x64";
   const plat = process.platform === "darwin" ? "mac" : "linux";
-  const bin = join(cacheDir, bestName, `chrome-headless-shell-${plat}-${arch}`, "chrome-headless-shell");
+  const bin =
+    process.platform === "win32"
+      ? join(cacheDir, bestName, "chrome-headless-shell-win64", "chrome-headless-shell.exe")
+      : join(cacheDir, bestName, `chrome-headless-shell-${plat}-${arch}`, "chrome-headless-shell");
   if (isExecutable(bin)) return bin;
   if (process.platform === "linux" && process.arch === "arm64") {
     const bin2 = join(cacheDir, bestName, "chrome-linux/headless_shell");
@@ -111,7 +151,20 @@ const chromePath = findChrome();
 // exists but can't run. Gate on CI + macOS < 15 rather than probing — a real
 // probe needs an async navigate, which adds startup cost on every platform.
 const chromeBroken = isCI && isMacOS && !isMacOSVersionAtLeast(15);
-const it = chromePath && !chromeBroken ? test : test.todo;
+// The Windows CI images have only Edge, and the buildkite agent there runs as
+// LocalSystem, under which every msedge.exe invocation (even --version) exits
+// with code 234 without printing anything, so spawn-mode ends in "Chrome
+// process closed the pipe". Detected through the account's profile directory;
+// the user name is no use because the test runner overrides USERNAME, which is
+// what userInfo() reports on Windows. Only CI is gated: a developer in the same
+// situation should see the real failure. The Windows pipe transport itself is
+// exercised on every lane by webview-chrome-pipe.test.ts, which needs no browser.
+const edgeAsLocalSystem =
+  isCI &&
+  process.platform === "win32" &&
+  /msedge\.exe$/i.test(chromePath ?? "") &&
+  /\\config\\systemprofile$/i.test(homedir());
+const it = chromePath && !chromeBroken && !edgeAsLocalSystem ? test : test.todo;
 
 // url:false forces spawn-mode — skips DevToolsActivePort auto-detect
 // which would connect to the dev's running Chrome, pop the "Allow remote
@@ -538,6 +591,152 @@ it("chrome: closeAll() kills the subprocess and pending promises reject", async 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout.trim()).toBe("rejected");
   expect(exitCode).toBe(0);
+});
+
+it("chrome: a new WebView respawns Chrome after the previous one died", async () => {
+  // Subprocess-isolated like the closeAll() test above. The dead Chrome's
+  // remaining close/exit notifications drain after the respawn and must not
+  // be taken for the new one. Construction fails until the old process has
+  // been reaped (see the comment on the closeAll() test), hence the retry.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const backend = {type:"chrome", url:false};
+        const first = new Bun.WebView({ backend, width: 200, height: 200 });
+        await first.navigate("data:text/html,<body>first</body>");
+        const pending = first.evaluate("new Promise(() => {})");
+        Bun.WebView.closeAll();
+        await pending.catch(() => {});
+        let second;
+        for (;;) {
+          try {
+            second = new Bun.WebView({ backend, width: 200, height: 200 });
+            break;
+          } catch (e) {
+            if (!/Failed to spawn Chrome/.test(e.message)) throw e;
+            await Bun.sleep(1);
+          }
+        }
+        await second.navigate("data:text/html,<body>second</body>");
+        console.log(await second.evaluate("document.body.textContent"));
+        second.close();
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("second\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+it("chrome: views orphaned by a Chrome death are closed, even after a new view respawns Chrome", async () => {
+  // Subprocess-isolated for the same reason as the closeAll() test above.
+  // Three views die with Chrome: one with an op in flight, one idle (so
+  // it has no pending entry in the transport), one never navigated (no
+  // target yet). All three must end up closed. Without that, once a new
+  // view respawns Chrome, an op on an old view is sent to the new Chrome
+  // with a stale session and its reply is dropped, so the promise never
+  // settles and the slot it occupies is never freed.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        // Spawn args come from whichever construction spawns Chrome, so every
+        // view passes them: the one constructed after closeAll() spawns the
+        // second Chrome. --no-sandbox: Chrome refuses to start as root
+        // (containers) otherwise.
+        const backend = { type: "chrome", url: false, argv: ["--no-sandbox"] };
+        const open = () => new Bun.WebView({ backend, width: 200, height: 200 });
+        // An op on a dead view must throw synchronously, not hand back a
+        // promise. The catch handler keeps an unfixed build's promise from
+        // surfacing as an unhandled rejection, so its exit code stays 0
+        // and the comparison below is what fails.
+        const probe = fn => {
+          try {
+            fn().catch(() => {});
+            return "returned a promise";
+          } catch (e) {
+            return e.code;
+          }
+        };
+
+        const busy = open();
+        const idle = open();
+        const blank = open();
+        await busy.navigate("data:text/html,<body>busy</body>");
+        await idle.navigate("data:text/html,<body>idle</body>");
+        const inFlight = busy.evaluate("new Promise(() => {})");
+        Bun.WebView.closeAll();
+        const death = await inFlight.then(() => "resolved", e => e.message);
+
+        const whileDead = {
+          busy: probe(() => busy.evaluate("1")),
+          idle: probe(() => idle.evaluate("1")),
+          blank: probe(() => blank.navigate("data:text/html,<body>blank</body>")),
+        };
+
+        // Construction fails until the dead Chrome has been reaped (see the
+        // respawn test above), hence the retry.
+        let fresh;
+        for (;;) {
+          try {
+            fresh = open();
+            break;
+          } catch (e) {
+            if (!/Failed to spawn Chrome/.test(e.message)) throw e;
+            await Bun.sleep(1);
+          }
+        }
+        await fresh.navigate("data:text/html,<body>fresh</body>");
+        const freshBody = await fresh.evaluate("document.body.textContent");
+
+        const afterRespawn = {
+          evaluate: probe(() => busy.evaluate("1")),
+          navigate: probe(() => busy.navigate("data:text/html,<body>again</body>")),
+          screenshot: probe(() => busy.screenshot()),
+          click: probe(() => busy.click(1, 1)),
+          cdp: probe(() => busy.cdp("Runtime.evaluate", { expression: "1" })),
+          idle: probe(() => idle.evaluate("1")),
+          blank: probe(() => blank.navigate("data:text/html,<body>blank</body>")),
+        };
+        // close() must still be safe to call on the views that died.
+        busy.close();
+        idle.close();
+        blank.close();
+        fresh.close();
+        console.log(JSON.stringify({ death, whileDead, freshBody, afterRespawn }));
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout, stderr).toEndWith("}\n");
+  expect(JSON.parse(stdout)).toEqual({
+    // Pipe EOF and the exit notification race; the wording follows the winner.
+    death: expect.stringMatching(/^Chrome (killed by signal \d+|process closed the pipe|exited)$/),
+    whileDead: {
+      busy: "ERR_INVALID_STATE",
+      idle: "ERR_INVALID_STATE",
+      blank: "ERR_INVALID_STATE",
+    },
+    freshBody: "fresh",
+    afterRespawn: {
+      evaluate: "ERR_INVALID_STATE",
+      navigate: "ERR_INVALID_STATE",
+      screenshot: "ERR_INVALID_STATE",
+      click: "ERR_INVALID_STATE",
+      cdp: "ERR_INVALID_STATE",
+      idle: "ERR_INVALID_STATE",
+      blank: "ERR_INVALID_STATE",
+    },
+  });
+  expect(exitCode, stderr).toBe(0);
 });
 
 it("chrome: backend.stderr defaults to ignore (Chrome noise hidden)", async () => {
@@ -976,4 +1175,84 @@ it("chrome: large evaluate payload crosses the pipe", async () => {
   const big = "x".repeat(100_000);
   const result = await view.evaluate(`${JSON.stringify(big)}.length`);
   expect(result).toBe(100_000);
+});
+
+it("chrome: large evaluate result crosses the pipe", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  await view.navigate(html("<body></body>"));
+  // The reply is larger than any single read the parent does (64KB on the
+  // Windows pipe transport), so the NUL-delimited frame arrives in several
+  // chunks and has to be reassembled before it's parsed.
+  const result: string = await view.evaluate(`"y".repeat(300_000) + "!"`);
+  expect(result.length).toBe(300_001);
+  expect(result.at(-1)).toBe("!");
+  expect(result.at(0)).toBe("y");
+  expect(result.at(150_000)).toBe("y");
+});
+
+// Both BUN_CHROME_PATH tests are subprocess-isolated: the executable is
+// resolved once per process, on the first spawn. The env var is consulted
+// right after backend.path, before $PATH and the install locations.
+const spawnWithEnv = `
+  const view = new Bun.WebView({ backend: { type: "chrome", url: false }, width: 200, height: 200 });
+  await view.navigate("data:text/html,<body>env</body>");
+  console.log(await view.evaluate("document.body.textContent"));
+  view.close();
+`;
+
+it("BUN_CHROME_PATH wins over auto-detection", async () => {
+  // This machine has a browser that auto-detection would find (that's the
+  // `it` gate), so the only way the constructor can fail here is by honoring
+  // the env var.
+  using dir = tempDir("bun-chrome-path", {});
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", spawnWithEnv],
+    env: { ...bunEnv, BUN_CHROME_PATH: join(String(dir), "not-a-browser") },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
+  expect(stderr).toContain("Failed to spawn Chrome");
+  expect(exitCode).toBe(1);
+});
+
+it("BUN_CHROME_PATH is used as the executable", async () => {
+  // The value is handed to the spawner as-is (no $PATH lookup), so this
+  // covers the absolute-path shape from the bug report on every platform,
+  // including paths with spaces and backslashes on Windows.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", spawnWithEnv],
+    env: { ...bunEnv, BUN_CHROME_PATH: chromePath },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "env", stderr: "", exitCode: 0 });
+});
+
+// No browser involved: the constructor refuses before it would spawn one. The
+// CDP transport is one per process, owned by the global that spawned it, so a
+// Worker's views would be left pointing at a dead global once it terminates.
+test("the chrome backend is refused off the main thread", async () => {
+  using dir = tempDir("webview-chrome-worker", {
+    "worker.ts": `
+      try {
+        new Bun.WebView({ backend: { type: "chrome", url: false } });
+        postMessage({ constructed: true });
+      } catch (e) {
+        postMessage({ code: e.code, message: e.message });
+      }
+    `,
+  });
+  const worker = new Worker(join(String(dir), "worker.ts"));
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+    worker.onmessage = e => resolve(e.data);
+    worker.onerror = e => reject(e);
+    expect(await promise).toEqual({
+      code: "ERR_INVALID_STATE",
+      message: 'Bun.WebView with backend "chrome" is only available on the main thread',
+    });
+  } finally {
+    worker.terminate();
+  }
 });

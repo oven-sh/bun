@@ -499,7 +499,7 @@ fn guard_check(errors: &mut Vec<CompilerDiagnostic>, operand: &Place, env: &Env)
 
 // --- Main entry point ---
 
-pub fn validate_no_ref_access_in_render(func: &HirFunction, env: &mut Environment) {
+pub(crate) fn validate_no_ref_access_in_render(func: &HirFunction, env: &mut Environment) {
     let mut ref_env = Env::new();
     collect_temporaries_sidemap(
         func,
@@ -590,10 +590,7 @@ fn validate_no_ref_access_in_render_impl(
 
     // Process params
     for param in &func.params {
-        let place = match param {
-            crate::hir::ParamPattern::Place(p) => p,
-            crate::hir::ParamPattern::Spread(s) => &s.place,
-        };
+        let place = param.place();
         ref_env.set(
             place.identifier,
             ref_type_of_type(place.identifier, identifiers, types),

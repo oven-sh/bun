@@ -196,7 +196,7 @@ const expectRangeError = {
   code: 'ERR_OUT_OF_RANGE',
   name: 'RangeError',
   message: 'The value of "fd" is out of range. ' +
-           'It must be >= 0 and <= 2147483647. Received -1'
+           'It must be >= 0 && <= 2147483647. Received -1'
 };
 // futimes-only error cases
 {

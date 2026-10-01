@@ -14,7 +14,6 @@
 #include <JavaScriptCore/Operations.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
-#include <JavaScriptCore/JSBoundFunction.h>
 using namespace JSC;
 
 namespace Zig {
@@ -27,6 +26,7 @@ JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetMethodName);
 JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetFileName);
 JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetLineNumber);
 JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetColumnNumber);
+JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetScriptId);
 JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetEvalOrigin);
 JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetScriptNameOrSourceURL);
 JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncIsToplevel);
@@ -69,6 +69,7 @@ static const HashTableValue CallSitePrototypeTableValues[]
           { "getFileName"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetFileName, 0 } },
           { "getLineNumber"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetLineNumber, 0 } },
           { "getColumnNumber"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetColumnNumber, 0 } },
+          { "getScriptId"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetScriptId, 0 } },
           { "getEvalOrigin"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetEvalOrigin, 0 } },
           { "getScriptNameOrSourceURL"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetScriptNameOrSourceURL, 0 } },
           { "isToplevel"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncIsToplevel, 0 } },
@@ -89,8 +90,8 @@ void CallSitePrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalO
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
-    reifyStaticProperties(vm, CallSite::info(), CallSitePrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, CallSite::info(), CallSitePrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 // TODO: doesn't recognize thisValue as global object
@@ -145,6 +146,12 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetColumnNumber, (JSGlobalObject * glo
     return JSC::JSValue::encode(jsNumber(std::max(callSite->columnNumber().zeroBasedInt(), 0)));
 }
 
+JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetScriptId, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    ENTER_PROTO_FUNC();
+    return JSC::JSValue::encode(jsNumber(static_cast<double>(callSite->sourceID())));
+}
+
 // TODO:
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetEvalOrigin, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -161,24 +168,8 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsToplevel, (JSGlobalObject * globalOb
 {
     ENTER_PROTO_FUNC();
 
-    if (JSValue functionValue = callSite->function()) {
-        if (JSObject* fn = functionValue.getObject()) {
-            if (JSFunction* function = dynamicDowncast<JSFunction>(fn)) {
-                if (function->inherits<JSC::JSBoundFunction>()) {
-                    return JSC::JSValue::encode(JSC::jsBoolean(false));
-                }
-
-                if (function->isHostFunction()) {
-                    return JSC::JSValue::encode(JSC::jsBoolean(true));
-                }
-
-                if (auto* executable = function->jsExecutable()) {
-                    return JSValue::encode(jsBoolean(executable->isProgramExecutable() || executable->isModuleProgramExecutable()));
-                }
-            } else if (dynamicDowncast<InternalFunction>(functionValue)) {
-                return JSC::JSValue::encode(JSC::jsBoolean(true));
-            }
-        }
+    if (callSite->isSloppyFunctionCall()) {
+        return JSC::JSValue::encode(JSC::jsBoolean(false));
     }
 
     JSC::JSValue thisValue = callSite->thisValue();
@@ -249,6 +240,7 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncToString, (JSGlobalObject * globalObje
     ENTER_PROTO_FUNC();
     WTF::StringBuilder sb;
     callSite->formatAsString(vm, globalObject, sb);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(jsString(vm, sb.toString()));
 }
 
@@ -256,10 +248,10 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncToJSON, (JSGlobalObject * globalObject
 {
     ENTER_PROTO_FUNC();
     JSObject* obj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
-    obj->putDirect(vm, JSC::Identifier::fromString(vm, "sourceURL"_s), callSite->sourceURL());
-    obj->putDirect(vm, JSC::Identifier::fromString(vm, "lineNumber"_s), jsNumber(callSite->lineNumber().oneBasedInt()));
-    obj->putDirect(vm, JSC::Identifier::fromString(vm, "columnNumber"_s), jsNumber(callSite->columnNumber().zeroBasedInt()));
-    obj->putDirect(vm, JSC::Identifier::fromString(vm, "functionName"_s), callSite->functionName());
+    Bun::putDirectNamed(vm, obj, "sourceURL"_s, callSite->sourceURL());
+    Bun::putDirectNamed(vm, obj, "lineNumber"_s, jsNumber(callSite->lineNumber().oneBasedInt()));
+    Bun::putDirectNamed(vm, obj, "columnNumber"_s, jsNumber(callSite->columnNumber().zeroBasedInt()));
+    Bun::putDirectNamed(vm, obj, "functionName"_s, callSite->functionName());
     return JSC::JSValue::encode(obj);
 }
 

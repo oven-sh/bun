@@ -85,7 +85,7 @@ describe("DOMJIT", () => {
       }
       expect(true).toBe(true);
     });
-    test.todo("FFI ptr and read", () => {
+    test("FFI ptr and read", () => {
       for (let i = 0; i < iter; i++) {
         read.intptr(ptr(buffer), 8);
         read.ptr(ptr(buffer), 8);

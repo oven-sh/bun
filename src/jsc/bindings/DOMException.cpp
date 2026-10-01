@@ -29,8 +29,6 @@
 #include "root.h"
 #include "DOMException.h"
 
-#include "Exception.h"
-
 namespace WebCore {
 
 // This array needs to be kept in sync with the ExceptionCode enumeration.
@@ -99,12 +97,6 @@ Ref<DOMException> DOMException::create(ExceptionCode ec, const String& message)
 Ref<DOMException> DOMException::create(const String& message, const String& name)
 {
     return adoptRef(*new DOMException(legacyCodeFromName(name), name, message));
-}
-
-Ref<DOMException> DOMException::create(const Exception& exception)
-{
-    auto& description = DOMException::description(exception.code());
-    return adoptRef(*new DOMException(description.legacyCode, description.name, exception.message().isEmpty() ? description.message : exception.message()));
 }
 
 DOMException::DOMException(LegacyCode legacyCode, const String& name, const String& message)

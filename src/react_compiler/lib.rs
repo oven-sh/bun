@@ -27,12 +27,12 @@ mod options;
 
 pub mod codegen;
 pub mod lowering;
-pub mod pipeline;
+pub(crate) mod pipeline;
 pub mod program;
 
 pub use compile_result::{CompileDiagnostic, CompileOutput};
 pub use options::ReactCompilerOptions;
 pub use program::{
-    CompileResult, Host, JsxImportKind, PendingCompile, ReactCompilerState, SymbolHost,
+    CompileResult, Host, JsxImportKind, PendingCompile, ReactCompilerState,
     collect_import_bindings, finish, has_module_scope_opt_out, maybe_compile_pending,
 };

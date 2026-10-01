@@ -5,20 +5,14 @@ pub(crate) struct NPMClient {
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Tag {
+pub(crate) enum Tag {
     Bun,
 }
 
 impl Tag {
-    pub fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Tag::Bun => "bun",
         }
-    }
-}
-
-impl From<Tag> for &'static str {
-    fn from(t: Tag) -> &'static str {
-        t.as_str()
     }
 }

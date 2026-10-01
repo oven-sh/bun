@@ -1,1 +1,0 @@
-crate::unary_predicate_matcher!(to_be_number, "toBeNumber", |v| v.is_number());

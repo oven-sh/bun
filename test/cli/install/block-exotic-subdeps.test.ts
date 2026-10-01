@@ -102,15 +102,7 @@ blockExoticSubdeps = true
       }),
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: envForDir(String(dir)),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stderr, exitCode } = await install(String(dir));
 
     expect(stderr).toContain("blockExoticSubdeps");
     // parent-pkg pulled in a non-registry transitive — should be flagged.
@@ -135,15 +127,7 @@ blockExoticSubdeps = true
       }),
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: envForDir(String(dir)),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stderr, exitCode } = await install(String(dir));
 
     // Should NOT complain — only direct root deps are exotic.
     expect(stderr).not.toContain("blockExoticSubdeps");
@@ -170,15 +154,7 @@ blockExoticSubdeps = true
       }),
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: envForDir(String(dir)),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stderr, exitCode } = await install(String(dir));
 
     expect(stderr).not.toContain("blockExoticSubdeps");
     expect(exitCode).toBe(0);
@@ -205,15 +181,7 @@ blockExoticSubdeps = false
       }),
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: envForDir(String(dir)),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stderr, exitCode } = await install(String(dir));
 
     expect(stderr).not.toContain("blockExoticSubdeps");
     expect(exitCode).toBe(0);
@@ -242,15 +210,7 @@ blockExoticSubdeps = true
       }),
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: envForDir(String(dir)),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stderr, exitCode } = await install(String(dir));
 
     // Mentions the parent that pulled in the exotic dep.
     expect(stderr).toContain("parent-pkg");
@@ -281,15 +241,7 @@ blockExoticSubdeps = true
       }),
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: envForDir(String(dir)),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stderr, exitCode } = await install(String(dir));
 
     expect(stderr).toContain("blockExoticSubdeps");
     expect(stderr).toContain("inner");
@@ -325,15 +277,7 @@ blockExoticSubdeps = true
       }),
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: envForDir(String(dir)),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stderr, exitCode } = await install(String(dir));
 
     expect(stderr).toContain("blockExoticSubdeps");
     expect(stderr).toContain("ws-member");
@@ -371,15 +315,7 @@ blockExoticSubdeps = true
       }),
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: envForDir(String(dir)),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stderr, exitCode } = await install(String(dir));
 
     expect(stderr).not.toContain("blockExoticSubdeps");
     expect(exitCode).toBe(0);
@@ -409,15 +345,7 @@ blockExoticSubdeps = true
       "inner-override/package.json": JSON.stringify({ name: "inner", version: "1.0.0" }),
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: envForDir(String(dir)),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stderr, exitCode } = await install(String(dir));
 
     expect(stderr).toContain("blockExoticSubdeps");
     // The override's literal — NOT the transitive parent's `file:../inner` —
@@ -456,15 +384,7 @@ blockExoticSubdeps = true
       "inner/package.json": JSON.stringify({ name: "inner", version: "1.0.0" }),
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: envForDir(String(dir)),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stderr, exitCode } = await install(String(dir));
 
     // The override's literal `^1.0.0` is plain npm semver, not exotic, so
     // the block must NOT fire regardless of what parent-pkg wrote.
@@ -500,15 +420,7 @@ blockExoticSubdeps = true
       "pkgs/ws-member/package.json": JSON.stringify({ name: "ws-member", version: "1.0.0" }),
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: envForDir(String(dir)),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stderr, exitCode } = await install(String(dir));
 
     expect(stderr).toContain("blockExoticSubdeps");
     expect(stderr).toContain("ws-member");
@@ -545,15 +457,7 @@ blockExoticSubdeps = true
       "shared/package.json": JSON.stringify({ name: "shared", version: "1.0.0" }),
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: envForDir(String(dir)),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stderr, exitCode } = await install(String(dir));
 
     // The failure is the resolver's, not this flag's.
     expect(stderr).toContain("failed to resolve");
@@ -584,15 +488,7 @@ blockExoticSubdeps = true
       "my-fork/package.json": JSON.stringify({ name: "inner", version: "1.0.0" }),
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: envForDir(String(dir)),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stderr, exitCode } = await install(String(dir));
 
     expect(stderr).toContain("blockExoticSubdeps");
     // Names the override's literal, making clear the user's own override

@@ -7,7 +7,7 @@ use core::sync::atomic::Ordering;
 use crate::bun_fs::FileSystem;
 use bun_core::{Output, UnwrapOrOom, fmt as bun_fmt};
 use bun_core::{StringOrTinyString, strings};
-use bun_paths::{self as Path, PathBuffer};
+use bun_paths as Path;
 use bun_semver::{self as Semver, String as SemverString};
 use bun_sys::Fd;
 use bun_threading::thread_pool as ThreadPool;
@@ -596,6 +596,10 @@ pub fn enqueue_dependency_to_root(
                 // raw `*mut` — `sleep_until`
                 // also receives this pointer, so `&mut` here would alias.
                 manager: *mut PackageManager,
+                // `sleep_until` ticks the JS event loop, and JS run there can
+                // swap `manager.log` and leave it pointing at a dead stack
+                // `Log`. `is_done` re-asserts this snapshot before each poll.
+                log: *mut bun_ast::Log,
             }
             impl Closure {
                 fn is_done(&mut self) -> bool {
@@ -603,6 +607,7 @@ pub fn enqueue_dependency_to_root(
                     // below; `sleep_until`/`tick_raw` hold no `&mut` across
                     // this callback, so this is the unique live borrow.
                     let manager = unsafe { &mut *self.manager };
+                    manager.log = self.log;
                     if manager.pending_task_count() > 0 {
                         // All callbacks void: `VoidRunTasksCallbacks` (below)
                         // has `Ctx = ()` and every `HAS_* = false`.
@@ -639,6 +644,7 @@ pub fn enqueue_dependency_to_root(
             let mut closure = Closure {
                 err: None,
                 manager: mgr,
+                log: this.log,
             };
             // SAFETY: `mgr` derived from the live exclusive `this` borrow;
             // `sleep_until` + `tick_raw` hold no `&mut PackageManager` across
@@ -2121,7 +2127,7 @@ fn enqueue_local_tarball(
     // can be reallocated concurrently by the main thread while processing
     // other dependencies (e.g. `appendPackage` / `StringBuilder.allocate`
     // in `Package.fromNPM`).
-    let mut abs_buf = PathBuffer::uninit();
+    let mut abs_buf = bun_paths::path_buffer_pool::get();
     let (tarball_path, normalize): (&[u8], bool) =
         match local_tarball_base_dir(&this.lockfile, dependency_id, path) {
             None => (path, true),
@@ -2411,6 +2417,17 @@ fn get_or_put_resolved_package_with_find_result(
     let this: &mut PackageManager = unsafe { &mut *guard.0 };
     // The scopeguard runs on ALL exits, never disarmed.
 
+    // `remote_package_features` only lacks groups that no remote package has.
+    let placed = behavior.is_placed(this.options.local_package_features);
+    // `is_filtered_dependency_or_workspace` filters this package and everything below it.
+    let unplaced = !this.options.runtime_auto_install
+        && (!placed
+            || package.is_disabled(this.options.cpu, this.options.os)
+            || this.lockfile.is_in_unplaced_subtree(dependency_id));
+    if unplaced {
+        this.lockfile.mark_unplaced_subtree(package.dependencies);
+    }
+
     // non-null if the package is in "patchedDependencies"
     let mut name_and_version_hash: Option<u64> = None;
     let mut patchfile_hash: Option<u64> = None;
@@ -2424,6 +2441,12 @@ fn get_or_put_resolved_package_with_find_result(
         // Is this package already in the cache?
         // We don't need to download the tarball, but we should enqueue dependencies
         install::PreinstallState::Done => Some(ResolvedPackageResult {
+            package,
+            is_first_time: true,
+            task: None,
+        }),
+        // If a placed dependency needs it too, the install phase fetches and patches it.
+        _ if unplaced => Some(ResolvedPackageResult {
             package,
             is_first_time: true,
             task: None,
@@ -2630,36 +2653,29 @@ fn get_or_put_resolved_package(
     match version.tag {
         dependency::version::Tag::Npm | dependency::version::Tag::DistTag => {
             'resolve_from_workspace: {
-                if version.tag == dependency::version::Tag::Npm {
-                    let workspace_path = if this.lockfile.workspace_paths.count() > 0 {
-                        this.lockfile.workspace_paths.get(&name_hash)
-                    } else {
-                        None
+                if version.tag == dependency::version::Tag::Npm
+                    && Lockfile::linked_workspace_path(
+                        this.options.link_workspace_packages,
+                        &this.lockfile.workspace_paths,
+                        &this.lockfile.workspace_versions,
+                        name_hash,
+                        &version.npm().version,
+                        this.lockfile.buffers.string_bytes.as_slice(),
+                    )
+                    .is_some()
+                {
+                    let Some(workspace_package_id) =
+                        root_workspace_package_id(&this.lockfile, name_hash)
+                    else {
+                        break 'resolve_from_workspace;
                     };
-                    let workspace_version = this.lockfile.workspace_versions.get(&name_hash);
-                    let buf = this.lockfile.buffers.string_bytes.as_slice();
-                    let npm_group = &version.npm().version;
-                    if this.options.link_workspace_packages
-                        && ((workspace_version.is_some()
-                            && npm_group.satisfies(*workspace_version.unwrap(), buf, buf))
-                            // https://github.com/oven-sh/bun/pull/10899#issuecomment-2099609419
-                            // if the workspace doesn't have a version, it can still be used if
-                            // dependency version is wildcard
-                            || (workspace_path.is_some() && npm_group.is_star()))
-                    {
-                        let Some(workspace_package_id) =
-                            root_workspace_package_id(&this.lockfile, name_hash)
-                        else {
-                            break 'resolve_from_workspace;
-                        };
-                        // make sure verifyResolutions sees this resolution as a valid package id
-                        success_fn(this, dependency_id, workspace_package_id);
-                        return Ok(Some(ResolvedPackageResult {
-                            package: *this.lockfile.packages.get(workspace_package_id as usize),
-                            is_first_time: false,
-                            task: None,
-                        }));
-                    }
+                    // make sure verifyResolutions sees this resolution as a valid package id
+                    success_fn(this, dependency_id, workspace_package_id);
+                    return Ok(Some(ResolvedPackageResult {
+                        package: *this.lockfile.packages.get(workspace_package_id as usize),
+                        is_first_time: false,
+                        task: None,
+                    }));
                 }
             }
 
@@ -2884,7 +2900,7 @@ fn get_or_put_resolved_package(
                     // SAFETY: `get_or_put` copies `folder_path_abs` into the
                     // lockfile string buffer before any other mutation.
                     let folder_path = this.lockfile.str_detached(&folder);
-                    let mut buf2 = PathBuffer::uninit();
+                    let mut buf2 = bun_paths::path_buffer_pool::get();
                     let folder_path_abs = if bun_paths::is_absolute(folder_path) {
                         folder_path
                     } else {
@@ -2910,19 +2926,10 @@ fn get_or_put_resolved_package(
                 }
 
                 // transitive folder dependencies do not have their dependencies resolved
-                if crate::bin::bin_target_escapes_package_dir(this.lockfile.str(&folder)) {
-                    // overrides/resolutions are only ever parsed from the root
-                    // package.json, so a folder path that reached here via an
-                    // override was written by the user and is trusted the same
-                    // as a direct dependency of the root.
-                    let buf = this.lockfile.buffers.string_bytes.as_slice();
-                    if !this.lockfile.overrides.contains_name(
-                        dependency.name_hash,
-                        dependency.name.slice(buf),
-                        buf,
-                    ) {
-                        break 'res FolderResolutionValue::Err(crate::Error::MissingPackageJSON);
-                    }
+                if crate::bin::bin_target_escapes_package_dir(this.lockfile.str(&folder))
+                    && !this.lockfile.is_trusted_folder_dependency(dependency_id)
+                {
+                    break 'res FolderResolutionValue::Err(crate::Error::MissingPackageJSON);
                 }
 
                 let mut package = Package::default();
@@ -2998,7 +3005,7 @@ fn get_or_put_resolved_package(
             // SAFETY: `get_or_put` copies `workspace_path_u8` into the
             // lockfile string buffer before any other mutation.
             let workspace_path = this.lockfile.str_detached(&workspace_path_raw);
-            let mut buf2 = PathBuffer::uninit();
+            let mut buf2 = bun_paths::path_buffer_pool::get();
             let workspace_path_u8 = if bun_paths::is_absolute(workspace_path) {
                 workspace_path
             } else {

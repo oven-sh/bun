@@ -47,7 +47,7 @@ generateObjectModuleSourceCodeForJSON(JSC::JSGlobalObject* globalObject,
         PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings,
             PrivateSymbolMode::Exclude);
         object->getPropertyNames(globalObject, properties, DontEnumPropertiesMode::Exclude);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, void());
         gcUnprotectNullTolerant(object);
 
         exportNames.append(vm.propertyNames->defaultKeyword);
@@ -61,7 +61,7 @@ generateObjectModuleSourceCodeForJSON(JSC::JSGlobalObject* globalObject,
             exportNames.append(entry);
 
             JSValue value = object->get(globalObject, entry);
-            RETURN_IF_EXCEPTION(scope, {});
+            RETURN_IF_EXCEPTION(scope, void());
             exportValues.append(value);
         }
     };

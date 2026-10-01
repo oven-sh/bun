@@ -29,7 +29,6 @@ use crate::repository::Repository;
 use crate::resolution_real::{Resolution, Tag as ResolutionTag, TaggedValue as ResolutionValue};
 use crate::versioned_url::VersionedURL;
 use bun_core::strings;
-use bun_paths::PathBuffer;
 use bun_semver::{self as Semver, SlicedString, String as SemverString};
 use bun_sys::Fd;
 
@@ -157,6 +156,29 @@ impl<'a> Entry<'a> {
             path = rest;
         }
         strings::without_trailing_slash(path)
+    }
+
+    /// `https://registry.npmjs.org/@scope/name/-/name-1.0.0.tgz` -> `@scope/name`
+    pub(crate) fn get_package_name_from_default_registry_url(url: &[u8]) -> Option<&[u8]> {
+        let host_and_path = url
+            .strip_prefix(b"https://")
+            .or_else(|| url.strip_prefix(b"http://"))?;
+        let path = host_and_path
+            .strip_prefix(b"registry.npmjs.org/")
+            .or_else(|| host_and_path.strip_prefix(b"registry.yarnpkg.com/"))?;
+        // `-` is a valid package name, so the first "/-/" can be inside `@scope/-`.
+        let scope_len = if path.starts_with(b"@") {
+            let scope_end = strings::index_of_char_usize(path, b'/')?;
+            if scope_end == b"@".len() {
+                return None;
+            }
+            scope_end + 1
+        } else {
+            0
+        };
+        let name_len = scope_len + strings::index_of_char_usize(&path[scope_len..], b'/')?;
+        let (name, rest) = path.split_at(name_len);
+        (rest.starts_with(b"/-/") && dependency::is_safe_install_folder_name(name)).then_some(name)
     }
 
     pub(crate) fn parse_git_url(
@@ -640,7 +662,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     };
 
     // `package_json_source.path` borrows this buffer (lifetime-erased); keep it alive until the overrides are parsed below.
-    let mut package_json_path_buf = PathBuffer::uninit();
+    let mut package_json_path_buf = bun_paths::path_buffer_pool::get();
     let package_json_source = {
         let Ok(package_json_path) =
             bun_sys::get_fd_path(package_json_fd.handle(), &mut package_json_path_buf)
@@ -947,23 +969,10 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     || Entry::is_remote_tarball(resolved)
                     || resolved.ends_with(b".tgz")
                 {
-                    // https://registry.npmjs.org/package/-/package-version.tgz
-                    if strings::index_of(resolved, b"registry.npmjs.org/").is_some()
-                        || strings::index_of(resolved, b"registry.yarnpkg.com/").is_some()
+                    if let Some(name) = Entry::get_package_name_from_default_registry_url(resolved)
                     {
-                        if let Some(separator_idx) = strings::index_of(resolved, b"/-/") {
-                            if let Some(registry_idx) = strings::index_of(resolved, b"registry.") {
-                                let after_registry = &resolved[registry_idx..];
-                                if let Some(domain_slash) = strings::index_of(after_registry, b"/")
-                                {
-                                    let package_start = registry_idx + domain_slash + 1;
-                                    let extracted_name = &resolved[package_start..separator_idx];
-                                    break 'blk extracted_name;
-                                }
-                            }
-                        }
+                        break 'blk name;
                     }
-                    break 'blk base_name;
                 }
             }
             break 'blk base_name;
@@ -1901,6 +1910,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             lockfile::DependencyIDSlice::new(resolutions_off, dep_count);
     }
 
+    this.tag_workspace_links(manager.options.link_workspace_packages);
     // `Lockfile::resolve` returns `Result<(), tree::SubtreeError>`; surface as
     // a tagged error until `From<SubtreeError>` lands.
     if let Err(_e) = this.resolve(log) {

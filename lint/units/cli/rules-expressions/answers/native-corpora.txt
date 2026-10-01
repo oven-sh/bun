@@ -1,0 +1,14 @@
+# node oracle/native.cjs /tmp/rx/corpus-js.json  (3600 files: /workspace/ref/eslint/lib, its node_modules, test/js/node of the worktree; no inline configuration)
+corpus-js.json: cases 3593, same 3593, differ 0
+all: cases 3593, same 3593, differ 0 {}; reports of ESLint 59
+left out (Bun rejects): /workspace/wt/cli/test/js/node/module/extensions-fixture/e.js
+left out (ESLint rejects): /workspace/wt/cli/test/js/node/parallel/test-child-process-server-close.js
+left out (ESLint rejects): /workspace/wt/cli/test/js/node/test/common/require-as.js
+left out (ESLint rejects): /workspace/wt/cli/test/js/node/test/fixtures/apilinks/root.js
+left out (Bun rejects): /workspace/wt/cli/test/js/node/test/fixtures/es-module-loaders/syntax-error.mjs
+left out (Bun rejects): /workspace/wt/cli/test/js/node/test/fixtures/es-modules/syntax-error.mjs
+left out (Bun rejects): /workspace/wt/cli/test/js/node/test/fixtures/es-modules/wasm-source-phase.js
+# node oracle/native.cjs /tmp/rx/corpus-ts.json  (895 files: src/js, test/js/bun, @typescript-eslint of /workspace/ref/tseslint; no .d.ts)
+corpus-ts.json: cases 895, same 895, differ 0
+all: cases 895, same 895, differ 0 {}; reports of ESLint 9
+# node oracle/native.cjs /tmp/rx/random3.json   (node oracle/gen-random.cjs 7000 777)

@@ -122,7 +122,7 @@ fn entry_pathname_utf8(entry: &libarchive::lib::Entry) -> Result<Vec<u8>, bun_al
 /// Count the number of files in an archive
 fn count_files_in_archive(data: &[u8]) -> u32 {
     use libarchive::lib;
-    let (archive, open_status) = lib::MemoryReader::open(data, lib::DamagedBlock::Skip);
+    let (archive, open_status) = lib::MemoryReader::open(data, lib::DamagedBlock::Fail);
     if open_status != lib::Result::Ok {
         return 0;
     }
@@ -756,7 +756,7 @@ impl ExtractContext {
                 close_handles: true,
                 log: false,
                 npm: false,
-                damaged_block: libarchive::DamagedBlock::Skip,
+                damaged_block: libarchive::DamagedBlock::Fail,
             },
         ) {
             Ok(c) => c,
@@ -1030,7 +1030,7 @@ impl FilesContext {
     fn do_run(&mut self) -> Result<FilesResult, bun_alloc::AllocError> {
         use libarchive::lib;
         let (archive, open_status) =
-            lib::MemoryReader::open(self.store.shared_view(), lib::DamagedBlock::Skip);
+            lib::MemoryReader::open(self.store.shared_view(), lib::DamagedBlock::Fail);
         if open_status != lib::Result::Ok {
             return Ok(Self::read_error(&archive));
         }
@@ -1283,7 +1283,7 @@ fn extract_to_disk_filtered(
     glob_patterns: Option<&[Box<[u8]>]>,
 ) -> crate::Result<u32> {
     use libarchive::lib;
-    let (archive, open_status) = lib::MemoryReader::open(file_buffer, lib::DamagedBlock::Skip);
+    let (archive, open_status) = lib::MemoryReader::open(file_buffer, lib::DamagedBlock::Fail);
     if open_status != lib::Result::Ok {
         return Err(crate::Error::ReadError);
     }

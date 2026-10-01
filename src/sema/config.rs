@@ -12,6 +12,8 @@ pub struct ConfigError {
     pub args: Vec<String>,
     /// Where it is, if it is anywhere: the file, from, to.
     pub at: Option<(String, u32, u32)>,
+    /// What is said below it: how far it is indented, the code, what goes into the message.
+    pub chain: Vec<(u32, u32, Vec<String>)>,
 }
 
 impl ConfigError {
@@ -20,6 +22,26 @@ impl ConfigError {
             code,
             args: args.iter().map(|&a| a.to_owned()).collect(),
             at: None,
+            chain: Vec::new(),
+        }
+    }
+
+    /// `problem`, in the configuration file at `config_path`, which may be none.
+    pub fn of_problem(
+        host: &dyn Host,
+        config_path: &str,
+        problem: &crate::verify::Problem,
+    ) -> ConfigError {
+        let at = (!config_path.is_empty())
+            .then(|| host.read(config_path))
+            .flatten()
+            .and_then(|text| problem.span_in(&text))
+            .map(|(from, to)| (config_path.to_owned(), from, to));
+        ConfigError {
+            code: problem.code,
+            args: problem.args.clone(),
+            at,
+            chain: problem.chain.clone(),
         }
     }
 }
@@ -173,6 +195,7 @@ fn parse_config(
                     code: problem.code,
                     args: problem.args,
                     at: problem.span.map(|(from, to)| (path.to_owned(), from, to)),
+                    chain: Vec::new(),
                 }),
         );
         let mut said = Vec::with_capacity(compiler.len());
@@ -546,6 +569,13 @@ fn project_from_raw(
     }
     let compiler = Json::Object(std::mem::take(&mut raw.compiler));
     let mut options = Options::from_compiler_options(base, &compiler);
+    options.verify(&compiler, config_path);
+    errors.extend(
+        options
+            .problems
+            .iter()
+            .map(|problem| ConfigError::of_problem(host, config_path, problem)),
+    );
     let has_no_references = raw.references.as_ref().is_none_or(Vec::is_empty);
     if raw.files.as_ref().is_some_and(Vec::is_empty) && has_no_references && !raw.has_extends {
         errors.push(ConfigError::new(18002, &[config_path]));

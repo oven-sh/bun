@@ -191,8 +191,14 @@ pub struct Options {
     pub max_node_module_js_depth: u32,
     /// `checkJs`. Not said at all is a third thing: see `Checker::is_plain_js`.
     pub check_js: Option<bool>,
-    /// What is wrong with the configuration itself: the codes.
+    /// What is wrong with the configuration itself: the codes, in order, each once.
     pub errors: Vec<u32>,
+    /// The same with all there is to say about it.
+    pub problems: Vec<crate::verify::Problem>,
+    /// `ConfigFilePath != ""`
+    pub has_config_file: bool,
+    /// `suppressOutputPathCheck`: that output would be written over input is not looked into. Only tests say so.
+    pub suppress_output_path_check: bool,
     /// What `target` says, `None` if it says nothing.
     pub target: ScriptTarget,
     /// What `module` comes to, said or not.
@@ -602,8 +608,18 @@ impl Options {
         }
         options.skip_lib_check = flag("skipLibCheck");
         options.skip_default_lib_check = flag("skipDefaultLibCheck");
-        options.errors = crate::verify::verify_compiler_options(compiler, &options);
+        options.suppress_output_path_check = flag("suppressOutputPathCheck");
+        options.verify(compiler, "");
         options
+    }
+
+    /// Finds out what is wrong with the options, which are made of `compiler`, in the configuration file at `config_path`, if there is one.
+    pub fn verify(&mut self, compiler: &Json, config_path: &str) {
+        self.has_config_file = !config_path.is_empty();
+        self.problems = crate::verify::verify_compiler_options(compiler, self, config_path);
+        self.errors = self.problems.iter().map(|problem| problem.code).collect();
+        self.errors.sort_unstable();
+        self.errors.dedup();
     }
 }
 

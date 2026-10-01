@@ -17,6 +17,15 @@ pub struct Line {
     pub level: u32,
 }
 
+/// `DiagnosticRelatedInformation`: something, mostly elsewhere, that has to do with an error. `'x' is declared here.`
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Related {
+    /// The file, and from where to where in it. `None`: it is nowhere.
+    pub at: Option<(FileId, u32, u32)>,
+    pub code: u32,
+    pub args: Vec<String>,
+}
+
 /// What is noted of the error `code` at `start`.
 #[derive(Clone, Debug)]
 pub(super) struct Note {
@@ -26,6 +35,16 @@ pub(super) struct Note {
     end: u32,
     args: Vec<String>,
     chain: Vec<Line>,
+    related: Vec<Related>,
+}
+
+/// [`Related`] as it is shown.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct RelatedExplained {
+    pub at: Option<(FileId, u32, u32)>,
+    pub code: u32,
+    pub category: Category,
+    pub text: String,
 }
 
 /// An error as it is shown.
@@ -37,6 +56,7 @@ pub struct Explained {
     pub category: Category,
     /// The lines of the message. Those after the first are indented by two spaces for each level.
     pub text: String,
+    pub related: Vec<RelatedExplained>,
 }
 
 impl Checker<'_> {
@@ -81,7 +101,38 @@ impl Checker<'_> {
             end,
             args,
             chain: Vec::new(),
+            related: Vec::new(),
         });
+    }
+
+    /// `AddRelatedInfo`: adds to what was last noted of the error `code` at `start`. `related` is only called if it will be read.
+    pub(super) fn relate(
+        &mut self,
+        start: u32,
+        code: u32,
+        related: impl FnOnce(&mut Self) -> Vec<Related>,
+    ) {
+        if !self.explains {
+            return;
+        }
+        let related = related(self);
+        let mut notes = self.notes.borrow_mut();
+        match notes
+            .iter_mut()
+            .rev()
+            .find(|n| n.start == start && n.code == code)
+        {
+            Some(note) => note.related.extend(related),
+            // Nothing was noted of a message whose arguments are read off the source.
+            None => notes.push(Note {
+                start,
+                code,
+                end: 0,
+                args: Vec::new(),
+                chain: Vec::new(),
+                related,
+            }),
+        }
     }
 
     /// `name` as it is written in a message.
@@ -153,6 +204,7 @@ impl Checker<'_> {
                     args: Vec::new(),
                     level: 1,
                 }],
+                related: Vec::new(),
             }),
         }
     }
@@ -206,8 +258,8 @@ impl Checker<'_> {
             messages::message(d.code).unwrap_or((Category::Error, "Unknown error."));
         let token_end = end_of_token(text, d.start);
         let mut message = match note {
-            Some(note) => messages::format(template, &note.args),
-            None => messages::format(
+            Some(note) if !note.args.is_empty() => messages::format(template, &note.args),
+            _ => messages::format(
                 template,
                 &args_from_source(text, d.start, token_end, d.code),
             ),
@@ -229,6 +281,20 @@ impl Checker<'_> {
             code: d.code,
             category,
             text: message,
+            related: note
+                .map_or(&[][..], |n| &n.related)
+                .iter()
+                .map(|related| {
+                    let (category, template) = messages::message(related.code)
+                        .unwrap_or((Category::Message, "Unknown error."));
+                    RelatedExplained {
+                        at: related.at,
+                        code: related.code,
+                        category,
+                        text: messages::format(template, &related.args),
+                    }
+                })
+                .collect(),
         }
     }
 }

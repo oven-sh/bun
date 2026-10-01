@@ -119,6 +119,8 @@ pub struct Diagnostic {
     /// Lines of the file from `source_line` on, without their line terminators: a few before the error, those it is on, a few after.
     pub source: Vec<String>,
     pub source_line: u32,
+    /// What else has to do with it: `'x' is declared here.` None of these has any of its own.
+    pub related: Vec<Diagnostic>,
 }
 
 #[derive(Default)]
@@ -174,6 +176,7 @@ fn global(code: u32, args: &[String]) -> Diagnostic {
         text: messages::format(template, args),
         source: Vec::new(),
         source_line: 0,
+        related: Vec::new(),
     }
 }
 
@@ -338,7 +341,11 @@ pub fn check(request: &Request) -> Report {
             .or_else(|| config::find_config(&disk, &cwd)),
     };
     let mut project = match &config_path {
-        Some(path) => config::load(&disk, path),
+        // Nothing is written, whatever the project says: this is `tsc --noEmit`. What is only wrong with where output would go is not
+        // looked into.
+        Some(path) => {
+            config::load_overriding(&disk, path, vec![("noEmit".to_owned(), Json::Bool(true))])
+        }
         None => config::without_config(&disk, &cwd, default_compiler_options(), Vec::new()),
     };
     report.config_path = project.config_path.clone();
@@ -386,18 +393,27 @@ pub fn check_project(
         0 => std::thread::available_parallelism().map_or(4, usize::from),
         n => n,
     };
+    let of_configuration = |error: &ConfigError| {
+        let mut said = global(error.code, &error.args);
+        for (level, code, args) in &error.chain {
+            said.text.push('\n');
+            for _ in 0..*level {
+                said.text.push_str("  ");
+            }
+            said.text.push_str(&global(*code, args).text);
+        }
+        match &error.at {
+            Some((path, from, to)) => match host.read(path) {
+                Some(text) => located(path, &text, &line_starts(&text), *from, *to, said),
+                None => said,
+            },
+            None => said,
+        }
+    };
     report
         .diagnostics
-        .extend(project.errors.iter().map(|ConfigError { code, args, at }| {
-            let said = global(*code, args);
-            match at {
-                Some((path, from, to)) => match host.read(path) {
-                    Some(text) => located(path, &text, &line_starts(&text), *from, *to, said),
-                    None => said,
-                },
-                None => said,
-            }
-        }));
+        .extend(project.errors.iter().map(of_configuration));
+    let config_path = project.config_path.clone();
     let lib_dir = match request.lib_dir {
         Some(dir) => Some(host::from_native(dir)),
         None => host::find_lib_dir(
@@ -439,9 +455,9 @@ pub fn check_project(
     report.diagnostics.extend(
         program
             .files
-            .configuration_errors()
-            .into_iter()
-            .map(|code| global(code, &[])),
+            .program_problems()
+            .iter()
+            .map(|problem| of_configuration(&ConfigError::of_problem(host, &config_path, problem))),
     );
 
     let checking = Instant::now();
@@ -516,7 +532,36 @@ pub fn check_project(
         let shown: Vec<Diagnostic> = errors
             .into_iter()
             .map(|e| {
+                let related = e
+                    .related
+                    .into_iter()
+                    .map(|related| {
+                        let said = Diagnostic {
+                            code: related.code,
+                            category: related.category,
+                            text: related.text,
+                            ..global(0, &[])
+                        };
+                        let Some((of, start, end)) = related.at else {
+                            return said;
+                        };
+                        if of == file {
+                            return located(&module.path, text, &starts, start, end, said);
+                        }
+                        let other = &program.files.modules[of.idx()];
+                        // The text of the default library is not kept.
+                        let read;
+                        let text = if other.hir.text.is_empty() {
+                            read = host.read(&other.path).unwrap_or_default();
+                            &read[..]
+                        } else {
+                            &other.hir.text[..]
+                        };
+                        located(&other.path, text, &line_starts(text), start, end, said)
+                    })
+                    .collect();
                 let said = Diagnostic {
+                    related,
                     code: e.code,
                     category: e.category,
                     text: if request.says_it_as_typescript_does {
@@ -572,6 +617,12 @@ pub fn check_project(
         take_what_goes_first();
     });
     report.diagnostics.extend(found.into_inner().unwrap());
+    report.diagnostics.extend(
+        program
+            .global_errors()
+            .iter()
+            .map(|(code, args)| global(*code, args)),
+    );
     report.gave_up = gave_up.into_inner().unwrap();
     report.gave_up.sort();
     // `CompareDiagnostics`

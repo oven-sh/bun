@@ -11,6 +11,7 @@ use crate::resolve::{
 };
 use crate::table::{Bases, ByNode, ByNodeKept, RawWord};
 use crate::util::{FxHashMap, FxHashSet, List, ListIter};
+use crate::verify::{Place, Problem};
 use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::sync::Mutex;
@@ -320,8 +321,8 @@ pub struct Files {
     memo: Memo,
     /// The order in which declarations of one thing in several files count: it decides the order of overloads.
     order: Vec<FileId>,
-    /// What is wrong with what the options name, no file being to blame: the codes.
-    program_errors: Vec<u32>,
+    /// What is wrong with what the options name, no file being to blame.
+    program_errors: Vec<Problem>,
 }
 
 /// What follows from how symbols are put together, each worked out the first time it is asked for. Until they are put together the
@@ -602,6 +603,27 @@ fn unsupported_extension_error(options: &Options, path: &str) -> Option<u32> {
     Some(if is_javascript(path) { 6504 } else { 6054 })
 }
 
+/// What `unsupported_extension_error` found of the file at `path`, in full.
+fn unsupported_extension_problem(options: &Options, code: u32, path: &str) -> Problem {
+    if code == 6504 {
+        return Problem::new(code, &[path], Place::Nowhere);
+    }
+    // `GetSupportedExtensionsWithJsonIfResolveJsonModule`, flattened.
+    let mut extensions: Vec<&str> = if options.allow_js {
+        vec![
+            ".ts", ".tsx", ".d.ts", ".js", ".jsx", ".cts", ".d.cts", ".cjs", ".mts", ".d.mts",
+            ".mjs",
+        ]
+    } else {
+        vec![".ts", ".tsx", ".d.ts", ".cts", ".d.cts", ".mts", ".d.mts"]
+    };
+    if options.resolve_json_module {
+        extensions.push(".json");
+    }
+    let quoted: Vec<String> = extensions.iter().map(|e| format!("'{e}'")).collect();
+    Problem::new(code, &[path, &quoted.join(", ")], Place::Nowhere)
+}
+
 /// `getSourceFileFromReference`: the file a `/// <reference path>` in `from` means, `name` being where it points to; or else what is
 /// said of it.
 fn referenced_file(
@@ -685,18 +707,27 @@ fn output_path_errors(
     options: &Options,
     modules: &[ModuleCell],
     by_path: &FxHashMap<String, FileId>,
-) -> Vec<u32> {
+) -> Vec<Problem> {
     let mut errors = Vec::new();
-    if !options.writes_js_beside_source && !options.writes_declarations_beside_source {
+    if options.suppress_output_path_check
+        || !options.writes_js_beside_source && !options.writes_declarations_beside_source
+    {
         return errors;
     }
     let mut seen: FxHashSet<String> = FxHashSet::default();
     let mut verify = |output: String| {
         if by_path.contains_key(&output) {
-            errors.push(5055);
+            let problem = Problem::new(5055, &[&output], Place::Nowhere);
+            errors.push(if options.has_config_file {
+                problem
+            } else {
+                problem.with(1, 5068, &[])
+            });
         }
-        if !seen.insert(output) {
-            errors.push(5056);
+        if seen.contains(&output) {
+            errors.push(Problem::new(5056, &[&output], Place::Nowhere));
+        } else {
+            seen.insert(output);
         }
     };
     for module in modules {
@@ -893,7 +924,11 @@ impl Files {
         for root in roots {
             // `parseTask.load`: a root file with an unsupported extension is reported and not loaded.
             match unsupported_extension_error(&options, root) {
-                Some(code) => program_errors.push(code),
+                Some(code) => program_errors.push(
+                    unsupported_extension_problem(&options, code, root)
+                        .with(1, 1430, &[])
+                        .with(2, 1427, &[]),
+                ),
                 None => starts.push(add(
                     root.clone(),
                     false,
@@ -924,7 +959,15 @@ impl Files {
                 }
                 // `*` is whatever there is.
                 None if name == "*" => {}
-                None => program_errors.push(2688),
+                None => program_errors.push(
+                    Problem::new(2688, &[name], Place::Nowhere)
+                        .with(1, 1430, &[])
+                        .with(
+                            2,
+                            if options.types.is_some() { 1417 } else { 1420 },
+                            &[name],
+                        ),
+                ),
             }
         }
 
@@ -1556,10 +1599,15 @@ impl Files {
     /// What is wrong before any file is looked at: with the options, and with what they name. The codes, in order, each once.
     pub fn configuration_errors(&self) -> Vec<u32> {
         let mut all = self.options.errors.clone();
-        all.extend_from_slice(&self.program_errors);
+        all.extend(self.program_errors.iter().map(|problem| problem.code));
         all.sort_unstable();
         all.dedup();
         all
+    }
+
+    /// What is wrong with what the options name, no file being to blame. What is wrong with the options themselves is in `options.problems`.
+    pub fn program_problems(&self) -> &[Problem] {
+        &self.program_errors
     }
 
     /// The module `file` imports for its JSX without saying so.

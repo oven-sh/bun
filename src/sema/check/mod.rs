@@ -157,6 +157,8 @@ pub struct Program {
     /// Type nodes at which 2615 is reported: the type of a property of a mapped type depends on itself. See
     /// `first_checked_type_node`.
     circular_mapped_props: NodeSet<(FileId, TypeNodeId)>,
+    /// `GetGlobalDiagnostics`: what is wrong and is in no file. `Cannot find global type 'Array'.` The code, and what goes into the message.
+    global_errors: std::sync::Mutex<std::collections::BTreeSet<(u32, Vec<String>)>>,
     /// Which property of which mapped type it is, for the message.
     circular_mapped_prop_names: ByNodeKept<(FileId, TypeNodeId), (TypeId, Atom)>,
     /// Type nodes whose resolution produced a tuple of 10,000 or more elements (2799). `TupleNormalizer.normalize`
@@ -384,6 +386,7 @@ impl Program {
             circular_aliases: NodeSet::new(&symbols),
             circular_mapped_keys: NodeSet::new(&type_nodes),
             circular_mapped_props: NodeSet::new(&type_nodes),
+            global_errors: Default::default(),
             circular_mapped_prop_names: ByNodeKept::new(&type_nodes),
             too_large_tuples: NodeSet::new(&type_nodes),
             circular_through_call: NodeSet::new(&pats),
@@ -447,6 +450,37 @@ impl Program {
             wrapper_types: Default::default(),
             files,
         }
+    }
+
+    /// `GetGlobalDiagnostics`: what has been found wrong that is in no file, once all files have been checked. In order, each once.
+    pub fn global_errors(&self) -> Vec<(u32, Vec<String>)> {
+        // `initializeChecker`: these there have to be, whether or not anything uses them.
+        let mut needed = vec![
+            "IArguments",
+            "Array",
+            "Object",
+            "Function",
+            "String",
+            "Number",
+            "Boolean",
+            "RegExp",
+        ];
+        // `getGlobalStrictFunctionType`
+        if self.files.options.strict_bind_call_apply {
+            needed.extend(["CallableFunction", "NewableFunction"]);
+        }
+        let mut all = self.global_errors.lock().unwrap().clone();
+        for name in needed {
+            let is_there = self
+                .files
+                .atoms
+                .lookup(name.as_bytes())
+                .is_some_and(|atom| self.files.global(atom, SymFlags::TYPE).is_some());
+            if !is_there {
+                all.insert((2318, vec![name.to_owned()]));
+            }
+        }
+        all.into_iter().collect()
     }
 
     pub fn checker(&self) -> Checker<'_> {
@@ -1900,6 +1934,11 @@ impl<'p> Checker<'p> {
     }
 
     // ───────────────────────────── well-known global types ─────────────────────────────
+
+    /// An error that is in no file: `c.error(nil, ..)`.
+    pub(super) fn report_global_error(&self, code: u32, args: Vec<String>) {
+        self.p.global_errors.lock().unwrap().insert((code, args));
+    }
 
     pub fn global_type_symbol(&self, name: Atom) -> Option<Sym> {
         // The table goes by the number of the name: it is for the names known from the start, which come first.

@@ -306,9 +306,15 @@ fn option_in(line: &[u8]) -> Option<(String, &[u8])> {
         return None;
     }
     let value = rest[end..].trim_ascii_start().strip_prefix(b":")?;
+    // `[^\r\n]*`
+    let value = value.trim_ascii_start();
+    let value_end = value
+        .iter()
+        .position(|&b| b == b'\r' || b == b'\n')
+        .unwrap_or(value.len());
     Some((
         String::from_utf8_lossy(&rest[..end]).to_lowercase(),
-        value.trim_ascii_start(),
+        &value[..value_end],
     ))
 }
 
@@ -526,6 +532,22 @@ fn render(diagnostics: &[Diagnostic], inputs: &[(String, Vec<u8>)], lib_dir: &st
             new_line(out);
             out.extend_from_slice(
                 format!("!!! {} TS{}: {line}", category_name(d.category), d.code).as_bytes(),
+            );
+        }
+        for related in &d.related {
+            let location = if related.path.is_empty() {
+                String::new()
+            } else if is_default_library(&related.path) {
+                clean(&format!(" {}:--:--", related.path))
+            } else {
+                clean(&format!(
+                    " {}:{}:{}",
+                    related.path, related.line, related.column
+                ))
+            };
+            new_line(out);
+            out.extend_from_slice(
+                format!("!!! related TS{}{location}: {}", related.code, related.text).as_bytes(),
             );
         }
     };
@@ -761,7 +783,11 @@ fn run_one(
         match bun_sema::config_options::from_text(name, value) {
             Some((name, value)) => said.push((name.to_owned(), value)),
             None => match name.as_str() {
-                "allownontsextensions" | "noerrortruncation" | "suppressoutputpathcheck" => {}
+                "suppressoutputpathcheck" => said.push((
+                    "suppressOutputPathCheck".to_owned(),
+                    Json::Bool(value.eq_ignore_ascii_case("true")),
+                )),
+                "allownontsextensions" | "noerrortruncation" => {}
                 // `t.Fatalf`
                 _ if !has_baselines => return None,
                 _ => {}
@@ -924,15 +950,23 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
     // By test: the configurations there are baselines of.
     let mut configurations: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
     for name in suite.names {
-        let (stem, configuration) = match (name.find('('), name.find('.')) {
-            (Some(open), dot) if dot.is_none_or(|dot| open < dot) => {
-                let Some(close) = name[open..].find(')') else {
-                    continue;
-                };
-                (&name[..open], &name[open + 1..open + close])
-            }
-            (_, Some(dot)) => (&name[..dot], ""),
-            _ => continue,
+        // The name of a test can have dots in it: what kind of baseline it is comes off the end.
+        const KINDS: [&str; 7] = [
+            ".errors.txt",
+            ".sourcemap.txt",
+            ".trace.json",
+            ".js.map",
+            ".symbols",
+            ".types",
+            ".js",
+        ];
+        let name = name.strip_suffix(".diff").unwrap_or(name);
+        let Some(configured) = KINDS.iter().find_map(|kind| name.strip_suffix(kind)) else {
+            continue;
+        };
+        let (stem, configuration) = match configured.strip_suffix(')').map(|c| (c, c.rfind('('))) {
+            Some((inner, Some(open))) => (&inner[..open], &inner[open + 1..]),
+            _ => (configured, ""),
         };
         configurations
             .entry(stem)

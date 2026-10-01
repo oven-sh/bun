@@ -1,0 +1,14 @@
+### cmd: cargo test -p bun_lint --lib probe_
+### cwd: /tmp/cli-d1/tree
+### start: 2026-10-01T11:17:03Z
+   Compiling bun_lint v0.0.0 (/tmp/cli-d1/tree/src/lint)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 12.37s
+     Running unittests lib.rs (target/debug/build/bun_lint/98e96dc9ddf11405/out/bun_lint-98e96dc9ddf11405)
+
+running 2 tests
+test probe_tests::probe_a_coloured_frame_of_a_line_longer_than_32_bytes ... ok
+test probe_tests::probe_a_stack_check_without_a_bound ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 28 filtered out; finished in 0.06s
+
+### finished: 2026-10-01T11:17:17Z rc=0 wall=14s

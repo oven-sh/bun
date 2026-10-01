@@ -1,0 +1,12 @@
+### cmd: cargo miri test -p bun_lint --lib probe_a_coloured
+### cwd: /tmp/cli-d1/tree
+### start: 2026-10-01T11:17:18Z
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.95s
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/build/bun_lint/f5b7f9ac214d98b6/out/bun_lint-f5b7f9ac214d98b6)
+
+running 1 test
+test probe_tests::probe_a_coloured_frame_of_a_line_longer_than_32_bytes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 29 filtered out; finished in 0.43s
+
+### finished: 2026-10-01T11:17:29Z rc=0 wall=11s

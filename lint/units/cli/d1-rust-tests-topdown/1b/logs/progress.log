@@ -1,0 +1,16 @@
+### q queued 2026-10-01T10:44:56Z
+### q lock acquired 2026-10-01T11:17:02Z
+### applied 0 2026-10-01T11:17:02Z
+### q z0-pristine rc=0 wall=1s 2026-10-01T11:17:03Z
+### applied Q1 2026-10-01T11:17:03Z
+### q q1-native-probes rc=0 wall=14s 2026-10-01T11:17:18Z
+### q q2-miri-coloured-frame-with-standins rc=0 wall=11s 2026-10-01T11:17:29Z
+### q q3-miri-stack-check-default rc=1 wall=7s 2026-10-01T11:17:36Z
+### applied Q2 2026-10-01T11:17:37Z
+### q q4-link-stack-check-init rc=101 wall=15s 2026-10-01T11:17:53Z
+### applied Q0 2026-10-01T11:17:53Z
+### q q5-miri-coloured-frame-without-standins rc=1 wall=5s 2026-10-01T11:17:59Z
+### applied 0 2026-10-01T11:17:59Z
+### q z9-pristine rc=0 wall=2s 2026-10-01T11:18:02Z
+### q c1-clippy-js-parser-primary-relint rc=101 wall=42s 2026-10-01T11:18:44Z
+### q complete 2026-10-01T11:18:44Z

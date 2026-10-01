@@ -1,0 +1,48 @@
+### cmd: cargo miri test -p bun_lint --lib probe_a_coloured
+### cwd: /tmp/cli-d1/tree
+### start: 2026-10-01T11:17:53Z
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.48s
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/build/bun_lint/f5b7f9ac214d98b6/out/bun_lint-f5b7f9ac214d98b6)
+
+running 1 test
+test probe_tests::probe_a_coloured_frame_of_a_line_longer_than_32_bytes ... error: unsupported operation: can't call foreign function `simdutf__validate_ascii` on OS `linux`
+ --> src/bun_core/lib.rs:1466:17
+  |
+  = note: unsupported operation occurred here
+  |
+  = help: this means the program tried to do something Miri does not support; it does not indicate a bug in the program
+  = note: this is on thread `probe_tests::pr`
+  = note: stack backtrace:
+          0: bun_core::is_all_ascii
+              at src/bun_core/lib.rs:1466:18: 1466:79
+          1: <bun_core::fmt::QuickAndDirtyJavaScriptSyntaxHighlighter<'_> as std::fmt::Display>::fmt
+              at src/bun_core/fmt.rs:1761:21: 1761:48
+          2: core::fmt::rt::Argument::<'_>::fmt
+              at /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/fmt/rt.rs:152:76: 152:95
+          3: std::fmt::write
+              at /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/fmt/mod.rs:1685:17: 1687:80
+          4: <&mut bun_core::fmt::VecWriter<'_> as std::fmt::Write::write_fmt::SpecWriteFmt>::spec_write_fmt
+              at /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/fmt/mod.rs:238:21: 238:38
+          5: <bun_core::fmt::VecWriter<'_> as std::fmt::Write>::write_fmt
+              at /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/fmt/mod.rs:243:9: 243:34
+          6: bun_ast::Data::write_format::<true, bun_core::fmt::VecWriter<'_>>
+              at /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/macros/mod.rs:652:9: 652:58
+          7: bun_ast::Msg::write_format::<true, bun_core::fmt::VecWriter<'_>>
+              at src/ast/lib.rs:1213:9: 1217:10
+          8: code_frame::write_code_frames::<true>
+              at src/lint/code_frame.rs:27:17: 27:79
+          9: probe_tests::probe_a_coloured_frame_of_a_line_longer_than_32_bytes
+              at src/lint/probe_tests.rs:35:5: 35:79
+          10: probe_tests::probe_a_coloured_frame_of_a_line_longer_than_32_bytes::{closure#0}
+              at src/lint/probe_tests.rs:11:59: 11:59
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+
+error: test failed, to rerun pass `-p bun_lint --lib`
+
+Caused by:
+  process didn't exit successfully: `/root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cli-d1/tree/target/miri/x86_64-unknown-linux-gnu/debug/build/bun_lint/f5b7f9ac214d98b6/out/bun_lint-f5b7f9ac214d98b6 probe_a_coloured` (exit status: 1)
+note: test exited abnormally; to see the full output pass --no-capture to the harness.
+### finished: 2026-10-01T11:17:58Z rc=1 wall=5s

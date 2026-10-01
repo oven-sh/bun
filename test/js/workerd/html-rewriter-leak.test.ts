@@ -183,6 +183,8 @@ test.skipIf(isDebug || isASAN)("HTMLRewriter does not leak element/document hand
     const noop = { element() {}, comments() {}, text() {} };
     const docNoop = { doctype() {}, comments() {}, text() {}, end() {} };
 
+    // malloc_bins has an entry for each size class. Its "current" is the
+    // count of live blocks of that size.
     function liveBlocks() {
       return heapStats().mimalloc.malloc_bins.reduce((sum, bin) => sum + bin.current, 0);
     }
@@ -203,6 +205,7 @@ test.skipIf(isDebug || isASAN)("HTMLRewriter does not leak element/document hand
       return held;
     }
 
+    // The first round pays for what is allocated once.
     round();
     const before = liveBlocks();
     let held;

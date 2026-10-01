@@ -214,8 +214,7 @@ pub(crate) enum Timings {
     Quiet,
 }
 
-/// Rows loaded from bun.lock skip the resolver's check. Runs before anything
-/// under node_modules is touched.
+/// Rows loaded from bun.lock skip the resolver's check.
 fn refuse_escaping_links(lockfile: &Lockfile, store: &Store) {
     let string_buf = &lockfile.buffers.string_bytes[..];
     let pkgs = lockfile.packages.slice();

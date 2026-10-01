@@ -13,7 +13,7 @@ enum State {
     Done,
 }
 
-pub struct Seq {
+pub(crate) struct Seq {
     state: State,
     start: f32,
     end: f32,

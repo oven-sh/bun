@@ -8,8 +8,6 @@ pub enum Error {
     MacroLoadError,
     #[error("MacroFailed")]
     MacroFailed,
-    #[error("JSTerminated")]
-    JSTerminated,
     #[error("JSError")]
     JSError,
     #[error(transparent)]
@@ -34,7 +32,6 @@ impl Error {
             Self::MacroNotFound => "MacroNotFound",
             Self::MacroLoadError => "MacroLoadError",
             Self::MacroFailed => "MacroFailed",
-            Self::JSTerminated => "JSTerminated",
             Self::JSError => "JSError",
             Self::Alloc(_) => "OutOfMemory",
             Self::Core(e) => e.name(),

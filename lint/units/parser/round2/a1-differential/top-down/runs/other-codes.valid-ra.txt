@@ -1,0 +1,23 @@
+TS1102	2 sources	"class C implements [delete A] {}"	ruling: tsc reports a rule of syntax outside its g
+TS1225	55 sources	"class C { @d m(): asserts is A { return x; } }"	asserts is T is the assertion about a parameter na
+TS1540	2 sources	"module as.b {}"	as or satisfies names a type alias, an interface o
+TS2304	901 sources	"class C implements A\n<B> {}"	an interface extends, or a class implements, an ex
+TS2307	64 sources	"type X = import('x')<A>;"	an import type takes type arguments and an express
+TS2318	16 sources	"const f = async <out = A>() => 0;"	out or in names a type or a type parameter
+TS2322	3 sources	"const f = (a): (a) => asserts a\nis B => 0;"	the type of an assertion predicate starts on the n
+TS2339	1 sources	"namespace N { import.meta.url; }"	import starts an expression in a namespace
+TS2369	110 sources	"type X = (public a: A) => void;"	a modifier stands before a parameter that is no pa
+TS2371	176 sources	"type X = (a = 1) => void;"	a parameter of a signature has an initializer
+TS2499	84 sources	"interface I extends [,] {}"	an interface extends, or a class implements, an ex
+TS2500	83 sources	"class C implements [,] {}"	an interface extends, or a class implements, an ex
+TS2503	26 sources	"class C implements infer.A {}"	an interface extends, or a class implements, an ex
+TS2564	47 sources	"class C { @d x: [...in: A[]]; }"	a reserved word is the label of a rest element of 
+TS2693	1 sources	"let v = <out>() => out>x;"	out or in names a type or a type parameter
+TS2695	2 sources	"x = a ? <T>(b, c) : d => e;"	a colon follows parentheses between ? and : of a c
+TS2711	5 sources	"namespace N { import(\"x\"); }"	import starts an expression in a namespace
+TS2842	26 sources	"type X = ({ a: b = 1 }: A) => void;"	a binding pattern of a signature is read as a bind
+TS2882	1 sources	"import \"x\"\nwith { type: \"json\" };"	the attributes of an import start on the next line
+TS7006	173 sources	"let v = a ? (b): [...in: A[]] => c : d;"	a reserved word is the label of a rest element of 
+TS7008	1 sources	"class C { accessor a }"	accessor is a modifier without standard decorators
+TS7019	3 sources	"declare class C { m(...a,): void; }"	a comma follows the rest parameter of a signature 
+TS7031	7 sources	"let x: ([a, , b]) => void;"	a binding pattern of a signature is read as a bind

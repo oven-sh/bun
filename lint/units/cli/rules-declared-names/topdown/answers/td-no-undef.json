@@ -1,0 +1,1220 @@
+[
+	{
+		"code": "a; b(); c.d; new e; f`x`; [g]; ({h}); ({i: j}); `${k}`;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 1,
+				"message": "'a' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 4,
+				"message": "'b' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 9,
+				"message": "'c' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 18,
+				"message": "'e' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 21,
+				"message": "'f' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 28,
+				"message": "'g' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 34,
+				"message": "'h' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 44,
+				"message": "'j' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 52,
+				"message": "'k' is not defined."
+			}
+		]
+	},
+	{
+		"code": "a = 1; b++; [c] = []; ({d} = {}); for (e in {}); for (f of []);",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 1,
+				"message": "'a' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 8,
+				"message": "'b' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 14,
+				"message": "'c' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 25,
+				"message": "'d' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 40,
+				"message": "'e' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 55,
+				"message": "'f' is not defined."
+			}
+		]
+	},
+	{
+		"code": "typeof a; typeof (b); typeof c.d; typeof e(); void f; typeof typeof g; typeof (0, h); if (typeof i === 'undefined') {}",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 30,
+				"message": "'c' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 42,
+				"message": "'e' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 52,
+				"message": "'f' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 83,
+				"message": "'h' is not defined."
+			}
+		]
+	},
+	{
+		"code": "var a; a; function f(b) { b; c } let d = d; { e; let e; } g; var g; h(); function h() {}",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 30,
+				"message": "'c' is not defined."
+			}
+		]
+	},
+	{
+		"code": "function f(a = b, b) {} function g({i = j}, [k = l] = m) {}",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 41,
+				"message": "'j' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 50,
+				"message": "'l' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 55,
+				"message": "'m' is not defined."
+			}
+		]
+	},
+	{
+		"code": "label: for (;;) { break label; } x.label; ({label: 1}); class C { label() {} #p; m() { return this.#p } }",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 34,
+				"message": "'x' is not defined."
+			}
+		]
+	},
+	{
+		"code": "class A extends B { static c = D; [E] = F; static { G } m() { super.m(); new.target; } }",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 17,
+				"message": "'B' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 32,
+				"message": "'D' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 36,
+				"message": "'E' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 41,
+				"message": "'F' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 53,
+				"message": "'G' is not defined."
+			}
+		]
+	},
+	{
+		"code": "try {} catch { a } try {} catch (b) { b; c }",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 16,
+				"message": "'a' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 42,
+				"message": "'c' is not defined."
+			}
+		]
+	},
+	{
+		"code": "console.log(process.argv, Bun.version, require('x'), module.exports, exports, __dirname, __filename, global, self, navigator, fetch);",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "window; document; localStorage; Deno; sessionStorage; Navigator; XMLHttpRequest; location;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 1,
+				"message": "'window' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 9,
+				"message": "'document' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 19,
+				"message": "'localStorage' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 33,
+				"message": "'Deno' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 39,
+				"message": "'sessionStorage' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 55,
+				"message": "'Navigator' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 66,
+				"message": "'XMLHttpRequest' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 82,
+				"message": "'location' is not defined."
+			}
+		]
+	},
+	{
+		"code": "describe('x', () => { it('y', () => { expect(1).toBe(1) }) }); test.skip('z'); beforeAll(f); beforeEach(f); afterEach(f); afterAll(f); jest.fn(); vi.fn(); xit; xtest; xdescribe; expectTypeOf; function f() {}",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "fit; fdescribe; mock; spyOn; setDefaultTimeout; suite; assert;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 1,
+				"message": "'fit' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 6,
+				"message": "'fdescribe' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 17,
+				"message": "'mock' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 23,
+				"message": "'spyOn' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 30,
+				"message": "'setDefaultTimeout' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 49,
+				"message": "'suite' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 56,
+				"message": "'assert' is not defined."
+			}
+		]
+	},
+	{
+		"code": "undefined; NaN; Infinity; globalThis; eval('1'); isNaN(1); parseInt('1'); escape; unescape; constructor; toString; valueOf; hasOwnProperty; isPrototypeOf; propertyIsEnumerable; toLocaleString;",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "__proto__; __defineGetter__; Loader; $; Buffer; HTMLRewriter; WebSocket; ShadowRealm;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 1,
+				"message": "'__proto__' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 12,
+				"message": "'__defineGetter__' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 30,
+				"message": "'Loader' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 38,
+				"message": "'$' is not defined."
+			}
+		]
+	},
+	{
+		"code": "arguments; function f() { return arguments } var g = () => arguments;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 1,
+				"message": "'arguments' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 60,
+				"message": "'arguments' is not defined."
+			}
+		]
+	},
+	{
+		"code": "import a, {b, c as d} from 'm'; import * as e from 'm2'; a; b; c; d; e;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 64,
+				"message": "'c' is not defined."
+			}
+		]
+	},
+	{
+		"code": "export { undeclared }; export default alsoUndeclared;",
+		"ext": "js",
+		"fatal": "1:10 Parsing error: Export 'undeclared' is not defined",
+		"reports": []
+	},
+	{
+		"code": "export { a as b } from 'm'; export * as c from 'm'; a; c;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 53,
+				"message": "'a' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 56,
+				"message": "'c' is not defined."
+			}
+		]
+	},
+	{
+		"code": "a?.b; a?.[b]; a?.(b); e ??= f; g ||= h; i &&= j;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 1,
+				"message": "'a' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 7,
+				"message": "'a' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 11,
+				"message": "'b' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 15,
+				"message": "'a' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 19,
+				"message": "'b' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 23,
+				"message": "'e' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 29,
+				"message": "'f' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 32,
+				"message": "'g' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 38,
+				"message": "'h' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 41,
+				"message": "'i' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 47,
+				"message": "'j' is not defined."
+			}
+		]
+	},
+	{
+		"code": "async function f() { await a; for await (b of c); } function* g() { yield d; yield* e; }",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 28,
+				"message": "'a' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 42,
+				"message": "'b' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 47,
+				"message": "'c' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 75,
+				"message": "'d' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 85,
+				"message": "'e' is not defined."
+			}
+		]
+	},
+	{
+		"code": "var o = { a, [b]: c, d() { e }, get f() { return g }, ...h };",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 11,
+				"message": "'a' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 15,
+				"message": "'b' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 19,
+				"message": "'c' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 28,
+				"message": "'e' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 50,
+				"message": "'g' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 58,
+				"message": "'h' is not defined."
+			}
+		]
+	},
+	{
+		"code": "x => y; (x, ...z) => x + z + w; function f() { new.target; }",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 6,
+				"message": "'y' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 30,
+				"message": "'w' is not defined."
+			}
+		]
+	},
+	{
+		"code": "import.meta.url; import('m'); import(spec);",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 38,
+				"message": "'spec' is not defined."
+			}
+		]
+	},
+	{
+		"code": "if (a) b; else c; while (d) e; do f; while (g); for (h; i; j) k; switch (l) { case m: n; default: o; } throw p;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 5,
+				"message": "'a' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 8,
+				"message": "'b' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 16,
+				"message": "'c' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 26,
+				"message": "'d' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 29,
+				"message": "'e' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 35,
+				"message": "'f' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 45,
+				"message": "'g' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 54,
+				"message": "'h' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 57,
+				"message": "'i' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 60,
+				"message": "'j' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 63,
+				"message": "'k' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 74,
+				"message": "'l' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 84,
+				"message": "'m' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 87,
+				"message": "'n' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 99,
+				"message": "'o' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 110,
+				"message": "'p' is not defined."
+			}
+		]
+	},
+	{
+		"code": "var {a = b, ...c} = d, [e = f, ...g] = h; a; c; e; g;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 10,
+				"message": "'b' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 21,
+				"message": "'d' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 29,
+				"message": "'f' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 40,
+				"message": "'h' is not defined."
+			}
+		]
+	},
+	{
+		"code": "arguments; require('x'); module.exports = exports; __dirname; __filename; a;",
+		"ext": "cjs",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 75,
+				"message": "'a' is not defined."
+			}
+		]
+	},
+	{
+		"code": "with (o) { a; b = 1 } function f() { return arguments[0] + c }",
+		"ext": "cjs",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 7,
+				"message": "'o' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 12,
+				"message": "'a' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 15,
+				"message": "'b' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 60,
+				"message": "'c' is not defined."
+			}
+		]
+	},
+	{
+		"code": "return a;",
+		"ext": "cjs",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 8,
+				"message": "'a' is not defined."
+			}
+		]
+	},
+	{
+		"code": "require; module; exports; __dirname; a;",
+		"ext": "mjs",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 38,
+				"message": "'a' is not defined."
+			}
+		]
+	},
+	{
+		"code": "var React; <App a={b} {...c}><d.e/><F.G/><h:i/>{k}<></></App>;",
+		"ext": "jsx",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 13,
+				"message": "'App' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 20,
+				"message": "'b' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 27,
+				"message": "'c' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 31,
+				"message": "'d' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 37,
+				"message": "'F' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 49,
+				"message": "'k' is not defined."
+			}
+		]
+	},
+	{
+		"code": "<div onClick={handler}>{text}</div>; <Foo-bar />; <foo.bar />; <_x />; <$y />; <this.z />;",
+		"ext": "jsx",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 15,
+				"message": "'handler' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 25,
+				"message": "'text' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 39,
+				"message": "'Foo-bar' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 52,
+				"message": "'foo' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 65,
+				"message": "'_x' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 73,
+				"message": "'$y' is not defined."
+			}
+		]
+	},
+	{
+		"code": "function App() { return <App><Self/></App> } import Self from 'm';",
+		"ext": "jsx",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "a; let x: Foo; type T = Bar<Baz>; x as Qux; <Quux>x; x satisfies Corge;",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 1,
+				"message": "'a' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 11,
+				"message": "'Foo' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 25,
+				"message": "'Bar' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 29,
+				"message": "'Baz' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 40,
+				"message": "'Qux' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 46,
+				"message": "'Quux' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 66,
+				"message": "'Corge' is not defined."
+			}
+		]
+	},
+	{
+		"code": "let x: HTMLElement; let y: Partial<NodeJS.Timeout>; let z: Promise<Record<string, Array<number>>>;",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 8,
+				"message": "'HTMLElement' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 36,
+				"message": "'NodeJS' is not defined."
+			}
+		]
+	},
+	{
+		"code": "declare const a: number; declare function f(): void; declare class C {} declare namespace N { const x: number } a; f; C; N;",
+		"ext": "ts",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "enum E { A = B } namespace M { export const x = y } M.x; E.A; import eq = require('m'); eq; import al = N2.x; al;",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 14,
+				"message": "'B' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 49,
+				"message": "'y' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 105,
+				"message": "'N2' is not defined."
+			}
+		]
+	},
+	{
+		"code": "function f<T>(x: T): U { return x as V } class C<T> extends D<T> implements I {}",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 22,
+				"message": "'U' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 38,
+				"message": "'V' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 61,
+				"message": "'D' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 77,
+				"message": "'I' is not defined."
+			}
+		]
+	},
+	{
+		"code": "type A = typeof b; let c: typeof d.e; type F = (g: h) => i; interface J extends K { l: m }",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 17,
+				"message": "'b' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 34,
+				"message": "'d' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 52,
+				"message": "'h' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 58,
+				"message": "'i' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 81,
+				"message": "'K' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 88,
+				"message": "'m' is not defined."
+			}
+		]
+	},
+	{
+		"code": "@dec class A { @dec2 m(@dec3 p: P) {} }",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 2,
+				"message": "'dec' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 17,
+				"message": "'dec2' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 25,
+				"message": "'dec3' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 33,
+				"message": "'P' is not defined."
+			}
+		]
+	},
+	{
+		"code": "let x: Props; <App<T> a={b as C}/>;",
+		"ext": "tsx",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 8,
+				"message": "'Props' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 16,
+				"message": "'App' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 20,
+				"message": "'T' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 26,
+				"message": "'b' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 31,
+				"message": "'C' is not defined."
+			}
+		]
+	},
+	{
+		"code": "arguments; a; let x: Foo;",
+		"ext": "cts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 1,
+				"message": "'arguments' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 12,
+				"message": "'a' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 22,
+				"message": "'Foo' is not defined."
+			}
+		]
+	},
+	{
+		"code": "declare const a: B; export type T = U;",
+		"ext": "d.ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 18,
+				"message": "'B' is not defined."
+			},
+			{
+				"rule": "no-undef",
+				"line": 1,
+				"column": 37,
+				"message": "'U' is not defined."
+			}
+		]
+	}
+]

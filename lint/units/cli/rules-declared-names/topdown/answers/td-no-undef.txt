@@ -1,0 +1,198 @@
+== [js] "a; b(); c.d; new e; f`x`; [g]; ({h}); ({i: j}); `${k}`;"
+   1:1 'a' is not defined.
+   1:4 'b' is not defined.
+   1:9 'c' is not defined.
+   1:18 'e' is not defined.
+   1:21 'f' is not defined.
+   1:28 'g' is not defined.
+   1:34 'h' is not defined.
+   1:44 'j' is not defined.
+   1:52 'k' is not defined.
+== [js] "a = 1; b++; [c] = []; ({d} = {}); for (e in {}); for (f of []);"
+   1:1 'a' is not defined.
+   1:8 'b' is not defined.
+   1:14 'c' is not defined.
+   1:25 'd' is not defined.
+   1:40 'e' is not defined.
+   1:55 'f' is not defined.
+== [js] "typeof a; typeof (b); typeof c.d; typeof e(); void f; typeof typeof g; typeof (0, h); if (typeof i === 'undefined') {}"
+   1:30 'c' is not defined.
+   1:42 'e' is not defined.
+   1:52 'f' is not defined.
+   1:83 'h' is not defined.
+== [js] "var a; a; function f(b) { b; c } let d = d; { e; let e; } g; var g; h(); function h() {}"
+   1:30 'c' is not defined.
+== [js] "function f(a = b, b) {} function g({i = j}, [k = l] = m) {}"
+   1:41 'j' is not defined.
+   1:50 'l' is not defined.
+   1:55 'm' is not defined.
+== [js] "label: for (;;) { break label; } x.label; ({label: 1}); class C { label() {} #p; m() { return this.#p } }"
+   1:34 'x' is not defined.
+== [js] "class A extends B { static c = D; [E] = F; static { G } m() { super.m(); new.target; } }"
+   1:17 'B' is not defined.
+   1:32 'D' is not defined.
+   1:36 'E' is not defined.
+   1:41 'F' is not defined.
+   1:53 'G' is not defined.
+== [js] "try {} catch { a } try {} catch (b) { b; c }"
+   1:16 'a' is not defined.
+   1:42 'c' is not defined.
+== [js] "console.log(process.argv, Bun.version, require('x'), module.exports, exports, __dirname, __filename, global, self, navigator, fetch);"
+== [js] "window; document; localStorage; Deno; sessionStorage; Navigator; XMLHttpRequest; location;"
+   1:1 'window' is not defined.
+   1:9 'document' is not defined.
+   1:19 'localStorage' is not defined.
+   1:33 'Deno' is not defined.
+   1:39 'sessionStorage' is not defined.
+   1:55 'Navigator' is not defined.
+   1:66 'XMLHttpRequest' is not defined.
+   1:82 'location' is not defined.
+== [js] "describe('x', () => { it('y', () => { expect(1).toBe(1) }) }); test.skip('z'); beforeAll(f); beforeEach(f); afterEach(f); afterAll(f); jest.fn(); vi.fn(); xit; xtest; xdescribe; expectTypeOf; function f() {}"
+== [js] "fit; fdescribe; mock; spyOn; setDefaultTimeout; suite; assert;"
+   1:1 'fit' is not defined.
+   1:6 'fdescribe' is not defined.
+   1:17 'mock' is not defined.
+   1:23 'spyOn' is not defined.
+   1:30 'setDefaultTimeout' is not defined.
+   1:49 'suite' is not defined.
+   1:56 'assert' is not defined.
+== [js] "undefined; NaN; Infinity; globalThis; eval('1'); isNaN(1); parseInt('1'); escape; unescape; constructor; toString; valueOf; hasOwnProperty; isPrototypeOf; propertyIsEnumerable; toLocaleString;"
+== [js] "__proto__; __defineGetter__; Loader; $; Buffer; HTMLRewriter; WebSocket; ShadowRealm;"
+   1:1 '__proto__' is not defined.
+   1:12 '__defineGetter__' is not defined.
+   1:30 'Loader' is not defined.
+   1:38 '$' is not defined.
+== [js] "arguments; function f() { return arguments } var g = () => arguments;"
+   1:1 'arguments' is not defined.
+   1:60 'arguments' is not defined.
+== [js] "import a, {b, c as d} from 'm'; import * as e from 'm2'; a; b; c; d; e;"
+   1:64 'c' is not defined.
+== [js] "export { undeclared }; export default alsoUndeclared;"
+   FATAL 1:10 Parsing error: Export 'undeclared' is not defined
+== [js] "export { a as b } from 'm'; export * as c from 'm'; a; c;"
+   1:53 'a' is not defined.
+   1:56 'c' is not defined.
+== [js] "a?.b; a?.[b]; a?.(b); e ??= f; g ||= h; i &&= j;"
+   1:1 'a' is not defined.
+   1:7 'a' is not defined.
+   1:11 'b' is not defined.
+   1:15 'a' is not defined.
+   1:19 'b' is not defined.
+   1:23 'e' is not defined.
+   1:29 'f' is not defined.
+   1:32 'g' is not defined.
+   1:38 'h' is not defined.
+   1:41 'i' is not defined.
+   1:47 'j' is not defined.
+== [js] "async function f() { await a; for await (b of c); } function* g() { yield d; yield* e; }"
+   1:28 'a' is not defined.
+   1:42 'b' is not defined.
+   1:47 'c' is not defined.
+   1:75 'd' is not defined.
+   1:85 'e' is not defined.
+== [js] "var o = { a, [b]: c, d() { e }, get f() { return g }, ...h };"
+   1:11 'a' is not defined.
+   1:15 'b' is not defined.
+   1:19 'c' is not defined.
+   1:28 'e' is not defined.
+   1:50 'g' is not defined.
+   1:58 'h' is not defined.
+== [js] "x => y; (x, ...z) => x + z + w; function f() { new.target; }"
+   1:6 'y' is not defined.
+   1:30 'w' is not defined.
+== [js] "import.meta.url; import('m'); import(spec);"
+   1:38 'spec' is not defined.
+== [js] "if (a) b; else c; while (d) e; do f; while (g); for (h; i; j) k; switch (l) { case m: n; default: o; } throw p;"
+   1:5 'a' is not defined.
+   1:8 'b' is not defined.
+   1:16 'c' is not defined.
+   1:26 'd' is not defined.
+   1:29 'e' is not defined.
+   1:35 'f' is not defined.
+   1:45 'g' is not defined.
+   1:54 'h' is not defined.
+   1:57 'i' is not defined.
+   1:60 'j' is not defined.
+   1:63 'k' is not defined.
+   1:74 'l' is not defined.
+   1:84 'm' is not defined.
+   1:87 'n' is not defined.
+   1:99 'o' is not defined.
+   1:110 'p' is not defined.
+== [js] "var {a = b, ...c} = d, [e = f, ...g] = h; a; c; e; g;"
+   1:10 'b' is not defined.
+   1:21 'd' is not defined.
+   1:29 'f' is not defined.
+   1:40 'h' is not defined.
+== [cjs] "arguments; require('x'); module.exports = exports; __dirname; __filename; a;"
+   1:75 'a' is not defined.
+== [cjs] "with (o) { a; b = 1 } function f() { return arguments[0] + c }"
+   1:7 'o' is not defined.
+   1:12 'a' is not defined.
+   1:15 'b' is not defined.
+   1:60 'c' is not defined.
+== [cjs] "return a;"
+   1:8 'a' is not defined.
+== [mjs] "require; module; exports; __dirname; a;"
+   1:38 'a' is not defined.
+== [jsx] "var React; <App a={b} {...c}><d.e/><F.G/><h:i/>{k}<></></App>;"
+   1:13 'App' is not defined.
+   1:20 'b' is not defined.
+   1:27 'c' is not defined.
+   1:31 'd' is not defined.
+   1:37 'F' is not defined.
+   1:49 'k' is not defined.
+== [jsx] "<div onClick={handler}>{text}</div>; <Foo-bar />; <foo.bar />; <_x />; <$y />; <this.z />;"
+   1:15 'handler' is not defined.
+   1:25 'text' is not defined.
+   1:39 'Foo-bar' is not defined.
+   1:52 'foo' is not defined.
+   1:65 '_x' is not defined.
+   1:73 '$y' is not defined.
+== [jsx] "function App() { return <App><Self/></App> } import Self from 'm';"
+== [ts] "a; let x: Foo; type T = Bar<Baz>; x as Qux; <Quux>x; x satisfies Corge;"
+   1:1 'a' is not defined.
+   1:11 'Foo' is not defined.
+   1:25 'Bar' is not defined.
+   1:29 'Baz' is not defined.
+   1:40 'Qux' is not defined.
+   1:46 'Quux' is not defined.
+   1:66 'Corge' is not defined.
+== [ts] "let x: HTMLElement; let y: Partial<NodeJS.Timeout>; let z: Promise<Record<string, Array<number>>>;"
+   1:8 'HTMLElement' is not defined.
+   1:36 'NodeJS' is not defined.
+== [ts] "declare const a: number; declare function f(): void; declare class C {} declare namespace N { const x: number } a; f; C; N;"
+== [ts] "enum E { A = B } namespace M { export const x = y } M.x; E.A; import eq = require('m'); eq; import al = N2.x; al;"
+   1:14 'B' is not defined.
+   1:49 'y' is not defined.
+   1:105 'N2' is not defined.
+== [ts] "function f<T>(x: T): U { return x as V } class C<T> extends D<T> implements I {}"
+   1:22 'U' is not defined.
+   1:38 'V' is not defined.
+   1:61 'D' is not defined.
+   1:77 'I' is not defined.
+== [ts] "type A = typeof b; let c: typeof d.e; type F = (g: h) => i; interface J extends K { l: m }"
+   1:17 'b' is not defined.
+   1:34 'd' is not defined.
+   1:52 'h' is not defined.
+   1:58 'i' is not defined.
+   1:81 'K' is not defined.
+   1:88 'm' is not defined.
+== [ts] "@dec class A { @dec2 m(@dec3 p: P) {} }"
+   1:2 'dec' is not defined.
+   1:17 'dec2' is not defined.
+   1:25 'dec3' is not defined.
+   1:33 'P' is not defined.
+== [tsx] "let x: Props; <App<T> a={b as C}/>;"
+   1:8 'Props' is not defined.
+   1:16 'App' is not defined.
+   1:20 'T' is not defined.
+   1:26 'b' is not defined.
+   1:31 'C' is not defined.
+== [cts] "arguments; a; let x: Foo;"
+   1:1 'arguments' is not defined.
+   1:12 'a' is not defined.
+   1:22 'Foo' is not defined.
+== [d.ts] "declare const a: B; export type T = U;"
+   1:18 'B' is not defined.
+   1:37 'U' is not defined.

@@ -1,0 +1,127 @@
+== [js] "Math(); new Math; JSON(); new JSON(); Reflect(); Atomics(); Intl(); Temporal(); new Temporal();"
+   1:1 'Math' is not a function.
+   1:9 'Math' is not a function.
+   1:19 'JSON' is not a function.
+   1:27 'JSON' is not a function.
+   1:39 'Reflect' is not a function.
+   1:50 'Atomics' is not a function.
+   1:61 'Intl' is not a function.
+   1:69 'Temporal' is not a function.
+   1:81 'Temporal' is not a function.
+== [js] "Math.abs(1); JSON.parse('1'); Math; new Math.foo(); Math.call(1); typeof Math; Math`t`;"
+== [js] "globalThis.Math(); new globalThis.JSON; globalThis['Reflect'](); globalThis[`Atomics`](); globalThis?.Intl(); globalThis.Temporal?.();"
+   1:1 'Math' is not a function.
+   1:20 'JSON' is not a function.
+   1:41 'Reflect' is not a function.
+   1:66 'Atomics' is not a function.
+   1:91 'Intl' is not a function.
+   1:111 'Temporal' is not a function.
+== [js] "self.Math(); global.Math(); window.Math(); globalThis.globalThis.Math(); self.self.JSON(); global['JSON']();"
+   1:1 'Math' is not a function.
+   1:14 'Math' is not a function.
+   1:92 'JSON' is not a function.
+== [js] "var x = Math; x(); new x; x.abs(1);"
+   1:15 'x' is reference to 'Math', which is not a function.
+   1:20 'x' is reference to 'Math', which is not a function.
+== [js] "var a = Math; var b = a; b(); var c = globalThis; c.JSON(); var d = c.Math; d();"
+   1:26 'b' is reference to 'Math', which is not a function.
+   1:51 'JSON' is not a function.
+   1:77 'd' is reference to 'Math', which is not a function.
+== [js] "const {Math: M, JSON: {parse}} = globalThis; M(); new M; parse();"
+   1:46 'M' is reference to 'Math', which is not a function.
+   1:51 'M' is reference to 'Math', which is not a function.
+== [js] "var {JSON: J = 1} = globalThis; J(); var [z = Math] = []; z();"
+   1:33 'J' is reference to 'JSON', which is not a function.
+   1:59 'z' is reference to 'Math', which is not a function.
+== [js] "let y; y = Reflect; new y; y();"
+   1:21 'y' is reference to 'Reflect', which is not a function.
+   1:28 'y' is reference to 'Reflect', which is not a function.
+== [js] "(a || Math)(); (Math || JSON)(); (b ? Math : c)(); (0, Math)(); (x = Math)(); (x ||= Math)(); (Math)();"
+   1:1 'undefined' is reference to 'Math', which is not a function.
+   1:16 'undefined' is reference to 'JSON', which is not a function.
+   1:16 'undefined' is reference to 'Math', which is not a function.
+   1:34 'undefined' is reference to 'Math', which is not a function.
+   1:52 'undefined' is reference to 'Math', which is not a function.
+   1:65 'undefined' is reference to 'Math', which is not a function.
+   1:79 'undefined' is reference to 'Math', which is not a function.
+   1:95 'Math' is not a function.
+== [js] "function f(m = Math) { m() } var g = (j = JSON) => j();"
+   1:24 'm' is reference to 'Math', which is not a function.
+   1:52 'j' is reference to 'JSON', which is not a function.
+== [js] "x = Math; x(); [q = JSON] = []; q();"
+== [js] "Math = 1; Math(); JSON++; JSON();"
+== [js] "function f(Math) { Math() } { let JSON; JSON() } try {} catch (Reflect) { Reflect() }"
+== [js] "var Math; Math(); function JSON() {} JSON(); class Reflect {} new Reflect; import Atomics from 'a'; Atomics();"
+== [js] "var x = Math; function f(x) { x() } { let x; x() }"
+== [js] "globalThis['Ma' + 'th'](); globalThis[k](); globalThis.Math.abs(); globalThis.JSON.parse('1');"
+   1:1 'null' is reference to 'Math', which is not a function.
+== [js] "var g = globalThis; g = 1; g.Math(); var s = self; s.JSON();"
+   1:28 'Math' is not a function.
+   1:52 'JSON' is not a function.
+== [js] "import(Math); Math()(); foo(Math()); Math().foo; new (Math());"
+   1:15 'Math' is not a function.
+   1:29 'Math' is not a function.
+   1:38 'Math' is not a function.
+   1:55 'Math' is not a function.
+== [js] "class A extends Math {} typeof Math(); void new Math; [Math(), new JSON];"
+   1:32 'Math' is not a function.
+   1:45 'Math' is not a function.
+   1:56 'Math' is not a function.
+   1:64 'JSON' is not a function.
+== [js] "var o = { Math() {}, m: Math }; o.Math(); o.m(); this.Math(); f.Math();"
+== [js] "var m = Math, n = m, p = n; p(); var q = q; q();"
+   1:29 'p' is reference to 'Math', which is not a function.
+== [js] "var a = Math; a = b; a();"
+   1:22 'a' is reference to 'Math', which is not a function.
+== [js] "function f() { var x = Math; return () => x() } var h = (x = JSON) => x;"
+   1:43 'x' is reference to 'Math', which is not a function.
+== [cjs] "with (o) { Math() } var x = JSON; with (o) { x() }"
+   1:12 'Math' is not a function.
+   1:46 'x' is reference to 'JSON', which is not a function.
+== [cjs] "Math(); exports.Math(); module.JSON(); require.Math();"
+   1:1 'Math' is not a function.
+== [mjs] "Math(); globalThis.JSON();"
+   1:1 'Math' is not a function.
+   1:9 'JSON' is not a function.
+== [jsx] "<a b={Math()}>{new JSON}</a>; <Math/>;"
+   1:7 'Math' is not a function.
+   1:16 'JSON' is not a function.
+== [ts] "(Math as any)(); Math!(); new (JSON as any); (<any>Math)(); (Math satisfies any)();"
+   1:1 'undefined' is reference to 'Math', which is not a function.
+   1:18 'undefined' is reference to 'Math', which is not a function.
+   1:27 'undefined' is reference to 'JSON', which is not a function.
+   1:46 'undefined' is reference to 'Math', which is not a function.
+   1:61 'undefined' is reference to 'Math', which is not a function.
+== [ts] "Math<any>(); new Math<any>; (Math<any>)(); new globalThis.JSON<any>();"
+   1:1 'Math' is not a function.
+   1:14 'Math' is not a function.
+   1:29 'undefined' is reference to 'Math', which is not a function.
+   1:44 'JSON' is not a function.
+== [ts] "const m = Math as any; m(); let n: any = Math!; n(); const k = <any>JSON; k();"
+   1:24 'm' is reference to 'Math', which is not a function.
+   1:49 'n' is reference to 'Math', which is not a function.
+   1:75 'k' is reference to 'JSON', which is not a function.
+== [ts] "globalThis!.Math(); (globalThis as any).Math(); const { Math: M } = globalThis as any; M(); (globalThis.Math as any)(); globalThis.Math!();"
+   1:1 'Math' is not a function.
+   1:21 'Math' is not a function.
+   1:88 'M' is reference to 'Math', which is not a function.
+   1:93 'undefined' is reference to 'Math', which is not a function.
+   1:121 'undefined' is reference to 'Math', which is not a function.
+== [ts] "declare const Math: any; Math(); namespace Reflect {} Reflect(); enum Intl {} Intl(); import type { Atomics } from 'm'; Atomics();"
+== [ts] "type JSON = 1; JSON(); interface Temporal {} Temporal(); function f<Math>() { Math() } class C<Intl> { m() { Intl() } }"
+   1:16 'JSON' is not a function.
+   1:46 'Temporal' is not a function.
+   1:79 'Math' is not a function.
+   1:110 'Intl' is not a function.
+== [ts] "declare global { var Math: any } Math();"
+   1:34 'Math' is not a function.
+== [ts] "let a: typeof Math; type T = typeof JSON; Math.abs(1 as any); let b = Math; b!(); (b as any)(); function g(p = Math, q: typeof Math = JSON) { p(); q() }"
+   1:77 'undefined' is reference to 'Math', which is not a function.
+   1:83 'undefined' is reference to 'Math', which is not a function.
+   1:143 'p' is reference to 'Math', which is not a function.
+   1:148 'q' is reference to 'JSON', which is not a function.
+== [tsx] "const x = Math; <a b={x()}/>;"
+   1:23 'x' is reference to 'Math', which is not a function.
+== [cts] "Math(); var y = JSON; y();"
+   1:1 'Math' is not a function.
+   1:23 'y' is reference to 'JSON', which is not a function.

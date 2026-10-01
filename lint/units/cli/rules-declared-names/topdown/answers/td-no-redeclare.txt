@@ -1,0 +1,119 @@
+== [js] "var a; var a;"
+   1:12 'a' is already defined.
+== [js] "var a = 1, a = 2; var [b, b] = x; var {c, c} = x;"
+   1:12 'a' is already defined.
+   1:27 'b' is already defined.
+   1:43 'c' is already defined.
+== [cjs] "function f() {} function f() {}"
+   1:26 'f' is already defined.
+== [cjs] "var a; function a() {}"
+   1:17 'a' is already defined.
+== [cjs] "function a() {} var a;"
+   1:21 'a' is already defined.
+== [js] "function f(p) { var p; function p() {} }"
+   1:21 'p' is already defined.
+   1:33 'p' is already defined.
+== [js] "var g = (p) => { var p; }; var h = function (q) { var q; };"
+   1:22 'p' is already defined.
+   1:55 'q' is already defined.
+== [js] "{ var a; } for (var a;;) {} for (var a in x) {} for (var a of x) {} var a;"
+   1:21 'a' is already defined.
+   1:38 'a' is already defined.
+   1:58 'a' is already defined.
+   1:73 'a' is already defined.
+== [js] "switch (1) { case 1: var sw; var sw; }"
+   1:34 'sw' is already defined.
+== [js] "class C { static { var s; var s; } }"
+   1:31 's' is already defined.
+== [js] "try {} catch (e) { var e; var e; }"
+   1:31 'e' is already defined.
+== [cjs] "{ function g() {} function g() {} }"
+   1:28 'g' is already defined.
+== [js] "var Object; var Array = 1; function Map() {}"
+== [js] "var a; { let a; { const a = 1; } } function f(a) { { let a; } }"
+== [js] "var undefined; var undefined;"
+   1:20 'undefined' is already defined.
+== [js] "if (x) { var b; } else { var b; }"
+   1:30 'b' is already defined.
+== [js] "label: { var l; } var l;"
+   1:23 'l' is already defined.
+== [cjs] "function f() { var arguments; var arguments; }"
+   1:35 'arguments' is already defined.
+== [js] "let a; { var a; }"
+   FATAL 1:14 Parsing error: Identifier 'a' has already been declared
+== [js] "for (var i = 0;;) {} for (var i = 0;;) {}"
+   1:31 'i' is already defined.
+== [js] "class A { m(p) { var p } get g() { var a; var a; return 1 } }"
+   1:22 'p' is already defined.
+   1:47 'a' is already defined.
+== [js] "var o = { m(p) { var p } };"
+   1:22 'p' is already defined.
+== [cjs] "var Object; var Object; var require; var module; var exports; var arguments;"
+   1:17 'Object' is already defined.
+== [cjs] "function f(a, a) {} var o = function (b, b) { var b; };"
+   1:15 'a' is already defined.
+   1:42 'b' is already defined.
+   1:51 'b' is already defined.
+== [cjs] "var a; var a; { function g() {} function g() {} }"
+   1:12 'a' is already defined.
+   1:42 'g' is already defined.
+== [mjs] "var a; var a;"
+   1:12 'a' is already defined.
+== [jsx] "var a; var a = <a/>;"
+   1:12 'a' is already defined.
+== [ts] "var a: number; var a: string; declare var b: number; declare var b: number;"
+   1:20 'a' is already defined.
+   1:66 'b' is already defined.
+== [ts] "function ov(a: string): void; function ov(a: number): void; function ov(a: any) {}"
+== [ts] "declare function df(): void; declare function df(x: number): void;"
+== [ts] "interface I {} interface I {} namespace N {} namespace N {}"
+== [ts] "class K {} interface K {} namespace K {}"
+== [ts] "function fn() {} namespace fn {} enum E { A } namespace E {}"
+== [ts] "type T = 1; type T = 2;"
+   1:18 'T' is already defined.
+== [ts] "const v = 1; type v = number; interface W {} type W = 1;"
+   1:19 'v' is already defined.
+   1:51 'W' is already defined.
+== [ts] "enum E2 {} enum E2 {} class K2 {} declare class K2 {}"
+   1:17 'E2' is already defined.
+   1:49 'K2' is already defined.
+== [ts] "namespace M { var a; var a; } class C { static { var s; var s; } }"
+== [ts] "function g<T, T>(a: T) {} type G<U, U> = U; function h<T>(x: T): T { var T; return x }"
+   1:15 'T' is already defined.
+   1:74 'T' is already defined.
+== [ts] "function f<a>(a: a) {} const g = <b,>(b: b) => 1; class C { m<c>(c: c) {} }"
+   1:12 'a' is already defined.
+   1:35 'b' is already defined.
+   1:63 'c' is already defined.
+== [ts] "declare global { var gv: any; var gv: any }"
+== [ts] "import type { X } from 'm'; type X = 1; import { Y } from 'm'; interface Y {}"
+   1:34 'X' is already defined.
+   1:74 'Y' is already defined.
+== [ts] "import Z = require('z'); namespace Z {}"
+   1:36 'Z' is already defined.
+== [ts] "function f(this: any, p: number) { var p } class P { constructor(public q: number) { var q } }"
+   1:40 'p' is already defined.
+   1:90 'q' is already defined.
+== [ts] "function f(p: any) { namespace p {} } function g(p = 1) { namespace p {} } const h = (p: any) => { namespace p {} };"
+   1:69 'p' is already defined.
+   1:110 'p' is already defined.
+== [ts] "function f(p: any) { interface p {} } function g(p: any) { enum p {} }"
+   1:32 'p' is already defined.
+   1:65 'p' is already defined.
+== [ts] "abstract class A { abstract m(a: any): void; ov(b: any): void; ov(b: any) { var b } }"
+   1:81 'b' is already defined.
+== [ts] "type F = (d: any, d2: any) => void; interface I { m(e: any): void; m(e: string): void }"
+== [ts] "let x = 1; namespace x {}"
+   1:22 'x' is already defined.
+== [tsx] "var a; var a = <a/>;"
+   1:12 'a' is already defined.
+== [cts] "var Object; var a; var a; interface Array<T> {} type Partial = 1;"
+   1:5 'Object' is already defined as a built-in global variable.
+   1:24 'a' is already defined.
+   1:37 'Array' is already defined as a built-in global variable.
+   1:54 'Partial' is already defined as a built-in global variable.
+== [d.ts] "declare var a: number; declare var a: number; declare function f(): void; declare function f(a: number): void;"
+   1:36 'a' is already defined.
+== [js] "export var e; var e;"
+   1:19 'e' is already defined.
+== [js] "export function a() {} export { a as b };"

@@ -1,0 +1,343 @@
+[
+	{
+		"code": "class A {} A = 1; A += 1; A++; --A;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-class-assign",
+				"line": 1,
+				"column": 12,
+				"message": "'A' is a class."
+			},
+			{
+				"rule": "no-class-assign",
+				"line": 1,
+				"column": 19,
+				"message": "'A' is a class."
+			},
+			{
+				"rule": "no-class-assign",
+				"line": 1,
+				"column": 27,
+				"message": "'A' is a class."
+			},
+			{
+				"rule": "no-class-assign",
+				"line": 1,
+				"column": 34,
+				"message": "'A' is a class."
+			}
+		]
+	},
+	{
+		"code": "class A { m() { A = 1 } static { A = 2 } }",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-class-assign",
+				"line": 1,
+				"column": 17,
+				"message": "'A' is a class."
+			},
+			{
+				"rule": "no-class-assign",
+				"line": 1,
+				"column": 34,
+				"message": "'A' is a class."
+			}
+		]
+	},
+	{
+		"code": "let K = class K2 { m() { K2 = 1; K = 2 } };",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-class-assign",
+				"line": 1,
+				"column": 26,
+				"message": "'K2' is a class."
+			}
+		]
+	},
+	{
+		"code": "(class A { m() { [A] = x; ({A} = x); ({a: A = 1} = x); for (A in x); for ([A = 1] of x); } });",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-class-assign",
+				"line": 1,
+				"column": 19,
+				"message": "'A' is a class."
+			},
+			{
+				"rule": "no-class-assign",
+				"line": 1,
+				"column": 29,
+				"message": "'A' is a class."
+			},
+			{
+				"rule": "no-class-assign",
+				"line": 1,
+				"column": 43,
+				"message": "'A' is a class."
+			},
+			{
+				"rule": "no-class-assign",
+				"line": 1,
+				"column": 61,
+				"message": "'A' is a class."
+			},
+			{
+				"rule": "no-class-assign",
+				"line": 1,
+				"column": 76,
+				"message": "'A' is a class."
+			}
+		]
+	},
+	{
+		"code": "class A {} function f(A) { A = 1 } { let A; A = 2 } (A) => { A = 3 };",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "export default class A {} A = 1;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-class-assign",
+				"line": 1,
+				"column": 27,
+				"message": "'A' is a class."
+			}
+		]
+	},
+	{
+		"code": "export class B {} B = 1;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-class-assign",
+				"line": 1,
+				"column": 19,
+				"message": "'B' is a class."
+			}
+		]
+	},
+	{
+		"code": "class A {} (A) = 1; ((A)) = 2;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-class-assign",
+				"line": 1,
+				"column": 13,
+				"message": "'A' is a class."
+			},
+			{
+				"rule": "no-class-assign",
+				"line": 1,
+				"column": 23,
+				"message": "'A' is a class."
+			}
+		]
+	},
+	{
+		"code": "class A {} var x = A; typeof A; A.b = 1; delete A.b; new A;",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "var B = class {}; B = 1;",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "class A {} with (o) { A = 1 }",
+		"ext": "cjs",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-class-assign",
+				"line": 1,
+				"column": 23,
+				"message": "'A' is a class."
+			}
+		]
+	},
+	{
+		"code": "class A {} (A as any) = 1; A! = 2; (<any>A) = 3;",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-class-assign",
+				"line": 1,
+				"column": 13,
+				"message": "'A' is a class."
+			},
+			{
+				"rule": "no-class-assign",
+				"line": 1,
+				"column": 28,
+				"message": "'A' is a class."
+			},
+			{
+				"rule": "no-class-assign",
+				"line": 1,
+				"column": 42,
+				"message": "'A' is a class."
+			}
+		]
+	},
+	{
+		"code": "class A {} (A satisfies any) = 1; (A as any as any) = 2; A!! = 3;",
+		"ext": "ts",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "class A {} [A as any] = x; ({a: A!} = x); for ((A satisfies any) of x);",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-class-assign",
+				"line": 1,
+				"column": 13,
+				"message": "'A' is a class."
+			},
+			{
+				"rule": "no-class-assign",
+				"line": 1,
+				"column": 33,
+				"message": "'A' is a class."
+			},
+			{
+				"rule": "no-class-assign",
+				"line": 1,
+				"column": 49,
+				"message": "'A' is a class."
+			}
+		]
+	},
+	{
+		"code": "declare class B {} B = 1;",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-class-assign",
+				"line": 1,
+				"column": 20,
+				"message": "'B' is a class."
+			}
+		]
+	},
+	{
+		"code": "abstract class C { m() { C = 1 } }",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-class-assign",
+				"line": 1,
+				"column": 26,
+				"message": "'C' is a class."
+			}
+		]
+	},
+	{
+		"code": "class D {} interface D {} D = 1;",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-class-assign",
+				"line": 1,
+				"column": 27,
+				"message": "'D' is a class."
+			}
+		]
+	},
+	{
+		"code": "class D {} namespace D { D = 2 }",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-class-assign",
+				"line": 1,
+				"column": 26,
+				"message": "'D' is a class."
+			}
+		]
+	},
+	{
+		"code": "enum E {} E = 1; namespace N {} N = 2; interface I {} I = 3; type T = 1; T = 4;",
+		"ext": "ts",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "class A<T> { m(A: T) { A = 1 as any } }",
+		"ext": "ts",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "@dec class A { @dec m() { A = 1 } }",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-class-assign",
+				"line": 1,
+				"column": 27,
+				"message": "'A' is a class."
+			}
+		]
+	},
+	{
+		"code": "class A {} A = <div/>;",
+		"ext": "tsx",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-class-assign",
+				"line": 1,
+				"column": 12,
+				"message": "'A' is a class."
+			}
+		]
+	},
+	{
+		"code": "class A {} A = 1;",
+		"ext": "cts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-class-assign",
+				"line": 1,
+				"column": 12,
+				"message": "'A' is a class."
+			}
+		]
+	},
+	{
+		"code": "declare class A {} ",
+		"ext": "d.ts",
+		"fatal": null,
+		"reports": []
+	}
+]

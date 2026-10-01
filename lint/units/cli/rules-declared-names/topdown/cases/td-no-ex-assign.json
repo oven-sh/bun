@@ -1,0 +1,20 @@
+[
+	{"code":"try {} catch (e) { e = 1; e += 1; e++; [e] = x; ({e} = x); for (e in x); }"},
+	{"code":"try {} catch ({ a, b: [c], ...d }) { a = 1; c = 2; d = 3 }"},
+	{"code":"try {} catch ([a = 1]) { a = 2 }"},
+	{"code":"try {} catch (e) { function f() { e = 1 } (() => { e = 2 }) }"},
+	{"code":"try {} catch (e) { { let e; e = 1 } }"},
+	{"code":"try {} catch (e) { var e = 1; }"},
+	{"code":"try {} catch (e) { var e; e = 1; }"},
+	{"code":"try {} catch (e) { e.message = 1; delete e.x; typeof e }"},
+	{"code":"try {} catch { e = 1 }"},
+	{"code":"try {} catch (e) {} e = 1;"},
+	{"code":"try {} catch (e) { try {} catch (e) { e = 1 } e = 2 }"},
+	{"code":"try {} catch (e) { (e) = 1; [e = 1] = x; }"},
+	{"code":"try {} catch (e) { with (o) { e = 1 } }","ext":"cjs"},
+	{"code":"try {} catch (e) { (e as any) = 1; e! = 2; (<any>e) = 3; (e satisfies any) = 4; (e as any as any) = 5; }","ext":"ts"},
+	{"code":"try {} catch (e: unknown) { [e as any] = x; for (e! of y); }","ext":"ts"},
+	{"code":"try {} catch (e: any) { e!++; --(e as any); }","ext":"ts"},
+	{"code":"try {} catch (e) { e = <a/>; }","ext":"tsx"},
+	{"code":"try {} catch (e) { e = 1 }","ext":"cts"}
+]

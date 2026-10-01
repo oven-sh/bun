@@ -1,0 +1,655 @@
+[
+	{
+		"code": "var undefined;",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "var undefined = 1;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 5,
+				"message": "Shadowing of global property 'undefined'."
+			}
+		]
+	},
+	{
+		"code": "var undefined; undefined = 1;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 5,
+				"message": "Shadowing of global property 'undefined'."
+			}
+		]
+	},
+	{
+		"code": "let undefined; const x = undefined;",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "var undefined; var undefined = 1;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 5,
+				"message": "Shadowing of global property 'undefined'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 20,
+				"message": "Shadowing of global property 'undefined'."
+			}
+		]
+	},
+	{
+		"code": "for (var undefined of x);",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 10,
+				"message": "Shadowing of global property 'undefined'."
+			}
+		]
+	},
+	{
+		"code": "for (var undefined in x);",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 10,
+				"message": "Shadowing of global property 'undefined'."
+			}
+		]
+	},
+	{
+		"code": "var [undefined] = x; var {NaN} = x; var {a: Infinity = 1} = x;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 6,
+				"message": "Shadowing of global property 'undefined'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 27,
+				"message": "Shadowing of global property 'NaN'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 45,
+				"message": "Shadowing of global property 'Infinity'."
+			}
+		]
+	},
+	{
+		"code": "function NaN() {} var f = function Infinity() {}; (class globalThis {}); class NaN2 {}",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 10,
+				"message": "Shadowing of global property 'NaN'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 36,
+				"message": "Shadowing of global property 'Infinity'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 58,
+				"message": "Shadowing of global property 'globalThis'."
+			}
+		]
+	},
+	{
+		"code": "function f(undefined, NaN, Infinity, globalThis) {} (undefined) => 1; ({NaN}) => 1; (...Infinity) => 1;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 12,
+				"message": "Shadowing of global property 'undefined'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 23,
+				"message": "Shadowing of global property 'NaN'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 28,
+				"message": "Shadowing of global property 'Infinity'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 38,
+				"message": "Shadowing of global property 'globalThis'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 54,
+				"message": "Shadowing of global property 'undefined'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 73,
+				"message": "Shadowing of global property 'NaN'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 89,
+				"message": "Shadowing of global property 'Infinity'."
+			}
+		]
+	},
+	{
+		"code": "try {} catch (undefined) {} try {} catch ({NaN}) {}",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 15,
+				"message": "Shadowing of global property 'undefined'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 44,
+				"message": "Shadowing of global property 'NaN'."
+			}
+		]
+	},
+	{
+		"code": "import undefined from 'a'; import {NaN} from 'b'; import * as Infinity from 'c'; import {x as globalThis} from 'd';",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 8,
+				"message": "Shadowing of global property 'undefined'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 36,
+				"message": "Shadowing of global property 'NaN'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 63,
+				"message": "Shadowing of global property 'Infinity'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 95,
+				"message": "Shadowing of global property 'globalThis'."
+			}
+		]
+	},
+	{
+		"code": "let NaN; const Infinity = 1; var globalThis; using undefined = o;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 5,
+				"message": "Shadowing of global property 'NaN'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 16,
+				"message": "Shadowing of global property 'Infinity'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 34,
+				"message": "Shadowing of global property 'globalThis'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 52,
+				"message": "Shadowing of global property 'undefined'."
+			}
+		]
+	},
+	{
+		"code": "class C { m(NaN) {} set s(undefined) {} static { var Infinity; } }",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 13,
+				"message": "Shadowing of global property 'NaN'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 27,
+				"message": "Shadowing of global property 'undefined'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 54,
+				"message": "Shadowing of global property 'Infinity'."
+			}
+		]
+	},
+	{
+		"code": "var o = { m(undefined) {}, f: function NaN() {} };",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 13,
+				"message": "Shadowing of global property 'undefined'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 40,
+				"message": "Shadowing of global property 'NaN'."
+			}
+		]
+	},
+	{
+		"code": "{ let undefined; } function g() { var undefined; }",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "undefined = 1; NaN++; var a = undefined; function h(a = NaN) {}",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "var undefinedd, nan, infinity, GlobalThis, Eval, Arguments;",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "var eval; var arguments; function eval2(eval, arguments) {}",
+		"ext": "cjs",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 5,
+				"message": "Shadowing of global property 'eval'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 15,
+				"message": "Shadowing of global property 'arguments'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 41,
+				"message": "Shadowing of global property 'eval'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 47,
+				"message": "Shadowing of global property 'arguments'."
+			}
+		]
+	},
+	{
+		"code": "function arguments() {} function eval() {} try {} catch (eval) {} try {} catch (arguments) {}",
+		"ext": "cjs",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 10,
+				"message": "Shadowing of global property 'arguments'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 34,
+				"message": "Shadowing of global property 'eval'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 58,
+				"message": "Shadowing of global property 'eval'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 81,
+				"message": "Shadowing of global property 'arguments'."
+			}
+		]
+	},
+	{
+		"code": "function f() { var arguments; } function g(arguments) { var arguments; } (function arguments() {});",
+		"ext": "cjs",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 20,
+				"message": "Shadowing of global property 'arguments'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 44,
+				"message": "Shadowing of global property 'arguments'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 61,
+				"message": "Shadowing of global property 'arguments'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 84,
+				"message": "Shadowing of global property 'arguments'."
+			}
+		]
+	},
+	{
+		"code": "var arguments; arguments = 1;",
+		"ext": "cjs",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 5,
+				"message": "Shadowing of global property 'arguments'."
+			}
+		]
+	},
+	{
+		"code": "var undefined = 1;",
+		"ext": "mjs",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 5,
+				"message": "Shadowing of global property 'undefined'."
+			}
+		]
+	},
+	{
+		"code": "var NaN = <a/>;",
+		"ext": "jsx",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 5,
+				"message": "Shadowing of global property 'NaN'."
+			}
+		]
+	},
+	{
+		"code": "let undefined: number;",
+		"ext": "ts",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "declare const undefined: any;",
+		"ext": "ts",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "var undefined!: number; undefined = 1;",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 5,
+				"message": "Shadowing of global property 'undefined'."
+			}
+		]
+	},
+	{
+		"code": "let undefined: number; declare var undefined: any;",
+		"ext": "ts",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "enum NaN {} namespace Infinity {} type undefined = 1; interface globalThis {}",
+		"ext": "ts",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "declare function NaN(): void; declare class Infinity {}",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 45,
+				"message": "Shadowing of global property 'Infinity'."
+			}
+		]
+	},
+	{
+		"code": "function globalThis(): void; function globalThis() {}",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 10,
+				"message": "Shadowing of global property 'globalThis'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 39,
+				"message": "Shadowing of global property 'globalThis'."
+			}
+		]
+	},
+	{
+		"code": "declare function f(undefined: any): void; type F = (NaN: number) => void; abstract class D { abstract m(Infinity: any): void }",
+		"ext": "ts",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "class C { constructor(public NaN: any) {} m(Infinity?: number) {} }",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 30,
+				"message": "Shadowing of global property 'NaN'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 45,
+				"message": "Shadowing of global property 'Infinity'."
+			}
+		]
+	},
+	{
+		"code": "function g<undefined>() {} type G<NaN> = NaN;",
+		"ext": "ts",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "import type { NaN } from 'm'; import { type Infinity as I2, type undefined } from 'm';",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 15,
+				"message": "Shadowing of global property 'NaN'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 66,
+				"message": "Shadowing of global property 'undefined'."
+			}
+		]
+	},
+	{
+		"code": "import undefined = require('m');",
+		"ext": "ts",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "declare namespace N { const NaN: number; let undefined: any; function Infinity(): void; }",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 29,
+				"message": "Shadowing of global property 'NaN'."
+			}
+		]
+	},
+	{
+		"code": "declare global { var NaN: number }",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 22,
+				"message": "Shadowing of global property 'NaN'."
+			}
+		]
+	},
+	{
+		"code": "const NaN = <a/>;",
+		"ext": "tsx",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 7,
+				"message": "Shadowing of global property 'NaN'."
+			}
+		]
+	},
+	{
+		"code": "var eval: any; function f(arguments: any) {}",
+		"ext": "cts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 5,
+				"message": "Shadowing of global property 'eval'."
+			},
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 27,
+				"message": "Shadowing of global property 'arguments'."
+			}
+		]
+	},
+	{
+		"code": "declare const NaN: number; declare function Infinity(): void; declare let undefined: undefined;",
+		"ext": "d.ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-shadow-restricted-names",
+				"line": 1,
+				"column": 15,
+				"message": "Shadowing of global property 'NaN'."
+			}
+		]
+	}
+]

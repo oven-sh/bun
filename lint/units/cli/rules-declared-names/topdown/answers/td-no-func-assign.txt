@@ -1,0 +1,58 @@
+== [js] "function f() {} f = 1; f += 1; f++;"
+   1:17 'f' is a function.
+   1:24 'f' is a function.
+   1:32 'f' is a function.
+== [js] "function f() { f = 1 }"
+   1:16 'f' is a function.
+== [js] "var a = function g() { g = 1 };"
+   1:24 'g' is a function.
+== [js] "f = 1; function f() {}"
+   1:1 'f' is a function.
+== [js] "[f] = x; ({f} = x); ({a: f = 1} = x); for (f in x); function f() {}"
+   1:2 'f' is a function.
+   1:12 'f' is a function.
+   1:26 'f' is a function.
+   1:44 'f' is a function.
+== [js] "function f(f) { f = 1 }"
+== [js] "function f() { var f = 1; f = 2 }"
+== [js] "var g = () => {}; g = 1; var h = function () {}; h = 2;"
+== [js] "export default function f() {} f = 1;"
+   1:32 'f' is a function.
+== [js] "export function e() {} e = 1;"
+   1:24 'e' is a function.
+== [js] "function f() {} function g(a) { function a() {} a = 1 }"
+== [cjs] "function f() {} var f; f = 1;"
+   1:24 'f' is a function.
+== [cjs] "var j; function j() {} j = 1;"
+== [js] "{ function b() {} b = 1 } b = 2;"
+   1:19 'b' is a function.
+== [js] "async function af() {} af = 1; function* gf() {} gf = 2;"
+   1:24 'af' is a function.
+   1:50 'gf' is a function.
+== [js] "function f() {} (f) = 1;"
+   1:18 'f' is a function.
+== [js] "class C { m() {} } var o = { m() { m = 1 } };"
+== [cjs] "function f() {} function f() {} f = 1;"
+   1:33 'f' is a function.
+   1:33 'f' is a function.
+== [cjs] "function f() {} with (o) { f = 1 }"
+   1:28 'f' is a function.
+== [ts] "function f() {} (f as any) = 1; f! = 2; (<any>f) = 3; (f satisfies any) = 4;"
+   1:18 'f' is a function.
+   1:33 'f' is a function.
+   1:47 'f' is a function.
+== [ts] "declare function g(): void; g = 1;"
+== [ts] "function h(): void; function h(a: number): void; function h(a?: number) {} h = 1;"
+   1:76 'h' is a function.
+== [ts] "function f() {} namespace f { f = 3 }"
+   1:31 'f' is a function.
+== [ts] "function f<T>(this: void, x: T) { f = 1 as any }"
+   1:35 'f' is a function.
+== [ts] "abstract class A { abstract m(): void; n() { n = 1 } }"
+== [ts] "namespace N { export function f() {} f = 1 }"
+   1:38 'f' is a function.
+== [ts] "declare namespace D { function f(): void; }"
+== [tsx] "function F() { return <F/> } F = null;"
+   1:30 'F' is a function.
+== [cts] "function f() {} f = 1;"
+   1:17 'f' is a function.

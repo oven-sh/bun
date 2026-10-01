@@ -1,0 +1,370 @@
+[
+	{
+		"code": "function f() {} f = 1; f += 1; f++;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-func-assign",
+				"line": 1,
+				"column": 17,
+				"message": "'f' is a function."
+			},
+			{
+				"rule": "no-func-assign",
+				"line": 1,
+				"column": 24,
+				"message": "'f' is a function."
+			},
+			{
+				"rule": "no-func-assign",
+				"line": 1,
+				"column": 32,
+				"message": "'f' is a function."
+			}
+		]
+	},
+	{
+		"code": "function f() { f = 1 }",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-func-assign",
+				"line": 1,
+				"column": 16,
+				"message": "'f' is a function."
+			}
+		]
+	},
+	{
+		"code": "var a = function g() { g = 1 };",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-func-assign",
+				"line": 1,
+				"column": 24,
+				"message": "'g' is a function."
+			}
+		]
+	},
+	{
+		"code": "f = 1; function f() {}",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-func-assign",
+				"line": 1,
+				"column": 1,
+				"message": "'f' is a function."
+			}
+		]
+	},
+	{
+		"code": "[f] = x; ({f} = x); ({a: f = 1} = x); for (f in x); function f() {}",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-func-assign",
+				"line": 1,
+				"column": 2,
+				"message": "'f' is a function."
+			},
+			{
+				"rule": "no-func-assign",
+				"line": 1,
+				"column": 12,
+				"message": "'f' is a function."
+			},
+			{
+				"rule": "no-func-assign",
+				"line": 1,
+				"column": 26,
+				"message": "'f' is a function."
+			},
+			{
+				"rule": "no-func-assign",
+				"line": 1,
+				"column": 44,
+				"message": "'f' is a function."
+			}
+		]
+	},
+	{
+		"code": "function f(f) { f = 1 }",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "function f() { var f = 1; f = 2 }",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "var g = () => {}; g = 1; var h = function () {}; h = 2;",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "export default function f() {} f = 1;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-func-assign",
+				"line": 1,
+				"column": 32,
+				"message": "'f' is a function."
+			}
+		]
+	},
+	{
+		"code": "export function e() {} e = 1;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-func-assign",
+				"line": 1,
+				"column": 24,
+				"message": "'e' is a function."
+			}
+		]
+	},
+	{
+		"code": "function f() {} function g(a) { function a() {} a = 1 }",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "function f() {} var f; f = 1;",
+		"ext": "cjs",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-func-assign",
+				"line": 1,
+				"column": 24,
+				"message": "'f' is a function."
+			}
+		]
+	},
+	{
+		"code": "var j; function j() {} j = 1;",
+		"ext": "cjs",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "{ function b() {} b = 1 } b = 2;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-func-assign",
+				"line": 1,
+				"column": 19,
+				"message": "'b' is a function."
+			}
+		]
+	},
+	{
+		"code": "async function af() {} af = 1; function* gf() {} gf = 2;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-func-assign",
+				"line": 1,
+				"column": 24,
+				"message": "'af' is a function."
+			},
+			{
+				"rule": "no-func-assign",
+				"line": 1,
+				"column": 50,
+				"message": "'gf' is a function."
+			}
+		]
+	},
+	{
+		"code": "function f() {} (f) = 1;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-func-assign",
+				"line": 1,
+				"column": 18,
+				"message": "'f' is a function."
+			}
+		]
+	},
+	{
+		"code": "class C { m() {} } var o = { m() { m = 1 } };",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "function f() {} function f() {} f = 1;",
+		"ext": "cjs",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-func-assign",
+				"line": 1,
+				"column": 33,
+				"message": "'f' is a function."
+			},
+			{
+				"rule": "no-func-assign",
+				"line": 1,
+				"column": 33,
+				"message": "'f' is a function."
+			}
+		]
+	},
+	{
+		"code": "function f() {} with (o) { f = 1 }",
+		"ext": "cjs",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-func-assign",
+				"line": 1,
+				"column": 28,
+				"message": "'f' is a function."
+			}
+		]
+	},
+	{
+		"code": "function f() {} (f as any) = 1; f! = 2; (<any>f) = 3; (f satisfies any) = 4;",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-func-assign",
+				"line": 1,
+				"column": 18,
+				"message": "'f' is a function."
+			},
+			{
+				"rule": "no-func-assign",
+				"line": 1,
+				"column": 33,
+				"message": "'f' is a function."
+			},
+			{
+				"rule": "no-func-assign",
+				"line": 1,
+				"column": 47,
+				"message": "'f' is a function."
+			}
+		]
+	},
+	{
+		"code": "declare function g(): void; g = 1;",
+		"ext": "ts",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "function h(): void; function h(a: number): void; function h(a?: number) {} h = 1;",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-func-assign",
+				"line": 1,
+				"column": 76,
+				"message": "'h' is a function."
+			}
+		]
+	},
+	{
+		"code": "function f() {} namespace f { f = 3 }",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-func-assign",
+				"line": 1,
+				"column": 31,
+				"message": "'f' is a function."
+			}
+		]
+	},
+	{
+		"code": "function f<T>(this: void, x: T) { f = 1 as any }",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-func-assign",
+				"line": 1,
+				"column": 35,
+				"message": "'f' is a function."
+			}
+		]
+	},
+	{
+		"code": "abstract class A { abstract m(): void; n() { n = 1 } }",
+		"ext": "ts",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "namespace N { export function f() {} f = 1 }",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-func-assign",
+				"line": 1,
+				"column": 38,
+				"message": "'f' is a function."
+			}
+		]
+	},
+	{
+		"code": "declare namespace D { function f(): void; }",
+		"ext": "ts",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "function F() { return <F/> } F = null;",
+		"ext": "tsx",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-func-assign",
+				"line": 1,
+				"column": 30,
+				"message": "'F' is a function."
+			}
+		]
+	},
+	{
+		"code": "function f() {} f = 1;",
+		"ext": "cts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-func-assign",
+				"line": 1,
+				"column": 17,
+				"message": "'f' is a function."
+			}
+		]
+	}
+]

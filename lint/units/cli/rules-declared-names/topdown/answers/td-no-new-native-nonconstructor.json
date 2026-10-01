@@ -1,0 +1,364 @@
+[
+	{
+		"code": "new Symbol(); new Symbol; new Symbol('a'); new BigInt(1); new BigInt;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 5,
+				"message": "`Symbol` cannot be called as a constructor."
+			},
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 19,
+				"message": "`Symbol` cannot be called as a constructor."
+			},
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 31,
+				"message": "`Symbol` cannot be called as a constructor."
+			},
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 48,
+				"message": "`BigInt` cannot be called as a constructor."
+			},
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 63,
+				"message": "`BigInt` cannot be called as a constructor."
+			}
+		]
+	},
+	{
+		"code": "Symbol(); BigInt(1); Symbol.iterator; new Symbol.for('a'); new (Symbol.x)(); new foo.Symbol(); new globalThis.Symbol(); new globalThis.BigInt(1);",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "new (Symbol)(); new ((BigInt))(1);",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 6,
+				"message": "`Symbol` cannot be called as a constructor."
+			},
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 23,
+				"message": "`BigInt` cannot be called as a constructor."
+			}
+		]
+	},
+	{
+		"code": "function f() { new Symbol() } (() => new BigInt(1)); class C { p = new Symbol(); static { new BigInt(1) } }",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 20,
+				"message": "`Symbol` cannot be called as a constructor."
+			},
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 42,
+				"message": "`BigInt` cannot be called as a constructor."
+			},
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 72,
+				"message": "`Symbol` cannot be called as a constructor."
+			},
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 95,
+				"message": "`BigInt` cannot be called as a constructor."
+			}
+		]
+	},
+	{
+		"code": "function f(Symbol) { new Symbol() } { let BigInt; new BigInt() } try {} catch (Symbol) { new Symbol }",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "var Symbol; new Symbol(); function BigInt() {} new BigInt();",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "import Symbol from 's'; new Symbol(); class BigInt {} new BigInt(1);",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "new Symbol(); function g() { var Symbol; }",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 5,
+				"message": "`Symbol` cannot be called as a constructor."
+			}
+		]
+	},
+	{
+		"code": "var S = Symbol; new S(); new (0, Symbol)(); new (Symbol || x)(); new (a ? BigInt : b)();",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "new Symbol().x; new Symbol()(); new new Symbol(); x = new Symbol; [new BigInt(1)];",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 5,
+				"message": "`Symbol` cannot be called as a constructor."
+			},
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 21,
+				"message": "`Symbol` cannot be called as a constructor."
+			},
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 41,
+				"message": "`Symbol` cannot be called as a constructor."
+			},
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 59,
+				"message": "`Symbol` cannot be called as a constructor."
+			},
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 72,
+				"message": "`BigInt` cannot be called as a constructor."
+			}
+		]
+	},
+	{
+		"code": "Symbol = 1; new Symbol(); BigInt++; new BigInt(1);",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 17,
+				"message": "`Symbol` cannot be called as a constructor."
+			},
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 41,
+				"message": "`BigInt` cannot be called as a constructor."
+			}
+		]
+	},
+	{
+		"code": "new Promise(r); new Map; new Object(); new Function('a'); new Bun.Glob('*');",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "new Symbol(); with (o) { new BigInt(1) }",
+		"ext": "cjs",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 5,
+				"message": "`Symbol` cannot be called as a constructor."
+			},
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 30,
+				"message": "`BigInt` cannot be called as a constructor."
+			}
+		]
+	},
+	{
+		"code": "new Symbol();",
+		"ext": "mjs",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 5,
+				"message": "`Symbol` cannot be called as a constructor."
+			}
+		]
+	},
+	{
+		"code": "<a b={new Symbol()}/>;",
+		"ext": "jsx",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 11,
+				"message": "`Symbol` cannot be called as a constructor."
+			}
+		]
+	},
+	{
+		"code": "new Symbol(); new BigInt(1); new Symbol<any>(); new (Symbol)();",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 5,
+				"message": "`Symbol` cannot be called as a constructor."
+			},
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 19,
+				"message": "`BigInt` cannot be called as a constructor."
+			},
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 34,
+				"message": "`Symbol` cannot be called as a constructor."
+			},
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 54,
+				"message": "`Symbol` cannot be called as a constructor."
+			}
+		]
+	},
+	{
+		"code": "new (Symbol as any)(); new Symbol!(); new (<any>BigInt)(1); new (Symbol satisfies any)();",
+		"ext": "ts",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "function f(Symbol: any) { new Symbol() } declare const BigInt: any; new BigInt(1);",
+		"ext": "ts",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "type BigInt = 1; new BigInt(2); interface Symbol {} new Symbol(); function g<Symbol>() { new Symbol() }",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 22,
+				"message": "`BigInt` cannot be called as a constructor."
+			},
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 57,
+				"message": "`Symbol` cannot be called as a constructor."
+			},
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 94,
+				"message": "`Symbol` cannot be called as a constructor."
+			}
+		]
+	},
+	{
+		"code": "namespace Symbol {} new Symbol(); enum BigInt {} new BigInt();",
+		"ext": "ts",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "let s: symbol = new Symbol() as any; let t = <any>new BigInt(1); (new Symbol())!;",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 21,
+				"message": "`Symbol` cannot be called as a constructor."
+			},
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 55,
+				"message": "`BigInt` cannot be called as a constructor."
+			},
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 71,
+				"message": "`Symbol` cannot be called as a constructor."
+			}
+		]
+	},
+	{
+		"code": "<a b={new Symbol()}/>;",
+		"ext": "tsx",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 11,
+				"message": "`Symbol` cannot be called as a constructor."
+			}
+		]
+	},
+	{
+		"code": "new Symbol();",
+		"ext": "cts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-new-native-nonconstructor",
+				"line": 1,
+				"column": 5,
+				"message": "`Symbol` cannot be called as a constructor."
+			}
+		]
+	}
+]

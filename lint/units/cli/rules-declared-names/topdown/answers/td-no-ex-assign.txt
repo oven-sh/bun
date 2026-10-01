@@ -1,0 +1,45 @@
+== [js] "try {} catch (e) { e = 1; e += 1; e++; [e] = x; ({e} = x); for (e in x); }"
+   1:20 Do not assign to the exception parameter.
+   1:27 Do not assign to the exception parameter.
+   1:35 Do not assign to the exception parameter.
+   1:41 Do not assign to the exception parameter.
+   1:51 Do not assign to the exception parameter.
+   1:65 Do not assign to the exception parameter.
+== [js] "try {} catch ({ a, b: [c], ...d }) { a = 1; c = 2; d = 3 }"
+   1:38 Do not assign to the exception parameter.
+   1:45 Do not assign to the exception parameter.
+   1:52 Do not assign to the exception parameter.
+== [js] "try {} catch ([a = 1]) { a = 2 }"
+   1:26 Do not assign to the exception parameter.
+== [js] "try {} catch (e) { function f() { e = 1 } (() => { e = 2 }) }"
+   1:35 Do not assign to the exception parameter.
+   1:52 Do not assign to the exception parameter.
+== [js] "try {} catch (e) { { let e; e = 1 } }"
+== [js] "try {} catch (e) { var e = 1; }"
+== [js] "try {} catch (e) { var e; e = 1; }"
+   1:27 Do not assign to the exception parameter.
+== [js] "try {} catch (e) { e.message = 1; delete e.x; typeof e }"
+== [js] "try {} catch { e = 1 }"
+== [js] "try {} catch (e) {} e = 1;"
+== [js] "try {} catch (e) { try {} catch (e) { e = 1 } e = 2 }"
+   1:39 Do not assign to the exception parameter.
+   1:47 Do not assign to the exception parameter.
+== [js] "try {} catch (e) { (e) = 1; [e = 1] = x; }"
+   1:21 Do not assign to the exception parameter.
+   1:30 Do not assign to the exception parameter.
+== [cjs] "try {} catch (e) { with (o) { e = 1 } }"
+   1:31 Do not assign to the exception parameter.
+== [ts] "try {} catch (e) { (e as any) = 1; e! = 2; (<any>e) = 3; (e satisfies any) = 4; (e as any as any) = 5; }"
+   1:21 Do not assign to the exception parameter.
+   1:36 Do not assign to the exception parameter.
+   1:50 Do not assign to the exception parameter.
+== [ts] "try {} catch (e: unknown) { [e as any] = x; for (e! of y); }"
+   1:30 Do not assign to the exception parameter.
+   1:50 Do not assign to the exception parameter.
+== [ts] "try {} catch (e: any) { e!++; --(e as any); }"
+   1:25 Do not assign to the exception parameter.
+   1:34 Do not assign to the exception parameter.
+== [tsx] "try {} catch (e) { e = <a/>; }"
+   1:20 Do not assign to the exception parameter.
+== [cts] "try {} catch (e) { e = 1 }"
+   1:20 Do not assign to the exception parameter.

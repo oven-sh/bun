@@ -1,0 +1,54 @@
+== [js] "class A {} A = 1; A += 1; A++; --A;"
+   1:12 'A' is a class.
+   1:19 'A' is a class.
+   1:27 'A' is a class.
+   1:34 'A' is a class.
+== [js] "class A { m() { A = 1 } static { A = 2 } }"
+   1:17 'A' is a class.
+   1:34 'A' is a class.
+== [js] "let K = class K2 { m() { K2 = 1; K = 2 } };"
+   1:26 'K2' is a class.
+== [js] "(class A { m() { [A] = x; ({A} = x); ({a: A = 1} = x); for (A in x); for ([A = 1] of x); } });"
+   1:19 'A' is a class.
+   1:29 'A' is a class.
+   1:43 'A' is a class.
+   1:61 'A' is a class.
+   1:76 'A' is a class.
+== [js] "class A {} function f(A) { A = 1 } { let A; A = 2 } (A) => { A = 3 };"
+== [js] "export default class A {} A = 1;"
+   1:27 'A' is a class.
+== [js] "export class B {} B = 1;"
+   1:19 'B' is a class.
+== [js] "class A {} (A) = 1; ((A)) = 2;"
+   1:13 'A' is a class.
+   1:23 'A' is a class.
+== [js] "class A {} var x = A; typeof A; A.b = 1; delete A.b; new A;"
+== [js] "var B = class {}; B = 1;"
+== [cjs] "class A {} with (o) { A = 1 }"
+   1:23 'A' is a class.
+== [ts] "class A {} (A as any) = 1; A! = 2; (<any>A) = 3;"
+   1:13 'A' is a class.
+   1:28 'A' is a class.
+   1:42 'A' is a class.
+== [ts] "class A {} (A satisfies any) = 1; (A as any as any) = 2; A!! = 3;"
+== [ts] "class A {} [A as any] = x; ({a: A!} = x); for ((A satisfies any) of x);"
+   1:13 'A' is a class.
+   1:33 'A' is a class.
+   1:49 'A' is a class.
+== [ts] "declare class B {} B = 1;"
+   1:20 'B' is a class.
+== [ts] "abstract class C { m() { C = 1 } }"
+   1:26 'C' is a class.
+== [ts] "class D {} interface D {} D = 1;"
+   1:27 'D' is a class.
+== [ts] "class D {} namespace D { D = 2 }"
+   1:26 'D' is a class.
+== [ts] "enum E {} E = 1; namespace N {} N = 2; interface I {} I = 3; type T = 1; T = 4;"
+== [ts] "class A<T> { m(A: T) { A = 1 as any } }"
+== [ts] "@dec class A { @dec m() { A = 1 } }"
+   1:27 'A' is a class.
+== [tsx] "class A {} A = <div/>;"
+   1:12 'A' is a class.
+== [cts] "class A {} A = 1;"
+   1:12 'A' is a class.
+== [d.ts] "declare class A {} "

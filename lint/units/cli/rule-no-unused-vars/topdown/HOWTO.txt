@@ -24,6 +24,8 @@ nuv-sim-ts.cjs    node nuv-sim-ts.cjs [--show N] <file.ts | list.json | --list f
 probe/            sitesprobe: the site facts (assign target, update operand, unused value, in a loop, for-in/of exception, storable
                   function) on bun's tree of Parser::parse_for_lint by one top-down walk, as the Referencer is to compute them.
                   build:  /workspace/tools/lk python3 probe/build.py /tmp/nuv/sitesprobe
+                  NOT BUILT in this pass: the build waited for the lock of the machine (14 commands before it). Its source was
+                  read against the node types only. First thing to run: the build, then sites-estree.cjs over the file lists.
 sites-estree.cjs  node sites-estree.cjs [--probe /tmp/nuv/sitesprobe] [--list files.txt] <file>... : those facts against the same
                   facts read off ESLint's tree with parent pointers (espree; typescript-eslint's parser for TypeScript).
 sites-context.cjs node sites-context.cjs [--list files.txt] <file>... : the three context values of the probe (unused value, loop depth, what a

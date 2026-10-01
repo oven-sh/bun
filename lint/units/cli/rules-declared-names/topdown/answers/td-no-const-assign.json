@@ -1,0 +1,419 @@
+[
+	{
+		"code": "const x = 0; x = 1; x += 1; ++x; x--;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 14,
+				"message": "'x' is constant."
+			},
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 21,
+				"message": "'x' is constant."
+			},
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 31,
+				"message": "'x' is constant."
+			},
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 34,
+				"message": "'x' is constant."
+			}
+		]
+	},
+	{
+		"code": "const {a: x, ...r} = o; x = 1; r = 2;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 25,
+				"message": "'x' is constant."
+			},
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 32,
+				"message": "'r' is constant."
+			}
+		]
+	},
+	{
+		"code": "const [a = 1, [b]] = o; a = 1; b = 2;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 25,
+				"message": "'a' is constant."
+			},
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 32,
+				"message": "'b' is constant."
+			}
+		]
+	},
+	{
+		"code": "const x = 0; ({x} = o); [x] = o; ({a: x = 1} = o); [x = 1] = o;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 16,
+				"message": "'x' is constant."
+			},
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 26,
+				"message": "'x' is constant."
+			},
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 39,
+				"message": "'x' is constant."
+			},
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 53,
+				"message": "'x' is constant."
+			}
+		]
+	},
+	{
+		"code": "for (const i = 0; i < 1; i++) {} for (const k in o) { k = 1 } for (const v of o) { v = 1 }",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 26,
+				"message": "'i' is constant."
+			},
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 55,
+				"message": "'k' is constant."
+			},
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 84,
+				"message": "'v' is constant."
+			}
+		]
+	},
+	{
+		"code": "const x = 0; function f() { x = 1 } (() => { x = 2 }); class C { m() { x = 3 } static { x = 4 } }",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 29,
+				"message": "'x' is constant."
+			},
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 46,
+				"message": "'x' is constant."
+			},
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 72,
+				"message": "'x' is constant."
+			},
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 89,
+				"message": "'x' is constant."
+			}
+		]
+	},
+	{
+		"code": "const x = 0; { let x; x = 1 } function g(x) { x = 2 }",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "using u = o; u = 1;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 14,
+				"message": "'u' is constant."
+			}
+		]
+	},
+	{
+		"code": "async function f() { await using au = o; au = 1; }",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 42,
+				"message": "'au' is constant."
+			}
+		]
+	},
+	{
+		"code": "const x = 0; for (x in o); for (x of o); for ([x] of o);",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 19,
+				"message": "'x' is constant."
+			},
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 33,
+				"message": "'x' is constant."
+			},
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 48,
+				"message": "'x' is constant."
+			}
+		]
+	},
+	{
+		"code": "const x = 0; x.a = 1; delete x.a; typeof x; x ??= 1; x ||= 2; x &&= 3;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 45,
+				"message": "'x' is constant."
+			},
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 54,
+				"message": "'x' is constant."
+			},
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 63,
+				"message": "'x' is constant."
+			}
+		]
+	},
+	{
+		"code": "let l = 0; l = 1; var v = 0; v = 1;",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "const x = 0; (x) = 1;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 15,
+				"message": "'x' is constant."
+			}
+		]
+	},
+	{
+		"code": "export const e = 1; e = 2;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 21,
+				"message": "'e' is constant."
+			}
+		]
+	},
+	{
+		"code": "const c = 1; const d = c; { const c = 2; }",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "const x = 0; with (o) { x = 1 }",
+		"ext": "cjs",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 25,
+				"message": "'x' is constant."
+			}
+		]
+	},
+	{
+		"code": "const x = 0; (x as any) = 1; x! = 2; (<number>x) = 3; (x satisfies number) = 4; (x as any as any) = 5;",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 15,
+				"message": "'x' is constant."
+			},
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 30,
+				"message": "'x' is constant."
+			},
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 47,
+				"message": "'x' is constant."
+			}
+		]
+	},
+	{
+		"code": "const x: number = 0; [x as any] = o; ({a: x!} = o); for ((x satisfies any) in o);",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 23,
+				"message": "'x' is constant."
+			},
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 43,
+				"message": "'x' is constant."
+			},
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 59,
+				"message": "'x' is constant."
+			}
+		]
+	},
+	{
+		"code": "declare const d: number; d = 1;",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 26,
+				"message": "'d' is constant."
+			}
+		]
+	},
+	{
+		"code": "declare namespace N { const n: number; } namespace M { const m = 1; m = 2 }",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 69,
+				"message": "'m' is constant."
+			}
+		]
+	},
+	{
+		"code": "const enum E { A } E = 1; const x = 1; type x = number; x = 2;",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 57,
+				"message": "'x' is constant."
+			}
+		]
+	},
+	{
+		"code": "for (const [k, v] of o as any) { k = v; }",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 34,
+				"message": "'k' is constant."
+			}
+		]
+	},
+	{
+		"code": "const x = <a/>; x = <b/>;",
+		"ext": "tsx",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 17,
+				"message": "'x' is constant."
+			}
+		]
+	},
+	{
+		"code": "const x = 0; x = 1;",
+		"ext": "cts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-const-assign",
+				"line": 1,
+				"column": 14,
+				"message": "'x' is constant."
+			}
+		]
+	}
+]

@@ -1,0 +1,104 @@
+== [js] "var undefined;"
+== [js] "var undefined = 1;"
+   1:5 Shadowing of global property 'undefined'.
+== [js] "var undefined; undefined = 1;"
+   1:5 Shadowing of global property 'undefined'.
+== [js] "let undefined; const x = undefined;"
+== [js] "var undefined; var undefined = 1;"
+   1:5 Shadowing of global property 'undefined'.
+   1:20 Shadowing of global property 'undefined'.
+== [js] "for (var undefined of x);"
+   1:10 Shadowing of global property 'undefined'.
+== [js] "for (var undefined in x);"
+   1:10 Shadowing of global property 'undefined'.
+== [js] "var [undefined] = x; var {NaN} = x; var {a: Infinity = 1} = x;"
+   1:6 Shadowing of global property 'undefined'.
+   1:27 Shadowing of global property 'NaN'.
+   1:45 Shadowing of global property 'Infinity'.
+== [js] "function NaN() {} var f = function Infinity() {}; (class globalThis {}); class NaN2 {}"
+   1:10 Shadowing of global property 'NaN'.
+   1:36 Shadowing of global property 'Infinity'.
+   1:58 Shadowing of global property 'globalThis'.
+== [js] "function f(undefined, NaN, Infinity, globalThis) {} (undefined) => 1; ({NaN}) => 1; (...Infinity) => 1;"
+   1:12 Shadowing of global property 'undefined'.
+   1:23 Shadowing of global property 'NaN'.
+   1:28 Shadowing of global property 'Infinity'.
+   1:38 Shadowing of global property 'globalThis'.
+   1:54 Shadowing of global property 'undefined'.
+   1:73 Shadowing of global property 'NaN'.
+   1:89 Shadowing of global property 'Infinity'.
+== [js] "try {} catch (undefined) {} try {} catch ({NaN}) {}"
+   1:15 Shadowing of global property 'undefined'.
+   1:44 Shadowing of global property 'NaN'.
+== [js] "import undefined from 'a'; import {NaN} from 'b'; import * as Infinity from 'c'; import {x as globalThis} from 'd';"
+   1:8 Shadowing of global property 'undefined'.
+   1:36 Shadowing of global property 'NaN'.
+   1:63 Shadowing of global property 'Infinity'.
+   1:95 Shadowing of global property 'globalThis'.
+== [js] "let NaN; const Infinity = 1; var globalThis; using undefined = o;"
+   1:5 Shadowing of global property 'NaN'.
+   1:16 Shadowing of global property 'Infinity'.
+   1:34 Shadowing of global property 'globalThis'.
+   1:52 Shadowing of global property 'undefined'.
+== [js] "class C { m(NaN) {} set s(undefined) {} static { var Infinity; } }"
+   1:13 Shadowing of global property 'NaN'.
+   1:27 Shadowing of global property 'undefined'.
+   1:54 Shadowing of global property 'Infinity'.
+== [js] "var o = { m(undefined) {}, f: function NaN() {} };"
+   1:13 Shadowing of global property 'undefined'.
+   1:40 Shadowing of global property 'NaN'.
+== [js] "{ let undefined; } function g() { var undefined; }"
+== [js] "undefined = 1; NaN++; var a = undefined; function h(a = NaN) {}"
+== [js] "var undefinedd, nan, infinity, GlobalThis, Eval, Arguments;"
+== [cjs] "var eval; var arguments; function eval2(eval, arguments) {}"
+   1:5 Shadowing of global property 'eval'.
+   1:15 Shadowing of global property 'arguments'.
+   1:41 Shadowing of global property 'eval'.
+   1:47 Shadowing of global property 'arguments'.
+== [cjs] "function arguments() {} function eval() {} try {} catch (eval) {} try {} catch (arguments) {}"
+   1:10 Shadowing of global property 'arguments'.
+   1:34 Shadowing of global property 'eval'.
+   1:58 Shadowing of global property 'eval'.
+   1:81 Shadowing of global property 'arguments'.
+== [cjs] "function f() { var arguments; } function g(arguments) { var arguments; } (function arguments() {});"
+   1:20 Shadowing of global property 'arguments'.
+   1:44 Shadowing of global property 'arguments'.
+   1:61 Shadowing of global property 'arguments'.
+   1:84 Shadowing of global property 'arguments'.
+== [cjs] "var arguments; arguments = 1;"
+   1:5 Shadowing of global property 'arguments'.
+== [mjs] "var undefined = 1;"
+   1:5 Shadowing of global property 'undefined'.
+== [jsx] "var NaN = <a/>;"
+   1:5 Shadowing of global property 'NaN'.
+== [ts] "let undefined: number;"
+== [ts] "declare const undefined: any;"
+== [ts] "var undefined!: number; undefined = 1;"
+   1:5 Shadowing of global property 'undefined'.
+== [ts] "let undefined: number; declare var undefined: any;"
+== [ts] "enum NaN {} namespace Infinity {} type undefined = 1; interface globalThis {}"
+== [ts] "declare function NaN(): void; declare class Infinity {}"
+   1:45 Shadowing of global property 'Infinity'.
+== [ts] "function globalThis(): void; function globalThis() {}"
+   1:10 Shadowing of global property 'globalThis'.
+   1:39 Shadowing of global property 'globalThis'.
+== [ts] "declare function f(undefined: any): void; type F = (NaN: number) => void; abstract class D { abstract m(Infinity: any): void }"
+== [ts] "class C { constructor(public NaN: any) {} m(Infinity?: number) {} }"
+   1:30 Shadowing of global property 'NaN'.
+   1:45 Shadowing of global property 'Infinity'.
+== [ts] "function g<undefined>() {} type G<NaN> = NaN;"
+== [ts] "import type { NaN } from 'm'; import { type Infinity as I2, type undefined } from 'm';"
+   1:15 Shadowing of global property 'NaN'.
+   1:66 Shadowing of global property 'undefined'.
+== [ts] "import undefined = require('m');"
+== [ts] "declare namespace N { const NaN: number; let undefined: any; function Infinity(): void; }"
+   1:29 Shadowing of global property 'NaN'.
+== [ts] "declare global { var NaN: number }"
+   1:22 Shadowing of global property 'NaN'.
+== [tsx] "const NaN = <a/>;"
+   1:7 Shadowing of global property 'NaN'.
+== [cts] "var eval: any; function f(arguments: any) {}"
+   1:5 Shadowing of global property 'eval'.
+   1:27 Shadowing of global property 'arguments'.
+== [d.ts] "declare const NaN: number; declare function Infinity(): void; declare let undefined: undefined;"
+   1:15 Shadowing of global property 'NaN'.

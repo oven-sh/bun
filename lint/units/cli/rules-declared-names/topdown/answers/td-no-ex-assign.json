@@ -1,0 +1,285 @@
+[
+	{
+		"code": "try {} catch (e) { e = 1; e += 1; e++; [e] = x; ({e} = x); for (e in x); }",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-ex-assign",
+				"line": 1,
+				"column": 20,
+				"message": "Do not assign to the exception parameter."
+			},
+			{
+				"rule": "no-ex-assign",
+				"line": 1,
+				"column": 27,
+				"message": "Do not assign to the exception parameter."
+			},
+			{
+				"rule": "no-ex-assign",
+				"line": 1,
+				"column": 35,
+				"message": "Do not assign to the exception parameter."
+			},
+			{
+				"rule": "no-ex-assign",
+				"line": 1,
+				"column": 41,
+				"message": "Do not assign to the exception parameter."
+			},
+			{
+				"rule": "no-ex-assign",
+				"line": 1,
+				"column": 51,
+				"message": "Do not assign to the exception parameter."
+			},
+			{
+				"rule": "no-ex-assign",
+				"line": 1,
+				"column": 65,
+				"message": "Do not assign to the exception parameter."
+			}
+		]
+	},
+	{
+		"code": "try {} catch ({ a, b: [c], ...d }) { a = 1; c = 2; d = 3 }",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-ex-assign",
+				"line": 1,
+				"column": 38,
+				"message": "Do not assign to the exception parameter."
+			},
+			{
+				"rule": "no-ex-assign",
+				"line": 1,
+				"column": 45,
+				"message": "Do not assign to the exception parameter."
+			},
+			{
+				"rule": "no-ex-assign",
+				"line": 1,
+				"column": 52,
+				"message": "Do not assign to the exception parameter."
+			}
+		]
+	},
+	{
+		"code": "try {} catch ([a = 1]) { a = 2 }",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-ex-assign",
+				"line": 1,
+				"column": 26,
+				"message": "Do not assign to the exception parameter."
+			}
+		]
+	},
+	{
+		"code": "try {} catch (e) { function f() { e = 1 } (() => { e = 2 }) }",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-ex-assign",
+				"line": 1,
+				"column": 35,
+				"message": "Do not assign to the exception parameter."
+			},
+			{
+				"rule": "no-ex-assign",
+				"line": 1,
+				"column": 52,
+				"message": "Do not assign to the exception parameter."
+			}
+		]
+	},
+	{
+		"code": "try {} catch (e) { { let e; e = 1 } }",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "try {} catch (e) { var e = 1; }",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "try {} catch (e) { var e; e = 1; }",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-ex-assign",
+				"line": 1,
+				"column": 27,
+				"message": "Do not assign to the exception parameter."
+			}
+		]
+	},
+	{
+		"code": "try {} catch (e) { e.message = 1; delete e.x; typeof e }",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "try {} catch { e = 1 }",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "try {} catch (e) {} e = 1;",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "try {} catch (e) { try {} catch (e) { e = 1 } e = 2 }",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-ex-assign",
+				"line": 1,
+				"column": 39,
+				"message": "Do not assign to the exception parameter."
+			},
+			{
+				"rule": "no-ex-assign",
+				"line": 1,
+				"column": 47,
+				"message": "Do not assign to the exception parameter."
+			}
+		]
+	},
+	{
+		"code": "try {} catch (e) { (e) = 1; [e = 1] = x; }",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-ex-assign",
+				"line": 1,
+				"column": 21,
+				"message": "Do not assign to the exception parameter."
+			},
+			{
+				"rule": "no-ex-assign",
+				"line": 1,
+				"column": 30,
+				"message": "Do not assign to the exception parameter."
+			}
+		]
+	},
+	{
+		"code": "try {} catch (e) { with (o) { e = 1 } }",
+		"ext": "cjs",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-ex-assign",
+				"line": 1,
+				"column": 31,
+				"message": "Do not assign to the exception parameter."
+			}
+		]
+	},
+	{
+		"code": "try {} catch (e) { (e as any) = 1; e! = 2; (<any>e) = 3; (e satisfies any) = 4; (e as any as any) = 5; }",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-ex-assign",
+				"line": 1,
+				"column": 21,
+				"message": "Do not assign to the exception parameter."
+			},
+			{
+				"rule": "no-ex-assign",
+				"line": 1,
+				"column": 36,
+				"message": "Do not assign to the exception parameter."
+			},
+			{
+				"rule": "no-ex-assign",
+				"line": 1,
+				"column": 50,
+				"message": "Do not assign to the exception parameter."
+			}
+		]
+	},
+	{
+		"code": "try {} catch (e: unknown) { [e as any] = x; for (e! of y); }",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-ex-assign",
+				"line": 1,
+				"column": 30,
+				"message": "Do not assign to the exception parameter."
+			},
+			{
+				"rule": "no-ex-assign",
+				"line": 1,
+				"column": 50,
+				"message": "Do not assign to the exception parameter."
+			}
+		]
+	},
+	{
+		"code": "try {} catch (e: any) { e!++; --(e as any); }",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-ex-assign",
+				"line": 1,
+				"column": 25,
+				"message": "Do not assign to the exception parameter."
+			},
+			{
+				"rule": "no-ex-assign",
+				"line": 1,
+				"column": 34,
+				"message": "Do not assign to the exception parameter."
+			}
+		]
+	},
+	{
+		"code": "try {} catch (e) { e = <a/>; }",
+		"ext": "tsx",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-ex-assign",
+				"line": 1,
+				"column": 20,
+				"message": "Do not assign to the exception parameter."
+			}
+		]
+	},
+	{
+		"code": "try {} catch (e) { e = 1 }",
+		"ext": "cts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-ex-assign",
+				"line": 1,
+				"column": 20,
+				"message": "Do not assign to the exception parameter."
+			}
+		]
+	}
+]

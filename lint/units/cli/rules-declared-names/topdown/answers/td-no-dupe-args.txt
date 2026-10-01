@@ -1,0 +1,48 @@
+== [cjs] "function f(a, a) {}"
+   1:11 Duplicate param 'a'.
+== [cjs] "function f(a, b, a, b) {}"
+   1:11 Duplicate param 'a'.
+   1:11 Duplicate param 'b'.
+== [cjs] "var g = function (a, a, a) {};"
+   1:18 Duplicate param 'a'.
+== [cjs] "var g = function n(a, b, a) {};"
+   1:19 Duplicate param 'a'.
+== [cjs] "function f(a, a) { function a() {} }"
+   1:11 Duplicate param 'a'.
+   1:30 Duplicate param 'a'.
+== [cjs] "function f(a, a) { var a; }"
+   1:11 Duplicate param 'a'.
+== [cjs] "function f(a, b) { function a(c, c) {} }"
+   1:30 Duplicate param 'c'.
+== [cjs] "function a(a) {} function b(b, c) { var b, c; }"
+== [cjs] "(function (a, a) {})(1, 2); !function (b, b) {}; new function (c, c) {};"
+   1:11 Duplicate param 'a'.
+   1:39 Duplicate param 'b'.
+   1:63 Duplicate param 'c'.
+== [cjs] "function f(a, a) {}\nfunction g(b,\n  b) {}"
+   1:11 Duplicate param 'a'.
+   2:11 Duplicate param 'b'.
+== [cjs] "function  f /* c */ (a, a) {}"
+   1:21 Duplicate param 'a'.
+== [cjs] "async function f(a, a) {}"
+   1:17 Duplicate param 'a'.
+== [js] "function f(a, b) {} var g = function (a, b) {}; var h = (a, b) => 1;"
+== [js] "function f(a, {b, c}, [d], ...e) {} function g(a = 1, b = a) {}"
+== [js] "class C { m(a, b) {} static s(a) {} constructor(a) {} } var o = { m(a) {}, get g() { return 1 }, set s(v) {} };"
+== [ts] "function f(a: number, b: string) {} function g(this: any, a: any) {} class C { constructor(public a: any, private b: any) {} }"
+== [ts] "function ov(a: string): void; function ov(a: any) {} declare function d(a: any, b: any): void;"
+== [ts] "type F = (a: any, b: any) => void; interface I { m(a: any): void } abstract class A { abstract m(a: any): void }"
+== [ts] "function f<a>(a: a, b: a) {}"
+== [tsx] "function F(props, ref) { return <a/> }"
+== [cts] "function f(a: any, a: any) {}"
+   1:11 Duplicate param 'a'.
+== [cts] "function f<T extends (x: any) => void>(a: T, a: T) {}"
+   1:22 Duplicate param 'a'.
+== [cts] "class C { m(b: any, b: any) {} constructor(private e: any, e: any) {} }"
+   1:12 Duplicate param 'b'.
+   1:43 Duplicate param 'e'.
+== [cts] "function f(this: any, p: number, p: string) {} var o = { async *[k(1)]<T>(c: T, c: T) {} };"
+   1:11 Duplicate param 'p'.
+   1:74 Duplicate param 'c'.
+== [cts] "(function <U = (() => void)>(d: U, d: U) {});"
+   1:16 Duplicate param 'd'.

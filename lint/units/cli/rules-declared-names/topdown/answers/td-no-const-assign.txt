@@ -1,0 +1,66 @@
+== [js] "const x = 0; x = 1; x += 1; ++x; x--;"
+   1:14 'x' is constant.
+   1:21 'x' is constant.
+   1:31 'x' is constant.
+   1:34 'x' is constant.
+== [js] "const {a: x, ...r} = o; x = 1; r = 2;"
+   1:25 'x' is constant.
+   1:32 'r' is constant.
+== [js] "const [a = 1, [b]] = o; a = 1; b = 2;"
+   1:25 'a' is constant.
+   1:32 'b' is constant.
+== [js] "const x = 0; ({x} = o); [x] = o; ({a: x = 1} = o); [x = 1] = o;"
+   1:16 'x' is constant.
+   1:26 'x' is constant.
+   1:39 'x' is constant.
+   1:53 'x' is constant.
+== [js] "for (const i = 0; i < 1; i++) {} for (const k in o) { k = 1 } for (const v of o) { v = 1 }"
+   1:26 'i' is constant.
+   1:55 'k' is constant.
+   1:84 'v' is constant.
+== [js] "const x = 0; function f() { x = 1 } (() => { x = 2 }); class C { m() { x = 3 } static { x = 4 } }"
+   1:29 'x' is constant.
+   1:46 'x' is constant.
+   1:72 'x' is constant.
+   1:89 'x' is constant.
+== [js] "const x = 0; { let x; x = 1 } function g(x) { x = 2 }"
+== [js] "using u = o; u = 1;"
+   1:14 'u' is constant.
+== [js] "async function f() { await using au = o; au = 1; }"
+   1:42 'au' is constant.
+== [js] "const x = 0; for (x in o); for (x of o); for ([x] of o);"
+   1:19 'x' is constant.
+   1:33 'x' is constant.
+   1:48 'x' is constant.
+== [js] "const x = 0; x.a = 1; delete x.a; typeof x; x ??= 1; x ||= 2; x &&= 3;"
+   1:45 'x' is constant.
+   1:54 'x' is constant.
+   1:63 'x' is constant.
+== [js] "let l = 0; l = 1; var v = 0; v = 1;"
+== [js] "const x = 0; (x) = 1;"
+   1:15 'x' is constant.
+== [js] "export const e = 1; e = 2;"
+   1:21 'e' is constant.
+== [js] "const c = 1; const d = c; { const c = 2; }"
+== [cjs] "const x = 0; with (o) { x = 1 }"
+   1:25 'x' is constant.
+== [ts] "const x = 0; (x as any) = 1; x! = 2; (<number>x) = 3; (x satisfies number) = 4; (x as any as any) = 5;"
+   1:15 'x' is constant.
+   1:30 'x' is constant.
+   1:47 'x' is constant.
+== [ts] "const x: number = 0; [x as any] = o; ({a: x!} = o); for ((x satisfies any) in o);"
+   1:23 'x' is constant.
+   1:43 'x' is constant.
+   1:59 'x' is constant.
+== [ts] "declare const d: number; d = 1;"
+   1:26 'd' is constant.
+== [ts] "declare namespace N { const n: number; } namespace M { const m = 1; m = 2 }"
+   1:69 'm' is constant.
+== [ts] "const enum E { A } E = 1; const x = 1; type x = number; x = 2;"
+   1:57 'x' is constant.
+== [ts] "for (const [k, v] of o as any) { k = v; }"
+   1:34 'k' is constant.
+== [tsx] "const x = <a/>; x = <b/>;"
+   1:17 'x' is constant.
+== [cts] "const x = 0; x = 1;"
+   1:14 'x' is constant.

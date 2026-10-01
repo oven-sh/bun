@@ -1,0 +1,680 @@
+[
+	{
+		"code": "Object = 1; Array += 1; Map++; --Set;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 1,
+				"message": "Read-only global 'Object' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 13,
+				"message": "Read-only global 'Array' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 25,
+				"message": "Read-only global 'Map' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 34,
+				"message": "Read-only global 'Set' should not be modified."
+			}
+		]
+	},
+	{
+		"code": "undefined = 1; NaN = 2; Infinity = 3; globalThis = 4;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 1,
+				"message": "Read-only global 'undefined' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 16,
+				"message": "Read-only global 'NaN' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 25,
+				"message": "Read-only global 'Infinity' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 39,
+				"message": "Read-only global 'globalThis' should not be modified."
+			}
+		]
+	},
+	{
+		"code": "[Object] = x; ({Array} = x); [Map = 1] = x; ({a: Set = 1} = x); [...Promise] = x;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 2,
+				"message": "Read-only global 'Object' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 17,
+				"message": "Read-only global 'Array' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 31,
+				"message": "Read-only global 'Map' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 50,
+				"message": "Read-only global 'Set' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 69,
+				"message": "Read-only global 'Promise' should not be modified."
+			}
+		]
+	},
+	{
+		"code": "for (Object in x); for (Array of x); for ([Map] of x);",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 6,
+				"message": "Read-only global 'Object' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 25,
+				"message": "Read-only global 'Array' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 44,
+				"message": "Read-only global 'Map' should not be modified."
+			}
+		]
+	},
+	{
+		"code": "function f() { String = 1 } (() => { Number++ }); class C { static { Boolean = 1 } }",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 16,
+				"message": "Read-only global 'String' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 38,
+				"message": "Read-only global 'Number' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 70,
+				"message": "Read-only global 'Boolean' should not be modified."
+			}
+		]
+	},
+	{
+		"code": "console = 1; process = 2; Bun = 3; fetch = 4; require = 5; module = 6; __dirname = 7; __filename = 8; global = 9; self = 10;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 1,
+				"message": "Read-only global 'console' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 14,
+				"message": "Read-only global 'process' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 27,
+				"message": "Read-only global 'Bun' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 36,
+				"message": "Read-only global 'fetch' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 47,
+				"message": "Read-only global 'require' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 60,
+				"message": "Read-only global 'module' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 72,
+				"message": "Read-only global '__dirname' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 87,
+				"message": "Read-only global '__filename' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 103,
+				"message": "Read-only global 'global' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 115,
+				"message": "Read-only global 'self' should not be modified."
+			}
+		]
+	},
+	{
+		"code": "exports = 1; onmessage = 2; onerror = 3;",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "describe = 1; it = 2; expect = 3;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 1,
+				"message": "Read-only global 'describe' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 15,
+				"message": "Read-only global 'it' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 23,
+				"message": "Read-only global 'expect' should not be modified."
+			}
+		]
+	},
+	{
+		"code": "window = 1; document = 2; foo = 3; localStorage = 4;",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "var Object; Object = 1; let Array; Array = 2; function Map() {} Map = 3;",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "function f(String) { String = 1 } { let Number; Number = 2 } try {} catch (Boolean) { Boolean = 3 }",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "Object.x = 1; delete Object.x; typeof Object; var o = Object; Object();",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "import Symbol from 's'; Symbol = 1;",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "(Object) = 1; ((Array)) = 2;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 2,
+				"message": "Read-only global 'Object' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 17,
+				"message": "Read-only global 'Array' should not be modified."
+			}
+		]
+	},
+	{
+		"code": "JSON = 1; Math = 2; Reflect = 3; Atomics = 4; Intl = 5; Temporal = 6;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 1,
+				"message": "Read-only global 'JSON' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 11,
+				"message": "Read-only global 'Math' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 21,
+				"message": "Read-only global 'Reflect' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 34,
+				"message": "Read-only global 'Atomics' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 47,
+				"message": "Read-only global 'Intl' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 57,
+				"message": "Read-only global 'Temporal' should not be modified."
+			}
+		]
+	},
+	{
+		"code": "hasOwnProperty = 1; toString = 2; constructor = 3; valueOf = 4;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 1,
+				"message": "Read-only global 'hasOwnProperty' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 21,
+				"message": "Read-only global 'toString' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 35,
+				"message": "Read-only global 'constructor' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 52,
+				"message": "Read-only global 'valueOf' should not be modified."
+			}
+		]
+	},
+	{
+		"code": "setTimeout = 1; clearTimeout = 2; queueMicrotask = 3; structuredClone = 4; atob = 5; btoa = 6;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 1,
+				"message": "Read-only global 'setTimeout' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 17,
+				"message": "Read-only global 'clearTimeout' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 35,
+				"message": "Read-only global 'queueMicrotask' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 55,
+				"message": "Read-only global 'structuredClone' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 76,
+				"message": "Read-only global 'atob' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 86,
+				"message": "Read-only global 'btoa' should not be modified."
+			}
+		]
+	},
+	{
+		"code": "Object = 1; exports = 2; module = 3; require = 4; arguments = 5;",
+		"ext": "cjs",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 1,
+				"message": "Read-only global 'Object' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 26,
+				"message": "Read-only global 'module' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 38,
+				"message": "Read-only global 'require' should not be modified."
+			}
+		]
+	},
+	{
+		"code": "var Object; Object = 1; with (o) { Array = 2 }",
+		"ext": "cjs",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 36,
+				"message": "Read-only global 'Array' should not be modified."
+			}
+		]
+	},
+	{
+		"code": "Object = 1; exports = 2; module = 3;",
+		"ext": "mjs",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 1,
+				"message": "Read-only global 'Object' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 26,
+				"message": "Read-only global 'module' should not be modified."
+			}
+		]
+	},
+	{
+		"code": "Object = <a/>;",
+		"ext": "jsx",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 1,
+				"message": "Read-only global 'Object' should not be modified."
+			}
+		]
+	},
+	{
+		"code": "Object = 1; (Array as any) = 1; Symbol! = 2; (<any>Map) = 3; (Set satisfies any) = 4; (Promise as any as any) = 5;",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 1,
+				"message": "Read-only global 'Object' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 14,
+				"message": "Read-only global 'Array' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 33,
+				"message": "Read-only global 'Symbol' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 52,
+				"message": "Read-only global 'Map' should not be modified."
+			}
+		]
+	},
+	{
+		"code": "[Object as any] = x; ({a: Array!} = x); for ((Map satisfies any) in x);",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 2,
+				"message": "Read-only global 'Object' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 27,
+				"message": "Read-only global 'Array' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 47,
+				"message": "Read-only global 'Map' should not be modified."
+			}
+		]
+	},
+	{
+		"code": "Partial = 1; Record = 2; ReadonlyArray = 3; Awaited = 4;",
+		"ext": "ts",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "type Object = 1; Object = 2; interface Array<T> {} Array = 3; function f<Map>() { Map = 4 as any }",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 18,
+				"message": "Read-only global 'Object' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 52,
+				"message": "Read-only global 'Array' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 83,
+				"message": "Read-only global 'Map' should not be modified."
+			}
+		]
+	},
+	{
+		"code": "declare const Object: any; Object = 1; namespace Array {} Array = 2; enum Map {} Map = 3;",
+		"ext": "ts",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "declare global { var Set: any } Set = 1;",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 33,
+				"message": "Read-only global 'Set' should not be modified."
+			}
+		]
+	},
+	{
+		"code": "console = 1 as any; process! = 2; Bun = <any>3;",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 1,
+				"message": "Read-only global 'console' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 21,
+				"message": "Read-only global 'process' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 35,
+				"message": "Read-only global 'Bun' should not be modified."
+			}
+		]
+	},
+	{
+		"code": "Object = <a/>;",
+		"ext": "tsx",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 1,
+				"message": "Read-only global 'Object' should not be modified."
+			}
+		]
+	},
+	{
+		"code": "Object = 1; exports = 2; module = 3;",
+		"ext": "cts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 1,
+				"message": "Read-only global 'Object' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 26,
+				"message": "Read-only global 'module' should not be modified."
+			}
+		]
+	},
+	{
+		"code": "var Object: any; Object = 1;",
+		"ext": "cts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 18,
+				"message": "Read-only global 'Object' should not be modified."
+			}
+		]
+	},
+	{
+		"code": "eval = 1; arguments = 2; function f() { arguments = 3; eval++ }",
+		"ext": "cjs",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 1,
+				"message": "Read-only global 'eval' should not be modified."
+			},
+			{
+				"rule": "no-global-assign",
+				"line": 1,
+				"column": 56,
+				"message": "Read-only global 'eval' should not be modified."
+			}
+		]
+	}
+]

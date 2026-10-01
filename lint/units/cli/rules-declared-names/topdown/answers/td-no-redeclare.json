@@ -1,0 +1,751 @@
+[
+	{
+		"code": "var a; var a;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 12,
+				"message": "'a' is already defined."
+			}
+		]
+	},
+	{
+		"code": "var a = 1, a = 2; var [b, b] = x; var {c, c} = x;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 12,
+				"message": "'a' is already defined."
+			},
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 27,
+				"message": "'b' is already defined."
+			},
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 43,
+				"message": "'c' is already defined."
+			}
+		]
+	},
+	{
+		"code": "function f() {} function f() {}",
+		"ext": "cjs",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 26,
+				"message": "'f' is already defined."
+			}
+		]
+	},
+	{
+		"code": "var a; function a() {}",
+		"ext": "cjs",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 17,
+				"message": "'a' is already defined."
+			}
+		]
+	},
+	{
+		"code": "function a() {} var a;",
+		"ext": "cjs",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 21,
+				"message": "'a' is already defined."
+			}
+		]
+	},
+	{
+		"code": "function f(p) { var p; function p() {} }",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 21,
+				"message": "'p' is already defined."
+			},
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 33,
+				"message": "'p' is already defined."
+			}
+		]
+	},
+	{
+		"code": "var g = (p) => { var p; }; var h = function (q) { var q; };",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 22,
+				"message": "'p' is already defined."
+			},
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 55,
+				"message": "'q' is already defined."
+			}
+		]
+	},
+	{
+		"code": "{ var a; } for (var a;;) {} for (var a in x) {} for (var a of x) {} var a;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 21,
+				"message": "'a' is already defined."
+			},
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 38,
+				"message": "'a' is already defined."
+			},
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 58,
+				"message": "'a' is already defined."
+			},
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 73,
+				"message": "'a' is already defined."
+			}
+		]
+	},
+	{
+		"code": "switch (1) { case 1: var sw; var sw; }",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 34,
+				"message": "'sw' is already defined."
+			}
+		]
+	},
+	{
+		"code": "class C { static { var s; var s; } }",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 31,
+				"message": "'s' is already defined."
+			}
+		]
+	},
+	{
+		"code": "try {} catch (e) { var e; var e; }",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 31,
+				"message": "'e' is already defined."
+			}
+		]
+	},
+	{
+		"code": "{ function g() {} function g() {} }",
+		"ext": "cjs",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 28,
+				"message": "'g' is already defined."
+			}
+		]
+	},
+	{
+		"code": "var Object; var Array = 1; function Map() {}",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "var a; { let a; { const a = 1; } } function f(a) { { let a; } }",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "var undefined; var undefined;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 20,
+				"message": "'undefined' is already defined."
+			}
+		]
+	},
+	{
+		"code": "if (x) { var b; } else { var b; }",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 30,
+				"message": "'b' is already defined."
+			}
+		]
+	},
+	{
+		"code": "label: { var l; } var l;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 23,
+				"message": "'l' is already defined."
+			}
+		]
+	},
+	{
+		"code": "function f() { var arguments; var arguments; }",
+		"ext": "cjs",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 35,
+				"message": "'arguments' is already defined."
+			}
+		]
+	},
+	{
+		"code": "let a; { var a; }",
+		"ext": "js",
+		"fatal": "1:14 Parsing error: Identifier 'a' has already been declared",
+		"reports": []
+	},
+	{
+		"code": "for (var i = 0;;) {} for (var i = 0;;) {}",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 31,
+				"message": "'i' is already defined."
+			}
+		]
+	},
+	{
+		"code": "class A { m(p) { var p } get g() { var a; var a; return 1 } }",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 22,
+				"message": "'p' is already defined."
+			},
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 47,
+				"message": "'a' is already defined."
+			}
+		]
+	},
+	{
+		"code": "var o = { m(p) { var p } };",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 22,
+				"message": "'p' is already defined."
+			}
+		]
+	},
+	{
+		"code": "var Object; var Object; var require; var module; var exports; var arguments;",
+		"ext": "cjs",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 17,
+				"message": "'Object' is already defined."
+			}
+		]
+	},
+	{
+		"code": "function f(a, a) {} var o = function (b, b) { var b; };",
+		"ext": "cjs",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 15,
+				"message": "'a' is already defined."
+			},
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 42,
+				"message": "'b' is already defined."
+			},
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 51,
+				"message": "'b' is already defined."
+			}
+		]
+	},
+	{
+		"code": "var a; var a; { function g() {} function g() {} }",
+		"ext": "cjs",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 12,
+				"message": "'a' is already defined."
+			},
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 42,
+				"message": "'g' is already defined."
+			}
+		]
+	},
+	{
+		"code": "var a; var a;",
+		"ext": "mjs",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 12,
+				"message": "'a' is already defined."
+			}
+		]
+	},
+	{
+		"code": "var a; var a = <a/>;",
+		"ext": "jsx",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 12,
+				"message": "'a' is already defined."
+			}
+		]
+	},
+	{
+		"code": "var a: number; var a: string; declare var b: number; declare var b: number;",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 20,
+				"message": "'a' is already defined."
+			},
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 66,
+				"message": "'b' is already defined."
+			}
+		]
+	},
+	{
+		"code": "function ov(a: string): void; function ov(a: number): void; function ov(a: any) {}",
+		"ext": "ts",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "declare function df(): void; declare function df(x: number): void;",
+		"ext": "ts",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "interface I {} interface I {} namespace N {} namespace N {}",
+		"ext": "ts",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "class K {} interface K {} namespace K {}",
+		"ext": "ts",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "function fn() {} namespace fn {} enum E { A } namespace E {}",
+		"ext": "ts",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "type T = 1; type T = 2;",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 18,
+				"message": "'T' is already defined."
+			}
+		]
+	},
+	{
+		"code": "const v = 1; type v = number; interface W {} type W = 1;",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 19,
+				"message": "'v' is already defined."
+			},
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 51,
+				"message": "'W' is already defined."
+			}
+		]
+	},
+	{
+		"code": "enum E2 {} enum E2 {} class K2 {} declare class K2 {}",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 17,
+				"message": "'E2' is already defined."
+			},
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 49,
+				"message": "'K2' is already defined."
+			}
+		]
+	},
+	{
+		"code": "namespace M { var a; var a; } class C { static { var s; var s; } }",
+		"ext": "ts",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "function g<T, T>(a: T) {} type G<U, U> = U; function h<T>(x: T): T { var T; return x }",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 15,
+				"message": "'T' is already defined."
+			},
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 74,
+				"message": "'T' is already defined."
+			}
+		]
+	},
+	{
+		"code": "function f<a>(a: a) {} const g = <b,>(b: b) => 1; class C { m<c>(c: c) {} }",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 12,
+				"message": "'a' is already defined."
+			},
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 35,
+				"message": "'b' is already defined."
+			},
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 63,
+				"message": "'c' is already defined."
+			}
+		]
+	},
+	{
+		"code": "declare global { var gv: any; var gv: any }",
+		"ext": "ts",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "import type { X } from 'm'; type X = 1; import { Y } from 'm'; interface Y {}",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 34,
+				"message": "'X' is already defined."
+			},
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 74,
+				"message": "'Y' is already defined."
+			}
+		]
+	},
+	{
+		"code": "import Z = require('z'); namespace Z {}",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 36,
+				"message": "'Z' is already defined."
+			}
+		]
+	},
+	{
+		"code": "function f(this: any, p: number) { var p } class P { constructor(public q: number) { var q } }",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 40,
+				"message": "'p' is already defined."
+			},
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 90,
+				"message": "'q' is already defined."
+			}
+		]
+	},
+	{
+		"code": "function f(p: any) { namespace p {} } function g(p = 1) { namespace p {} } const h = (p: any) => { namespace p {} };",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 69,
+				"message": "'p' is already defined."
+			},
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 110,
+				"message": "'p' is already defined."
+			}
+		]
+	},
+	{
+		"code": "function f(p: any) { interface p {} } function g(p: any) { enum p {} }",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 32,
+				"message": "'p' is already defined."
+			},
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 65,
+				"message": "'p' is already defined."
+			}
+		]
+	},
+	{
+		"code": "abstract class A { abstract m(a: any): void; ov(b: any): void; ov(b: any) { var b } }",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 81,
+				"message": "'b' is already defined."
+			}
+		]
+	},
+	{
+		"code": "type F = (d: any, d2: any) => void; interface I { m(e: any): void; m(e: string): void }",
+		"ext": "ts",
+		"fatal": null,
+		"reports": []
+	},
+	{
+		"code": "let x = 1; namespace x {}",
+		"ext": "ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 22,
+				"message": "'x' is already defined."
+			}
+		]
+	},
+	{
+		"code": "var a; var a = <a/>;",
+		"ext": "tsx",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 12,
+				"message": "'a' is already defined."
+			}
+		]
+	},
+	{
+		"code": "var Object; var a; var a; interface Array<T> {} type Partial = 1;",
+		"ext": "cts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 5,
+				"message": "'Object' is already defined as a built-in global variable."
+			},
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 24,
+				"message": "'a' is already defined."
+			},
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 37,
+				"message": "'Array' is already defined as a built-in global variable."
+			},
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 54,
+				"message": "'Partial' is already defined as a built-in global variable."
+			}
+		]
+	},
+	{
+		"code": "declare var a: number; declare var a: number; declare function f(): void; declare function f(a: number): void;",
+		"ext": "d.ts",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 36,
+				"message": "'a' is already defined."
+			}
+		]
+	},
+	{
+		"code": "export var e; var e;",
+		"ext": "js",
+		"fatal": null,
+		"reports": [
+			{
+				"rule": "no-redeclare",
+				"line": 1,
+				"column": 19,
+				"message": "'e' is already defined."
+			}
+		]
+	},
+	{
+		"code": "export function a() {} export { a as b };",
+		"ext": "js",
+		"fatal": null,
+		"reports": []
+	}
+]

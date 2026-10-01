@@ -1,0 +1,58 @@
+== [js] "new Symbol(); new Symbol; new Symbol('a'); new BigInt(1); new BigInt;"
+   1:5 `Symbol` cannot be called as a constructor.
+   1:19 `Symbol` cannot be called as a constructor.
+   1:31 `Symbol` cannot be called as a constructor.
+   1:48 `BigInt` cannot be called as a constructor.
+   1:63 `BigInt` cannot be called as a constructor.
+== [js] "Symbol(); BigInt(1); Symbol.iterator; new Symbol.for('a'); new (Symbol.x)(); new foo.Symbol(); new globalThis.Symbol(); new globalThis.BigInt(1);"
+== [js] "new (Symbol)(); new ((BigInt))(1);"
+   1:6 `Symbol` cannot be called as a constructor.
+   1:23 `BigInt` cannot be called as a constructor.
+== [js] "function f() { new Symbol() } (() => new BigInt(1)); class C { p = new Symbol(); static { new BigInt(1) } }"
+   1:20 `Symbol` cannot be called as a constructor.
+   1:42 `BigInt` cannot be called as a constructor.
+   1:72 `Symbol` cannot be called as a constructor.
+   1:95 `BigInt` cannot be called as a constructor.
+== [js] "function f(Symbol) { new Symbol() } { let BigInt; new BigInt() } try {} catch (Symbol) { new Symbol }"
+== [js] "var Symbol; new Symbol(); function BigInt() {} new BigInt();"
+== [js] "import Symbol from 's'; new Symbol(); class BigInt {} new BigInt(1);"
+== [js] "new Symbol(); function g() { var Symbol; }"
+   1:5 `Symbol` cannot be called as a constructor.
+== [js] "var S = Symbol; new S(); new (0, Symbol)(); new (Symbol || x)(); new (a ? BigInt : b)();"
+== [js] "new Symbol().x; new Symbol()(); new new Symbol(); x = new Symbol; [new BigInt(1)];"
+   1:5 `Symbol` cannot be called as a constructor.
+   1:21 `Symbol` cannot be called as a constructor.
+   1:41 `Symbol` cannot be called as a constructor.
+   1:59 `Symbol` cannot be called as a constructor.
+   1:72 `BigInt` cannot be called as a constructor.
+== [js] "Symbol = 1; new Symbol(); BigInt++; new BigInt(1);"
+   1:17 `Symbol` cannot be called as a constructor.
+   1:41 `BigInt` cannot be called as a constructor.
+== [js] "new Promise(r); new Map; new Object(); new Function('a'); new Bun.Glob('*');"
+== [cjs] "new Symbol(); with (o) { new BigInt(1) }"
+   1:5 `Symbol` cannot be called as a constructor.
+   1:30 `BigInt` cannot be called as a constructor.
+== [mjs] "new Symbol();"
+   1:5 `Symbol` cannot be called as a constructor.
+== [jsx] "<a b={new Symbol()}/>;"
+   1:11 `Symbol` cannot be called as a constructor.
+== [ts] "new Symbol(); new BigInt(1); new Symbol<any>(); new (Symbol)();"
+   1:5 `Symbol` cannot be called as a constructor.
+   1:19 `BigInt` cannot be called as a constructor.
+   1:34 `Symbol` cannot be called as a constructor.
+   1:54 `Symbol` cannot be called as a constructor.
+== [ts] "new (Symbol as any)(); new Symbol!(); new (<any>BigInt)(1); new (Symbol satisfies any)();"
+== [ts] "function f(Symbol: any) { new Symbol() } declare const BigInt: any; new BigInt(1);"
+== [ts] "type BigInt = 1; new BigInt(2); interface Symbol {} new Symbol(); function g<Symbol>() { new Symbol() }"
+   1:22 `BigInt` cannot be called as a constructor.
+   1:57 `Symbol` cannot be called as a constructor.
+   1:94 `Symbol` cannot be called as a constructor.
+== [ts] "namespace Symbol {} new Symbol(); enum BigInt {} new BigInt();"
+== [ts] "let s: symbol = new Symbol() as any; let t = <any>new BigInt(1); (new Symbol())!;"
+   1:21 `Symbol` cannot be called as a constructor.
+   1:55 `BigInt` cannot be called as a constructor.
+   1:71 `Symbol` cannot be called as a constructor.
+== [tsx] "<a b={new Symbol()}/>;"
+   1:11 `Symbol` cannot be called as a constructor.
+== [cts] "new Symbol();"
+   1:5 `Symbol` cannot be called as a constructor.

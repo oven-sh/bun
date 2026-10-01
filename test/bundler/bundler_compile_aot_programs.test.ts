@@ -47,6 +47,38 @@ describe.skipIf(!supported)("compile.aot", () => {
       expect(result.stdout).not.toBe("");
     });
 
+    // The smallest executable: nothing is kept that only an interpreter, a debugger or Function.prototype.toString() needs.
+    // More is also inferred about such a program, which is closed: all of its code has been seen. The text of a function
+    // is "[native code]" then, and nothing else differs. So this has a reference of its own, which hides that text too.
+    const referenceWithoutText = Promise.withResolvers<Awaited<ReturnType<typeof run>>>();
+    it(`${name}: without its machine code, hiding the text of functions`, async () => {
+      const result = await run(name, {
+        BUN_AOT: "0",
+        BUN_JSC_useImmutableIntrinsics: "1",
+        BUN_JSC_hideTextOfFunctionsForTesting: "1",
+      });
+      referenceWithoutText.resolve(result);
+      expect(result.stderr).toContain("[aot] not using the image: useAOT is off");
+      expect(result.stdout).not.toBe("");
+    });
+    it(`${name}: ahead of time, without its text or its bytecode`, async () => {
+      const [expected, actual] = await Promise.all([
+        referenceWithoutText.promise,
+        run(name, {
+          BUN_COMPILE_OMIT_SOURCES_CONTENT: "1",
+          BUN_COMPILE_OMIT_SOURCE_TEXT: "1",
+          BUN_COMPILE_OMIT_BYTECODE: "1",
+          BUN_COMPILE_COMPACT_POSITIONS: "1",
+        }),
+      ]);
+      expect(actual.stderr).toContain("[aot] image: ");
+      expect(actual.stderr).not.toContain("[aot] not using");
+      expect({ ...actual, stderr: withoutAOTLogLines(actual.stderr) }).toEqual({
+        ...expected,
+        stderr: withoutAOTLogLines(expected.stderr),
+      });
+    });
+
     for (const [label, options] of [
       ["ahead of time", ""],
       // Every type the compiler inferred is checked against the value, and the B3 and Air validators run after every phase.

@@ -42,7 +42,8 @@ async function inPieces(deliver, flight, pieces) {
 
 // A client wraps a Duplex in TLS and calls end() right after its first flight left, so the handshake is still running.
 // The server's certificate is not trusted, unless `trusted`. It is for "agent1". With `resumed` the client offers the
-// session of an earlier connection that asked for "agent1". Returns the ordered events of the client.
+// session of an earlier connection that asked for "agent1", and its name check records whether the handshake resumed
+// that session. Returns the ordered events of the client.
 async function endMidHandshake(
   rejectUnauthorized,
   { pieces = 1, trusted = false, servername = "agent1", checkServerIdentity, resumed = false } = {},
@@ -58,9 +59,12 @@ async function endMidHandshake(
   let session;
   if (resumed) {
     const first = tls.connect({ port: server.address().port, host: "127.0.0.1", servername: "agent1", ca: serverCA });
-    first.on("error", () => {});
     first.resume();
-    session = await new Promise(offered => first.once("session", offered));
+    session = await new Promise((offered, failed) => {
+      first.once("session", offered);
+      first.once("error", failed);
+      first.once("close", () => failed(new Error("the first connection closed before it offered a session")));
+    });
     first.destroy();
   }
   const raw = net.connect(server.address().port, "127.0.0.1");
@@ -93,6 +97,12 @@ async function endMidHandshake(
     rejectUnauthorized,
     session,
     ...(trusted && { ca: serverCA }),
+    ...(resumed && {
+      checkServerIdentity(name, peerCertificate) {
+        events.push(`session reused=${client.isSessionReused()}`);
+        return tls.checkServerIdentity(name, peerCertificate);
+      },
+    }),
     ...(checkServerIdentity && { checkServerIdentity }),
   });
   client.on("secureConnect", () => {
@@ -407,7 +417,7 @@ test(
   { skip: !isBun && "Node does not check the name of a resumed session" },
   async () => {
     const events = await endMidHandshake(true, { trusted: true, servername: "another.name", resumed: true });
-    assert.deepStrictEqual(events, ["error ERR_TLS_CERT_ALTNAME_INVALID", "close"]);
+    assert.deepStrictEqual(events, ["session reused=true", "error ERR_TLS_CERT_ALTNAME_INVALID", "close"]);
   },
 );
 

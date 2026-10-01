@@ -497,13 +497,7 @@ function onClientHandshake(self, socket, success, verifyError) {
     self.secureConnecting = false;
     return;
   }
-  // `success` says whether the handshake completed. node:tls applies the
-  // chain's X509 verdict and the name check in JS (the rejectUnauthorized /
-  // checkServerIdentity handling below), so a pair with an X509 code goes on
-  // to that handling whether or not the handshake completed. Only a failure
-  // with a TLS reason tears the socket down here: EPROTO carrying the OpenSSL
-  // "error:...:SSL routines:..." reason (or an already decomposed ERR_SSL_* /
-  // ERR_OSSL_* code). The engine over a Duplex reports no such reason (#32929).
+  // `success` says whether the handshake completed. The chain's verdict and the name check are applied below.
   const isProtocolFailure =
     !success &&
     verifyError?.code != null &&

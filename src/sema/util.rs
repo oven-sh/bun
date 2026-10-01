@@ -351,9 +351,9 @@ mod tests {
     }
 }
 
-const MAP_SHARDS: usize = 64;
+const MAP_SHARDS: usize = 256;
 
-/// Spreads a hash over all its bits: the top ones pick the shard, the next the place in the table, the low ones are the tag.
+/// Spreads a hash over all its bits: the top ones pick the shard, the low half is the tag, which the place in the table goes by.
 #[inline]
 fn spread(hash: u64) -> u64 {
     (hash ^ (hash >> 32)).wrapping_mul(0x9E37_79B9_7F4A_7C15)
@@ -377,7 +377,7 @@ impl Places {
     #[inline]
     fn find(&self, spread: u64, mut is_it: impl FnMut(u32) -> bool) -> Option<u32> {
         let tag = spread as u32;
-        let mut at = (spread >> 26) as usize & self.mask;
+        let mut at = tag as usize & self.mask;
         loop {
             let place = self.places[at].load(Ordering::Acquire);
             if place == 0 {
@@ -392,14 +392,16 @@ impl Places {
 
     /// Only whoever holds the lock of the shard puts anything in.
     fn put(&self, spread: u64, index: u32) {
-        let mut at = (spread >> 26) as usize & self.mask;
+        self.put_place(u64::from(spread as u32) << 32 | u64::from(index + 1));
+    }
+
+    /// What is in a place says where it goes: a table grows without looking at what it is a table of.
+    fn put_place(&self, place: u64) {
+        let mut at = (place >> 32) as usize & self.mask;
         while self.places[at].load(Ordering::Relaxed) != 0 {
             at = (at + 1) & self.mask;
         }
-        self.places[at].store(
-            u64::from(spread as u32) << 32 | u64::from(index + 1),
-            Ordering::Release,
-        );
+        self.places[at].store(place, Ordering::Release);
     }
 }
 
@@ -437,13 +439,12 @@ impl GrowingPlaces {
         unsafe { &*current }.find(spread, is_it)
     }
 
-    /// What `is_it` says yes to, or else what `make` adds. `hash_of` is what the index was put in by, for when the table grows.
+    /// What `is_it` says yes to, or else what `make` adds.
     pub(crate) fn find_or_add(
         &self,
         spread: u64,
         mut is_it: impl FnMut(u32) -> bool,
         make: impl FnOnce() -> u32,
-        hash_of: impl Fn(u32) -> u64,
     ) -> u32 {
         let mut writer = self.writer.lock().unwrap();
         // Somebody may have been faster.
@@ -461,7 +462,7 @@ impl GrowingPlaces {
                 for place in &old.places {
                     let place = place.load(Ordering::Relaxed);
                     if place != 0 {
-                        bigger.put(hash_of(place as u32 - 1), place as u32 - 1);
+                        bigger.put_place(place);
                     }
                 }
             }
@@ -482,7 +483,7 @@ impl GrowingPlaces {
 
 #[inline]
 pub(crate) fn shard_of(spread: u64) -> usize {
-    (spread >> 58) as usize % MAP_SHARDS
+    (spread >> 56) as usize % MAP_SHARDS
 }
 
 #[inline]
@@ -546,7 +547,6 @@ impl<K: std::hash::Hash + Eq, V> ShardedMap<K, V> {
                     .is_some_and(|e| shard.entries.get(i).0 == e.0)
             },
             || shard.entries.push(entry.borrow_mut().take().unwrap()),
-            |i| spread_hash(&shard.entries.get(i).0),
         );
         &shard.entries.get(index).1
     }
@@ -579,7 +579,6 @@ impl<K: std::hash::Hash + Eq, V: Clone> ShardedMap<K, V> {
                     .is_some_and(|e| shard.entries.get(i).0 == e.0)
             },
             || shard.entries.push(entry.borrow_mut().take().unwrap()),
-            |i| spread_hash(&shard.entries.get(i).0),
         );
         shard.entries.get(index).1.clone()
     }

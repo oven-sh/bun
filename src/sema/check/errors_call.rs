@@ -1016,6 +1016,30 @@ impl Checker<'_> {
             .is_some()
     }
 
+    /// Whether `sig` is `candidate`, or `candidate` with something for its type parameters.
+    fn is_declared_where(&self, sig: SigId, candidate: SigId) -> bool {
+        sig == candidate
+            || match (self.p.types.sig(sig), self.p.types.sig(candidate)) {
+                (
+                    SigData::Decl { file, func, .. },
+                    SigData::Decl {
+                        file: other_file,
+                        func: other,
+                        ..
+                    },
+                ) => (file, func) == (other_file, other),
+                (
+                    SigData::Construct { class, func, .. },
+                    SigData::Construct {
+                        class: other_class,
+                        func: other,
+                        ..
+                    },
+                ) => (class, func) == (other_class, other),
+                _ => false,
+            }
+    }
+
     /// `chooseOverload`, by assignability. `None`: a candidate applies, or it cannot be told.
     fn failed_candidates(
         &mut self,
@@ -1070,6 +1094,25 @@ impl Checker<'_> {
                 && !hir.text.is_empty()
                 && hir.text.get(data.close_pos as usize) != Some(&b')')
         };
+        // All that is asked is whether any of them applies, and the call has been resolved to one that most likely does. The ones before it do
+        // not, which takes inferring their type arguments to find out.
+        if candidates.len() > 1
+            && type_args.is_empty()
+            && !is_under_way
+            && let Some(sig) = resolved.sig
+            // Not what is made up of all of them when none applies.
+            && candidates
+                .iter()
+                .any(|&candidate| self.is_declared_where(sig, candidate))
+            && {
+                let params = self.sig_params(sig);
+                self.has_correct_arity_for(&params, &args, is_incomplete)
+            }
+            && self.is_signature_applicable(file, e, c, &args, sig, this_arg, is_new, None)
+                == Applicable::Yes
+        {
+            return None;
+        }
         let mut for_argument_error: Vec<SigId> = Vec::new();
         let mut for_arity_error = None;
         let mut for_type_argument_error = None;

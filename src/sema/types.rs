@@ -7,7 +7,7 @@ use crate::atom::Atom;
 use crate::hir::{ExprId, FnId, TypeNodeId, TypeParamId};
 use crate::local::{self, Chunked, Found, LOCAL, MaybeLocal};
 use crate::program::{FileId, Sym};
-use crate::table::Id;
+use crate::table::{ById, Id};
 use crate::util::{AppendVec, GrowingPlaces, SHARDS, shard_of, spread_hash};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -437,7 +437,6 @@ impl<V> Interned<V> {
                 self.items
                     .push_with(|id| make(key.borrow_mut().take().unwrap(), id))
             },
-            |i| spread_hash(key_of(self.items.get(i))),
         )
     }
 }
@@ -613,6 +612,8 @@ pub struct TypeStore {
     types: Interned<TypeRecord>,
     sigs: Interned<SigData>,
     mappers: Interned<(Mapping, TypeFlags)>,
+    /// The types of string literals, regular and fresh, by what they say. There is one for nearly every string in a program.
+    string_literals: [ById<Atom, TypeId>; 2],
 }
 
 macro_rules! well_known {
@@ -702,6 +703,7 @@ impl TypeStore {
             types: Interned::new(),
             sigs: Interned::new(),
             mappers: Interned::new(),
+            string_literals: Default::default(),
         };
         for (i, data) in WELL_KNOWN.iter().enumerate() {
             assert_eq!(store.intern(data.clone()).0 as usize, i);
@@ -942,6 +944,15 @@ impl TypeStore {
     }
 
     pub fn intern(&self, data: TypeData) -> TypeId {
+        if let TypeData::StringLit { value, fresh } = data {
+            let known = &self.string_literals[usize::from(fresh)];
+            if let Some(id) = known.get(&value) {
+                return id;
+            }
+            let id = self.types.items.push_with(|id| self.new_record(data, id));
+            // Of two threads that get here at once one has made a type nothing will ever refer to.
+            return known.insert(value, TypeId(id));
+        }
         if !local::is_any_on() {
             return TypeId(self.types.intern(
                 data,

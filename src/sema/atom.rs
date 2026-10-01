@@ -202,6 +202,21 @@ thread_local! {
 /// From 1 on.
 static NEXT_NUMBER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
+impl crate::table::Id for Atom {
+    #[inline]
+    fn number(self) -> u32 {
+        self.0
+    }
+    #[inline]
+    fn from_number(number: u32) -> Self {
+        Atom(number)
+    }
+    #[inline]
+    fn local_number(self) -> Option<u32> {
+        None
+    }
+}
+
 impl Default for Interner {
     fn default() -> Self {
         Self::new()
@@ -260,7 +275,6 @@ impl Interner {
             spread,
             |i| &**self.texts.get(i) == text,
             || self.texts.push(Box::from(text)),
-            |i| spread_hash(&**self.texts.get(i)),
         ))
     }
 

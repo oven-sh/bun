@@ -1,0 +1,25 @@
+     25,160     25,160  parse/parse_fn.rs:343  [P<true,false>::parse_fn]  } else if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+     67,860     22,620  parse/mod.rs:2138  [P<true,false>::parse_stmts_up_to]  if let Some(starts) = &mut p.starts_for_parse_only {
+     14,300     14,300  parse/parse_fn.rs:440  [P<true,false>::parse_fn]  } else if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+     31,740     10,580  parse/mod.rs:312  [P<true,false>::parse_class]  if let Some(starts) = &mut p.starts_for_parse_only {
+     42,320     10,580  parse/parse_property.rs:128  [P<true,false>::parse_property]  if let Some(starts) = &mut p.starts_for_parse_only {
+      4,440      4,440  parse/mod.rs:1947  [P<true,false>::parse_and_declare_decls]  if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+     13,260      4,420  parse/parse_fn.rs:132  [P<true,false>::parse_fn_stmt]  if let Some(starts) = &mut p.starts_for_parse_only {
+      9,300      3,100  parse/parse_stmt.rs:2360  [P<true,false>::parse_stmt_fallthrough_ts_keyword]  if let Some(starts) = &mut p.starts_for_parse_only {
+      2,940      2,940  parse/parse_fn.rs:348  [P<true,false>::parse_fn]  } else if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+      2,600      2,600  parse/parse_skip_typescript.rs:3112  [P<true,false>::skip_type_script_type_stmt]  if self.starts_for_parse_only.is_some() {
+      5,880      1,960  parse/mod.rs:272  [P<true,false>::parse_class]  if let Some(starts) = &mut p.starts_for_parse_only {
+      1,960      1,960  parse/parse_property.rs:830  [P<true,false>::parse_property]  } else if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+      1,600      1,600  parse/parse_skip_typescript.rs:3141  [P<true,false>::skip_type_script_interface_stmt]  if self.starts_for_parse_only.is_some() {
+      1,420      1,420  parse/parse_typescript.rs:232  [P<true,false>::parse_type_script_namespace_stmt]  let erased_name = if Self::IS_TYPESCRIPT_ENABLED && p.starts_for_parse_only.is_some() {
+      1,520        760  parse/mod.rs:1320  [P<true,false>::parse_class_stmt]  } else if Self::IS_TYPESCRIPT_ENABLED && p.starts_for_parse_only.is_some() {
+      2,280        760  parse/mod.rs:1363  [P<true,false>::parse_class_stmt]  if let Some(starts) = &mut p.starts_for_parse_only {
+        500        500  parse/parse_fn.rs:71  [P<true,false>::parse_fn_stmt]  if p.starts_for_parse_only.is_some() {
+        760        380  parse/parse_property.rs:775  [P<true,false>::parse_property]  has_type_parameters = if p.starts_for_parse_only.is_some() {
+        540        180  parse/parse_stmt.rs:1718  [P<true,false>::t_import]  if let Some(starts) = &mut p.starts_for_parse_only {
+        180        180  parse/parse_suffix.rs:903  [P<true,false>::parse_suffix]  if p.starts_for_parse_only.is_some() {
+        100        100  parse/mod.rs:202  [P<true,false>::parse_class]  if p.starts_for_parse_only.is_some() {
+         40         40  parse/mod.rs:1332  [P<true,false>::parse_class_stmt]  if p.starts_for_parse_only.is_some() {
+        120         40  parse/parse_typescript.rs:598  [P<true,false>::parse_type_script_import_equals_stmt]  if let Some(starts) = &mut p.starts_for_parse_only {
+         20         20  parse/parse_typescript.rs:820  [P<true,false>::parse_typescript_enum_stmt]  if p.starts_for_parse_only.is_some() {
+    230,840    110,640  SUM Ir, Bc on 24 (line, function) pairs

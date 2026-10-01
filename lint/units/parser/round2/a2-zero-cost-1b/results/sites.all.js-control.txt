@@ -1,0 +1,2 @@
+        400        100  parse/parse_fn.rs:698  [P<false,false>::parse_arrow_body_with_flags]  if let Some(starts) = &mut p.starts_for_parse_only {
+        400        100  SUM Ir, Bc on 1 (line, function) pairs

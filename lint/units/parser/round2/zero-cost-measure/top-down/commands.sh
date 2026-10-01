@@ -13,7 +13,7 @@ S=/tmp/zcm-td/seam
 #    and the three runs with --vex-guest-chase=no (tags rawbase, rawhead, rawnolintbt).
 #    batch3.sh: the decorator bench on deco-bench.common.json (default and raw), variant f1 (default and raw).
 #    batch4.sh: variant vold (default and raw) and the A1 harness with base, head and vold.
-#    batch5.sh: variant f1b (raw and default). batch6.sh: variant vold2, the A1 harness head vs vold2 and base vs vold2, raw and default.
+#    batch5.sh: variant f1b (raw and default). batch6.sh: variant vold3 (vold2 is its two-jump form, assembly only), the A1 harness head vs vold3 and base vs vold3, raw and default.
 # /workspace/tools/lk /tmp/zcm-td/batch1.sh ; ... ; batch6.sh     (copies of the six scripts: batches/)
 
 # 2. tables (each prints to stdout; the saved outputs are the *.txt and *.tsv beside this file)
@@ -29,8 +29,8 @@ python3 $T/cgline.py $O/head20b.typescript-lib.cg --fn 'P<true, false>>::parse_t
 python3 $T/cgsites.py $O/head20b.src-js.cg                                # Bc on the lines that test the side table
 
 # 3. variants: patched copy -> rlib with the rustc command of the release build -> ThinLTO relink -> counts
-python3 $T/variants.py nolint nolintbt f1 f1b vold vold2                  # copies under $S/root/<tag>/src/js_parser
-for v in nolint nolintbt f1 f1b vold vold2; do RELAX=1 python3 $T/run.py $v $S/root/$v; done     # about one minute each, no lock
+python3 $T/variants.py nolint nolintbt f1 f1b vold vold2 vold3                  # copies under $S/root/<tag>/src/js_parser
+for v in nolint nolintbt f1 f1b vold vold2 vold3; do RELAX=1 python3 $T/run.py $v $S/root/$v; done     # about one minute each, no lock
 # OUT=$S/link CACHE=$S/thinlto-cache python3 /workspace/notes/lint/units/parser/paren-expr-seam/relink.py <tag> $S/out/<tag>/libbun_js_parser-185fe25973f3a1f8.rlib full
 # /workspace/notes/lint/tools/cgbench.sh $S/link/<tag>/bun-profile $O <tag> 20 ; $T/cgbench-raw.sh $S/link/<tag>/bun-profile $O raw<tag> 20
 

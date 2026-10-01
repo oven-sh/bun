@@ -1,0 +1,69 @@
+program Ir  5,118,791,555 ->  5,113,719,325 (-5,072,230)  Bc   706,838,082 ->   705,930,111 (-907,971)  Bi  53,862,512 ->  53,861,727 (-785)
+parser  Ir  3,315,540,179 ->  3,313,430,249 (-2,109,930)  Bc   343,413,670 ->   343,318,610 (-95,060)  Bi  42,778,315 ->  42,778,315 (+0)
+rest    Ir  1,803,251,376 ->  1,800,289,076 (-2,962,300)  Bc   363,424,412 ->   362,611,501 (-812,911)  Bi  11,084,197 ->  11,083,412 (-785)
+23 parser symbols differ, 584 other symbols differ
+-- parser symbols with |dBc| >= 0, by dBc
+  Bc    +127,020  Ir       -2,920  Bi        +0  (a Bc 2,961,980) <bun_js_parser::p::P<false, false>>::s_local
+  Bc      +5,580  Ir      +51,580  Bi        +0  (a Bc 0) NEW <bun_js_parser::p::P<false, false>>::parse_arrow_body_with_flags
+  Bc        +100  Ir     +596,180  Bi        +0  (a Bc 7,077,980) <bun_js_parser::visit::visit_binary::BinaryExpressionVisitor>::visit_right_and_finish::<false, false>
+  Bc         +84  Ir         +147  Bi        +0  (a Bc 1,323) core::ptr::drop_glue::<bun_js_parser::p::P<false, false>>
+  Bc          +0  Ir     +118,040  Bi        +0  (a Bc 177,060) <bun_alloc::baby_vec::BabyVec<bun_ast::g::Arg>>::grow_exact
+  Bc          +0  Ir     -136,420  Bi        +0  (a Bc 2,577,280) <bun_js_parser::p::P<false, false>>::hoist_symbols
+  Bc          +0  Ir     -132,440  Bi        +0  (a Bc 977,260) <bun_js_parser::p::P<false, false>>::visit_func
+  Bc          +0  Ir     -514,460  Bi        +0  (a Bc 13,964,440) <bun_js_parser::p::P<false, false>>::parse_prefix
+  Bc          +0  Ir     -995,200  Bi        +0  (a Bc 845,920) <bun_js_parser::p::P<false, false>>::parse_fn_stmt
+  Bc          +0  Ir      -99,520  Bi        +0  (a Bc 694,900) <bun_js_parser::p::P<false, false>>::s_function
+  Bc          +0  Ir          +21  Bi        +0  (a Bc 189) <bun_js_parser::p::P<false, false>>::init
+  Bc          +0  Ir     +111,160  Bi        +0  (a Bc 1,372,101) <bun_js_parser::p::P<false, false>>::visit_args
+  Bc          +0  Ir      -49,140  Bi        +0  (a Bc 131,040) <bun_js_parser::p::P<false, false>>::parse_fn_expr
+  Bc          +0  Ir       +6,060  Bi        +0  (a Bc 2,286,560) <bun_js_parser::p::P<false, false>>::parse_property
+  Bc          +0  Ir          +20  Bi        +0  (a Bc 4,140) <bun_js_parser::p::P<false, false>>::to_ast
+  Bc         -40  Ir         -120  Bi        +0  (a Bc 2,215,140) <bun_js_parser::p::P<false, false>>::parse_and_declare_decls
+  Bc         -84  Ir         -378  Bi        +0  (a Bc 84) GONE core::ptr::drop_glue::<bun_js_parser::parser::MacroState>
+  Bc      -5,580  Ir      -50,560  Bi        +0  (a Bc 5,580) GONE <bun_js_parser::p::P<false, false>>::parse_arrow_body
+  Bc     -16,460  Ir     -197,520  Bi        +0  (a Bc 98,760) <bun_js_parser::p::P<false, false>>::e_function
+  Bc     -17,860  Ir     -267,900  Bi        +0  (a Bc 17,860) GONE core::ptr::drop_glue::<bun_ast::e::JSXElement>
+  Bc     -21,960  Ir     -252,540  Bi        +0  (a Bc 21,960) GONE core::ptr::drop_glue::<bun_alloc::baby_vec::BabyVec<bun_ast::g::Arg>>
+  Bc     -55,240  Ir     -113,820  Bi        +0  (a Bc 2,123,380) <bun_js_parser::p::P<false, false>>::parse_fn
+  Bc    -110,620  Ir     -180,200  Bi        +0  (a Bc 3,459,960) <bun_js_parser::p::P<false, false>>::parse_stmt
+-- other symbols, top by |dBc|
+  Bc    -370,290  Ir     -424,442  Bi        +0  (a Bc 62,499,352) __memcpy_avx_unaligned_erms
+  Bc    -285,206  Ir     -287,830  Bi        +0  (a Bc 10,306,714) __memset_avx2_unaligned_erms
+  Bc     +59,416  Ir     +356,949  Bi        +0  (a Bc 163,784) void JSC::ConservativeRoots::genericAddPointer<false, JSC::CompositeMarkHook>(char*, unsigned int, unsigned int, JSC::TinyBloomFilter<unsigned long>, JSC::TinyBloomFilter
+  Bc     -35,275  Ir     -156,358  Bi    -3,274  (a Bc 216,713) JSC::SlotVisitor::drain(WTF::MonotonicTime)::$_0::operator()(JSC::MarkStackArray&) const
+  Bc     -27,844  Ir     -181,286  Bi        +0  (a Bc 1,019,076) mi_page_queue_find_free_ex(mi_theap_s*, mi_page_queue_s*, bool)
+  Bc     -22,790  Ir     -155,796  Bi        +0  (a Bc 138,886) void JSC::SlotVisitor::setMarkedAndAppendToMarkStack<JSC::MarkedBlock>(JSC::MarkedBlock&, JSC::JSCell*, WTF::Dependency)
+  Bc     -22,223  Ir      -96,877  Bi        +0  (a Bc 76,592) mi_stats_add(mi_stats_s*, mi_stats_s const*)
+  Bc     -19,042  Ir     -115,750  Bi        +0  (a Bc 121,154) JSC::JSObjectWithButterfly::visitChildren(JSC::JSCell*, JSC::SlotVisitor&)
+  Bc     -15,714  Ir      -72,245  Bi        +0  (a Bc 96,610) JSC::Structure::visitChildren(JSC::JSCell*, JSC::SlotVisitor&)
+  Bc     -15,312  Ir      -57,646  Bi        +0  (a Bc 726,552) mi_page_free_collect_ex(mi_page_s*, bool, bool)
+  Bc     -12,410  Ir      -84,277  Bi        +0  (a Bc 896,799) _mi_malloc_generic(mi_theap_s*, unsigned long, unsigned long, mi_page_s**)
+  Bc      +9,473  Ir      +41,194  Bi       +30  (a Bc 15,098) JSC::CodeBlock::reconcileWeakReferencesAtGCEnd(JSC::VM&, JSC::CollectionScope)
+  Bc      -8,289  Ir      -57,166  Bi        +0  (a Bc 367,969) mi_page_queue_remove(mi_page_queue_s*, mi_page_s*)
+  Bc      -7,795  Ir      -52,547  Bi        +0  (a Bc 4,377,686) mi_page_free_list_extend(mi_page_s*, unsigned long, unsigned long)
+  Bc      -6,786  Ir      -50,518  Bi        +0  (a Bc 347,427) mi_page_extend_free(mi_theap_s*, mi_page_s*)
+  Bc      -6,065  Ir      -36,397  Bi        +0  (a Bc 36,545) JSC::JSString::visitChildren(JSC::JSCell*, JSC::SlotVisitor&)
+  Bc      -6,062  Ir      -66,409  Bi        +0  (a Bc 36,592) JSC::SlotVisitor::appendSlow(JSC::JSCell*, WTF::Dependency)
+  Bc      +5,628  Ir      +20,088  Bi        +0  (a Bc 13,513) __pthread_mutex_unlock_usercnt
+  Bc      +5,039  Ir      +14,854  Bi        +0  (a Bc 67,971) JSC::VM::visitAggregate(JSC::SlotVisitor&)
+  Bc      +4,911  Ir      +33,653  Bi      +508  (a Bc 8,093) WTF::ParkingLot::parkConditionallyImpl(void const*, WTF::ScopedLambda<bool ()> const&, WTF::ScopedLambda<void ()> const&, WTF::TimeWithDynamicClockType const&)
+  Bc      -4,884  Ir      -17,280  Bi       -58  (a Bc 4,884) GONE __nptl_deallocate_tsd
+  Bc      +4,786  Ir      +21,328  Bi        +0  (a Bc 7,876) JSC::CodeBlock::updateAllArrayProfilePredictions()
+  Bc      +4,636  Ir      +24,993  Bi      +167  (a Bc 49,302) bun_core::string::immutable::copy_lowercase_if_needed
+  Bc      +3,991  Ir      +17,210  Bi        +0  (a Bc 43,947) bun::N_AVX2::IndexOfCharImpl(unsigned char const*, unsigned long, unsigned char)
+  Bc      +3,969  Ir      +17,545  Bi        +0  (a Bc 11,102) pthread_mutex_lock@@GLIBC_2.2.5
+  Bc      -3,924  Ir      -24,852  Bi        +0  (a Bc 23,484) JSC::NativeExecutable::visitChildren(JSC::JSCell*, JSC::SlotVisitor&)
+  Bc      -3,905  Ir      -25,312  Bi        +0  (a Bc 23,440) JSC::JSCallee::visitChildren(JSC::JSCell*, JSC::SlotVisitor&)
+  Bc      -3,871  Ir      -20,877  Bi        +0  (a Bc 25,156) JSC::FunctionExecutable::visitChildren(JSC::JSCell*, JSC::SlotVisitor&)
+  Bc      +3,864  Ir      +20,519  Bi        +0  (a Bc 8,941) JSC::CodeBlock::visitChildren(JSC::JSCell*, JSC::SlotVisitor&)
+  Bc      -3,863  Ir      -24,012  Bi        +0  (a Bc 169,663) mi_page_queue_push_at_end(mi_theap_s*, mi_page_queue_s*, mi_page_s*)
+  Bc      -3,808  Ir      -33,497  Bi        +0  (a Bc 166,098) mi_bitmap_setN(mi_bitmap_s*, unsigned long, unsigned long, unsigned long*)
+  Bc      -3,692  Ir      -35,436  Bi        +0  (a Bc 22,576) JSC::JSFunction::visitChildren(JSC::JSCell*, JSC::SlotVisitor&)
+  Bc      +3,582  Ir       +6,898  Bi        +0  (a Bc 4,628) WTF::ThreadSafeRefCounted<WTF::(anonymous namespace)::ThreadData, (WTF::DestructionThread)0>::deref() const
+  Bc      +3,508  Ir      +25,356  Bi        +0  (a Bc 4,075) pthread_cond_signal@@GLIBC_2.3.2
+  Bc      -3,496  Ir      -22,511  Bi        +0  (a Bc 163,229) mi_theap_page_update_stats(mi_theap_s*, mi_page_s*)
+  Bc      +3,494  Ir      +20,415  Bi        +0  (a Bc 6,269) JSC::CodeBlock::updateAllNonLazyValueProfilePredictionsAndCountLiveness(unsigned int&, unsigned int&, JSC::CodeBlock::ValueProfileSamples)
+  Bc      -3,076  Ir      -23,234  Bi        +0  (a Bc 20,093) JSC::UnlinkedCodeBlock::visitChildren(JSC::JSCell*, JSC::SlotVisitor&)
+  Bc      -2,926  Ir      -20,412  Bi        +0  (a Bc 4,881) memset
+  Bc      -2,908  Ir      -13,449  Bi        +0  (a Bc 6,569) mi_theap_collect_ex(mi_theap_s*, mi_collect_e) [clone .llvm.4777501368710607264]
+  Bc      +2,900  Ir      +40,570  Bi        +0  (a Bc 16,800) void JSC::ConservativeRoots::genericAddSpan<JSC::CompositeMarkHook>(void*, void*, JSC::CompositeMarkHook&)

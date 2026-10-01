@@ -80,11 +80,12 @@ for (const { config, tests } of runs) {
 				skip("options that are not the defaults");
 				continue;
 			}
-			if (lo.globals && Object.keys(lo.globals).length) {
+			// As round 1: what the case itself configures. What the RuleTester of the file sets for all its cases is not looked at.
+			if (own.globals && Object.keys(own.globals).length) {
 				skip("globals");
 				continue;
 			}
-			if (typeof lo.ecmaVersion === "number" && lo.ecmaVersion < 6) {
+			if (typeof own.ecmaVersion === "number" && own.ecmaVersion < 6) {
 				skip("an edition before 2015");
 				continue;
 			}

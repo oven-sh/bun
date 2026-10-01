@@ -540,8 +540,7 @@ static JSValue convertChunksToBytes(JSGlobalObject* globalObject, JSValue chunks
 static JSValue textAccumulatorWrite(JSC::VM& vm, JSGlobalObject*, JSC::JSObject* owner, BunTextAccumulator&, JSValue chunk);
 static WTF::String finishTextAccumulator(JSC::VM& vm, JSGlobalObject*, JSC::JSObject* owner, BunTextAccumulator&);
 
-// The number of U+FEFF code units, at most two, at the start of the text of the string chunks.
-// stripTextResultBOM() removes as many from a text. A Latin-1 chunk cannot start with one.
+// How many U+FEFF code units, at most two, start the text of the string chunks. The text result leaves them out.
 static unsigned leadingBOMCount(JSGlobalObject* globalObject, const MarkedArgumentBuffer& chunks)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
@@ -565,9 +564,7 @@ static unsigned leadingBOMCount(JSGlobalObject* globalObject, const MarkedArgume
     return count;
 }
 
-// The string chunks as one string, without the first `skip` of their `length` code units. It is one
-// allocation of that size, and null when that allocation fails. A chunk that is a rope is copied from
-// its fibers: it is not resolved first.
+// The string chunks as one string without its first `skip` code units, from one allocation. Null when that fails.
 template<typename CharacterType>
 static WTF::String tryJoinStringChunks(JSGlobalObject* globalObject, const MarkedArgumentBuffer& chunks, unsigned length, unsigned skip)
 {
@@ -590,6 +587,7 @@ static WTF::String tryJoinStringChunks(JSGlobalObject* globalObject, const Marke
             }
             continue;
         }
+        // This copies a rope from its fibers. It does not make the string of the rope.
         chunk->resolveToBuffer(characters.first(chunkLength));
         characters = characters.subspan(chunkLength);
     }

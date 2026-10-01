@@ -361,7 +361,7 @@ impl Checker<'_> {
         out: &mut Vec<Diagnostic>,
     ) {
         let files = self.files();
-        let parts = files.parts(sym);
+        let parts = files.every_part(sym);
         if parts.len() == 1 && files.symbol(sym).decls.len() < 2 {
             return;
         }

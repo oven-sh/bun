@@ -300,6 +300,11 @@ pub struct Files {
     merged_into: FxHashMap<Sym, Sym>,
     /// From a symbol to its parts, itself included.
     merged_parts: FxHashMap<Sym, Vec<Sym>>,
+    /// `merged_parts`, and among them, in the order they came, those that could not be made one with what was there before. They add
+    /// nothing to the symbol. They are errors.
+    every_part: FxHashMap<Sym, Vec<Sym>>,
+    /// While symbols are put together: `name_means_instead`.
+    stand_ins: Vec<(Sym, SymbolId)>,
     merged_exports: FxHashMap<Sym, FxHashMap<Atom, Sym>>,
     /// The tables of `merged_exports` sorted by name, once symbols are put together.
     sorted_exports: FxHashMap<Sym, Box<[(Atom, Sym)]>>,
@@ -1122,6 +1127,8 @@ impl Files {
             pattern_augmentations: FxHashMap::default(),
             merged_into: FxHashMap::default(),
             merged_parts: FxHashMap::default(),
+            every_part: FxHashMap::default(),
+            stand_ins: Vec::new(),
             merged_exports: FxHashMap::default(),
             sorted_exports: FxHashMap::default(),
             refused_merges: Vec::new(),
@@ -1835,6 +1842,23 @@ impl Files {
                 None => {}
             }
         }
+        // Each file is gone through once, however many of its names mean something else.
+        let mut stand_ins = std::mem::take(&mut self.stand_ins);
+        stand_ins.sort_unstable();
+        for of_file in stand_ins.chunk_by(|a, b| a.0.file == b.0.file) {
+            let stands_in = |symbol: &mut SymbolId| {
+                if let Ok(i) = of_file.binary_search_by_key(symbol, |s| s.0.id) {
+                    *symbol = of_file[i].1;
+                }
+            };
+            let bound = &mut self.modules[of_file[0].0.file.idx()].bound;
+            bound.expr_symbol.iter_mut().for_each(stands_in);
+            bound
+                .entries
+                .iter_mut()
+                .map(|e| &mut e.1)
+                .for_each(stands_in);
+        }
         // What an alias was found to stand for while symbols were being put together may be a part of something by now.
         let symbols = Bases::new(self.modules.iter().map(|m| m.bound.symbols.len()));
         self.aliases = ByNode::new(&symbols);
@@ -1905,14 +1929,43 @@ impl Files {
                 }
             }
         }
-        let target_exports_table = self.symbol(target).exports;
-        self.symbol_mut(target).flags |= source_flags | SymFlags::MERGED;
-        self.symbol_mut(source).flags |= SymFlags::MERGED;
-        self.merged_into.insert(source, target);
+        // What cannot be one symbol with what has the name adds nothing to it: two classes, a class and a variable. It stays what its
+        // own declarations are about, and the name goes on meaning the first wherever it is used.
+        if self
+            .symbol(target)
+            .flags
+            .intersects(excluded_flags(source_flags))
+        {
+            let refused = self.every_part(source).into_vec();
+            for &part in &refused {
+                self.name_means_instead(part, target);
+            }
+            self.symbol_mut(target).flags |= SymFlags::MERGED;
+            self.merged_parts
+                .entry(target)
+                .or_insert_with(|| vec![target]);
+            self.every_part
+                .entry(target)
+                .or_insert_with(|| vec![target])
+                .extend(refused);
+            return target;
+        }
         let source_parts = self
             .merged_parts
             .remove(&source)
             .unwrap_or_else(|| vec![source]);
+        let every_source_part = self
+            .every_part
+            .remove(&source)
+            .unwrap_or_else(|| vec![source]);
+        self.every_part
+            .entry(target)
+            .or_insert_with(|| vec![target])
+            .extend(every_source_part);
+        let target_exports_table = self.symbol(target).exports;
+        self.symbol_mut(target).flags |= source_flags | SymFlags::MERGED;
+        self.symbol_mut(source).flags |= SymFlags::MERGED;
+        self.merged_into.insert(source, target);
         for &part in &source_parts {
             self.merged_into.insert(part, target);
         }
@@ -1980,6 +2033,32 @@ impl Files {
         target
     }
 
+    /// Names are looked up in the table the two symbols were to share, which has `target`. The binder has found `refused` for those in
+    /// its file. They get a symbol that stands in for `target` there, and the declarations of `refused` keep theirs.
+    fn name_means_instead(&mut self, refused: Sym, target: Sym) {
+        let bound = &mut self.modules[refused.file.idx()].bound;
+        let stand_in = SymbolId(bound.symbols.len() as u32);
+        let (name, parent) = {
+            let symbol = &bound.symbols[refused.id.idx()];
+            (symbol.name, symbol.parent)
+        };
+        bound.symbols.push(Symbol {
+            name,
+            flags: SymFlags::MERGED,
+            decls: bind::Decls::Many(Box::default()),
+            parent,
+            exports: bind::TableId::NONE,
+        });
+        self.stand_ins.push((refused, stand_in));
+        self.merged_into.insert(
+            Sym {
+                file: refused.file,
+                id: stand_in,
+            },
+            target,
+        );
+    }
+
     /// `resolveAlias`, `pushTypeResolution`: follows the pure aliases from `start` on and, if they run into a cycle, records the aliases
     /// of the cycle in `circular_at_merge`.
     fn record_alias_cycle(&mut self, start: Sym) {
@@ -2023,6 +2102,10 @@ impl Files {
         let source_exports = self.exports(source);
         let target_exports_table = self.symbol(target).exports;
         self.symbol_mut(target).flags |= source_flags | SymFlags::MERGED;
+        self.every_part
+            .entry(target)
+            .or_insert_with(|| vec![target])
+            .extend_from_slice(&source_parts);
         self.merged_parts
             .entry(target)
             .or_insert_with(|| vec![target])
@@ -2197,6 +2280,16 @@ impl Files {
     pub fn parts(&self, sym: Sym) -> List<'_, Sym> {
         if self.symbol(sym).flags.contains(SymFlags::MERGED)
             && let Some(parts) = self.merged_parts.get(&sym)
+        {
+            return List::Kept(parts);
+        }
+        List::One(sym)
+    }
+
+    /// `parts`, and what was refused as a part, in the order they came.
+    pub fn every_part(&self, sym: Sym) -> List<'_, Sym> {
+        if self.symbol(sym).flags.contains(SymFlags::MERGED)
+            && let Some(parts) = self.every_part.get(&sym)
         {
             return List::Kept(parts);
         }

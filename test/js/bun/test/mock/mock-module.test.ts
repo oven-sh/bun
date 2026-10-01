@@ -540,3 +540,79 @@ test.concurrent("mock.module() of a module whose import() is still loading its d
   expect(stderr).toContain(" 1 pass");
   expect(exitCode).toBe(0);
 });
+
+test.concurrent("mock.module() of a module whose import() is in flight and then throws", async () => {
+  using dir = tempDir("mock-module-import-in-flight-throws", {
+    "a.ts": `import "./dependency"; export const a = "real-a"; throw new Error("the replaced module threw");`,
+    "dependency.ts": `export {};`,
+    "in-flight.test.ts": `
+      import { expect, mock, test } from "bun:test";
+
+      test("the mock stays the module after the import in flight rejects", async () => {
+        const dependencyRequested = Promise.withResolvers<void>();
+        const dependencyMayLoad = Promise.withResolvers<void>();
+        Bun.plugin({
+          name: "hold the dependency's load open",
+          setup(build) {
+            build.onLoad({ filter: /dependency\\.ts$/ }, async () => {
+              dependencyRequested.resolve();
+              await dependencyMayLoad.promise;
+              return { contents: "export {}", loader: "ts" };
+            });
+          },
+        });
+
+        const inFlight = import("./a");
+        await dependencyRequested.promise;
+        mock.module("./a", () => ({ a: "mocked-a" }));
+        expect((await import("./a")).a).toBe("mocked-a");
+        dependencyMayLoad.resolve();
+
+        await expect(inFlight).rejects.toThrow("the replaced module threw");
+        expect((await import("./a")).a).toBe("mocked-a");
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "./in-flight.test.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 1 pass");
+  expect(exitCode).toBe(0);
+});
+
+// No plugin and nothing to wait for: the failed import() of the real file settles after the mock is registered.
+test.concurrent("mock.module() of a file whose import() before it failed", async () => {
+  using dir = tempDir("mock-module-after-failed-import", {
+    "app.ts": `export const optional = import("./data.json").catch(() => null);`,
+    "data.json": `{ "ok": false, `,
+    "mocked.test.ts": `
+      import { expect, mock, test } from "bun:test";
+      import "./app";
+
+      mock.module("./data.json", () => ({ default: { ok: true } }));
+      const first = await import("./data.json");
+
+      test("the mock is what the import() after mock.module() got", () => {
+        expect(first.default).toEqual({ ok: true });
+      });
+      test("the mock is what a later import() gets", async () => {
+        expect((await import("./data.json")).default).toEqual({ ok: true });
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "./mocked.test.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 2 pass");
+  expect(exitCode).toBe(0);
+});

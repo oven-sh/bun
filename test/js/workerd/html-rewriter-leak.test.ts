@@ -174,79 +174,84 @@ test("onEndTag callbacks are released after the rewrite", () => {
 //
 // Skipped in debug: too slow for this many registrations, and CI has no debug
 // lane.
-test.skipIf(isDebug || isASAN)("HTMLRewriter does not leak element/document handler allocations", async () => {
-  const ROUNDS = 2;
-  const REWRITERS_PER_ROUND = 1000;
-  // Each rewriter gets 32 on() and 32 onDocument() calls.
-  const REGISTRATIONS_PER_ROUND = REWRITERS_PER_ROUND * 64;
-  // ElementHandler is 40 bytes and DocumentHandler is 48. mimalloc serves both
-  // from its 48-byte size class.
-  const HANDLER_BLOCK_SIZE = 48;
-  const code = /* js */ `
-    const { heapStats } = require("bun:jsc");
-    const noop = { element() {}, comments() {}, text() {} };
-    const docNoop = { doctype() {}, comments() {}, text() {}, end() {} };
+test.concurrent.skipIf(isDebug || isASAN)(
+  "HTMLRewriter does not leak element/document handler allocations",
+  async () => {
+    const ROUNDS = 2;
+    const REWRITERS_PER_ROUND = 1000;
+    // Each rewriter gets 32 on() and 32 onDocument() calls.
+    const REGISTRATIONS_PER_ROUND = REWRITERS_PER_ROUND * 64;
+    // ElementHandler is 40 bytes and DocumentHandler is 48. mimalloc serves both
+    // from its 48-byte size class.
+    const HANDLER_BLOCK_SIZE = 48;
+    const code = /* js */ `
+      const { heapStats } = require("bun:jsc");
+      const noop = { element() {}, comments() {}, text() {} };
+      const docNoop = { doctype() {}, comments() {}, text() {}, end() {} };
 
-    // malloc_bins has an entry for each size class. Its "current" is the
-    // count of live blocks of that size.
-    function liveHandlerBlocks() {
-      return heapStats().mimalloc.malloc_bins.find(bin => bin.block_size === ${HANDLER_BLOCK_SIZE}).current;
-    }
-
-    // Counts while the rewriters of the round are alive, then lets the
-    // collector have them.
-    function round() {
-      const rewriters = [];
-      for (let i = 0; i < ${REWRITERS_PER_ROUND}; i++) {
-        const rewriter = new HTMLRewriter();
-        for (let j = 0; j < 32; j++) rewriter.on("div", noop);
-        for (let j = 0; j < 32; j++) rewriter.onDocument(docNoop);
-        rewriters.push(rewriter);
+      // malloc_bins has an entry for each size class. Its "current" is the
+      // count of live blocks of that size.
+      function liveHandlerBlocks() {
+        return heapStats().mimalloc.malloc_bins.find(bin => bin.block_size === ${HANDLER_BLOCK_SIZE}).current;
       }
-      const held = liveHandlerBlocks();
-      rewriters.length = 0;
-      Bun.gc(true);
-      return held;
-    }
 
-    // The first round pays for what is allocated once.
-    round();
-    const before = liveHandlerBlocks();
-    let held;
-    for (let i = 0; i < ${ROUNDS}; i++) held = round();
-    const after = liveHandlerBlocks();
+      // Counts while the rewriters of the round are alive, then lets the
+      // collector have them.
+      function round() {
+        const rewriters = [];
+        for (let i = 0; i < ${REWRITERS_PER_ROUND}; i++) {
+          const rewriter = new HTMLRewriter();
+          for (let j = 0; j < 32; j++) rewriter.on("div", noop);
+          for (let j = 0; j < 32; j++) rewriter.onDocument(docNoop);
+          rewriters.push(rewriter);
+        }
+        const held = liveHandlerBlocks();
+        rewriters.length = 0;
+        Bun.gc(true);
+        return held;
+      }
 
-    process.stdout.write(JSON.stringify({ before, held, after }));
-  `;
+      // The first round pays for what is allocated once.
+      round();
+      const before = liveHandlerBlocks();
+      let held;
+      for (let i = 0; i < ${ROUNDS}; i++) held = round();
+      const after = liveHandlerBlocks();
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", code],
-    env: {
-      ...bunEnv,
-      // The runner's GC_LEVEL=1 adds collections of its own.
-      BUN_GARBAGE_COLLECTOR_LEVEL: "0",
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+      process.stdout.write(JSON.stringify({ before, held, after }));
+    `;
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: {
+        ...bunEnv,
+        // The runner's GC_LEVEL=1 adds collections of its own.
+        BUN_GARBAGE_COLLECTOR_LEVEL: "0",
+        // The JIT allocates blocks of this size class while it compiles.
+        BUN_JSC_useJIT: "0",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: expect.stringMatching(/^\{"before":-?\d+,"held":-?\d+,"after":-?\d+\}$/),
-    stderr: "",
-    exitCode: 0,
-  });
-  const { before, held, after } = JSON.parse(stdout);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // While the rewriters of a round are alive, the count is up by one for each
-  // registration. One kind of struct alone is half of that: a struct that
-  // leaves this size class, or that mimalloc does not count, fails here.
-  expect(held - before, stdout).toBeGreaterThan((REGISTRATIONS_PER_ROUND * 3) / 4);
-  // Unfixed: the struct of every registration of both rounds is still there,
-  // 128,000 blocks. Fixed: within 100 of zero.
-  expect(after - before, stdout).toBeLessThan((ROUNDS * REGISTRATIONS_PER_ROUND) / 4);
-});
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: expect.stringMatching(/^\{"before":-?\d+,"held":-?\d+,"after":-?\d+\}$/),
+      stderr: "",
+      exitCode: 0,
+    });
+    const { before, held, after } = JSON.parse(stdout);
+
+    // While the rewriters of a round are alive, the count is up by one for each
+    // registration. One kind of struct alone is half of that: a struct that
+    // leaves this size class, or that mimalloc does not count, fails here.
+    expect(held - before, stdout).toBeGreaterThan((REGISTRATIONS_PER_ROUND * 3) / 4);
+    // Unfixed: the struct of every registration of both rounds is still there,
+    // 128,000 blocks. One struct for each rewriter would be 2,000. Fixed: about 0.
+    expect(after - before, stdout).toBeLessThan(REWRITERS_PER_ROUND);
+  },
+);
 
 // ASAN builds cannot read that count: their allocator is ASAN's. They measure
 // resident memory.

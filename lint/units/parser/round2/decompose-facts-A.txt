@@ -1,0 +1,109 @@
+Round 2 of unit "parser": facts read from the tree and the notes at be1ebe5295 (2026-10-01), part A.
+Input for the research units. Every line is something that was read or run, with the place.
+
+STATE OF THE MACHINE
+- /workspace/wt/parser: branch robobun/abbc0c92/lint-parser, HEAD be1ebe5295 = origin (0 ahead, 0 behind), clean.
+- No build/ and no node_modules in the worktree (machine restarted). Load average ~760 when this was written.
+- tsc 6.0.2 for probes: /workspace/bun/node_modules/typescript (the notes scripts name /workspace/wt/parser/node_modules/typescript,
+  which does not exist until bun install ran; oracle.mjs takes ORACLE_TYPESCRIPT).
+- Installed bun on PATH: 1.4.3-canary.1+367d939d9 (before round 1). /tmp/rr (typescript-go oracle binaries) is gone.
+- Reference: /workspace/ref/typescript-go at 89d5d5b, present.
+
+HAZARD: THE BINARIES WOULD BE COMMITTED
+- /workspace/notes/.gitignore has: lint/benchroot/, lint/measure/*/bin/, *.cg, lint/goals/*.mjs, lint/internal/.
+- `git check-ignore lint/measure/parser/base/bun` prints nothing: the path parser2.md names is NOT ignored, and
+  /workspace/tools/save-notes runs `git add -A .` for every unit. Write /workspace/notes/lint/measure/parser/.gitignore
+  (lines `base/` and `head/`) BEFORE a binary is copied there.
+
+A1 (differential run), notes grammar-diff/
+- harness.mjs: `<bun under test> harness.mjs <corpus.json> <out.jsonl.gz> [--jobs=N]`, 15 configurations of Bun.Transpiler
+  (transformSync ts/tsx plain, experimentalDecorators, emitDecoratorMetadata, keep, trim, min, node; scan; scanImports).
+  A run of corpus.small.json (209,628 sources) took 23 s with --jobs=8 on a release binary. Use --jobs=4 (rule: four at a time).
+- diff.mjs: classes A>R, R>A, A>A, R>R, crash, hang, missing; exit 1 on A>R or on a record no cause owns.
+- causes.mjs: helpers tscParses, bunMetadataOf, onlyMetadataDiffers, and an EMPTY default list. Every differing record is
+  "unexplained" until causes are written.
+- oracle.mjs: per source tsc parseDiagnostics as .ts and .tsx, plus `meta` / `metaLoose` (the __metadata calls of tsc with
+  experimentalDecorators + emitDecoratorMetadata, strict and strictNullChecks:false). It has NO checker grammar errors.
+  oracle.small.jsonl.gz and oracle.targeted.jsonl.gz exist. corpus.targeted.json is built from targeted/01..08-*.txt.
+- The new rule needs "no grammar error of the checker". Reference definition of that set:
+  /workspace/ref/typescript-go/internal/checker/grammarchecks.go (2,185 lines, 190 distinct diagnostics.* names);
+  tsc twin: grammarError* calls in _submodules/TypeScript/src/compiler/checker.ts (281 matches).
+- Only the installed binary's runs are saved (measure/base/grammar-diff/installed-367d939d9.*.jsonl.gz). The base run
+  (e3566be889) has to be made again.
+- Sources of causes: the commits e3566be889..e200dc91ce that touch src/js_parser (f1982cf599 productions of typescript-go,
+  f8493edf35 object type members and interface heritage, 2906595e0e class members/heritage/arguments, 7bd6c3cc6e and
+  0c70f54cbd initializers of type members, 1c7ca5c9e3 class index signature, 761df9953e import types and reserved type
+  names, 9a9e92c70f / 9f4f7eae70 / 8a3faae08e / daa97e786d operands and arrow bodies before ":", db5064cff8 and 328644b4c5
+  decorator metadata, e57ec63c80 and 972712a9f9 missing types in attempts, e200dc91ce statements and module syntax,
+  4d06830629 typeof #a kept rejected unless S::STRICT) and the describe/test.each groups of the four
+  test/bundler/transpiler/typescript-grammar*.test.ts files (one table per group = one cause).
+
+A2 (zero cost)
+- Tools: /workspace/notes/lint/tools/{symsizes.py,cgbench.sh,cgsum.py}; notes measure/{symdiff.py,grammar-syms.py},
+  measure/tools/{cgdiff.py,disasm.py,gdstats.py}; build-sink-positions/{fncmp.py,fnasm.py};
+  paren-expr-seam/{variants.py,run.py,relink.py,objfn.py,summarize.py,commands.sh} (one rlib per patched copy + ThinLTO
+  relink: a variant costs minutes, not a full build).
+- cgbench groups: bun-types typescript-lib src-js tsx js-control, inputs fixed under /workspace/notes/lint/benchroot.
+- Base numbers saved in notes: measure/base/symsizes.b.txt (bun_js_parser text 863 symbols 1,400,578 B; P<true,false>
+  319 / 475,751; type grammar 21 / 27,155; skip_type_script_type_with_opts::<Discard> 3,446; ::<DecoratorMetadata> 7,017;
+  parse_suffix TS 17,763; parse_prefix TS 15,583; Lexer::next 15,372), measure/base/grammar-syms.b.txt (per function),
+  paren-expr-seam/results/cg.base0.txt (Ir/Bc/Bi per group, total and matched).
+- Round 1's own relink measurement of the "(" seam (paren-expr-seam/results/linked.txt): variant topw (test at "(" in
+  TypeScript only) Bc +41,880 src-js, +42,000 tsx, +0 elsewhere; topwjs (JavaScript too) js-control Bc +192,360;
+  v2m2 (the twin that was merged) Bc +42,460 src-js, +46,000 tsx. No variant with a dispatch test had +0.
+- What a parse without lint runs now that the base did not (read in the code):
+  * src/js_parser/parse/parse_prefix.rs:50 `if !SCAN_ONLY && p.is_lint_parse()` in pfx_t_open_paren: every "(" that
+    starts an expression, JavaScript and TypeScript.
+  * parse_skip_typescript.rs:3320-3425 lexer_backtracker_bool / _result / _kept: read log.msgs.len, errors, warnings and
+    call sidecar_mark() in every attempt; on a backtrack truncate the log and test the mark.
+  * p.rs parser_snapshot / restore_parser_snapshot: `sidecar: self.sidecar_mark()` and its rewind; ParserSnapshot grew.
+  * parse/mod.rs:2347-2390 parse_async_prefix_expr: three tests before parse_paren_expr.
+  * about 110 tests of starts_for_parse_only after a TypeScript token test: parse_stmt.rs 27, parse/mod.rs 20,
+    parse_prefix.rs 12, parse_fn.rs 10, parse_typescript.rs 9, parse_property.rs 8, parse_skip_typescript.rs 7,
+    parse_suffix.rs 5, parse_jsx.rs 1 (`grep -n 'starts_for_parse_only\|is_lint_parse' src/js_parser/parse/*.rs`).
+  * the type grammar itself: parse_skip_typescript.rs +3803/-861 lines, type_sink.rs +2301; TypeSink::member takes the
+    arena for every sink since be1ebe5295.
+  * At the base only three sites tested the option (parse/mod.rs:225 class element, :1595 async arrow, parse_fn.rs:568).
+- With one copy of the parse pass a site test is one branch per occurrence of the TypeScript construct. A candidate that
+  removes them from P<_, false>: gate the sites on the existing SCAN_ONLY copy (P<_, true>, used by scan_imports only).
+  Obstacles read: new_expr sniffs require() under SCAN_ONLY (p.rs:915), parse_import_export.rs:75, parse_jsx.rs:19,
+  TRACK_SYMBOL_USAGE_DURING_PARSE_PASS (p.rs:806), the visit pass debug-asserts !SCAN_ONLY (blocks A3), and it moves the
+  seam the integrator merged: evaluate and report, do not implement without a ruling.
+- Sizes at the base (measure/base/psize): P 3808 release / 3888 debug (all four instantiations), Lexer 336,
+  LexerSnapshot 240, ParserSnapshot 416, Expr 16, Stmt 16, ts::Metadata 24, StartsForParseOnly 168, Options 392;
+  Msg 152 (const assert in src/ast/lib.rs), E::Arrow 32 (const assert). Not measured at the base: Binding, G::Decl,
+  G::Arg, G::Fn, G::Property. Head: ts::Metadata::MDot is StoreSlice<Ref> instead of Vec<Ref> (G::Arg, G::Fn,
+  G::Property embed ts::Metadata), ParserSnapshot has `sidecar: Option<SidecarMark>`.
+  Method of the probe: `const _: [(); 0] = [(); core::mem::size_of::<T>()];` and read the size from the error
+  (measure/base/psize/*.lines.txt). Do it in a scratch crate outside the worktree (template: measure/linkprobe/).
+
+A3 (lint parse, visited and printed, equals the normal transpile)
+- Nothing outside src/js_parser calls Parser::parse_for_lint: src/runtime/cli/lint_command.rs:239-251 calls parse_only for
+  js/jsx and Parser::parse for ts/tsx. Bun.Transpiler and bun:internal-for-testing reach no lint parse (NEEDS.md N3).
+- The cargo test binary cannot run the visit pass (API.md "How the tests of the parser run": twelve more symbols of
+  JavaScriptCore). So the visit needs the real binary.
+- Parser::_parse (parse_entry.rs:981) and _parse_for_lint (:547) both call init_p! then parse_stmts_up_to; the lint entry
+  sets p.starts_for_parse_only = Some(StartsForParseOnly::for_lint()) and, for a declaration file,
+  is_typescript_declare. P::init sets lexer.track_comments from minify_identifiers (p.rs:9787).
+- Parse-time readers of is_lint_parse(): parse_stmt.rs:1951, parse/mod.rs:1993, parse_prefix.rs:50, syntax_errors.rs:386.
+- Corpus: `git ls-files test src/js` has 3,214 .ts/.tsx/.mts/.cts files (153 .tsx, 10 .d.ts), 35,351,260 bytes. One
+  sweep with the release binary did not finish in 100 s on the loaded machine (notes lint-entry-probe/count.mjs).
+- CLAUDE.md: a test must fail with USE_SYSTEM_BUN=1. A switch the installed binary ignores makes both runs equal, so
+  the test needs a source that only a lint parse rejects (e.g. `let x: (a: ) => void`, TS1110) as proof the switch ran.
+
+TESTS THAT MUST STAY GREEN (twelve files + the Rust tests)
+- cargo test -p bun_js_parser --lib: 70 passed at be1ebe5295 (integrator).
+- test/bundler/transpiler/{typescript-grammar,typescript-grammar-expressions,typescript-grammar-statements,
+  typescript-grammar-decorator-metadata,decorator-metadata,decorators,transpiler-stack-overflow}.test.ts,
+  test/bundler/transpiler/transpiler.test.js, test/bundler/bundler_decorator_metadata.test.ts,
+  test/bundler/esbuild/ts.test.ts, test/js/bun/typescript/type-export.test.ts, test/cli/run/transpiler-cache.test.ts.
+- Leak check: BUN_DESTRUCT_VM_ON_EXIT=1 ASAN_OPTIONS=allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1
+  LSAN_OPTIONS=malloc_context_size=30:print_suppressions=0:suppressions=$PWD/test/leaksan.supp bun bd test <file>.
+
+API.md AS IT IS (984 lines)
+- Sections: "Type nodes: bun_ast::ts", "Syntax errors of a lint parse: the codes of the reference", "How the tests of the
+  parser run". No section for Parser::parse_for_lint / ParsedForLint (parse_entry.rs:97-140), for
+  StartsForParseOnly.{erased,wrappers,attached,generics} or for how a record is keyed to its node (Owner, ExprId,
+  Annotation.owner, Place, TypeArgumentsOf). No P1 section (no table input/old/new/tsc, no count by cause).
+- Several paragraphs say "not built and not run in the worktree": stale since the integrator's run.
+- NEEDS.md: N1 (code on Msg) is in the tree now; N2 and N3 wait for the cli unit; N4 (no CI job runs the Rust tests) open.

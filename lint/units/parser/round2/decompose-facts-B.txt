@@ -1,0 +1,126 @@
+Round 2 of unit "parser": facts read from the tree and the notes at be1ebe5295 (2026-10-01), part B.
+
+B1. COMMENTS
+- Lexer (src/js_parser/lexer.rs, unchanged since the base): `track_comments: bool` and `all_comments: Vec<Range>` exist.
+  scan_comment_text (:1902) pushes self.range() when track_comments; LexerSnapshot has all_comments_len and restore()
+  truncates (:403), so every lexer backtrack already rewinds the list.
+- track_comments is set ONLY from features.minify_identifiers: Parser::init (parse_entry.rs:433) and P::init (p.rs:9787).
+  _parse_for_lint does not set it. So lexer.all_comments is EMPTY in a lint parse, and the nine callers that hand it to
+  ts::full_start get no comment: wrappers.rs:214, attached.rs:541, erased.rs:240, generics.rs:549 and :562,
+  type_sink.rs:1595 and :2380, syntax_errors.rs:421 and :611.
+- Code that saves comments across restore_parser_snapshot and extends the list again has never run with a comment:
+  generics.rs:485-545 (lint_expression_of_heritage_entry), type_sink.rs:1531-1590; jumps forward set
+  end.all_comments_len by hand: parse_skip_typescript.rs:2758 and :2812, parse/mod.rs:484.
+- Before the first token: Parser::init primes the lexer (lexer.step(); lexer.next()) before any entry is chosen, so the
+  comments before the first token are scanned without tracking. After a `#!` line the lint entry calls lexer.next()
+  itself (parse_entry.rs:571).
+- JSX: next_inside_jsx_element (lexer.rs:2421-2519) scans `//` and `/* */` inline and never calls scan_comment_text.
+  Pushing there under `track_comments` would also change the character frequency of a minified build
+  (p.rs:1945 reads all_comments): a parse without lint must not change. Guard script: notes
+  lexer-lint-hooks/top-down/minify-guard.mjs (+ minify-guard.bun143.txt).
+- scan_legacy_html_close_comment (:2052) reads `-->` at the start of a line as a comment with a warning; the reference
+  has no such comment.
+- Kinds of the reference (scanner.go:616-675): `//` line; `/*` block; JSDoc when the character after `/**` is not `/`.
+- ts::full_start(source, comments: &[Range], start) is in src/ast/ts_nodes.rs:1093; it needs every comment in source order.
+- Backtracker tests to extend: parse_skip_typescript.rs:3725-3986 (record_in_every_list, observed), erased_tests.rs,
+  annotation_tests.rs.
+- Oracles from round 1's research: lexer-lint-hooks/bottom-up/{comments-oracle.cjs,comments-inputs.json,
+  comments-expected.txt}, top-down/{comments-oracle.cjs,comments-inputs.json,comments-expected.txt},
+  lexer-layout-probe.rs (layout of Lexer: where a flag fits without growth).
+
+B1. DIRECTIVE COMMENTS AND PRAGMAS (reference)
+- scanner.go:972 processCommentDirective(start, end, multiline): single line: skip `//`, more `/`, blanks, then `@`, then
+  prefix `ts-expect-error` or `ts-ignore`. Multi line: start is lastLineStart (after the last line break inside the
+  comment), skip blanks, skip any run of `/` and `*`, blanks, `@`. Range recorded: start..end, kind ExpectError | Ignore.
+  Called for every comment the scanner meets (scanner.go:631 and :674); commentDirectives is in ScannerState, so
+  Mark/Rewind restore it.
+- parser.go:466-469 finishSourceFile: CommentDirectives from the scanner; Pragmas = getCommentPragmas(sourceText) over
+  GetLeadingCommentRanges(text, 0) only (the comments before the first token, after a `#!` line);
+  processPragmasIntoFields.
+- parser.go:6463 extractPragmas: `///` + `<reference` with arguments path, types, lib, no-default-lib, resolution-mode,
+  preserve (each value with its own range); `// @ts-check` and `// @ts-nocheck` (single line only, with or without a
+  third slash); in a block comment `@jsx`, `@jsxfrag`, `@jsximportsource`, `@jsxruntime` with one argument, first `@` of
+  a line only. parser.go:6634 processPragmasIntoFields: ReferencedFiles, TypeReferenceDirectives (with resolution mode),
+  LibReferenceDirectives, CheckJsDirective (the last one wins), and the error Invalid_reference_directive_syntax at the
+  range of the comment when a reference has none of types, lib, path or no-default-lib="true".
+- Line-for-line JavaScript transliteration with vectors: lexer-lint-hooks/bottom-up/{pragmas-port.cjs,
+  pragmas-inputs.json,pragmas-expected.txt,pragmas-vs-go-oracle.cjs,pragmas-vs-tsc.cjs}, top-down/pragma-*.
+
+B2. THE CODE ON THE MSG
+- src/ast/lib.rs (owner cli): Metadata::Code(u32); Msg::code(&self) -> Option<u32>; Log::add_range_error_with_code(source,
+  r, code, text: Cow<'static,[u8]>, notes: Box<[Data]>); `pub metadata: Metadata` is a public field of Msg;
+  size_of::<Msg>() == 152 asserted. Consumers treat Code like Build: src/jsc/VirtualMachine.rs:3612, src/jsc/lib.rs:1379,
+  src/runtime/server/DevErrorPage.rs:159. Msg::write_format prints no code. bun_lint Diagnostic::from_msg prints TS<n>
+  for a message with a number, else `syntax`.
+- syntax_errors.rs today: Message{code,text} constants for 1002, 1003, 1005, 1010, 1109, 1110, 1128, 1131, 1160, 1359,
+  1385-1388; SyntaxErrors{list, recorded, sweep_at, first}; records follow a message by the address and length of its
+  text; P::code_syntax_error, unexpected_as, type_expected, statement_expected (refine), property_or_signature_expected,
+  function_or_constructor_type_to_error; finish() reads the six lexer messages from their text (of_lexer_message).
+  Parser::parse_for_lint_with_codes(errors, f) fills the table only when the parse fails (parse_entry.rs:599-605).
+- An error in the first token fails Parser::init (lexer.next()? at parse_entry.rs:437) before any entry runs: no table,
+  no code.
+- cli's API.md ("Diagnostic code on bun_ast::Msg") expects one call, add_range_error_with_code with tsc's text;
+  parser2.md B2 decides: the code on the Msg, the table keeps the range and the text of the reference.
+
+B3 / B4. WHAT THE REFERENCE REPORTS (tsc 6.0.2 parseDiagnostics, probed; same sites in typescript-go parser.go)
+  source                                   first diagnostic
+  a + b = c;                               TS1005 ';' expected.            at 6, length 1 (the "=")
+  -a = b;                                  TS1005 at 3 (+1)
+  a++ = b;                                 TS1005 at 4 (+1)
+  async function f() { await x = y; }      TS1005 at 29 (+1)
+  a++ ++;                                  TS1005 at 4 (+2), then TS1109 at 6
+  a--.b;                                   TS1005 at 3 (+1)
+  ++ delete a.b;                           TS1109 Expression expected. at 3 (+6)
+  new A?.b();                              TS1209 at 5 (+2), argument 'A'                        parser.go:5815
+  function* g() { yield*; }                TS1109 at the ";" (or "}")
+  a.<line break>b in c;                    TS1003 Identifier expected. at 2, length 0            parser.go:2989
+  for (using of of []) {}                  TS1011 at 18, length 0 (after "[")                    parser.go:5492, :6363-6383
+  a<b>.c;                                  TS1477 at 1 (+3)                                      parser.go:5461
+  <A>x ** 2;                               TS17007 at 0 (+4)                                     parser.go:4751
+  -x ** 2;                                 TS17006 at 0 (+2), argument "-"                       parser.go:4754
+  super<T>.x / super;                      TS2754 / TS1034                                       parser.go:5275, :5286
+  this?.#a                                 TS18030 at the private name                           parser.go:5455
+  import ... assert {...}                  TS2880 at `assert`                                    parser.go:2548, :2615, :3089
+  enum E { A B }                           TS1357 at `B`                                         parser.go:677
+  a keyword spelled with an escape         TS1260 when the parser moves past it (nextToken)      parser.go:388
+  list elements                            parsingContextErrors: TS1135, 1137, 1136, 1138, 1139, 1131, 1132, 1134, 1180,
+                                           1181; TS1129 (case clause), TS1130, TS1472, TS1434/1435/1440/1228 (missing
+                                           semicolon after a name), TS1442/1441/1436, TS1144
+- What Bun's parse pass does with them (installed 367d939d9: scanImports = parse pass only, transformSync = full):
+  accepted by the parse pass, rejected by the visit pass ("Invalid assignment target"): a + b = c, -a = b, a++ = b,
+  await x = y, a++ ++, ++ delete a.b. Accepted by both: a--.b, new A?.b(), yield*; 'a.' before 'b in c',
+  for (using of of []), this?.#a, import ... assert, and as TypeScript a<b>.c and <A>x ** 2. Rejected without a code:
+  -x ** 2 (Unexpected **), super<T>.x and super; (Unexpected "super"), enum E { A B } (Expected "}" but found "B"),
+  an escaped keyword (Unexpected), a[] (Unexpected ]). Re-check at HEAD: e200dc91ce changed statements.
+- Sites in Bun: assignment handlers sfx_t_equals and the compound ones (parse_suffix.rs:1405...), postfix
+  sfx_t_plus_plus / sfx_t_minus_minus (:535-571), sfx_t_dot and the optional chain handlers, sfx_t_less_than /
+  sfx_type_arguments (:900-1010), pfx_t_new, pfx_t_super (parse_prefix.rs:25-45), pfx_t_less_than_for_lint
+  (parse_prefix.rs:1068-1165, lint-only code), lint_type_arguments_in_expression (generics.rs, lint-only code),
+  parse_yield_expr (parse/mod.rs:132), parse_path with `assert` (parse/mod.rs:1992-2003), import attributes of an
+  import type (type_sink.rs:2427, parse_skip_typescript.rs:1652), parse_typescript_enum_stmt (parse_typescript.rs:645),
+  T::TEscapedKeyword (lexer.rs:1092-1105), the last arm of parse_prefix (unexpected_as(EXPRESSION_EXPECTED)).
+- The left operand tells LeftHandSideExpression only together with the wrapper records: `(a + b) = c` and `x! = 1` are
+  left-hand sides, `x as T = 1` and `<T>x = 1` are not; the tree holds the bare operand (wrappers.rs: Wrapper, ExprId).
+- E::Binary keeps no offset of its operator and an Expr has no end: a check after the parse finds the "=" only as
+  full_start(first token of the right operand), which needs the comment list of B1.
+- Cost: a test in sfx_t_equals or sfx_t_plus_plus runs for every assignment or update of every parse. Lint-only code
+  (pfx_t_less_than_for_lint, lint_type_arguments_*, parse_paren_expr_for_lint) and error paths cost a parse without
+  lint nothing.
+- API.md, "Not done" (lines 874-882) and "Known differences" (855-872) are the list B4 names.
+- Strictness outside the type grammar: class members, parameters and heritage clauses are read by Bun's own productions
+  (parse_property.rs, parse_fn.rs, parse_class in parse/mod.rs:165-440); the Build sink is strict only for the types
+  inside them. Reference productions: parseClassElement, parseClassMemberList, parseModifiers, parseParameter,
+  parseParameterList, parseHeritageClauses, parseExpressionWithTypeArguments, parsePropertyOrMethodDeclaration,
+  parseAccessorDeclaration, parseConstructorDeclaration (parser.go). Grammar errors of the checker
+  (grammarchecks.go: duplicate or misplaced modifiers, empty lists, `extends` twice) are NOT parse errors: the
+  typecheck unit reports them from the side table.
+
+B5. TESTS
+- Every test of a lint parse is a #[test] in bun_js_parser: mod tests of parse_entry.rs, wrappers.rs, attached.rs,
+  erased.rs, generics.rs, syntax_errors.rs, parse_skip_typescript.rs; erased_tests.rs, annotation_tests.rs;
+  type_sink_tests.rs; native_test_shims.rs (57 stand-ins for C/C++ symbols; a new symbol the linker reports gets its
+  stand-in there). Command: cargo test -p bun_js_parser --lib (after one bun bd --version).
+- Pattern of a test that parses: Arena::new(); ASTMemoryAllocator::borrowing(&arena).enter(); Source::init_path_string;
+  Options::init(Default::default(), loader) with features.no_macros and dont_bundle_twice; Parser::init(...);
+  parser.parse_for_lint(|parsed| ...) or parse_for_lint_with_codes(&mut errors, ...).
+- No CI job runs these tests (NEEDS.md N4).

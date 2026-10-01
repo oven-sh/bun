@@ -491,12 +491,7 @@ it("dir should be validated", async () => {
 });
 
 it("reload() keeps route names when dir is reached through a symlink", async () => {
-  // The constructor stores the resolved real path of `dir`, which has no
-  // trailing separator, and reload() loads routes against it. The loader used
-  // to slice each entry's directory at the length of that path, so after a
-  // reload every name carried the last character of the directory name:
-  // `/b` became `s/b`. With an index route the name collapsed to one character
-  // and route validation looped forever, so this fixture has no index route.
+  // reload() loads routes against the real path of `dir`, which has no trailing separator.
   using dir = tempDir("fsr-reload-symlink", {
     "fixture.ts": /* ts */ `
       import path from "path";
@@ -531,13 +526,7 @@ it("reload() keeps route names when dir is reached through a symlink", async () 
 });
 
 it("reload() returns when the resolver has dir cached without a trailing separator", async () => {
-  // After a failed relative resolve, the resolver has the entries of `pages`
-  // cached under a path with no trailing separator. A router over a
-  // subdirectory then caches `pages` itself under that spelling, and that is
-  // the path reload() loads routes against. The loader used to slice each
-  // entry's directory at the length of that path: the index route's name
-  // shrank to one character and route validation never ended, so an unfixed
-  // build never prints.
+  // The failed resolve and the router over `sub` leave `pages` cached without a trailing separator.
   using dir = tempDir("fsr-reload-failed-resolve", {
     "fixture.ts": /* ts */ `
       import path from "path";

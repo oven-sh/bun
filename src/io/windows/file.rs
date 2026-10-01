@@ -437,6 +437,9 @@ impl Inner {
                     return super::complete_from_loop(loop_, &raw mut (*this).op);
                 }
                 WorkPool::owe_write();
+                if !(*this).disk {
+                    WorkPool::write_held_up();
+                }
             }
             super::op_submitted(loop_);
             WorkPool::schedule(&raw mut (*this).task);
@@ -461,8 +464,10 @@ impl Inner {
             if claimed.is_ok() {
                 (*this).result = Self::perform(this);
             }
-            if owed {
+            if owed && (*this).disk {
                 WorkPool::write_settled();
+            } else if owed {
+                WorkPool::held_up_write_settled();
             }
             let from = match claimed {
                 Ok(_) => RUNNING,

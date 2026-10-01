@@ -138,8 +138,9 @@ static WRITES_OWED: AtomicU32 = AtomicU32::new(0);
 /// [`WorkPool::write_held_up`].
 static WRITES_HELD_UP: AtomicU32 = AtomicU32::new(0);
 /// How long an exit goes on waiting for writes that are held up while none of
-/// them ends.
-const HELD_UP_GRACE_NS: u64 = 100 * 1_000_000;
+/// them ends. It covers the time until a thread, which may have to be created,
+/// first runs: hundreds of milliseconds where other processes want the CPUs.
+const HELD_UP_GRACE_NS: u64 = 1_000 * 1_000_000;
 
 #[cold]
 fn create() -> ThreadPool {

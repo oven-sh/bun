@@ -1128,11 +1128,15 @@ impl Connection {
             if hdr.stream_id > self.last_stream_id {
                 self.last_stream_id = hdr.stream_id;
             }
+            let processed = match disposition {
+                BlockDisposition::Deliver | BlockDisposition::StreamClosed => true,
+                // node refuses for memory in a callback that runs after nghttp2 set
+                // last_proc_stream_id, so the stream counts. It does not once a GOAWAY of ours
+                // told the peer that no higher id is processed (§6.8).
+                BlockDisposition::Refused => !sink.goaway_sent(),
+            };
             // A client's "new" HEADERS is the response to its own request: not a peer stream.
-            // A refused stream counts as processed, because node refuses it in a callback that
-            // runs after nghttp2 set last_proc_stream_id. It does not once a GOAWAY of ours
-            // told the peer that no higher id is processed (§6.8).
-            if self.is_server && !(refused && sink.goaway_sent()) {
+            if self.is_server && processed {
                 self.note_peer_stream(sink, hdr.stream_id);
             }
             if !refused {

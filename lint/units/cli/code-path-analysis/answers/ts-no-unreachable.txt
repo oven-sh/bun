@@ -1,0 +1,164 @@
+"function f() { while (true as boolean) {} a; }"
+      => (none)
+"function f() { while (<boolean>true) {} a; }"
+      => (none)
+"function f() { while (true!) {} a; }"
+      => (none)
+"function f() { while (true satisfies boolean) {} a; }"
+      => (none)
+"function f() { while ((true)) {} a; }"
+      => no-unreachable 1:34 Unreachable code.
+"function f() { for (;1 as any;) {} a; }"
+      => (none)
+"function f() { do {} while (true as const); a; }"
+      => (none)
+"function f() { for (;;) {} a; }"
+      => no-unreachable 1:28 Unreachable code.
+"function f() { return; a as any; b!; <T>c; }"
+      => no-unreachable 1:24 Unreachable code.
+"function f() { return; let x: number; a; }"
+      => no-unreachable 1:24 Unreachable code.
+"function f() { return; var x: number; a; }"
+      => no-unreachable 1:39 Unreachable code.
+"function f() { return; var x!: number; a; }"
+      => no-unreachable 1:40 Unreachable code.
+"function f() { return; a; interface I {} b; }"
+      => no-unreachable 1:24 Unreachable code. | no-unreachable 1:42 Unreachable code.
+"function f() { return; a; type T = number; b; }"
+      => no-unreachable 1:24 Unreachable code. | no-unreachable 1:44 Unreachable code.
+"function f() { return; a; type T = number\n b; }"
+      => no-unreachable 1:24 Unreachable code. | no-unreachable 2:2 Unreachable code.
+"function f() { return; a; declare const x: number; b; }"
+      => no-unreachable 1:24 Unreachable code.
+"function f() { return; interface I {} a; }"
+      => no-unreachable 1:39 Unreachable code.
+"function f() { return; type T = 1; }"
+      => (none)
+"function f() { return; enum E { A } a; }"
+      => no-unreachable 1:37 Unreachable code.
+"function f() { return; a; enum E { A } b; }"
+      => no-unreachable 1:24 Unreachable code. | no-unreachable 1:40 Unreachable code.
+"function f() { return; a; const enum E { A } b; }"
+      => no-unreachable 1:24 Unreachable code. | no-unreachable 1:46 Unreachable code.
+"function f() { return; a; function g(): void; function g() {} b; }"
+      => no-unreachable 1:24 Unreachable code. | no-unreachable 1:63 Unreachable code.
+"function f() { return; a; abstract class A {} b; }"
+      => no-unreachable 1:24 Unreachable code.
+"function f() { return; a; declare class A {} b; }"
+      => no-unreachable 1:24 Unreachable code.
+"function f() { return; a; class A<T> implements I {} b; }"
+      => no-unreachable 1:24 Unreachable code.
+"throw 1; namespace N { a; } b;"
+      => no-unreachable 1:24 Unreachable code. | no-unreachable 1:29 Unreachable code.
+"throw 1; a; namespace N { b; } c;"
+      => no-unreachable 1:10 Unreachable code. | no-unreachable 1:27 Unreachable code. | no-unreachable 1:32 Unreachable code.
+"throw 1; a; namespace N {} b;"
+      => no-unreachable 1:10 Unreachable code. | no-unreachable 1:28 Unreachable code.
+"throw 1; a; declare namespace N {} b;"
+      => no-unreachable 1:10 Unreachable code. | no-unreachable 1:36 Unreachable code.
+"throw 1; a; declare module 'm' {} b;"
+      => no-unreachable 1:10 Unreachable code. | no-unreachable 1:35 Unreachable code.
+"throw 1; export enum E { A } b;"
+      => no-unreachable 1:10 Unreachable code.
+"throw 1; export namespace N { x; } b;"
+      => no-unreachable 1:10 Unreachable code.
+"throw 1; export interface I {} b;"
+      => no-unreachable 1:10 Unreachable code.
+"throw 1; export type T = 1; b;"
+      => no-unreachable 1:10 Unreachable code.
+"throw 1; a; export type T = 1; b;"
+      => no-unreachable 1:10 Unreachable code.
+"throw 1; export declare const x: number; b;"
+      => no-unreachable 1:10 Unreachable code.
+"throw 1; import type { T } from 'x'; b;"
+      => no-unreachable 1:38 Unreachable code.
+"throw 1; a; import type { T } from 'x'; b;"
+      => no-unreachable 1:10 Unreachable code. | no-unreachable 1:41 Unreachable code.
+"throw 1; import x = require('x'); b;"
+      => no-unreachable 1:35 Unreachable code.
+"throw 1; a; import x = N.y; b;"
+      => no-unreachable 1:10 Unreachable code. | no-unreachable 1:29 Unreachable code.
+"throw 1; a; export = a; b;"
+      => no-unreachable 1:10 Unreachable code. | no-unreachable 1:25 Unreachable code.
+"throw 1; export = a;"
+      => (none)
+"throw 1; a; export as namespace X; b;"
+      => no-unreachable 1:10 Unreachable code. | no-unreachable 1:36 Unreachable code.
+"namespace N { throw 1; a; }"
+      => no-unreachable 1:24 Unreachable code.
+"namespace N { export function f() { return; a; } }"
+      => no-unreachable 1:45 Unreachable code.
+"class C extends B { foo: number; constructor() {} }"
+      => no-unreachable 1:21 Unreachable code.
+"class C extends B { foo!: number; constructor() {} }"
+      => no-unreachable 1:21 Unreachable code.
+"class C extends B { foo?: number; constructor() {} }"
+      => no-unreachable 1:21 Unreachable code.
+"class C extends B { declare foo: number; constructor() {} }"
+      => no-unreachable 1:21 Unreachable code.
+"class C extends B { readonly foo = 1; private bar; constructor() {} }"
+      => no-unreachable 1:21 Unreachable code.
+"class C extends B { public foo; protected bar; constructor() {} }"
+      => no-unreachable 1:21 Unreachable code.
+"abstract class C extends B { abstract foo: number; bar; constructor() { super2(); } }"
+      => no-unreachable 1:52 Unreachable code.
+"abstract class C extends B { abstract foo: number; constructor() {} }"
+      => (none)
+"class C extends B { accessor foo = 1; constructor() {} }"
+      => (none)
+"class C extends B { [key: string]: any; foo; constructor() {} }"
+      => no-unreachable 1:41 Unreachable code.
+"class C extends B { foo; constructor(); constructor(a?: any) {} }"
+      => no-unreachable 1:21 Unreachable code.
+"class C extends B { foo; constructor(); constructor(a?: any) { super(); } }"
+      => (none)
+"class C extends B { foo; constructor(private x: number) {} }"
+      => no-unreachable 1:21 Unreachable code.
+"class C extends B { @dec foo; constructor() {} }"
+      => no-unreachable 1:21 Unreachable code.
+"class C extends B { @dec() foo = 1; bar; constructor() {} }"
+      => no-unreachable 1:21 Unreachable code.
+"class C extends B { foo; constructor() { super() as any; } }"
+      => (none)
+"class C extends B { foo; constructor() { super()!; } }"
+      => (none)
+"class C extends B { foo; constructor() { (<any>super()); } }"
+      => (none)
+"class C extends B<T> { foo; constructor() {} }"
+      => no-unreachable 1:24 Unreachable code.
+"class C implements I { foo; constructor() {} }"
+      => (none)
+"declare class C extends B { foo; constructor(); }"
+      => (none)
+"function f(): never { throw 1; a; }"
+      => no-unreachable 1:32 Unreachable code.
+"function f<T>(x: T): T { return x; a; }"
+      => no-unreachable 1:36 Unreachable code.
+"const f = (x: number): number => { return x; a; };"
+      => no-unreachable 1:46 Unreachable code.
+"const f = <T,>(x: T) => { return; a; b; };"
+      => no-unreachable 1:35 Unreachable code.
+"function f(this: Window) { return; a; }"
+      => no-unreachable 1:36 Unreachable code.
+"function f(x?: number, ...r: any[]) { return; a; }"
+      => no-unreachable 1:47 Unreachable code.
+"function f() { try { return; } catch (e: unknown) { a; } b; }"
+      => no-unreachable 1:51 Unreachable code.
+"function f() { return; using x = y; a; }"
+      => no-unreachable 1:24 Unreachable code.
+"function f() { return; label: type T = 1; a; }"
+      => no-unreachable 1:24 Unreachable code.
+"function f() { switch (x) { case 1: return; type T = 1; a; } }"
+      => no-unreachable 1:57 Unreachable code.
+"function f() { switch (x) { case 1: return; a; type T = 1; b; } }"
+      => no-unreachable 1:45 Unreachable code. | no-unreachable 1:60 Unreachable code.
+"function f() { switch (x) { case 1: return; interface I {} } a; }"
+      => (none)
+"function f() { return; a satisfies T; b as const; }"
+      => no-unreachable 1:24 Unreachable code.
+"function f() { return; if (a) type T = 1; b; }"
+      => no-unreachable 1:24 Unreachable code.
+"//tsx\nfunction f() { return; <div>{a}</div>; b; }"
+      => no-unreachable 2:24 Unreachable code.
+"//tsx\nfunction f() { return <div/>; a; }"
+      => no-unreachable 2:31 Unreachable code.

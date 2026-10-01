@@ -1,0 +1,292 @@
+{
+	"valid": [
+		{
+			"code": "function foo() { function bar() { return 1; } return bar(); }"
+		},
+		{
+			"code": "function foo() { return bar(); function bar() { return 1; } }"
+		},
+		{
+			"code": "function foo() { return x; var x; }"
+		},
+		{
+			"code": "throw new Error(); import foo from 'foo';",
+			"languageOptions": {
+				"ecmaVersion": 6,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "function foo() { var x = 1; var y = 2; }"
+		},
+		{
+			"code": "function foo() { var x = 1; var y = 2; return; }"
+		},
+		{
+			"code": "while (true) { switch (foo) { case 1: x = 1; x = 2;} }"
+		},
+		{
+			"code": "while (true) { break; var x; }"
+		},
+		{
+			"code": "while (true) { continue; var x, y; }"
+		},
+		{
+			"code": "while (true) { throw 'message'; var x; }"
+		},
+		{
+			"code": "while (true) { if (true) break; var x = 1; }"
+		},
+		{
+			"code": "while (true) continue;"
+		},
+		{
+			"code": "switch (foo) { case 1: break; var x; }"
+		},
+		{
+			"code": "switch (foo) { case 1: break; var x; default: throw true; };"
+		},
+		{
+			"code": "const arrow_direction = arrow => {  switch (arrow) { default: throw new Error();  };}",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var x = 1; y = 2; throw 'uh oh'; var y;"
+		},
+		{
+			"code": "function foo() { var x = 1; if (x) { return; } x = 2; }"
+		},
+		{
+			"code": "function foo() { var x = 1; if (x) { } else { return; } x = 2; }"
+		},
+		{
+			"code": "function foo() { var x = 1; switch (x) { case 0: break; default: return; } x = 2; }"
+		},
+		{
+			"code": "function foo() { var x = 1; while (x) { return; } x = 2; }"
+		},
+		{
+			"code": "function foo() { var x = 1; for (x in {}) { return; } x = 2; }"
+		},
+		{
+			"code": "function foo() { var x = 1; try { return; } finally { x = 2; } }"
+		},
+		{
+			"code": "function foo() { var x = 1; for (;;) { if (x) break; } x = 2; }"
+		},
+		{
+			"code": "A: { break A; } foo()"
+		},
+		{
+			"code": "function* foo() { try { yield 1; return; } catch (err) { return err; } }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "function foo() { try { bar(); return; } catch (err) { return err; } }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "function foo() { try { a.b.c = 1; return; } catch (err) { return err; } }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "class C { foo = reachable; }",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			}
+		},
+		{
+			"code": "class C { foo = reachable; constructor() {} }",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			}
+		},
+		{
+			"code": "class C extends B { foo = reachable; }",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			}
+		},
+		{
+			"code": "class C extends B { foo = reachable; constructor() { super(); } }",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			}
+		},
+		{
+			"code": "class C extends B { static foo = reachable; constructor() {} }",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			}
+		}
+	],
+	"invalid": [
+		{
+			"code": "throw new Error(); import foo from 'foo'; foo();",
+			"languageOptions": {
+				"ecmaVersion": 6,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "throw new Error(); foo(); import foo from 'foo'; foo();",
+			"languageOptions": {
+				"ecmaVersion": 6,
+				"sourceType": "module"
+			}
+		},
+		{
+			"code": "function foo() { return x; var x = 1; }"
+		},
+		{
+			"code": "function foo() { return x; var x, y = 1; }"
+		},
+		{
+			"code": "while (true) { continue; var x = 1; }"
+		},
+		{
+			"code": "function foo() { return; x = 1; }"
+		},
+		{
+			"code": "function foo() { throw error; x = 1; }"
+		},
+		{
+			"code": "while (true) { break; x = 1; }"
+		},
+		{
+			"code": "while (true) { continue; x = 1; }"
+		},
+		{
+			"code": "function foo() { switch (foo) { case 1: return; x = 1; } }"
+		},
+		{
+			"code": "function foo() { switch (foo) { case 1: throw e; x = 1; } }"
+		},
+		{
+			"code": "while (true) { switch (foo) { case 1: break; x = 1; } }"
+		},
+		{
+			"code": "while (true) { switch (foo) { case 1: continue; x = 1; } }"
+		},
+		{
+			"code": "var x = 1; throw 'uh oh'; var y = 2;"
+		},
+		{
+			"code": "function foo() { var x = 1; if (x) { return; } else { throw e; } x = 2; }"
+		},
+		{
+			"code": "function foo() { var x = 1; if (x) return; else throw -1; x = 2; }"
+		},
+		{
+			"code": "function foo() { var x = 1; try { return; } finally {} x = 2; }"
+		},
+		{
+			"code": "function foo() { var x = 1; try { } finally { return; } x = 2; }"
+		},
+		{
+			"code": "function foo() { var x = 1; do { return; } while (x); x = 2; }"
+		},
+		{
+			"code": "function foo() { var x = 1; while (x) { if (x) break; else continue; x = 2; } }"
+		},
+		{
+			"code": "function foo() { var x = 1; for (;;) { if (x) continue; } x = 2; }"
+		},
+		{
+			"code": "function foo() { var x = 1; while (true) { } x = 2; }"
+		},
+		{
+			"code": "const arrow_direction = arrow => {  switch (arrow) { default: throw new Error();  }; g() }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "\n                function foo() {\n                    return;\n\n                    a();  // ← ERROR: Unreachable code. (no-unreachable)\n\n                    b()   // ↑ ';' token is included in the unreachable code, so this statement will be merged.\n                    // comment\n                    c();  // ↑ ')' token is included in the unreachable code, so this statement will be merged.\n                }\n            "
+		},
+		{
+			"code": "\n                function foo() {\n                    return;\n\n                    a();\n\n                    if (b()) {\n                        c()\n                    } else {\n                        d()\n                    }\n                }\n            "
+		},
+		{
+			"code": "\n                function foo() {\n                    if (a) {\n                        return\n                        b();\n                        c();\n                    } else {\n                        throw err\n                        d();\n                    }\n                }\n            "
+		},
+		{
+			"code": "\n                function foo() {\n                    if (a) {\n                        return\n                        b();\n                        c();\n                    } else {\n                        throw err\n                        d();\n                    }\n                    e();\n                }\n            "
+		},
+		{
+			"code": "\n                function* foo() {\n                    try {\n                        return;\n                    } catch (err) {\n                        return err;\n                    }\n                }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "\n                function foo() {\n                    try {\n                        return;\n                    } catch (err) {\n                        return err;\n                    }\n                }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "\n                function foo() {\n                    try {\n                        return;\n                        let a = 1;\n                    } catch (err) {\n                        return err;\n                    }\n                }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "class C extends B { foo; constructor() {} }",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			}
+		},
+		{
+			"code": "class C extends B { foo = unreachable + code; constructor() {} }",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			}
+		},
+		{
+			"code": "class C extends B { foo; bar; constructor() {} }",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			}
+		},
+		{
+			"code": "class C extends B { foo; constructor() {} bar; }",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			}
+		},
+		{
+			"code": "(class extends B { foo; constructor() {} bar; })",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			}
+		},
+		{
+			"code": "class B extends A { x; constructor() { class C extends D { [super().x]; constructor() {} } } }",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			}
+		},
+		{
+			"code": "class B extends A { x; constructor() { class C extends super().x { y; constructor() {} } } }",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			}
+		},
+		{
+			"code": "class B extends A { x; static y; z; static q; constructor() {} }",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			}
+		}
+	],
+	"skipped": 0
+}

@@ -1,0 +1,256 @@
+{"code":"function f() { return; a; b; }","type":"script","reports":["1:24-1:29 Unreachable code."]}
+{"code":"function f() { return; a; ; b; }","type":"script","reports":["1:24-1:26 Unreachable code.","1:29-1:31 Unreachable code."]}
+{"code":"function f() { return; a;; b; }","type":"script","reports":["1:24-1:26 Unreachable code.","1:28-1:30 Unreachable code."]}
+{"code":"function f() { return; a\n;b; }","type":"script","reports":["1:24-2:4 Unreachable code."]}
+{"code":"function f() { return; a\nb }","type":"script","reports":["1:24-2:2 Unreachable code."]}
+{"code":"function f() { return; {}; b; }","type":"script","reports":["1:24-1:26 Unreachable code.","1:28-1:30 Unreachable code."]}
+{"code":"function f() { return; {} b; }","type":"script","reports":["1:24-1:29 Unreachable code."]}
+{"code":"function f() { return; { a; } b; }","type":"script","reports":["1:24-1:33 Unreachable code."]}
+{"code":"function f() { { return; a; } b; }","type":"script","reports":["1:26-1:28 Unreachable code.","1:31-1:33 Unreachable code."]}
+{"code":"function f() { return; a; function g() {} b; }","type":"script","reports":["1:24-1:26 Unreachable code.","1:43-1:45 Unreachable code."]}
+{"code":"function f() { return; a; var x; b; }","type":"script","reports":["1:24-1:26 Unreachable code.","1:34-1:36 Unreachable code."]}
+{"code":"function f() { return; a; var x = 1; b; }","type":"script","reports":["1:24-1:40 Unreachable code."]}
+{"code":"function f() { return; var x; a; }","type":"script","reports":["1:31-1:33 Unreachable code."]}
+{"code":"function f() { return; var x, y = 1; a; }","type":"script","reports":["1:24-1:40 Unreachable code."]}
+{"code":"function f() { return; let x; a; }","type":"script","reports":["1:24-1:33 Unreachable code."]}
+{"code":"function f() { return; const x = 1; a; }","type":"script","reports":["1:24-1:39 Unreachable code."]}
+{"code":"function f() { return; foo(function() { x; }); bar(); }","type":"script","reports":["1:24-1:47 Unreachable code.","1:48-1:54 Unreachable code."]}
+{"code":"function f() { return; foo(function() {}); bar(); }","type":"script","reports":["1:24-1:43 Unreachable code.","1:44-1:50 Unreachable code."]}
+{"code":"function f() { return; foo(() => x); bar(); }","type":"script","reports":["1:24-1:44 Unreachable code."]}
+{"code":"function f() { return; foo(() => { x; }); bar(); }","type":"script","reports":["1:24-1:42 Unreachable code.","1:43-1:49 Unreachable code."]}
+{"code":"function f() { return; foo(() => {}); bar(); }","type":"script","reports":["1:24-1:38 Unreachable code.","1:39-1:45 Unreachable code."]}
+{"code":"function f() { return; foo(class { m() {} }); bar(); }","type":"script","reports":["1:24-1:46 Unreachable code.","1:47-1:53 Unreachable code."]}
+{"code":"function f() { return; foo(class { static { x; } }); bar(); }","type":"script","reports":["1:24-1:53 Unreachable code.","1:54-1:60 Unreachable code."]}
+{"code":"function f() { return; foo(class { x = 1; }); bar(); }","type":"script","reports":["1:24-1:53 Unreachable code."]}
+{"code":"function f() { return; foo(class { x = () => { y; }; }); bar(); }","type":"script","reports":["1:24-1:57 Unreachable code.","1:58-1:64 Unreachable code."]}
+{"code":"function f() { return; class A { m() { x; } } bar(); }","type":"script","reports":["1:24-1:46 Unreachable code.","1:47-1:53 Unreachable code."]}
+{"code":"function f() { return; class A {} ; bar(); }","type":"script","reports":["1:24-1:34 Unreachable code.","1:37-1:43 Unreachable code."]}
+{"code":"function f() { return; class A {} bar(); }","type":"script","reports":["1:24-1:41 Unreachable code."]}
+{"code":"function f() { return; if (a) b; c; }","type":"script","reports":["1:24-1:36 Unreachable code."]}
+{"code":"function f() { return; if (a) b; else c; d; }","type":"script","reports":["1:24-1:44 Unreachable code."]}
+{"code":"function f() { return; if (a) {} else {} ; d; }","type":"script","reports":["1:24-1:41 Unreachable code.","1:44-1:46 Unreachable code."]}
+{"code":"function f() { return; if (a) {} else ; d; }","type":"script","reports":["1:24-1:43 Unreachable code."]}
+{"code":"function f() { return; if (a) ; d; }","type":"script","reports":["1:24-1:35 Unreachable code."]}
+{"code":"function f() { return; for (;;) ; d; }","type":"script","reports":["1:24-1:37 Unreachable code."]}
+{"code":"function f() { return; for (;;) ; ; d; }","type":"script","reports":["1:24-1:34 Unreachable code.","1:37-1:39 Unreachable code."]}
+{"code":"function f() { return; for (;;) {} ; d; }","type":"script","reports":["1:24-1:35 Unreachable code.","1:38-1:40 Unreachable code."]}
+{"code":"function f() { return; while (a) b; d; }","type":"script","reports":["1:24-1:39 Unreachable code."]}
+{"code":"function f() { return; do a; while (b); d; }","type":"script","reports":["1:24-1:43 Unreachable code."]}
+{"code":"function f() { return; do a; while (b) d; }","type":"script","reports":["1:24-1:42 Unreachable code."]}
+{"code":"function f() { return; do {} while (b); ; d; }","type":"script","reports":["1:24-1:40 Unreachable code.","1:43-1:45 Unreachable code."]}
+{"code":"function f() { return; l: a; d; }","type":"script","reports":["1:24-1:32 Unreachable code."]}
+{"code":"function f() { return; l: {} ; d; }","type":"script","reports":["1:24-1:29 Unreachable code.","1:32-1:34 Unreachable code."]}
+{"code":"function f() { return; l: for (;;) break l; d; }","type":"script","reports":["1:24-1:47 Unreachable code."]}
+{"code":"function f() { return; with (a) b; d; }","type":"script","reports":["1:24-1:38 Unreachable code."]}
+{"code":"function f() { return; switch (a) { case 1: b; } d; }","type":"script","reports":["1:24-1:52 Unreachable code."]}
+{"code":"function f() { return; switch (a) { case 1: b; }; d; }","type":"script","reports":["1:24-1:49 Unreachable code.","1:51-1:53 Unreachable code."]}
+{"code":"function f() { return; try { a; } catch { b; } finally { c; } d; }","type":"script","reports":["1:24-1:65 Unreachable code."]}
+{"code":"function f() { return; try { a; } finally { c; }; d; }","type":"script","reports":["1:24-1:49 Unreachable code.","1:51-1:53 Unreachable code."]}
+{"code":"function f() { return; throw a; d; }","type":"script","reports":["1:24-1:35 Unreachable code."]}
+{"code":"function f() { return; return; d; }","type":"script","reports":["1:24-1:34 Unreachable code."]}
+{"code":"function f() { return; debugger; d; }","type":"script","reports":["1:24-1:36 Unreachable code."]}
+{"code":"function f() { return; 'use strict'; d; }","type":"script","reports":["1:24-1:40 Unreachable code."]}
+{"code":"function f() { 'use strict'; return; d; }","type":"script","reports":["1:38-1:40 Unreachable code."]}
+{"code":"function f() { return; a; /* c */ b; }","type":"script","reports":["1:24-1:37 Unreachable code."]}
+{"code":"function f() { return; a; // ;\n b; }","type":"script","reports":["1:24-2:4 Unreachable code."]}
+{"code":"function f() { return; a /* ; */ ; b; }","type":"script","reports":["1:24-1:38 Unreachable code."]}
+{"code":"function f() { return; a; /* ; */ ; b; }","type":"script","reports":["1:24-1:26 Unreachable code.","1:37-1:39 Unreachable code."]}
+{"code":"function f() { return\n a; b; }","type":"script","reports":["2:2-2:7 Unreachable code."]}
+{"code":"function f() { if (a) { return; b; } else { return; c; } d; }","type":"script","reports":["1:33-1:35 Unreachable code.","1:53-1:55 Unreachable code.","1:58-1:60 Unreachable code."]}
+{"code":"function f() { if (a) return; else return; d; e; }","type":"script","reports":["1:44-1:49 Unreachable code."]}
+{"code":"function f() { if (a) return; else { return; c; } d; }","type":"script","reports":["1:46-1:48 Unreachable code.","1:51-1:53 Unreachable code."]}
+{"code":"function f() { while (true) { a; } b; c; }","type":"script","reports":["1:36-1:41 Unreachable code."]}
+{"code":"function f() { while (true) { break; a; } b; }","type":"script","reports":["1:38-1:40 Unreachable code."]}
+{"code":"function f() { for (;;) { continue; a; b; } c; }","type":"script","reports":["1:37-1:42 Unreachable code.","1:45-1:47 Unreachable code."]}
+{"code":"function f() { for (;;) {} a; function g() {} b; }","type":"script","reports":["1:28-1:30 Unreachable code.","1:47-1:49 Unreachable code."]}
+{"code":"function f() { do { return; a; } while (b); c; }","type":"script","reports":["1:29-1:31 Unreachable code.","1:45-1:47 Unreachable code."]}
+{"code":"function f() { do { a; } while (true); c; }","type":"script","reports":["1:40-1:42 Unreachable code."]}
+{"code":"function f() { switch (a) { case 1: return; b; c; case 2: d; } }","type":"script","reports":["1:45-1:50 Unreachable code."]}
+{"code":"function f() { switch (a) { case 1: return; b; ; c; } }","type":"script","reports":["1:45-1:47 Unreachable code.","1:50-1:52 Unreachable code."]}
+{"code":"function f() { switch (a) { case 1: return; ; b; } }","type":"script","reports":["1:47-1:49 Unreachable code."]}
+{"code":"function f() { switch (a) { default: return; b; } c; }","type":"script","reports":["1:46-1:48 Unreachable code.","1:51-1:53 Unreachable code."]}
+{"code":"function f() { switch (a) { case 1: return; default: return; } c; d; }","type":"script","reports":["1:64-1:69 Unreachable code."]}
+{"code":"function f() { switch (a) { case 1: break; b; case 2: c; } }","type":"script","reports":["1:44-1:46 Unreachable code."]}
+{"code":"function f() { try { return; a; } finally { b; } c; }","type":"script","reports":["1:30-1:32 Unreachable code.","1:50-1:52 Unreachable code."]}
+{"code":"function f() { try { return; } finally { b; } c; d; }","type":"script","reports":["1:47-1:52 Unreachable code."]}
+{"code":"function f() { try { for (;;) {} } finally { b; } c; }","type":"script","reports":["1:44-1:53 Unreachable code."]}
+{"code":"function f() { try { for (;;) {} } catch (e) { b; } c; }","type":"script","reports":["1:46-1:55 Unreachable code."]}
+{"code":"function f() { try { return; } catch (e) { b; } finally { c; } d; }","type":"script","reports":["1:42-1:48 Unreachable code.","1:64-1:66 Unreachable code."]}
+{"code":"function f() { try { throw 1; a; } catch (e) { return; b; } c; }","type":"script","reports":["1:31-1:33 Unreachable code.","1:56-1:58 Unreachable code.","1:61-1:63 Unreachable code."]}
+{"code":"function f() { try { a(); return; } catch { return; } b; c; }","type":"script","reports":["1:55-1:60 Unreachable code."]}
+{"code":"function f() { l: { break l; a; } b; }","type":"script","reports":["1:30-1:32 Unreachable code."]}
+{"code":"function f() { l: { return; } a; b; }","type":"script","reports":["1:31-1:36 Unreachable code."]}
+{"code":"function f() { return; l: { a; } }","type":"script","reports":["1:24-1:33 Unreachable code."]}
+{"code":"function f() { throw 1; a; b;\n\nc; }","type":"script","reports":["1:25-3:3 Unreachable code."]}
+{"code":"function* g() { yield 1; return; a; }","type":"script","reports":["1:34-1:36 Unreachable code."]}
+{"code":"async function f() { await a; return; b; }","type":"script","reports":["1:39-1:41 Unreachable code."]}
+{"code":"function f() { return; (a, b); c; }","type":"script","reports":["1:24-1:34 Unreachable code."]}
+{"code":"function f() { return; (a); (b); }","type":"script","reports":["1:24-1:33 Unreachable code."]}
+{"code":"function f() { return; a; (function() { b; })(); c; }","type":"script","reports":["1:24-1:49 Unreachable code.","1:50-1:52 Unreachable code."]}
+{"code":"function f() { return; [a]; `x`; /re/; c; }","type":"script","reports":["1:24-1:42 Unreachable code."]}
+{"code":"function f() { return; a = function() { return; b; }; c; }","type":"script","reports":["1:24-1:54 Unreachable code.","1:49-1:51 Unreachable code.","1:55-1:57 Unreachable code."]}
+{"code":"function f() { return; x = () => { return; b; }; c; }","type":"script","reports":["1:24-1:49 Unreachable code.","1:44-1:46 Unreachable code.","1:50-1:52 Unreachable code."]}
+{"code":"var f = () => { return; a; b; };","type":"script","reports":["1:25-1:30 Unreachable code."]}
+{"code":"var f = function() { throw a; b; };","type":"script","reports":["1:31-1:33 Unreachable code."]}
+{"code":"({ m() { return; a; }, get g() { return 1; b; } });","type":"script","reports":["1:18-1:20 Unreachable code.","1:44-1:46 Unreachable code."]}
+{"code":"class A { m() { return; a; } static s() { throw 1; b; } }","type":"script","reports":["1:25-1:27 Unreachable code.","1:52-1:54 Unreachable code."]}
+{"code":"class A { static { throw 1; a; b; } }","type":"script","reports":["1:29-1:34 Unreachable code."]}
+{"code":"class A { static { a; } x = 1; }","type":"script","reports":[]}
+{"code":"class C extends B { foo; constructor() {} }","type":"script","reports":["1:21-1:25 Unreachable code."]}
+{"code":"class C extends B { foo; bar; constructor() {} }","type":"script","reports":["1:21-1:30 Unreachable code."]}
+{"code":"class C extends B { foo;; bar; constructor() {} }","type":"script","reports":["1:21-1:25 Unreachable code.","1:27-1:31 Unreachable code."]}
+{"code":"class C extends B { foo\nbar; constructor() {} }","type":"script","reports":["1:21-2:5 Unreachable code."]}
+{"code":"class C extends B { foo; m() {} bar; constructor() {} }","type":"script","reports":["1:21-1:25 Unreachable code.","1:33-1:37 Unreachable code."]}
+{"code":"class C extends B { foo; static s; bar; constructor() {} }","type":"script","reports":["1:21-1:25 Unreachable code.","1:36-1:40 Unreachable code."]}
+{"code":"class C extends B { foo; static {} bar; constructor() {} }","type":"script","reports":["1:21-1:25 Unreachable code.","1:36-1:40 Unreachable code."]}
+{"code":"class C extends B { foo; constructor() {} bar; baz }","type":"script","reports":["1:21-1:25 Unreachable code.","1:43-1:51 Unreachable code."]}
+{"code":"class C extends B { constructor() {} foo; bar }","type":"script","reports":["1:38-1:46 Unreachable code."]}
+{"code":"class C extends B { constructor() { super(); } foo; }","type":"script","reports":[]}
+{"code":"class C extends B { constructor() { () => super(); } foo; }","type":"script","reports":[]}
+{"code":"class C extends B { constructor() { return; a; } foo; }","type":"script","reports":["1:45-1:47 Unreachable code.","1:50-1:54 Unreachable code."]}
+{"code":"class C extends B { constructor() { return; a; } foo; bar; }","type":"script","reports":["1:45-1:47 Unreachable code.","1:50-1:59 Unreachable code."]}
+{"code":"class C extends B { foo; constructor() { return; a; } }","type":"script","reports":["1:21-1:25 Unreachable code.","1:50-1:52 Unreachable code."]}
+{"code":"class C extends B { foo = () => { x; }; constructor() {} }","type":"script","reports":["1:21-1:40 Unreachable code."]}
+{"code":"class C extends B { constructor() {} foo = () => { x; }; bar; }","type":"script","reports":["1:38-1:62 Unreachable code."]}
+{"code":"class C extends B { constructor() {} foo = function() { return; x; }; }","type":"script","reports":["1:38-1:70 Unreachable code.","1:65-1:67 Unreachable code."]}
+{"code":"class C extends B { 'constructor'() {} foo; }","type":"script","reports":["1:40-1:44 Unreachable code."]}
+{"code":"class C extends B { ['constructor']() {} foo; }","type":"script","reports":[]}
+{"code":"class C extends B { static constructor() {} foo; }","type":"script","reports":[]}
+{"code":"class C extends B { get constructor2() {} foo; }","type":"script","reports":[]}
+{"code":"class C extends B { #p; [k] = 1; 'q'; 1; constructor() {} }","type":"script","reports":["1:21-1:41 Unreachable code."]}
+{"code":"class C extends B { foo; constructor() { class D extends E { x; constructor() {} } } }","type":"script","reports":["1:21-1:25 Unreachable code.","1:62-1:64 Unreachable code."]}
+{"code":"class C extends B { foo; constructor() { class D extends E { x; constructor() { super(); } } } }","type":"script","reports":["1:21-1:25 Unreachable code."]}
+{"code":"class C { foo; constructor() {} }","type":"script","reports":[]}
+{"code":"class C extends null { foo; constructor() {} }","type":"script","reports":["1:24-1:28 Unreachable code."]}
+{"code":"(class extends B { foo; constructor() {} });","type":"script","reports":["1:20-1:24 Unreachable code."]}
+{"code":"x = class extends B { foo; constructor() {} bar; };","type":"script","reports":["1:23-1:27 Unreachable code.","1:45-1:49 Unreachable code."]}
+{"code":"function f() { return; class C extends B { foo; constructor() {} } }","type":"script","reports":["1:24-1:67 Unreachable code.","1:44-1:48 Unreachable code."]}
+{"code":"function f() { return; a; class C extends B { foo; constructor() {} } b; }","type":"script","reports":["1:24-1:70 Unreachable code.","1:47-1:51 Unreachable code.","1:71-1:73 Unreachable code."]}
+{"code":"function f() { return; x = class extends B { foo; constructor() {} }; b; }","type":"script","reports":["1:24-1:70 Unreachable code.","1:46-1:50 Unreachable code.","1:71-1:73 Unreachable code."]}
+{"code":"throw 1; a; b;","type":"script","reports":["1:10-1:15 Unreachable code."]}
+{"code":"throw 1; export var a = 1; b;","type":"module","reports":["1:10-1:30 Unreachable code."]}
+{"code":"throw 1; export function g() {} b;","type":"module","reports":["1:10-1:32 Unreachable code.","1:33-1:35 Unreachable code."]}
+{"code":"throw 1; export class A {} b;","type":"module","reports":["1:10-1:30 Unreachable code."]}
+{"code":"throw 1; export default a; b;","type":"module","reports":["1:10-1:30 Unreachable code."]}
+{"code":"throw 1; export default function() {} b;","type":"module","reports":["1:10-1:38 Unreachable code.","1:39-1:41 Unreachable code."]}
+{"code":"var a; throw 1; export { a }; b;","type":"module","reports":["1:17-1:33 Unreachable code."]}
+{"code":"throw 1; export * from 'x'; b;","type":"module","reports":["1:10-1:31 Unreachable code."]}
+{"code":"throw 1; import 'x'; b;","type":"module","reports":["1:22-1:24 Unreachable code."]}
+{"code":"throw 1; a; import 'x'; b;","type":"module","reports":["1:10-1:12 Unreachable code.","1:25-1:27 Unreachable code."]}
+{"code":"throw 1; a; export var c = 1; b;","type":"module","reports":["1:10-1:33 Unreachable code."]}
+{"code":"throw 1; export var c = 1; export var d = 2;","type":"module","reports":["1:10-1:45 Unreachable code."]}
+{"code":"while (true) {} a;","type":"script","reports":["1:17-1:19 Unreachable code."]}
+{"code":"for (;;) {} a; b;","type":"script","reports":["1:13-1:18 Unreachable code."]}
+{"code":"for (;true;) {} a;","type":"script","reports":["1:17-1:19 Unreachable code."]}
+{"code":"for (;1;) {} a;","type":"script","reports":["1:14-1:16 Unreachable code."]}
+{"code":"for (;'x';) {} a;","type":"script","reports":["1:16-1:18 Unreachable code."]}
+{"code":"for (;'';) {} a;","type":"script","reports":[]}
+{"code":"for (;0;) {} a;","type":"script","reports":[]}
+{"code":"for (;null;) {} a;","type":"script","reports":[]}
+{"code":"for (;1n;) {} a;","type":"script","reports":["1:15-1:17 Unreachable code."]}
+{"code":"for (;0n;) {} a;","type":"script","reports":[]}
+{"code":"for (;/x/;) {} a;","type":"script","reports":["1:16-1:18 Unreachable code."]}
+{"code":"for (;`x`;) {} a;","type":"script","reports":[]}
+{"code":"for (;(true);) {} a;","type":"script","reports":["1:19-1:21 Unreachable code."]}
+{"code":"for (;!0;) {} a;","type":"script","reports":[]}
+{"code":"for (;-1;) {} a;","type":"script","reports":[]}
+{"code":"for (;[];) {} a;","type":"script","reports":[]}
+{"code":"for (;x;) {} a;","type":"script","reports":[]}
+{"code":"for (;undefined;) {} a;","type":"script","reports":[]}
+{"code":"for (;Infinity;) {} a;","type":"script","reports":[]}
+{"code":"while (1) {} a;","type":"script","reports":["1:14-1:16 Unreachable code."]}
+{"code":"while ('a') {} a;","type":"script","reports":["1:16-1:18 Unreachable code."]}
+{"code":"while (`a`) {} a;","type":"script","reports":[]}
+{"code":"do {} while (true); a;","type":"script","reports":["1:21-1:23 Unreachable code."]}
+{"code":"do {} while (1n) ; a;","type":"script","reports":["1:20-1:22 Unreachable code."]}
+{"code":"do { break; } while (true); a;","type":"script","reports":[]}
+{"code":"do { continue; } while (true); a;","type":"script","reports":["1:32-1:34 Unreachable code."]}
+{"code":"while (true) { if (a) break; } b;","type":"script","reports":[]}
+{"code":"l: while (true) { while (true) { break l; } c; } d;","type":"script","reports":["1:45-1:47 Unreachable code."]}
+{"code":"l: while (true) { while (true) { continue l; } c; } d;","type":"script","reports":["1:48-1:50 Unreachable code.","1:53-1:55 Unreachable code."]}
+{"code":"for (var x in y) { break; a; } b;","type":"script","reports":["1:27-1:29 Unreachable code."]}
+{"code":"for (var x of y) { continue; a; } b;","type":"script","reports":["1:30-1:32 Unreachable code."]}
+{"code":"for (;;) { for (var x in y) { return; } a; }","type":"script","fatal":"Parsing error: 'return' outside of function","reports":[]}
+{"code":"label: { a; break label; b; } c;","type":"script","reports":["1:26-1:28 Unreachable code."]}
+{"code":"function f() { l: try { for (;;) {} } finally { b; } c; }","type":"script","reports":["1:47-1:56 Unreachable code."]}
+{"code":"function f() { if (x) try { for (;;) {} } finally { b; } c; }","type":"script","reports":["1:51-1:57 Unreachable code."]}
+{"code":"function f() { if (x) y; else try { for (;;) {} } finally { b; } c; }","type":"script","reports":["1:59-1:65 Unreachable code."]}
+{"code":"function f() { while (x) try { for (;;) {} } catch { b; } c; }","type":"script","reports":["1:52-1:58 Unreachable code."]}
+{"code":"function f() { try { for (;;) {} } finally { b; }; c; }","type":"script","reports":["1:44-1:50 Unreachable code.","1:52-1:54 Unreachable code."]}
+{"code":"function f() { try { for (;;) {} } finally { b; } function g() {} c; }","type":"script","reports":["1:44-1:50 Unreachable code.","1:67-1:69 Unreachable code."]}
+{"code":"function f() { try { for (;;) {} } catch { b; } finally { c; } d; }","type":"script","reports":["1:42-1:48 Unreachable code.","1:57-1:66 Unreachable code."]}
+{"code":"function f() { try { try { for (;;) {} } finally { b; } } finally { c; } d; }","type":"script","reports":["1:50-1:56 Unreachable code.","1:67-1:76 Unreachable code."]}
+{"code":"function f() { try { for (;;) {} } finally { } }","type":"script","reports":["1:44-1:47 Unreachable code."]}
+{"code":"function f() { try { return; } finally { for (;;) {} } c; }","type":"script","reports":["1:56-1:58 Unreachable code."]}
+{"code":"function f() { try { a(); } catch { for (;;) {} } c; d; }","type":"script","reports":[]}
+{"code":"function f() { for (;;) { try { return; } finally { break; } } c; }","type":"script","reports":[]}
+{"code":"function f() { return; try { a; } catch { b; } c; }","type":"script","reports":["1:24-1:50 Unreachable code."]}
+{"code":"var a; throw 1; export { a as default }; b;","type":"module","reports":["1:17-1:44 Unreachable code."]}
+{"code":"throw 1; export const x = 1, y = 2; b; c;","type":"module","reports":["1:10-1:42 Unreachable code."]}
+{"code":"throw 1; export default class {} b;","type":"module","reports":["1:10-1:36 Unreachable code."]}
+{"code":"throw 1; export default (class {}); b;","type":"module","reports":["1:10-1:39 Unreachable code."]}
+{"code":"throw 1; label: export_ = 1; b;","type":"script","reports":["1:10-1:32 Unreachable code."]}
+{"code":"function f() { return; function g() {} }","type":"script","reports":[]}
+{"code":"function f() { return; function g() {} a; }","type":"script","reports":["1:40-1:42 Unreachable code."]}
+{"code":"function f() { return; ; }","type":"script","reports":[]}
+{"code":"function f() { return; ; a; }","type":"script","reports":["1:26-1:28 Unreachable code."]}
+{"code":"function f() { return; {} }","type":"script","reports":["1:24-1:26 Unreachable code."]}
+{"code":"function f() { return; { { a; } } b; }","type":"script","reports":["1:24-1:37 Unreachable code."]}
+{"code":"function f() { return; { function g() { x; } } b; }","type":"script","reports":["1:24-1:47 Unreachable code.","1:48-1:50 Unreachable code."]}
+{"code":"function f() { return; if (a) { function g() { x; } } b; }","type":"script","reports":["1:24-1:54 Unreachable code.","1:55-1:57 Unreachable code."]}
+{"code":"function f() { return; a; b; function g() { x; } c; d; }","type":"script","reports":["1:24-1:29 Unreachable code.","1:50-1:55 Unreachable code."]}
+{"code":"function f() { { return; } a; { b; } c; }","type":"script","reports":["1:28-1:40 Unreachable code."]}
+{"code":"function f() { switch (x) { case 1: { return; } a; b; } c; }","type":"script","reports":["1:49-1:54 Unreachable code."]}
+{"code":"function f() { switch (x) { case 1: return; case 2: a; } b; }","type":"script","reports":[]}
+{"code":"function f() { switch (x) { case 1: return; a; default: } b; }","type":"script","reports":["1:45-1:47 Unreachable code."]}
+{"code":"function f() { switch (x) { } return; a; }","type":"script","reports":["1:39-1:41 Unreachable code."]}
+{"code":"function f() { switch (x) { default: return; } a; b; }","type":"script","reports":["1:48-1:53 Unreachable code."]}
+{"code":"function f() { switch (x) { default: return; case 1: return; } a; b; }","type":"script","reports":["1:64-1:69 Unreachable code."]}
+{"code":"function f() { switch (x) { case 1: return; default: } a; }","type":"script","reports":[]}
+{"code":"function f() { switch (x) { case 1: case 2: return; default: throw 1; } a; }","type":"script","reports":["1:73-1:75 Unreachable code."]}
+{"code":"function f() { for (;;) { switch (x) { case 1: continue; default: return; } a; } b; }","type":"script","reports":["1:77-1:79 Unreachable code.","1:82-1:84 Unreachable code."]}
+{"code":"function f() { a: for (;;) { b: for (;;) { continue a; } c; } d; }","type":"script","reports":["1:58-1:60 Unreachable code.","1:63-1:65 Unreachable code."]}
+{"code":"function f() { a: { b: { break a; } c; } d; }","type":"script","reports":["1:37-1:39 Unreachable code."]}
+{"code":"function f() { a: { b: { break b; } c; } d; }","type":"script","reports":[]}
+{"code":"function f() { for (;;) { if (x) continue; else break; y; } z; }","type":"script","reports":["1:56-1:58 Unreachable code."]}
+{"code":"function f() { for (var i = 0; ; i++) { } a; }","type":"script","reports":["1:43-1:45 Unreachable code."]}
+{"code":"function f() { for (var i = 0; i < 1; i++) { return; } a; }","type":"script","reports":[]}
+{"code":"function f() { for (var i = 0; i < 1; i++) { continue; a; } b; }","type":"script","reports":["1:56-1:58 Unreachable code."]}
+{"code":"function f() { for (;; a) { break; } b; }","type":"script","reports":[]}
+{"code":"function f() { for (;; a) { return; } b; }","type":"script","reports":["1:39-1:41 Unreachable code."]}
+{"code":"function f() { x ? y : z; return; a; }","type":"script","reports":["1:35-1:37 Unreachable code."]}
+{"code":"function f() { return (a && b) || c; d; }","type":"script","reports":["1:38-1:40 Unreachable code."]}
+{"code":"function f() { a?.b?.(c); throw 1; d; }","type":"script","reports":["1:36-1:38 Unreachable code."]}
+{"code":"function f() { try { a?.b; } catch { return; c; } finally { d; } e; }","type":"script","reports":["1:46-1:48 Unreachable code."]}
+{"code":"function* g() { try { yield 1; } finally { return; a; } b; }","type":"script","reports":["1:52-1:54 Unreachable code.","1:57-1:59 Unreachable code."]}
+{"code":"function* g() { for (;;) { yield 1; } a; }","type":"script","reports":["1:39-1:41 Unreachable code."]}
+{"code":"function* g() { try { for (;;) { yield 1; } } finally { a; } b; }","type":"script","reports":["1:62-1:64 Unreachable code."]}
+{"code":"async function f() { for await (const x of y) { return; a; } b; }","type":"script","reports":["1:57-1:59 Unreachable code."]}
+{"code":"function f(a = (() => { return; b; })()) { return; c; }","type":"script","reports":["1:33-1:35 Unreachable code.","1:52-1:54 Unreachable code."]}
+{"code":"function f({ a = 1, b: [c = 2] = [] } = {}) { return; d; }","type":"script","reports":["1:55-1:57 Unreachable code."]}
+{"code":"class A { x = (() => { return; a; })(); static y = function() { throw 1; b; }; }","type":"script","reports":["1:32-1:34 Unreachable code.","1:74-1:76 Unreachable code."]}
+{"code":"class A { [(() => { return; a; })()]() { return; b; } }","type":"script","reports":["1:29-1:31 Unreachable code.","1:50-1:52 Unreachable code."]}
+{"code":"class A extends (() => { return; a; })() { constructor() { super(); return; b; } }","type":"script","reports":["1:34-1:36 Unreachable code.","1:77-1:79 Unreachable code."]}
+{"code":"class C extends B { foo = 1; static { } bar = 2; constructor() { } baz; qux; static s = 1; quux; }","type":"script","reports":["1:21-1:29 Unreachable code.","1:41-1:49 Unreachable code.","1:68-1:77 Unreachable code.","1:92-1:97 Unreachable code."]}
+{"code":"class C extends B { foo; constructor() { super.x; } }","type":"script","reports":["1:21-1:25 Unreachable code."]}
+{"code":"class C extends B { foo; constructor() { super[x](); } }","type":"script","reports":["1:21-1:25 Unreachable code."]}
+{"code":"class C extends B { foo; constructor() { function g() { super_(); } } }","type":"script","reports":["1:21-1:25 Unreachable code."]}
+{"code":"class C extends B { foo; constructor() { new.target; } }","type":"script","reports":["1:21-1:25 Unreachable code."]}
+{"code":"class C extends B { a; b; c; constructor() {} d; e; m() {} f; }","type":"script","reports":["1:21-1:29 Unreachable code.","1:47-1:52 Unreachable code.","1:60-1:62 Unreachable code."]}
+{"code":"class C extends B { a\n;b; constructor() {} }","type":"script","reports":["1:21-2:4 Unreachable code."]}
+{"code":"class C extends B { a = 1; b = 2\n c = 3; constructor() {} }","type":"script","reports":["1:21-2:8 Unreachable code."]}
+{"code":"class C extends B { a; constructor() { return; x; y; } b; c; }","type":"script","reports":["1:21-1:23 Unreachable code.","1:48-1:53 Unreachable code.","1:56-1:61 Unreachable code."]}
+{"code":"class C extends B { constructor() { return; x; } a; }","type":"script","reports":["1:45-1:47 Unreachable code.","1:50-1:52 Unreachable code."]}
+{"code":"class C extends B { a; constructor() {} }\nfoo();","type":"script","reports":["1:21-1:23 Unreachable code."]}
+{"code":"function f() { return; a; }\nclass C extends B { a; constructor() {} }","type":"script","reports":["1:24-1:26 Unreachable code.","2:21-2:23 Unreachable code."]}
+{"code":"function f() { return; x; }\nfunction g() { return; y; }","type":"script","reports":["1:24-1:26 Unreachable code.","2:24-2:26 Unreachable code."]}
+{"code":"function f() { return; x; } function g() { return; y; }","type":"script","reports":["1:24-1:26 Unreachable code.","1:52-1:54 Unreachable code."]}
+{"code":"function f() { throw 1; var x; var y = 1; var z; w; }","type":"script","reports":["1:32-1:42 Unreachable code.","1:50-1:52 Unreachable code."]}
+{"code":"function f() { throw 1; for (var x in y) {} }","type":"script","reports":["1:25-1:44 Unreachable code."]}
+{"code":"function f() { throw 1; for (var x of y) {} }","type":"script","reports":["1:25-1:44 Unreachable code."]}
+{"code":"function f() { throw 1; for (var x;;) {} }","type":"script","reports":["1:25-1:41 Unreachable code."]}
+{"code":"function f() { throw 1; for (var x = 1;;) {} }","type":"script","reports":["1:25-1:45 Unreachable code."]}
+{"code":"function f() { throw 1; for (let x in y) {} }","type":"script","reports":["1:25-1:44 Unreachable code."]}
+{"code":"function f() { throw 1; for (x in y) {} }","type":"script","reports":["1:25-1:40 Unreachable code."]}
+{"code":"function f() { throw 1; var { a } = b; }","type":"script","reports":["1:25-1:39 Unreachable code."]}
+{"code":"function f() { throw 1; var [ a ] = b, c; }","type":"script","reports":["1:25-1:42 Unreachable code."]}

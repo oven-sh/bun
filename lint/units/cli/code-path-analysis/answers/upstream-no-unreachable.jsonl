@@ -1,0 +1,70 @@
+{"kind":"valid","code":"function foo() { function bar() { return 1; } return bar(); }","type":"script","reports":[]}
+{"kind":"valid","code":"function foo() { return bar(); function bar() { return 1; } }","type":"script","reports":[]}
+{"kind":"valid","code":"function foo() { return x; var x; }","type":"script","reports":[]}
+{"kind":"valid","code":"throw new Error(); import foo from 'foo';","type":"module","given":"{\"ecmaVersion\":6,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"function foo() { var x = 1; var y = 2; }","type":"script","reports":[]}
+{"kind":"valid","code":"function foo() { var x = 1; var y = 2; return; }","type":"script","reports":[]}
+{"kind":"valid","code":"while (true) { switch (foo) { case 1: x = 1; x = 2;} }","type":"script","reports":[]}
+{"kind":"valid","code":"while (true) { break; var x; }","type":"script","reports":[]}
+{"kind":"valid","code":"while (true) { continue; var x, y; }","type":"script","reports":[]}
+{"kind":"valid","code":"while (true) { throw 'message'; var x; }","type":"script","reports":[]}
+{"kind":"valid","code":"while (true) { if (true) break; var x = 1; }","type":"script","reports":[]}
+{"kind":"valid","code":"while (true) continue;","type":"script","reports":[]}
+{"kind":"valid","code":"switch (foo) { case 1: break; var x; }","type":"script","reports":[]}
+{"kind":"valid","code":"switch (foo) { case 1: break; var x; default: throw true; };","type":"script","reports":[]}
+{"kind":"valid","code":"const arrow_direction = arrow => {  switch (arrow) { default: throw new Error();  };}","type":"script","given":"{\"ecmaVersion\":6}","reports":[]}
+{"kind":"valid","code":"var x = 1; y = 2; throw 'uh oh'; var y;","type":"script","reports":[]}
+{"kind":"valid","code":"function foo() { var x = 1; if (x) { return; } x = 2; }","type":"script","reports":[]}
+{"kind":"valid","code":"function foo() { var x = 1; if (x) { } else { return; } x = 2; }","type":"script","reports":[]}
+{"kind":"valid","code":"function foo() { var x = 1; switch (x) { case 0: break; default: return; } x = 2; }","type":"script","reports":[]}
+{"kind":"valid","code":"function foo() { var x = 1; while (x) { return; } x = 2; }","type":"script","reports":[]}
+{"kind":"valid","code":"function foo() { var x = 1; for (x in {}) { return; } x = 2; }","type":"script","reports":[]}
+{"kind":"valid","code":"function foo() { var x = 1; try { return; } finally { x = 2; } }","type":"script","reports":[]}
+{"kind":"valid","code":"function foo() { var x = 1; for (;;) { if (x) break; } x = 2; }","type":"script","reports":[]}
+{"kind":"valid","code":"A: { break A; } foo()","type":"script","reports":[]}
+{"kind":"valid","code":"function* foo() { try { yield 1; return; } catch (err) { return err; } }","type":"script","given":"{\"ecmaVersion\":6}","reports":[]}
+{"kind":"valid","code":"function foo() { try { bar(); return; } catch (err) { return err; } }","type":"script","given":"{\"ecmaVersion\":6}","reports":[]}
+{"kind":"valid","code":"function foo() { try { a.b.c = 1; return; } catch (err) { return err; } }","type":"script","given":"{\"ecmaVersion\":6}","reports":[]}
+{"kind":"valid","code":"class C { foo = reachable; }","type":"script","given":"{\"ecmaVersion\":2022}","reports":[]}
+{"kind":"valid","code":"class C { foo = reachable; constructor() {} }","type":"script","given":"{\"ecmaVersion\":2022}","reports":[]}
+{"kind":"valid","code":"class C extends B { foo = reachable; }","type":"script","given":"{\"ecmaVersion\":2022}","reports":[]}
+{"kind":"valid","code":"class C extends B { foo = reachable; constructor() { super(); } }","type":"script","given":"{\"ecmaVersion\":2022}","reports":[]}
+{"kind":"valid","code":"class C extends B { static foo = reachable; constructor() {} }","type":"script","given":"{\"ecmaVersion\":2022}","reports":[]}
+{"kind":"invalid","code":"throw new Error(); import foo from 'foo'; foo();","type":"module","given":"{\"ecmaVersion\":6,\"sourceType\":\"module\"}","reports":["1:43-1:49 Unreachable code."]}
+{"kind":"invalid","code":"throw new Error(); foo(); import foo from 'foo'; foo();","type":"module","given":"{\"ecmaVersion\":6,\"sourceType\":\"module\"}","reports":["1:20-1:26 Unreachable code.","1:50-1:56 Unreachable code."]}
+{"kind":"invalid","code":"function foo() { return x; var x = 1; }","type":"script","reports":["1:28-1:38 Unreachable code."]}
+{"kind":"invalid","code":"function foo() { return x; var x, y = 1; }","type":"script","reports":["1:28-1:41 Unreachable code."]}
+{"kind":"invalid","code":"while (true) { continue; var x = 1; }","type":"script","reports":["1:26-1:36 Unreachable code."]}
+{"kind":"invalid","code":"function foo() { return; x = 1; }","type":"script","reports":["1:26-1:32 Unreachable code."]}
+{"kind":"invalid","code":"function foo() { throw error; x = 1; }","type":"script","reports":["1:31-1:37 Unreachable code."]}
+{"kind":"invalid","code":"while (true) { break; x = 1; }","type":"script","reports":["1:23-1:29 Unreachable code."]}
+{"kind":"invalid","code":"while (true) { continue; x = 1; }","type":"script","reports":["1:26-1:32 Unreachable code."]}
+{"kind":"invalid","code":"function foo() { switch (foo) { case 1: return; x = 1; } }","type":"script","reports":["1:49-1:55 Unreachable code."]}
+{"kind":"invalid","code":"function foo() { switch (foo) { case 1: throw e; x = 1; } }","type":"script","reports":["1:50-1:56 Unreachable code."]}
+{"kind":"invalid","code":"while (true) { switch (foo) { case 1: break; x = 1; } }","type":"script","reports":["1:46-1:52 Unreachable code."]}
+{"kind":"invalid","code":"while (true) { switch (foo) { case 1: continue; x = 1; } }","type":"script","reports":["1:49-1:55 Unreachable code."]}
+{"kind":"invalid","code":"var x = 1; throw 'uh oh'; var y = 2;","type":"script","reports":["1:27-1:37 Unreachable code."]}
+{"kind":"invalid","code":"function foo() { var x = 1; if (x) { return; } else { throw e; } x = 2; }","type":"script","reports":["1:66-1:72 Unreachable code."]}
+{"kind":"invalid","code":"function foo() { var x = 1; if (x) return; else throw -1; x = 2; }","type":"script","reports":["1:59-1:65 Unreachable code."]}
+{"kind":"invalid","code":"function foo() { var x = 1; try { return; } finally {} x = 2; }","type":"script","reports":["1:56-1:62 Unreachable code."]}
+{"kind":"invalid","code":"function foo() { var x = 1; try { } finally { return; } x = 2; }","type":"script","reports":["1:57-1:63 Unreachable code."]}
+{"kind":"invalid","code":"function foo() { var x = 1; do { return; } while (x); x = 2; }","type":"script","reports":["1:55-1:61 Unreachable code."]}
+{"kind":"invalid","code":"function foo() { var x = 1; while (x) { if (x) break; else continue; x = 2; } }","type":"script","reports":["1:70-1:76 Unreachable code."]}
+{"kind":"invalid","code":"function foo() { var x = 1; for (;;) { if (x) continue; } x = 2; }","type":"script","reports":["1:59-1:65 Unreachable code."]}
+{"kind":"invalid","code":"function foo() { var x = 1; while (true) { } x = 2; }","type":"script","reports":["1:46-1:52 Unreachable code."]}
+{"kind":"invalid","code":"const arrow_direction = arrow => {  switch (arrow) { default: throw new Error();  }; g() }","type":"script","given":"{\"ecmaVersion\":6}","reports":["1:86-1:89 Unreachable code."]}
+{"kind":"invalid","code":"\n                function foo() {\n                    return;\n\n                    a();  // ← ERROR: Unreachable code. (no-unreachable)\n\n                    b()   // ↑ ';' token is included in the unreachable code, so this statement will be merged.\n                    // comment\n                    c();  // ↑ ')' token is included in the unreachable code, so this statement will be merged.\n                }\n            ","type":"script","reports":["5:21-9:25 Unreachable code."]}
+{"kind":"invalid","code":"\n                function foo() {\n                    return;\n\n                    a();\n\n                    if (b()) {\n                        c()\n                    } else {\n                        d()\n                    }\n                }\n            ","type":"script","reports":["5:21-11:22 Unreachable code."]}
+{"kind":"invalid","code":"\n                function foo() {\n                    if (a) {\n                        return\n                        b();\n                        c();\n                    } else {\n                        throw err\n                        d();\n                    }\n                }\n            ","type":"script","reports":["5:25-6:29 Unreachable code.","9:25-9:29 Unreachable code."]}
+{"kind":"invalid","code":"\n                function foo() {\n                    if (a) {\n                        return\n                        b();\n                        c();\n                    } else {\n                        throw err\n                        d();\n                    }\n                    e();\n                }\n            ","type":"script","reports":["5:25-6:29 Unreachable code.","9:25-9:29 Unreachable code.","11:21-11:25 Unreachable code."]}
+{"kind":"invalid","code":"\n                function* foo() {\n                    try {\n                        return;\n                    } catch (err) {\n                        return err;\n                    }\n                }","type":"script","given":"{\"ecmaVersion\":6}","reports":["5:35-7:22 Unreachable code."]}
+{"kind":"invalid","code":"\n                function foo() {\n                    try {\n                        return;\n                    } catch (err) {\n                        return err;\n                    }\n                }","type":"script","given":"{\"ecmaVersion\":6}","reports":["5:35-7:22 Unreachable code."]}
+{"kind":"invalid","code":"\n                function foo() {\n                    try {\n                        return;\n                        let a = 1;\n                    } catch (err) {\n                        return err;\n                    }\n                }","type":"script","given":"{\"ecmaVersion\":6}","reports":["5:25-5:35 Unreachable code.","6:35-8:22 Unreachable code."]}
+{"kind":"invalid","code":"class C extends B { foo; constructor() {} }","type":"script","given":"{\"ecmaVersion\":2022}","reports":["1:21-1:25 Unreachable code."]}
+{"kind":"invalid","code":"class C extends B { foo = unreachable + code; constructor() {} }","type":"script","given":"{\"ecmaVersion\":2022}","reports":["1:21-1:46 Unreachable code."]}
+{"kind":"invalid","code":"class C extends B { foo; bar; constructor() {} }","type":"script","given":"{\"ecmaVersion\":2022}","reports":["1:21-1:30 Unreachable code."]}
+{"kind":"invalid","code":"class C extends B { foo; constructor() {} bar; }","type":"script","given":"{\"ecmaVersion\":2022}","reports":["1:21-1:25 Unreachable code.","1:43-1:47 Unreachable code."]}
+{"kind":"invalid","code":"(class extends B { foo; constructor() {} bar; })","type":"script","given":"{\"ecmaVersion\":2022}","reports":["1:20-1:24 Unreachable code.","1:42-1:46 Unreachable code."]}
+{"kind":"invalid","code":"class B extends A { x; constructor() { class C extends D { [super().x]; constructor() {} } } }","type":"script","given":"{\"ecmaVersion\":2022}","reports":["1:60-1:72 Unreachable code."]}
+{"kind":"invalid","code":"class B extends A { x; constructor() { class C extends super().x { y; constructor() {} } } }","type":"script","given":"{\"ecmaVersion\":2022}","reports":["1:68-1:70 Unreachable code."]}
+{"kind":"invalid","code":"class B extends A { x; static y; z; static q; constructor() {} }","type":"script","given":"{\"ecmaVersion\":2022}","reports":["1:21-1:23 Unreachable code.","1:34-1:36 Unreachable code."]}

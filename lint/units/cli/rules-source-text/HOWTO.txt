@@ -1,0 +1,45 @@
+Pass 1b of the research unit rules-source-text (D3): no-loss-of-precision, no-octal, no-nonoctal-decimal-escape,
+no-irregular-whitespace, no-unexpected-multiline, no-empty, no-empty-static-block. Nothing here is in the tree.
+The directory pass1a/ beside this file is another pass of the same unit and has its own HOWTO.txt.
+
+The oracle is ESLint at the pin of src/lint/UPSTREAM_PORTED (/workspace/ref/eslint) and typescript-eslint (/workspace/ref/tseslint):
+sh ../tools/eslint-oracle-setup.sh restores both. "Bun" below is /workspace/wt/cli/build/debug/bun-debug of be1ebe5295, which has
+none of the seven rules: it was used to see which cases its parser rejects and which of the eleven rules of round 1 report on them.
+
+oracle/upstream.cjs <rule>          every case of ESLint's own test of the rule, every run, with what the file gives the case
+oracle/extract.cjs <rule>           the same as { valid, invalid, typescript } of { code, languageOptions? } for make-fixture.cjs
+oracle/eslint.cjs <rule> <cases.json> [--all-recommended] [--ts]
+                                    the rule at its DEFAULT options over a list; one JSON line per case: { kind?, code, type, jsx?,
+                                    options?, fatal?, reports: ["line:column-endLine:endColumn message"] }. A case with `ts` or `parser`
+                                    runs with @typescript-eslint/parser as a.ts (a.tsx with `jsx`).
+oracle/bun.cjs <bun-debug> <answers.jsonl> [--all]
+                                    what `bun --lint` prints for each case of an answers file (one run, one file per case)
+oracle/cross.cjs [--json] [--all] [--dir=<fixtures>]
+                                    the cases of the fixtures of the tree on which one of the seven rules (--all: any rule that has a
+                                    fixture) reports: rules.test.ts takes a line of another rule only when its fixture has the case
+
+cases/upstream-<rule>.json          upstream.cjs
+cases/extract-<rule>.json           extract.cjs: ESLint's own cases, the first list of make-fixture.cjs (they get eslintTest)
+cases/edge-<rule>.json              JavaScript and JSX cases of this research: [{ code, jsx?, languageOptions? }]
+cases/ts-<rule>.json                TypeScript cases: [{ code, ext: "ts", ts: true }]
+answers/upstream-<rule>.jsonl, edge-<rule>.jsonl, ts-<rule>.jsonl      eslint.cjs over those lists
+answers/bun-upstream-<rule>.jsonl   bun.cjs: the upstream cases that Bun's parser rejects (10 in all)
+answers/cross-existing-fixtures.txt, .jsonl                            cross.cjs at be1ebe5295: 148 cases of the eleven fixtures to add
+
+proto/lop.rs, lop-check.cjs         `losesPrecision` in Rust on the raw text and the value of a literal, against ESLint:
+                                    rustc -O --edition 2024 lop.rs -o /tmp/lop && node lop-check.cjs /tmp/lop 120000 99
+                                    (180000 generated literals and ESLint's own: 0 differences; 1.3 microseconds a literal)
+proto/irregular-model.cjs <answers.jsonl>...   no-irregular-whitespace as planned (runs and line terminators by offset, out when
+                                    inside a string token) against ESLint: 278 cases, 0 differences
+proto/multiline-model.cjs <answers.jsonl>...   no-unexpected-multiline as planned (the look back over the text, the tokens only where
+                                    it cannot answer) against the real rule, in one ESLint run per case
+proto/empty-model.cjs <answers.jsonl>...       no-empty and no-empty-static-block as planned (blank text between the braces)
+proto/corpus.cjs <dir>... [--max n] real files in the answers format, for the two models:
+                                    node corpus.cjs /workspace/ref/eslint/lib /workspace/ref/eslint/tests/lib/rules /workspace/ref/eslint/node_modules --max 4000 > /tmp/corpus-js.jsonl
+                                    node corpus.cjs /workspace/wt/cli/src/js /workspace/wt/cli/test/js/bun /workspace/wt/cli/test/js/node/test/parallel --max 4000 > /tmp/corpus-bun.jsonl
+                                    multiline-model: 7318 cases (7073 files), 0 differences, the tokens needed for 651 of 302772 brackets
+                                    empty-model: 7073 files, 271 reports of ESLint, 0 differences
+
+A fixture, once a rule is in a build (the tool is the one of rules-statements):
+node ../rules-statements/oracle/make-fixture.cjs <rule> --bun /workspace/wt/cli/build/debug/bun-debug \
+  --out /workspace/wt/cli/test/cli/lint/rules/<rule>.json cases/extract-<rule>.json cases/edge-<rule>.json answers/cross-existing-fixtures.jsonl

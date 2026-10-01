@@ -247,5 +247,5 @@ g("class members: TS1442 TS1441 TS1436 TS1144 TS1068", [
   "x = class { x: number y }", "x = class { foo() bar }", "x = class { ) }", "class C { static { ) } }", "class C { static {} ) }", "class C { x: number\n(y) }", "class C { x\n(y) }", "class C { x = 1\n(y) }", "class C { x: number\n[y] }", "class C { x = 1\n[y] }",
   "class C { x: number y() {} }", "class C { x = y z }", "class C { x: T<U> y }", "class C { x: number } y", "class C { get }", "class C { get; }", "class C { get x }", "class C { set }", "class C { async }", "class C { async x }", "class C { async\nx() {} }",
 ]);
-require("node:fs").writeFileSync(__dirname + "/inputs.json", JSON.stringify(rows, null, 0).replace(/\},\{/g, "},\n{"));
+require("node:fs").writeFileSync(__dirname + "/inputs1.json", JSON.stringify(rows, null, 0).replace(/\},\{/g, "},\n{"));
 console.log(rows.length + " inputs");

@@ -55,7 +55,8 @@ summary() {
 
 # The tests of a log that took longest, and every test that failed.
 slowest() {
-  local log=$1 n=${2:-12}
-  grep -aE '^\((pass|fail)\)' "$log" | sed -E 's/\x1b\[[0-9;]*m//g' | awk '{ t=$NF; gsub(/[\[\]ms]/, "", t); print t "\t" $0 }' | sort -rn | head -"$n" | cut -f2- | cut -c1-200
-  grep -aE '^\(fail\)|^error:' "$log" | sed -E 's/\x1b\[[0-9;]*m//g' | cut -c1-300 | head -20
+  local log=$1 n=${2:-12} plain
+  plain=$(sed -E 's/\x1b\[[0-9;]*m//g' "$log")
+  grep -aE '^(\((pass|fail)\)|✓|✗) ' <<< "$plain" | awk '{ t=$NF; gsub(/[\[\]ms]/, "", t); print t "\t" $0 }' | sort -rn | head -"$n" | cut -f2- | cut -c1-200
+  grep -aE '^\(fail\)|^✗|^error:' <<< "$plain" | cut -c1-300 | head -20
 }

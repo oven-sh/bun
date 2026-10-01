@@ -70,7 +70,7 @@
 +    NonNull,
 +    /// `<T>operand`.
 +    TypeAssertion,
-+    /// `operand<T>` that no call, `new` or template takes as its type arguments.
++    /// `operand<T>` with no argument list and no template after it: an instantiation expression.
 +    Instantiation,
 +}
 +
@@ -395,7 +395,7 @@
 +        u32::try_from(count).unwrap_or(u32::MAX)
 +    }
 +
-+    /// Whether parentheses or a TypeScript node stand around `expr` in its place: a literal there is no pattern.
++    /// Whether parentheses or a TypeScript node stand around `expr` in its place.
 +    pub(crate) fn is_wrapped(&self, expr: &Expr) -> bool {
 +        !self.around(expr).is_empty()
 +    }
@@ -1232,7 +1232,7 @@
 +                    }
 +                    ImportClause::Named(items) => {
 +                        for item in items.slice() {
-+                            linter.context.declare_name(item.alias.slice());
++                            linter.context.declare(item.name.ref_);
 +                        }
 +                    }
 +                }
@@ -1265,13 +1265,13 @@
  
  impl Linter<'_, '_> {
 -    /// `expr` is written where a target is expected.
-+    /// `expr` is written where a target is expected. In parentheses or in a TypeScript node it is an expression there, as for typescript-eslint: no pattern.
++    /// `expr` is written where a target is expected. In a TypeScript file a literal in parentheses or in a TypeScript node is an expression there, as typescript-eslint reads it: no pattern. ESLint's own parser rejects such parentheses, and a JavaScript file keeps the pattern.
      fn mark(&mut self, expr: &Expr) {
 +        let written = match &expr.data {
 +            ExprData::ESpread(spread) => &spread.value,
 +            _ => expr,
 +        };
-+        if self.context.is_wrapped(written) {
++        if self.context.is_typescript() && self.context.is_wrapped(written) {
 +            return;
 +        }
          if let Some(address) = target_of(expr) {
@@ -1472,7 +1472,7 @@
  
  use crate::ast_utils::{self, is_same_reference};
  use crate::context::Context;
-@@ -36,6 +36,14 @@
+@@ -36,6 +36,17 @@
          context.too_deep(right.loc);
          return;
      }
@@ -1480,14 +1480,17 @@
 +    if context.ts_wrapper(left).is_some() || context.ts_wrapper(right).is_some() {
 +        return;
 +    }
-+    // A literal in parentheses on the left is an expression for typescript-eslint, no pattern, and a syntax error for ESLint's parser.
-+    if matches!(left.data, ExprData::EArray(_) | ExprData::EObject(_)) && context.is_wrapped(left) {
++    // A literal in parentheses on the left is an expression for typescript-eslint, no pattern. ESLint's parser rejects it: a JavaScript file keeps the pattern.
++    if context.is_typescript()
++        && matches!(left.data, ExprData::EArray(_) | ExprData::EObject(_))
++        && context.is_wrapped(left)
++    {
 +        return;
 +    }
      match (&left.data, &right.data) {
          (ExprData::EMissing(_), _) | (_, ExprData::EMissing(_)) => {}
          (ExprData::EIdentifier(l), ExprData::EIdentifier(r)) => {
-@@ -88,14 +96,12 @@
+@@ -88,14 +99,12 @@
      {
          return;
      }
@@ -1505,7 +1508,7 @@
      ) {
          (Some(left), Some(right)) => left.bytes() == right.bytes(),
          _ => false,
-@@ -105,30 +111,10 @@
+@@ -105,30 +114,10 @@
      }
  }
  
@@ -1539,7 +1542,7 @@
          context.too_deep(node.loc);
          return;
      };
-@@ -138,8 +124,7 @@
+@@ -138,8 +127,7 @@
      else {
          return;
      };

@@ -19,6 +19,30 @@ p I am your father
   expect(await new Response(child.stderr).text()).toEqual("");
 });
 
+// A Bun parent with no uncaughtException handler whose Node.js child sends one
+// message. `spawnOptions` is spliced into the Bun.spawn() options.
+async function bunParentOfNodeChild(spawnOptions: string, message: string) {
+  const parentSource = `
+    const child = Bun.spawn({
+      cmd: [process.env.NODE_BIN, "-e", 'process.send(${message}, () => process.disconnect())'],
+      stdio: ["ignore", "inherit", "inherit"],
+      ${spawnOptions}
+      ipc(message) { console.log("UNEXPECTED_IPC_MESSAGE", message); },
+    });
+    await child.exited;
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", parentSource],
+    env: { ...bunEnv, NODE_BIN: nodeExe()! },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
 test.skipIf(!nodeExe())(
   'a node child under the default serialization is reported, with the "json" remedy',
   async () => {
@@ -26,32 +50,26 @@ test.skipIf(!nodeExe())(
     // speaks. A Node.js child answers in v8's framing; the parent cannot decode it
     // and must fail loudly instead of leaving the user with a channel that never
     // delivers anything.
-    const parentSource = `
-    const child = Bun.spawn({
-      cmd: [process.env.NODE_BIN, "-e", 'process.send({ hello: "from node" }, () => process.disconnect())'],
-      stdio: ["ignore", "inherit", "inherit"],
-      ipc(message) { console.log("UNEXPECTED_IPC_MESSAGE", message); },
-    });
-    await child.exited;
-  `;
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", parentSource],
-      env: { ...bunEnv, NODE_BIN: nodeExe()! },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stdout, stderr, exitCode } = await bunParentOfNodeChild("", `{ hello: "from node" }`);
 
     // No uncaughtException handler: the parent exits 1 at the report.
     expect(stdout).toBe("");
-    expect(normalizeBunSnapshot(stderr)).toContain(
+    expect(stderr).toContain(
       `sent an IPC message that is not in Bun's "advanced" serialization format, so Bun closed the IPC channel. "advanced" serialization only works between two Bun processes. For IPC between Bun and Node.js, use serialization: "json".`,
     );
     expect(exitCode).toBe(1);
   },
 );
+
+test.skipIf(!nodeExe())("a line from a node child that is not JSON is reported", async () => {
+  // JSON.stringify() of an object whose toJSON() returns undefined is undefined,
+  // so Node.js writes the line "undefined" to the channel.
+  const { stdout, stderr, exitCode } = await bunParentOfNodeChild(`serialization: "json",`, `{ toJSON() {} }`);
+
+  expect(stdout).toBe("");
+  expect(stderr).toContain("sent an IPC message that is not valid JSON, so Bun closed the IPC channel.");
+  expect(exitCode).toBe(1);
+});
 
 test.skipIf(isWindows || !nodeExe())(
   "receives a net.Socket handle from a node child and releases its descriptor",

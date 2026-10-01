@@ -79,6 +79,9 @@ describe.concurrent("against a mock server", () => {
   });
 });
 
+// Gated on docker alone, not on a BUN_TEST_SERVICE_mysql_plain override: a
+// server that differs from the mysql_plain image (a MariaDB whose root is
+// unix_socket only, for example) fails this suite instead of skipping it.
 if (isDockerEnabled()) {
   describeWithContainer("against mysql", { image: "mysql_plain", concurrent: true }, container => {
     test.each(scenarios)("the process stays alive for a query issued after %s", async scenario => {
@@ -86,4 +89,6 @@ if (isDockerEnabled()) {
       await expectFixtureToFinish(`mysql://root@${container.host}:${container.port}/bun_sql_test`, scenario);
     });
   });
+} else {
+  describe.todo("against mysql");
 }

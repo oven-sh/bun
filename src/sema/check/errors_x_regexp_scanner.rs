@@ -26,16 +26,15 @@ impl Checker<'_> {
             target => target,
         };
         let mut noted: Option<Vec<Noted>> = self.explains.then(Vec::new);
-        for e in &hir.exprs {
-            if matches!(e.kind, ExprKind::Regex) {
-                check_regular_expression_literal(
-                    &hir.text,
-                    e.pos as usize,
-                    target,
-                    out,
-                    noted.as_mut(),
-                );
-            }
+        let index = self.exprs_by_kind(file);
+        for &e in index.of(ExprTag::Regex) {
+            check_regular_expression_literal(
+                &hir.text,
+                hir[e].pos as usize,
+                target,
+                out,
+                noted.as_mut(),
+            );
         }
         for (start, end, code, args) in noted.into_iter().flatten() {
             self.note(start, end, code, args);

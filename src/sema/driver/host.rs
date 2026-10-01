@@ -156,6 +156,31 @@ impl Drop for Turn<'_> {
     }
 }
 
+/// All that the file `name` in `directory` says.
+fn read_whole(directory: impl bun_sys::AsFd, name: &[u8]) -> Option<Vec<u8>> {
+    /// Few files are bigger.
+    const ROOM: usize = 64 * 1024;
+    thread_local! {
+        static READ_INTO: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    }
+    let file = bun_sys::File::openat(directory, name, bun_sys::O::RDONLY, 0).ok()?;
+    READ_INTO.with_borrow_mut(|room| {
+        room.resize(ROOM, 0);
+        let count = file.read(&mut room[..]).ok()?;
+        // A file that gives less than there is room for has given all it has: how big it is need not be asked before, nor whether
+        // that was all after.
+        if count < ROOM {
+            return Some(room[..count].to_vec());
+        }
+        let size = file.get_end_pos().ok()?.max(count);
+        let mut all = Vec::new();
+        all.try_reserve_exact(size.saturating_add(16)).ok()?;
+        all.extend_from_slice(&room[..count]);
+        file.read_to_end_into(&mut all).ok()?;
+        Some(all)
+    })
+}
+
 fn split(path: &str) -> (&str, &str) {
     let path = if path.len() > 1 {
         path.trim_end_matches('/')
@@ -211,50 +236,7 @@ impl Disk {
                 .directories
                 .insert_ref(path.to_owned(), Directory::Missing);
         }
-        let read = match std::fs::read_dir(to_native(path)) {
-            Ok(entries) => {
-                let mut listing = Listing {
-                    files: Vec::new(),
-                    directories: Vec::new(),
-                    links: Vec::new(),
-                    folded: OnceLock::new(),
-                };
-                for entry in entries.flatten() {
-                    let name = entry.file_name().to_string_lossy().into_owned();
-                    // What the directory says about the entry spares asking about each file. A link has to be followed.
-                    let is_dir = match entry.file_type() {
-                        Ok(kind) if kind.is_symlink() => {
-                            listing.links.push(name.clone());
-                            match std::fs::metadata(entry.path()) {
-                                Ok(target) => target.is_dir(),
-                                // It leads nowhere.
-                                Err(_) => continue,
-                            }
-                        }
-                        Ok(kind) => kind.is_dir(),
-                        Err(_) => continue,
-                    };
-                    if is_dir {
-                        listing.directories.push(name);
-                    } else {
-                        listing.files.push(name);
-                    }
-                }
-                listing.files.sort_unstable();
-                listing.directories.sort_unstable();
-                listing.links.sort_unstable();
-                Directory::Listed(listing)
-            }
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
-                ) =>
-            {
-                Directory::Missing
-            }
-            Err(_) => Directory::Unreadable,
-        };
+        let read = list(path);
         self.directories.insert_ref(path.to_owned(), read)
     }
 
@@ -314,6 +296,112 @@ impl Disk {
     }
 }
 
+/// What the system says is in the directory at `path`.
+#[cfg(unix)]
+fn list(path: &str) -> Directory {
+    use bun_sys::EntryKind;
+    use std::os::unix::ffi::OsStrExt;
+    let directory = match bun_sys::open_dir_absolute(path.as_bytes()) {
+        Ok(directory) => bun_sys::Dir::from_fd(directory),
+        Err(error) if matches!(error.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) => {
+            return Directory::Missing;
+        }
+        Err(_) => return Directory::Unreadable,
+    };
+    let mut listing = Listing {
+        files: Vec::new(),
+        directories: Vec::new(),
+        links: Vec::new(),
+        folded: OnceLock::new(),
+    };
+    let mut entries = bun_sys::iterate_dir(directory.fd());
+    while let Ok(Some(entry)) = entries.next() {
+        let written = entry.name.slice_u8();
+        let whole = || std::path::Path::new(path).join(std::ffi::OsStr::from_bytes(written));
+        // What the directory says about the entry spares asking about each file. `None`: it is a link.
+        let is_dir = match entry.kind {
+            EntryKind::Directory => Some(true),
+            EntryKind::SymLink => None,
+            EntryKind::Unknown => match std::fs::symlink_metadata(whole()) {
+                Ok(found) if found.is_symlink() => None,
+                Ok(found) => Some(found.is_dir()),
+                Err(_) => continue,
+            },
+            _ => Some(false),
+        };
+        let name = String::from_utf8_lossy(written).into_owned();
+        let is_dir = match is_dir {
+            Some(is_dir) => is_dir,
+            // A link has to be followed.
+            None => {
+                listing.links.push(name.clone());
+                match std::fs::metadata(whole()) {
+                    Ok(target) => target.is_dir(),
+                    // It leads nowhere.
+                    Err(_) => continue,
+                }
+            }
+        };
+        if is_dir {
+            listing.directories.push(name);
+        } else {
+            listing.files.push(name);
+        }
+    }
+    listing.files.sort_unstable();
+    listing.directories.sort_unstable();
+    listing.links.sort_unstable();
+    Directory::Listed(listing)
+}
+
+#[cfg(not(unix))]
+fn list(path: &str) -> Directory {
+    match std::fs::read_dir(to_native(path)) {
+        Ok(entries) => {
+            let mut listing = Listing {
+                files: Vec::new(),
+                directories: Vec::new(),
+                links: Vec::new(),
+                folded: OnceLock::new(),
+            };
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                // What the directory says about the entry spares asking about each file. A link has to be followed.
+                let is_dir = match entry.file_type() {
+                    Ok(kind) if kind.is_symlink() => {
+                        listing.links.push(name.clone());
+                        match std::fs::metadata(entry.path()) {
+                            Ok(target) => target.is_dir(),
+                            // It leads nowhere.
+                            Err(_) => continue,
+                        }
+                    }
+                    Ok(kind) => kind.is_dir(),
+                    Err(_) => continue,
+                };
+                if is_dir {
+                    listing.directories.push(name);
+                } else {
+                    listing.files.push(name);
+                }
+            }
+            listing.files.sort_unstable();
+            listing.directories.sort_unstable();
+            listing.links.sort_unstable();
+            Directory::Listed(listing)
+        }
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            Directory::Missing
+        }
+        Err(_) => Directory::Unreadable,
+    }
+}
+
 /// `isFileSystemCaseSensitive`: whether this program is still found when the case of its path is swapped.
 fn is_file_system_case_sensitive() -> bool {
     if cfg!(windows) {
@@ -338,26 +426,37 @@ fn is_file_system_case_sensitive() -> bool {
 
 impl Host for Disk {
     fn read(&self, path: &str) -> Option<Cow<'static, [u8]>> {
-        // Opened by its name in its directory. By its whole path, every directory on the way is looked up again, and all threads meet at
-        // the ones near the root. One file after the other is in the same directory.
+        // From the second file in a row in one directory on, a file is opened by its name in the directory. By its whole path, every
+        // directory on the way is looked up again, and all threads meet at the ones near the root. For one file alone, opening the
+        // directory takes that walk and more.
         thread_local! {
-            static LAST: RefCell<Option<(String, bun_sys::Dir)>> = const { RefCell::new(None) };
+            static LAST: RefCell<(String, Option<bun_sys::Dir>)> = const { RefCell::new((String::new(), None)) };
         }
         let (parent, name) = split(path);
         if name.is_empty() || Self::is_above_listings(parent) {
             return std::fs::read(to_native(path)).ok().map(Cow::Owned);
         }
         let _turn = self.reading.as_ref().map(Turn::wait_for);
-        LAST.with_borrow_mut(|last| {
-            if !last.as_ref().is_some_and(|(of, _)| of == parent) {
-                *last = None;
-                let directory = bun_sys::open_dir_absolute(to_native(parent).as_bytes()).ok()?;
-                *last = Some((parent.to_owned(), bun_sys::Dir::from_fd(directory)));
+        let by_whole_path = || -> Option<Cow<'static, [u8]>> {
+            let path = to_native(path.trim_end_matches('/'));
+            read_whole(bun_sys::Fd::cwd(), path.as_bytes()).map(Cow::Owned)
+        };
+        LAST.with_borrow_mut(|(of, opened)| {
+            if of.as_str() != parent {
+                *opened = None;
+                of.clear();
+                of.push_str(parent);
+                return by_whole_path();
             }
-            let (_, directory) = last.as_ref()?;
-            bun_sys::File::read_from(directory, name.as_bytes())
-                .ok()
-                .map(Cow::Owned)
+            if opened.is_none() {
+                *opened = bun_sys::open_dir_absolute(to_native(parent).as_bytes())
+                    .ok()
+                    .map(bun_sys::Dir::from_fd);
+            }
+            let Some(directory) = opened.as_ref() else {
+                return by_whole_path();
+            };
+            read_whole(directory, name.as_bytes()).map(Cow::Owned)
         })
     }
     fn is_file(&self, path: &str) -> bool {

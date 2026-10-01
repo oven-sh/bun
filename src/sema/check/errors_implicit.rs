@@ -772,6 +772,8 @@ impl Checker<'_> {
         }
         for (index, p) in decl.params.iter().enumerate() {
             let param = &hir[p];
+            // Whether something is expected of it, once that has been asked.
+            let mut is_expected = None;
             if matches!(hir[param.pat].kind, PatKind::Object(_) | PatKind::Array(_)) {
                 let is_told = if param.ty.is_some() {
                     // `getBindingElementTypeFromParentType`: below an annotation the defaults are only looked at to see whether they
@@ -779,7 +781,7 @@ impl Checker<'_> {
                     self.p.files.options.strict_null_checks
                 } else if let FnOwner::Expr(e) = bound.fns[func.idx()].owner {
                     // What a default is depends on what is expected of it.
-                    self.contextual_param_type(file, func, index).is_some()
+                    *is_expected.insert(self.contextual_param_type(file, func, index).is_some())
                         || *context_is_known.get_or_insert_with(|| self.is_context_known(file, e))
                 } else {
                     true
@@ -863,7 +865,11 @@ impl Checker<'_> {
                     continue;
                 }
                 if let FnOwner::Expr(e) = bound.fns[func.idx()].owner {
-                    if self.contextual_param_type(file, func, index).is_some() {
+                    let is_expected = match is_expected {
+                        Some(is_expected) => is_expected,
+                        None => self.contextual_param_type(file, func, index).is_some(),
+                    };
+                    if is_expected {
                         continue;
                     }
                     // Nothing is expected of it, as far as can be told.

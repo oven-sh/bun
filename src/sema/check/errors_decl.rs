@@ -192,20 +192,23 @@ impl Checker<'_> {
         {
             return;
         }
-        // The parameter whose pattern `pat` is part of.
-        let param_of = |mut pat: PatId| loop {
-            match bound.pat_parent[pat.idx()] {
-                PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => pat = outer,
-                PatParent::Param(p) => break Some(p),
-                _ => break None,
-            }
-        };
-        const NOWHERE: (PatId, ParamId) = (PatId::NONE, ParamId::NONE);
-        // Around a statement are statements, and then a function, a namespace or the file.
-        let runs_in_place = self.has_function_run_in_place(file);
+        // Around a statement are statements, and then a function, a namespace or the file. From there it only goes on to a parameter
+        // if the function runs where it is written, and is written in one.
+        let runs_in_place = (0..hir.fns.len() as u32).map(FnId).any(|f| {
+            (hir[f].kind == FnKind::StaticBlock || self.is_immediately_invoked(file, f))
+                && self
+                    .parameter_around(file, ExprId::NONE, Parent::FnBody(f), true)
+                    .0
+                    .is_some()
+        });
         let index = self.exprs_by_kind(file);
         for &id in index.of(ExprTag::Ident) {
             let i = id.idx();
+            let (within, param) =
+                self.parameter_around(file, id, bound.expr_parent[i], runs_in_place);
+            if within.is_none() {
+                continue;
+            }
             let ExprKind::Ident(name) = hir.exprs[i].kind else {
                 continue;
             };
@@ -220,81 +223,6 @@ impl Checker<'_> {
                 Some(&Decl::Fn(f)) => (PatId::NONE, hir[f].pos),
                 _ => continue,
             };
-            // Out to the first parameter, or element of the pattern of one, whose default or whose pattern the name is written in; not
-            // through anything that runs later (`getIsDeferredContext`). `within`: what that parameter or element binds.
-            let mut below = ExprId(i as u32);
-            let mut parent = bound.expr_parent[i];
-            let (within, param) = loop {
-                parent = match parent {
-                    Parent::Expr(e) if e.is_none() => break NOWHERE,
-                    Parent::Expr(e) => {
-                        below = e;
-                        bound.expr_parent[e.idx()]
-                    }
-                    Parent::ParamDefault(p) => break (hir[p].pat, p),
-                    Parent::PatPropDefault(_) | Parent::PatElemDefault(_) => {
-                        let element = match parent {
-                            Parent::PatPropDefault(p) => hir[p].value,
-                            Parent::PatElemDefault(p) => hir[p].pat,
-                            _ => unreachable!(),
-                        };
-                        match param_of(element) {
-                            Some(p) => break (element, p),
-                            // Of a variable.
-                            None => self.outward(file, parent),
-                        }
-                    }
-                    // A name is worked out where the object literal, the pattern or the class is.
-                    Parent::Key(_) | Parent::MemberKey => match self
-                        .what_is_named(file, parent, below)
-                    {
-                        Named::Property(literal) | Named::Function(literal) => {
-                            Parent::Expr(literal)
-                        }
-                        // It is no part of the element it names: it goes with what has the pattern around it for a name.
-                        Named::Element(p) => {
-                            let PatParent::Prop(pattern, _) = bound.pat_parent[hir[p].value.idx()]
-                            else {
-                                break NOWHERE;
-                            };
-                            match param_of(pattern) {
-                                Some(q) => break (pattern, q),
-                                None => self.outward(file, Parent::PatPropDefault(p)),
-                            }
-                        }
-                        Named::Member(m) => self.parent_of(file, Parent::MemberInit(m)),
-                        Named::Unknown => break NOWHERE,
-                    },
-                    Parent::FnBody(f) => {
-                        let runs_now = match hir[f].kind {
-                            FnKind::StaticBlock => true,
-                            FnKind::Arrow | FnKind::Expr => {
-                                !hir[f].flags.intersects(Flags::ASYNC | Flags::GENERATOR)
-                                    && self.is_immediately_invoked(file, f)
-                            }
-                            _ => false,
-                        };
-                        if !runs_now {
-                            break NOWHERE;
-                        }
-                        self.parent_of(file, parent)
-                    }
-                    Parent::MemberInit(m) if hir[m].flags.contains(Flags::STATIC) => {
-                        self.parent_of(file, parent)
-                    }
-                    Parent::Stmt(s) if s.is_none() || !runs_in_place => break NOWHERE,
-                    Parent::Stmt(s) => bound.stmt_parent[s.idx()],
-                    Parent::Prop(_)
-                    | Parent::VarInit(_)
-                    | Parent::Case(_)
-                    | Parent::ClassExtends(_)
-                    | Parent::Decorator(..) => self.outward(file, parent),
-                    _ => break NOWHERE,
-                };
-            };
-            if within.is_none() {
-                continue;
-            }
             // `root.Parent.Locals()`: a local of the function whose parameter it is.
             let scope = bound.fns[bound.param_fn[param.idx()].idx()].scope;
             if bound.lookup(
@@ -319,6 +247,93 @@ impl Checker<'_> {
                     vec![c.source_text(file, hir[within].pos, end), c.atom_text(name)]
                 });
             }
+        }
+    }
+
+    /// Out from `parent`, which `below` is written in, to the first parameter, or element of the pattern of one, whose default or whose
+    /// pattern that is in; not through anything that runs later (`getIsDeferredContext`). What that parameter or element binds, and
+    /// the parameter: `NONE` if there is none. `past_statements`: whether to go on from a statement.
+    fn parameter_around(
+        &self,
+        file: FileId,
+        mut below: ExprId,
+        mut parent: Parent,
+        past_statements: bool,
+    ) -> (PatId, ParamId) {
+        const NOWHERE: (PatId, ParamId) = (PatId::NONE, ParamId::NONE);
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        // The parameter whose pattern `pat` is part of.
+        let param_of = |mut pat: PatId| loop {
+            match bound.pat_parent[pat.idx()] {
+                PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => pat = outer,
+                PatParent::Param(p) => break Some(p),
+                _ => break None,
+            }
+        };
+        loop {
+            parent = match parent {
+                Parent::Expr(e) if e.is_none() => return NOWHERE,
+                Parent::Expr(e) => {
+                    below = e;
+                    bound.expr_parent[e.idx()]
+                }
+                Parent::ParamDefault(p) => return (hir[p].pat, p),
+                Parent::PatPropDefault(_) | Parent::PatElemDefault(_) => {
+                    let element = match parent {
+                        Parent::PatPropDefault(p) => hir[p].value,
+                        Parent::PatElemDefault(p) => hir[p].pat,
+                        _ => unreachable!(),
+                    };
+                    match param_of(element) {
+                        Some(p) => return (element, p),
+                        // Of a variable.
+                        None => self.outward(file, parent),
+                    }
+                }
+                // A name is worked out where the object literal, the pattern or the class is.
+                Parent::Key(_) | Parent::MemberKey => match self.what_is_named(file, parent, below)
+                {
+                    Named::Property(literal) | Named::Function(literal) => Parent::Expr(literal),
+                    // It is no part of the element it names: it goes with what has the pattern around it for a name.
+                    Named::Element(p) => {
+                        let PatParent::Prop(pattern, _) = bound.pat_parent[hir[p].value.idx()]
+                        else {
+                            return NOWHERE;
+                        };
+                        match param_of(pattern) {
+                            Some(q) => return (pattern, q),
+                            None => self.outward(file, Parent::PatPropDefault(p)),
+                        }
+                    }
+                    Named::Member(m) => self.parent_of(file, Parent::MemberInit(m)),
+                    Named::Unknown => return NOWHERE,
+                },
+                Parent::FnBody(f) => {
+                    let runs_now = match hir[f].kind {
+                        FnKind::StaticBlock => true,
+                        FnKind::Arrow | FnKind::Expr => {
+                            !hir[f].flags.intersects(Flags::ASYNC | Flags::GENERATOR)
+                                && self.is_immediately_invoked(file, f)
+                        }
+                        _ => false,
+                    };
+                    if !runs_now {
+                        return NOWHERE;
+                    }
+                    self.parent_of(file, parent)
+                }
+                Parent::MemberInit(m) if hir[m].flags.contains(Flags::STATIC) => {
+                    self.parent_of(file, parent)
+                }
+                Parent::Stmt(s) if s.is_none() || !past_statements => return NOWHERE,
+                Parent::Stmt(s) => bound.stmt_parent[s.idx()],
+                Parent::Prop(_)
+                | Parent::VarInit(_)
+                | Parent::Case(_)
+                | Parent::ClassExtends(_)
+                | Parent::Decorator(..) => self.outward(file, parent),
+                _ => return NOWHERE,
+            };
         }
     }
 

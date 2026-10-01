@@ -42,7 +42,7 @@ pub struct Module {
     /// Which file each specifier the file mentions means, in each of the ways it is looked for there (`getModeForUsageLocation`).
     pub imports: FxHashMap<(Atom, ResolutionMode), FileId>,
     /// The `/// <reference>`s that lead nowhere: where what they name is written, and what is said of it.
-    pub missing_references: Vec<(u32, u32)>,
+    pub missing_references: Few<(u32, u32)>,
     /// Resolved like Node does, it is an ECMAScript module.
     pub is_esm: bool,
     /// Its name or its package says that it is an ECMAScript module, however modules are resolved. Only asked of packages then.
@@ -52,21 +52,21 @@ pub struct Module {
     /// `getEmitSyntaxForUsageLocationWorker` of a plain `import` in it: what that is emitted as, which is also how it is resolved.
     pub default_mode: ResolutionMode,
     /// The specifiers that lead to JavaScript nothing declares the types of, and the way they are looked for when they do.
-    pub untyped_imports: Vec<(Atom, ResolutionMode)>,
+    pub untyped_imports: Few<(Atom, ResolutionMode)>,
     /// Those of `untyped_imports` that lead to a `.jsx` file, which takes `jsx` (`GetResolutionDiagnostic`).
-    pub jsx_imports: Vec<(Atom, ResolutionMode)>,
+    pub jsx_imports: Few<(Atom, ResolutionMode)>,
     /// Those of `untyped_imports` that resolve to a file inside a package. With `allowJs` such a file is loaded only up to
     /// `maxNodeModuleJsDepth` (`elideOnDepth`).
-    pub untyped_package_imports: Vec<(Atom, ResolutionMode)>,
+    pub untyped_package_imports: Few<(Atom, ResolutionMode)>,
     /// `ResolvedUsingTsExtension`: the specifiers that resolve through a TypeScript extension written in the specifier itself, with the
     /// mode they are resolved in.
-    pub ts_extension_imports: Vec<(Atom, ResolutionMode)>,
+    pub ts_extension_imports: Few<(Atom, ResolutionMode)>,
     /// `GetResolutionDiagnostic`: the specifiers that resolve to a `.d.css.ts` file or the like without `allowArbitraryExtensions`, with
     /// the mode they are resolved in. They lead to no file (6263).
-    pub arbitrary_extension_imports: Vec<(Atom, ResolutionMode)>,
+    pub arbitrary_extension_imports: Few<(Atom, ResolutionMode)>,
     /// The relative specifiers without an extension, when modules are resolved like Node does, which wants one of `import`; and
     /// whether there is a file that could be meant.
-    pub extensionless_imports: Vec<(Atom, bool)>,
+    pub extensionless_imports: Few<(Atom, bool)>,
     /// The files it refers to, in the order it does: `/// <reference>`s, then imports.
     pub edges: Vec<FileId>,
     /// Nothing refers to it, and it adds nothing to what all files see. So `hir` and `bound` are only there while a thread has it at hand:
@@ -197,26 +197,14 @@ fn read_and_work(
     });
 }
 
-/// A guess at whether nothing refers to the file, from where it is and what it is called. It is only a matter of speed and memory: a file
-/// that was wrongly let go of is parsed again, and one that was wrongly held on to is let go of later.
-fn looks_like_a_leaf(path: &str) -> bool {
-    const DIRECTORIES: [&str; 14] = [
-        "test",
-        "tests",
-        "__tests__",
-        "spec",
-        "specs",
-        "e2e",
-        "fixtures",
-        "__fixtures__",
-        "scripts",
-        "examples",
-        "bench",
-        "benchmarks",
-        "stories",
-        "__mocks__",
-    ];
-    let (directories, name) = path.rsplit_once('/').unwrap_or(("", path));
+/// A guess at whether nothing refers to the file: it exports nothing, or it is called what nothing imports is called. It is only a matter
+/// of speed and memory: a file that was wrongly let go of is parsed again, and one that was wrongly held on to is let go of later.
+fn looks_like_a_leaf(path: &str, bound: &Bound) -> bool {
+    let exports = bound.symbols[bound.file_symbol.idx()].exports;
+    if bound.table(exports).is_empty() && bound.export_stars.is_empty() {
+        return true;
+    }
+    let name = path.rsplit_once('/').map_or(path, |(_, name)| name);
     [
         ".test.",
         ".spec.",
@@ -227,9 +215,6 @@ fn looks_like_a_leaf(path: &str) -> bool {
     ]
     .iter()
     .any(|mark| name.contains(mark))
-        || directories
-            .split('/')
-            .any(|directory| DIRECTORIES.contains(&directory))
 }
 
 /// What is known of a file whose syntax tree is not there.
@@ -940,7 +925,7 @@ impl Files {
         // Only what nothing has been seen to refer to: the files the program starts from.
         let mut may_drop = options.drops_what_nothing_refers_to;
         let mut is_first = true;
-        let mut ahead: FxHashMap<String, Loaded> = FxHashMap::default();
+        let mut ahead: FxHashMap<String, Box<Loaded>> = FxHashMap::default();
         while !frontier.is_empty() {
             let batch = std::mem::take(&mut frontier);
             if is_first {
@@ -951,7 +936,7 @@ impl Files {
                     .collect();
                 ahead = Self::load_ahead(host, &resolver, &options, &atoms, seeds);
             }
-            let results: Vec<Mutex<Option<Loaded>>> = batch
+            let results: Vec<Mutex<Option<Box<Loaded>>>> = batch
                 .iter()
                 .map(|(_, path, is_lib)| {
                     Mutex::new(
@@ -968,13 +953,13 @@ impl Files {
             let paths: Vec<&str> = missing.iter().map(|&i| &batch[i].1[..]).collect();
             read_and_work(host, &paths, &|at, text| {
                 let (_, path, is_lib) = &batch[missing[at]];
-                *results[missing[at]].lock().unwrap() = Some(Self::load_one(
+                *results[missing[at]].lock().unwrap() = Some(Box::new(Self::load_one(
                     host, &resolver, &options, &atoms, path, *is_lib, may_drop, text,
-                ));
+                )));
             });
             may_drop = false;
             for ((id, _, _), result) in batch.iter().zip(results) {
-                let mut loaded = result.into_inner().unwrap().unwrap();
+                let mut loaded = *result.into_inner().unwrap().unwrap();
                 // `filesParser.start`: the sub tasks of a file start once, at the lowest depth the file has been reached at by then.
                 let depth = depths[id.idx()];
                 for (path, is_lib, increases_depth) in loaded.references {
@@ -1037,7 +1022,7 @@ impl Files {
             let paths: Vec<&str> = back.iter().map(|&i| &modules[i].path[..]).collect();
             read_and_work(host, &paths, &|at, text| {
                 let module = &modules[back[at]];
-                *parsed[at].lock().unwrap() = Some(Self::parse_and_bind(
+                let (mut hir, mut bound) = Self::parse_and_bind(
                     host,
                     &options,
                     &atoms,
@@ -1045,7 +1030,10 @@ impl Files {
                     module.is_lib,
                     module.says_esm,
                     text,
-                ));
+                );
+                hir.fit();
+                bound.fit();
+                *parsed[at].lock().unwrap() = Some((hir, bound));
             });
             for (&i, parsed) in back.iter().zip(parsed) {
                 let (hir, bound) = parsed.into_inner().unwrap().unwrap();
@@ -1104,7 +1092,7 @@ impl Files {
         options: &Options,
         atoms: &Interner,
         seeds: Vec<(String, bool, bool)>,
-    ) -> FxHashMap<String, Loaded> {
+    ) -> FxHashMap<String, Box<Loaded>> {
         /// What is next to each other is in the same directory.
         const RUN: usize = 16;
         /// What has been read takes memory until it is worked on.
@@ -1116,7 +1104,7 @@ impl Files {
             seen_packages: FxHashSet<String>,
             /// Taken from `to_read` and not in `done` yet.
             under_way: usize,
-            done: FxHashMap<String, Loaded>,
+            done: FxHashMap<String, Box<Loaded>>,
         }
         let shared = Mutex::new(Shared {
             seen: seeds.iter().map(|seed| seed.0.clone()).collect(),
@@ -1147,9 +1135,9 @@ impl Files {
                     state = shared.lock().unwrap();
                 } else if let Some(((path, is_lib, may_drop), text)) = state.ready.pop() {
                     drop(state);
-                    let loaded = Self::load_one(
+                    let loaded = Box::new(Self::load_one(
                         host, resolver, options, atoms, &path, is_lib, may_drop, text,
-                    );
+                    ));
                     // As the waves do, but for what goes by how deep in packages a file is.
                     let found = loaded
                         .references
@@ -1497,13 +1485,13 @@ impl Files {
             bound,
             is_lib,
             imports: FxHashMap::default(),
-            untyped_imports,
-            jsx_imports,
-            untyped_package_imports,
-            ts_extension_imports,
-            arbitrary_extension_imports,
-            extensionless_imports,
-            missing_references,
+            untyped_imports: untyped_imports.into(),
+            jsx_imports: jsx_imports.into(),
+            untyped_package_imports: untyped_package_imports.into(),
+            ts_extension_imports: ts_extension_imports.into(),
+            arbitrary_extension_imports: arbitrary_extension_imports.into(),
+            extensionless_imports: extensionless_imports.into(),
+            missing_references: missing_references.into(),
             is_esm,
             says_esm,
             implied_format,
@@ -1522,10 +1510,13 @@ impl Files {
             && module.bound.ambient_modules.is_empty()
             && module.bound.umd_globals.is_empty();
         // All the trees of a big program at once are several times what is ever needed afterwards.
-        if may_drop && module.adds_nothing && looks_like_a_leaf(path) {
+        if may_drop && module.adds_nothing && looks_like_a_leaf(path, &module.bound) {
             module.hir = stub_of(&module.hir);
             module.bound = Bound::default();
             module.is_dropped = true;
+        } else {
+            module.hir.fit();
+            module.bound.fit();
         }
         Loaded {
             module,

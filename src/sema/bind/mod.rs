@@ -289,11 +289,65 @@ pub struct Symbol {
     pub flags: SymFlags,
     /// In the order they are bound. Those that what has the name refuses (`declareSymbolEx`) are listed too, for what is said of
     /// duplicates: they add nothing to `flags`, and each is the one declaration of a symbol of its own that is in no table.
-    pub decls: Vec<Decl>,
+    pub decls: Decls,
     /// The module, namespace or enum it is a member of.
     pub parent: SymbolId,
     /// What a module, namespace or enum exports.
     pub exports: TableId,
+}
+
+/// The declarations of a symbol. Nearly every symbol has one, which needs no block of its own.
+pub enum Decls {
+    One(Decl),
+    Many(Box<[Decl]>),
+}
+
+impl Decls {
+    #[inline]
+    pub fn as_slice(&self) -> &[Decl] {
+        match self {
+            Decls::One(decl) => std::slice::from_ref(decl),
+            Decls::Many(decls) => &decls[..],
+        }
+    }
+
+    fn push(&mut self, decl: Decl) {
+        let mut all = Vec::with_capacity(self.len() + 1);
+        all.extend_from_slice(self.as_slice());
+        all.push(decl);
+        *self = Decls::Many(all.into_boxed_slice());
+    }
+
+    fn retain(&mut self, keep: impl FnMut(&Decl) -> bool) {
+        let mut all = self.to_vec();
+        all.retain(keep);
+        let only = if let [decl] = all[..] {
+            Some(decl)
+        } else {
+            None
+        };
+        *self = match only {
+            Some(decl) => Decls::One(decl),
+            None => Decls::Many(all.into_boxed_slice()),
+        };
+    }
+}
+
+impl std::ops::Deref for Decls {
+    type Target = [Decl];
+    #[inline]
+    fn deref(&self) -> &[Decl] {
+        self.as_slice()
+    }
+}
+
+impl<'a> IntoIterator for &'a Decls {
+    type Item = &'a Decl;
+    type IntoIter = std::slice::Iter<'a, Decl>;
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.as_slice().iter()
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -511,27 +565,27 @@ pub struct Bound {
     /// The file as a module. Its exports are what other files can import.
     pub file_symbol: SymbolId,
     /// `export * from spec`, by the module or namespace symbol that says so.
-    pub export_stars: Vec<(SymbolId, Atom)>,
+    pub export_stars: Few<(SymbolId, Atom)>,
     /// Which of `export_stars` are `export type *`, index for index.
-    pub export_star_type_only: Vec<bool>,
+    pub export_star_type_only: Few<bool>,
     /// `declare module "name"` at the top of a file, or right in an ambient module at the top of a script.
-    pub ambient_modules: Vec<(Atom, SymbolId)>,
+    pub ambient_modules: Few<(Atom, SymbolId)>,
     /// `declare global { }` at the top of a module, or right in an ambient module at the top of a script: symbols whose exports are
     /// global.
-    pub global_augmentations: Vec<SymbolId>,
+    pub global_augmentations: Few<SymbolId>,
     /// `local.ExportSymbol` of `declareModuleMember`: the exported values that what is exported under their names refuses. In the block
     /// it is written in each is what its name means as a value all the same: it is among the locals there, without being local.
-    pub refused_exports: Vec<SymbolId>,
+    pub refused_exports: Few<SymbolId>,
     /// `export as namespace N`
-    pub umd_globals: Vec<(Atom, SymbolId)>,
+    pub umd_globals: Few<(Atom, SymbolId)>,
     /// The module specifiers in the file that are looked for, in the order they are first mentioned. `collectModuleReferences`
     pub specifiers: Vec<Atom>,
     /// Those of the import and export statements directly in the ambient modules a script declares, and the names of the modules
     /// added to there: looked for unless relative.
-    pub ambient_specifiers: Vec<Atom>,
+    pub ambient_specifiers: Few<Atom>,
     /// `this.name = value` and `this["name"] = value` in the members of a class, in JavaScript, where it declares the property: the
     /// class, whether it is the static side, the name, the assignment. Sorted.
-    pub this_properties: Vec<(ClassId, bool, Atom, ExprId)>,
+    pub this_properties: Few<(ClassId, bool, Atom, ExprId)>,
     /// `CommonJSModuleIndicator`: what shows that the file is a CommonJS module.
     pub commonjs_indicator: Option<ExprId>,
 
@@ -566,49 +620,49 @@ pub struct Bound {
     pub interface_symbol: Vec<SymbolId>,
     pub alias_symbol: Vec<SymbolId>,
     pub alias_scope: Vec<ScopeId>,
-    pub enum_symbol: Vec<SymbolId>,
-    pub enum_member_symbol: Vec<SymbolId>,
-    pub enum_member_owner: Vec<EnumId>,
-    pub module_symbol: Vec<SymbolId>,
+    pub enum_symbol: Few<SymbolId>,
+    pub enum_member_symbol: Few<SymbolId>,
+    pub enum_member_owner: Few<EnumId>,
+    pub module_symbol: Few<SymbolId>,
     /// `getModuleInstanceState(..) != NonInstantiated`, by `ModuleId`.
-    pub module_instantiated: Vec<bool>,
+    pub module_instantiated: Few<bool>,
     pub var_stmt: Vec<StmtId>,
     /// The identifiers that are assigned to, by the variable they name.
     pub assignments: Vec<(SymbolId, ExprId)>,
     /// The expressions that are (part of) the operand of a `typeof` in a type. Sorted.
-    pub type_query_operands: Vec<ExprId>,
+    pub type_query_operands: Few<ExprId>,
     /// Where each `infer T` that is written somewhere that says something about `T` is written. In order of the parameters.
-    pub infer_positions: Vec<(TypeParamId, InferPosition)>,
+    pub infer_positions: Few<(TypeParamId, InferPosition)>,
     /// `f.name = value` and `f["name"] = value` next to `function f() {}`: properties of `f`, which may be written `a.f`. By the
     /// symbol of the function, then by name. The last field is the declaration: the assignment or, in JavaScript, the call
     /// `Object.defineProperty(f, "name", descriptor)`.
-    pub declared_fn_expandos: Vec<(SymbolId, Atom, ExprId)>,
+    pub declared_fn_expandos: Few<(SymbolId, Atom, ExprId)>,
     /// The same next to `const f = function () {}` or `const f = () => {}`, by the function.
-    pub fn_expr_expandos: Vec<(FnId, Atom, ExprId)>,
+    pub fn_expr_expandos: Few<(FnId, Atom, ExprId)>,
     /// `f[0] = value`, `f[key] = value`: the same under a numeric or late-bound key, which the checker names.
     /// (function, key, declaration), by function, then by declaration.
-    pub declared_fn_keyed_expandos: Vec<(SymbolId, ExprId, ExprId)>,
-    pub fn_expr_keyed_expandos: Vec<(FnId, ExprId, ExprId)>,
+    pub declared_fn_keyed_expandos: Few<(SymbolId, ExprId, ExprId)>,
+    pub fn_expr_keyed_expandos: Few<(FnId, ExprId, ExprId)>,
     /// `o.name = value`, `o["name"] = value`: properties of the empty object literal that initializes `o`, in JavaScript. By the
     /// literal, then by name.
-    pub object_expandos: Vec<(ExprId, Atom, ExprId)>,
+    pub object_expandos: Few<(ExprId, Atom, ExprId)>,
     /// `o[0] = value`: a property of such a literal under a numeric key, which the checker names. A late-bound key declares
     /// nothing there. (literal, key, declaration), by literal, then by declaration.
-    pub object_keyed_expandos: Vec<(ExprId, ExprId, ExprId)>,
+    pub object_keyed_expandos: Few<(ExprId, ExprId, ExprId)>,
     /// The assignments and calls that `bindDeferredExpandoAssignment` gives a symbol. Sorted.
-    pub expando_declarations: Vec<ExprId>,
+    pub expando_declarations: Few<ExprId>,
     pub case_stmt: Vec<StmtId>,
     /// Where control is when each statement is reached.
     pub stmt_flow: Vec<FlowId>,
     /// Where control is at the end of a `case` that another follows, if it gets there. `NONE` otherwise.
     pub case_fallthrough: Vec<FlowId>,
     /// Each `var` written in a block, which is not where it ends up, and the scope it is written in.
-    pub hoisted_vars: Vec<(PatId, ScopeId)>,
+    pub hoisted_vars: Few<(PatId, ScopeId)>,
     /// The decorators of what cannot be decorated: nothing more is said of what is in them.
-    pub refused_decorators: Vec<ExprId>,
+    pub refused_decorators: Few<ExprId>,
     /// The labeled statements no `break` or `continue` names.
-    pub unused_labels: Vec<StmtId>,
-    pub import_equals_scope: Vec<ScopeId>,
+    pub unused_labels: Few<StmtId>,
+    pub import_equals_scope: Few<ScopeId>,
     pub export_scope: Vec<ScopeId>,
     /// The scope an expression that opens none is in, for the few that need it.
     pub expr_scope: FxHashMap<ExprId, ScopeId>,
@@ -622,12 +676,15 @@ pub struct Bound {
     /// a value only the program can tell. Sorted by expression.
     pub alias_idents: Vec<(ExprId, ScopeId)>,
     /// The identifiers `arguments` that mean the arguments of a function around them. Sorted.
-    pub arguments_objects: Vec<ExprId>,
+    pub arguments_objects: Few<ExprId>,
     /// `checkUnmatchedJSDocParameters`: the `@param` tags that match no parameter, as start and code.
-    pub jsdoc_param_errors: Vec<(u32, u32)>,
+    pub jsdoc_param_errors: Few<(u32, u32)>,
 
     pub flow: Vec<Flow>,
     pub flow_edges: Vec<FlowId>,
+    /// How many places in the flow of control the binder came to. `flow` leaves out the labels nothing comes after, and has one start for
+    /// all the functions without a body.
+    pub flow_places: u32,
 }
 
 pub const UNREACHABLE: FlowId = FlowId(0);
@@ -803,6 +860,28 @@ impl Bound {
             + self.flow.capacity() * std::mem::size_of::<Flow>()
             + self.flow_edges.capacity() * 4
             + self.pat_parent.capacity() * 12
+    }
+}
+
+impl Bound {
+    /// `hir::fit`, for a file that is kept. The other lists are made the size they need.
+    pub fn fit(&mut self) {
+        macro_rules! each {
+            ($($f:ident),*) => { $(crate::hir::fit(&mut self.$f);)* };
+        }
+        each!(
+            symbols,
+            scopes,
+            tables,
+            entries,
+            ids,
+            specifiers,
+            assignments,
+            free_idents,
+            alias_idents,
+            flow,
+            flow_edges
+        );
     }
 }
 

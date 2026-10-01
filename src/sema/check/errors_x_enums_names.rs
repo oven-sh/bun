@@ -81,8 +81,6 @@ impl Checker<'_> {
             computed: FxHashSet::default(),
             values: FxHashMap::default(),
             variables: Vec::new(),
-            indexed: Vec::new(),
-            free_names: FxHashMap::default(),
             errors: Vec::new(),
             unsure: false,
             unsure_members: FxHashSet::default(),
@@ -859,9 +857,6 @@ struct EnumValues<'c, 'p> {
     values: FxHashMap<(FileId, EnumMemberId), Evaluated>,
     /// The constants whose initializers are being evaluated.
     variables: Vec<(FileId, VarDeclId)>,
-    /// The files whose `free_idents` are in `free_names`.
-    indexed: Vec<FileId>,
-    free_names: FxHashMap<(FileId, ExprId), ScopeId>,
     errors: Vec<Diagnostic>,
     /// Since it was last reset, a name could not be followed to what it means for want of something that is not kept here.
     unsure: bool,
@@ -1408,18 +1403,10 @@ impl EnumValues<'_, '_> {
     }
 
     /// The scope the name `e`, which nothing in its file declares as a value, is written in.
-    fn scope_of_free_name(&mut self, file: FileId, e: ExprId) -> Option<ScopeId> {
-        if !self.indexed.contains(&file) {
-            self.indexed.push(file);
-            self.free_names.extend(
-                self.c
-                    .bound(file)
-                    .free_idents
-                    .iter()
-                    .map(|&(e, scope)| ((file, e), scope)),
-            );
-        }
-        self.free_names.get(&(file, e)).copied()
+    fn scope_of_free_name(&self, file: FileId, e: ExprId) -> Option<ScopeId> {
+        let free = &self.c.bound(file).free_idents;
+        let at = free.binary_search_by_key(&e, |f| f.0).ok()?;
+        Some(free[at].1)
     }
 }
 

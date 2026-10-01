@@ -116,7 +116,7 @@ impl Builder<'_> {
                     args: self.clone_type_list(args),
                 },
             },
-            ts::TypeData::StringLiteral(text) => TypeNodeKind::StringLit(self.atoms.intern(&text)),
+            ts::TypeData::StringLiteral(text) => TypeNodeKind::StringLit(self.atom(&text)),
             ts::TypeData::NumberLiteral(number) => {
                 TypeNodeKind::NumberLit(self.file.number(self.ts.numbers[number as usize]))
             }
@@ -426,7 +426,7 @@ impl Builder<'_> {
         }
         let atoms: smallvec::SmallVec<[Atom; 4]> = self.ts[names]
             .iter()
-            .map(|name| self.atoms.intern(&name.text))
+            .map(|name| self.atom(&name.text))
             .collect();
         self.file.list(&atoms)
     }
@@ -461,7 +461,7 @@ impl Builder<'_> {
             flags: param_flags,
         } = self.ts[id];
         TypeParam {
-            name: self.atoms.intern(&name),
+            name: self.atom(&name),
             pos: pos(loc),
             constraint: self.clone_type(constraint),
             default: self.clone_type(default),
@@ -555,7 +555,7 @@ impl Builder<'_> {
         let ts::Pattern { data, loc } = self.ts[id];
         let kind = match data {
             ts::PatternData::Missing => PatKind::Missing,
-            ts::PatternData::Identifier(name) => PatKind::Ident(self.atoms.intern(&name)),
+            ts::PatternData::Identifier(name) => PatKind::Ident(self.atom(&name)),
             ts::PatternData::Array(elements) => {
                 let cloned: smallvec::SmallVec<[PatElem; 4]> = elements
                     .iter()
@@ -622,7 +622,7 @@ impl Builder<'_> {
             ts::PropertyKey::None | ts::PropertyKey::BigInt | ts::PropertyKey::Computed(_) => {
                 PropKey::None
             }
-            ts::PropertyKey::Name(name) => PropKey::Name(self.atoms.intern(&name)),
+            ts::PropertyKey::Name(name) => PropKey::Name(self.atom(&name)),
             ts::PropertyKey::Number(number) => {
                 PropKey::Name(self.number_name(self.ts.numbers[number as usize]))
             }

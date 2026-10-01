@@ -872,8 +872,7 @@ impl Checker<'_> {
         // By symbol, once there is a name to ask about. 0: nothing is said.
         const NOT_LOOKED_INTO: u32 = u32::MAX;
         let mut codes: Vec<u32> = Vec::new();
-        let index = self.exprs_by_kind(file);
-        for &e in index.of(ExprTag::Ident) {
+        for &(e, _) in &bound.alias_idents {
             let i = e.idx();
             let local = bound.expr_symbol[i];
             if local.is_none() || matches!(bound.expr_parent[i], Parent::None) {

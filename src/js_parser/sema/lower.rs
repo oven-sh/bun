@@ -20,6 +20,13 @@ pub(crate) struct Lower<'p, 'a> {
     pub(super) p: &'p P<'a, true, false>,
     /// Sorted.
     marks: Vec<(i32, Mark, i32)>,
+    /// A bit for each place in the source, set where something in `marks` is noted from. At hardly any place something is.
+    mark_starts: Vec<u64>,
+    /// What the lists being lowered have so far, the innermost list last: ids, variables, parameters, properties.
+    list_ids: Vec<u32>,
+    list_decls: Vec<VarDecl>,
+    list_params: Vec<Param>,
+    list_props: Vec<Prop>,
     /// What is made of an expression, from the inside out.
     casts: HashMap<ExprKey, SmallVec<[(CastKind, i32); 2]>>,
     /// A bit for each place in the source, set where an expression in `casts` starts. Hardly any expression is in there.
@@ -123,6 +130,12 @@ impl<'p, 'a> Lower<'p, 'a> {
         let mut marks = syntax.marks;
         marks.sort_unstable();
         marks.dedup();
+        let mut mark_starts = vec![0u64; p.source.contents().len() / 64 + 1];
+        for &(from, ..) in &marks {
+            if let Some(word) = mark_starts.get_mut(from as u32 as usize / 64) {
+                *word |= 1 << (from as u32 % 64);
+            }
+        }
         let mut casts: HashMap<ExprKey, SmallVec<[(CastKind, i32); 2]>> = HashMap::default();
         let mut cast_starts = vec![0u64; p.source.contents().len() / 64 + 1];
         for (key, kind, ty) in syntax.casts {
@@ -152,6 +165,11 @@ impl<'p, 'a> Lower<'p, 'a> {
             b,
             p,
             marks,
+            mark_starts,
+            list_ids: Vec::new(),
+            list_decls: Vec::new(),
+            list_params: Vec::new(),
+            list_props: Vec::new(),
             casts,
             cast_starts,
             closing_tags,
@@ -295,7 +313,21 @@ impl<'p, 'a> Lower<'p, 'a> {
 
     // ───────────────────────────── what the parser noted ─────────────────────────────
 
+    #[inline]
     fn mark(&self, from: ast::Loc, what: Mark) -> Option<u32> {
+        // Outside the source there is no telling.
+        let start = from.start as u32;
+        if self
+            .mark_starts
+            .get(start as usize / 64)
+            .is_some_and(|word| word & 1 << (start % 64) == 0)
+        {
+            return None;
+        }
+        self.find_mark(from, what)
+    }
+
+    fn find_mark(&self, from: ast::Loc, what: Mark) -> Option<u32> {
         let at = self
             .marks
             .partition_point(|&(f, w, _)| (f, w) < (from.start, what));
@@ -446,7 +478,7 @@ impl<'p, 'a> Lower<'p, 'a> {
     /// `in_block`: false for the statements of the file and of a namespace.
     fn stmts_in(&mut self, stmts: &[Stmt], is_top_level: bool, in_block: bool) -> IdList<StmtId> {
         let outer_in_block = std::mem::replace(&mut self.in_block, in_block);
-        let mut out = Vec::with_capacity(stmts.len());
+        let base = self.list_ids.len();
         // An `export` in a namespace makes no module of the file, from wherever it is parsed.
         let was_module = self.b.file.has_module_syntax;
         let outer_reparsed = std::mem::take(&mut self.reparsed);
@@ -466,26 +498,44 @@ impl<'p, 'a> Lower<'p, 'a> {
             }
             let id = self.stmt(stmt);
             // `parseListIndex`: what was made of JSDoc tags while the statement was parsed goes before it.
-            out.append(&mut self.reparsed);
+            self.list_reparsed();
             if let Some(id) = id {
                 if is_top_level && self.is_exported(id) {
                     self.b.file.has_module_syntax = true;
                 }
-                out.push(id);
+                self.list_ids.push(id.0);
             }
         }
         if is_top_level {
             // `parseSourceFileWorker`: the end of the file has comments as well.
             self.with_jsdoc(self.source.len() as u32, false, &mut Host::Other);
             self.dropped_statement_jsdoc();
-            out.append(&mut self.reparsed);
+            self.list_reparsed();
         }
         self.reparsed = outer_reparsed;
         if !is_top_level {
             self.b.file.has_module_syntax = was_module;
         }
         self.in_block = outer_in_block;
-        self.b.file.list(&out)
+        self.take_ids(base)
+    }
+
+    /// Moves what is in `reparsed` to the list of statements being lowered.
+    #[inline]
+    fn list_reparsed(&mut self) {
+        if !self.reparsed.is_empty() {
+            self.list_ids
+                .extend(self.reparsed.drain(..).map(|statement| statement.0));
+        }
+    }
+
+    /// Makes a list of what is in `list_ids` from `base` on, and takes it off.
+    fn take_ids<T>(&mut self, base: usize) -> IdList<T> {
+        let start = self.b.file.ids.len() as u32;
+        self.b.file.ids.extend_from_slice(&self.list_ids[base..]);
+        let len = (self.list_ids.len() - base) as u32;
+        self.list_ids.truncate(base);
+        IdList::new(start, len)
     }
 
     /// `parseList(PCSwitchClauseStatements)`: the type aliases and imports made of JSDoc tags go on to the list around the `switch`.
@@ -1049,7 +1099,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 VarKind::Var
             };
         }
-        let mut decls = Vec::with_capacity(s.decls.len());
+        let base = self.list_decls.len();
         for decl in s.decls.iter() {
             let mut flags = if s.is_export {
                 Flags::EXPORT
@@ -1065,7 +1115,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             let pat = self.binding(&decl.binding);
             let ty = self.annotation(decl.binding.loc);
             let init = self.optional_expr(decl.value.as_ref());
-            decls.push(VarDecl {
+            self.list_decls.push(VarDecl {
                 pat,
                 ty,
                 init,
@@ -1073,7 +1123,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                 flags,
             });
         }
-        let decls = self.b.file.add_var_decls(&decls);
+        let decls = self.b.file.add_var_decls(&self.list_decls[base..]);
+        self.list_decls.truncate(base);
         // `parseVariableDeclarationWorker`
         if !self.jsdoc.list.is_empty() {
             for (id, decl) in decls.iter().zip(s.decls.iter()) {
@@ -1248,7 +1299,7 @@ impl<'p, 'a> Lower<'p, 'a> {
     // ───────────────────────────── functions and classes ─────────────────────────────
 
     fn params(&mut self, args: &[G::Arg], has_rest: bool) -> Span<ParamId> {
-        let mut params = Vec::with_capacity(args.len());
+        let base = self.list_params.len();
         let mut decorators: Vec<(usize, ExprId)> = Vec::new();
         // `(... /* comment */ a)`
         let last_is_rest =
@@ -1374,7 +1425,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             if let Some(code) = parameter_property_error {
                 self.b.file.early_errors.push((pos, code));
             }
-            params.push(Param {
+            self.list_params.push(Param {
                 pat,
                 ty,
                 default,
@@ -1385,7 +1436,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                 decorators.push((i, self.expr(decorator)));
             }
         }
-        let params = self.b.file.add_params(&params);
+        let params = self.b.file.add_params(&self.list_params[base..]);
+        self.list_params.truncate(base);
         for (i, e) in decorators {
             self.b
                 .file
@@ -1805,8 +1857,21 @@ impl<'p, 'a> Lower<'p, 'a> {
     }
 
     fn exprs<'e>(&mut self, exprs: impl Iterator<Item = &'e Expr>) -> IdList<ExprId> {
-        let list: Vec<ExprId> = exprs.map(|e| self.expr(e)).collect();
-        self.b.file.list(&list)
+        let base = self.list_ids.len();
+        for e in exprs {
+            let id = self.expr(e);
+            self.list_ids.push(id.0);
+        }
+        self.take_ids(base)
+    }
+
+    /// Whether an expression in `casts` starts where `expr` does. Outside the source there is no telling.
+    #[inline]
+    fn may_have_casts(&self, expr: &Expr) -> bool {
+        let start = expr.loc.start as u32;
+        self.cast_starts
+            .get(start as usize / 64)
+            .is_none_or(|word| word & 1 << (start % 64) != 0)
     }
 
     fn chain(chain: Option<ast::OptionalChain>) -> Chain {
@@ -1825,12 +1890,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             return self.b.file.expr(ExprKind::Missing, pos);
         }
         let mut id = self.expr_without_casts(expr);
-        // Where it starts outside the source there is no telling.
-        let start = expr.loc.start as u32;
-        if self
-            .cast_starts
-            .get(start as usize / 64)
-            .is_none_or(|word| word & 1 << (start % 64) != 0)
+        if self.may_have_casts(expr)
             && let Some(casts) = self.casts.get(&ExprKey::of(expr))
         {
             for (kind, at) in casts.clone() {
@@ -2085,11 +2145,16 @@ impl<'p, 'a> Lower<'p, 'a> {
                         }))
                     }
                     None => {
-                        let mut texts = vec![self.template_text(&e.head)];
-                        texts.extend(e.parts().iter().map(|part| self.template_text(&part.tail)));
+                        let base = self.list_ids.len();
+                        let head = self.template_text(&e.head);
+                        self.list_ids.push(head.0);
+                        for part in e.parts().iter() {
+                            let tail = self.template_text(&part.tail);
+                            self.list_ids.push(tail.0);
+                        }
                         ExprKind::Template {
                             exprs,
-                            texts: self.b.file.list(&texts),
+                            texts: self.take_ids(base),
                         }
                     }
                 }
@@ -2256,12 +2321,12 @@ impl<'p, 'a> Lower<'p, 'a> {
 
     /// `a + b + c + ...` is as deep to the left as it is long.
     fn binary(&mut self, expr: &Expr) -> ExprId {
-        let mut spine: Vec<&Expr> = Vec::new();
+        let mut spine: SmallVec<[&Expr; 8]> = SmallVec::new();
         let mut leftmost = expr;
         while let Data::EBinary(e) = &leftmost.data {
             spine.push(leftmost);
             // A cast of the left operand, or parentheses around it, have to be looked up.
-            if !self.casts.is_empty() && self.casts.contains_key(&ExprKey::of(&e.left)) {
+            if self.may_have_casts(&e.left) && self.casts.contains_key(&ExprKey::of(&e.left)) {
                 leftmost = &e.left;
                 break;
             }
@@ -2340,7 +2405,7 @@ impl<'p, 'a> Lower<'p, 'a> {
 
     /// `is_literal`: they are those of an object literal, not the attributes of a JSX element.
     fn props(&mut self, properties: &[G::Property], is_literal: bool) -> Span<PropId> {
-        let mut props = Vec::with_capacity(properties.len());
+        let base = self.list_props.len();
         // The types of `@type` tags: of which property, and the type.
         let mut types: Vec<(usize, TypeNodeId)> = Vec::new();
         self.object_literals_around += u32::from(is_literal);
@@ -2352,7 +2417,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 .map_or(0, |e| pos_of(e.loc));
             if property.kind == G::PropertyKind::Spread {
                 let value = self.optional_expr(property.value.as_ref());
-                props.push(Prop {
+                self.list_props.push(Prop {
                     kind: PropKind::Spread,
                     key: PropKey::None,
                     value,
@@ -2434,14 +2499,15 @@ impl<'p, 'a> Lower<'p, 'a> {
                 if let Host::Property(documented, ty) = host {
                     prop = documented;
                     if ty.is_some() {
-                        types.push((props.len(), ty));
+                        types.push((self.list_props.len() - base, ty));
                     }
                 }
             }
-            props.push(prop);
+            self.list_props.push(prop);
         }
         self.object_literals_around -= u32::from(is_literal);
-        let props = self.b.file.add_props(&props);
+        let props = self.b.file.add_props(&self.list_props[base..]);
+        self.list_props.truncate(base);
         for (index, ty) in types {
             self.b
                 .file

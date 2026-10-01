@@ -257,7 +257,7 @@ impl Checker<'_> {
     fn check_flow_too_deep(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // The limit is 2000 levels, and a walk nests at most once per flow node.
-        if bound.flow.len() <= 2000 {
+        if bound.flow_places <= 2000 {
             return;
         }
         let mut reported = Parent::None;
@@ -272,7 +272,7 @@ impl Checker<'_> {
             }
             // Ensures that the flow of `e` has been walked. The type is cached if an earlier pass asked for it.
             self.type_of_expr(file, e);
-            if self.p.flows_too_deep.get(&(file, e)).is_none() {
+            if self.p.flows_too_deep.len() == 0 || self.p.flows_too_deep.get(&(file, e)).is_none() {
                 continue;
             }
             // `FindAncestor(node, IsFunctionOrModuleBlock)`

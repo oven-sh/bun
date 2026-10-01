@@ -411,6 +411,10 @@ impl Checker<'_> {
                 .iter()
                 .all(|&part| self.is_iterable(part, allows_async));
         }
+        // What the library that has `Iterable` says of arrays and tuples, as in `iterable_types`.
+        if self.is_array_or_tuple(ty) {
+            return true;
+        }
         // `getIterationTypesOfIterableFast`
         let is_ref_to = |c: &Self, names: [Atom; 4]| {
             names

@@ -11,6 +11,18 @@ enum ExpandoFunction {
     Object(ExprId),
 }
 
+/// A label while the file is bound.
+struct Label {
+    /// What leads to it.
+    edges: smallvec::SmallVec<[FlowId; 4]>,
+    /// Its place in the flow of control, once something is seen to come after it.
+    node: FlowId,
+    is_loop: bool,
+}
+
+/// Set in what stands for a label while the file is bound. The rest is its number in `Binder::label_edges`.
+const PENDING: u32 = 1 << 31;
+
 pub(super) struct Binder<'f> {
     f: &'f File,
     options: BindOptions,
@@ -31,7 +43,12 @@ pub(super) struct Binder<'f> {
     /// `bindChildren`: control gets to where the statement, declaration or expression being bound starts. What that does to the flow
     /// of control is then noted, be control lost inside it, as in `x = (() => { throw e })()`.
     is_reached: bool,
-    label_edges: FxHashMap<u32, Vec<FlowId>>,
+    /// Until the file is done, `start` of the node of a label says which of these it is.
+    label_edges: Vec<Label>,
+    /// Where the functions without a body start that nothing known outside holds in.
+    start_of_signatures: FlowId,
+    /// How many places in the flow of control were not made because one does for all of those.
+    spared: u32,
     break_target: FlowId,
     continue_target: FlowId,
     return_target: FlowId,
@@ -106,14 +123,14 @@ impl<'f> Binder<'f> {
         b.interface_symbol = vec![SymbolId::NONE; f.interfaces.len()];
         b.alias_symbol = vec![SymbolId::NONE; f.aliases.len()];
         b.alias_scope = vec![ScopeId::NONE; f.aliases.len()];
-        b.enum_symbol = vec![SymbolId::NONE; f.enums.len()];
-        b.enum_member_symbol = vec![SymbolId::NONE; f.enum_members.len()];
-        b.enum_member_owner = vec![EnumId::NONE; f.enum_members.len()];
-        b.module_symbol = vec![SymbolId::NONE; f.modules.len()];
-        b.module_instantiated = vec![false; f.modules.len()];
+        b.enum_symbol = vec![SymbolId::NONE; f.enums.len()].into();
+        b.enum_member_symbol = vec![SymbolId::NONE; f.enum_members.len()].into();
+        b.enum_member_owner = vec![EnumId::NONE; f.enum_members.len()].into();
+        b.module_symbol = vec![SymbolId::NONE; f.modules.len()].into();
+        b.module_instantiated = vec![false; f.modules.len()].into();
         b.var_stmt = vec![StmtId::NONE; f.var_decls.len()];
         b.case_stmt = vec![StmtId::NONE; f.cases.len()];
-        b.import_equals_scope = vec![ScopeId::NONE; f.import_equals.len()];
+        b.import_equals_scope = vec![ScopeId::NONE; f.import_equals.len()].into();
         b.export_scope = vec![ScopeId::NONE; f.exports.len()];
         b.flow.push(Flow::Unreachable);
 
@@ -129,7 +146,9 @@ impl<'f> Binder<'f> {
             expando_assignments: Vec::new(),
             flow: UNREACHABLE,
             is_reached: false,
-            label_edges: FxHashMap::default(),
+            label_edges: Vec::new(),
+            start_of_signatures: FlowId::NONE,
+            spared: 0,
             break_target: FlowId::NONE,
             continue_target: FlowId::NONE,
             return_target: FlowId::NONE,
@@ -173,7 +192,7 @@ impl<'f> Binder<'f> {
         self.b.symbols.push(Symbol {
             name,
             flags,
-            decls: vec![decl],
+            decls: Decls::One(decl),
             parent,
             exports: TableId::NONE,
         });
@@ -543,23 +562,60 @@ impl<'f> Binder<'f> {
         FlowId(self.b.flow.len() as u32 - 1)
     }
 
+    fn new_label(&mut self, is_loop: bool) -> FlowId {
+        self.label_edges.push(Label {
+            edges: Default::default(),
+            node: FlowId::NONE,
+            is_loop,
+        });
+        FlowId(PENDING | (self.label_edges.len() as u32 - 1))
+    }
+
     fn branch_label(&mut self) -> FlowId {
-        let id = self.new_flow(Flow::Label { start: 0, len: 0 });
-        self.label_edges.insert(id.0, Vec::new());
-        id
+        self.new_label(false)
     }
 
     fn loop_label(&mut self) -> FlowId {
-        let id = self.new_flow(Flow::Loop { start: 0, len: 0 });
-        self.label_edges.insert(id.0, Vec::new());
-        id
+        self.new_label(true)
+    }
+
+    /// Which of `label_edges` `label` is.
+    fn edges_of(&self, label: FlowId) -> usize {
+        (label.0 & !PENDING) as usize
+    }
+
+    /// The place of `label` in the flow of control.
+    fn node_of(&mut self, label: FlowId) -> FlowId {
+        let at = self.edges_of(label);
+        if self.label_edges[at].node.is_none() {
+            let (start, len) = (at as u32, 0);
+            self.label_edges[at].node = self.new_flow(if self.label_edges[at].is_loop {
+                Flow::Loop { start, len }
+            } else {
+                Flow::Label { start, len }
+            });
+        }
+        self.label_edges[at].node
+    }
+
+    /// Where a function without a body starts, if nothing known outside holds in it: one place does for all of them.
+    fn start_of_signature(&mut self) -> FlowId {
+        if self.start_of_signatures.is_none() {
+            self.start_of_signatures = self.new_flow(Flow::Start {
+                outer: FlowId::NONE,
+                arrow: false,
+            });
+        } else {
+            self.spared += 1;
+        }
+        self.start_of_signatures
     }
 
     /// What cannot be reached stays that way: a loop there would have no way in but its own way back.
     fn enter_loop(&mut self, pre: FlowId) {
         if self.flow != UNREACHABLE {
             self.add_edge(pre, self.flow);
-            self.flow = pre;
+            self.flow = self.node_of(pre);
         }
     }
 
@@ -567,23 +623,24 @@ impl<'f> Binder<'f> {
         if from == UNREACHABLE || label.is_none() {
             return;
         }
-        let edges = self.label_edges.get_mut(&label.0).unwrap();
+        let at = self.edges_of(label);
+        let edges = &mut self.label_edges[at].edges;
         if !edges.contains(&from) {
             edges.push(from);
         }
     }
 
     fn finish_label(&mut self, label: FlowId) -> FlowId {
-        let edges = &self.label_edges[&label.0];
+        let edges = &self.label_edges[self.edges_of(label)].edges;
         match edges.len() {
             0 => UNREACHABLE,
             1 => edges[0],
-            _ => label,
+            _ => self.node_of(label),
         }
     }
 
     fn has_edges(&self, label: FlowId) -> bool {
-        !self.label_edges[&label.0].is_empty()
+        !self.label_edges[self.edges_of(label)].edges.is_empty()
     }
 
     /// `IsStringOrNumericLiteralLike`, of what is written: `("a")` is not.
@@ -1336,23 +1393,29 @@ impl<'f> Binder<'f> {
         }
         self.b
             .declared_fn_expandos
+            .as_mut_slice()
             .sort_unstable_by_key(|x| (x.0, x.1, x.2));
         self.b
             .fn_expr_expandos
+            .as_mut_slice()
             .sort_unstable_by_key(|x| (x.0, x.1, x.2));
         self.b
             .declared_fn_keyed_expandos
+            .as_mut_slice()
             .sort_unstable_by_key(|x| (x.0, x.2));
         self.b
             .fn_expr_keyed_expandos
+            .as_mut_slice()
             .sort_unstable_by_key(|x| (x.0, x.2));
         self.b
             .object_expandos
+            .as_mut_slice()
             .sort_unstable_by_key(|x| (x.0, x.1, x.2));
         self.b
             .object_keyed_expandos
+            .as_mut_slice()
             .sort_unstable_by_key(|x| (x.0, x.2));
-        self.b.expando_declarations.sort_unstable();
+        self.b.expando_declarations.as_mut_slice().sort_unstable();
     }
 
     /// `bindThisPropertyAssignment`, `getThisClassAndSymbolTable`: in a constructor, a method, an accessor, an initializer or a static
@@ -1414,7 +1477,7 @@ impl<'f> Binder<'f> {
                 self.b.this_properties.push((class, is_static, name, e));
             }
         }
-        self.b.this_properties.sort_unstable();
+        self.b.this_properties.as_mut_slice().sort_unstable();
     }
 
     fn finish(mut self) -> Bound {
@@ -1518,20 +1581,27 @@ impl<'f> Binder<'f> {
             }
         }
         self.b.assignments.sort_unstable_by_key(|a| (a.0.0, a.1.0));
-        self.b.type_query_operands.sort_unstable();
+        self.b.type_query_operands.as_mut_slice().sort_unstable();
         self.b.free_idents.sort_unstable_by_key(|f| f.0);
         self.b.alias_idents.sort_unstable_by_key(|a| a.0);
-        self.b.arguments_objects.sort_unstable();
+        self.b.arguments_objects.as_mut_slice().sort_unstable();
         // `checkUnmatchedJSDocParameters`: a function that refers to `arguments` is held to less.
         for &(func, pos, code) in &self.f.jsdoc_param_errors {
             if (code == 8029) == refer_to_arguments.contains(&func) {
                 self.b.jsdoc_param_errors.push((pos, code));
             }
         }
-        self.b.infer_positions.sort_unstable_by_key(|p| p.0);
+        self.b
+            .infer_positions
+            .as_mut_slice()
+            .sort_unstable_by_key(|p| p.0);
         self.collect_expandos();
         self.collect_this_properties();
         // Tables, flat and sorted.
+        self.b.tables.reserve_exact(self.tables.len());
+        self.b
+            .entries
+            .reserve_exact(self.tables.iter().map(|table| table.len()).sum());
         for table in &self.tables {
             let start = self.b.entries.len() as u32;
             self.b
@@ -1541,22 +1611,29 @@ impl<'f> Binder<'f> {
             self.b.tables.push((start, table.len() as u32));
         }
         // Labels.
-        for i in 0..self.b.flow.len() {
-            if let Some(edges) = self.label_edges.get(&(i as u32)) {
-                let start = self.b.flow_edges.len() as u32;
-                self.b.flow_edges.extend_from_slice(edges);
-                let len = edges.len() as u32;
-                self.b.flow[i] = match self.b.flow[i] {
-                    Flow::Loop { .. } => Flow::Loop { start, len },
-                    _ => Flow::Label { start, len },
-                };
+        let (mut kept, mut not_kept) = (0, 0);
+        for label in &self.label_edges {
+            if label.node.is_some() {
+                kept += label.edges.len();
+            } else {
+                not_kept += 1;
             }
+        }
+        self.b.flow_places = self.b.flow.len() as u32 + self.spared + not_kept;
+        self.b.flow_edges.reserve_exact(kept);
+        for node in &mut self.b.flow {
+            let (Flow::Label { start, len } | Flow::Loop { start, len }) = node else {
+                continue;
+            };
+            let edges = &self.label_edges[*start as usize].edges;
+            (*start, *len) = (self.b.flow_edges.len() as u32, edges.len() as u32);
+            self.b.flow_edges.extend_from_slice(&edges[..]);
         }
         let mut seen = crate::util::FxHashSet::default();
         self.b.specifiers.retain(|s| seen.insert(*s));
-        self.b.ambient_specifiers.retain(|s| seen.insert(*s));
-        self.b.symbols.shrink_to_fit();
-        self.b.flow.shrink_to_fit();
+        if !self.b.ambient_specifiers.is_empty() {
+            self.b.ambient_specifiers.retain(|s| seen.insert(*s));
+        }
         self.b
     }
 
@@ -2278,40 +2355,43 @@ impl<'f> Binder<'f> {
         if finalizer.is_some() {
             let finally_label = self.branch_label();
             for from in [normal_exit, exception_label, return_label] {
-                for edge in self.label_edges[&from.0].clone() {
+                for edge in self.label_edges[self.edges_of(from)].edges.clone() {
                     self.add_edge(finally_label, edge);
                 }
             }
             self.flow = if self.has_edges(finally_label) {
-                finally_label
+                self.node_of(finally_label)
             } else {
                 UNREACHABLE
             };
             self.stmt(finalizer, me, false);
             if self.flow != UNREACHABLE {
                 // Whoever comes out of the block goes on the way they came in: by returning, by throwing, or normally.
-                let end = self.flow;
+                let (before, label) = (self.flow, self.node_of(finally_label));
                 if self.return_target.is_some() && self.has_edges(return_label) {
+                    let instead = self.node_of(return_label);
                     let reduced = self.new_flow(Flow::Reduce {
-                        before: end,
-                        label: finally_label,
-                        instead: return_label,
+                        before,
+                        label,
+                        instead,
                     });
                     self.add_edge(self.return_target, reduced);
                 }
                 if self.exception_target.is_some() && self.has_edges(exception_label) {
+                    let instead = self.node_of(exception_label);
                     let reduced = self.new_flow(Flow::Reduce {
-                        before: end,
-                        label: finally_label,
-                        instead: exception_label,
+                        before,
+                        label,
+                        instead,
                     });
                     self.add_edge(self.exception_target, reduced);
                 }
                 self.flow = if self.has_edges(normal_exit) {
+                    let instead = self.node_of(normal_exit);
                     self.new_flow(Flow::Reduce {
-                        before: end,
-                        label: finally_label,
-                        instead: normal_exit,
+                        before,
+                        label,
+                        instead,
                     })
                 } else {
                     UNREACHABLE
@@ -2814,6 +2894,12 @@ impl<'f> Binder<'f> {
         if after_name.is_some() {
             // `bindContainer`: it started before the computed name.
             self.flow = after_name;
+        } else if matches!(f.body, FnBody::None)
+            && !runs_in_place
+            && !continues_outer
+            && f.kind != FnKind::IndexSignature
+        {
+            self.flow = self.start_of_signature();
         } else if !runs_in_place && f.kind != FnKind::IndexSignature {
             // `GetContainerFlags`: an index signature has locals, but the flow of control goes on through it too.
             self.flow = self.new_flow(if is_invoked {

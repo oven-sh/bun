@@ -419,6 +419,20 @@ impl Pass<'_, '_> {
         } else {
             Vec::new()
         };
+        // Without one only `arguments` is looked at, where no declaration is what it means: the binder has those.
+        if !has_auto_variables {
+            let bound = self.bound;
+            let free = bound.free_idents.iter().map(|f| f.0);
+            for e in bound.arguments_objects.iter().copied().chain(free) {
+                if matches!(self.hir[e].kind, ExprKind::Ident(known::arguments))
+                    && self.is_bound(e)
+                    && self.is_arguments_in_initializer(e)
+                {
+                    self.report(self.hir[e].pos, 2815);
+                }
+            }
+            return;
+        }
         let by_kind = self.c.exprs_by_kind(self.file);
         for &e in by_kind.of(ExprTag::Ident) {
             let symbol = self.bound.expr_symbol[e.idx()];
@@ -429,9 +443,6 @@ impl Pass<'_, '_> {
                 {
                     self.report(self.hir[e].pos, 2815);
                 }
-                continue;
-            }
-            if !has_auto_variables {
                 continue;
             }
             let is_auto =

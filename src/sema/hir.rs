@@ -149,6 +149,100 @@ impl<T: From<u32>> Span<T> {
     }
 }
 
+/// A list most files have nothing in. It takes one word, not three, until something is put in. Otherwise it is a `Vec`.
+pub struct Few<T>(Option<Box<Vec<T>>>);
+
+impl<T: 'static> Few<T> {
+    const NOTHING: &'static Vec<T> = &Vec::new();
+
+    /// Leaves it no room it does not use. The allocator does not make a block smaller that is half used: what is in it has to move.
+    pub fn shrink_to_fit(&mut self) {
+        if self.is_empty() {
+            self.0 = None;
+        } else if let Some(list) = &mut self.0
+            && list.capacity() > list.len()
+        {
+            let mut exact = Vec::with_capacity(list.len());
+            exact.append(list);
+            **list = exact;
+        }
+    }
+
+    /// What is in it, to be put in order. Through `DerefMut` that would make the box of a list that is empty.
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        match &mut self.0 {
+            Some(list) => list.as_mut_slice(),
+            None => &mut [],
+        }
+    }
+}
+
+impl<T> Default for Few<T> {
+    #[inline]
+    fn default() -> Self {
+        Few(None)
+    }
+}
+
+impl<T: Clone> Clone for Few<T> {
+    fn clone(&self) -> Self {
+        Few(self.0.clone())
+    }
+}
+
+impl<T: 'static> std::ops::Deref for Few<T> {
+    type Target = Vec<T>;
+    #[inline]
+    fn deref(&self) -> &Vec<T> {
+        match &self.0 {
+            Some(list) => &**list,
+            None => Self::NOTHING,
+        }
+    }
+}
+
+impl<T: 'static> std::ops::DerefMut for Few<T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Vec<T> {
+        &mut **self.0.get_or_insert_with(Box::default)
+    }
+}
+
+impl<T> From<Vec<T>> for Few<T> {
+    fn from(list: Vec<T>) -> Self {
+        Few((!list.is_empty()).then(|| Box::new(list)))
+    }
+}
+
+impl<T> FromIterator<T> for Few<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(items: I) -> Self {
+        Vec::from_iter(items).into()
+    }
+}
+
+impl<T> IntoIterator for Few<T> {
+    type Item = T;
+    type IntoIter = std::vec::IntoIter<T>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.map_or_else(Vec::new, |list| *list).into_iter()
+    }
+}
+
+impl<'a, T: 'static> IntoIterator for &'a Few<T> {
+    type Item = &'a T;
+    type IntoIter = std::slice::Iter<'a, T>;
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<T: std::fmt::Debug + 'static> std::fmt::Debug for Few<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&**self, f)
+    }
+}
+
 bitflags::bitflags! {
     /// Modifiers, on whatever they can be written on.
     #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -1159,7 +1253,7 @@ pub struct File {
     /// The parser could not make sense of the file; whatever is here is partial.
     pub has_errors: bool,
     /// `@d`: what is decorated, and the expression. In the order they are written.
-    pub decorators: Vec<(DecoratorOwner, ExprId)>,
+    pub decorators: Few<(DecoratorOwner, ExprId)>,
     /// `experimentalDecorators`
     pub legacy_decorators: bool,
     /// What the parser objected to and went on from, the tree being whole: where, and the code it goes by.
@@ -1168,7 +1262,7 @@ pub struct File {
     /// reserved names then report nothing.
     pub has_parse_diagnostics: bool,
     /// Errors about syntax that tsgo reports with a plain `c.error`, so parse errors do not silence them: start and code.
-    pub checker_errors: Vec<(u32, u32)>,
+    pub checker_errors: Few<(u32, u32)>,
     /// Pieces of type syntax that were given up on.
     pub syntax_errors: u32,
     /// Where the first of either was noticed.
@@ -1180,42 +1274,42 @@ pub struct File {
     pub text: std::borrow::Cow<'static, [u8]>,
     pub body: IdList<StmtId>,
     /// `/// <reference ... />`. The last is what `resolution-mode=` says, of a `types` reference only.
-    pub references: Vec<(ReferenceKind, Atom, u32, ResolutionMode)>,
+    pub references: Few<(ReferenceKind, Atom, u32, ResolutionMode)>,
     /// The lines `// @ts-ignore` and `// @ts-expect-error` are about: from where to where. In order.
-    pub suppressed: Vec<(u32, u32)>,
+    pub suppressed: Few<(u32, u32)>,
     /// The statement of each `with (e) statement`, from right after the `)` to where it ends.
-    pub with_bodies: Vec<(u32, u32)>,
+    pub with_bodies: Few<(u32, u32)>,
     /// The start of each token that follows a token the parser skipped in a list (`abortParsingListOrMoveToNextToken`). Sorted.
-    pub after_skipped: Vec<u32>,
+    pub after_skipped: Few<u32>,
     /// The decorators of missing declarations and of `this` parameters, which `checkDecorators` never looks at: from where the
     /// expression starts to where what comes after the decorators starts. The expressions are statements of their own.
-    pub stray_decorators: Vec<(u32, u32)>,
+    pub stray_decorators: Few<(u32, u32)>,
     /// Where module specifiers are written, but for those of `import()`, which are expressions.
     pub specifier_uses: Vec<SpecifierUse>,
     /// The specifier of an `import()` that has a second argument, and that argument.
-    pub import_options: Vec<(ExprId, ExprId)>,
+    pub import_options: Few<(ExprId, ExprId)>,
     /// The specifier of each `import.defer(..)`, and where the `)` of the call is.
-    pub deferred_import_calls: Vec<(ExprId, u32)>,
+    pub deferred_import_calls: Few<(ExprId, u32)>,
     /// `with { .. }` of imports and exports: the start of `with`, and the attributes as an `ExprKind::Object`.
-    pub import_attributes: Vec<(u32, ExprId)>,
+    pub import_attributes: Few<(u32, ExprId)>,
     /// The module specifiers of imports and exports that are no string literals. They are bound, and nothing in them is checked.
-    pub specifier_expressions: Vec<ExprId>,
+    pub specifier_expressions: Few<ExprId>,
     /// The expressions written in parentheses, in order, and where the parentheses open. Nothing else is kept of them.
     pub parens: Vec<(ExprId, u32)>,
     /// What comments at the top say about JSX in this file.
     pub jsx_pragmas: JsxPragmas,
     /// The JSDoc comments of a JavaScript file, from where to where. Sorted. A node whose position is in one is made from a tag.
-    pub jsdoc_comments: Vec<(u32, u32)>,
+    pub jsdoc_comments: Few<(u32, u32)>,
     /// `JSDocDiagnostics`: what the parser objects to in the JSDoc comments that belong to a node, start and code. Only reported if
     /// the file is checked (`IsCheckJSEnabledForFile`), and no parse diagnostics as far as `hasParseDiagnostics` goes.
-    pub jsdoc_errors: Vec<(u32, u32)>,
+    pub jsdoc_errors: Few<(u32, u32)>,
     /// The types of `@type` tags on what has no place for a type. Sorted by owner.
-    pub jsdoc_types: Vec<(JsDocTypeOwner, TypeNodeId)>,
+    pub jsdoc_types: Few<(JsDocTypeOwner, TypeNodeId)>,
     /// `@public`, `@private`, `@protected`, `@readonly` and `@override` on an assignment: the assignment and the modifiers. Sorted.
-    pub jsdoc_modifiers: Vec<(ExprId, Flags)>,
+    pub jsdoc_modifiers: Few<(ExprId, Flags)>,
     /// `checkUnmatchedJSDocParameters`, as far as the syntax tells: the function, where the name in the `@param` tag is, and the
     /// code. 8024 and 8032 hold unless the function refers to `arguments`, 8029 holds if it does.
-    pub jsdoc_param_errors: Vec<(FnId, u32, u32)>,
+    pub jsdoc_param_errors: Few<(FnId, u32, u32)>,
 
     pub ids: Vec<u32>,
     pub numbers: Vec<f64>,
@@ -1231,22 +1325,22 @@ pub struct File {
     pub classes: Vec<Class>,
     pub interfaces: Vec<Interface>,
     pub aliases: Vec<Alias>,
-    pub enums: Vec<Enum>,
-    pub enum_members: Vec<EnumMember>,
-    pub modules: Vec<Module>,
+    pub enums: Few<Enum>,
+    pub enum_members: Few<EnumMember>,
+    pub modules: Few<Module>,
     pub members: Vec<Member>,
     pub props: Vec<Prop>,
     pub var_decls: Vec<VarDecl>,
     pub calls: Vec<Call>,
     pub cases: Vec<Case>,
-    pub jsx: Vec<Jsx>,
+    pub jsx: Few<Jsx>,
     pub imports: Vec<Import>,
     pub import_specs: Vec<ImportSpec>,
-    pub import_equals: Vec<ImportEquals>,
+    pub import_equals: Few<ImportEquals>,
     pub exports: Vec<Export>,
     pub export_specs: Vec<ExportSpec>,
-    pub tuple_elems: Vec<TupleElem>,
-    pub mapped: Vec<Mapped>,
+    pub tuple_elems: Few<TupleElem>,
+    pub mapped: Few<Mapped>,
 }
 
 macro_rules! arenas {
@@ -1427,9 +1521,54 @@ impl File {
         )
     }
 
+    /// Of the short lists. The long ones are left to `fit`.
     pub fn shrink_to_fit(&mut self) {
         macro_rules! each {
             ($($f:ident),*) => { $(self.$f.shrink_to_fit();)* };
+        }
+        each!(
+            enums,
+            enum_members,
+            modules,
+            jsx,
+            import_equals,
+            tuple_elems,
+            mapped,
+            references,
+            with_bodies,
+            import_options,
+            deferred_import_calls,
+            import_attributes,
+            specifier_expressions,
+            checker_errors,
+            after_skipped,
+            stray_decorators,
+            jsdoc_comments,
+            jsdoc_errors,
+            jsdoc_types,
+            jsdoc_modifiers,
+            jsdoc_param_errors,
+            decorators,
+            suppressed
+        );
+    }
+}
+
+/// Leaves `list` no room it does not use. `shrink_to_fit` will not do: the allocator leaves a block that is at least half used as it is,
+/// and that is every list that has grown by doubling. So what is in it moves to a block of its size.
+pub(crate) fn fit<T>(list: &mut Vec<T>) {
+    if list.capacity() > list.len() {
+        let mut exact = Vec::with_capacity(list.len());
+        exact.append(list);
+        *list = exact;
+    }
+}
+
+impl File {
+    /// `fit`, for a file that is kept.
+    pub fn fit(&mut self) {
+        macro_rules! each {
+            ($($f:ident),*) => { $(fit(&mut self.$f);)* };
         }
         each!(
             ids,
@@ -1446,37 +1585,17 @@ impl File {
             classes,
             interfaces,
             aliases,
-            enums,
-            enum_members,
-            modules,
             members,
             props,
             var_decls,
             calls,
             cases,
-            jsx,
             imports,
             import_specs,
-            import_equals,
             exports,
             export_specs,
-            tuple_elems,
-            mapped,
-            references,
-            parens,
-            with_bodies,
-            import_options,
-            deferred_import_calls,
-            import_attributes,
-            specifier_expressions,
-            checker_errors,
-            after_skipped,
-            stray_decorators,
-            jsdoc_comments,
-            jsdoc_errors,
-            jsdoc_types,
-            jsdoc_modifiers,
-            jsdoc_param_errors
+            specifier_uses,
+            parens
         );
     }
 }

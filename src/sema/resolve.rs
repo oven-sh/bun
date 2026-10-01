@@ -2,7 +2,7 @@
 
 use crate::hir::ResolutionMode;
 use crate::json::Json;
-use crate::util::FxHashMap;
+use crate::util::{FxHashMap, ShardedMap};
 use std::borrow::Cow;
 use std::cell::Cell;
 use std::cmp::Ordering;
@@ -635,20 +635,21 @@ pub fn parent_dir(path: &str) -> &str {
 
 /// `a/b/../c/./d` is `a/c/d`.
 pub fn normalize(path: &str) -> String {
-    let mut parts: Vec<&str> = Vec::new();
-    for part in path.split('/') {
+    from_parts(path.split('/'), path.len() + 1)
+}
+
+/// The path that is made of `parts`. `room`: how long it can get.
+fn from_parts<'a>(parts: impl Iterator<Item = &'a str>, room: usize) -> String {
+    let mut out = String::with_capacity(room);
+    for part in parts {
         match part {
             "" | "." => {}
-            ".." => {
-                parts.pop();
+            ".." => out.truncate(out.rfind('/').unwrap_or(0)),
+            _ => {
+                out.push('/');
+                out.push_str(part);
             }
-            _ => parts.push(part),
         }
-    }
-    let mut out = String::with_capacity(path.len());
-    for part in parts {
-        out.push('/');
-        out.push_str(part);
     }
     if out.is_empty() {
         out.push('/');
@@ -660,7 +661,10 @@ pub fn join(dir: &str, rest: &str) -> String {
     if rest.starts_with('/') {
         return normalize(rest);
     }
-    normalize(&format!("{dir}/{rest}"))
+    from_parts(
+        dir.split('/').chain(rest.split('/')),
+        dir.len() + rest.len() + 2,
+    )
 }
 
 struct Package {
@@ -747,6 +751,9 @@ pub struct Resolver<'h> {
     packages: RwLock<FxHashMap<String, Option<Arc<Package>>>>,
     dirs: RwLock<FxHashMap<String, bool>>,
     files: RwLock<FxHashMap<String, bool>>,
+    /// What `resolve_module_and_extension` found. By the directory, `//`, the mode as a digit, and the specifier: no directory has `//`
+    /// in it.
+    resolved: ShardedMap<String, Option<(String, bool, bool)>>,
 }
 
 /// `extensionsToRemove`: the extensions that mean something, in the order they are looked for at the end of a name.
@@ -787,6 +794,7 @@ impl<'h> Resolver<'h> {
             packages: RwLock::default(),
             dirs: RwLock::default(),
             files: RwLock::default(),
+            resolved: ShardedMap::default(),
         }
     }
 
@@ -813,7 +821,7 @@ impl<'h> Resolver<'h> {
         if let Some(known) = self.packages.read().unwrap().get(dir) {
             return known.clone();
         }
-        let path = format!("{dir}/package.json");
+        let path = [dir, "/package.json"].concat();
         let package = if self.is_file(&path) {
             self.host
                 .read(&path)
@@ -877,10 +885,26 @@ impl<'h> Resolver<'h> {
         from: &str,
         mode: ResolutionMode,
     ) -> Option<(String, bool, bool)> {
+        // Of `from`, only the directory counts.
+        let key = [
+            parent_dir(from),
+            match mode {
+                ResolutionMode::None => "//0",
+                ResolutionMode::Import => "//1",
+                ResolutionMode::Require => "//2",
+            },
+            spec,
+        ]
+        .concat();
+        if let Some(known) = self.resolved.get_ref(key.as_str()) {
+            return known.clone();
+        }
         let (using_ts_extension, arbitrary_extension) = (Cell::new(false), Cell::new(false));
         let look = self.look(mode, true, &using_ts_extension, &arbitrary_extension);
-        let found = self.resolve_with(spec, from, look)?;
-        Some((found, using_ts_extension.get(), arbitrary_extension.get()))
+        let found = self
+            .resolve_with(spec, from, look)
+            .map(|found| (found, using_ts_extension.get(), arbitrary_extension.get()));
+        self.resolved.insert_ref(key, found).clone()
     }
 
     /// `newResolutionState`. `is_module`: the name is a module specifier. Otherwise it is the name in a `/// <reference types>`, which
@@ -1285,7 +1309,7 @@ impl<'h> Resolver<'h> {
     fn first_file(&self, stem: &str, extensions: &[&str]) -> Option<String> {
         extensions
             .iter()
-            .find_map(|e| self.try_file(&format!("{stem}{e}")))
+            .find_map(|e| self.try_file(&[stem, *e].concat()))
     }
 
     /// `loadModuleFromFile`: what stands for `path` as it is written, or else `path` with an extension added.
@@ -1341,7 +1365,7 @@ impl<'h> Resolver<'h> {
         };
         let typed = typed.or_else(|| {
             if look.declarations {
-                self.try_file(&format!("{stem}{declaration}"))
+                self.try_file(&[stem, declaration].concat())
             } else {
                 None
             }
@@ -1462,7 +1486,7 @@ impl<'h> Resolver<'h> {
         if look.esm {
             None
         } else {
-            self.file(&format!("{dir}/index"), look)
+            self.file(&[dir, "/index"].concat(), look)
         }
     }
 
@@ -1488,13 +1512,13 @@ impl<'h> Resolver<'h> {
         let mut dir = from_dir;
         loop {
             if !dir.ends_with("/node_modules") {
-                let modules = format!("{dir}/node_modules");
+                let modules = [dir, "/node_modules"].concat();
                 if self.is_dir(&modules) {
                     match self.in_modules(&modules, spec, look) {
                         Found::No => {}
                         found => return found,
                     }
-                    let types = format!("{modules}/@types");
+                    let types = [modules.as_str(), "/@types"].concat();
                     if look.declarations && self.is_dir(&types) {
                         match self.in_modules(&types, &mangle_scoped(spec), look.for_declarations())
                         {
@@ -1515,8 +1539,8 @@ impl<'h> Resolver<'h> {
     fn in_modules(&self, modules: &str, spec: &str, look: Look) -> Found {
         let spec = spec.strip_suffix('/').unwrap_or(spec);
         let (name, rest) = split_package_name(spec);
-        let candidate = format!("{modules}/{spec}");
-        let package_dir = format!("{modules}/{name}");
+        let candidate = [modules, "/", spec].concat();
+        let package_dir = [modules, "/", name].concat();
         let package = self.package(&package_dir);
         let exports = package
             .as_ref()

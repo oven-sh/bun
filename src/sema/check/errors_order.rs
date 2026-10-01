@@ -554,6 +554,17 @@ impl Checker<'_> {
         runs_in_place: bool,
     ) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
+        // An expression is numbered after all that is written in it, and the initializer after the pattern. What comes later still is
+        // not in the declaration, unless it is what a loop goes through.
+        let (init, stmt) = (hir[decl].init, bound.var_stmt[decl.idx()]);
+        if init.is_some()
+            && e.0 > init.0
+            && stmt.is_some()
+            && !matches!(bound.stmt_parent[stmt.idx()], Parent::Stmt(around) if around.is_some()
+                && matches!(hir[around].kind, StmtKind::ForIn { .. } | StmtKind::ForOf { .. }))
+        {
+            return true;
+        }
         // Of an element of a pattern: the nearest element around the use, whatever else is in between, has to be another.
         if !matches!(bound.pat_parent[pat.idx()], PatParent::Var(_)) {
             let mut below = e;

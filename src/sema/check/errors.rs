@@ -1274,6 +1274,10 @@ impl Checker<'_> {
     /// Whether `e` is written in the initializer of the declaration `d`, which binds `pat`.
     fn is_in_initializer_of(&self, file: FileId, e: ExprId, pat: PatId, d: VarDeclId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
+        // An expression is numbered after all that is written in it.
+        if e.0 > hir[d].init.0 {
+            return false;
+        }
         let declared_at = hir[pat].pos;
         let mut parent = bound.expr_parent[e.idx()];
         loop {
@@ -1364,7 +1368,8 @@ impl Checker<'_> {
             return true;
         }
         // `isSameScopedBindingElement`: what a pattern binds, read in the nearest default around, which is one of the same pattern.
-        if decl.pat != pat {
+        // What is in the pattern is numbered before the initializer.
+        if decl.pat != pat && e.0 < decl.init.0 {
             let mut at = parent;
             loop {
                 match at {
@@ -1706,11 +1711,37 @@ impl Checker<'_> {
         }
         // `getSymbol`: an alias is what it stands for. One that stands for no value is not there where a value is wanted, and the search
         // goes on further out.
+        // An import is a local of the file or the module it is written in, where the binder found it from the same scope: if it stands
+        // for a value, that is where the search ends at the latest. Whether each does, once it has been asked.
+        let mut imports_value: Vec<Option<bool>> = Vec::new();
         for &(e, scope) in &bound.alias_idents {
             let ExprKind::Ident(name) = hir[e].kind else {
                 continue;
             };
-            if matches!(bound.expr_parent[e.idx()], Parent::None)
+            if matches!(bound.expr_parent[e.idx()], Parent::None) {
+                continue;
+            }
+            if imports_value.is_empty() {
+                imports_value.resize(bound.symbols.len(), None);
+            }
+            let local = bound.expr_symbol[e.idx()];
+            let is_value = local.is_some()
+                && *imports_value[local.idx()].get_or_insert_with(|| {
+                    let symbol = &bound.symbols[local.idx()];
+                    !symbol.flags.contains(SymFlags::MERGED)
+                        && matches!(
+                            symbol.decls.first(),
+                            Some(
+                                Decl::ImportSpec(_)
+                                    | Decl::ImportDefault(_)
+                                    | Decl::ImportNamespace(_)
+                            )
+                        )
+                        && self
+                            .files()
+                            .means(self.files().sym(file, local), SymFlags::VALUE)
+                });
+            if is_value
                 || self
                     .files()
                     .resolve_name(file, scope, name, SymFlags::VALUE)
@@ -4048,15 +4079,16 @@ impl Checker<'_> {
     fn check_operators(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut numeric = None;
-        for i in 0..hir.exprs.len() {
-            if !matches!(
-                hir.exprs[i].kind,
-                ExprKind::Binary { .. } | ExprKind::Assign { .. } | ExprKind::Unary { .. }
-            ) || matches!(bound.expr_parent[i], Parent::None)
-            {
+        let index = self.exprs_by_kind(file);
+        for e in super::errors_small::in_file_order([
+            index.of(ExprTag::Binary),
+            index.of(ExprTag::Assign),
+            index.of(ExprTag::Unary),
+        ]) {
+            let i = e.idx();
+            if matches!(bound.expr_parent[i], Parent::None) {
                 continue;
             }
-            let e = ExprId(i as u32);
             match hir.exprs[i].kind {
                 // `checkInExpression`
                 ExprKind::Binary {
@@ -4671,6 +4703,24 @@ impl Checker<'_> {
         ty: TypeId,
         out: &mut Vec<Diagnostic>,
     ) -> TypeId {
+        // Most of what is asked about is neither of the two, nor made of other types, nor `is_deferred`.
+        if ty != TypeId::UNKNOWN
+            && !ty.is_undefined()
+            && !ty.is_null()
+            && !matches!(
+                self.data(ty),
+                TypeData::Union(_)
+                    | TypeData::Intersection(_)
+                    | TypeData::TypeParam(..)
+                    | TypeData::ThisParam(_)
+                    | TypeData::Marker(_)
+                    | TypeData::IndexedAccess { .. }
+                    | TypeData::Cond { .. }
+                    | TypeData::Keyof(_)
+            )
+        {
+            return ty;
+        }
         if self.is_uncertain(file, node) {
             return ty;
         }
@@ -4863,11 +4913,54 @@ impl Checker<'_> {
     fn check_writes(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut numeric = None;
-        for i in 0..hir.exprs.len() {
+        let index = self.exprs_by_kind(file);
+        let (assignments, unaries) = (index.of(ExprTag::Assign), index.of(ExprTag::Unary));
+        // What may be written to: the target of an assignment, of `++` or `--` or of the head of a loop, and in it whatever
+        // `write_kind` sees through on its way out.
+        let mut targets: Vec<ExprId> = Vec::new();
+        for &e in assignments {
+            if let ExprKind::Assign { target, .. } = hir[e].kind {
+                targets.push(target);
+            }
+        }
+        for &e in unaries {
+            if let ExprKind::Unary {
+                op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
+                operand,
+            } = hir[e].kind
+            {
+                targets.push(operand);
+            }
+        }
+        for s in &hir.stmts {
+            if let StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } = s.kind
+                && let StmtKind::Expr(x) = hir[left].kind
+            {
+                targets.push(x);
+            }
+        }
+        let mut written: Vec<ExprId> = Vec::new();
+        while let Some(e) = targets.pop() {
+            if e.is_none() {
+                continue;
+            }
+            match hir[e].kind {
+                ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Index { .. } => {
+                    written.push(e)
+                }
+                ExprKind::NonNull(x) | ExprKind::Spread(x) => targets.push(x),
+                ExprKind::Array(items) => targets.extend(hir.ids(items)),
+                ExprKind::Object(props) => targets.extend(props.iter().map(|p| hir[p].value)),
+                _ => {}
+            }
+        }
+        written.sort_unstable();
+        written.dedup();
+        for e in super::errors_small::in_file_order([&written[..], assignments, unaries]) {
+            let i = e.idx();
             if matches!(bound.expr_parent[i], Parent::None) {
                 continue;
             }
-            let e = ExprId(i as u32);
             match hir.exprs[i].kind {
                 ExprKind::Ident(name) => {
                     if self.write_kind(file, e).is_none() {

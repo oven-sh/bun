@@ -103,6 +103,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     fn classify_list_token_slow(&mut self, kind: ListKind) -> Result<ListStep, Error> {
+        // The lists in which `is_list_element` takes a name whatever it is and whatever follows it.
+        const TAKE_ANY_NAME: u32 = 1 << ListKind::EnumMembers as u32
+            | 1 << ListKind::VariableDeclarations as u32
+            | 1 << ListKind::ObjectBindingElements as u32
+            | 1 << ListKind::ArrayBindingElements as u32
+            | 1 << ListKind::ArgumentExpressions as u32
+            | 1 << ListKind::ObjectLiteralMembers as u32
+            | 1 << ListKind::ArrayLiteralMembers as u32
+            | 1 << ListKind::Parameters as u32
+            | 1 << ListKind::ImportAttributes as u32
+            | 1 << ListKind::JsxAttributes as u32;
+        if self.lexer.token == T::TIdentifier && TAKE_ANY_NAME & 1 << kind as u32 != 0 {
+            return Ok(ListStep::Element);
+        }
         if self.is_list_element(kind, false) {
             return Ok(ListStep::Element);
         }
@@ -386,7 +400,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.is_start_of_declaration()
                     || self.look_ahead(|p| p.step() && matches!(p.lexer.token, T::TOpenParen | T::TLessThan | T::TDot))
             }
-            T::TConst | T::TExport => self.is_start_of_declaration(),
+            // `is_start_of_declaration` looks no further than this token.
+            T::TConst => true,
+            T::TExport => self.is_start_of_declaration(),
             T::TIdentifier => {
                 use Modifier::*;
                 match Modifier::find(self.word()) {

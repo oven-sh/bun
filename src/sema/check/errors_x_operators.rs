@@ -2191,6 +2191,13 @@ fn check_iterated_type(
     {
         return;
     }
+    // What the library that has `Iterable` says of arrays and tuples: they can be gone through, and `next` takes whatever it is sent.
+    if iterable_exists
+        && !usage.allows_async()
+        && c.every_type(input, |c, m| c.is_array_or_tuple(m))
+    {
+        return;
+    }
     if iterable_exists || usage.allows_async() {
         let mut report = IterationReport::new(file, at, node);
         let types = iteration_types_of_iterable(c, input, usage, iterable_exists, &mut report);

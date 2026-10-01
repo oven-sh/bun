@@ -211,19 +211,38 @@ impl OddLists {
             if !chunk.iter().fold(false, |any, &c| any | (c | 2 == b'>')) {
                 continue;
             }
-            for (i, &c) in chunk.iter().enumerate() {
-                let at = n * CHUNK + i;
-                if c == b'<' && !lists.has_empty {
-                    lists.has_empty = text.get(skip_trivia(text, at + 1)) == Some(&b'>');
-                } else if c == b'>' && !lists.has_early_end {
-                    lists.has_early_end = matches!(
-                        text[..end_of_previous_token(text, at)].last(),
-                        Some(b',' | b'<')
-                    );
+            // Eight bytes at a time: a bit for each that is one of the two, and at times for the byte after one.
+            let words = chunk.chunks_exact(8);
+            let rest = words.remainder().len();
+            for (w, word) in words.enumerate() {
+                let word = u64::from_le_bytes(word.try_into().unwrap());
+                let other = (word | 0x0202_0202_0202_0202) ^ 0x3e3e_3e3e_3e3e_3e3e;
+                let mut found =
+                    other.wrapping_sub(0x0101_0101_0101_0101) & !other & 0x8080_8080_8080_8080;
+                while found != 0 {
+                    let at = n * CHUNK + w * 8 + found.trailing_zeros() as usize / 8;
+                    lists.look_at(text, at);
+                    found &= found - 1;
                 }
+            }
+            for i in chunk.len() - rest..chunk.len() {
+                lists.look_at(text, n * CHUNK + i);
             }
         }
         lists
+    }
+
+    /// Takes note of what is at `at`, if it is `<` or `>`.
+    fn look_at(&mut self, text: &[u8], at: usize) {
+        let c = text[at];
+        if c == b'<' && !self.has_empty {
+            self.has_empty = text.get(skip_trivia(text, at + 1)) == Some(&b'>');
+        } else if c == b'>' && !self.has_early_end {
+            self.has_early_end = matches!(
+                text[..end_of_previous_token(text, at)].last(),
+                Some(b',' | b'<')
+            );
+        }
     }
 }
 
@@ -860,7 +879,9 @@ impl Checker<'_> {
             }
             let node = TypeNodeId(t as u32);
             self.type_from_node(file, node);
-            if self.p.too_large_tuples.get(&(file, node)).is_some() {
+            if self.p.too_large_tuples.len() != 0
+                && self.p.too_large_tuples.get(&(file, node)).is_some()
+            {
                 out.push(Diagnostic {
                     start: hir.types[t].pos,
                     code: 2799,
@@ -1102,10 +1123,27 @@ impl Checker<'_> {
             if props.is_empty() || matches!(bound.expr_parent[i], Parent::None) {
                 continue;
             }
-            let Some(context) = self.contextual_type_for_object_literal(file, ExprId(i as u32))
-            else {
+            // `contextual_type_for_object_literal`. Its last step leaves out members of a union and makes none: it is spared where no
+            // member is an intersection.
+            let literal = ExprId(i as u32);
+            let Some(context) = self.contextual_type(file, literal) else {
                 continue;
             };
+            let context = self.map_type_unreduced(context, |c, m| {
+                if c.is_deferred(m) {
+                    c.base_constraint(m)
+                } else {
+                    m
+                }
+            });
+            if !self
+                .parts(context)
+                .iter()
+                .any(|&part| self.is_intersection(part))
+            {
+                continue;
+            }
+            let context = self.discriminate_by_object_members(file, literal, context);
             for &part in self.parts(context) {
                 if !self.is_intersection(part) {
                     continue;

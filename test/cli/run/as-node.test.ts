@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "path";
-import { bunEnv, bunExe, fakeNodeRun, isWindows, tempDir } from "../../harness";
+import { bunEnv, bunExe, fakeNodeRun, isMacOS, isWindows, tempDir } from "../../harness";
 
 describe("fake node cli", () => {
   test("the node cli actually works", () => {
@@ -45,12 +45,12 @@ describe("fake node cli", () => {
       stderr: "pipe",
     });
     expect(stdout.toString()).toBe("");
-    // Where PATH_MAX is 1024 the resolver reports the length before it looks for the module.
     const path = join(String(temp), long);
-    expect([
-      `error: Module not found '${path}'`,
-      `error: ENAMETOOLONG while resolving '${path}' from 'bun:main'`,
-    ]).toContain(stderr.toString().split("\n")[0]);
+    // On macOS the lookup fails in a system call, so the error names ENAMETOOLONG.
+    const expected = isMacOS
+      ? `error: ENAMETOOLONG while resolving '${path}' from 'bun:main'`
+      : `error: Module not found '${path}'`;
+    expect(stderr.toString().split("\n")[0]).toBe(expected);
     expect(exitCode).toBe(1);
   });
   describe("entrypoint file extension picking", () => {

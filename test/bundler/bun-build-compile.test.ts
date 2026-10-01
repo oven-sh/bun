@@ -2110,8 +2110,7 @@ export function inOther() {
         exitCode: 0,
       });
       expect(readdirSync(String(tmp))).toEqual([]);
-      // A debug build copies about 1 GB, and here it also moves the copy.
-    }, 30_000);
+    });
 
     test("reports a temporary directory that leaves no room either", async () => {
       expect(await compile({ BUN_TMPDIR: "/" + Buffer.alloc(MAX_PATH_BYTES, "a").toString() })).toEqual({

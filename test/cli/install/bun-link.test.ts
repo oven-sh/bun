@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { lstatSync, realpathSync } from "fs";
+import { lstatSync, realpathSync, symlinkSync } from "fs";
 import { access, mkdir, writeFile } from "fs/promises";
 import {
   bunExe,
@@ -564,51 +564,57 @@ describe("link: specifier longer than the path buffers", () => {
     expect(exitCode).toBe(1);
   });
 
+  // A filesystem can limit a symlink target to less than a path (XFS: 1024 bytes). A package in
+  // a directory this long cannot be linked there at all.
+  const longTarget = MAX_PATH_BYTES - 128;
+  const linksLongTargets = (() => {
+    try {
+      symlinkSync(Buffer.alloc(longTarget, "a").toString(), join(tmpdirSync(), "probe"));
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
   // The hoisted installer links the package with a relative symlink: one `../` for each level
   // of the project, then the real path of the package. That can be longer than both. Windows
   // links with an absolute target.
-  it.skipIf(isWindows)(
+  it.skipIf(isWindows || !linksLongTargets)(
     "fails to install a linked package when the relative symlink target does not fit",
     async () => {
-      const link_name = basename(link_dir).slice("bun-link.".length);
       // `<linked>/package.json` still has to fit a path, so the target gets its length from the
       // levels of the project: each one adds `../`.
-      const linked = mkdirToLength(realpathSync(link_dir), MAX_PATH_BYTES - 128);
+      const linked = mkdirToLength(realpathSync(link_dir), longTarget);
       const root = realpathSync(package_dir);
       const levels = Math.ceil((MAX_PATH_BYTES - relative(join(root, "node_modules"), linked).length) / 3);
       const project = join(root, ...Array(levels).fill("d"));
       const node_modules = join(project, "node_modules");
       expect(relative(node_modules, linked).length).toBeGreaterThanOrEqual(MAX_PATH_BYTES);
 
+      // What `bun link` in `linked` does, in a global directory of its own.
+      const global_dir = tmpdirSync();
+      await mkdir(join(global_dir, "node_modules"));
+      symlinkSync(linked, join(global_dir, "node_modules", "linked"), "dir");
+      await writeFile(join(linked, "package.json"), JSON.stringify({ name: "linked", version: "0.0.1" }));
       await mkdir(project, { recursive: true });
-      await writeFile(join(linked, "package.json"), JSON.stringify({ name: link_name, version: "0.0.1" }));
       await writeFile(
         join(project, "package.json"),
-        JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { [link_name]: `link:${link_name}` } }),
+        JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { linked: "link:linked" } }),
       );
 
-      const registered = await run(linked, "link");
-      let unlinked: Awaited<ReturnType<typeof run>>;
-      try {
-        expect(registered.err).toBe("");
-        expect(registered.out).toContain(`Success! Registered "${link_name}"`);
-        expect(registered.exitCode).toBe(0);
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--linker", "hoisted"],
+        cwd: project,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...env, BUN_INSTALL_GLOBAL_DIR: global_dir },
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-        const { out, err, exitCode } = await run(project, "install", "--linker", "hoisted");
-
-        expect(err).toContain(
-          `ENAMETOOLONG: failed linking dependency/workspace to node_modules for package ${link_name}`,
-        );
-        expect(out).toContain("Failed to install 1 package");
-        expect(lstatSync(join(node_modules, link_name), { throwIfNoEntry: false })).toBeUndefined();
-        expect(exitCode).toBe(1);
-      } finally {
-        unlinked = await run(linked, "unlink");
-      }
-      expect(unlinked.out).toContain(`success: unlinked package "${link_name}"`);
-      expect(unlinked.exitCode).toBe(0);
-      // A debug build also prints a symbolized stack trace for this failure. That takes seconds.
+      expect(err).toContain("ENAMETOOLONG: failed linking dependency/workspace to node_modules for package linked");
+      expect(out).toContain("Failed to install 1 package");
+      expect(lstatSync(join(node_modules, "linked"), { throwIfNoEntry: false })).toBeUndefined();
+      expect(exitCode).toBe(1);
     },
-    30_000,
   );
 });

@@ -552,6 +552,49 @@ pub fn write_diagnostics(out: &mut String, report: &Report, style: &Style) {
     }
 }
 
+/// How far it has got, in a line that takes the place of the one before it. `tick` counts how often it has been shown.
+pub fn write_progress(out: &mut String, progress: &crate::Progress, style: &Style, tick: usize) {
+    use std::sync::atomic::Ordering::Relaxed;
+    const SPINNER: [&str; 10] = [
+        "\u{280b}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}", "\u{2826}",
+        "\u{2827}", "\u{2807}", "\u{280f}",
+    ];
+    const BAR: usize = 24;
+    let paint = Paint { on: style.color };
+    out.push_str(ERASE_LINE);
+    paint.put(out, &[CYAN], SPINNER[tick % SPINNER.len()]);
+    let (total, done) = (
+        progress.to_check.load(Relaxed),
+        progress.checked.load(Relaxed),
+    );
+    if total == 0 {
+        out.push_str(" Loading");
+        paint.put(out, &[DIM], "\u{2026}");
+        return;
+    }
+    out.push_str(" Checking ");
+    // Only where there is room for it.
+    if style.width == 0 || style.width >= 72 {
+        let bytes = progress.bytes_to_check.load(Relaxed).max(1);
+        let filled = (progress.bytes_checked.load(Relaxed) * BAR / bytes).min(BAR);
+        paint.put(out, &[CYAN], &"\u{2501}".repeat(filled));
+        paint.put(out, &[DIM], &"\u{2501}".repeat(BAR - filled));
+        out.push(' ');
+    }
+    out.push_str(&with_commas(done));
+    paint.put(out, &[DIM], &format!(" / {} files", with_commas(total)));
+    match progress.errors.load(Relaxed) {
+        0 => {}
+        errors => {
+            paint.put(out, &[DIM], ", ");
+            paint.put(out, &[RED], &plural(errors, "error", "errors"));
+        }
+    }
+}
+
+/// Back to the start of the line, with nothing on it.
+pub const ERASE_LINE: &str = "\r\u{1b}[2K";
+
 /// How it went, in a line or a few.
 pub fn write_summary(out: &mut String, report: &Report, style: &Style) {
     let paint = Paint { on: style.color };
@@ -619,9 +662,12 @@ pub fn write_summary(out: &mut String, report: &Report, style: &Style) {
     } else {
         by_file.len()
     };
-    let width = by_file
+    let rest: usize = by_file[shown..].iter().map(|(_, count)| count).sum();
+    let width = by_file[..shown]
         .iter()
-        .map(|(_, count)| with_commas(*count).len())
+        .map(|&(_, count)| count)
+        .chain([rest])
+        .map(|count| with_commas(count).len())
         .max()
         .unwrap_or(1);
     for (first, count) in &by_file[..shown] {
@@ -631,7 +677,6 @@ pub fn write_summary(out: &mut String, report: &Report, style: &Style) {
         out.push('\n');
     }
     if shown < by_file.len() {
-        let rest: usize = by_file[shown..].iter().map(|(_, count)| count).sum();
         let _ = write!(out, "  {:>width$}  ", with_commas(rest));
         paint.put(
             out,

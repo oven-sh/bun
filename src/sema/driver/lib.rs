@@ -55,6 +55,19 @@ pub fn for_each_parallel_in_runs(
     );
 }
 
+/// How far a check has got. Read from another thread.
+#[derive(Default)]
+pub struct Progress {
+    /// How many files there are to check. 0: the program is still being loaded.
+    pub to_check: AtomicUsize,
+    pub checked: AtomicUsize,
+    /// The same in bytes of source, which says more about how long it will take: the biggest files go first.
+    pub bytes_to_check: AtomicUsize,
+    pub bytes_checked: AtomicUsize,
+    /// How many errors have been found.
+    pub errors: AtomicUsize,
+}
+
 pub struct Request<'a> {
     /// The working directory, as the operating system names it.
     pub cwd: &'a str,
@@ -70,6 +83,8 @@ pub struct Request<'a> {
     pub global_node_modules: Option<&'a str>,
     /// How long a single file may take. One that takes longer has run into a bug, and nothing is said about it but that.
     pub file_time_limit: Duration,
+    /// Kept up to date on the way, for whoever shows how far it has got.
+    pub progress: Option<&'a Progress>,
     /// Of all that is loaded, only the files with this in their path are checked. For looking into one file of a big project.
     pub only: Option<&'a str>,
     /// The process ends once the errors have been shown.
@@ -392,6 +407,14 @@ pub fn check(request: &Request) -> Report {
         hasher.finish()
     });
     report.files_checked = to_check.len();
+    if let Some(progress) = request.progress {
+        let bytes = to_check
+            .iter()
+            .map(|f| program.files.modules[f.idx()].hir.source_len as usize)
+            .sum();
+        progress.bytes_to_check.store(bytes, Ordering::Relaxed);
+        progress.to_check.store(to_check.len(), Ordering::Relaxed);
+    }
     let found: Mutex<Vec<Diagnostic>> = Mutex::new(Vec::new());
     let gave_up: Mutex<Vec<String>> = Mutex::new(Vec::new());
     // Files that ask a lot of the same types tend to be next to each other. When a small file turns out to take long, what else is in its
@@ -450,6 +473,9 @@ pub fn check(request: &Request) -> Report {
                 }
             })
             .collect();
+        if let Some(progress) = request.progress {
+            progress.errors.fetch_add(shown.len(), Ordering::Relaxed);
+        }
         found.lock().unwrap().extend(shown);
     };
     let take = |i: usize| {
@@ -458,6 +484,12 @@ pub fn check(request: &Request) -> Report {
         }
         let began = Instant::now();
         check_one(i);
+        if let Some(progress) = request.progress {
+            progress.checked.fetch_add(1, Ordering::Relaxed);
+            progress
+                .bytes_checked
+                .fetch_add(size(to_check[i]) as usize, Ordering::Relaxed);
+        }
         if i >= big && began.elapsed() >= SLOW {
             let path = &program.files.modules[to_check[i].idx()].path[..];
             let next_to_it = &neighbors[bun_sema::resolve::parent_dir(path)];

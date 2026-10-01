@@ -539,6 +539,28 @@ fn main() {
                 .to_string_lossy()
                 .into_owned();
             let lib_dir = std::env::var("BUN_SEMA_TS_LIB").ok();
+            // `--progress`: as `bun check` shows it at a terminal.
+            let progress = args
+                .iter()
+                .any(|a| a == "--progress")
+                .then(|| std::sync::Arc::new(bun_sema_driver::Progress::default()));
+            if let Some(progress) = progress.clone() {
+                std::thread::spawn(move || {
+                    let style = Style {
+                        layout: Layout::Pretty,
+                        color: true,
+                        cwd: "",
+                        github_annotations: false,
+                        width: bun_sema_standalone::terminal_width(),
+                    };
+                    for tick in 0.. {
+                        let mut line = String::new();
+                        bun_sema_driver::format::write_progress(&mut line, &progress, &style, tick);
+                        eprint!("{line}");
+                        std::thread::sleep(std::time::Duration::from_millis(80));
+                    }
+                });
+            }
             // `--memory-curve`: how much memory there is, ten times a second.
             if args.iter().any(|a| a == "--memory-curve") {
                 let began = std::time::Instant::now();
@@ -566,6 +588,7 @@ fn main() {
                     lib_dir: lib_dir.as_deref(),
                     global_node_modules: None,
                     file_time_limit: std::time::Duration::from_secs(10),
+                    progress: progress.as_deref(),
                     only: args.iter().find_map(|a| a.strip_prefix("--only=")),
                     ends_the_process: true,
                     keeps_everything: args.iter().any(|a| a == "--keep"),
@@ -594,6 +617,9 @@ fn main() {
                     .and_then(|w| w.parse().ok())
                     .unwrap_or_else(bun_sema_standalone::terminal_width),
             };
+            if progress.is_some() {
+                eprint!("{}", bun_sema_driver::format::ERASE_LINE);
+            }
             let mut out = String::new();
             write_diagnostics(&mut out, &report, &style);
             print!("{out}");

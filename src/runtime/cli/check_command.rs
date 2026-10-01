@@ -4,7 +4,9 @@ use bstr::BStr;
 
 use bun_core::{Global, Output, ZStr, env_var};
 use bun_sema_driver::format::{self, Layout, Style};
-use bun_sema_driver::{Report, Request};
+use bun_sema_driver::{Progress, Report, Request};
+use core::sync::atomic::{AtomicBool, Ordering};
+use core::time::Duration;
 
 pub(crate) struct CheckCommand;
 
@@ -130,12 +132,70 @@ fn global_node_modules() -> Option<String> {
         .map(|home| format!("{}/.bun/install/global/node_modules", text(home)))
 }
 
+/// Shows how far `progress` has got on stderr until `is_done`, once it has taken long enough for somebody to wonder.
+fn show_progress(progress: &Progress, is_done: &AtomicBool, style: &Style) {
+    const BEFORE_THE_FIRST: Duration = Duration::from_millis(300);
+    const BETWEEN: Duration = Duration::from_millis(80);
+    let began = std::time::Instant::now();
+    let mut tick = 0;
+    while !is_done.load(Ordering::Acquire) {
+        if began.elapsed() >= BEFORE_THE_FIRST {
+            let mut line = String::new();
+            format::write_progress(&mut line, progress, style, tick);
+            let _ = Output::error_writer().write_all(line.as_bytes());
+            Output::flush();
+            tick += 1;
+        }
+        std::thread::park_timeout(BETWEEN);
+    }
+    if tick > 0 {
+        let _ = Output::error_writer().write_all(format::ERASE_LINE.as_bytes());
+        Output::flush();
+    }
+}
+
 fn run(
     cwd: &str,
     project: Option<&str>,
     paths: &[String],
     threads: usize,
     ends_the_process: bool,
+) -> Report {
+    // For a person who is watching.
+    if !Output::is_stderr_tty() || Output::is_ai_agent() {
+        return run_quietly(cwd, project, paths, threads, ends_the_process, None);
+    }
+    let (progress, is_done) = (Progress::default(), AtomicBool::new(false));
+    let style = style_for(
+        cwd,
+        Some(true),
+        bun_core::Fd::stderr(),
+        true,
+        Output::enable_ansi_colors_stderr(),
+    );
+    std::thread::scope(|scope| {
+        let shown = scope.spawn(|| show_progress(&progress, &is_done, &style));
+        let report = run_quietly(
+            cwd,
+            project,
+            paths,
+            threads,
+            ends_the_process,
+            Some(&progress),
+        );
+        is_done.store(true, Ordering::Release);
+        shown.thread().unpark();
+        report
+    })
+}
+
+fn run_quietly(
+    cwd: &str,
+    project: Option<&str>,
+    paths: &[String],
+    threads: usize,
+    ends_the_process: bool,
+    progress: Option<&Progress>,
 ) -> Report {
     let global = global_node_modules();
     bun_sema_driver::check(&Request {
@@ -146,6 +206,7 @@ fn run(
         lib_dir: None,
         global_node_modules: global.as_deref(),
         file_time_limit: core::time::Duration::from_secs(10),
+        progress,
         only: None,
         ends_the_process,
         keeps_everything: false,

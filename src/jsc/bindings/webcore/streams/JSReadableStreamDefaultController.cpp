@@ -486,9 +486,7 @@ void readableStreamDefaultControllerCallPullIfNeeded(JSGlobalObject* globalObjec
     ASSERT(!controller->m_pullAgain);
     controller->m_pulling = true;
     auto* runtime = JSStreamsRuntime::from(globalObject);
-    // A link's pull algorithm reads from the next stream, which pulls its own source, and so on. With the
-    // stack nearly used up (see streamLinkMustDefer), act as if this pull settled at once and another is
-    // wanted: the fulfillment handler then pulls from a microtask.
+    // The fulfillment handler sees m_pullAgain and runs this pull from its microtask (see streamLinkMustDefer).
     if (mayDefer == MayDefer::Yes && controller->m_algorithms.linksAnotherStream() && streamLinkMustDefer(vm)) [[unlikely]] {
         controller->m_pullAgain = true;
         return queueStreamsMicrotask(globalObject, runtime->onRSDefaultControllerPullFulfilled(), jsUndefined(), controller);

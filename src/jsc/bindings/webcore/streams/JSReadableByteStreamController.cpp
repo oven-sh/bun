@@ -609,13 +609,13 @@ void readableByteStreamControllerCallPullIfNeeded(JSGlobalObject* globalObject, 
     ASSERT(!controller->m_pullAgain);
     controller->m_pulling = true;
     auto* runtime = JSStreamsRuntime::from(globalObject);
-    // See readableStreamDefaultControllerCallPullIfNeeded, for both this and the one below.
     if (mayDefer == MayDefer::Yes && controller->m_algorithms.linksAnotherStream() && streamLinkMustDefer(vm)) [[unlikely]] {
         controller->m_pullAgain = true;
         return queueStreamsMicrotask(globalObject, runtime->onRSByteControllerPullFulfilled(), jsUndefined(), controller);
     }
     JSPromise* pullPromise = performByteControllerPullAlgorithm(vm, globalObject, controller);
     RETURN_IF_EXCEPTION(scope, void());
+    // See readableStreamDefaultControllerCallPullIfNeeded.
     if (!pullPromise || pullPromise->status() == JSPromise::Status::Fulfilled)
         return queueStreamsMicrotask(globalObject, runtime->onRSByteControllerPullFulfilled(), jsUndefined(), controller);
     pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onRSByteControllerPullFulfilled(), runtime->onRSByteControllerPullRejected(), jsUndefined(), controller);

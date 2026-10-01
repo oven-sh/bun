@@ -76,10 +76,7 @@ namespace WebCore {
 //   Tee: context = the JSStreamTeeState, except onByteTeeReaderClosedRejected whose context
 //     is an InternalFieldTuple{teeState, thisReader}.
 //   The two *Microtask entries are the tee chunk-steps "queue a microtask" jobs.
-//   The two *CancelDeferred entries are the cancel of a link's source, continued from a
-//     microtask (see streamLinkMustDefer); value = the reason. onTeeCancelDeferred: context =
-//     the JSStreamTeeState. onTextDecodeCancelDeferred: context = an InternalFieldTuple{the
-//     source reader, the promise the cancel algorithm returned}.
+//   onTextDecodeCancelDeferred: context = an InternalFieldTuple{source reader, result promise}.
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_RS_OPERATIONS(V) \
     V(onFromIterablePullFulfilled)                             \
     V(onFromIterableCancelFulfilled)                           \
@@ -91,9 +88,7 @@ namespace WebCore {
     V(onTeeCancelDeferred)                                     \
     V(onTextDecodeCancelDeferred)
 
-// owner: JSReadRequest.cpp. The close / error steps of a link's read request or read-into
-// request, continued from a microtask (see streamLinkMustDefer). context = the JSReadRequest /
-// JSReadIntoRequest. value = the error steps' error; the read-into close steps' chunk, or undefined.
+// owner: JSReadRequest.cpp. context = the JSReadRequest / JSReadIntoRequest whose steps run again.
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_READ_REQUEST(V) \
     V(onReadRequestCloseStepsDeferred)                        \
     V(onReadRequestErrorStepsDeferred)                        \

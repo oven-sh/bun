@@ -175,8 +175,7 @@ void queueStreamsMicrotask(JSGlobalObject* globalObject, JSFunction* handler, JS
 
 bool streamLinkMustDefer(JSC::VM& vm)
 {
-    // The last link of a chain calls the source's pull() or cancel(). JS calls throw RangeError at the
-    // soft limit, so a link that goes on leaves them this much room above it.
+    // Room for the source's pull() or cancel() at the end of a chain: a JS call throws RangeError at the soft limit.
 #if ASAN_ENABLED
     static constexpr size_t headroom = 384 * KB;
 #else

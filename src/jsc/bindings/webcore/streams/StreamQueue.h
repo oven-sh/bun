@@ -69,8 +69,7 @@ struct ByteQueueEntry {
 struct SourceAlgorithmSlots {
     // Which arm runs pull/cancel.
     SourceKind kind { SourceKind::Nothing };
-    // Whether that arm is a native link: it pulls and cancels another stream, whose own source can be
-    // a link too (see streamLinkMustDefer).
+    // Whether that arm pulls and cancels another stream natively (see streamLinkMustDefer).
     bool linksAnotherStream() const
     {
         switch (kind) {

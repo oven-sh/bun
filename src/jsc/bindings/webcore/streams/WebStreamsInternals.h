@@ -360,11 +360,7 @@ void readableStreamDefaultReaderRead(JSC::JSGlobalObject*, JSReadableStreamDefau
 JSReadableStreamDefaultController* teeBranchDefaultController(JSReadableStream* branch); // userJS: no — ReadableStreamOperations.cpp
 JSReadableByteStreamController* teeBranchByteController(JSReadableStream* branch); // userJS: no — ReadableStreamOperations.cpp
 void queueStreamsMicrotask(JSC::JSGlobalObject*, JSC::JSFunction* handler, JSC::JSValue value, JSC::JSValue context); // userJS: no — WebStreamsMisc.cpp
-// A tee and a Body.textStream() link two streams natively: a pull or a cancel of the one runs straight into
-// the other, and so do the close and error steps of the link's read request. In a chain of links (tee() on a
-// branch, or Response.clone(), in a loop) each of these recurses once per link. True when the native stack
-// is too close to its limit for one more link: that link then continues from a microtask. A link through
-// a JS call (a user pull(), ReadableStream.from(stream)) is left to the RangeError of that call.
+// True when a chain of tees or text streams left too little stack for the next link: it continues from a microtask.
 bool streamLinkMustDefer(JSC::VM&); // userJS: no (pure) — WebStreamsMisc.cpp
 JSC::JSValue readableStreamDefaultReaderTryReadFromQueue(JSC::JSGlobalObject*, JSReadableStreamDefaultReader*); // userJS: yes (a drained queue can pull) — JSReadableStreamDefaultReader.cpp
 void readableStreamDefaultReaderRelease(JSC::JSGlobalObject*, JSReadableStreamDefaultReader*); // userJS: yes (error-steps dispatch) — JSReadableStreamDefaultReader.cpp

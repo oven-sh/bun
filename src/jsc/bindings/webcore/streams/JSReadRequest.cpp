@@ -90,9 +90,6 @@ void JSReadRequest::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Context), "context"_s);
 }
 
-// The kinds whose close steps close another stream, whose own read requests can be of these kinds too
-// (see streamLinkMustDefer). The error steps of TextDecode forward the same way. A tee forwards an
-// error through reader.closed instead, one microtask per link.
 static bool closeStepsCloseAnotherStream(ReadRequestKind kind)
 {
     switch (kind) {

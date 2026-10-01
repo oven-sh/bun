@@ -1013,7 +1013,6 @@ JSPromise* textDecodePullAlgorithm(JSGlobalObject* globalObject, JSReadableStrea
     }));
 }
 
-// The source side of textDecodeCancelAlgorithm: cancels the source through `reader`, then releases `reader`.
 static JSPromise* textDecodeCancelSource(JSGlobalObject* globalObject, JSReadableStreamDefaultReader* reader, JSValue reason)
 {
     auto& vm = getVM(globalObject);
@@ -1045,7 +1044,6 @@ JSPromise* textDecodeCancelAlgorithm(JSGlobalObject* globalObject, JSReadableStr
     RELEASE_AND_RETURN(scope, textDecodeCancelSource(globalObject, reader, reason));
 }
 
-// onTextDecodeCancelDeferred: context = InternalFieldTuple{the source reader, the promise textDecodeCancelAlgorithm returned}.
 static EncodedJSValue textDecodeCancelDeferred(JSGlobalObject* globalObject, JSValue reason, InternalFieldTuple* context)
 {
     auto& vm = getVM(globalObject);
@@ -1145,7 +1143,7 @@ JSPromise* defaultTeePullAlgorithm(JSGlobalObject* globalObject, JSStreamTeeStat
     RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
 }
 
-// "Resolve cancelPromise with ! ReadableStreamCancel(stream, reason)": both branches are canceled, or teeAbortWithError.
+// "Resolve cancelPromise with ! ReadableStreamCancel(stream, reason)".
 static void teeCancelStream(JSC::VM& vm, JSGlobalObject* globalObject, JSStreamTeeState* teeState, JSValue reason)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);

@@ -142,8 +142,36 @@ test("bad tokens inside color function arguments still fail the declaration", ()
 // light-dark() origins (Parser::MAX_LIGHT_DARK_ORIGIN_DEPTH = 4); past the cap
 // the color value falls back to an unparsed token list instead of expanding.
 
-function nestedLightDarkOrigin(depth: number, property: string): string {
-  return `.a{${property}:` + "rgb(from light-dark(red,blue) r g b/".repeat(depth) + "1" + ")".repeat(depth) + "}";
+// The capped split is reached through two token-list arms in
+// `UnresolvedColor::parse`: rgb() and hsl(). Both are exercised.
+const lightDarkOriginShapes = [
+  {
+    fn: "rgb",
+    open: "rgb(from light-dark(red,blue) r g b/",
+    light: "rgb(255 0 0/",
+    dark: "rgb(0 0 255/",
+    raw: "rgb(from light-dark(red,#00f) r g b/1)",
+  },
+  {
+    fn: "hsl",
+    open: "hsl(from light-dark(red,blue) h s l/",
+    light: "hsl(0 100% 50%/",
+    dark: "hsl(240 100% 50%/",
+    raw: "hsl(from light-dark(red,#00f) h s l/1)",
+  },
+];
+
+function nestedLightDarkOrigin(depth: number, property: string, open = lightDarkOriginShapes[0].open): string {
+  return `.a{${property}:` + open.repeat(depth) + "1" + ")".repeat(depth) + "}";
+}
+
+// The fully resolved form of `depth` nested origins whose innermost alpha is
+// `leaf`: each level becomes `light-dark(<light>/X, <dark>/X)` with X the
+// level below.
+function resolvedLightDark(depth: number, light: string, dark: string, leaf: string): string {
+  let value = leaf;
+  for (let i = 0; i < depth; i++) value = `light-dark(${light}${value}),${dark}${value}))`;
+  return value;
 }
 
 test("light-dark() origins at or below the depth cap still fully resolve", () => {
@@ -159,25 +187,29 @@ test("light-dark() origins at or below the depth cap still fully resolve", () =>
   expect(minifyTest(nestedLightDarkOrigin(3, "--x"), "")).toBe(
     ".a{--x:light-dark(rgb(255 0 0/light-dark(rgb(255 0 0/light-dark(red,#00f)),rgb(0 0 255/light-dark(red,#00f)))),rgb(0 0 255/light-dark(rgb(255 0 0/light-dark(red,#00f)),rgb(0 0 255/light-dark(red,#00f)))))}",
   );
-
-  // Depth 4 sits exactly at the cap and still fully resolves.
-  expect(minifyTest(nestedLightDarkOrigin(4, "--x"), "")).toBe(
-    ".a{--x:light-dark(rgb(255 0 0/light-dark(rgb(255 0 0/light-dark(rgb(255 0 0/light-dark(red,#00f)),rgb(0 0 255/light-dark(red,#00f)))),rgb(0 0 255/light-dark(rgb(255 0 0/light-dark(red,#00f)),rgb(0 0 255/light-dark(red,#00f)))))),rgb(0 0 255/light-dark(rgb(255 0 0/light-dark(rgb(255 0 0/light-dark(red,#00f)),rgb(0 0 255/light-dark(red,#00f)))),rgb(0 0 255/light-dark(rgb(255 0 0/light-dark(red,#00f)),rgb(0 0 255/light-dark(red,#00f)))))))}",
-  );
 });
 
-test("one level past the cap falls back to unparsed tokens instead of expanding", () => {
-  const out = minifyTest(nestedLightDarkOrigin(5, "--x"), "");
-  // Before the fix the value resolved completely (no `from` keyword left);
-  // now the level past the cap is preserved as raw tokens.
-  expect(out).toContain("from");
-  expect(out).toContain("light-dark(");
+test.each(lightDarkOriginShapes)("$fn: depth 4 sits exactly at the cap and still fully resolves", shape => {
+  // The innermost level resolves to the plain light-dark() of its origin, so
+  // depth 4 is three resolved wrappers around `light-dark(red,#00f)`.
+  const expected = resolvedLightDark(3, shape.light, shape.dark, "light-dark(red,#00f)");
+  expect(minifyTest(nestedLightDarkOrigin(4, "--x", shape.open), "")).toBe(`.a{--x:${expected}}`);
 });
 
-test("deeply nested light-dark() origins in a custom property stay bounded", () => {
-  const out = minifyTest(nestedLightDarkOrigin(16, "--x"), "");
-  // Before the fix this produced 1,933,281 bytes from ~600 bytes of input
-  // (2x per nesting level); ~25 levels reached gigabytes.
+test.each(lightDarkOriginShapes)("$fn: one level past the cap keeps that level as raw tokens", shape => {
+  // Exactly MAX_LIGHT_DARK_ORIGIN_DEPTH (4) levels resolve; the fifth is
+  // preserved verbatim as the leaf, so the raw function appears 2^4 times.
+  // Before the fix every level resolved and no `from` remained.
+  const expected = resolvedLightDark(4, shape.light, shape.dark, shape.raw);
+  const out = minifyTest(nestedLightDarkOrigin(5, "--x", shape.open), "");
+  expect(out).toBe(`.a{--x:${expected}}`);
+  expect(out.split(shape.raw).length - 1).toBe(16);
+});
+
+test.each(lightDarkOriginShapes)("$fn: deeply nested origins in a custom property stay bounded", shape => {
+  const out = minifyTest(nestedLightDarkOrigin(16, "--x", shape.open), "");
+  // Before the fix this produced ~1.9 MB (rgb) / ~2.2 MB (hsl) from ~600 bytes
+  // of input (2x per nesting level); ~25 levels reached gigabytes.
   expect(out.length).toBeLessThan(20_000);
   // The value is preserved, not dropped.
   expect(out).toContain("from");

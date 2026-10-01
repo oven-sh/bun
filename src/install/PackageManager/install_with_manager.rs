@@ -324,8 +324,7 @@ pub fn install_with_manager(
                     let off = lf.dependencies.len() as u32;
                     let len = (new_dependencies.len() + kept_pruned.len()) as u32;
                     let old_resolutions_list = lf.packages.items_resolutions()[0];
-                    // The rows of the old root slice stay in the buffer, but no
-                    // package declares them now, so they must not be resolved again.
+                    // Stays in the buffer, declared by no package from here on.
                     let replaced_root_rows = root.dependencies;
                     lf.packages.items_dependencies_mut()[0] =
                         lockfile::DependencySlice::new(off, len);
@@ -846,6 +845,9 @@ pub fn install_with_manager(
     let save_format = load_result.save_format(&manager.options);
 
     if manager.options.lockfile_only {
+        if had_errors_before_cleaning_lockfile {
+            Global::crash();
+        }
         // save the lockfile and exit. make sure metahash is generated for binary lockfile
         return save_lockfile_only(
             manager,

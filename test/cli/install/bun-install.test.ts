@@ -11406,7 +11406,7 @@ describe.concurrent("link: paths with .. or an absolute path declared by a depen
   // consults plain rules only, as it does for a nested rule with a `file:` path
   // (tested above). The error names the value the rule supplied.
   for (const [shape, rules] of [
-    ["parent>name", { "bar>outside": "link:../outside" }],
+    ["parent-name", { "bar>outside": "link:../outside" }],
     ["nested", { bar: { outside: "link:../outside" } }],
   ] as const) {
     it(`are refused when a scoped root override (${shape}) puts one on a registry package's dependency`, async () => {

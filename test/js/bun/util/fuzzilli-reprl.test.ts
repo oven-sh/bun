@@ -1,14 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import fs from "node:fs";
-import path from "node:path";
 
 // `bun fuzzilli` is the REPRL child that the Fuzzilli fuzzer drives
 // (src/runtime/cli/fuzzilli_command.rs). The fuzzer talks to it over four
 // inherited descriptors: 100 (commands in), 101 (HELO + one u32 status per
-// program out), 102 (program source in) and 103 (FUZZILLI_PRINT out). Here the
-// command and program streams are regular files prepared up front, which the
-// child reads exactly like the pipe and memfd Fuzzilli would give it.
+// program out), 102 (program source in) and 103 (FUZZILLI_PRINT out). Here all
+// four are pipes. The commands and the programs are written up front and the
+// command pipe is closed, so the child runs every program and leaves on EOF.
 //
 // The loop is compiled into fuzzilli, debug and ASAN builds only.
 const enabled = !isWindows && (isDebug || isASAN);
@@ -17,6 +16,15 @@ const REPRL_CRFD = 100;
 const REPRL_CWFD = 101;
 const REPRL_DRFD = 102;
 const REPRL_DWFD = 103;
+
+function owned(fd: number) {
+  let open = true;
+  const close = () => {
+    if (open) fs.closeSync(fd);
+    open = false;
+  };
+  return { fd, close, [Symbol.dispose]: close };
+}
 
 async function runReprl(programs: string[]) {
   const sources = programs.map(p => Buffer.from(p, "utf8"));
@@ -27,35 +35,35 @@ async function runReprl(programs: string[]) {
     control.push(Buffer.from("exec"), size);
   }
 
-  using dir = tempDir("fuzzilli-reprl", {
-    "control.bin": Buffer.concat(control),
-    "programs.bin": Buffer.concat(sources),
-    "status.bin": "",
-    "fuzzout.txt": "",
-  });
-  const file = (name: string) => path.join(String(dir), name);
-
-  const stdio: any[] = ["ignore", "pipe", "pipe"];
-  stdio[REPRL_CRFD] = Bun.file(file("control.bin"));
-  stdio[REPRL_CWFD] = Bun.file(file("status.bin"));
-  stdio[REPRL_DRFD] = Bun.file(file("programs.bin"));
-  stdio[REPRL_DWFD] = Bun.file(file("fuzzout.txt"));
-
+  using dir = tempDir("fuzzilli-reprl", {});
+  // Descriptors 3 to 99 stay closed in the child. 100 to 103 are the REPRL pipes.
+  const unused = Array.from({ length: REPRL_CRFD - 3 }, () => "ignore" as const);
   await using proc = Bun.spawn({
     cmd: [bunExe(), "fuzzilli"],
     env: bunEnv,
     cwd: String(dir),
-    stdio,
+    stdio: ["ignore", "pipe", "pipe", ...unused, "pipe", "pipe", "pipe", "pipe"],
   });
+  // Reading `stdio` makes the caller the owner of the pipe descriptors.
+  const fds = proc.stdio;
+  using commands = owned(fds[REPRL_CRFD]!);
+  using status = owned(fds[REPRL_CWFD]!);
+  using data = owned(fds[REPRL_DRFD]!);
+  using _fuzzout = owned(fds[REPRL_DWFD]!);
+
+  fs.writeSync(commands.fd, Buffer.concat(control));
+  fs.writeSync(data.fd, Buffer.concat(sources));
+  commands.close();
+
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const status = fs.readFileSync(file("status.bin"));
+  const written = fs.readFileSync(status.fd);
   const statuses: number[] = [];
-  for (let offset = 4; offset + 4 <= status.length; offset += 4) {
-    statuses.push(status.readUInt32LE(offset));
+  for (let offset = 4; offset + 4 <= written.length; offset += 4) {
+    statuses.push(written.readUInt32LE(offset));
   }
   return {
-    handshake: status.subarray(0, 4).toString("latin1"),
+    handshake: written.subarray(0, 4).toString("latin1"),
     statuses,
     stdout: stdout.split("\n").filter(Boolean),
     stderr,
@@ -185,19 +193,43 @@ describe.skipIf(!enabled)("bun fuzzilli", () => {
           () => console.log("server alive: false"),
         );
       `,
-      // A Worker that is busy in JIT code when the reset terminates it. JSC
-      // stops it with a signal-based VM trap, so nothing may take SIGSEGV away
-      // from JSC in the REPRL child.
+    ]);
+
+    expect(result.stdout).toEqual(["serving", "server alive: false"]);
+    expect(result.statuses).toEqual([0, 0]);
+    expect(result.exitCode).toBe(0);
+  });
+
+  test.concurrent("a Worker that is busy in JIT code when its program ends is stopped by the reset", async () => {
+    // JSC stops such a Worker with a signal-based VM trap, so nothing may take
+    // SIGSEGV away from JSC in the REPRL child. The program blocks until the
+    // Worker reports that its loop is hot, and leaves it spinning.
+    const worker = `
+      onmessage = event => {
+        const hot = new Int32Array(event.data);
+        function spin(n) {
+          let x = 0;
+          for (let i = 0; i < n; i++) x += Math.random();
+          return x;
+        }
+        spin(1e6);
+        Atomics.store(hot, 0, 1);
+        Atomics.notify(hot, 0);
+        while (true) spin(2147483647);
+      };
+    `;
+    const result = await runReprl([
       `
-        new Worker("data:text/javascript,let x = 0; while (true) x += Math.random();");
-        Bun.sleepSync(500);
-        console.log("worker left running");
+        const hot = new Int32Array(new SharedArrayBuffer(4));
+        new Worker(${JSON.stringify("data:text/javascript," + encodeURIComponent(worker))}).postMessage(hot.buffer);
+        Atomics.wait(hot, 0, 0);
+        console.log("worker is spinning");
       `,
       `console.log("after the worker");`,
     ]);
 
-    expect(result.stdout).toEqual(["serving", "server alive: false", "worker left running", "after the worker"]);
-    expect(result.statuses).toEqual([0, 0, 0, 0]);
+    expect(result.stdout).toEqual(["worker is spinning", "after the worker"]);
+    expect(result.statuses).toEqual([0, 0]);
     expect(result.exitCode).toBe(0);
   });
 

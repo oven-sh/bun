@@ -8,6 +8,12 @@ The trees
            git -C /tmp/tb1b/glue apply ../../corpus-glue/top-down/verified/conformance.test.ts.patch
            = the file as it is once corpus-commit and corpus-glue have landed: 106 tests
   budget   a copy of glue, then prototype/test-budget.on-the-glue.patch: 107 tests
+  stack    budget with the patch of ../../default-check-classification laid between: the test file of before the timeouts,
+           bottom-up/default-check.patch for the test file, lints-fixture.ts, check_bun_lint.ts and run.ts (they apply),
+           runner/index.ts by hand (verdictOutcomes, Death, Verdict: the hunk misses its context by one line of the glue),
+           H/sweep.ts left as the glue has it (the hunks collide; the test file does not import it), then
+           patch -p1 < top-down/amend-bottom-up.patch (its hunk of sweep.ts is rejected), then probes/apply-timeouts.py
+           and prettier. Its test "the binary under test lints" needs a release build that has --lint.
 
 prototype/
   test-budget.on-the-glue.patch     glue -> budget, three files: conformance.test.ts (the whole enumeration leaves the file as
@@ -24,6 +30,9 @@ probes/
   batch1.sh           /workspace/tools/lk bash batch1.sh <tree> <out> <label>: one hold of the lock, release cold and warm twice,
                       release with the environment of CI, debug, debug with the leak check, debug as the ASAN lane
   batch2.sh           batch1.sh, then sweep.ts --no-run, ../../typecheck.sh, lint-leak.sh
+  batch3.sh           the same runs for a tree whose file starts the binary under test, with a release build that has --lint
+                      (REL of modes.sh), and the installed build cold twice on a second tree
+  clean-clone.sh      a clone of a commit without sync.sh: what a checkout of CI has, and what the commit lacks
   lint-leak.sh        `bun --lint` itself under the leak check and the exception checks on three small files
   table.ts            bun table.ts <min ms> <log> ...: the tests of several logs side by side
   evict.py            python3 evict.py <directory> ...: puts the data pages of the files out of the page cache
@@ -32,6 +41,8 @@ observed/
   batch1-debug-table.txt             the tests of glue above 0.9 s in the three debug runs
   batch1-release-table.txt           the tests of glue above 0.3 s in the four release runs
   batch2.txt, batch2/, batch2-*      the same for the tree budget
+  batch3.txt, batch3/, batch3-*      the tree stack, and the tree budget cold twice
+  platforms-by-reading.txt           every place that depends on the platform, with its guard; nothing of it was run
 
 The acceptance, once corpus-commit and corpus-glue are in the worktree (each line one call, timeout 3600000 ms)
   /workspace/tools/lk bun bd test test/cli/lint/conformance.test.ts

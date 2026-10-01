@@ -296,7 +296,8 @@ pub(crate) fn key_until(
         }
         let raw = source.get(token.start as usize..token.end.min(end) as usize)?;
         // `>>` closes two lists of type arguments for typescript-eslint and is one operator elsewhere: each `>` and `=` of such a token is compared alone, and the node may end inside it.
-        if !token.opaque && token.end - token.start > 1 && raw.first() == Some(&b'>') {
+        if !token.opaque && token.end.saturating_sub(token.start) > 1 && raw.first() == Some(&b'>')
+        {
             for byte in raw {
                 key.extend_from_slice(&[0, 1, 0, 0, 0, *byte]);
             }

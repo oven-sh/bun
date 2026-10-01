@@ -1,0 +1,26 @@
+[1] budget-release-cold.log
+[2] budget-release-warm1.log
+[3] budget-release-warm2.log
+[4] budget-release-ci.log
+     52      43      50     104  reference > the corpus has the oracle that the list says for every instance that runs
+    233      58      56     344  default check > the probe: a command that dies
+    415     215     383     346  default check > the probe: a command that runs its operand
+    338     194      44     385  default check > a command that runs its operand gets no instance
+    489      70    1169     404  default check > the probe: a command that takes the flag and does nothing
+    425     199     820     919  default check > stderr is read in the plain format, chain lines too: the first section is the oracle's, and th
+    837     340    1184     942  default check > the probe: a command that lints
+    448     197     822     924  default check > a command that lints gets the written unit as its operand, and no diagnostic passes an instanc
+    340     198     845    1137  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a file that is 
+    406     164     817    1412  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an exit code th
+    340     164     823     769  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: no error and th
+    334     209    1350    1137  default check > never equal to an oracle without errors: a stand-in
+    358     163     823     754  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: text on stdout
+    443     164     816     627  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: the exit code o
+    444    1263     820     685  default check > never equal to an oracle without errors: the code -1
+    472     187     842    1137  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a signal
+    614     174    1319     753  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a diagnostic of
+    615     164     816     627  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an error and th
+    632     501     816     627  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a line of no fo
+    640     198    1319    1132  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an error of the
+    353       1       1       2  listed instances > a name in the list of the other class, a skipped instance and a name of no instance are fai
+  10383    5431   16580   15858  sum of the times of all tests (tests that run at the same time count each)

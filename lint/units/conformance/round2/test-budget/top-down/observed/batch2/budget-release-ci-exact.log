@@ -1,0 +1,11 @@
+bun test v1.4.3-canary.1 (367d939d9)
+...........................................................................................................
+::endgroup::
+
+
+107 pass
+0 fail
+177 expect() calls
+Ran 107 tests across 1 file. [4.17s]
+TIME wall 4.281 s user 0.984 s sys 0.299 s
+exit 0

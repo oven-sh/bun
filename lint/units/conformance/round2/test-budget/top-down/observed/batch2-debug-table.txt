@@ -1,0 +1,53 @@
+[1] budget-debug.log
+[2] budget-debug-leak.log
+[3] budget-debug-ci.log
+   3217    3741   11485  reference > the list has the instances of the reference's run: 14,915, of which 12,797 run and 2,118 are skipp
+   2412    2197    3238  reference > the case and space tables are those of Go
+   1767    1544    2684  directives > the vectors of the reference parser
+   3244    3075    9324  enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 1
+   2093    1564    3383  enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 2
+    906    1301    2412  enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 3
+    703    1200    2830  enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 4
+   1577    1020    1286  enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 5
+    551     795    1132  enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 6
+   2356     863    1936  enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 7
+   1012     344    1712  enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 8
+   2765    2128    3227  error baselines > read and written again, the bytes are the same: group 1
+    341    1409    1747  error baselines > read and written again, the bytes are the same: group 3
+   2896    3261    4166  error baselines > read and written again, the bytes are the same: group 4
+    965    1095     854  error baselines > read and written again, the bytes are the same: group 5
+   2593    1131    1434  error baselines > read and written again, the bytes are the same: group 6
+   1426     539    1449  error baselines > read and written again, the bytes are the same: group 7
+   1202    1835    1650  error baselines > read and written again, the bytes are the same: group 8
+   1690    1798    2984  error baselines > read and written again, the bytes are the same: group 9
+   4738    2927    8624  error baselines > read and written again, the bytes are the same: group 10
+   2035     706    2030  error baselines > read and written again, the bytes are the same: group 11
+   1624    1057    4586  run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 1
+    758     437    1444  run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 2
+    281     475    1429  run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 4
+   1364    1943    3106  run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 5
+    579     410    1232  run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 6
+    290     500    1501  run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 7
+   1985    1441    2571  plain format > the first section of the baselines of one of 250 cases is the plain format
+   2320    6130    7510  default check > the probe: a command that runs its operand
+   2167    1845    2505  default check > the probe: a command that dies
+   2447    4994    3149  default check > the probe: a command that takes the flag and does nothing
+   2325    6412    9738  default check > a command that runs its operand gets no instance
+   8680   10447   17521  default check > the probe: a command that lints
+   7842   14890   17802  default check > stderr is read in the plain format, chain lines too: the first section is the oracle's, and th
+   9511   14002   23186  default check > a command that lints gets the written unit as its operand, and no diagnostic passes an instanc
+   8437   11440   16656  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an exit code th
+   6517    6831   13174  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: the exit code o
+   4564    7964    7724  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a line of no fo
+   3877    3555   10140  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: text on stdout
+   5227    5824    4065  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an error and th
+   2692    4797   10681  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an error of the
+   4602    3454   10179  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a file that is 
+   6141    4083   10130  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: no error and th
+   1446     880    2969  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a signal
+   2391    5151   10432  default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a diagnostic of
+   2427    6002    4057  default check > never equal to an oracle without errors: a stand-in
+   2721    5862    3365  default check > never equal to an oracle without errors: the code -1
+   3342     601    2043  listed instances > a batch passes when the oracle is replayed, and fails its names of list E when nothing is r
+    758      97    1185  corpus > an instance that the reference fails is told from one that it skips, and neither runs
+ 142340  170115  281249  sum of the times of all tests (tests that run at the same time count each)

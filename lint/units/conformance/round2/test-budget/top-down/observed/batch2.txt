@@ -1,0 +1,69 @@
+### 2026-10-01T15:58:31Z budget: release 1.4.3-canary.1+367d939d9, cold: the data pages of the corpus and the fixtures are put out of the page cache
+evicted 22219 files, 33631134 bytes, in 0.4 s
+budget release cold load 229.89:  107 pass 0 fail Ran 107 tests across 1 file. [2.85s] TIME wall 2.917 s user 0.994 s sys 0.308 s exit 0 sanitizer-lines 0
+budget release warm1 load 232.38:  107 pass 0 fail Ran 107 tests across 1 file. [2.45s] TIME wall 3.038 s user 0.924 s sys 0.287 s exit 0 sanitizer-lines 0
+budget release warm2 load 232.38:  107 pass 0 fail Ran 107 tests across 1 file. [2.77s] TIME wall 2.785 s user 0.937 s sys 0.279 s exit 0 sanitizer-lines 0
+budget release-ci load 236.59:  107 pass 0 fail Ran 107 tests across 1 file. [3.10s] TIME wall 3.353 s user 1.040 s sys 0.276 s exit 0 sanitizer-lines 0
+budget release-ci-exact load 243.43: 107 pass 0 fail Ran 107 tests across 1 file. [4.17s] TIME wall 4.281 s user 0.984 s sys 0.299 s exit 0 sanitizer-lines 0
+### 2026-10-01T15:58:50Z budget: debug 1.4.3-debug+3110ce85c
+budget debug load 362.69:  105 pass 2 skip 0 fail Ran 107 tests across 1 file. [87.63s] TIME wall 87.841 s user 73.850 s sys 3.835 s exit 0 sanitizer-lines 0
+(pass) default check > a command that lints gets the written unit as its operand, and no diagnostic passes an instance without errors [9510.65ms]
+(pass) default check > the probe: a command that lints [8680.44ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an exit code that is none of 0, 1 and 2 [8436.72ms]
+(pass) default check > stderr is read in the plain format, chain lines too: the first section is the oracle's, and that is no pass [7841.94ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: the exit code of a refusal [6517.05ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: no error and the exit code 2 [6141.22ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an error and the exit code 0 [5226.61ms]
+(pass) error baselines > read and written again, the bytes are the same: group 10 [4738.02ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a file that is not of the instance [4602.06ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a line of no form [4564.18ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: text on stdout [3876.63ms]
+(pass) listed instances > a batch passes when the oracle is replayed, and fails its names of list E when nothing is reported [3341.75ms]
+(pass) enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 1 [3243.50ms]
+(pass) reference > the list has the instances of the reference's run: 14,915, of which 12,797 run and 2,118 are skipped [3216.86ms]
+budget debug-leak load 499.05:  105 pass 2 skip 0 fail Ran 107 tests across 1 file. [86.20s] TIME wall 89.665 s user 73.915 s sys 4.119 s exit 0 sanitizer-lines 0
+(pass) default check > stderr is read in the plain format, chain lines too: the first section is the oracle's, and that is no pass [14889.99ms]
+(pass) default check > a command that lints gets the written unit as its operand, and no diagnostic passes an instance without errors [14001.66ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an exit code that is none of 0, 1 and 2 [11439.51ms]
+(pass) default check > the probe: a command that lints [10447.15ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a line of no form [7963.95ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: the exit code of a refusal [6831.12ms]
+(pass) default check > a command that runs its operand gets no instance [6411.86ms]
+(pass) default check > the probe: a command that runs its operand [6129.91ms]
+(pass) default check > never equal to an oracle without errors: a stand-in [6001.59ms]
+(pass) default check > never equal to an oracle without errors: the code -1 [5862.01ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an error and the exit code 0 [5823.74ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a diagnostic of a rule [5151.43ms]
+(pass) default check > the probe: a command that takes the flag and does nothing [4994.02ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an error of the command [4797.26ms]
+budget debug-ci load 449.93:  105 pass 2 skip 0 fail Ran 107 tests across 1 file. [156.74s] TIME wall 159.158 s user 117.069 s sys 4.640 s exit 0 sanitizer-lines 0
+✓ default check > a command that lints gets the written unit as its operand, and no diagnostic passes an instance without errors [23186.35ms]
+✓ default check > stderr is read in the plain format, chain lines too: the first section is the oracle's, and that is no pass [17801.71ms]
+✓ default check > the probe: a command that lints [17521.39ms]
+✓ default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an exit code that is none of 0, 1 and 2 [16656.15ms]
+✓ default check > a run that breaks the rules is a crash and never an empty list of diagnostics: the exit code of a refusal [13173.51ms]
+✓ reference > the list has the instances of the reference's run: 14,915, of which 12,797 run and 2,118 are skipped [11484.98ms]
+✓ default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an error of the command [10681.31ms]
+✓ default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a diagnostic of a rule [10431.67ms]
+✓ default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a file that is not of the instance [10178.59ms]
+✓ default check > a run that breaks the rules is a crash and never an empty list of diagnostics: text on stdout [10140.02ms]
+✓ default check > a run that breaks the rules is a crash and never an empty list of diagnostics: no error and the exit code 2 [10129.52ms]
+✓ default check > a command that runs its operand gets no instance [9738.25ms]
+✓ enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 1 [9323.83ms]
+✓ error baselines > read and written again, the bytes are the same: group 10 [8624.23ms]
+### 2026-10-01T16:04:34Z done
+### 2026-10-01T16:04:34Z budget: sweep.ts --no-run, every case against the list
+      31  skipped: unsupported baseUrl
+      24  skipped: esModuleInterop=false is unsupported
+      23  skipped: unsupported module resolution kind 2
+TIME wall 58.256 s user 2.495 s sys 0.733 s
+exit 0
+### 2026-10-01T16:05:32Z budget: type check
+no type error below test/cli/lint (12 elsewhere, in files that these import)
+### 2026-10-01T16:05:38Z bun --lint itself under the leak check and the exception checks
+ok.ts: exit 0, stdout 0 bytes, stderr 0 lines, ran.txt absent
+bad.ts: exit 2, stdout 0 bytes, stderr 2 lines, ran.txt absent
+    stderr: bad.ts(1,7): error syntax: This constant must be initialized
+    stderr: bad.ts(1,7): error syntax: Expected identifier but found "="
+rule.ts: exit 0, stdout 0 bytes, stderr 0 lines, ran.txt absent
+### 2026-10-01T16:05:40Z done

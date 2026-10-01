@@ -1,0 +1,66 @@
+Where test/cli/lint/conformance.test.ts and what it imports depend on the platform, and what guards each place.
+BY READING ONLY. Nothing here ran on Windows, on macOS, on aarch64 or on musl: the two Windows machines of the session answer
+"not available", and there is no macOS machine. The lanes are .buildkite/ci.ts:291 to 317 (darwin aarch64 26 and 14, darwin
+x64 14, linux debian 13 x64 and aarch64, linux x64 asan, ubuntu 25.04 x64 and aarch64, alpine 3.23 musl x64 and aarch64,
+windows 2019 x64, windows 11 aarch64). T is the test file at 3110ce85cf, R is test/cli/lint/conformance/runner.
+
+signals
+  T:958 to 961   "the probe: a command that dies" compares the whole reason only where isWindows is false; on Windows the prefix.
+  T:1068         the row "a signal" is left out on Windows.
+  fixtures/crashes-fixture.ts:2, lints-fixture.ts "kill"   process.kill(process.pid, "SIGKILL"): the child ends itself. On Windows
+                 that is TerminateProcess with the exit code 1 and no signal for the parent (libuv), so readRun (R/check_bun_lint.ts
+                 127) says "the command refused: ", which has the prefix that T:959 asks for.
+  R/check_bun_lint.ts:84, 85, 91, 93   the limit kills with SIGKILL through the handle of the parent and reads proc.signalCode. On
+                 Windows src/spawn/process.rs:533 to 565 reports Status::Signaled when libuv hands a term_signal, which it does for
+                 a kill through uv_process_kill: so a run that the limit ended has a signal there too. No test of the file as
+                 committed lets a limit end a process; the patch of default-check-classification adds one ("//~ hang", 500 ms).
+                 Its helper removes its directory right after the run returns, and the run returns when the limit is reached, not
+                 when the child is gone: on Windows a directory that is the current directory of a living process is not removed
+                 (rmSync throws EBUSY or EPERM there; harness.ts:494 DisposableString has no retry). Not run; it belongs to that patch.
+
+the temporary directory
+  harness.ts:489  tempDir is mkdtemp below realpathSync.native(os.tmpdir()): /private/var/... on macOS, the long name with the
+                 drive on Windows. R/materialise.ts:3080 makeTemporaryDirectory does the same for the probe.
+  R/check_bun_lint.ts:147 physical(), R/materialise.ts:2903 rootSpellings, 2916 foldPath   a path that a command prints is mapped
+                 back by both spellings of the root, and on Windows without the case of ASCII letters and with either separator.
+  R/materialise.ts:2862 ancestorProjectFile, 3033   an instance that is WRITTEN is refused ("unsupported", reason
+                 ancestor-has-project-files: <path>) when the directory of temporary files or a directory above it holds
+                 node_modules, package.json, tsconfig.json or jsconfig.json. scripts/runner.node.ts:1966 puts TMPDIR (TEMP on
+                 Windows) at <os tmp>/buntmp-XXXXXX and nothing of CI moves it (.buildkite, scripts/build/ci-images: no TMPDIR).
+                 /tmp and /private/var/folders have no such file above them; on Windows the directory is below the home of the
+                 user (C:\Users\<user>\AppData\Local\Temp), and a package.json or node_modules in that home would fail the two
+                 tests of describe("listed instances") (T:1109, 1116) and every batch of describe("expectations.json").
+                 NOTHING guards this; the failure names the file. Not verified for the agents of CI.
+  T:147, 925 to 928   the unit of a test of "default check" is written at root + "/.src/a.ts": mixed separators on Windows, which
+                 node:fs takes. These tests do not go through materialise, so the rule above does not reach them.
+
+links
+  R/materialise.ts:3055 to 3059   a link of an instance: symlinkSync, "file" for a file, a junction for a directory on Windows.
+  R/materialise.ts:2834 probePlatform, 2778   the right to link to a file is probed below the parent of the root; without it the
+                 instance is unsupported (link-not-permitted), before anything is written.
+  R/corpus.ts:99 to 103 testPlatforms, R/expectations.ts:148   a name that one of linux, darwin (no case, names not kept), win32
+                 (no case, no file link) cannot lay out is refused by the lists ("platform-limited"), whichever platform sweeps.
+  22 cases of the corpus have @link or @symlink. None of the five names of T:1101 to 1107 has one, and none sets
+  useCaseSensitiveFileNames (11 cases do; on Linux such an instance is unsupported, case-insensitive-requested, R/materialise.ts
+  2768): the five are one unit each, so every platform writes them.
+
+case of names, other names
+  the corpus: 22,182 files, no name outside ASCII, no two names of one directory that differ in case only, no name that Windows
+  refuses, 12,444 base names of cases that are distinct without case too. The longest path is 191 characters from the root of the
+  repository; sync.sh:80 (max_path=200) holds that, and the images of CI set core.longpaths (scripts/build/ci-images/spec.ts:1376).
+  T:55 sampled()  Bun.hash.crc32 of a path that is put together with "/" (T:83 to 85): the same sample everywhere.
+  R/roundtrip.ts:93 sortNames, 116 sampleErrorBaselines   byte order of names; the sample also depends on the SIZE of the files
+                 (64 KiB), which no checkout changes: H/.gitattributes "corpus/** -text".
+  T:241          the digest of fixtures/instances.tsv: fixtures/.gitattributes "*.tsv text eol=lf".
+  T:1141         expectations.json against the text that the update writes: the root's "*.json text eol=lf".
+  T:202          UPSTREAM has no attribute: a checkout may give it CR LF; the test takes the 40 hexadecimal digits by a pattern.
+
+separators
+  R/paths.ts:23  every path below the corpus is joined with "/"; home and corpusRoot come from node:path (T:44 to 47): mixed on Windows.
+  R/materialise.ts:2895 toRealPath   "/" becomes the separator of the platform below the root.
+  fixtures/lints-fixture.ts:14   the fixture prints a path as `bun --lint` does, with "/".
+  R/expectations.ts:312   the update command is printed with "/".
+
+processes at a time
+  T:189          at most min(8, availableParallelism()) checks of listed instances.
+  describe("default check")   20 tests side by side (the default of --max-concurrency), 23 processes.

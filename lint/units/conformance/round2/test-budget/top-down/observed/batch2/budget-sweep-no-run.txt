@@ -1,0 +1,13 @@
+instances 14915: run 12797 (E 7027, C 5770), skipped 2118
+    1244  skipped: unsupported target ES5
+     321  skipped: unsupported module kind AMD
+     222  skipped: unsupported module kind System
+      87  skipped: unsupported outFile
+      57  skipped: unsupported module kind UMD
+      57  skipped: unsupported module resolution kind 1
+      52  skipped: alwaysStrict=false is unsupported
+      31  skipped: unsupported baseUrl
+      24  skipped: esModuleInterop=false is unsupported
+      23  skipped: unsupported module resolution kind 2
+TIME wall 58.256 s user 2.495 s sys 0.733 s
+exit 0

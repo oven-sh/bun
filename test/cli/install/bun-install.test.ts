@@ -10614,16 +10614,8 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
 
   // Packs `manifest` as the package.json of an otherwise empty package into `tarball`.
   async function packManifest(tarball: string, manifest: object) {
-    using work = tempDir("pack-manifest", { "package/package.json": JSON.stringify(manifest) });
-    await using tar = spawn({
-      cmd: ["tar", "-czf", tarball, "-C", String(work), "package"],
-      stdout: "ignore",
-      stderr: "pipe",
-    });
-    const [tarStderr, tarExitCode] = await Promise.all([tar.stderr.text(), tar.exited]);
-    if (tarExitCode !== 0) {
-      throw new Error(`tar exited with ${tarExitCode}: ${tarStderr}`);
-    }
+    const archive = new Bun.Archive({ "package/package.json": JSON.stringify(manifest) }, { compress: "gzip" });
+    await write(tarball, await archive.bytes());
   }
 
   async function install(root: string, ...args: string[]) {
@@ -10673,45 +10665,66 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
 
   // A local tarball is part of the project like a file: folder. Its own file:
   // tarballs are read from the directory the tarball is in, as npm does, not from
-  // the project directory: here `inside.tgz` exists only next to `bar.tgz`.
+  // the project directory: here `inside.tgz` exists only next to `bar.tgz`. The
+  // lockfile records where the file is, so two tarballs that each declare
+  // `./x.tgz` get their own, and a later install reads from the same place.
   it("reads the ones declared by a local tarball from next to that tarball", async () => {
     using dir = tempDir("local-tarballs-of-tarball-dep", {
-      "project/package.json": rootPackageJson({ bar: "file:./vendor/bar.tgz" }),
+      "project/package.json": rootPackageJson({ bar: "file:./vendor/bar.tgz", other: "file:./other/other.tgz" }),
     });
     const root = String(dir);
     await Promise.all([
       cp(planted, join(root, "project", "vendor", "inside.tgz")),
       cp(planted, join(root, "project", "outside.tgz")),
       cp(planted, join(root, "absolute.tgz")),
+      packManifest(join(root, "project", "other", "inside.tgz"), { name: "other-inside", version: "2.0.0" }),
     ]);
-    await packManifest(join(root, "project", "vendor", "bar.tgz"), {
-      name: "bar",
-      version: "0.0.2",
-      dependencies: declaredTarballs(root),
-    });
+    await Promise.all([
+      packManifest(join(root, "project", "vendor", "bar.tgz"), {
+        name: "bar",
+        version: "0.0.2",
+        dependencies: declaredTarballs(root),
+      }),
+      packManifest(join(root, "project", "other", "other.tgz"), {
+        name: "other",
+        version: "0.0.1",
+        dependencies: { inside: "file:./inside.tgz" },
+      }),
+    ]);
 
     const { err, out, exitCode } = await install(root);
     expect(diagnostics(err)).toEqual([]);
-    expect(out).toContain("4 packages installed");
+    expect(out).toContain("6 packages installed");
     expect(await readdirSorted(join(root, "project", "node_modules"))).toEqual([
       ".bin",
       "absolute",
       "bar",
       "inside",
+      "other",
       "outside",
     ]);
+    expect(await file(join(root, "project", "node_modules", "inside", "package.json")).json()).toEqual(plantedManifest);
+    expect(
+      await file(join(root, "project", "node_modules", "other", "node_modules", "inside", "package.json")).json(),
+    ).toEqual({ name: "other-inside", version: "2.0.0" });
     const lockfile = await file(join(root, "project", "bun.lock")).text();
     expect(lockfile).toContain('"bar": ["bar@./vendor/bar.tgz"');
-    expect(lockfile).toContain('"inside": ["baz@./inside.tgz"');
-    expect(lockfile).toContain('"outside": ["baz@../outside.tgz"');
+    expect(lockfile).toContain('"inside": ["baz@vendor/inside.tgz"');
+    expect(lockfile).toContain('"outside": ["baz@outside.tgz"');
+    expect(lockfile).toContain('"other/inside": ["other-inside@other/inside.tgz"');
     expect(exitCode).toBe(0);
 
-    // The lockfile keeps the paths as declared, so a later install reads them from the same place.
-    await rm(join(root, "project", "node_modules"), { recursive: true });
+    await Promise.all([
+      rm(join(root, "project", "node_modules"), { recursive: true }),
+      rm(join(root, "cache"), { recursive: true }),
+    ]);
     const again = await install(root, "--frozen-lockfile");
     expect(diagnostics(again.err)).toEqual([]);
-    expect(again.out).toContain("4 packages installed");
+    expect(again.out).toContain("6 packages installed");
     expect(await file(join(root, "project", "node_modules", "inside", "package.json")).json()).toEqual(plantedManifest);
+    expect(
+      await file(join(root, "project", "node_modules", "other", "node_modules", "inside", "package.json")).json(),
+    ).toEqual({ name: "other-inside", version: "2.0.0" });
     expect(again.exitCode).toBe(0);
   });
 
@@ -10720,7 +10733,6 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
       "project/package.json": rootPackageJson({ a: "file:./vendor/a.tgz" }),
     });
     const root = String(dir);
-    await mkdir(join(root, "project", "vendor", "nested"), { recursive: true });
     await Promise.all([
       packManifest(join(root, "project", "vendor", "a.tgz"), {
         name: "a",
@@ -10740,8 +10752,50 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
     expect(out).toContain("3 packages installed");
     expect(await file(join(root, "project", "node_modules", "c", "package.json")).json()).toEqual(plantedManifest);
     const lockfile = await file(join(root, "project", "bun.lock")).text();
-    expect(lockfile).toContain('"b": ["b@./nested/b.tgz"');
-    expect(lockfile).toContain('"c": ["baz@./c.tgz"');
+    expect(lockfile).toContain('"b": ["b@vendor/nested/b.tgz"');
+    expect(lockfile).toContain('"c": ["baz@vendor/nested/c.tgz"');
+    expect(exitCode).toBe(0);
+
+    await Promise.all([
+      rm(join(root, "project", "node_modules"), { recursive: true }),
+      rm(join(root, "cache"), { recursive: true }),
+    ]);
+    const again = await install(root, "--frozen-lockfile");
+    expect(diagnostics(again.err)).toEqual([]);
+    expect(again.out).toContain("3 packages installed");
+    expect(await file(join(root, "project", "node_modules", "c", "package.json")).json()).toEqual(plantedManifest);
+    expect(again.exitCode).toBe(0);
+  });
+
+  // A workspace's tarball is relative to the workspace, and so is the location of
+  // the tarballs it declares.
+  it("reads the ones declared by a workspace's local tarball from next to that tarball", async () => {
+    using dir = tempDir("local-tarballs-of-workspace-tarball", {
+      "project/package.json": JSON.stringify({ name: "my-app", version: "1.0.0", workspaces: ["packages/*"] }),
+      "project/bunfig.toml": '[install]\nlinker = "hoisted"\n',
+      "project/packages/app/package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { a: "file:./vendor/a.tgz" },
+      }),
+    });
+    const root = String(dir);
+    await Promise.all([
+      packManifest(join(root, "project", "packages", "app", "vendor", "a.tgz"), {
+        name: "a",
+        version: "1.0.0",
+        dependencies: { b: "file:./b.tgz" },
+      }),
+      cp(planted, join(root, "project", "packages", "app", "vendor", "b.tgz")),
+    ]);
+
+    const { err, out, exitCode } = await install(root);
+    expect(diagnostics(err)).toEqual([]);
+    expect(out).toContain("3 packages installed");
+    expect(await file(join(root, "project", "node_modules", "b", "package.json")).json()).toEqual(plantedManifest);
+    const lockfile = await file(join(root, "project", "bun.lock")).text();
+    expect(lockfile).toContain('"a": ["a@./vendor/a.tgz"');
+    expect(lockfile).toContain('"b": ["baz@packages/app/vendor/b.tgz"');
     expect(exitCode).toBe(0);
   });
 
@@ -10850,6 +10904,28 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
       });
     });
   }
+
+  // A bundled dependency ships inside the declaring package, so the root cannot
+  // stand in for it and the note is left out.
+  it("rejects the one a registry package declares as bundled, without the root remedy", async () => {
+    await withContext(defaultOpts, async ctx => {
+      using dir = tempDir("bundled-local-tarball-of-registry-dep", {});
+      const root = String(dir);
+      await writeRegistryProject(ctx, root, {
+        dependencies: { inside: "file:./inside.tgz" },
+        bundleDependencies: ["inside"],
+      });
+      await cp(planted, join(root, "project", "inside.tgz"));
+
+      const { err, exitCode } = await install(root);
+      expect(diagnostics(err)).toEqual([
+        refusal("inside", "file:./inside.tgz", "bar@0.0.2")[0],
+        "error: inside@file:./inside.tgz failed to resolve",
+      ]);
+      expect(await exists(join(root, "project", "bun.lock"))).toBe(false);
+      expect(exitCode).toBe(1);
+    });
+  });
 
   it("leaves the one a registry package declares as optional uninstalled", async () => {
     await withContext(defaultOpts, async ctx => {

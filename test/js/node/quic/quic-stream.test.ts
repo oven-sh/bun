@@ -446,23 +446,29 @@ describe("a malformed first request stream", () => {
     test(`${name} in the handshake's last flight closes only that connection`, async () => {
       const expected = {
         close: { application: true, code: 0x105, reason: "unexpected HTTP/3 frame on stream 0" },
-        events: [["handshake", "h3", "TLS_AES_128_GCM_SHA256", "localhost"], ["stream"], ["error", "ERR_QUIC_TRANSPORT_ERROR"]],
+        events: [
+          ["handshake", "h3", "TLS_AES_128_GCM_SHA256", "localhost"],
+          ["stream"],
+          ["error", "ERR_QUIC_TRANSPORT_ERROR"],
+        ],
         status: "200",
       };
       expect(await exchange(streams, "with-finished")).toEqual(expected);
       expect(await exchange(streams, "after-handshake-done")).toEqual(expected);
     });
   }
+});
 
-  test("the listen()-time stream callbacks reach a received stream", async () => {
+describe("listen()-time stream callbacks", () => {
+  const names = ["onheaders", "ontrailers", "oninfo", "onwanttrailers"];
+
+  test("reach a stream the session receives", async () => {
     const applied = Promise.withResolvers<string[]>();
     await using server = await listen(
       (session: any) => {
         session.onerror = () => {};
         session.onstream = (stream: any) => {
-          applied.resolve(
-            ["onheaders", "ontrailers", "oninfo", "onwanttrailers"].filter(name => typeof stream[name] === "function"),
-          );
+          applied.resolve(names.filter(name => typeof stream[name] === "function"));
           stream.closed.catch(() => {});
         };
       },
@@ -490,27 +496,28 @@ describe("a malformed first request stream", () => {
       headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
     });
     stream.closed.catch(() => {});
-    expect(await applied.promise).toEqual(["onheaders", "ontrailers", "oninfo", "onwanttrailers"]);
+    expect(await applied.promise).toEqual(names);
     client.close();
   });
 
-  // The assert stays where the application can see it: a raw-QUIC session has
-  // no headers, so the setter inside `onstream` throws and destroys that
-  // session through onerror.
-  test("a raw-QUIC listener still throws when onstream sets onheaders", async () => {
+  /** What a raw-QUIC session reports once a peer opens a stream on it. */
+  async function rawQuicSession(listenOptions: Record<string, unknown>, onstream: (stream: any) => void) {
     const failed = Promise.withResolvers<string>();
+    let announced = 0;
     await using server = await listen(
       (session: any) => {
         session.onerror = (err: any) => failed.resolve(err?.code);
         session.onstream = (stream: any) => {
+          announced++;
           stream.closed.catch(() => {});
-          stream.onheaders = () => {};
+          onstream(stream);
         };
       },
       {
         alpn: ["quic-test"],
         sni: { "*": { keys: [key], certs: [cert] } },
         transportParams: { maxIdleTimeout: 5 },
+        ...listenOptions,
       },
     );
 
@@ -524,7 +531,24 @@ describe("a malformed first request stream", () => {
     client.closed.catch(() => {});
     const stream = await client.createBidirectionalStream({ body: new TextEncoder().encode("hi") });
     stream.closed.catch(() => {});
-    expect(await failed.promise).toBe("ERR_INVALID_STATE");
+    const code = await failed.promise;
     client.close();
+    return { code, announced };
+  }
+
+  // A raw-QUIC session has no headers, so the callback cannot apply. That is
+  // the session's error, as a throw from `onstream` is: it must not leave the
+  // stream half announced or escape as an uncaught exception.
+  for (const name of names) {
+    test(`a raw-QUIC session reports a listen()-time ${name} through onerror`, async () => {
+      expect(await rawQuicSession({ [name]() {} }, () => {})).toEqual({ code: "ERR_INVALID_STATE", announced: 0 });
+    });
+  }
+
+  test("a raw-QUIC session reports an onheaders set inside onstream through onerror", async () => {
+    const result = await rawQuicSession({}, stream => {
+      stream.onheaders = () => {};
+    });
+    expect(result).toEqual({ code: "ERR_INVALID_STATE", announced: 1 });
   });
 });

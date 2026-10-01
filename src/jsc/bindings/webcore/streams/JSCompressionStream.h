@@ -35,9 +35,10 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM&);
 
-    // the Rust CompressionStreamCoder. Freed eagerly at ClearAlgorithms (post-flush /
-    // error / cancel); a vm.heap.addFinalizer registered in the constructor is the
-    // idempotent fallback for an abandoned stream.
+    // the Rust CompressionStreamCoder, refcounted (ownership rules on its
+    // `ref_count` field). This cell's reference is released eagerly at
+    // ClearAlgorithms (post-flush / error / cancel); a vm.heap.addFinalizer
+    // registered in the constructor is the idempotent fallback.
     void* m_coder { nullptr };
 
 private:

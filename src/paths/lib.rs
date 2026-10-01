@@ -4,7 +4,6 @@
 // Pinned nightly — enable the structural-match subset directly instead of the
 // `PlatformT` sealed-trait workaround.
 #![feature(adt_const_params)]
-#![allow(incomplete_features)]
 
 pub mod error;
 pub use error::{Error, Result};
@@ -21,7 +20,7 @@ pub mod w_path_buffer_pool {
         PathBufferPoolT::<WPathBuffer>::get()
     }
     #[inline]
-    pub(crate) fn put(buf: Box<WPathBuffer>) {
+    pub fn put(buf: Box<WPathBuffer>) {
         PathBufferPoolT::<WPathBuffer>::put(buf)
     }
 }
@@ -267,8 +266,7 @@ pub fn join_sep_maybe_z<const SENTINEL: bool>(parts: &[&[u8]]) -> Box<[u8]> {
 /// `dirname` semantics (Option, trailing-slash handling, root preservation)
 /// use `bun_core::dirname`.
 pub fn dirname_simple(p: &[u8]) -> &[u8] {
-    p.iter()
-        .rposition(|&c| c == b'/' || (cfg!(windows) && c == b'\\'))
+    crate::resolve_path::last_index_of_sep(p)
         .map(|i| &p[..i])
         .unwrap_or(b"")
 }
@@ -282,7 +280,7 @@ pub use bun_core::strings::{PathByte, basename, basename_posix, basename_windows
 /// and basenames whose only `.` is at index 0 report no extension.
 pub fn extension(p: &[u8]) -> &[u8] {
     let filename = basename(p);
-    match filename.iter().rposition(|&c| c == b'.') {
+    match strings::last_index_of_char(filename, b'.') {
         Some(dot) if dot > 0 => &filename[dot..],
         _ => &p[p.len()..],
     }
@@ -293,7 +291,7 @@ pub fn extension(p: &[u8]) -> &[u8] {
 /// leading dot (`.gitignore` → `.gitignore`).
 pub fn stem(p: &[u8]) -> &[u8] {
     let filename = basename(p);
-    match filename.iter().rposition(|&c| c == b'.') {
+    match strings::last_index_of_char(filename, b'.') {
         Some(0) => p,
         Some(dot) => &filename[..dot],
         None => filename,
@@ -333,13 +331,13 @@ pub mod path_buffer_pool;
 // or out-param redesign. The `_buf`-suffixed fns (explicit `&mut [u8]` param)
 // compile; the convenience wrappers don't yet. Gate the module; expose Platform.
 pub mod resolve_path;
-pub use resolve_path::{Platform, PlatformT, platform};
+pub use resolve_path::{Platform, platform};
 pub mod component_iterator;
 pub use component_iterator::{
     Component, ComponentIterator, MakePathStep, PathFormat, make_path_with,
 };
 pub mod classify;
-pub use classify::{RelPathFacts, classify_rel_t};
+pub use classify::classify_rel_t;
 // Crate-root re-exports for the path-mutation helpers so `#[cfg(windows)]`
 // install paths can call
 // `bun_paths::dangerously_convert_path_to_posix_in_place(..)` directly.
@@ -348,7 +346,6 @@ pub use resolve_path::{
     dirname_w, is_drive_letter, is_drive_letter_t, is_sep_any, is_sep_any_t, is_sep_native,
     is_sep_native_t, join_abs_string_buf, join_abs_string_buf_z, path_to_posix_buf,
     relative_to_common_path_buf, slashes_to_posix_in_place, slashes_to_windows_in_place,
-    windows_volume_name_len,
 };
 // Re-export the pool *type* at crate root so `bun_paths::os_path_buffer_pool::get()`
 // resolves on both targets (= `WPathBuffer` pool on Windows, `PathBuffer` on
@@ -427,7 +424,7 @@ pub fn dirname(p: &[u8]) -> Option<&[u8]> {
 }
 #[path = "EnvPath.rs"]
 pub mod env_path;
-pub use env_path::{EnvPath, EnvPathInput, PathComponentBuilder};
+pub use env_path::EnvPath;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Windows path-prefix constants — relocated from
@@ -493,14 +490,10 @@ pub fn is_package_path_not_absolute(non_absolute_path: &[u8]) -> bool {
     debug_assert!(!non_absolute_path.starts_with(b"/"));
 
     let p = non_absolute_path;
-    if p.starts_with(b"./") || p.starts_with(b"../") || p == b"." || p == b".." {
-        return false;
-    }
+    let dot_relative = p.starts_with(b"./") || p.starts_with(b"../") || p == b"." || p == b"..";
     #[cfg(windows)]
-    if p.starts_with(b".\\") || p.starts_with(b"..\\") {
-        return false;
-    }
-    true
+    let dot_relative = dot_relative || p.starts_with(b".\\") || p.starts_with(b"..\\");
+    !dot_relative
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -644,7 +637,7 @@ pub mod fs {
         pub fn find_extname(path: &[u8]) -> &[u8] {
             let start = last_index_of_sep(path).map(|i| i + 1).unwrap_or(0);
             let base = &path[start..];
-            if let Some(dot) = base.iter().rposition(|&c| c == b'.') {
+            if let Some(dot) = crate::strings::last_index_of_char(base, b'.') {
                 if dot > 0 {
                     return &base[dot..];
                 }
@@ -668,7 +661,7 @@ pub mod fs {
                 // "/index" -> "index"
                 return PathName::init(self.dir).base;
             }
-            debug_assert!(!self.base.contains(&b'/'));
+            debug_assert!(!crate::strings::contains_char(self.base, b'/'));
             // /bar/foo.js -> foo
             self.base
         }
@@ -739,7 +732,7 @@ pub mod fs {
             }
 
             // Strip off the extension
-            if let Some(dot) = base.iter().rposition(|&c| c == b'.') {
+            if let Some(dot) = crate::strings::last_index_of_char(base, b'.') {
                 ext = &base[dot..];
                 base = &base[0..dot];
             } else {
@@ -913,7 +906,7 @@ pub mod fs {
         #[inline]
         pub fn assert_pretty_is_valid(&self) {
             #[cfg(all(windows, debug_assertions))]
-            if self.pretty.contains(&b'\\') {
+            if crate::strings::contains_char(self.pretty, b'\\') {
                 panic!(
                     "Expected pretty file path to have only forward slashes, got '{}'",
                     bstr::BStr::new(self.pretty)
@@ -967,8 +960,7 @@ pub mod fs {
         /// Checks for `<sep>node_modules<sep>` in the
         /// parsed dir component (`name.dir`, NOT `text`).
         pub fn is_node_module(&self) -> bool {
-            use bstr::ByteSlice;
-            self.name().dir.rfind(crate::NODE_MODULES_NEEDLE).is_some()
+            crate::strings::contains(self.name().dir, crate::NODE_MODULES_NEEDLE)
         }
 
         /// Key used to identify this path in the incremental graph: the real

@@ -51,20 +51,22 @@ pub(crate) fn options_from_js(
         }
 
         if let Some(flags) = js(value.get(global, "flags"))? {
-            if !flags.is_number() {
-                return Err(FromJSError::InvalidFlags);
-            }
+            if !flags.is_null() {
+                if !flags.is_number() {
+                    return Err(FromJSError::InvalidFlags);
+                }
 
-            // Coerce to i32 and store/bit-test as u32.
-            let flags_int: i32 = js(flags.coerce::<i32>(global))?;
-            options.flags = flags_int;
+                // Coerce to i32 and store/bit-test as u32.
+                let flags_int: i32 = js(flags.coerce::<i32>(global))?;
+                options.flags = flags_int;
 
-            // hints & ~(AI_ADDRCONFIG | AI_ALL | AI_V4MAPPED)) !== 0
-            let filter: u32 =
-                !((bun_dns::AI_ALL | bun_dns::AI_ADDRCONFIG | bun_dns::AI_V4MAPPED) as u32);
-            let int: u32 = flags_int as u32;
-            if int & filter != 0 {
-                return Err(FromJSError::InvalidFlags);
+                // hints & ~(AI_ADDRCONFIG | AI_ALL | AI_V4MAPPED)) !== 0
+                let filter: u32 =
+                    !((bun_dns::AI_ALL | bun_dns::AI_ADDRCONFIG | bun_dns::AI_V4MAPPED) as u32);
+                let int: u32 = flags_int as u32;
+                if int & filter != 0 {
+                    return Err(FromJSError::InvalidFlags);
+                }
             }
         }
 
@@ -235,7 +237,7 @@ pub(crate) fn address_to_js(
     address: &bun_dns::Address,
     global: &JSGlobalObject,
 ) -> JsResult<JSValue> {
-    address_to_string(address).transfer_to_js(global)
+    address_to_string(address).into_js(global)
 }
 
 fn addr_info_to_js_array(

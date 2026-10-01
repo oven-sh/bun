@@ -115,7 +115,11 @@ export function asyncIterator(this: Console) {
   return ConsoleAsyncIterator();
 }
 
-export function write(this: Console, input) {
+interface ConsoleWriter extends Bun.FileSink {
+  flush(wait?: boolean): number | Promise<number>;
+}
+
+export function write(this: Console & { $writer: ConsoleWriter | undefined }, input) {
   if (!$isObject(this)) throw $ERR_INVALID_THIS("Console");
 
   var writer = $getByIdDirectPrivate(this, "writer");
@@ -125,11 +129,11 @@ export function write(this: Console, input) {
     $putByIdDirectPrivate(this, "writer", writer);
   }
 
-  var wrote = writer.write(input);
+  var wrote = writer.write(input) as number;
 
   const count = $argumentCount();
   for (var i = 1; i < count; i++) {
-    wrote += writer.write(arguments[i]);
+    wrote += writer.write(arguments[i]) as number;
   }
 
   writer.flush(true);
@@ -155,18 +159,11 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const StringPrototypeRepeat = String.prototype.repeat;
   const StringPrototypeSlice = String.prototype.slice;
   const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
-  const StringPrototypePadStart = String.prototype.padStart;
-  const StringPrototypeSplit = String.prototype.split;
-  const NumberPrototypeToFixed = Number.prototype.toFixed;
   const ArrayPrototypeMap = Array.prototype.map;
   const ArrayPrototypeJoin = Array.prototype.join;
   const ArrayPrototypePush = Array.prototype.push;
 
   const kCounts = Symbol("counts");
-
-  const kSecond = 1000;
-  const kMinute = 60 * kSecond;
-  const kHour = 60 * kMinute;
 
   const internalGetStringWidth = $newCppFunction("stringWidth.cpp", "jsFunctionBunStringWidth", 1);
 
@@ -265,6 +262,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const kUseStderr = Symbol("kUseStderr");
 
   const optionsMap = new WeakMap<any, any>();
+  function Console(this: any, ...args: unknown[]): void;
   function Console(this: any, options /* or: stdout, stderr, ignoreErrors = true */): void {
     // We have to test new.target here to see if this function is called
     // with new, because we need to define a custom instanceof to accommodate
@@ -465,8 +463,8 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
           if (
             e != null &&
             typeof e === "object" &&
-            e.name === "RangeError" &&
-            e.message === "Maximum call stack size exceeded."
+            (e as Partial<Error>).name === "RangeError" &&
+            (e as Partial<Error>).message === "Maximum call stack size exceeded."
           )
             throw e;
           // Sorry, there's no proper way to pass along the error here.
@@ -762,39 +760,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     return true;
   }
 
-  function pad(value) {
-    return StringPrototypePadStart.$call(`${value}`, 2, "0");
-  }
-
-  function formatTime(ms) {
-    let hours = 0;
-    let minutes = 0;
-    let seconds: string | number = 0;
-
-    if (ms >= kSecond) {
-      if (ms >= kMinute) {
-        if (ms >= kHour) {
-          hours = Math.floor(ms / kHour);
-          ms = ms % kHour;
-        }
-        minutes = Math.floor(ms / kMinute);
-        ms = ms % kMinute;
-      }
-      seconds = ms / kSecond;
-    }
-
-    if (hours !== 0 || minutes !== 0) {
-      ({ 0: seconds, 1: ms } = (StringPrototypeSplit.$call as any)(NumberPrototypeToFixed.$call(seconds, 3), "."));
-      const res = hours !== 0 ? `${hours}:${pad(minutes)}` : minutes;
-      return `${res}:${pad(seconds)}.${ms} (${hours !== 0 ? "h:m" : ""}m:ss.mmm)`;
-    }
-
-    if (seconds !== 0) {
-      return `${NumberPrototypeToFixed.$call(seconds, 3)}s`;
-    }
-
-    return `${Number(NumberPrototypeToFixed.$call(ms, 3))}ms`;
-  }
+  const { formatTime } = require("internal/util/debuglog");
 
   const keyKey = "Key";
   const valuesKey = "Values";

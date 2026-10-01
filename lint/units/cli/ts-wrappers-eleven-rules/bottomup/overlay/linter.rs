@@ -34,8 +34,7 @@ pub(crate) fn run(mut context: Context<'_, '_>, stmts: &[Stmt]) -> Vec<Diagnosti
             }
         }
         for member in &erased.members {
-            if let bun_js_parser::parse::erased::ErasedMemberData::Property(property) =
-                &member.data
+            if let bun_js_parser::parse::erased::ErasedMemberData::Property(property) = &member.data
             {
                 for decorator in property.ts_decorators.iter() {
                     linter.visit_expr(decorator);

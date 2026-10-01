@@ -1,0 +1,776 @@
+
+// TS1477 instantiation expression before a property access
+    (b"a<b>.c;", Loader::Ts, 1477, 1, 4, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"a<b>.c;", Loader::Js, 1109, 4, 5, "Expression expected."), // plain: @4+1 Unexpected .
+    (b"a<b>?.c;", Loader::Ts, 1477, 1, 4, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"a<b>?.c;", Loader::Js, 1109, 4, 6, "Expression expected."), // plain: @4+2 Unexpected ?.
+    (b"a<b>?.[c];", Loader::Js, 1109, 4, 6, "Expression expected."), // plain: @4+2 Unexpected ?.
+    (b"a<b>?.();", Loader::Js, 1109, 4, 6, "Expression expected."), // plain: @4+2 Unexpected ?.
+    (b"a<b>?.`x`;", Loader::Js, 1109, 4, 6, "Expression expected."), // plain: @4+2 Unexpected ?.
+    (b"a<b>.c<d>.e;", Loader::Ts, 1477, 1, 4, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"a<b>.c<d>.e;", Loader::Js, 1109, 4, 5, "Expression expected."), // plain: @4+1 Unexpected .
+    (b"a<b>.c<d>(e);", Loader::Ts, 1477, 1, 4, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"a<b>.c<d>(e);", Loader::Js, 1109, 4, 5, "Expression expected."), // plain: @4+1 Unexpected .
+    (b"new A<T>.b();", Loader::Ts, 1477, 5, 8, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"new A<T>.b();", Loader::Js, 1109, 8, 9, "Expression expected."), // plain: @8+1 Unexpected .
+    (b"new A<T>.b;", Loader::Ts, 1477, 5, 8, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"new A<T>.b;", Loader::Js, 1109, 8, 9, "Expression expected."), // plain: @8+1 Unexpected .
+    (b"a<b, c>.d;", Loader::Ts, 1477, 1, 7, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"a<b, c>.d;", Loader::Js, 1109, 7, 8, "Expression expected."), // plain: @7+1 Unexpected .
+    (b"a<b> .c;", Loader::Ts, 1477, 1, 4, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"a<b> .c;", Loader::Js, 1109, 5, 6, "Expression expected."), // plain: @5+1 Unexpected .
+    (b"a<b>\n.c;", Loader::Ts, 1477, 1, 4, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"a<b>\n.c;", Loader::Js, 1109, 5, 6, "Expression expected."), // plain: @5+1 Unexpected .
+    (b"a< b /*x*/ > /*y*/ .c;", Loader::Ts, 1477, 1, 12, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"a< b /*x*/ > /*y*/ .c;", Loader::Js, 1109, 19, 20, "Expression expected."), // plain: @19+1 Unexpected .
+    (b"a<b>.;", Loader::Ts, 1003, 5, 6, "Identifier expected."), // plain: @5+1 Expected identifier but found ";"
+    (b"a<b>.;", Loader::Js, 1109, 4, 5, "Expression expected."), // plain: @4+1 Unexpected .
+    (b"a<b>.#c;", Loader::Ts, 1477, 1, 4, "An instantiation expression cannot be followed by a property access."), // plain: @5+2 Expected identifier but found "#c"
+    (b"a<b>.#c;", Loader::Js, 1109, 4, 5, "Expression expected."), // plain: @4+1 Unexpected .
+    (b"class C { #b = 1; m(a) { a<b>.#b; } }", Loader::Ts, 1477, 26, 29, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"class C { #b = 1; m(a) { a<b>.#b; } }", Loader::Js, 1109, 29, 30, "Expression expected."), // plain: @29+1 Unexpected .
+    (b"class C { #b = 1; m(a) { a<b>?.#b; } }", Loader::Ts, 18030, 31, 33, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a<b>?.#b; } }", Loader::Js, 1109, 29, 31, "Expression expected."), // plain: @29+2 Unexpected ?.
+    (b"a.b<c>.d;", Loader::Ts, 1477, 3, 6, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"a.b<c>.d;", Loader::Js, 1109, 6, 7, "Expression expected."), // plain: @6+1 Unexpected .
+    (b"f()<b>.c;", Loader::Ts, 1477, 3, 6, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"f()<b>.c;", Loader::Js, 1109, 6, 7, "Expression expected."), // plain: @6+1 Unexpected .
+    (b"a<b>!.c;", Loader::Ts, 1109, 5, 6, "Expression expected."), // plain: @5+1 Unexpected .
+    (b"a<b>!.c;", Loader::Js, 1109, 5, 6, "Expression expected."), // plain: @5+1 Unexpected .
+    (b"(a<b>).c;", Loader::Js, 1109, 5, 6, "Expression expected."), // plain: @5+1 Unexpected )
+    (b"a?.b<c>.d;", Loader::Ts, 1477, 4, 7, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"a?.b<c>.d;", Loader::Js, 1109, 7, 8, "Expression expected."), // plain: @7+1 Unexpected .
+    (b"a<b>.c = 1;", Loader::Ts, 1477, 1, 4, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"a<b>.c = 1;", Loader::Js, 1109, 4, 5, "Expression expected."), // plain: @4+1 Unexpected .
+    (b"a<<T>(x: T) => void>.c;", Loader::Ts, 1477, 1, 20, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"a<<T>(x: T) => void>.c;", Loader::Js, 1005, 7, 8, "')' expected."), // plain: @7+1 Expected ")" but found ":"
+    (b"a<b>>.c;", Loader::Ts, 1109, 5, 6, "Expression expected."), // plain: @5+1 Unexpected .
+    (b"a<b>>.c;", Loader::Js, 1109, 5, 6, "Expression expected."), // plain: @5+1 Unexpected .
+    (b"a<b<c>>.d;", Loader::Ts, 1477, 1, 7, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"a<b<c>>.d;", Loader::Js, 1109, 7, 8, "Expression expected."), // plain: @7+1 Unexpected .
+    (b"a<b<c<d>>>.e;", Loader::Ts, 1477, 1, 10, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"a<b<c<d>>>.e;", Loader::Js, 1109, 10, 11, "Expression expected."), // plain: @10+1 Unexpected .
+    (b"x = a<b>.c;", Loader::Ts, 1477, 5, 8, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"x = a<b>.c;", Loader::Js, 1109, 8, 9, "Expression expected."), // plain: @8+1 Unexpected .
+    (b"f(a<b>.c);", Loader::Ts, 1477, 3, 6, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"f(a<b>.c);", Loader::Js, 1109, 6, 7, "Expression expected."), // plain: @6+1 Unexpected .
+    (b"a<b>.c.d;", Loader::Ts, 1477, 1, 4, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"a<b>.c.d;", Loader::Js, 1109, 4, 5, "Expression expected."), // plain: @4+1 Unexpected .
+    (b"a<>.c;", Loader::Ts, 1477, 1, 3, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"a<>.c;", Loader::Js, 1109, 2, 3, "Expression expected."), // plain: @2+1 Unexpected >
+    (b"a<b,>.c;", Loader::Ts, 1477, 1, 5, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"a<b,>.c;", Loader::Js, 1109, 4, 5, "Expression expected."), // plain: @4+1 Unexpected >
+    (b"this<T>.x;", Loader::Ts, 1477, 4, 7, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"this<T>.x;", Loader::Js, 1109, 7, 8, "Expression expected."), // plain: @7+1 Unexpected .
+    (b"a<b>.c<d>;", Loader::Ts, 1477, 1, 4, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"a<b>.c<d>;", Loader::Js, 1109, 4, 5, "Expression expected."), // plain: @4+1 Unexpected .
+    (b"a!<b>.c;", Loader::Ts, 1477, 2, 5, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"a<b>\n.c\n.d;", Loader::Ts, 1477, 1, 4, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"a<b>\n.c\n.d;", Loader::Js, 1109, 5, 6, "Expression expected."), // plain: @5+1 Unexpected .
+    (b"a<b>?.c<d>.e;", Loader::Ts, 1477, 1, 4, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"a<b>?.c<d>.e;", Loader::Js, 1109, 4, 6, "Expression expected."), // plain: @4+2 Unexpected ?.
+    (b"import.meta<T>.x;", Loader::Ts, 1477, 11, 14, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"import.meta<T>.x;", Loader::Js, 1109, 14, 15, "Expression expected."), // plain: @14+1 Unexpected .
+    (b"a<b>.c`x`;", Loader::Ts, 1477, 1, 4, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"a<b>.c`x`;", Loader::Js, 1109, 4, 5, "Expression expected."), // plain: @4+1 Unexpected .
+    (b"a`x`<b>.c;", Loader::Ts, 1477, 4, 7, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"a`x`<b>.c;", Loader::Js, 1109, 7, 8, "Expression expected."), // plain: @7+1 Unexpected .
+    (b"a<b>.then<c>(d);", Loader::Ts, 1477, 1, 4, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"a<b>.then<c>(d);", Loader::Js, 1109, 4, 5, "Expression expected."), // plain: @4+1 Unexpected .
+
+// TS17007 and TS17006 operand of **
+    (b"<A>x ** 2;", Loader::Ts, 17007, 0, 4, "A type assertion expression is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: ok
+    (b"<A>(x) ** 2;", Loader::Ts, 17007, 0, 6, "A type assertion expression is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: ok
+    (b"<A>x.y ** 2;", Loader::Ts, 17007, 0, 6, "A type assertion expression is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: ok
+    (b"<A>x++ ** 2;", Loader::Ts, 17007, 0, 6, "A type assertion expression is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: ok
+    (b"<A> x ** 2;", Loader::Ts, 17007, 0, 5, "A type assertion expression is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: ok
+    (b" <A>x ** 2;", Loader::Ts, 17007, 1, 5, "A type assertion expression is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: ok
+    (b"/*c*/ <A>x ** 2;", Loader::Ts, 17007, 6, 10, "A type assertion expression is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: ok
+    (b"<A>x /*c*/ ** 2;", Loader::Ts, 17007, 0, 4, "A type assertion expression is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: ok
+    (b"<A><B>x ** 2;", Loader::Ts, 17007, 0, 7, "A type assertion expression is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: ok
+    (b"<A>-x ** 2;", Loader::Ts, 17007, 0, 5, "A type assertion expression is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @6+2 Unexpected **
+    (b"-<A>x ** 2;", Loader::Ts, 17006, 0, 5, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @6+2 Unexpected **
+    (b"- <A>x ** 2;", Loader::Ts, 17006, 0, 6, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @7+2 Unexpected **
+    (b"y = <A>x ** 2;", Loader::Ts, 17007, 4, 8, "A type assertion expression is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: ok
+    (b"f(<A>x ** 2);", Loader::Ts, 17007, 2, 6, "A type assertion expression is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: ok
+    (b"2 ** <A>x ** 2;", Loader::Ts, 17007, 5, 9, "A type assertion expression is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: ok
+    (b"<A>x\n** 2;", Loader::Ts, 17007, 0, 4, "A type assertion expression is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: ok
+    (b"<A>new X ** 2;", Loader::Ts, 17007, 0, 8, "A type assertion expression is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: ok
+    (b"<A>x! ** 2;", Loader::Ts, 17007, 0, 5, "A type assertion expression is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: ok
+    (b"-x ** 2;", Loader::Ts, 17006, 0, 2, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @3+2 Unexpected **
+    (b"-x ** 2;", Loader::Js, 17006, 0, 2, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @3+2 Unexpected **
+    (b"+x ** 2;", Loader::Ts, 17006, 0, 2, "An unary expression with the '+' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @3+2 Unexpected **
+    (b"+x ** 2;", Loader::Js, 17006, 0, 2, "An unary expression with the '+' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @3+2 Unexpected **
+    (b"~x ** 2;", Loader::Ts, 17006, 0, 2, "An unary expression with the '~' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @3+2 Unexpected **
+    (b"~x ** 2;", Loader::Js, 17006, 0, 2, "An unary expression with the '~' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @3+2 Unexpected **
+    (b"!x ** 2;", Loader::Ts, 17006, 0, 2, "An unary expression with the '!' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @3+2 Unexpected **
+    (b"!x ** 2;", Loader::Js, 17006, 0, 2, "An unary expression with the '!' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @3+2 Unexpected **
+    (b"typeof x ** 2;", Loader::Ts, 17006, 0, 8, "An unary expression with the 'typeof' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @9+2 Unexpected **
+    (b"typeof x ** 2;", Loader::Js, 17006, 0, 8, "An unary expression with the 'typeof' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @9+2 Unexpected **
+    (b"void x ** 2;", Loader::Ts, 17006, 0, 6, "An unary expression with the 'void' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @7+2 Unexpected **
+    (b"void x ** 2;", Loader::Js, 17006, 0, 6, "An unary expression with the 'void' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @7+2 Unexpected **
+    (b"delete x ** 2;", Loader::Ts, 17006, 0, 8, "An unary expression with the 'delete' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @9+2 Unexpected **
+    (b"delete x ** 2;", Loader::Js, 17006, 0, 8, "An unary expression with the 'delete' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @9+2 Unexpected **
+    (b"delete x.y ** 2;", Loader::Ts, 17006, 0, 10, "An unary expression with the 'delete' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @11+2 Unexpected **
+    (b"delete x.y ** 2;", Loader::Js, 17006, 0, 10, "An unary expression with the 'delete' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @11+2 Unexpected **
+    (b"async function f() { await x ** 2; }", Loader::Ts, 17006, 21, 28, "An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @29+2 Unexpected **
+    (b"async function f() { await x ** 2; }", Loader::Js, 17006, 21, 28, "An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @29+2 Unexpected **
+    (b"async function f() { y = await x ** 2; }", Loader::Ts, 17006, 25, 32, "An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @33+2 Unexpected **
+    (b"async function f() { y = await x ** 2; }", Loader::Js, 17006, 25, 32, "An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @33+2 Unexpected **
+    (b"async function f() { await -x ** 2; }", Loader::Ts, 17006, 21, 29, "An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @30+2 Unexpected **
+    (b"async function f() { await -x ** 2; }", Loader::Js, 17006, 21, 29, "An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @30+2 Unexpected **
+    (b"async function f() { -await x ** 2; }", Loader::Ts, 17006, 21, 29, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @30+2 Unexpected **
+    (b"async function f() { -await x ** 2; }", Loader::Js, 17006, 21, 29, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @30+2 Unexpected **
+    (b"await ** 2;", Loader::Ts, 17006, 0, 5, "An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: ok
+    (b"await ** 2;", Loader::Js, 17006, 0, 5, "An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: ok
+    (b"y = await ** 2;", Loader::Ts, 17006, 4, 9, "An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: ok
+    (b"y = await ** 2;", Loader::Js, 17006, 4, 9, "An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: ok
+    (b"function f() { await ** 2; }", Loader::Ts, 17006, 15, 20, "An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: ok
+    (b"function f() { await ** 2; }", Loader::Js, 17006, 15, 20, "An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: ok
+    (b"function f() { return await ** 2; }", Loader::Ts, 17006, 22, 27, "An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: ok
+    (b"function f() { return await ** 2; }", Loader::Js, 17006, 22, 27, "An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: ok
+    (b"- -x ** 2;", Loader::Ts, 17006, 0, 4, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @5+2 Unexpected **
+    (b"- -x ** 2;", Loader::Js, 17006, 0, 4, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @5+2 Unexpected **
+    (b"-+x ** 2;", Loader::Ts, 17006, 0, 3, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @4+2 Unexpected **
+    (b"-+x ** 2;", Loader::Js, 17006, 0, 3, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @4+2 Unexpected **
+    (b"!-x ** 2;", Loader::Ts, 17006, 0, 3, "An unary expression with the '!' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @4+2 Unexpected **
+    (b"!-x ** 2;", Loader::Js, 17006, 0, 3, "An unary expression with the '!' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @4+2 Unexpected **
+    (b"typeof -x ** 2;", Loader::Ts, 17006, 0, 9, "An unary expression with the 'typeof' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @10+2 Unexpected **
+    (b"typeof -x ** 2;", Loader::Js, 17006, 0, 9, "An unary expression with the 'typeof' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @10+2 Unexpected **
+    (b"void typeof x ** 2;", Loader::Ts, 17006, 0, 13, "An unary expression with the 'void' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @14+2 Unexpected **
+    (b"void typeof x ** 2;", Loader::Js, 17006, 0, 13, "An unary expression with the 'void' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @14+2 Unexpected **
+    (b"- - -x ** 2;", Loader::Ts, 17006, 0, 6, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @7+2 Unexpected **
+    (b"- - -x ** 2;", Loader::Js, 17006, 0, 6, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @7+2 Unexpected **
+    (b"a - -x ** 2;", Loader::Ts, 17006, 4, 6, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @7+2 Unexpected **
+    (b"a - -x ** 2;", Loader::Js, 17006, 4, 6, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @7+2 Unexpected **
+    (b"a > -x ** 2;", Loader::Ts, 17006, 4, 6, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @7+2 Unexpected **
+    (b"a > -x ** 2;", Loader::Js, 17006, 4, 6, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @7+2 Unexpected **
+    (b"-x.y ** 2;", Loader::Ts, 17006, 0, 4, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @5+2 Unexpected **
+    (b"-x.y ** 2;", Loader::Js, 17006, 0, 4, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @5+2 Unexpected **
+    (b"-x() ** 2;", Loader::Ts, 17006, 0, 4, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @5+2 Unexpected **
+    (b"-x() ** 2;", Loader::Js, 17006, 0, 4, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @5+2 Unexpected **
+    (b"-x++ ** 2;", Loader::Ts, 17006, 0, 4, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @5+2 Unexpected **
+    (b"-x++ ** 2;", Loader::Js, 17006, 0, 4, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @5+2 Unexpected **
+    (b"-++x ** 2;", Loader::Ts, 17006, 0, 4, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @5+2 Unexpected **
+    (b"-++x ** 2;", Loader::Js, 17006, 0, 4, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @5+2 Unexpected **
+    (b"-x /*c*/ ** 2;", Loader::Ts, 17006, 0, 2, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @9+2 Unexpected **
+    (b"-x /*c*/ ** 2;", Loader::Js, 17006, 0, 2, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @9+2 Unexpected **
+    (b"/*c*/ -x ** 2;", Loader::Ts, 17006, 6, 8, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @9+2 Unexpected **
+    (b"/*c*/ -x ** 2;", Loader::Js, 17006, 6, 8, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @9+2 Unexpected **
+    (b"- /*c*/ x ** 2;", Loader::Ts, 17006, 0, 9, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @10+2 Unexpected **
+    (b"- /*c*/ x ** 2;", Loader::Js, 17006, 0, 9, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @10+2 Unexpected **
+    (b"-x\n** 2;", Loader::Ts, 17006, 0, 2, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @3+2 Unexpected **
+    (b"-x\n** 2;", Loader::Js, 17006, 0, 2, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @3+2 Unexpected **
+    (b"2 ** -x ** 2;", Loader::Ts, 17006, 5, 7, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @8+2 Unexpected **
+    (b"2 ** -x ** 2;", Loader::Js, 17006, 5, 7, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @8+2 Unexpected **
+    (b"x = -y ** 2;", Loader::Ts, 17006, 4, 6, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @7+2 Unexpected **
+    (b"x = -y ** 2;", Loader::Js, 17006, 4, 6, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @7+2 Unexpected **
+    (b"f(-x ** 2);", Loader::Ts, 17006, 2, 4, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @5+2 Unexpected **
+    (b"f(-x ** 2);", Loader::Js, 17006, 2, 4, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @5+2 Unexpected **
+    (b"[-x ** 2];", Loader::Ts, 17006, 1, 3, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @4+2 Unexpected **
+    (b"[-x ** 2];", Loader::Js, 17006, 1, 3, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @4+2 Unexpected **
+    (b"-1 ** 2;", Loader::Ts, 17006, 0, 2, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @3+2 Unexpected **
+    (b"-1 ** 2;", Loader::Js, 17006, 0, 2, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @3+2 Unexpected **
+    (b"- new A ** 2;", Loader::Ts, 17006, 0, 7, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @8+2 Unexpected **
+    (b"- new A ** 2;", Loader::Js, 17006, 0, 7, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @8+2 Unexpected **
+    (b"- new A() ** 2;", Loader::Ts, 17006, 0, 9, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @10+2 Unexpected **
+    (b"- new A() ** 2;", Loader::Js, 17006, 0, 9, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @10+2 Unexpected **
+    (b"-x ** 2 ** 3;", Loader::Ts, 17006, 0, 2, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @3+2 Unexpected **
+    (b"-x ** 2 ** 3;", Loader::Js, 17006, 0, 2, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @3+2 Unexpected **
+    (b"-x ** -y ** 2;", Loader::Ts, 17006, 0, 2, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @3+2 Unexpected **
+    (b"-x ** -y ** 2;", Loader::Js, 17006, 0, 2, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @3+2 Unexpected **
+    (b"-x!.y ** 2;", Loader::Ts, 17006, 0, 5, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @6+2 Unexpected **
+    (b"-(x as any) ** 2;", Loader::Ts, 17006, 0, 11, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @12+2 Unexpected **
+    (b"-x[0] ** 2;", Loader::Ts, 17006, 0, 5, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @6+2 Unexpected **
+    (b"-x[0] ** 2;", Loader::Js, 17006, 0, 5, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @6+2 Unexpected **
+    (b"-`a` ** 2;", Loader::Ts, 17006, 0, 4, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @5+2 Unexpected **
+    (b"-`a` ** 2;", Loader::Js, 17006, 0, 4, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @5+2 Unexpected **
+    (b"-x`a` ** 2;", Loader::Ts, 17006, 0, 5, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @6+2 Unexpected **
+    (b"-x`a` ** 2;", Loader::Js, 17006, 0, 5, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @6+2 Unexpected **
+    (b"-x?.y ** 2;", Loader::Ts, 17006, 0, 5, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @6+2 Unexpected **
+    (b"-x?.y ** 2;", Loader::Js, 17006, 0, 5, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @6+2 Unexpected **
+    (b"-(x) ** 2;", Loader::Ts, 17006, 0, 4, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @5+2 Unexpected **
+    (b"-(x) ** 2;", Loader::Js, 17006, 0, 4, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @5+2 Unexpected **
+    (b"- (x) /*c*/ ** 2;", Loader::Ts, 17006, 0, 5, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @12+2 Unexpected **
+    (b"- (x) /*c*/ ** 2;", Loader::Js, 17006, 0, 5, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @12+2 Unexpected **
+    (b"function* g() { -(yield) ** 2; }", Loader::Ts, 17006, 16, 24, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @25+2 Unexpected **
+    (b"function* g() { -(yield) ** 2; }", Loader::Js, 17006, 16, 24, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @25+2 Unexpected **
+    (b"for (const k in -x ** 2) {}", Loader::Ts, 17006, 16, 18, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @19+2 Unexpected **
+    (b"for (const k in -x ** 2) {}", Loader::Js, 17006, 16, 18, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @19+2 Unexpected **
+    (b"x ? -y ** 2 : z;", Loader::Ts, 17006, 4, 6, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @7+2 Unexpected **
+    (b"x ? -y ** 2 : z;", Loader::Js, 17006, 4, 6, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @7+2 Unexpected **
+    (b"-x ** 2 ? y : z;", Loader::Ts, 17006, 0, 2, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @3+2 Unexpected **
+    (b"-x ** 2 ? y : z;", Loader::Js, 17006, 0, 2, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @3+2 Unexpected **
+    (b"class A { m() { -super.x ** 2; } }", Loader::Ts, 17006, 16, 24, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @25+2 Unexpected **
+    (b"class A { m() { -super.x ** 2; } }", Loader::Js, 17006, 16, 24, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @25+2 Unexpected **
+    (b"typeof import('a') ** 2;", Loader::Ts, 17006, 0, 18, "An unary expression with the 'typeof' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @19+2 Unexpected **
+    (b"typeof import('a') ** 2;", Loader::Js, 17006, 0, 18, "An unary expression with the 'typeof' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @19+2 Unexpected **
+    (b"-function(){} ** 2;", Loader::Ts, 17006, 0, 13, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @14+2 Unexpected **
+    (b"-function(){} ** 2;", Loader::Js, 17006, 0, 13, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @14+2 Unexpected **
+    (b"-class{} ** 2;", Loader::Ts, 17006, 0, 8, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @9+2 Unexpected **
+    (b"-class{} ** 2;", Loader::Js, 17006, 0, 8, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @9+2 Unexpected **
+    (b"-{} ** 2;", Loader::Ts, 17006, 0, 3, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @4+2 Unexpected **
+    (b"-{} ** 2;", Loader::Js, 17006, 0, 3, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @4+2 Unexpected **
+    (b"-[] ** 2;", Loader::Ts, 17006, 0, 3, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @4+2 Unexpected **
+    (b"-[] ** 2;", Loader::Js, 17006, 0, 3, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @4+2 Unexpected **
+    (b"-/a/ ** 2;", Loader::Ts, 17006, 0, 4, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @5+2 Unexpected **
+    (b"-/a/ ** 2;", Loader::Js, 17006, 0, 4, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @5+2 Unexpected **
+    (b"-a.b.c(d)[e] ** 2;", Loader::Ts, 17006, 0, 12, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @13+2 Unexpected **
+    (b"-a.b.c(d)[e] ** 2;", Loader::Js, 17006, 0, 12, "An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."), // plain: @13+2 Unexpected **
+
+// TS1209 optional chain from new
+    (b"new A?.b();", Loader::Ts, 1209, 5, 7, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new A?.b();", Loader::Js, 1209, 5, 7, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new A?.b;", Loader::Ts, 1209, 5, 7, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new A?.b;", Loader::Js, 1209, 5, 7, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new A.B?.c();", Loader::Ts, 1209, 7, 9, "Invalid optional chain from new expression. Did you mean to call 'A.B()'?"), // plain: ok
+    (b"new A.B?.c();", Loader::Js, 1209, 7, 9, "Invalid optional chain from new expression. Did you mean to call 'A.B()'?"), // plain: ok
+    (b"new A<T>?.b();", Loader::Ts, 1209, 8, 10, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new A<T>?.b();", Loader::Js, 1109, 8, 10, "Expression expected."), // plain: @8+2 Unexpected ?.
+    (b"new (A)?.b();", Loader::Ts, 1209, 7, 9, "Invalid optional chain from new expression. Did you mean to call '(A)()'?"), // plain: ok
+    (b"new (A)?.b();", Loader::Js, 1209, 7, 9, "Invalid optional chain from new expression. Did you mean to call '(A)()'?"), // plain: ok
+    (b"new A?.();", Loader::Ts, 1209, 5, 7, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new A?.();", Loader::Js, 1209, 5, 7, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new A?.<T>();", Loader::Ts, 1209, 5, 7, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new A?.[0];", Loader::Ts, 1209, 5, 7, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new A?.[0];", Loader::Js, 1209, 5, 7, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new A?.[0]();", Loader::Ts, 1209, 5, 7, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new A?.[0]();", Loader::Js, 1209, 5, 7, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new A?.b.c();", Loader::Ts, 1209, 5, 7, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new A?.b.c();", Loader::Js, 1209, 5, 7, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new A?.b?.c();", Loader::Ts, 1209, 5, 7, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new A?.b?.c();", Loader::Js, 1209, 5, 7, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new new A?.b()();", Loader::Ts, 1209, 9, 11, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new new A?.b()();", Loader::Js, 1209, 9, 11, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new A!?.b();", Loader::Ts, 1209, 6, 8, "Invalid optional chain from new expression. Did you mean to call 'A!()'?"), // plain: ok
+    (b"new A ?.b();", Loader::Ts, 1209, 6, 8, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new A ?.b();", Loader::Js, 1209, 6, 8, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new A /*c*/ ?.b();", Loader::Ts, 1209, 12, 14, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new A /*c*/ ?.b();", Loader::Js, 1209, 12, 14, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new A\n?.b();", Loader::Ts, 1209, 6, 8, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new A\n?.b();", Loader::Js, 1209, 6, 8, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new a.b.c?.d();", Loader::Ts, 1209, 9, 11, "Invalid optional chain from new expression. Did you mean to call 'a.b.c()'?"), // plain: ok
+    (b"new a.b.c?.d();", Loader::Js, 1209, 9, 11, "Invalid optional chain from new expression. Did you mean to call 'a.b.c()'?"), // plain: ok
+    (b"new A`x`?.b();", Loader::Ts, 1209, 8, 10, "Invalid optional chain from new expression. Did you mean to call 'A`x`()'?"), // plain: ok
+    (b"new A`x`?.b();", Loader::Js, 1209, 8, 10, "Invalid optional chain from new expression. Did you mean to call 'A`x`()'?"), // plain: ok
+    (b"new this?.b();", Loader::Ts, 1209, 8, 10, "Invalid optional chain from new expression. Did you mean to call 'this()'?"), // plain: ok
+    (b"new this?.b();", Loader::Js, 1209, 8, 10, "Invalid optional chain from new expression. Did you mean to call 'this()'?"), // plain: ok
+    (b"new class {}?.b();", Loader::Ts, 1209, 12, 14, "Invalid optional chain from new expression. Did you mean to call 'class {}()'?"), // plain: ok
+    (b"new class {}?.b();", Loader::Js, 1209, 12, 14, "Invalid optional chain from new expression. Did you mean to call 'class {}()'?"), // plain: ok
+    (b"new function () {}?.b();", Loader::Ts, 1209, 18, 20, "Invalid optional chain from new expression. Did you mean to call 'function () {}()'?"), // plain: ok
+    (b"new function () {}?.b();", Loader::Js, 1209, 18, 20, "Invalid optional chain from new expression. Did you mean to call 'function () {}()'?"), // plain: ok
+    (b"new A['x']?.b();", Loader::Ts, 1209, 10, 12, "Invalid optional chain from new expression. Did you mean to call 'A['x']()'?"), // plain: ok
+    (b"new A['x']?.b();", Loader::Js, 1209, 10, 12, "Invalid optional chain from new expression. Did you mean to call 'A['x']()'?"), // plain: ok
+    (b"new A?.b<T>();", Loader::Ts, 1209, 5, 7, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"class C { #b = 1; m(a) { new a?.#b(); } }", Loader::Ts, 1209, 30, 32, "Invalid optional chain from new expression. Did you mean to call 'a()'?"), // plain: ok
+    (b"class C { #b = 1; m(a) { new a?.#b(); } }", Loader::Js, 1209, 30, 32, "Invalid optional chain from new expression. Did you mean to call 'a()'?"), // plain: ok
+    (b"class C { #b = 1; m(a) { new a.#b?.c(); } }", Loader::Ts, 1209, 33, 35, "Invalid optional chain from new expression. Did you mean to call 'a.#b()'?"), // plain: ok
+    (b"class C { #b = 1; m(a) { new a.#b?.c(); } }", Loader::Js, 1209, 33, 35, "Invalid optional chain from new expression. Did you mean to call 'a.#b()'?"), // plain: ok
+    (b"x = new A?.b();", Loader::Ts, 1209, 9, 11, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"x = new A?.b();", Loader::Js, 1209, 9, 11, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"f(new A?.b());", Loader::Ts, 1209, 7, 9, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"f(new A?.b());", Loader::Js, 1209, 7, 9, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new  A . B ?.c();", Loader::Ts, 1209, 11, 13, "Invalid optional chain from new expression. Did you mean to call 'A . B()'?"), // plain: ok
+    (b"new  A . B ?.c();", Loader::Js, 1209, 11, 13, "Invalid optional chain from new expression. Did you mean to call 'A . B()'?"), // plain: ok
+    (b"new A?.b = 1;", Loader::Ts, 1209, 5, 7, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new A?.b = 1;", Loader::Js, 1209, 5, 7, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new A?.b++;", Loader::Ts, 1209, 5, 7, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new A?.b++;", Loader::Js, 1209, 5, 7, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new (new A)?.b();", Loader::Ts, 1209, 11, 13, "Invalid optional chain from new expression. Did you mean to call '(new A)()'?"), // plain: ok
+    (b"new (new A)?.b();", Loader::Js, 1209, 11, 13, "Invalid optional chain from new expression. Did you mean to call '(new A)()'?"), // plain: ok
+    (b"new new A?.b();", Loader::Ts, 1209, 9, 11, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new new A?.b();", Loader::Js, 1209, 9, 11, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new A<T>?.();", Loader::Ts, 1209, 8, 10, "Invalid optional chain from new expression. Did you mean to call 'A()'?"), // plain: ok
+    (b"new A<T>?.();", Loader::Js, 1109, 8, 10, "Expression expected."), // plain: @8+2 Unexpected ?.
+    (b"new a.b<c>.d?.e();", Loader::Ts, 1477, 7, 10, "An instantiation expression cannot be followed by a property access."), // plain: ok
+    (b"new a.b<c>.d?.e();", Loader::Js, 1109, 10, 11, "Expression expected."), // plain: @10+1 Unexpected .
+    (b"new (A)!?.b();", Loader::Ts, 1209, 8, 10, "Invalid optional chain from new expression. Did you mean to call '(A)!()'?"), // plain: ok
+    (b"new (a, b)?.c();", Loader::Ts, 1209, 10, 12, "Invalid optional chain from new expression. Did you mean to call '(a, b)()'?"), // plain: ok
+    (b"new (a, b)?.c();", Loader::Js, 1209, 10, 12, "Invalid optional chain from new expression. Did you mean to call '(a, b)()'?"), // plain: ok
+    (b"new A.b?.[c]?.d();", Loader::Ts, 1209, 7, 9, "Invalid optional chain from new expression. Did you mean to call 'A.b()'?"), // plain: ok
+    (b"new A.b?.[c]?.d();", Loader::Js, 1209, 7, 9, "Invalid optional chain from new expression. Did you mean to call 'A.b()'?"), // plain: ok
+    (b"new 'a'?.b();", Loader::Ts, 1209, 7, 9, "Invalid optional chain from new expression. Did you mean to call ''a'()'?"), // plain: ok
+    (b"new 'a'?.b();", Loader::Js, 1209, 7, 9, "Invalid optional chain from new expression. Did you mean to call ''a'()'?"), // plain: ok
+    (b"new 1?.b();", Loader::Ts, 1209, 5, 7, "Invalid optional chain from new expression. Did you mean to call '1()'?"), // plain: ok
+    (b"new 1?.b();", Loader::Js, 1209, 5, 7, "Invalid optional chain from new expression. Did you mean to call '1()'?"), // plain: ok
+    (b"new []?.b();", Loader::Ts, 1209, 6, 8, "Invalid optional chain from new expression. Did you mean to call '[]()'?"), // plain: ok
+    (b"new []?.b();", Loader::Js, 1209, 6, 8, "Invalid optional chain from new expression. Did you mean to call '[]()'?"), // plain: ok
+    (b"new {}?.b();", Loader::Ts, 1209, 6, 8, "Invalid optional chain from new expression. Did you mean to call '{}()'?"), // plain: ok
+    (b"new {}?.b();", Loader::Js, 1209, 6, 8, "Invalid optional chain from new expression. Did you mean to call '{}()'?"), // plain: ok
+    (b"new /a/?.b();", Loader::Ts, 1209, 7, 9, "Invalid optional chain from new expression. Did you mean to call '/a/()'?"), // plain: ok
+    (b"new /a/?.b();", Loader::Js, 1209, 7, 9, "Invalid optional chain from new expression. Did you mean to call '/a/()'?"), // plain: ok
+    (b"new `a`?.b();", Loader::Ts, 1209, 7, 9, "Invalid optional chain from new expression. Did you mean to call '`a`()'?"), // plain: ok
+    (b"new `a`?.b();", Loader::Js, 1209, 7, 9, "Invalid optional chain from new expression. Did you mean to call '`a`()'?"), // plain: ok
+    (b"new async?.b();", Loader::Ts, 1209, 9, 11, "Invalid optional chain from new expression. Did you mean to call 'async()'?"), // plain: ok
+    (b"new async?.b();", Loader::Js, 1209, 9, 11, "Invalid optional chain from new expression. Did you mean to call 'async()'?"), // plain: ok
+    (b"class X extends Y { m() { new super.x?.y(); } }", Loader::Ts, 1209, 37, 39, "Invalid optional chain from new expression. Did you mean to call 'super.x()'?"), // plain: ok
+    (b"class X extends Y { m() { new super.x?.y(); } }", Loader::Js, 1209, 37, 39, "Invalid optional chain from new expression. Did you mean to call 'super.x()'?"), // plain: ok
+
+// TS18030 private identifier in an optional chain
+    (b"a?.#b;", Loader::Ts, 18030, 3, 5, "An optional chain cannot contain private identifiers."), // plain: @3+2 Expected identifier but found "#b"
+    (b"a?.#b;", Loader::Js, 18030, 3, 5, "An optional chain cannot contain private identifiers."), // plain: @3+2 Expected identifier but found "#b"
+    (b"this?.#a;", Loader::Ts, 18030, 6, 8, "An optional chain cannot contain private identifiers."), // plain: @6+2 Expected identifier but found "#a"
+    (b"this?.#a;", Loader::Js, 18030, 6, 8, "An optional chain cannot contain private identifiers."), // plain: @6+2 Expected identifier but found "#a"
+    (b"class C { #b = 1; m(a) { a?.#b; } }", Loader::Ts, 18030, 28, 30, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.#b; } }", Loader::Js, 18030, 28, 30, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.x.#b; } }", Loader::Ts, 18030, 30, 32, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.x.#b; } }", Loader::Js, 18030, 30, 32, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.x!.#b; } }", Loader::Ts, 18030, 31, 33, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.[0].#b; } }", Loader::Ts, 18030, 32, 34, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.[0].#b; } }", Loader::Js, 18030, 32, 34, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.().#b; } }", Loader::Ts, 18030, 31, 33, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.().#b; } }", Loader::Js, 18030, 31, 33, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.#b = 1; } }", Loader::Ts, 18030, 28, 30, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.#b = 1; } }", Loader::Js, 18030, 28, 30, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a ?. #b; } }", Loader::Ts, 18030, 30, 32, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a ?. #b; } }", Loader::Js, 18030, 30, 32, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a ?. /*c*/ #b; } }", Loader::Ts, 18030, 36, 38, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a ?. /*c*/ #b; } }", Loader::Js, 18030, 36, 38, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.\n#b; } }", Loader::Ts, 18030, 29, 31, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.\n#b; } }", Loader::Js, 18030, 29, 31, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.#b(); } }", Loader::Ts, 18030, 28, 30, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.#b(); } }", Loader::Js, 18030, 28, 30, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.x.y.#b; } }", Loader::Ts, 18030, 32, 34, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.x.y.#b; } }", Loader::Js, 18030, 32, 34, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.x.y.#b.z; } }", Loader::Ts, 18030, 32, 34, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.x.y.#b.z; } }", Loader::Js, 18030, 32, 34, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.#b.#b; } }", Loader::Ts, 18030, 28, 30, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.#b.#b; } }", Loader::Js, 18030, 28, 30, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.#b?.#b; } }", Loader::Ts, 18030, 28, 30, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.#b?.#b; } }", Loader::Js, 18030, 28, 30, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a.x?.#b; } }", Loader::Ts, 18030, 30, 32, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a.x?.#b; } }", Loader::Js, 18030, 30, 32, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.x!!.#b; } }", Loader::Ts, 18030, 32, 34, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.x.y().z[0].#b; } }", Loader::Ts, 18030, 39, 41, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.x.y().z[0].#b; } }", Loader::Js, 18030, 39, 41, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a!?.#b; } }", Loader::Ts, 18030, 29, 31, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { this?.#b; } }", Loader::Ts, 18030, 31, 33, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { this?.#b; } }", Loader::Js, 18030, 31, 33, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.#b++; } }", Loader::Ts, 18030, 28, 30, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.#b++; } }", Loader::Js, 18030, 28, 30, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { x = a?.#b ?? 1; } }", Loader::Ts, 18030, 32, 34, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { x = a?.#b ?? 1; } }", Loader::Js, 18030, 32, 34, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.#c; } }", Loader::Ts, 18030, 28, 30, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.#c; } }", Loader::Js, 18030, 28, 30, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"a?.x.#b;", Loader::Ts, 18030, 5, 7, "An optional chain cannot contain private identifiers."), // plain: @5+2 Expected identifier but found "#b"
+    (b"a?.x.#b;", Loader::Js, 18030, 5, 7, "An optional chain cannot contain private identifiers."), // plain: @5+2 Expected identifier but found "#b"
+    (b"class C { #b = 1; m(a) { a?.<T>().#b; } }", Loader::Ts, 18030, 34, 36, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.<T>().#b; } }", Loader::Js, 1003, 28, 29, "Identifier expected."), // plain: @28+1 Expected identifier but found "<"
+    (b"class C { #b = 1; m(a) { a<T>?.#b; } }", Loader::Ts, 18030, 31, 33, "An optional chain cannot contain private identifiers."), // plain: ok
+    (b"class C { #b = 1; m(a) { a<T>?.#b; } }", Loader::Js, 1109, 29, 31, "Expression expected."), // plain: @29+2 Unexpected ?.
+
+// TS2754 and TS1034 super
+    (b"class A extends B { constructor() { super<T>(); } }", Loader::Ts, 2754, 41, 44, "'super' may not use type arguments."), // plain: @36+5 Unexpected "super"
+    (b"class A extends B { constructor() { super<T>(); } }", Loader::Js, 1034, 41, 42, "'super' must be followed by an argument list or member access."), // plain: @36+5 Unexpected "super"
+    (b"class A extends B { constructor() { super <T>(); } }", Loader::Ts, 2754, 41, 45, "'super' may not use type arguments."), // plain: @36+5 Unexpected "super"
+    (b"class A extends B { constructor() { super <T>(); } }", Loader::Js, 1034, 42, 43, "'super' must be followed by an argument list or member access."), // plain: @36+5 Unexpected "super"
+    (b"class A extends B { constructor() { super /*c*/ <T> /*d*/ (); } }", Loader::Ts, 2754, 41, 51, "'super' may not use type arguments."), // plain: @36+5 Unexpected "super"
+    (b"class A extends B { constructor() { super /*c*/ <T> /*d*/ (); } }", Loader::Js, 1034, 48, 49, "'super' must be followed by an argument list or member access."), // plain: @36+5 Unexpected "super"
+    (b"class A extends B { constructor() { super<T, U>(); } }", Loader::Ts, 2754, 41, 47, "'super' may not use type arguments."), // plain: @36+5 Unexpected "super"
+    (b"class A extends B { constructor() { super<T, U>(); } }", Loader::Js, 1034, 41, 42, "'super' must be followed by an argument list or member access."), // plain: @36+5 Unexpected "super"
+    (b"class A extends B { constructor() { super<>(); } }", Loader::Ts, 2754, 41, 43, "'super' may not use type arguments."), // plain: @36+5 Unexpected "super"
+    (b"class A extends B { constructor() { super<>(); } }", Loader::Js, 1034, 41, 42, "'super' must be followed by an argument list or member access."), // plain: @36+5 Unexpected "super"
+    (b"class A extends B { constructor() { super<T,>(); } }", Loader::Ts, 2754, 41, 45, "'super' may not use type arguments."), // plain: @36+5 Unexpected "super"
+    (b"class A extends B { constructor() { super<T,>(); } }", Loader::Js, 1034, 41, 42, "'super' must be followed by an argument list or member access."), // plain: @36+5 Unexpected "super"
+    (b"class A extends B { constructor() { super<T>(1).x; } }", Loader::Ts, 2754, 41, 44, "'super' may not use type arguments."), // plain: @36+5 Unexpected "super"
+    (b"class A extends B { constructor() { super<T>(1).x; } }", Loader::Js, 1034, 41, 42, "'super' must be followed by an argument list or member access."), // plain: @36+5 Unexpected "super"
+    (b"class A extends B { m() { super<T>.x; } }", Loader::Ts, 2754, 31, 34, "'super' may not use type arguments."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super<T>.x; } }", Loader::Js, 1034, 31, 32, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super<T>.x(); } }", Loader::Ts, 2754, 31, 34, "'super' may not use type arguments."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super<T>.x(); } }", Loader::Js, 1034, 31, 32, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super<T>[0]; } }", Loader::Ts, 1034, 31, 32, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super<T>[0]; } }", Loader::Js, 1034, 31, 32, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super; } }", Loader::Ts, 1034, 31, 32, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super; } }", Loader::Js, 1034, 31, 32, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super<T>; } }", Loader::Ts, 2754, 31, 34, "'super' may not use type arguments."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super<T>; } }", Loader::Js, 1034, 31, 32, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super\n<T>(); } }", Loader::Ts, 2754, 31, 35, "'super' may not use type arguments."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super\n<T>(); } }", Loader::Js, 1034, 32, 33, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super + 1; } }", Loader::Ts, 1034, 32, 33, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super + 1; } }", Loader::Js, 1034, 32, 33, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super`x`; } }", Loader::Ts, 1034, 31, 34, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super`x`; } }", Loader::Js, 1034, 31, 34, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super<T>`x`; } }", Loader::Ts, 2754, 31, 34, "'super' may not use type arguments."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super<T>`x`; } }", Loader::Js, 1034, 31, 32, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { return super } }", Loader::Ts, 1034, 39, 40, "'super' must be followed by an argument list or member access."), // plain: @33+5 Unexpected "super"
+    (b"class A extends B { m() { return super } }", Loader::Js, 1034, 39, 40, "'super' must be followed by an argument list or member access."), // plain: @33+5 Unexpected "super"
+    (b"class A extends B { m() { return super; } }", Loader::Ts, 1034, 38, 39, "'super' must be followed by an argument list or member access."), // plain: @33+5 Unexpected "super"
+    (b"class A extends B { m() { return super; } }", Loader::Js, 1034, 38, 39, "'super' must be followed by an argument list or member access."), // plain: @33+5 Unexpected "super"
+    (b"class A extends B { m() { super?.x; } }", Loader::Ts, 1034, 31, 33, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super?.x; } }", Loader::Js, 1034, 31, 33, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super?.(); } }", Loader::Ts, 1034, 31, 33, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super?.(); } }", Loader::Js, 1034, 31, 33, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super<T } }", Loader::Ts, 1034, 31, 32, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super<T } }", Loader::Js, 1034, 31, 32, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super<T; } }", Loader::Ts, 1034, 31, 32, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super<T; } }", Loader::Js, 1034, 31, 32, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super<T>x; } }", Loader::Ts, 1034, 31, 32, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super<T>x; } }", Loader::Js, 1034, 31, 32, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super<T>1; } }", Loader::Ts, 1034, 31, 32, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super<T>1; } }", Loader::Js, 1034, 31, 32, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super!.x; } }", Loader::Ts, 1034, 31, 32, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super!.x; } }", Loader::Js, 1034, 31, 32, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super.x<T>(); } }", Loader::Js, 1109, 37, 38, "Expression expected."), // plain: @37+1 Unexpected )
+    (b"class A extends B { m() { x = super; } }", Loader::Ts, 1034, 35, 36, "'super' must be followed by an argument list or member access."), // plain: @30+5 Unexpected "super"
+    (b"class A extends B { m() { x = super; } }", Loader::Js, 1034, 35, 36, "'super' must be followed by an argument list or member access."), // plain: @30+5 Unexpected "super"
+    (b"class A extends B { m() { f(super); } }", Loader::Ts, 1034, 33, 34, "'super' must be followed by an argument list or member access."), // plain: @28+5 Unexpected "super"
+    (b"class A extends B { m() { f(super); } }", Loader::Js, 1034, 33, 34, "'super' must be followed by an argument list or member access."), // plain: @28+5 Unexpected "super"
+    (b"class A extends B { m() { super = 1; } }", Loader::Ts, 1034, 32, 33, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super = 1; } }", Loader::Js, 1034, 32, 33, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super++; } }", Loader::Ts, 1034, 31, 33, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super++; } }", Loader::Js, 1034, 31, 33, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { (super); } }", Loader::Ts, 1034, 32, 33, "'super' must be followed by an argument list or member access."), // plain: @27+5 Unexpected "super"
+    (b"class A extends B { m() { (super); } }", Loader::Js, 1034, 32, 33, "'super' must be followed by an argument list or member access."), // plain: @27+5 Unexpected "super"
+    (b"class A extends B { m() { super as any; } }", Loader::Ts, 1034, 32, 34, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super as any; } }", Loader::Js, 1034, 32, 34, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super < T > (x); } }", Loader::Ts, 2754, 31, 37, "'super' may not use type arguments."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super < T > (x); } }", Loader::Js, 1034, 32, 33, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super<T>>(); } }", Loader::Ts, 1034, 31, 32, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super<T>>(); } }", Loader::Js, 1034, 31, 32, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super<A<B>>(); } }", Loader::Ts, 2754, 31, 37, "'super' may not use type arguments."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super<A<B>>(); } }", Loader::Js, 1034, 31, 32, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super<<T>() => void>(); } }", Loader::Ts, 1034, 31, 33, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super<<T>() => void>(); } }", Loader::Js, 1034, 31, 33, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { typeof super; } }", Loader::Ts, 1034, 38, 39, "'super' must be followed by an argument list or member access."), // plain: @33+5 Unexpected "super"
+    (b"class A extends B { m() { typeof super; } }", Loader::Js, 1034, 38, 39, "'super' must be followed by an argument list or member access."), // plain: @33+5 Unexpected "super"
+    (b"class A extends B { m() { super in x; } }", Loader::Ts, 1034, 32, 34, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super in x; } }", Loader::Js, 1034, 32, 34, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super instanceof A; } }", Loader::Ts, 1034, 32, 42, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super instanceof A; } }", Loader::Js, 1034, 32, 42, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { [super]; } }", Loader::Ts, 1034, 32, 33, "'super' must be followed by an argument list or member access."), // plain: @27+5 Unexpected "super"
+    (b"class A extends B { m() { [super]; } }", Loader::Js, 1034, 32, 33, "'super' must be followed by an argument list or member access."), // plain: @27+5 Unexpected "super"
+    (b"class A extends B { m() { `${super}`; } }", Loader::Ts, 1034, 34, 35, "'super' must be followed by an argument list or member access."), // plain: @29+5 Unexpected "super"
+    (b"class A extends B { m() { `${super}`; } }", Loader::Js, 1034, 34, 35, "'super' must be followed by an argument list or member access."), // plain: @29+5 Unexpected "super"
+    (b"class A extends B { m() { super => 1; } }", Loader::Ts, 1034, 32, 34, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super => 1; } }", Loader::Js, 1034, 32, 34, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super ? 1 : 2; } }", Loader::Ts, 1034, 32, 33, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super ? 1 : 2; } }", Loader::Js, 1034, 32, 33, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super, 1; } }", Loader::Ts, 1034, 31, 32, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super, 1; } }", Loader::Js, 1034, 31, 32, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super /*c*/ ; } }", Loader::Ts, 1034, 38, 39, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"class A extends B { m() { super /*c*/ ; } }", Loader::Js, 1034, 38, 39, "'super' must be followed by an argument list or member access."), // plain: @26+5 Unexpected "super"
+    (b"super;", Loader::Ts, 1034, 5, 6, "'super' must be followed by an argument list or member access."), // plain: @0+5 Unexpected "super"
+    (b"super;", Loader::Js, 1034, 5, 6, "'super' must be followed by an argument list or member access."), // plain: @0+5 Unexpected "super"
+    (b"super<T>();", Loader::Ts, 2754, 5, 8, "'super' may not use type arguments."), // plain: @0+5 Unexpected "super"
+    (b"super<T>();", Loader::Js, 1034, 5, 6, "'super' must be followed by an argument list or member access."), // plain: @0+5 Unexpected "super"
+    (b"super<T>.x;", Loader::Ts, 2754, 5, 8, "'super' may not use type arguments."), // plain: @0+5 Unexpected "super"
+    (b"super<T>.x;", Loader::Js, 1034, 5, 6, "'super' must be followed by an argument list or member access."), // plain: @0+5 Unexpected "super"
+    (b"x = super;", Loader::Ts, 1034, 9, 10, "'super' must be followed by an argument list or member access."), // plain: @4+5 Unexpected "super"
+    (b"x = super;", Loader::Js, 1034, 9, 10, "'super' must be followed by an argument list or member access."), // plain: @4+5 Unexpected "super"
+    (b"class A extends B { constructor() { super<T>().x; } }", Loader::Ts, 2754, 41, 44, "'super' may not use type arguments."), // plain: @36+5 Unexpected "super"
+    (b"class A extends B { constructor() { super<T>().x; } }", Loader::Js, 1034, 41, 42, "'super' must be followed by an argument list or member access."), // plain: @36+5 Unexpected "super"
+
+// TS1011 element access without an argument
+    (b"a[];", Loader::Ts, 1011, 2, 2, "An element access expression should take an argument."), // plain: @2+1 Unexpected ]
+    (b"a[];", Loader::Js, 1011, 2, 2, "An element access expression should take an argument."), // plain: @2+1 Unexpected ]
+    (b"a[ ];", Loader::Ts, 1011, 2, 2, "An element access expression should take an argument."), // plain: @3+1 Unexpected ]
+    (b"a[ ];", Loader::Js, 1011, 2, 2, "An element access expression should take an argument."), // plain: @3+1 Unexpected ]
+    (b"a[\n];", Loader::Ts, 1011, 2, 2, "An element access expression should take an argument."), // plain: @3+1 Unexpected ]
+    (b"a[\n];", Loader::Js, 1011, 2, 2, "An element access expression should take an argument."), // plain: @3+1 Unexpected ]
+    (b"a[/*c*/];", Loader::Ts, 1011, 2, 2, "An element access expression should take an argument."), // plain: @7+1 Unexpected ]
+    (b"a[/*c*/];", Loader::Js, 1011, 2, 2, "An element access expression should take an argument."), // plain: @7+1 Unexpected ]
+    (b"a[ /*c*/ ];", Loader::Ts, 1011, 2, 2, "An element access expression should take an argument."), // plain: @9+1 Unexpected ]
+    (b"a[ /*c*/ ];", Loader::Js, 1011, 2, 2, "An element access expression should take an argument."), // plain: @9+1 Unexpected ]
+    (b"a[ // c\n];", Loader::Ts, 1011, 2, 2, "An element access expression should take an argument."), // plain: @8+1 Unexpected ]
+    (b"a[ // c\n];", Loader::Js, 1011, 2, 2, "An element access expression should take an argument."), // plain: @8+1 Unexpected ]
+    (b"a?.[];", Loader::Ts, 1011, 4, 4, "An element access expression should take an argument."), // plain: @4+1 Unexpected ]
+    (b"a?.[];", Loader::Js, 1011, 4, 4, "An element access expression should take an argument."), // plain: @4+1 Unexpected ]
+    (b"a?.[ ];", Loader::Ts, 1011, 4, 4, "An element access expression should take an argument."), // plain: @5+1 Unexpected ]
+    (b"a?.[ ];", Loader::Js, 1011, 4, 4, "An element access expression should take an argument."), // plain: @5+1 Unexpected ]
+    (b"a[][0];", Loader::Ts, 1011, 2, 2, "An element access expression should take an argument."), // plain: @2+1 Unexpected ]
+    (b"a[][0];", Loader::Js, 1011, 2, 2, "An element access expression should take an argument."), // plain: @2+1 Unexpected ]
+    (b"a[b[]];", Loader::Ts, 1011, 4, 4, "An element access expression should take an argument."), // plain: @4+1 Unexpected ]
+    (b"a[b[]];", Loader::Js, 1011, 4, 4, "An element access expression should take an argument."), // plain: @4+1 Unexpected ]
+    (b"a[{ []: 1 }];", Loader::Ts, 1109, 5, 6, "Expression expected."), // plain: @5+1 Unexpected ]
+    (b"a[{ []: 1 }];", Loader::Js, 1109, 5, 6, "Expression expected."), // plain: @5+1 Unexpected ]
+    (b"({ []: 1 });", Loader::Ts, 1109, 4, 5, "Expression expected."), // plain: @4+1 Unexpected ]
+    (b"({ []: 1 });", Loader::Js, 1109, 4, 5, "Expression expected."), // plain: @4+1 Unexpected ]
+    (b"({ [ ]: 1 });", Loader::Ts, 1109, 5, 6, "Expression expected."), // plain: @5+1 Unexpected ]
+    (b"({ [ ]: 1 });", Loader::Js, 1109, 5, 6, "Expression expected."), // plain: @5+1 Unexpected ]
+    (b"class C { []() {} }", Loader::Ts, 1005, 12, 13, "';' expected."), // plain: @12+1 Expected ";" but found "("
+    (b"class C { static [] = 1 }", Loader::Ts, 1005, 20, 21, "';' expected."), // plain: @20+1 Expected ";" but found "="
+    (b"class C { a = b\n[] }", Loader::Ts, 1011, 17, 17, "An element access expression should take an argument."), // plain: @17+1 Unexpected ]
+    (b"class C { a = b\n[] }", Loader::Js, 1011, 17, 17, "An element access expression should take an argument."), // plain: @17+1 Unexpected ]
+    (b"a[] = 1;", Loader::Ts, 1011, 2, 2, "An element access expression should take an argument."), // plain: @2+1 Unexpected ]
+    (b"a[] = 1;", Loader::Js, 1011, 2, 2, "An element access expression should take an argument."), // plain: @2+1 Unexpected ]
+    (b"new A[];", Loader::Ts, 1011, 6, 6, "An element access expression should take an argument."), // plain: @6+1 Unexpected ]
+    (b"new A[];", Loader::Js, 1011, 6, 6, "An element access expression should take an argument."), // plain: @6+1 Unexpected ]
+    (b"new A[]();", Loader::Ts, 1011, 6, 6, "An element access expression should take an argument."), // plain: @6+1 Unexpected ]
+    (b"new A[]();", Loader::Js, 1011, 6, 6, "An element access expression should take an argument."), // plain: @6+1 Unexpected ]
+    (b"x = a[];", Loader::Ts, 1011, 6, 6, "An element access expression should take an argument."), // plain: @6+1 Unexpected ]
+    (b"x = a[];", Loader::Js, 1011, 6, 6, "An element access expression should take an argument."), // plain: @6+1 Unexpected ]
+    (b"a.b[];", Loader::Ts, 1011, 4, 4, "An element access expression should take an argument."), // plain: @4+1 Unexpected ]
+    (b"a.b[];", Loader::Js, 1011, 4, 4, "An element access expression should take an argument."), // plain: @4+1 Unexpected ]
+    (b"a()[];", Loader::Ts, 1011, 4, 4, "An element access expression should take an argument."), // plain: @4+1 Unexpected ]
+    (b"a()[];", Loader::Js, 1011, 4, 4, "An element access expression should take an argument."), // plain: @4+1 Unexpected ]
+    (b"a![];", Loader::Ts, 1011, 3, 3, "An element access expression should take an argument."), // plain: @3+1 Unexpected ]
+    (b"let x: A[] = a[];", Loader::Ts, 1011, 15, 15, "An element access expression should take an argument."), // plain: @15+1 Unexpected ]
+    (b"a[,];", Loader::Ts, 1109, 2, 3, "Expression expected."), // plain: @2+1 Unexpected ,
+    (b"a[,];", Loader::Js, 1109, 2, 3, "Expression expected."), // plain: @2+1 Unexpected ,
+    (b"a[", Loader::Ts, 1109, 2, 2, "Expression expected."), // plain: @2+0 Unexpected end of file
+    (b"a[", Loader::Js, 1109, 2, 2, "Expression expected."), // plain: @2+0 Unexpected end of file
+    (b"a[;", Loader::Ts, 1109, 2, 3, "Expression expected."), // plain: @2+1 Unexpected ;
+    (b"a[;", Loader::Js, 1109, 2, 3, "Expression expected."), // plain: @2+1 Unexpected ;
+    (b"a[)", Loader::Ts, 1109, 2, 3, "Expression expected."), // plain: @2+1 Unexpected )
+    (b"a[)", Loader::Js, 1109, 2, 3, "Expression expected."), // plain: @2+1 Unexpected )
+    (b"a[}", Loader::Ts, 1109, 2, 3, "Expression expected."), // plain: @2+1 Unexpected }
+    (b"a[}", Loader::Js, 1109, 2, 3, "Expression expected."), // plain: @2+1 Unexpected }
+    (b"for (const x of y[]) {}", Loader::Ts, 1011, 18, 18, "An element access expression should take an argument."), // plain: @18+1 Unexpected ]
+    (b"for (const x of y[]) {}", Loader::Js, 1011, 18, 18, "An element access expression should take an argument."), // plain: @18+1 Unexpected ]
+    (b"a[].b;", Loader::Ts, 1011, 2, 2, "An element access expression should take an argument."), // plain: @2+1 Unexpected ]
+    (b"a[].b;", Loader::Js, 1011, 2, 2, "An element access expression should take an argument."), // plain: @2+1 Unexpected ]
+    (b"a[]();", Loader::Ts, 1011, 2, 2, "An element access expression should take an argument."), // plain: @2+1 Unexpected ]
+    (b"a[]();", Loader::Js, 1011, 2, 2, "An element access expression should take an argument."), // plain: @2+1 Unexpected ]
+    (b"a[]++;", Loader::Ts, 1011, 2, 2, "An element access expression should take an argument."), // plain: @2+1 Unexpected ]
+    (b"a[]++;", Loader::Js, 1011, 2, 2, "An element access expression should take an argument."), // plain: @2+1 Unexpected ]
+    (b"a[]\n[];", Loader::Ts, 1011, 2, 2, "An element access expression should take an argument."), // plain: @2+1 Unexpected ]
+    (b"a[]\n[];", Loader::Js, 1011, 2, 2, "An element access expression should take an argument."), // plain: @2+1 Unexpected ]
+    (b"a[][];", Loader::Ts, 1011, 2, 2, "An element access expression should take an argument."), // plain: @2+1 Unexpected ]
+    (b"a[][];", Loader::Js, 1011, 2, 2, "An element access expression should take an argument."), // plain: @2+1 Unexpected ]
+    (b"f(a[]);", Loader::Ts, 1011, 4, 4, "An element access expression should take an argument."), // plain: @4+1 Unexpected ]
+    (b"f(a[]);", Loader::Js, 1011, 4, 4, "An element access expression should take an argument."), // plain: @4+1 Unexpected ]
+    (b"[a[]];", Loader::Ts, 1011, 3, 3, "An element access expression should take an argument."), // plain: @3+1 Unexpected ]
+    (b"[a[]];", Loader::Js, 1011, 3, 3, "An element access expression should take an argument."), // plain: @3+1 Unexpected ]
+    (b"`${a[]}`;", Loader::Ts, 1011, 5, 5, "An element access expression should take an argument."), // plain: @5+1 Unexpected ]
+    (b"`${a[]}`;", Loader::Js, 1011, 5, 5, "An element access expression should take an argument."), // plain: @5+1 Unexpected ]
+    (b"a[]`x`;", Loader::Ts, 1011, 2, 2, "An element access expression should take an argument."), // plain: @2+1 Unexpected ]
+    (b"a[]`x`;", Loader::Js, 1011, 2, 2, "An element access expression should take an argument."), // plain: @2+1 Unexpected ]
+    (b"a[] as any;", Loader::Ts, 1011, 2, 2, "An element access expression should take an argument."), // plain: @2+1 Unexpected ]
+    (b"a[] as any;", Loader::Js, 1011, 2, 2, "An element access expression should take an argument."), // plain: @2+1 Unexpected ]
+    (b"(a[]);", Loader::Ts, 1011, 3, 3, "An element access expression should take an argument."), // plain: @3+1 Unexpected ]
+    (b"(a[]);", Loader::Js, 1011, 3, 3, "An element access expression should take an argument."), // plain: @3+1 Unexpected ]
+    (b"a[(]", Loader::Ts, 1109, 3, 4, "Expression expected."), // plain: @3+1 Unexpected ]
+    (b"a[(]", Loader::Js, 1109, 3, 4, "Expression expected."), // plain: @3+1 Unexpected ]
+    (b"a[[]][];", Loader::Ts, 1011, 6, 6, "An element access expression should take an argument."), // plain: @6+1 Unexpected ]
+    (b"a[[]][];", Loader::Js, 1011, 6, 6, "An element access expression should take an argument."), // plain: @6+1 Unexpected ]
+    (b"let [] = a[];", Loader::Ts, 1011, 11, 11, "An element access expression should take an argument."), // plain: @11+1 Unexpected ]
+    (b"let [] = a[];", Loader::Js, 1011, 11, 11, "An element access expression should take an argument."), // plain: @11+1 Unexpected ]
+    (b"class C { @a[] m() {} }", Loader::Ts, 1005, 15, 16, "';' expected."), // plain: @15+1 Expected ";" but found "m"
+    (b"a?.b[];", Loader::Ts, 1011, 5, 5, "An element access expression should take an argument."), // plain: @5+1 Unexpected ]
+    (b"a?.b[];", Loader::Js, 1011, 5, 5, "An element access expression should take an argument."), // plain: @5+1 Unexpected ]
+    (b"class A extends B { m() { super[]; } }", Loader::Ts, 1011, 32, 32, "An element access expression should take an argument."), // plain: @32+1 Unexpected ]
+    (b"class A extends B { m() { super[]; } }", Loader::Js, 1011, 32, 32, "An element access expression should take an argument."), // plain: @32+1 Unexpected ]
+    (b"this[];", Loader::Ts, 1011, 5, 5, "An element access expression should take an argument."), // plain: @5+1 Unexpected ]
+    (b"this[];", Loader::Js, 1011, 5, 5, "An element access expression should take an argument."), // plain: @5+1 Unexpected ]
+    (b"import.meta[];", Loader::Ts, 1011, 12, 12, "An element access expression should take an argument."), // plain: @12+1 Unexpected ]
+    (b"import.meta[];", Loader::Js, 1011, 12, 12, "An element access expression should take an argument."), // plain: @12+1 Unexpected ]
+    (b"a[]<b>;", Loader::Ts, 1011, 2, 2, "An element access expression should take an argument."), // plain: @2+1 Unexpected ]
+    (b"a[]<b>;", Loader::Js, 1011, 2, 2, "An element access expression should take an argument."), // plain: @2+1 Unexpected ]
+    (b"async[];", Loader::Ts, 1011, 6, 6, "An element access expression should take an argument."), // plain: @6+1 Unexpected ]
+    (b"async[];", Loader::Js, 1011, 6, 6, "An element access expression should take an argument."), // plain: @6+1 Unexpected ]
+    (b"await[];", Loader::Ts, 1011, 6, 6, "An element access expression should take an argument."), // plain: @6+1 Unexpected ]
+    (b"await[];", Loader::Js, 1011, 6, 6, "An element access expression should take an argument."), // plain: @6+1 Unexpected ]
+    (b"yield[];", Loader::Ts, 1011, 6, 6, "An element access expression should take an argument."), // plain: @6+1 Unexpected ]
+    (b"yield[];", Loader::Js, 1011, 6, 6, "An element access expression should take an argument."), // plain: @6+1 Unexpected ]
+    (b"function* g() { (yield)[]; }", Loader::Ts, 1011, 24, 24, "An element access expression should take an argument."), // plain: @24+1 Unexpected ]
+    (b"function* g() { (yield)[]; }", Loader::Js, 1011, 24, 24, "An element access expression should take an argument."), // plain: @24+1 Unexpected ]
+    (b"of[];", Loader::Ts, 1011, 3, 3, "An element access expression should take an argument."), // plain: @3+1 Unexpected ]
+    (b"of[];", Loader::Js, 1011, 3, 3, "An element access expression should take an argument."), // plain: @3+1 Unexpected ]
+
+// for head with using and of
+    (b"for (using of of []) {}", Loader::Ts, 1011, 18, 18, "An element access expression should take an argument."), // plain: ok
+    (b"for (using of of []) {}", Loader::Js, 1011, 18, 18, "An element access expression should take an argument."), // plain: ok
+    (b"for (using of of x) {}", Loader::Ts, 1005, 17, 18, "')' expected."), // plain: ok
+    (b"for (using of of x) {}", Loader::Js, 1005, 17, 18, "')' expected."), // plain: ok
+    (b"for (using of in x) {}", Loader::Ts, 1109, 14, 16, "Expression expected."), // plain: ok
+    (b"for (using of in x) {}", Loader::Js, 1109, 14, 16, "Expression expected."), // plain: ok
+    (b"for (using of of of) {}", Loader::Ts, 1005, 17, 19, "')' expected."), // plain: ok
+    (b"for (using of of of) {}", Loader::Js, 1005, 17, 19, "')' expected."), // plain: ok
+    (b"for (using of\nof []) {}", Loader::Ts, 1011, 18, 18, "An element access expression should take an argument."), // plain: ok
+    (b"for (using of\nof []) {}", Loader::Js, 1011, 18, 18, "An element access expression should take an argument."), // plain: ok
+    (b"for (using\nof of []) {}", Loader::Ts, 1011, 18, 18, "An element access expression should take an argument."), // plain: @18+1 Unexpected ]
+    (b"for (using\nof of []) {}", Loader::Js, 1011, 18, 18, "An element access expression should take an argument."), // plain: @18+1 Unexpected ]
+    (b"for (using of /*c*/ of []) {}", Loader::Ts, 1011, 24, 24, "An element access expression should take an argument."), // plain: ok
+    (b"for (using of /*c*/ of []) {}", Loader::Js, 1011, 24, 24, "An element access expression should take an argument."), // plain: ok
+    (b"for (using of of\n[]) {}", Loader::Ts, 1011, 18, 18, "An element access expression should take an argument."), // plain: ok
+    (b"for (using of of\n[]) {}", Loader::Js, 1011, 18, 18, "An element access expression should take an argument."), // plain: ok
+    (b"for (using of of [ ]) {}", Loader::Ts, 1011, 18, 18, "An element access expression should take an argument."), // plain: ok
+    (b"for (using of of [ ]) {}", Loader::Js, 1011, 18, 18, "An element access expression should take an argument."), // plain: ok
+    (b"for (using of, x;;) {}", Loader::Ts, 1109, 13, 14, "Expression expected."), // plain: ok
+    (b"for (using of, x;;) {}", Loader::Js, 1109, 13, 14, "Expression expected."), // plain: ok
+    (b"for (using of) {}", Loader::Ts, 1109, 13, 14, "Expression expected."), // plain: @13+1 Expected ";" but found ")"
+    (b"for (using of) {}", Loader::Js, 1109, 13, 14, "Expression expected."), // plain: @13+1 Expected ";" but found ")"
+    (b"for (using of as any of []) {}", Loader::Ts, 1005, 17, 20, "')' expected."), // plain: @14+2 Expected ";" but found "as"
+    (b"for (using of as any of []) {}", Loader::Js, 1005, 17, 20, "')' expected."), // plain: @14+2 Expected ";" but found "as"
+    (b"for (using of! of []) {}", Loader::Ts, 1011, 19, 19, "An element access expression should take an argument."), // plain: @15+2 Expected ":" but found "of"
+    (b"for (using of! of []) {}", Loader::Js, 1011, 19, 19, "An element access expression should take an argument."), // plain: @13+1 Expected ";" but found "!"
+    (b"async function f() { for await (using of of []) {} }", Loader::Ts, 1011, 45, 45, "An element access expression should take an argument."), // plain: ok
+    (b"async function f() { for await (using of of []) {} }", Loader::Js, 1011, 45, 45, "An element access expression should take an argument."), // plain: ok
+    (b"async function f() { for await (using of of x) {} }", Loader::Ts, 1005, 44, 45, "')' expected."), // plain: ok
+    (b"async function f() { for await (using of of x) {} }", Loader::Js, 1005, 44, 45, "')' expected."), // plain: ok
+
+// What the reference parses and a lint parse takes
+    (b"a<b>?.[c];", Loader::Ts), // plain: ok
+    (b"a<b>?.();", Loader::Ts), // plain: ok
+    (b"a<b>['c'];", Loader::Ts), // plain: ok
+    (b"a<b>['c'];", Loader::Js), // plain: ok
+    (b"(a<b>).c;", Loader::Ts), // plain: ok
+    (b"a<b>`x`.c;", Loader::Ts), // plain: ok
+    (b"a<b>`x`.c;", Loader::Js), // plain: ok
+    (b"a<b>(c).d;", Loader::Ts), // plain: ok
+    (b"a<b>(c).d;", Loader::Js), // plain: ok
+    (b"<A>(x) => x ** 2;", Loader::Ts), // plain: ok
+    (b"(<A>x) ** 2;", Loader::Ts), // plain: ok
+    (b"<A>(x ** 2);", Loader::Ts), // plain: ok
+    (b"<A>x as B ** 2;", Loader::Ts), // plain: ok
+    (b"async function f() { (await x) ** 2; }", Loader::Ts), // plain: ok
+    (b"async function f() { (await x) ** 2; }", Loader::Js), // plain: ok
+    (b"a-x ** 2;", Loader::Ts), // plain: ok
+    (b"a-x ** 2;", Loader::Js), // plain: ok
+    (b"(-x) ** 2;", Loader::Ts), // plain: ok
+    (b"(-x) ** 2;", Loader::Js), // plain: ok
+    (b"-(x ** 2);", Loader::Ts), // plain: ok
+    (b"-(x ** 2);", Loader::Js), // plain: ok
+    (b"++x ** 2;", Loader::Ts), // plain: ok
+    (b"++x ** 2;", Loader::Js), // plain: ok
+    (b"x++ ** 2;", Loader::Ts), // plain: ok
+    (b"x++ ** 2;", Loader::Js), // plain: ok
+    (b"2 ** -x;", Loader::Ts), // plain: ok
+    (b"2 ** -x;", Loader::Js), // plain: ok
+    (b"-x as any ** 2;", Loader::Ts), // plain: ok
+    (b"new A()?.b;", Loader::Ts), // plain: ok
+    (b"new A()?.b;", Loader::Js), // plain: ok
+    (b"new A()?.b();", Loader::Ts), // plain: ok
+    (b"new A()?.b();", Loader::Js), // plain: ok
+    (b"new (A?.b)();", Loader::Ts), // plain: ok
+    (b"new (A?.b)();", Loader::Js), // plain: ok
+    (b"new (A?.b);", Loader::Ts), // plain: ok
+    (b"new (A?.b);", Loader::Js), // plain: ok
+    (b"new A?.3:1;", Loader::Ts), // plain: ok
+    (b"new A?.3:1;", Loader::Js), // plain: ok
+    (b"new A ?.5 : 1;", Loader::Ts), // plain: ok
+    (b"new A ?.5 : 1;", Loader::Js), // plain: ok
+    (b"new A().b?.c();", Loader::Ts), // plain: ok
+    (b"new A().b?.c();", Loader::Js), // plain: ok
+    (b"(new A)?.b();", Loader::Ts), // plain: ok
+    (b"(new A)?.b();", Loader::Js), // plain: ok
+    (b"new.target?.b();", Loader::Ts), // plain: ok
+    (b"new.target?.b();", Loader::Js), // plain: ok
+    (b"function f() { new.target?.b(); }", Loader::Ts), // plain: ok
+    (b"function f() { new.target?.b(); }", Loader::Js), // plain: ok
+    (b"class C { #b = 1; m(a) { a.#b; } }", Loader::Ts), // plain: ok
+    (b"class C { #b = 1; m(a) { a.#b; } }", Loader::Js), // plain: ok
+    (b"class C { #b = 1; m(a) { a.#b?.c; } }", Loader::Ts), // plain: ok
+    (b"class C { #b = 1; m(a) { a.#b?.c; } }", Loader::Js), // plain: ok
+    (b"class C { #b = 1; m(a) { (a?.x).#b; } }", Loader::Ts), // plain: ok
+    (b"class C { #b = 1; m(a) { (a?.x).#b; } }", Loader::Js), // plain: ok
+    (b"class C { #b = 1; m(a) { return #b in a?.x; } }", Loader::Ts), // plain: ok
+    (b"class C { #b = 1; m(a) { return #b in a?.x; } }", Loader::Js), // plain: ok
+    (b"class C { #b = 1; m(a) { (a?.x)!.#b; } }", Loader::Ts), // plain: ok
+    (b"class C { #b = 1; m(a) { new a.#b(); } }", Loader::Ts), // plain: ok
+    (b"class C { #b = 1; m(a) { new a.#b(); } }", Loader::Js), // plain: ok
+    (b"class C { #b = 1; m(a) { (a?.x as any).#b; } }", Loader::Ts), // plain: ok
+    (b"class C { #b = 1; m(a) { a?.x as any; } }", Loader::Ts), // plain: ok
+    (b"class A extends B { constructor() { super(); } }", Loader::Ts), // plain: ok
+    (b"class A extends B { constructor() { super(); } }", Loader::Js), // plain: ok
+    (b"class A extends B { m() { super.x; } }", Loader::Ts), // plain: ok
+    (b"class A extends B { m() { super.x; } }", Loader::Js), // plain: ok
+    (b"class A extends B { m() { super[0]; } }", Loader::Ts), // plain: ok
+    (b"class A extends B { m() { super[0]; } }", Loader::Js), // plain: ok
+    (b"class A extends B { m() { super.x<T>(); } }", Loader::Ts), // plain: ok
+    (b"class A extends B { m() { new super.x(); } }", Loader::Ts), // plain: ok
+    (b"class A extends B { m() { new super.x(); } }", Loader::Js), // plain: ok
+    (b"class A extends B { m() { super\n.x; } }", Loader::Ts), // plain: ok
+    (b"class A extends B { m() { super\n.x; } }", Loader::Js), // plain: ok
+    (b"class A extends B { m() { delete super.x; } }", Loader::Ts), // plain: ok
+    (b"class A extends B { m() { delete super.x; } }", Loader::Js), // plain: ok
+    (b"class A extends B { x = super.y; }", Loader::Ts), // plain: ok
+    (b"class A extends B { x = super.y; }", Loader::Js), // plain: ok
+    (b"({ m() { super.x; } });", Loader::Ts), // plain: ok
+    (b"({ m() { super.x; } });", Loader::Js), // plain: ok
+    (b"class A extends B { constructor() { (() => super())(); } }", Loader::Ts), // plain: ok
+    (b"class A extends B { constructor() { (() => super())(); } }", Loader::Js), // plain: ok
+    (b"class A extends B { constructor() { super()(); } }", Loader::Ts), // plain: ok
+    (b"class A extends B { constructor() { super()(); } }", Loader::Js), // plain: ok
+    (b"class A extends B { constructor() { super() ** 2; } }", Loader::Ts), // plain: ok
+    (b"class A extends B { constructor() { super() ** 2; } }", Loader::Js), // plain: ok
+    (b"class A extends B { constructor() { -super(); } }", Loader::Ts), // plain: ok
+    (b"class A extends B { constructor() { -super(); } }", Loader::Js), // plain: ok
+    (b"class A extends B { constructor() { x = super(); } }", Loader::Ts), // plain: ok
+    (b"class A extends B { constructor() { x = super(); } }", Loader::Js), // plain: ok
+    (b"class A extends B { constructor() { super().x; } }", Loader::Ts), // plain: ok
+    (b"class A extends B { constructor() { super().x; } }", Loader::Js), // plain: ok
+    (b"class A extends B { constructor() { f(super()); } }", Loader::Ts), // plain: ok
+    (b"class A extends B { constructor() { f(super()); } }", Loader::Js), // plain: ok
+    (b"a[[]];", Loader::Ts), // plain: ok
+    (b"a[[]];", Loader::Js), // plain: ok
+    (b"type T = { []: number };", Loader::Ts), // plain: ok
+    (b"type T = A[ ];", Loader::Ts), // plain: ok
+    (b"let x: { [ ]: 1 };", Loader::Ts), // plain: ok
+    (b"a<b>[];", Loader::Ts), // plain: ok
+    (b"a<b>[];", Loader::Js), // plain: ok
+    (b"function* g() { yield[]; }", Loader::Ts), // plain: ok
+    (b"function* g() { yield[]; }", Loader::Js), // plain: ok
+    (b"for (using of of [1]) {}", Loader::Ts), // plain: ok
+    (b"for (using of of [1]) {}", Loader::Js), // plain: ok
+    (b"for (using of of) {}", Loader::Ts), // plain: @16+1 Unexpected )
+    (b"for (using of of) {}", Loader::Js), // plain: @16+1 Unexpected )
+    (b"for (using of [1]) {}", Loader::Ts), // plain: @14+1 Expected ";" but found "["
+    (b"for (using of [1]) {}", Loader::Js), // plain: @14+1 Expected ";" but found "["
+    (b"for (using of []) {}", Loader::Ts), // plain: @14+1 Expected ";" but found "["
+    (b"for (using of []) {}", Loader::Js), // plain: @14+1 Expected ";" but found "["
+    (b"for (using of x) {}", Loader::Ts), // plain: @14+1 Expected ";" but found "x"
+    (b"for (using of x) {}", Loader::Js), // plain: @14+1 Expected ";" but found "x"
+    (b"for (using x of y) {}", Loader::Ts), // plain: ok
+    (b"for (using x of y) {}", Loader::Js), // plain: ok
+    (b"for (using of = null;;) {}", Loader::Ts), // plain: ok
+    (b"for (using of = null;;) {}", Loader::Js), // plain: ok
+    (b"for (using of = null; false;) {}", Loader::Ts), // plain: ok
+    (b"for (using of = null; false;) {}", Loader::Js), // plain: ok
+    (b"for (using of;;) {}", Loader::Ts), // plain: ok
+    (b"for (using of;;) {}", Loader::Js), // plain: ok
+    (b"for (using of: T = null;;) {}", Loader::Ts), // plain: ok
+    (b"for (using in x) {}", Loader::Ts), // plain: ok
+    (b"for (using in x) {}", Loader::Js), // plain: ok
+    (b"for (using;;) {}", Loader::Ts), // plain: ok
+    (b"for (using;;) {}", Loader::Js), // plain: ok
+    (b"for (using = 1;;) {}", Loader::Ts), // plain: ok
+    (b"for (using = 1;;) {}", Loader::Js), // plain: ok
+    (b"for (using.x of y) {}", Loader::Ts), // plain: ok
+    (b"for (using.x of y) {}", Loader::Js), // plain: ok
+    (b"for (using[0] of y) {}", Loader::Ts), // plain: ok
+    (b"for (using[0] of y) {}", Loader::Js), // plain: ok
+    (b"for (using x = y;;) {}", Loader::Ts), // plain: ok
+    (b"for (using x = y;;) {}", Loader::Js), // plain: ok
+    (b"for (using x = y, z = w;;) {}", Loader::Ts), // plain: ok
+    (b"for (using x = y, z = w;;) {}", Loader::Js), // plain: ok
+    (b"for (using [a] of y) {}", Loader::Ts), // plain: ok
+    (b"for (using [a] of y) {}", Loader::Js), // plain: ok
+    (b"for (using of of.x) {}", Loader::Ts), // plain: @16+1 Unexpected .
+    (b"for (using of of.x) {}", Loader::Js), // plain: @16+1 Unexpected .
+    (b"for (using of of()) {}", Loader::Ts), // plain: @18+1 Expected "=>" but found ")"
+    (b"for (using of of()) {}", Loader::Js), // plain: @18+1 Expected "=>" but found ")"
+    (b"for (using of of?.[0]) {}", Loader::Ts), // plain: @16+2 Unexpected ?.
+    (b"for (using of of?.[0]) {}", Loader::Js), // plain: @16+2 Unexpected ?.
+    (b"for (using of of => of) {}", Loader::Ts), // plain: @17+2 Unexpected =>
+    (b"for (using of of => of) {}", Loader::Js), // plain: @17+2 Unexpected =>
+    (b"for (using x in y) {}", Loader::Ts), // plain: ok
+    (b"for (using x in y) {}", Loader::Js), // plain: ok
+    (b"async function f() { for (await using of of []) {} }", Loader::Ts), // plain: ok
+    (b"async function f() { for (await using of of []) {} }", Loader::Js), // plain: ok
+    (b"async function f() { for (await using of of x) {} }", Loader::Ts), // plain: ok
+    (b"async function f() { for (await using of of x) {} }", Loader::Js), // plain: ok
+    (b"async function f() { for (await using x of y) {} }", Loader::Ts), // plain: ok
+    (b"async function f() { for (await using x of y) {} }", Loader::Js), // plain: ok
+    (b"async function f() { for await (using x of y) {} }", Loader::Ts), // plain: ok
+    (b"async function f() { for await (using x of y) {} }", Loader::Js), // plain: ok
+    (b"async function f() { for (await using of = null;;) {} }", Loader::Ts), // plain: ok
+    (b"async function f() { for (await using of = null;;) {} }", Loader::Js), // plain: ok
+    (b"using of = null;", Loader::Ts), // plain: ok
+    (b"using of = null;", Loader::Js), // plain: ok
+    (b"using x = null;", Loader::Ts), // plain: ok
+    (b"using x = null;", Loader::Js), // plain: ok
+    (b"{ using of = null; }", Loader::Ts), // plain: ok
+    (b"{ using of = null; }", Loader::Js), // plain: ok
+    (b"for (let of of []) {}", Loader::Ts), // plain: ok
+    (b"for (let of of []) {}", Loader::Js), // plain: ok
+    (b"for (let of of x) {}", Loader::Ts), // plain: ok
+    (b"for (let of of x) {}", Loader::Js), // plain: ok
+    (b"for (const of of []) {}", Loader::Ts), // plain: ok
+    (b"for (const of of []) {}", Loader::Js), // plain: ok
+    (b"for (var of of []) {}", Loader::Ts), // plain: ok
+    (b"for (var of of []) {}", Loader::Js), // plain: ok
+    (b"for (of of []) {}", Loader::Ts), // plain: ok
+    (b"for (of of []) {}", Loader::Js), // plain: ok
+    (b"for (of of of) {}", Loader::Ts), // plain: ok
+    (b"for (of of of) {}", Loader::Js), // plain: ok

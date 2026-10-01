@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 # SCRATCH PROBE of the research unit "ts-wrappers-eleven-rules" (from the one of "ts-entry-codes-harness"), not part of the change.
-# Copies src/lint of the worktree to a scratch directory, makes the edit that D2 plans in lib.rs and context.rs
-# (`ParsedOnly` -> `ParsedForLint`, the arena read from the parse), adds probe_main.rs (the planned `parse` of lint_command.rs)
-# and compiles it as ONE binary with rustc against the rlibs of the debug build of the worktree: no crate is rebuilt.
-# usage: /workspace/tools/lk python3 make.py [out dir]      default out dir: /tmp/tsentry
+# Copies src/lint of the worktree to a scratch directory, lays the planned files of src-lint/ beside this script over it,
+# adds probe_main.rs (the planned `parse` of lint_command.rs and a dump of node ranges) and compiles it as ONE binary with
+# rustc against the rlibs of the debug build of the worktree: no crate is rebuilt.
+# usage: /workspace/tools/lk python3 make.py [out dir]
 # The binary <out>/tsentry takes the operands of `bun --lint` (a leading `--lint` is dropped) and writes what the
 # planned command writes to stderr; see probe_main.rs for the environment variables that change what it prints.
 import glob, json, os, shutil, subprocess, sys
 
 WT = os.environ.get("WT", "/workspace/wt/cli")
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = sys.argv[1] if len(sys.argv) > 1 else "/tmp/w1b-topdown/check"
+OUT = sys.argv[1] if len(sys.argv) > 1 else "/tmp/w1b-topdown/out"
 SRC = f"{OUT}/src"
 shutil.rmtree(SRC, ignore_errors=True)
 shutil.copytree(f"{WT}/src/lint", SRC, ignore=shutil.ignore_patterns("Cargo.toml", "LICENSE*", "UPSTREAM*"))
@@ -59,11 +59,11 @@ for i, x in enumerate(a):
     elif x == "--crate-type":
         args += ["--crate-type", "bin"]; skip = 1
     elif x.startswith("--emit="):
-        args.append("--emit=metadata")
+        args.append("--emit=link")
     elif x in ("--error-format=json",) or x.startswith("--json="):
         continue
-    elif x.startswith("--deny=") or x.startswith("--forbid="):
-        args.append("--warn=" + x.split("=", 1)[1])
+    elif x.startswith("--deny=") or x.startswith("--warn=") or x.startswith("--forbid="):
+        continue
     elif x == "-C" and (a[i + 1].startswith("metadata=") or a[i + 1].startswith("extra-filename=") or a[i + 1].startswith("incremental=")):
         skip = 1
     elif x == "--out-dir":
@@ -84,9 +84,9 @@ for x in args:
     else:
         fixed.append(x)
 args = fixed
-args += ["--allow=unused_crate_dependencies"]
+args += ["-C", "link-arg=-Wl,--error-limit=0", "-C", "link-arg=-Wl,--gc-sections", "-C", "link-arg=-lstdc++", "-C", "link-arg=-lpthread", "-C", "link-arg=-ldl", "--cap-lints", "allow"]
 env = dict(os.environ)
 env.update(unit["env"])
 env["CARGO_CRATE_NAME"] = "tsentry"
-r = subprocess.run([os.path.join(os.path.dirname(unit["rustc"]), "clippy-driver")] + args, cwd=WT, env=env)
+r = subprocess.run([unit["rustc"]] + args, cwd=WT, env=env)
 sys.exit(r.returncode)

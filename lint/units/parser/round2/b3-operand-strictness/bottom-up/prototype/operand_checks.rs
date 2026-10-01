@@ -879,11 +879,11 @@ impl Resolver<'_, '_, '_> {
                     .properties
                     .slice()
                     .iter()
-                    .find_map(|property| self.property(property, After::ClassField))
+                    .find_map(|property| self.property(property, After::Token(T::TComma), After::ClassField))
             })
     }
 
-    fn property(&mut self, property: &G::Property, initializer: After) -> Option<Context> {
+    fn property(&mut self, property: &G::Property, value: After, initializer: After) -> Option<Context> {
         let is_computed = property.flags.contains(bun_ast::flags::Property::IsComputed);
         let key = if is_computed {
             After::Token(T::TCloseBracket)
@@ -898,7 +898,7 @@ impl Resolver<'_, '_, '_> {
             .or_else(|| {
                 property
                     .value
-                    .and_then(|expr| self.expr(&expr, After::Token(T::TComma), Follow::List))
+                    .and_then(|expr| self.expr(&expr, value, Follow::List))
             })
             .or_else(|| {
                 property
@@ -998,7 +998,7 @@ impl Resolver<'_, '_, '_> {
             ExprData::EObject(e) => e
                 .properties
                 .iter()
-                .find_map(|property| self.property(property, comma)),
+                .find_map(|property| self.property(property, comma, comma)),
             ExprData::ETemplate(e) => e
                 .tag
                 .and_then(|tag| self.expr(&tag, after, follow))
@@ -1030,7 +1030,10 @@ impl Resolver<'_, '_, '_> {
                 .or_else(|| {
                     e.properties
                         .iter()
-                        .find_map(|property| self.property(property, After::Token(T::TCloseBrace)))
+                        .find_map(|property| {
+                            let brace = After::Token(T::TCloseBrace);
+                            self.property(property, brace, brace)
+                        })
                 })
                 .or_else(|| self.exprs(&e.children, After::Token(T::TCloseBrace), follow)),
             _ => None,

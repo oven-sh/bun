@@ -261,7 +261,7 @@
      /// The walk stops going deeper at `loc`. Said once.
      pub(crate) fn too_deep(&mut self, loc: Loc) {
          if !core::mem::replace(&mut self.cut, true) {
-@@ -165,122 +348,301 @@
+@@ -165,122 +348,308 @@
          self.reports
      }
  
@@ -295,7 +295,9 @@
 +        }
 +        let key = key_of(ExprId::of(expr));
 +        let records: &'p [TypeArguments] = &self.parsed.sidecar.generics.type_arguments;
-+        let to = self.type_arguments.partition_point(|(other, _)| *other <= key);
++        let to = self
++            .type_arguments
++            .partition_point(|(other, _)| *other <= key);
 +        let (other, index) = self.type_arguments.get(to.checked_sub(1)?)?;
 +        if *other != key {
 +            return None;
@@ -575,7 +577,12 @@
          let mut tokens = Tokens::new(&mut log, self.source, self.arena, &spans, from);
 -        tokens::case_key(&mut tokens, self.text())
 +        // ESLint's own parser has a word as what it spells; typescript-eslint has its text.
-+        tokens::case_key(&mut tokens, self.text(), &self.return_types, !self.typescript)
++        tokens::case_key(
++            &mut tokens,
++            self.text(),
++            &self.return_types,
++            !self.typescript,
++        )
      }
  
 -    /// Where the clause with the test `value` starts: the `case` that the text before the test shows, else the test.
@@ -658,7 +665,7 @@
          let from = u32::try_from(index.loc.start).ok()?;
          let spans = tokens::spans_under(self.text(), &[index], self.stack_check)?;
          let mut log = Log::init();
-@@ -289,7 +651,7 @@
+@@ -289,7 +658,7 @@
      }
  
      /// After the token that starts at `at`. `None` when the text there does not read.
@@ -667,7 +674,7 @@
          let at = u32::try_from(at.start).ok()?;
          match self.token_len(at) {
              0 => None,
-@@ -308,26 +670,45 @@
+@@ -308,26 +677,45 @@
      }
  }
  
@@ -801,8 +808,8 @@
 -                    if waiting > 0 {
 +                    // The `:` before the return type of an arrow function or of a function ends nothing.
 +                    ahead = tokens.next();
-+                    let is_return_type = ahead
-+                        .is_some_and(|next| return_types.binary_search(&next.start).is_ok());
++                    let is_return_type =
++                        ahead.is_some_and(|next| return_types.binary_search(&next.start).is_ok());
 +                    if is_return_type {
 +                    } else if waiting > 0 {
                          waiting -= 1;
@@ -1007,7 +1014,7 @@
      let mut linter = Linter {
          context,
          targets: Vec::new(),
-@@ -15,6 +16,39 @@
+@@ -15,6 +16,38 @@
      for stmt in stmts {
          linter.visit_stmt(stmt);
      }
@@ -1029,8 +1036,7 @@
 +            }
 +        }
 +        for member in &erased.members {
-+            if let bun_js_parser::parse::erased::ErasedMemberData::Property(property) =
-+                &member.data
++            if let bun_js_parser::parse::erased::ErasedMemberData::Property(property) = &member.data
 +            {
 +                for decorator in property.ts_decorators.iter() {
 +                    linter.visit_expr(decorator);
@@ -1047,7 +1053,7 @@
      linter.context.finish()
  }
  
-@@ -41,8 +75,15 @@
+@@ -41,8 +74,15 @@
  }
  
  impl Linter<'_, '_> {
@@ -1064,7 +1070,7 @@
          if let Some(address) = target_of(expr) {
              self.targets.push(address);
          }
-@@ -126,6 +167,19 @@
+@@ -126,6 +166,19 @@
          walk::walk_s_for_of(self, node);
      }
  
@@ -1084,7 +1090,7 @@
      fn visit_s_function(&mut self, node: &'ast S::Function, _: Loc) {
          if let Some(name) = &node.func.name {
              self.context.declare(name.ref_);
-@@ -177,7 +231,7 @@
+@@ -177,7 +230,7 @@
          walk::walk_b_object(self, node);
      }
  
@@ -1093,7 +1099,7 @@
          // The `=` of a default in a pattern is not an assignment: its left side is a target all the same.
          let is_default =
              node.op == OpCode::BinAssign && self.take(core::ptr::from_ref(node).addr());
-@@ -189,8 +243,8 @@
+@@ -189,8 +242,8 @@
          if !is_default {
              rules::no_self_assign::e_binary(&mut self.context, node);
          }
@@ -1205,8 +1211,8 @@
 +        .erased_members_of(class.body_loc)
 +        .filter_map(|erased| {
 +            let field = context::declared_field(erased)?;
-+            let is_static = erased.flags.contains(ErasedFlags::STATIC)
-+                || field.flags.contains(Flag::IsStatic);
++            let is_static =
++                erased.flags.contains(ErasedFlags::STATIC) || field.flags.contains(Flag::IsStatic);
 +            Some((erased.index as usize, is_static, field))
 +        })
 +        .collect();

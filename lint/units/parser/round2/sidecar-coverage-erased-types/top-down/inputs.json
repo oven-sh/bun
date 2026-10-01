@@ -57,6 +57,6 @@
  },
  {
   "name": "heritage-of-reserved-words",
-  "text": "interface A extends class {} {}\ninterface B extends this, null, function () {} {}\nclass C implements class {} {}\n"
+  "text": "interface A extends class {} {}\ninterface B extends this, null, function () {} {}\nclass C implements class {} {}\ninterface D extends keyof, readonly, unique {}\ninterface F extends (G), H!, any {}\n"
  }
 ]

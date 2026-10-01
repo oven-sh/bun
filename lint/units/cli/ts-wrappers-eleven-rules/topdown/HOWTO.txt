@@ -1,0 +1,45 @@
+RESEARCH OF D2, "ts-wrappers-eleven-rules", pass 1b (top-down): the eleven rules of round 1 on TypeScript and TSX.
+Nothing here is in the tree. Read at be1ebe5295 (worktree /workspace/wt/cli), 2026-10-01.
+
+proto/src-lint/          the planned text of the thirteen files of src/lint that change: lib.rs, context.rs, tokens.rs,
+                         ast_utils.rs, linter.rs, rules/{no_compare_neg_zero,no_dupe_class_members,no_dupe_keys,no_duplicate_case,
+                         no_self_assign,no_unsafe_negation,use_isnan,valid_typeof}.rs. rustfmt clean, one-line comments.
+proto/src-lint.patch     the same as a patch: `git apply --check` passes in the worktree at be1ebe5295. It changes the signature
+                         of `bun_lint::lint` (ParsedForLint, `typescript: bool`): src/runtime/cli/lint_command.rs has to call
+                         `parser.parse_for_lint_with_codes(&mut errors, |parsed| bun_lint::lint(file, parsed, source, loader.is_typescript()))`
+                         for every loader in the same commit, or `bun_runtime` does not compile.
+proto/make.py            /workspace/tools/lk python3 make.py [out dir]   copies src/lint of the worktree, lays proto/src-lint over
+                         it, adds probe_main.rs and compiles ONE binary <out>/tsentry with rustc against the rlibs of the debug
+                         build of the worktree (no crate is rebuilt, 10 s). Default out dir /tmp/w1b-topdown/out.
+                         The binary takes the operands of `bun --lint` and writes the plain format to stderr.
+                         PROBE_RANGES=1: also prints, for every expression of the walk, Context::node_start and node_end.
+proto/check.py           the same compile with clippy-driver and the lint flags of the workspace as warnings (metadata only):
+                         no warning in the thirteen files.
+proto/run-fixtures.cjs   node run-fixtures.cjs [--show] [--dir <fixtures>] [rule...]   the probe over fixtures, case by case.
+proto/oracle/common.cjs, diff.cjs, make-fixtures.cjs   from ../round2-oracle/proto-1a, with two changes: the probe is the
+                         binary of make.py, and in a TypeScript file `no-dupe-class-members` is `@typescript-eslint/no-dupe-class-members`.
+                         node diff.cjs <rule> --show --out vectors/<rule>.json <fixture or list>...; node make-fixtures.cjs --to <dir> <rule>...
+proto/oracle/cross-add.cjs   what rules.test.ts asks across rules: a case that gets a line of another rule is a case of that rule too.
+proto/oracle/ranges.cjs  node ranges.cjs <file | cases.json>...   node_start/node_end of every expression of the walk against the
+                         node ranges of espree and typescript-estree.
+proto/cases/<rule>.ts.json    the TypeScript lists of ../round2-oracle/proto-1a (564 cases).
+proto/cases/<rule>.ts2.json   written here (make-ts2-lists.cjs, 499 cases): instantiation expressions, nested wrappers, where a
+                         node starts and ends, targets in parentheses, members that leave no node, `case` after anything.
+proto/cases/use-isnan.ts4.json, no-sparse-arrays.ts3.json   25 forms that declare a name; 1 case that cross-add.cjs found.
+proto/oracle/vectors/, logs/   diff.cjs over the fixture of the tree and the lists, per rule.
+fixtures/<rule>.json     the planned fixtures (make-fixtures.cjs): the cases of the tree and 1,071 cases with a TypeScript extension.
+test-cli-lint/rules.test.ts, rules.test.patch   the test with `ext`; the patch applies in the worktree.
+
+Results (prototype binary, 2026-10-01):
+- The 3,341 cases of the fixtures of the tree: 3,305 keep their answer, 36 have ESLint's answer now (the 33 `moved` and the 3
+  `other-text` of difference 11), 0 other. (no-duplicate-case.json of the tree has one case twice, at 286 and 334.)
+- 1,071 TypeScript cases that both parsers take: 1,041 ESLint's answer, 28 missing (18 patterns inside a type, 9 names
+  declared in another scope, 1 JSX text), 2 extra (a name with `type` in an import clause that the parser does not record).
+- The planned fixtures, 4,413 cases: every case gets its `expect`; cross-add.cjs adds nothing.
+- ranges.cjs: TypeScript compiler sources (scanner, utilities, parser, binder, core, path, checker, 39 files of services):
+  292,653 expressions, 292,648 with the range of a node of typescript-estree; ESLint's lib and three bundled parsers (399
+  files): 230,194 expressions, 229,663 equal. Every other one is of a known kind: a comma expression inside a comma
+  expression (ESLint has one flat node), the function of a method with type parameters (ESLint's starts at the `<`), the
+  target of `new A<T>` without arguments, a call that the parse pass makes for `import x = require()`, nodes inside JSX.
+- Without the loop over the erased records in linter::run, 75 of the 1,071 TypeScript cases get another answer.
+- Time: checker.ts (3.1 MB) 1.8 s with and without the change (debug build with ASAN). 200,000 chained comparisons 3 s.

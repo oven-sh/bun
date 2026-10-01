@@ -79,8 +79,8 @@ pub(crate) fn class(context: &mut Context<'_, '_>, class: &G::Class) {
         .erased_members_of(class.body_loc)
         .filter_map(|erased| {
             let field = context::declared_field(erased)?;
-            let is_static = erased.flags.contains(ErasedFlags::STATIC)
-                || field.flags.contains(Flag::IsStatic);
+            let is_static =
+                erased.flags.contains(ErasedFlags::STATIC) || field.flags.contains(Flag::IsStatic);
             Some((erased.index as usize, is_static, field))
         })
         .collect();

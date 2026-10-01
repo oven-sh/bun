@@ -563,17 +563,69 @@ edit(G, """    /// An entry of `implements`: a type reference where one stands t
             self.lexer.is_log_disabled = start.is_log_disabled;
             match as_type {
                 Ok(type_node)
-                    if self.log().errors == logged.1
+                    if matches!(type_node.data, ts::TypeData::TypeReference(_))
+                        && self.log().errors == logged.1
                         && self.is_end_of_heritage_clause_element() =>
                 {
-                    if let Some(reference) = self.build_heritage_type_reference(type_node) {
-                        return Ok(reference);
-                    }
+                    return Ok(type_node);
                 }
                 Err(err @ (Error::StackOverflow | Error::Alloc(_))) => return Err(err),
                 _ => {}
             }
         }
+""")
+edit(G, """        let expression_start = offset_of(self.lexer.start);
+        let (expression, mut end) = self.lint_expression_of_heritage_entry()?;
+        let mut type_arguments = None;
+        if let Some((list, close_end)) = self.build_type_script_type_arguments::<false, false>()? {
+            type_arguments = Some(list);
+            end = close_end;
+        }
+        let payload = ts::ExpressionWithTypeArguments {
+            expression,
+            type_arguments,
+        };
+        Ok(ts::Type::alloc(self.arena, payload, expression_start, end))
+    }
+""", """        let expression_start = offset_of(self.lexer.start);
+        let (expression, mut end) = self.lint_expression_of_heritage_entry()?;
+        // isValidHeritageTypeReferenceExpression: a name alone is a type reference, also the name of a keyword type or of a type operator.
+        let name = if reads_type {
+            self.lint_name_alone(expression, expression_start, end)
+        } else {
+            None
+        };
+        let mut type_arguments = None;
+        if let Some((list, close_end)) = self.build_type_script_type_arguments::<false, false>()? {
+            type_arguments = Some(list);
+            end = close_end;
+        }
+        if let Some(name) = name {
+            let payload = ts::TypeReference {
+                type_name: ts::EntityName::Identifier(name),
+                type_arguments,
+            };
+            return Ok(ts::Type::alloc(self.arena, payload, expression_start, end));
+        }
+        let payload = ts::ExpressionWithTypeArguments {
+            expression,
+            type_arguments,
+        };
+        Ok(ts::Type::alloc(self.arena, payload, expression_start, end))
+    }
+
+    /// The name that `expression` is where it is an identifier that fills `start` to `end`: no parentheses and no `!` stand around it.
+    fn lint_name_alone(&self, expression: Expr, start: u32, end: u32) -> Option<ts::Name> {
+        let ExprData::EIdentifier(identifier) = expression.data else {
+            return None;
+        };
+        let range = crate::lexer::range_of_identifier(self.source, expression.loc);
+        if offset(range.loc) != start || offset(range.end()) != end {
+            return None;
+        }
+        let text = self.load_name_from_ref(identifier.ref_);
+        Some(ts::Name::new(text, start, end))
+    }
 """)
 edit(G, """    /// The lexer is on the `<` after the name of an interface or of a type alias: reads the type parameters and records them.
     #[cold]
@@ -636,24 +688,6 @@ edit(S, """    /// Whether `test` holds from the token the lexer is on. Nothing 
             Level::Lowest,
             SkipTypeOptionsBitset::only(SkipTypeOptions::DisallowConditionalTypes),
         )
-    }
-
-    /// The entry of a heritage clause that `node` is where the reference reads a name: a type reference, also for the name of a keyword type.
-    pub(crate) fn build_heritage_type_reference(&self, node: ts::Type) -> Option<ts::Type> {
-        match node.data {
-            ts::TypeData::TypeReference(_) => Some(node),
-            ts::TypeData::Keyword(kind)
-                if !matches!(kind, ts::KeywordKind::Void | ts::KeywordKind::Intrinsic) =>
-            {
-                let name = ts::Name::new(keyword_text(kind), node.start, node.end);
-                let payload = ts::TypeReference {
-                    type_name: ts::EntityName::Identifier(name),
-                    type_arguments: None,
-                };
-                Some(ts::Type::alloc(self.arena, payload, node.start, node.end))
-            }
-            _ => None,
-        }
     }
 
     /// Whether `test` holds from the token the lexer is on. Nothing moves.""")

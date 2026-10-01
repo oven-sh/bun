@@ -1,0 +1,84 @@
+pfx_t_void                   P<false, false>  instructions   108 ->   116 (+8)  conditional jumps    8 ->    8 (+0)  differing lines 100
+pfx_t_void                   P<true, false >  instructions   108 ->   116 (+8)  conditional jumps    8 ->    8 (+0)  differing lines 100
+pfx_t_void                   P<false, true >  instructions   108 ->   116 (+8)  conditional jumps    8 ->    8 (+0)  differing lines 100
+pfx_t_void                   P<true, true  >  instructions   108 ->   116 (+8)  conditional jumps    8 ->    8 (+0)  differing lines 100
+pfx_t_plus                   P<false, false>  instructions   108 ->   116 (+8)  conditional jumps    8 ->    8 (+0)  differing lines 100
+pfx_t_plus                   P<true, false >  instructions   108 ->   116 (+8)  conditional jumps    8 ->    8 (+0)  differing lines 100
+pfx_t_plus                   P<false, true >  instructions   108 ->   116 (+8)  conditional jumps    8 ->    8 (+0)  differing lines 100
+pfx_t_plus                   P<true, true  >  instructions   108 ->   116 (+8)  conditional jumps    8 ->    8 (+0)  differing lines 100
+pfx_t_tilde                  P<false, false>  instructions   108 ->   116 (+8)  conditional jumps    8 ->    8 (+0)  differing lines 100
+pfx_t_tilde                  P<true, false >  instructions   108 ->   116 (+8)  conditional jumps    8 ->    8 (+0)  differing lines 100
+pfx_t_tilde                  P<false, true >  instructions   108 ->   116 (+8)  conditional jumps    8 ->    8 (+0)  differing lines 100
+pfx_t_tilde                  P<true, true  >  instructions   108 ->   116 (+8)  conditional jumps    8 ->    8 (+0)  differing lines 100
+pfx_t_exclamation            P<false, false>  instructions   108 ->   116 (+8)  conditional jumps    8 ->    8 (+0)  differing lines 100
+pfx_t_exclamation            P<true, false >  instructions   108 ->   116 (+8)  conditional jumps    8 ->    8 (+0)  differing lines 100
+pfx_t_exclamation            P<false, true >  instructions   108 ->   116 (+8)  conditional jumps    8 ->    8 (+0)  differing lines 100
+pfx_t_exclamation            P<true, true  >  instructions   108 ->   116 (+8)  conditional jumps    8 ->    8 (+0)  differing lines 100
+pfx_t_typeof                 P<false, false>  instructions   113 ->   121 (+8)  conditional jumps    8 ->    8 (+0)  differing lines 100
+pfx_t_typeof                 P<true, false >  instructions   113 ->   121 (+8)  conditional jumps    8 ->    8 (+0)  differing lines 100
+pfx_t_typeof                 P<false, true >  instructions   113 ->   121 (+8)  conditional jumps    8 ->    8 (+0)  differing lines 100
+pfx_t_typeof                 P<true, true  >  instructions   113 ->   121 (+8)  conditional jumps    8 ->    8 (+0)  differing lines 100
+pfx_t_delete                 P<false, false>  instructions   143 ->   155 (+12)  conditional jumps   13 ->   14 (+1)  differing lines 142
+pfx_t_delete                 P<true, false >  instructions   143 ->   155 (+12)  conditional jumps   13 ->   14 (+1)  differing lines 142
+pfx_t_delete                 P<false, true >  instructions   143 ->   155 (+12)  conditional jumps   13 ->   14 (+1)  differing lines 142
+pfx_t_delete                 P<true, true  >  instructions   143 ->   155 (+12)  conditional jumps   13 ->   14 (+1)  differing lines 142
+pfx_t_minus                  P<false, false>  instructions   108 ->   116 (+8)  conditional jumps    8 ->    8 (+0)  differing lines 100
+pfx_t_minus                  P<true, false >  instructions   108 ->   116 (+8)  conditional jumps    8 ->    8 (+0)  differing lines 100
+pfx_t_minus                  P<false, true >  instructions   108 ->   116 (+8)  conditional jumps    8 ->    8 (+0)  differing lines 100
+pfx_t_minus                  P<true, true  >  instructions   108 ->   116 (+8)  conditional jumps    8 ->    8 (+0)  differing lines 100
+pfx_t_identifier             P<false, false>  instructions   525 ->   541 (+16)  conditional jumps   70 ->   73 (+3)  differing lines 581
+pfx_t_identifier             P<true, false >  instructions   522 ->   546 (+24)  conditional jumps   70 ->   73 (+3)  differing lines 474
+pfx_t_identifier             P<false, true >  instructions   525 ->   541 (+16)  conditional jumps   70 ->   73 (+3)  differing lines 581
+pfx_t_identifier             P<true, true  >  instructions   544 ->   556 (+12)  conditional jumps   74 ->   77 (+3)  differing lines 530
+pfx_t_super                  P<false, false>  instructions    70 ->    68 (-2)  conditional jumps    9 ->    9 (+0)  differing lines 22
+pfx_t_super                  P<true, false >  instructions    70 ->    68 (-2)  conditional jumps    9 ->    9 (+0)  differing lines 22
+pfx_t_super                  P<false, true >  instructions    70 ->    68 (-2)  conditional jumps    9 ->    9 (+0)  differing lines 22
+pfx_t_super                  P<true, true  >  instructions    70 ->    68 (-2)  conditional jumps    9 ->    9 (+0)  differing lines 22
+pfx_t_new                    P<false, false>  instructions   193 ->   193 (+0)  conditional jumps   19 ->   19 (+0)  differing lines 0
+pfx_t_new                    P<true, false >  instructions   205 ->   206 (+1)  conditional jumps   21 ->   21 (+0)  differing lines 1
+pfx_t_new                    P<false, true >  instructions   195 ->   195 (+0)  conditional jumps   19 ->   19 (+0)  differing lines 0
+pfx_t_new                    P<true, true  >  instructions   207 ->   208 (+1)  conditional jumps   21 ->   21 (+0)  differing lines 1
+parse_prefix                 P<false, false>  instructions   290 ->   291 (+1)  conditional jumps   21 ->   21 (+0)  differing lines 5
+parse_prefix                 P<true, false >  instructions   292 ->   293 (+1)  conditional jumps   21 ->   21 (+0)  differing lines 7
+parse_prefix                 P<false, true >  instructions   290 ->   291 (+1)  conditional jumps   21 ->   21 (+0)  differing lines 5
+parse_prefix                 P<true, true  >  instructions   292 ->   293 (+1)  conditional jumps   21 ->   21 (+0)  differing lines 7
+parse_suffix                 P<false, false>  instructions   607 ->   607 (+0)  conditional jumps   65 ->   65 (+0)  differing lines 0
+parse_suffix                 P<true, false >  instructions   439 ->   439 (+0)  conditional jumps   20 ->   20 (+0)  differing lines 0
+parse_suffix                 P<false, true >  instructions   607 ->   607 (+0)  conditional jumps   65 ->   65 (+0)  differing lines 0
+parse_suffix                 P<true, true  >  instructions   439 ->   439 (+0)  conditional jumps   20 ->   20 (+0)  differing lines 0
+sfx_t_dot                    P<false, false>  instructions   203 ->   203 (+0)  conditional jumps   22 ->   21 (-1)  differing lines 48
+sfx_t_dot                    P<true, false >  instructions   203 ->   203 (+0)  conditional jumps   22 ->   21 (-1)  differing lines 48
+sfx_t_dot                    P<false, true >  instructions   203 ->   203 (+0)  conditional jumps   22 ->   21 (-1)  differing lines 48
+sfx_t_dot                    P<true, true  >  instructions   213 ->   213 (+0)  conditional jumps   24 ->   23 (-1)  differing lines 48
+sfx_t_question_dot           P<false, false>  instructions   380 ->   378 (-2)  conditional jumps   37 ->   36 (-1)  differing lines 344
+sfx_t_question_dot           P<true, false >  instructions   338 ->   289 (-49)  conditional jumps   29 ->   26 (-3)  differing lines 448
+sfx_t_question_dot           P<false, true >  instructions   359 ->   357 (-2)  conditional jumps   34 ->   33 (-1)  differing lines 172
+sfx_t_question_dot           P<true, true  >  instructions   274 ->   275 (+1)  conditional jumps   25 ->   24 (-1)  differing lines 243
+sfx_t_less_than              P<false, false>  instructions   101 ->   101 (+0)  conditional jumps    7 ->    7 (+0)  differing lines 0
+sfx_t_less_than              P<true, false >  instructions   116 ->   119 (+3)  conditional jumps   10 ->   10 (+0)  differing lines 27
+sfx_t_less_than              P<false, true >  instructions   101 ->   101 (+0)  conditional jumps    7 ->    7 (+0)  differing lines 0
+sfx_t_less_than              P<true, true  >  instructions   116 ->   119 (+3)  conditional jumps   10 ->   10 (+0)  differing lines 27
+sfx_t_less_than_less_than    P<false, false>  instructions   101 ->   101 (+0)  conditional jumps    7 ->    7 (+0)  differing lines 0
+sfx_t_less_than_less_than    P<true, false >  instructions   116 ->   119 (+3)  conditional jumps   10 ->   10 (+0)  differing lines 27
+sfx_t_less_than_less_than    P<false, true >  instructions   101 ->   101 (+0)  conditional jumps    7 ->    7 (+0)  differing lines 0
+sfx_t_less_than_less_than    P<true, true  >  instructions   116 ->   119 (+3)  conditional jumps   10 ->   10 (+0)  differing lines 27
+sfx_t_open_bracket           P<false, false>  instructions   125 ->   125 (+0)  conditional jumps   10 ->   10 (+0)  differing lines 0
+sfx_t_open_bracket           P<true, false >  instructions   125 ->   125 (+0)  conditional jumps   10 ->   10 (+0)  differing lines 0
+sfx_t_open_bracket           P<false, true >  instructions   125 ->   125 (+0)  conditional jumps   10 ->   10 (+0)  differing lines 0
+sfx_t_open_bracket           P<true, true  >  instructions   125 ->   125 (+0)  conditional jumps   10 ->   10 (+0)  differing lines 0
+sfx_t_open_paren             P<false, false>  instructions    98 ->    98 (+0)  conditional jumps    5 ->    5 (+0)  differing lines 0
+sfx_t_open_paren             P<true, false >  instructions    98 ->    98 (+0)  conditional jumps    5 ->    5 (+0)  differing lines 0
+sfx_t_open_paren             P<false, true >  instructions    69 ->    69 (+0)  conditional jumps    2 ->    2 (+0)  differing lines 0
+sfx_t_open_paren             P<true, true  >  instructions    69 ->    69 (+0)  conditional jumps    2 ->    2 (+0)  differing lines 0
+parse_expr_or_let_stmt       P<false, false>  instructions   520 ->   545 (+25)  conditional jumps   53 ->   55 (+2)  differing lines 831
+parse_expr_or_let_stmt       P<true, false >  instructions   520 ->   545 (+25)  conditional jumps   53 ->   55 (+2)  differing lines 831
+parse_expr_or_let_stmt       P<false, true >  instructions   520 ->   545 (+25)  conditional jumps   53 ->   55 (+2)  differing lines 831
+parse_expr_or_let_stmt       P<true, true  >  instructions   531 ->   556 (+25)  conditional jumps   55 ->   57 (+2)  differing lines 782
+parse_expr_common            P<false, false>  instructions    88 ->    88 (+0)  conditional jumps    8 ->    8 (+0)  differing lines 0
+parse_expr_common            P<true, false >  instructions    88 ->    88 (+0)  conditional jumps    8 ->    8 (+0)  differing lines 0
+parse_expr_common            P<false, true >  instructions    88 ->    88 (+0)  conditional jumps    8 ->    8 (+0)  differing lines 0
+parse_expr_common            P<true, true  >  instructions    88 ->    88 (+0)  conditional jumps    8 ->    8 (+0)  differing lines 0
+t_for                        P<false, false>  instructions   759 ->   759 (+0)  conditional jumps   77 ->   77 (+0)  differing lines 0
+t_for                        P<true, false >  instructions   759 ->   759 (+0)  conditional jumps   77 ->   77 (+0)  differing lines 0
+t_for                        P<false, true >  instructions   759 ->   759 (+0)  conditional jumps   77 ->   77 (+0)  differing lines 0
+t_for                        P<true, true  >  instructions   759 ->   759 (+0)  conditional jumps   77 ->   77 (+0)  differing lines 0

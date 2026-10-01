@@ -153,9 +153,11 @@
     },
     Payloads {
         name: "heritage-of-reserved-words",
-        text: b"interface A extends class {} {}\ninterface B extends this, null, function () {} {}\nclass C implements class {} {}\n",
+        text: b"interface A extends class {} {}\ninterface B extends this, null, function () {} {}\nclass C implements class {} {}\ninterface D extends keyof, readonly, unique {}\ninterface F extends (G), H!, any {}\n",
         lines: &[
             "InterfaceDeclaration[0,31) name[10,11) extends[12,28) ExpressionWithTypeArguments[20,28) members[30,30)",
             "InterfaceDeclaration[32,81) name[42,43) extends[44,78) ExpressionWithTypeArguments[52,56) ExpressionWithTypeArguments[58,62) ExpressionWithTypeArguments[64,78) members[80,80)",
+            "InterfaceDeclaration[113,159) name[123,124) extends[125,156) TypeReference[133,138) TypeReference[140,148) TypeReference[150,156) members[158,158)",
+            "InterfaceDeclaration[160,195) name[170,171) extends[172,192) ExpressionWithTypeArguments[180,183) ExpressionWithTypeArguments[185,187) TypeReference[189,192) members[194,194)",
         ],
     },

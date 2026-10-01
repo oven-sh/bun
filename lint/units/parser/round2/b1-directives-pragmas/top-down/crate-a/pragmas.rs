@@ -932,14 +932,14 @@ mod tests {
         assert_eq!((references, diagnostics), (vec![], vec![(TS1084, 0, 21)]));
     }
 
-    /// A message of the log as the number of its diagnostic, its offset, its length, its text, and the start and end that the table of a failed parse has for it.
+    /// A message of the log as the number of its diagnostic, its offset, its length, its text, and the start and end that the table of the parse has for it.
     type Logged = (Option<u32>, usize, usize, Vec<u8>, Option<(u32, u32)>);
 
-    /// What `read` makes of the lint parse of `text`, `None` where the parse fails, and the messages that it left. The lexer keeps its comments as it does for a build that minifies names.
+    /// What `read` makes of the lint parse of `text`, or the errors that the parse left. The lexer keeps its comments as it does for a build that minifies names.
     fn lint_parse<R>(
         text: &'static [u8],
         read: impl FnOnce(&ParsedForLint<'_, '_>) -> R,
-    ) -> (Option<R>, Vec<Logged>) {
+    ) -> Result<R, Vec<Logged>> {
         let arena = Arena::new();
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();
@@ -955,27 +955,27 @@ mod tests {
             Ok(parser) => parser.parse_for_lint_with_codes(&mut errors, read).ok(),
             Err(_) => None,
         };
-        let logged = log
-            .msgs
-            .iter()
-            .enumerate()
-            .map(|(index, msg)| {
-                let (offset, length) = msg
-                    .data
-                    .location
-                    .as_ref()
-                    .map_or((0, 0), |location| (location.offset, location.length));
-                let marked = errors.get(index).map(|entry| (entry.start, entry.end));
-                (msg.code(), offset, length, msg.data.text.to_vec(), marked)
-            })
-            .collect();
-        (parsed, logged)
+        parsed.ok_or_else(|| {
+            log.msgs
+                .iter()
+                .enumerate()
+                .map(|(index, msg)| {
+                    let (offset, length) = msg
+                        .data
+                        .location
+                        .as_ref()
+                        .map_or((0, 0), |location| (location.offset, location.length));
+                    let marked = errors.get(index).map(|entry| (entry.start, entry.end));
+                    (msg.code(), offset, length, msg.data.text.to_vec(), marked)
+                })
+                .collect()
+        })
     }
 
     #[test]
     fn a_lint_parse_keeps_what_the_header_says() {
         let text: &[u8] = b"#!/usr/bin/env bun\n/// <reference types=\"bun\" />\n// @ts-nocheck\n// @ts-check\nlet x = 1;\n/// <reference path=\"late.ts\" />\n// @ts-nocheck\n";
-        let (read, logged) = lint_parse(text, |parsed| {
+        let read = lint_parse(text, |parsed| {
             let pragmas = &parsed.sidecar.pragmas;
             let references: Vec<(ReferenceDirectiveKind, &[u8], u32, u32)> = pragmas
                 .reference_directives
@@ -996,13 +996,13 @@ mod tests {
                 Some((true, 64, 76))
             );
         });
-        assert_eq!((read, logged), (Some(()), vec![]));
+        assert_eq!(read, Ok(()));
     }
 
     #[test]
     fn a_lint_parse_keeps_the_directives_of_its_comments_once() {
         let text: &[u8] = b"// @ts-ignore\nlet x: number = 'a';\nlet r = a < /* @ts-ignore */ b > /* @ts-expect-error */ c;\nlet s = c ? (a) /* @ts-ignore */ : b => d /* @ts-expect-error */ : e;\nlet t = '// @ts-ignore';\n/*\n * @ts-expect-error */\n";
-        let (read, logged) = lint_parse(text, |parsed| {
+        let read = lint_parse(text, |parsed| {
             parsed
                 .sidecar
                 .comment_directives
@@ -1018,62 +1018,53 @@ mod tests {
             (CommentDirectiveKind::ExpectError, 136, 158),
             (CommentDirectiveKind::ExpectError, 192, 214),
         ];
-        assert_eq!((read, logged), (Some(expected.to_vec()), vec![]));
+        assert_eq!(read, Ok(expected.to_vec()));
     }
 
     #[test]
-    fn a_pragma_that_the_reference_reports_is_an_error_with_its_code_and_the_parse_goes_on() {
-        let invalid = "Invalid 'reference' directive syntax.";
-        let mode = "`resolution-mode` should be either `require` or `import`.";
-        let cases: [(&'static [u8], &[&[u8]], &[(u32, usize, usize, &str)]); 3] = [
+    fn a_reference_without_a_file_fails_a_lint_parse_with_its_code() {
+        let cases: [(&'static [u8], &[(u32, usize, usize, &str)]); 3] = [
             (
-                b"/// <reference />\nlet x = 1;",
-                &[],
-                &[(1084, 0, 17, invalid)],
+                b"/// <reference />\nlet x = ;",
+                &[(1084, 0, 17, "Invalid 'reference' directive syntax.")],
             ),
             (
                 b"/// <reference types=\"a\" resolution-mode=\"node\" />\n/// <reference foo=\"1\" />\nx;",
-                &[b"a"],
-                &[(1453, 42, 4, mode), (1084, 51, 25, invalid)],
+                &[
+                    (
+                        1453,
+                        42,
+                        4,
+                        "`resolution-mode` should be either `require` or `import`.",
+                    ),
+                    (1084, 51, 25, "Invalid 'reference' directive syntax."),
+                ],
             ),
             (
-                b"#!/bin/sh\n\n/// <reference no-default-lib=\"false\"/>\n/// <reference lib=\"dom\"/>\n",
-                &[b"dom"],
-                &[(1084, 11, 39, invalid)],
+                b"#!/bin/sh\n\n/// <reference no-default-lib=\"false\"/>\n",
+                &[(1084, 11, 39, "Invalid 'reference' directive syntax.")],
             ),
         ];
-        for (text, expected_names, expected) in cases {
+        for (text, expected) in cases {
             let expected: Vec<Logged> = expected
                 .iter()
                 .map(|&(code, offset, length, said)| {
-                    (Some(code), offset, length, said.as_bytes().to_vec(), None)
+                    let marked = (offset as u32, (offset + length) as u32);
+                    (
+                        Some(code),
+                        offset,
+                        length,
+                        said.as_bytes().to_vec(),
+                        Some(marked),
+                    )
                 })
                 .collect();
-            let (names, logged) = lint_parse(text, |parsed| {
-                parsed
-                    .sidecar
-                    .pragmas
-                    .reference_directives
-                    .iter()
-                    .map(|reference| reference.file_name(text).to_vec())
-                    .collect::<Vec<_>>()
-            });
-            let expected_names: Vec<Vec<u8>> =
-                expected_names.iter().map(|name| name.to_vec()).collect();
-            assert_eq!(names, Some(expected_names), "{}", bstr::BStr::new(text));
-            assert_eq!(logged, expected, "{}", bstr::BStr::new(text));
+            assert_eq!(
+                lint_parse(text, |_| ()),
+                Err(expected),
+                "{}",
+                bstr::BStr::new(text)
+            );
         }
-    }
-
-    #[test]
-    fn a_syntax_error_after_a_pragma_error_fails_the_parse() {
-        let (read, logged) = lint_parse(b"/// <reference />\nlet x = ;", |_| ());
-        assert_eq!(read, None);
-        let places: Vec<(usize, usize, Option<(u32, u32)>)> = logged
-            .iter()
-            .map(|&(_, offset, length, _, marked)| (offset, length, marked))
-            .collect();
-        assert_eq!(places, [(0, 17, Some((0, 17))), (26, 1, Some((26, 27)))]);
-        assert_eq!(logged.first().and_then(|first| first.0), Some(1084));
     }
 }

@@ -102,21 +102,14 @@ edit("parse/parse_entry.rs", """                break 'parse Err(err.into());
                 is_typescript_declare: is_declaration_file,
 """, """                break 'parse Err(err.into());
             }
+            // The lexer is on the first token: every comment that can hold a pragma is read.
+            p.read_pragmas_for_lint();
             if p.log().errors > orig_error_count {
                 break 'parse Err(crate::Error::SyntaxError);
             }
-            // The lexer is on the first token: every comment that can hold a pragma is read.
-            p.read_pragmas_for_lint();
-            // What a pragma reports leaves the tree whole, as in the reference: only what the statements add fails the parse.
-            let errors_before_statements = p.log().errors;
             let mut opts = ParseStatementOptions {
                 scope: StatementScope::Module,
                 is_typescript_declare: is_declaration_file,
-""")
-edit("parse/parse_entry.rs", """                Ok(_) if p.log().errors > orig_error_count => Err(crate::Error::SyntaxError),
-""", """                Ok(_) if p.log().errors > errors_before_statements => {
-                    Err(crate::Error::SyntaxError)
-                }
 """)
 edit("parse/parse_entry.rs", """        sidecar.attached.sort();
         Ok(f(&ParsedForLint {

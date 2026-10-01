@@ -1,0 +1,290 @@
+# B3 and B4 rows
+MISSED ts  "a + b = c;"  go: TS1005 @6+1 "';' expected."  lint: parses
+MISSED ts  "-a = b;"  go: TS1005 @3+1 "';' expected."  lint: parses
+MISSED ts  "a++ = b;"  go: TS1005 @4+1 "';' expected."  lint: parses
+MISSED ts  "async function f() { await x = y; }"  go: TS1005 @29+1 "';' expected."  lint: parses
+MISSED ts  "a++ ++;"  go: TS1005 @4+2 "';' expected."  lint: parses
+MISSED ts  "a--.b;"  go: TS1005 @3+1 "';' expected."  lint: parses
+MISSED ts  "++ delete a.b;"  go: TS1109 @3+6 "Expression expected."  lint: parses
+MISSED ts  "new A?.b();"  go: TS1209 @5+2 "Invalid optional chain from new expression. Did..."  lint: parses
+MISSED ts  "function* g() { yield*; }"  go: TS1109 @22+1 "Expression expected."  lint: parses
+MISSED ts  "function* g() { yield* }"  go: TS1109 @23+1 "Expression expected."  lint: parses
+MISSED ts  "a.\nb in c;"  go: TS1003 @2+0 "Identifier expected."  lint: parses
+MISSED ts  "for (using of of []) {}"  go: TS1011 @18+0 "An element access expression should take an arg..."  lint: parses
+DIFF   ts  "a[];"  go: TS1011 @2+0 "An element access expression should take an arg..."  lint: TS1109 @2+1 "Expression expected."   [bun: @2+1 "Unexpected ]"]
+MISSED ts  "a<b>.c;"  go: TS1477 @1+3 "An instantiation expression cannot be followed ..."  lint: parses
+MISSED ts  "<A>x ** 2;"  go: TS17007 @0+4 "A type assertion expression is not allowed in t..."  lint: parses
+DIFF   ts  "-x ** 2;"  go: TS17006 @0+2 "An unary expression with the '-' operator is no..."  lint: TS0 @0+0 ""   [bun: @3+2 "Unexpected **"]
+MISSED ts  "class C { #a; m() { this?.#a } }"  go: TS18030 @26+2 "An optional chain cannot contain private identi..."  lint: parses
+DIFF   ts  "class C extends B { m() { super<T>.x } }"  go: TS2754 @31+3 "'super' may not use type arguments."  lint: TS0 @0+0 ""   [bun: @26+5 "Unexpected \"super\""]
+DIFF   ts  "class C extends B { m() { super; } }"  go: TS1034 @31+1 "'super' must be followed by an argument list or..."  lint: TS0 @0+0 ""   [bun: @26+5 "Unexpected \"super\""]
+DIFF   ts  "class C extends B { m() { super<T>(1) } }"  go: TS2754 @31+3 "'super' may not use type arguments."  lint: TS0 @0+0 ""   [bun: @26+5 "Unexpected \"super\""]
+DIFF   ts  "class C extends B { constructor() { super<T>(1) } }"  go: TS2754 @41+3 "'super' may not use type arguments."  lint: TS0 @0+0 ""   [bun: @36+5 "Unexpected \"super\""]
+MISSED js  "a + b = c;"  go: TS1005 @6+1 "';' expected."  lint: parses
+MISSED js  "-a = b;"  go: TS1005 @3+1 "';' expected."  lint: parses
+MISSED js  "a++ = b;"  go: TS1005 @4+1 "';' expected."  lint: parses
+MISSED js  "async function f() { await x = y; }"  go: TS1005 @29+1 "';' expected."  lint: parses
+MISSED js  "a++ ++;"  go: TS1005 @4+2 "';' expected."  lint: parses
+MISSED js  "a--.b;"  go: TS1005 @3+1 "';' expected."  lint: parses
+MISSED js  "++ delete a.b;"  go: TS1109 @3+6 "Expression expected."  lint: parses
+MISSED js  "new A?.b();"  go: TS1209 @5+2 "Invalid optional chain from new expression. Did..."  lint: parses
+MISSED js  "function* g() { yield*; }"  go: TS1109 @22+1 "Expression expected."  lint: parses
+MISSED js  "a.\nb in c;"  go: TS1003 @2+0 "Identifier expected."  lint: parses
+MISSED js  "for (using of of []) {}"  go: TS1011 @18+0 "An element access expression should take an arg..."  lint: parses
+DIFF   js  "a[];"  go: TS1011 @2+0 "An element access expression should take an arg..."  lint: TS1109 @2+1 "Expression expected."   [bun: @2+1 "Unexpected ]"]
+DIFF   js  "-x ** 2;"  go: TS17006 @0+2 "An unary expression with the '-' operator is no..."  lint: TS0 @0+0 ""   [bun: @3+2 "Unexpected **"]
+MISSED js  "class C { #a; m() { this?.#a } }"  go: TS18030 @26+2 "An optional chain cannot contain private identi..."  lint: parses
+DIFF   js  "class C extends B { m() { super; } }"  go: TS1034 @31+1 "'super' must be followed by an argument list or..."  lint: TS0 @0+0 ""   [bun: @26+5 "Unexpected \"super\""]
+MISSED tsx "a<b>.c;"  go: TS1477 @1+3 "An instantiation expression cannot be followed ..."  lint: parses
+DIFF   tsx "-x ** 2;"  go: TS17006 @0+2 "An unary expression with the '-' operator is no..."  lint: TS0 @0+0 ""   [bun: @3+2 "Unexpected **"]
+# postfix family
+MISSED ts  "++a++;"  go: TS1005 @3+2 "';' expected."  lint: parses
+MISSED ts  "a++!;"  go: TS1005 @3+1 "';' expected."  lint: parses
+MISSED ts  "a++();"  go: TS1005 @3+1 "';' expected."  lint: parses
+MISSED ts  "a++[0];"  go: TS1005 @3+1 "';' expected."  lint: parses
+MISSED ts  "a++`x`;"  go: TS1005 @3+3 "';' expected."  lint: parses
+MISSED ts  "a++?.b;"  go: TS1005 @3+2 "';' expected."  lint: parses
+ok     ts  "a++<T>(x);"  go: parses
+ok     ts  "(a++).b;"  go: parses
+ok     ts  "(a++)++;"  go: parses
+ok     ts  "++(a++);"  go: parses
+ok     ts  "a++ as T;"  go: parses
+ok     ts  "(a++ as T).b;"  go: parses
+MISSED ts  "a!++ ++;"  go: TS1005 @5+2 "';' expected."  lint: parses
+MISSED ts  "a.b++ = c;"  go: TS1005 @6+1 "';' expected."  lint: parses
+MISSED ts  "x = a++ = b;"  go: TS1005 @8+1 "';' expected."  lint: parses
+MISSED ts  "(a++ = b);"  go: TS1005 @5+1 "')' expected."  lint: parses
+MISSED ts  "f(a++ ++);"  go: TS1005 @6+2 "',' expected."  lint: parses
+MISSED ts  "[a++ = b];"  go: TS1005 @5+1 "',' expected."  lint: parses
+MISSED ts  "x ? a++ = b : c;"  go: TS1005 @8+1 "':' expected."  lint: parses
+same   ts  "a++\n++;"  go: TS1109 @6+1 "Expression expected."
+MISSED ts  "a++\n.b;"  go: TS1128 @4+1 "Declaration or statement expected."  lint: parses
+MISSED ts  "a++ += b;"  go: TS1005 @4+2 "';' expected."  lint: parses
+MISSED ts  "a-- --;"  go: TS1005 @4+2 "';' expected."  lint: parses
+MISSED ts  "a[i]++ ++;"  go: TS1005 @7+2 "';' expected."  lint: parses
+MISSED ts  "f(x)++ ++;"  go: TS1005 @7+2 "';' expected."  lint: parses
+# prefix update operand
+MISSED ts  "++-a;"  go: TS1109 @2+1 "Expression expected."  lint: parses
+MISSED ts  "++<T>a;"  go: TS1109 @2+1 "Expression expected."  lint: parses
+MISSED ts  "async function f() { ++await a; }"  go: TS1109 @23+5 "Expression expected."  lint: parses
+MISSED ts  "++typeof a;"  go: TS1109 @2+6 "Expression expected."  lint: parses
+MISSED ts  "++!a;"  go: TS1109 @2+1 "Expression expected."  lint: parses
+MISSED ts  "++ ++a;"  go: TS1109 @3+2 "Expression expected."  lint: parses
+MISSED ts  "--void a;"  go: TS1109 @2+4 "Expression expected."  lint: parses
+ok     ts  "++(delete a.b);"  go: parses
+ok     ts  "++(-a);"  go: parses
+ok     ts  "++a.b;"  go: parses
+ok     ts  "++new A;"  go: parses
+ok     ts  "++a();"  go: parses
+ok     ts  "-a++;"  go: parses
+ok     ts  "typeof a++;"  go: parses
+ok     ts  "++a ** 2;"  go: parses
+ok     ts  "a++ ** 2;"  go: parses
+MISSED tsx "++<a/>;"  go: TS1109 @2+1 "Expression expected."  lint: parses
+# new + optional chain
+MISSED ts  "new a.b?.c();"  go: TS1209 @7+2 "Invalid optional chain from new expression. Did..."  lint: parses
+MISSED ts  "new (a)?.b();"  go: TS1209 @7+2 "Invalid optional chain from new expression. Did..."  lint: parses
+MISSED ts  "new a?.[b]();"  go: TS1209 @5+2 "Invalid optional chain from new expression. Did..."  lint: parses
+MISSED ts  "new a?.();"  go: TS1209 @5+2 "Invalid optional chain from new expression. Did..."  lint: parses
+MISSED ts  "new A<T>?.b();"  go: TS1209 @8+2 "Invalid optional chain from new expression. Did..."  lint: parses
+ok     ts  "new (a?.b)();"  go: parses
+MISSED ts  "new a?.b;"  go: TS1209 @5+2 "Invalid optional chain from new expression. Did..."  lint: parses
+MISSED ts  "new a?.b?.c();"  go: TS1209 @5+2 "Invalid optional chain from new expression. Did..."  lint: parses
+MISSED ts  "new a /*x*/ ?. /*y*/ b();"  go: TS1209 @12+2 "Invalid optional chain from new expression. Did..."  lint: parses
+DIFF   ts  "new a?.`x`;"  go: TS1209 @5+2 "Invalid optional chain from new expression. Did..."  lint: TS1003 @7+3 "Identifier expected."   [bun: @7+3 "Expected identifier but found \"`x`\""]
+# private in optional chain
+MISSED ts  "class C { #c; m(a) { a?.b.#c } }"  go: TS18030 @26+2 "An optional chain cannot contain private identi..."  lint: parses
+MISSED ts  "class C { #c; m(a) { a?.b!.#c } }"  go: TS18030 @27+2 "An optional chain cannot contain private identi..."  lint: parses
+MISSED ts  "class C { #c; m(a) { a?.#c } }"  go: TS18030 @24+2 "An optional chain cannot contain private identi..."  lint: parses
+MISSED ts  "class C { #c; m(a) { a?.b().#c } }"  go: TS18030 @28+2 "An optional chain cannot contain private identi..."  lint: parses
+MISSED ts  "class C { #c; m(a) { a?.[0].#c } }"  go: TS18030 @28+2 "An optional chain cannot contain private identi..."  lint: parses
+ok     ts  "class C { #c; m(a) { (a?.b).#c } }"  go: parses
+DIFF   ts  "a?.#c"  go: TS18030 @3+2 "An optional chain cannot contain private identi..."  lint: TS1003 @3+2 "Identifier expected."   [bun: @3+2 "Expected identifier but found \"#c\""]
+MISSED ts  "a++\n= b;"  go: TS1128 @4+1 "Declaration or statement expected."  lint: parses
+MISSED ts  "a++\n?.b;"  go: TS1128 @4+2 "Declaration or statement expected."  lint: parses
+ok     ts  "a++\n!b;"  go: parses
+ok     ts  "a++\n`x`;"  go: parses
+ok     ts  "a++\n(b);"  go: parses
+ok     ts  "a++\n[0];"  go: parses
+MISSED ts  "a++\n+= b;"  go: TS1128 @4+2 "Declaration or statement expected."  lint: parses
+MISSED ts  "f(a++\n[0]);"  go: TS1005 @6+1 "',' expected."  lint: parses
+MISSED ts  "(a++\n.b);"  go: TS1005 @5+1 "')' expected."  lint: parses
+MISSED ts  "a++ /*c*/ = b;"  go: TS1005 @10+1 "';' expected."  lint: parses
+MISSED ts  "a++ // c\n= b;"  go: TS1128 @9+1 "Declaration or statement expected."  lint: parses
+MISSED ts  "a++`x${1}`;"  go: TS1005 @3+4 "';' expected."  lint: parses
+# dot newline
+DIFF   ts  "a.\nb c;"  go: TS1003 @2+0 "Identifier expected."  lint: TS1005 @5+1 "';' expected."   [bun: @5+1 "Expected \";\" but found \"c\""]
+ok     ts  "a.\nb\nc;"  go: parses
+DIFF   ts  "a.\n#b c;"  go: TS1003 @2+0 "Identifier expected."  lint: TS1003 @3+2 "Identifier expected."   [bun: @3+2 "Expected identifier but found \"#b\""]
+DIFF   ts  "a?.\nb c;"  go: TS1003 @3+0 "Identifier expected."  lint: TS1005 @6+1 "';' expected."   [bun: @6+1 "Expected \";\" but found \"c\""]
+MISSED ts  "a. // x\nb in c;"  go: TS1003 @2+0 "Identifier expected."  lint: parses
+MISSED ts  "a. /* x\n */ b in c;"  go: TS1003 @2+0 "Identifier expected."  lint: parses
+ok     ts  "a.\nb.c;"  go: parses
+ok     ts  "a.\nb(c);"  go: parses
+ok     ts  "a.\nb = c;"  go: parses
+DIFF   ts  "a.\nb #c;"  go: TS1003 @2+0 "Identifier expected."  lint: TS1005 @5+2 "';' expected."   [bun: @5+2 "Expected \";\" but found \"#c\""]
+same   ts  "a.\nb 1;"  go: TS1005 @5+1 "';' expected."
+same   ts  "a.\nb 'x';"  go: TS1005 @5+3 "';' expected."
+DIFF   ts  "a.\nin c;"  go: TS1003 @2+0 "Identifier expected."  lint: TS1005 @6+1 "';' expected."   [bun: @6+1 "Expected \";\" but found \"c\""]
+same   ts  "a.\nb\n.c d;"  go: TS1005 @8+1 "';' expected."
+MISSED ts  "x = a.\nb in c;"  go: TS1003 @6+0 "Identifier expected."  lint: parses
+MISSED ts  "a.\nb as c;"  go: TS1003 @2+0 "Identifier expected."  lint: parses
+MISSED ts  "a.\nb instanceof c;"  go: TS1003 @2+0 "Identifier expected."  lint: parses
+ok     ts  "a.\nb; c"  go: parses
+DIFF   ts  "a.b.\nc d;"  go: TS1003 @4+0 "Identifier expected."  lint: TS1005 @7+1 "';' expected."   [bun: @7+1 "Expected \";\" but found \"d\""]
+DIFF   ts  "a.\n/*x*/b c;"  go: TS1003 @2+0 "Identifier expected."  lint: TS1005 @10+1 "';' expected."   [bun: @10+1 "Expected \";\" but found \"c\""]
+MISSED tsx "<a.\nb c='1' />;"  go: TS1003 @3+0 "Identifier expected."  lint: parses
+DIFF   ts  "let x: A.\nB c;"  go: TS1003 @9+0 "Identifier expected."  lint: TS1005 @12+1 "';' expected."   [bun: @12+1 "Expected \";\" but found \"c\""]
+same   ts  "a\n.b c;"  go: TS1005 @5+1 "';' expected."
+# instantiation + property access
+MISSED ts  "a<b>?.c;"  go: TS1477 @1+3 "An instantiation expression cannot be followed ..."  lint: parses
+MISSED ts  "a<b>.c<d>.e;"  go: TS1477 @1+3 "An instantiation expression cannot be followed ..."  lint: parses
+ok     ts  "a<b>?.[c];"  go: parses
+DIFF   ts  "a<b>.#c;"  go: TS1477 @1+3 "An instantiation expression cannot be followed ..."  lint: TS1003 @5+2 "Identifier expected."   [bun: @5+2 "Expected identifier but found \"#c\""]
+MISSED ts  "a<b>\n.c;"  go: TS1477 @1+3 "An instantiation expression cannot be followed ..."  lint: parses
+same   ts  "a<b>.;"  go: TS1003 @5+1 "Identifier expected."
+ok     ts  "a<b>?.();"  go: parses
+MISSED ts  "new a<b>.c();"  go: TS1477 @5+3 "An instantiation expression cannot be followed ..."  lint: parses
+same   ts  "a<b>!.c;"  go: TS1109 @5+1 "Expression expected."
+MISSED ts  "a<<T>() => void>.c;"  go: TS1477 @1+15 "An instantiation expression cannot be followed ..."  lint: parses
+MISSED ts  "a<b> .c;"  go: TS1477 @1+3 "An instantiation expression cannot be followed ..."  lint: parses
+MISSED ts  "a<b /*x*/ > /*y*/ .c;"  go: TS1477 @1+10 "An instantiation expression cannot be followed ..."  lint: parses
+ok     ts  "(a<b>).c;"  go: parses
+MISSED ts  "a.b<c>.d;"  go: TS1477 @3+3 "An instantiation expression cannot be followed ..."  lint: parses
+MISSED ts  "a<b>.c<d>();"  go: TS1477 @1+3 "An instantiation expression cannot be followed ..."  lint: parses
+DIFF   ts  "a<b>.\nc d;"  go: TS1003 @5+0 "Identifier expected."  lint: TS1005 @8+1 "';' expected."   [bun: @8+1 "Expected \";\" but found \"d\""]
+# S1 family
+MISSED ts  "(a + b = c);"  go: TS1005 @7+1 "')' expected."  lint: parses
+MISSED ts  "f(a + b = c);"  go: TS1005 @8+1 "',' expected."  lint: parses
+MISSED ts  "[a + b = c];"  go: TS1005 @7+1 "',' expected."  lint: parses
+MISSED ts  "x ? a + b = c : d;"  go: TS1005 @10+1 "':' expected."  lint: parses
+MISSED ts  "`${a + b = c}`;"  go: TS1005 @9+1 "'}' expected."  lint: parses
+MISSED ts  "a[b + c = d];"  go: TS1005 @8+1 "']' expected."  lint: parses
+MISSED ts  "let x = a + b = c;"  go: TS1005 @14+1 "',' expected."  lint: parses
+MISSED ts  "if (a + b = c) {}"  go: TS1005 @10+1 "')' expected."  lint: parses
+MISSED ts  "x = a + b = c;"  go: TS1005 @10+1 "';' expected."  lint: parses
+MISSED ts  "a || b = c;"  go: TS1005 @7+1 "';' expected."  lint: parses
+MISSED ts  "a ?? b = c;"  go: TS1005 @7+1 "';' expected."  lint: parses
+MISSED ts  "a ** b = c;"  go: TS1005 @7+1 "';' expected."  lint: parses
+MISSED ts  "a + b += c;"  go: TS1005 @6+2 "';' expected."  lint: parses
+MISSED ts  "!a = b;"  go: TS1005 @3+1 "';' expected."  lint: parses
+MISSED ts  "typeof a = b;"  go: TS1005 @9+1 "';' expected."  lint: parses
+MISSED ts  "++a = b;"  go: TS1005 @4+1 "';' expected."  lint: parses
+MISSED ts  "delete a.b = c;"  go: TS1005 @11+1 "';' expected."  lint: parses
+MISSED ts  "void a = b;"  go: TS1005 @7+1 "';' expected."  lint: parses
+ok     ts  "new X = 1;"  go: parses
+ok     ts  "(a + b) = c;"  go: parses
+ok     ts  "x! = 1;"  go: parses
+MISSED ts  "<T>x = 1;"  go: TS1005 @5+1 "';' expected."  lint: parses
+same   ts  "x as T = 1;"  go: TS1005 @7+1 "';' expected."
+ok     ts  "(x as T) = 1;"  go: parses
+ok     ts  "a ? b : c = d;"  go: parses
+MISSED ts  "a + b\n= c;"  go: TS1128 @6+1 "Declaration or statement expected."  lint: parses
+MISSED ts  "-a\n= b;"  go: TS1128 @3+1 "Declaration or statement expected."  lint: parses
+ok     ts  "a = b = c;"  go: parses
+ok     ts  "a, b = c;"  go: parses
+MISSED ts  "a + b >>>= c;"  go: TS1005 @6+4 "';' expected."  lint: parses
+MISSED ts  "a instanceof b = c;"  go: TS1005 @15+1 "';' expected."  lint: parses
+MISSED ts  "a in b = c;"  go: TS1005 @7+1 "';' expected."  lint: parses
+MISSED ts  "a < b = c;"  go: TS1005 @6+1 "';' expected."  lint: parses
+ok     ts  "yield = 1;"  go: parses
+MISSED ts  "async function f() { await x += y; }"  go: TS1005 @29+2 "';' expected."  lint: parses
+MISSED ts  "for (a + b = c;;) {}"  go: TS1005 @11+1 "';' expected."  lint: parses
+DIFF   ts  "x = () => {} = 1;"  go: TS2809 @13+1 "Declaration or statement expected. This '=' fol..."  lint: TS1005 @13+1 "';' expected."   [bun: @13+1 "Expected \";\" but found \"=\""]
+MISSED ts  "({ a: b + c = d });"  go: TS1005 @12+1 "',' expected."  lint: parses
+MISSED ts  "class C { x = a + b = c; }"  go: TS1005 @20+1 "';' expected."  lint: parses
+ok     ts  "1 = 2;"  go: parses
+ok     ts  "this = 1;"  go: parses
+ok     ts  "f() = 1;"  go: parses
+ok     ts  "a?.b = 1;"  go: parses
+ok     ts  "import.meta = 1;"  go: parses
+ok     ts  "`a` = 1;"  go: parses
+ok     ts  "a<b> = c;"  go: parses
+MISSED ts  "-a++ = b;"  go: TS1005 @5+1 "';' expected."  lint: parses
+MISSED ts  "a + -b = c;"  go: TS1005 @7+1 "';' expected."  lint: parses
+MISSED ts  "a = -b = c;"  go: TS1005 @7+1 "';' expected."  lint: parses
+MISSED ts  "<T>x += 1;"  go: TS1005 @5+2 "';' expected."  lint: parses
+MISSED ts  "<T>x++ = 1;"  go: TS1005 @7+1 "';' expected."  lint: parses
+ok     ts  "/* @__PURE__ */ a = b;"  go: parses
+MISSED ts  "/* @__PURE__ */ <T>a = b;"  go: TS1005 @21+1 "';' expected."  lint: parses
+# exponent
+MISSED ts  "<A>x.y ** 2;"  go: TS17007 @0+6 "A type assertion expression is not allowed in t..."  lint: parses
+DIFF   ts  "-<A>x ** 2;"  go: TS17006 @0+5 "An unary expression with the '-' operator is no..."  lint: TS0 @0+0 ""   [bun: @6+2 "Unexpected **"]
+DIFF   ts  "typeof x ** 2;"  go: TS17006 @0+8 "An unary expression with the 'typeof' operator ..."  lint: TS0 @0+0 ""   [bun: @9+2 "Unexpected **"]
+DIFF   ts  "async function f() { await x ** 2; }"  go: TS17006 @21+7 "An unary expression with the 'await' operator i..."  lint: TS0 @0+0 ""   [bun: @29+2 "Unexpected **"]
+MISSED ts  "a ** <A>x ** 2;"  go: TS17007 @5+4 "A type assertion expression is not allowed in t..."  lint: parses
+ok     ts  "(<A>x) ** 2;"  go: parses
+DIFF   ts  "+x ** 2;"  go: TS17006 @0+2 "An unary expression with the '+' operator is no..."  lint: TS0 @0+0 ""   [bun: @3+2 "Unexpected **"]
+DIFF   ts  "!x ** 2;"  go: TS17006 @0+2 "An unary expression with the '!' operator is no..."  lint: TS0 @0+0 ""   [bun: @3+2 "Unexpected **"]
+DIFF   ts  "delete x ** 2;"  go: TS17006 @0+8 "An unary expression with the 'delete' operator ..."  lint: TS0 @0+0 ""   [bun: @9+2 "Unexpected **"]
+DIFF   ts  "void x ** 2;"  go: TS17006 @0+6 "An unary expression with the 'void' operator is..."  lint: TS0 @0+0 ""   [bun: @7+2 "Unexpected **"]
+DIFF   ts  "~x ** 2;"  go: TS17006 @0+2 "An unary expression with the '~' operator is no..."  lint: TS0 @0+0 ""   [bun: @3+2 "Unexpected **"]
+DIFF   ts  "a * -x ** 2;"  go: TS17006 @4+2 "An unary expression with the '-' operator is no..."  lint: TS0 @0+0 ""   [bun: @7+2 "Unexpected **"]
+DIFF   ts  "- /*c*/ x /*d*/ ** 2;"  go: TS17006 @0+9 "An unary expression with the '-' operator is no..."  lint: TS0 @0+0 ""   [bun: @16+2 "Unexpected **"]
+MISSED ts  "<A> x /*d*/ ** 2;"  go: TS17007 @0+5 "A type assertion expression is not allowed in t..."  lint: parses
+DIFF   ts  "-x.y[0]() ** 2;"  go: TS17006 @0+9 "An unary expression with the '-' operator is no..."  lint: TS0 @0+0 ""   [bun: @10+2 "Unexpected **"]
+DIFF   ts  "- -x ** 2;"  go: TS17006 @0+4 "An unary expression with the '-' operator is no..."  lint: TS0 @0+0 ""   [bun: @5+2 "Unexpected **"]
+MISSED ts  "await ** 2;"  go: TS17006 @0+5 "An unary expression with the 'await' operator i..."  lint: parses
+MISSED ts  "<A>x++ ** 2;"  go: TS17007 @0+6 "A type assertion expression is not allowed in t..."  lint: parses
+DIFF   ts  "-x\n** 2;"  go: TS17006 @0+2 "An unary expression with the '-' operator is no..."  lint: TS0 @0+0 ""   [bun: @3+2 "Unexpected **"]
+DIFF   ts  "y = -x ** 2;"  go: TS17006 @4+2 "An unary expression with the '-' operator is no..."  lint: TS0 @0+0 ""   [bun: @7+2 "Unexpected **"]
+MISSED ts  "<A><B>x ** 2;"  go: TS17007 @0+7 "A type assertion expression is not allowed in t..."  lint: parses
+DIFF   tsx "-x ** 2;"  go: TS17006 @0+2 "An unary expression with the '-' operator is no..."  lint: TS0 @0+0 ""   [bun: @3+2 "Unexpected **"]
+DIFF   js  "typeof x ** 2;"  go: TS17006 @0+8 "An unary expression with the 'typeof' operator ..."  lint: TS0 @0+0 ""   [bun: @9+2 "Unexpected **"]
+# super
+DIFF   ts  "class C extends B { m() { super<T>; } }"  go: TS2754 @31+3 "'super' may not use type arguments."  lint: TS0 @0+0 ""   [bun: @26+5 "Unexpected \"super\""]
+DIFF   ts  "class C extends B { m() { super <T>.x } }"  go: TS2754 @31+4 "'super' may not use type arguments."  lint: TS0 @0+0 ""   [bun: @26+5 "Unexpected \"super\""]
+EXTRA  ts  "class C extends B { m() { new super() } }"  go: parses  lint: TS0 @0+0 ""   [bun: @30+5 "Unexpected \"super\""]
+EXTRA  ts  "class C extends B { m() { new super } }"  go: parses  lint: TS0 @0+0 ""   [bun: @30+5 "Unexpected \"super\""]
+DIFF   ts  "class C extends B { m() { super } }"  go: TS1034 @32+1 "'super' must be followed by an argument list or..."  lint: TS0 @0+0 ""   [bun: @26+5 "Unexpected \"super\""]
+DIFF   ts  "class C extends B { m() { super`x` } }"  go: TS1034 @31+3 "'super' must be followed by an argument list or..."  lint: TS0 @0+0 ""   [bun: @26+5 "Unexpected \"super\""]
+DIFF   ts  "class C extends B { m() { super<T>`x` } }"  go: TS2754 @31+3 "'super' may not use type arguments."  lint: TS0 @0+0 ""   [bun: @26+5 "Unexpected \"super\""]
+DIFF   ts  "class C extends B { m() { super<T>[0] } }"  go: TS1034 @31+1 "'super' must be followed by an argument list or..."  lint: TS0 @0+0 ""   [bun: @26+5 "Unexpected \"super\""]
+DIFF   ts  "class C extends B { m() { super++ } }"  go: TS1034 @31+2 "'super' must be followed by an argument list or..."  lint: TS0 @0+0 ""   [bun: @26+5 "Unexpected \"super\""]
+DIFF   ts  "class C extends B { m() { super?.x } }"  go: TS1034 @31+2 "'super' must be followed by an argument list or..."  lint: TS0 @0+0 ""   [bun: @26+5 "Unexpected \"super\""]
+DIFF   ts  "class C extends B { m() { super!.x } }"  go: TS1034 @31+1 "'super' must be followed by an argument list or..."  lint: TS0 @0+0 ""   [bun: @26+5 "Unexpected \"super\""]
+EXTRA  ts  "function f() { super.x }"  go: parses  lint: TS0 @0+0 ""   [bun: @15+5 "Unexpected \"super\""]
+EXTRA  ts  "function f() { super() }"  go: parses  lint: TS0 @0+0 ""   [bun: @15+5 "Unexpected \"super\""]
+EXTRA  ts  "super.x;"  go: parses  lint: TS0 @0+0 ""   [bun: @0+5 "Unexpected \"super\""]
+EXTRA  ts  "class C extends B { m() { super() } }"  go: parses  lint: TS0 @0+0 ""   [bun: @26+5 "Unexpected \"super\""]
+ok     ts  "class C extends B { static x = super.y; }"  go: parses
+DIFF   ts  "class C extends B { m() { super<T } }"  go: TS1034 @31+1 "'super' must be followed by an argument list or..."  lint: TS0 @0+0 ""   [bun: @26+5 "Unexpected \"super\""]
+DIFF   ts  "class C extends B { m() { -super } }"  go: TS1034 @33+1 "'super' must be followed by an argument list or..."  lint: TS0 @0+0 ""   [bun: @27+5 "Unexpected \"super\""]
+DIFF   ts  "super"  go: TS1034 @5+0 "'super' must be followed by an argument list or..."  lint: TS0 @0+0 ""   [bun: @0+5 "Unexpected \"super\""]
+DIFF   js  "class C extends B { m() { super<T>.x } }"  go: TS1034 @31+1 "'super' must be followed by an argument list or..."  lint: TS0 @0+0 ""   [bun: @26+5 "Unexpected \"super\""]
+ok     ts  "class C extends B { m() { super\n.x } }"  go: parses
+DIFF   ts  "class C extends B { m() { super<T>\n(1) } }"  go: TS2754 @31+3 "'super' may not use type arguments."  lint: TS0 @0+0 ""   [bun: @26+5 "Unexpected \"super\""]
+# yield
+MISSED ts  "function* g() { (yield*); }"  go: TS1109 @23+1 "Expression expected."  lint: parses
+MISSED ts  "function* g() { [yield*]; }"  go: TS1109 @23+1 "Expression expected."  lint: parses
+ok     ts  "function* g() { yield*\nx; }"  go: parses
+DIFF   ts  "function* g() { yield\n* x; }"  go: TS1109 @22+1 "Expression expected."  lint: TS0 @0+0 ""   [bun: @22+1 "Unexpected *"]
+MISSED ts  "function* g() { yield*, 1; }"  go: TS1109 @22+1 "Expression expected."  lint: parses
+MISSED ts  "function* g() { x ? yield* : 1; }"  go: TS1109 @27+1 "Expression expected."  lint: parses
+same   ts  "function* g() { yield*"  go: TS1109 @22+0 "Expression expected."
+ok     ts  "function* g() { yield; yield\nx; (yield); }"  go: parses
+# element access
+DIFF   ts  "a?.[];"  go: TS1011 @4+0 "An element access expression should take an arg..."  lint: TS1109 @4+1 "Expression expected."   [bun: @4+1 "Unexpected ]"]
+DIFF   ts  "a[ ];"  go: TS1011 @2+0 "An element access expression should take an arg..."  lint: TS1109 @3+1 "Expression expected."   [bun: @3+1 "Unexpected ]"]
+DIFF   ts  "a[/*c*/];"  go: TS1011 @2+0 "An element access expression should take an arg..."  lint: TS1109 @7+1 "Expression expected."   [bun: @7+1 "Unexpected ]"]
+same   ts  "a[b + ];"  go: TS1109 @6+1 "Expression expected."
+DIFF   ts  "a[][0];"  go: TS1011 @2+0 "An element access expression should take an arg..."  lint: TS1109 @2+1 "Expression expected."   [bun: @2+1 "Unexpected ]"]
+DIFF   ts  "a[\n];"  go: TS1011 @2+0 "An element access expression should take an arg..."  lint: TS1109 @3+1 "Expression expected."   [bun: @3+1 "Unexpected ]"]
+DIFF   ts  "new A[]();"  go: TS1011 @6+0 "An element access expression should take an arg..."  lint: TS1109 @6+1 "Expression expected."   [bun: @6+1 "Unexpected ]"]
+DIFF   ts  "a[b[]];"  go: TS1011 @4+0 "An element access expression should take an arg..."  lint: TS1109 @4+1 "Expression expected."   [bun: @4+1 "Unexpected ]"]
+same   ts  "a[,];"  go: TS1109 @2+1 "Expression expected."
+DIFF   js  "a?.[];"  go: TS1011 @4+0 "An element access expression should take an arg..."  lint: TS1109 @4+1 "Expression expected."   [bun: @4+1 "Unexpected ]"]
+# using
+ok     ts  "for (using of = x;;) {}"  go: parses
+MISSED ts  "for (using of of x) {}"  go: TS1005 @17+1 "')' expected."  lint: parses
+MISSED ts  "for (using of in x) {}"  go: TS1109 @14+2 "Expression expected."  lint: parses
+ok     ts  "for (using x of y) {}"  go: parses
+ok     ts  "for (using of;;) {}"  go: parses
+EXTRA  ts  "for (await using of of []) {}"  go: parses  lint: TS0 @0+0 ""   [bun: @11+5 "\"await\" can only be used inside an \"async\" function"]
+ok     ts  "for (using of: T = x;;) {}"  go: parses
+MISSED ts  "for (using of of of) {}"  go: TS1005 @17+2 "')' expected."  lint: parses
+DIFF   ts  "for (using\nof of []) {}"  go: TS1011 @18+0 "An element access expression should take an arg..."  lint: TS1109 @18+1 "Expression expected."   [bun: @18+1 "Unexpected ]"]
+MISSED ts  "for (using of\nof []) {}"  go: TS1011 @18+0 "An element access expression should take an arg..."  lint: parses
+ok     ts  "using of = 1;"  go: parses
+EXTRA  ts  "for (using of [a]) {}"  go: parses  lint: TS1005 @14+1 "';' expected."   [bun: @14+1 "Expected \";\" but found \"[\""]
+EXTRA  ts  "for (using of of) {}"  go: parses  lint: TS1109 @16+1 "Expression expected."   [bun: @16+1 "Unexpected )"]

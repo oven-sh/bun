@@ -31,6 +31,7 @@ cp -r /workspace/wt/parser/src/js_parser src/js_parser && cp "$here"/crate/*.rs 
 python3 apply.py /tmp/b1check/src/js_parser /tmp/b1check/new
 cp zz_probe.rs src/js_parser/zz_probe.rs && printf '\n#[cfg(test)]\nmod zz_probe;\n' >> src/js_parser/lib.rs
 /workspace/tools/lk sh -c 'python3 typecheck.py lib | head -1; python3 typecheck.py test | head -1; python3 testbin.py link 8 | head -1; ./out-testbin/bun_js_parser 2>&1 | tail -2; sh clippy-scratch.sh /workspace/wt/parser /tmp/b1check'
-# A lint parse that fails prints its messages: 3 lines differ for the directives and 4 for the pragmas (saved beside this file).
+# Only a source that Bun does not parse differs: 3 lines for the directives (a stray @ts-ignore after a comment, a comment without its end) and 1 for the pragmas (a #! line after a line break).
+# apply.py lets the parse go on after TS1084 and TS1453, as the reference does; apply-a.py with crate-a/pragmas.rs is the variant that fails the parse there.
 /tmp/b1dp/oracle-hex/directives/oracle /tmp/b1dp/rows-d.hex | diff rows-d.lint.txt - | grep -c '^[<>]' || true
 /tmp/b1dp/oracle-hex/pragmas/oracle /tmp/b1dp/rows-p.hex | grep -v '^pragma ' | diff rows-p.lint.txt - | grep -c '^[<>]' || true

@@ -368,7 +368,9 @@ impl<'p, 'a> Context<'p, 'a> {
         }
         let key = key_of(ExprId::of(expr));
         let records: &'p [TypeArguments] = &self.parsed.sidecar.generics.type_arguments;
-        let to = self.type_arguments.partition_point(|(other, _)| *other <= key);
+        let to = self
+            .type_arguments
+            .partition_point(|(other, _)| *other <= key);
         let (other, index) = self.type_arguments.get(to.checked_sub(1)?)?;
         if *other != key {
             return None;
@@ -571,7 +573,12 @@ impl<'p, 'a> Context<'p, 'a> {
         let mut log = Log::init();
         let mut tokens = Tokens::new(&mut log, self.source, self.arena, &spans, from);
         // ESLint's own parser has a word as what it spells; typescript-eslint has its text.
-        tokens::case_key(&mut tokens, self.text(), &self.return_types, !self.typescript)
+        tokens::case_key(
+            &mut tokens,
+            self.text(),
+            &self.return_types,
+            !self.typescript,
+        )
     }
 
     /// Where the clause at `index` of `node` starts, which has a test: where the parser says, else at the `case` that is the token before the test, else at the test.

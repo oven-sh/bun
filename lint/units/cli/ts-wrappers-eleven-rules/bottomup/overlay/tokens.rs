@@ -337,8 +337,8 @@ pub(crate) fn case_key(
                 T::TColon => {
                     // The `:` before the return type of an arrow function or of a function ends nothing.
                     ahead = tokens.next();
-                    let is_return_type = ahead
-                        .is_some_and(|next| return_types.binary_search(&next.start).is_ok());
+                    let is_return_type =
+                        ahead.is_some_and(|next| return_types.binary_search(&next.start).is_ok());
                     if is_return_type {
                     } else if waiting > 0 {
                         waiting -= 1;

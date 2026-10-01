@@ -57,13 +57,12 @@ fn run(mode: &str, name: &str, text: &'static [u8], out: &mut String) {
         Err(_) => false,
     };
     out.push_str(&lines);
-    if !parsed {
-        for msg in &log.msgs {
-            let (offset, length) = msg.data.location.as_ref().map_or((0, 0), |l| (l.offset, l.length));
-            match msg.code() {
-                Some(code @ (1084 | 1453)) => writeln!(out, "diag TS{code} {}..{}", offset, offset + length).unwrap(),
-                code => writeln!(out, "PARSE-ERROR {code:?} {}..{} {}", offset, offset + length, bstr::BStr::new(&msg.data.text)).unwrap(),
-            }
+    for msg in &log.msgs {
+        let (offset, length) = msg.data.location.as_ref().map_or((0, 0), |l| (l.offset, l.length));
+        match msg.code() {
+            Some(code @ (1084 | 1453)) if mode == "p" => writeln!(out, "diag TS{code} {}..{}", offset, offset + length).unwrap(),
+            code if !parsed => writeln!(out, "PARSE-ERROR {code:?} {}..{} {}", offset, offset + length, bstr::BStr::new(&msg.data.text)).unwrap(),
+            _ => {}
         }
     }
 }

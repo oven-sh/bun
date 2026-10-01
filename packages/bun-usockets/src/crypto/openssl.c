@@ -1950,7 +1950,7 @@ static inline int ssl_gone(struct us_socket_t *s) {
   return us_socket_is_closed(s) || s->ssl == NULL;
 }
 
-/* The `read` bytes came before the request, so they go first, as at a close_notify. Returns NULL when a callback closed the socket. */
+/* The `read` bytes came before the request, so they go first, as at a close_notify. A callback can close the socket: check ssl_gone() on the result. */
 static struct us_socket_t *ssl_refuse_renegotiation(struct us_socket_t *s, int over_limit, int read) {
   struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
   /* Both taken now: the callbacks below run JS, which can change the queue and end the socket. */
@@ -1959,10 +1959,10 @@ static struct us_socket_t *ssl_refuse_renegotiation(struct us_socket_t *s, int o
   ERR_clear_error();
   s->ssl_handshake_state = HANDSHAKE_COMPLETED;
   ssl_flush_pending_events(s);
-  if (ssl_gone(s)) return NULL;
+  if (ssl_gone(s)) return s;
   if (read) {
     s = us_dispatch_data(s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
-    if (!s || ssl_gone(s)) return NULL;
+    if (!s || ssl_gone(s)) return s;
   }
   /* A protocol failure, not the X509 verdict of the session. After our own close_notify or FIN the request has no answer. */
   if (!was_shut_down) {
@@ -1975,7 +1975,7 @@ static struct us_socket_t *ssl_refuse_renegotiation(struct us_socket_t *s, int o
     loop_ssl_data->ssl_last_fatal_error_owner = s;
   }
   ssl_trigger_handshake(s, 0);
-  return ssl_gone(s) ? NULL : s;
+  return s;
 }
 
 static int ssl_renegotiate(struct us_socket_t *s, int *over_limit) {
@@ -2505,7 +2505,7 @@ restart:
           int over_limit;
           if (ssl_renegotiate(s, &over_limit)) continue;
           s = ssl_refuse_renegotiation(s, over_limit, read);
-          if (!s) return NULL;
+          if (!s || ssl_gone(s)) return NULL;
           err = SSL_ERROR_SSL;
         } else if (err == SSL_ERROR_ZERO_RETURN) {
           /* Remote close_notify. A NewSessionTicket that rode in ahead of the

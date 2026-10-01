@@ -455,7 +455,12 @@ const pingPongRenegotiationServer = /* js */ `
 
 // Renegotiates 4 times in a row when the first request arrives, so the client refuses the last one while it waits
 // for an answer. An HTTP request gets its response after the 4 renegotiations. A RESP command (Valkey) gets none.
+// For "/response-first" a complete keep-alive response leaves ahead of request 4. The process prints two ports:
+// 1. The server.
+// 2. An HTTP CONNECT proxy to the server. It forwards whole records, and it gives the client that response and
+//    request 4 in one write, so one read holds both.
 const backToBackRenegotiationServer = /* js */ `
+  const net = require("net");
   const tls = require("tls");
   tls.CLIENT_RENEG_LIMIT = 100;
   const server = tls.createServer(
@@ -469,8 +474,10 @@ const backToBackRenegotiationServer = /* js */ `
         if (isHttp && !head.includes("\\r\\n\\r\\n")) return;
         socket.off("data", onHead);
         socket.resume();
+        const responseFirst = head.startsWith("GET /response-first ");
         let asked = 0;
         (function ask() {
+          if (asked === 3 && responseFirst) socket.write("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nok");
           if (asked === 4) {
             if (isHttp) socket.end("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nok");
             return;
@@ -483,7 +490,52 @@ const backToBackRenegotiationServer = /* js */ `
       });
     },
   );
-  server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+
+  const APPLICATION_DATA = 23;
+  const CHANGE_CIPHER_SPEC = 20;
+  const proxy = net.createServer(client => {
+    client.on("error", () => {});
+    let request = Buffer.alloc(0);
+    client.on("data", function onConnect(chunk) {
+      request = Buffer.concat([request, chunk]);
+      const end = request.indexOf("\\r\\n\\r\\n");
+      if (end === -1) return;
+      client.off("data", onConnect);
+      const upstream = net.connect(server.address().port, "127.0.0.1");
+      upstream.on("error", () => {});
+      client.on("close", () => upstream.destroy());
+      upstream.on("close", () => client.destroy());
+      client.write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n");
+      upstream.write(request.subarray(end + 4));
+      client.on("data", chunk => upstream.write(chunk));
+      // The server finished 4 handshakes when its 4th ChangeCipherSpec passed. The application data record after
+      // that is the response. It waits here for the record behind it.
+      let fromServer = Buffer.alloc(0);
+      let handshakes = 0;
+      let held;
+      upstream.on("data", chunk => {
+        fromServer = Buffer.concat([fromServer, chunk]);
+        while (fromServer.length >= 5 && fromServer.length >= 5 + fromServer.readUInt16BE(3)) {
+          const record = fromServer.subarray(0, 5 + fromServer.readUInt16BE(3));
+          fromServer = fromServer.subarray(record.length);
+          if (record[0] === CHANGE_CIPHER_SPEC) handshakes++;
+          if (held) {
+            client.write(Buffer.concat([held, record]));
+            held = undefined;
+            handshakes = 0;
+          } else if (handshakes === 4 && record[0] === APPLICATION_DATA) {
+            held = record;
+          } else {
+            client.write(record);
+          }
+        }
+      });
+    });
+  });
+
+  server.listen(0, "127.0.0.1", () =>
+    proxy.listen(0, "127.0.0.1", () => console.log(server.address().port, proxy.address().port)),
+  );
 `;
 
 // A TCP relay in front of a TLS 1.2 server. The relay forwards whole records and stops reading a client for good
@@ -532,24 +584,28 @@ let pingPongPort: number;
 let sameReadPort: number;
 let afterEndPort: number;
 let backToBackPort: number;
+let responseFirstProxyPort: number;
 let stalledUploadPort: number;
 const refusalServers: Subprocess[] = [];
 beforeAll(async () => {
-  [[pingPongPort, sameReadPort, afterEndPort], [backToBackPort], [stalledUploadPort]] = await Promise.all(
-    [pingPongRenegotiationServer, backToBackRenegotiationServer, stalledUploadRenegotiationServer].map(async source => {
-      const server = Bun.spawn({
-        cmd: ["node", "-e", source],
-        stdout: "pipe",
-        stderr: "inherit",
-        stdin: "ignore",
-        env: { ...bunEnv, SERVER_CERT: tls.cert, SERVER_KEY: tls.key },
-      });
-      refusalServers.push(server);
-      const { value, done } = await server.stdout.getReader().read();
-      if (done) throw new Error("the server exited before it printed its ports");
-      return new TextDecoder().decode(value).trim().split(" ").map(Number);
-    }),
-  );
+  [[pingPongPort, sameReadPort, afterEndPort], [backToBackPort, responseFirstProxyPort], [stalledUploadPort]] =
+    await Promise.all(
+      [pingPongRenegotiationServer, backToBackRenegotiationServer, stalledUploadRenegotiationServer].map(
+        async source => {
+          const server = Bun.spawn({
+            cmd: ["node", "-e", source],
+            stdout: "pipe",
+            stderr: "inherit",
+            stdin: "ignore",
+            env: { ...bunEnv, SERVER_CERT: tls.cert, SERVER_KEY: tls.key },
+          });
+          refusalServers.push(server);
+          const { value, done } = await server.stdout.getReader().read();
+          if (done) throw new Error("the server exited before it printed its ports");
+          return new TextDecoder().decode(value).trim().split(" ").map(Number);
+        },
+      ),
+    );
 });
 afterAll(() => {
   for (const server of refusalServers) server.kill();
@@ -789,6 +845,47 @@ it("fetch does not report a certificate error when the client refuses a renegoti
     (err: NodeJS.ErrnoException) => `${err.name} ${err.code}`,
   );
   expect(outcome).toBe("TypeError EPROTO");
+});
+
+// The response of "/response-first" and request 4 arrive in one read of the proxy tunnel. The response is complete,
+// so each fetch succeeds. The refusal then closes the tunnel: it must not go back to the pool for the next fetch.
+// In a child process: a report to a tunnel in the pool uses freed memory, which only a sanitizer build shows.
+it("fetch through a proxy gets the response that arrives in the same read as a refused renegotiation", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        for (let i = 0; i < 2; i++) {
+          const res = await fetch("https://localhost:" + process.env.SERVER_PORT + "/response-first", {
+            proxy: "http://127.0.0.1:" + process.env.PROXY_PORT,
+            tls: { ca: process.env.SERVER_CERT },
+          });
+          console.log(res.status, await res.text());
+        }
+      `,
+    ],
+    env: {
+      ...bunEnv,
+      SERVER_PORT: String(backToBackPort),
+      PROXY_PORT: String(responseFirstProxyPort),
+      SERVER_CERT: tls.cert,
+      // An ambient NO_PROXY applies to an explicit `proxy` option too and would send the request direct.
+      NO_PROXY: "",
+      no_proxy: "",
+      ASAN_OPTIONS: ((bunEnv.ASAN_OPTIONS ?? "") + ":symbolize=0").replace(/^:/, ""),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, exitCode, signalCode: proc.signalCode, stderr }).toEqual({
+    stdout: "200 ok\n200 ok\n",
+    exitCode: 0,
+    signalCode: null,
+    stderr: expect.any(String),
+  });
 });
 
 // In a child process: with no error to report, an assert-enabled build aborts when it makes an Error with no message.

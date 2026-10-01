@@ -1130,6 +1130,8 @@ pub mod ssl_wrapper {
             boring_sys::ERR_clear_error();
             self.flags
                 .set_handshake_state(HandshakeState::HandshakeCompleted);
+            // As for a fatal read: an owner that finishes its request in the data callback must close, not keep, this wrapper.
+            self.flags.set_fatal_error(true);
             if !decrypted.is_empty() {
                 self.trigger_data_callback(decrypted);
                 if self.ssl.get().is_none() || self.flags.closed_notified() {

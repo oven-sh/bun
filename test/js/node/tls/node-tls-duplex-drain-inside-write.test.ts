@@ -48,6 +48,8 @@ test("a write queued before the handshake goes out once over a Duplex that emits
   const { promise: ended, resolve, reject } = Promise.withResolvers();
   const server = new tls.TLSSocket(serverSide, { isServer: true, key, cert });
   server.on("error", reject);
+  // A no-op after 'end' has resolved.
+  server.on("close", () => reject(new Error("the server socket closed before 'end'")));
   server.on("data", chunk => received.push(chunk));
   server.on("end", () => {
     server.end();
@@ -86,6 +88,9 @@ test("an HTTP/2 request completes over a Duplex that emits 'drain' from write()"
   raw.on("data", chunk => transport.push(chunk));
 
   const { promise, resolve, reject } = Promise.withResolvers();
+  // The 'close' rejections are no-ops after the response has resolved.
+  raw.on("error", reject);
+  raw.on("close", () => reject(new Error("the connection closed before the response ended")));
   // A second copy of the client preface reaches the server as a protocol error.
   server.on("sessionError", reject);
   const session = http2.connect("https://localhost", {
@@ -94,6 +99,7 @@ test("an HTTP/2 request completes over a Duplex that emits 'drain' from write()"
   session.on("error", reject);
   const request = session.request({ ":path": "/" });
   request.on("error", reject);
+  request.on("close", () => reject(new Error("the request closed before its response ended")));
   request.setEncoding("utf8");
   request.on("response", headers => {
     let body = "";

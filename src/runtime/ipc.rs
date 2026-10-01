@@ -894,6 +894,9 @@ enum ContinueSendReason {
     OnWritable,
 }
 
+/// The most bytes one write request carries: the transport reports the count it took as an `i32`.
+const MAX_WRITE_LEN: usize = i32::MAX as usize;
+
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct SendQueue {
     ref_count: Cell<u32>,
@@ -1536,6 +1539,7 @@ impl SendQueue {
         enum Done {
             AwaitAck,
             Completed(SendHandle),
+            Capped,
             Partial,
             NoProgress,
             Error,
@@ -1543,39 +1547,41 @@ impl SendQueue {
         let done = self.queue.with_mut(|queue| {
             let first = &mut queue[0];
             let to_send_len = first.data.list.len() - first.data.cursor;
-            // `n` is the write count from the socket (at most i32::MAX per write).
-            // The coalesced item can be larger than that, so compare as usize.
-            match usize::try_from(n) {
-                Ok(written) if written == to_send_len => {
-                    if first.handle.is_some() {
-                        // the message was fully written, but it had a handle.
-                        // we must wait for ACK or NACK before sending any more messages.
-                        let item = queue.remove(0);
-                        self.waiting_for_ack.with_mut(|w| {
-                            if w.is_some() {
-                                log!("[error] already waiting for ack. this should never happen.");
-                            }
-                            // shift the item off the queue and move it to waiting_for_ack
-                            *w = Some(item);
-                        });
-                        Done::AwaitAck
-                    } else {
-                        // the message was fully sent, but there may be more items in the queue.
-                        // shift the queue and try to send the next item immediately.
-                        Done::Completed(queue.remove(0))
-                    }
+            let Ok(written) = usize::try_from(n) else {
+                return Done::Error;
+            };
+            if written == to_send_len {
+                if first.handle.is_some() {
+                    // the message was fully written, but it had a handle.
+                    // we must wait for ACK or NACK before sending any more messages.
+                    let item = queue.remove(0);
+                    self.waiting_for_ack.with_mut(|w| {
+                        if w.is_some() {
+                            log!("[error] already waiting for ack. this should never happen.");
+                        }
+                        // shift the item off the queue and move it to waiting_for_ack
+                        *w = Some(item);
+                    });
+                    Done::AwaitAck
+                } else {
+                    // the message was fully sent, but there may be more items in the queue.
+                    // shift the queue and try to send the next item immediately.
+                    Done::Completed(queue.remove(0))
                 }
-                Ok(0) => {
-                    // no bytes written; wait for writable
-                    Done::NoProgress
-                }
-                Ok(written) if written < to_send_len => {
-                    // the item was partially sent; update the cursor and wait for writable to send the rest
-                    // (if we tried to send a handle, a partial write means the handle wasn't sent yet.)
-                    first.data.cursor += written;
+            } else if written > 0 && written < to_send_len {
+                // the item was partially sent; update the cursor and wait for writable to send the rest
+                // (if we tried to send a handle, a partial write means the handle wasn't sent yet.)
+                first.data.cursor += written;
+                if written == MAX_WRITE_LEN {
+                    Done::Capped
+                } else {
                     Done::Partial
                 }
-                _ => Done::Error,
+            } else if written == 0 {
+                // no bytes written; wait for writable
+                Done::NoProgress
+            } else {
+                Done::Error
             }
         });
         match done {
@@ -1586,13 +1592,11 @@ impl SendQueue {
                 item.complete(&global_this); // call the callback & deinit
                 self.continue_send(&global_this, ContinueSendReason::OnWritable);
             }
-            Done::Partial => {
-                // libuv completes a request in full or fails. A partial write is
-                // the i32::MAX cap in `write`, and no writable event follows it.
-                #[cfg(windows)]
+            Done::Capped => {
+                // The transport took a whole capped request, so no writable event follows.
                 self.continue_send(&global_this, ContinueSendReason::OnWritable);
             }
-            Done::NoProgress => {}
+            Done::Partial | Done::NoProgress => {}
             Done::Error => {
                 // error. close socket.
                 self.close_socket(CloseReason::Failure, CloseFrom::User);
@@ -1716,7 +1720,7 @@ impl SendQueue {
                 let first = &queue[0];
                 let data = &first.data.list[first.data.cursor..];
                 log!("SendQueue#write len {}", data.len());
-                let write_len = data.len().min(i32::MAX as usize);
+                let write_len = data.len().min(MAX_WRITE_LEN);
                 Box::from(&data[0..write_len])
             });
 
@@ -1771,6 +1775,7 @@ impl SendQueue {
                 let first = &queue[0];
                 let data = &first.data.list[first.data.cursor..];
                 log!("SendQueue#write len {}", data.len());
+                let data = &data[..data.len().min(MAX_WRITE_LEN)];
                 if let Some(fd_unwrapped) = fd {
                     socket.write_fd(data, fd_unwrapped.native())
                 } else {

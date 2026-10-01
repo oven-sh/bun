@@ -1,0 +1,358 @@
+bench/react-hello-world/react-hello-world.node.js(4133,78): error valid-typeof: Invalid typeof comparison value.
+bench/react-hello-world/react-hello-world.node.js(4139,81): error valid-typeof: Invalid typeof comparison value.
+bench/react-hello-world/react-hello-world.node.js(15288,82): error valid-typeof: Invalid typeof comparison value.
+bench/react-hello-world/react-hello-world.node.js(15294,85): error valid-typeof: Invalid typeof comparison value.
+bench/react-hello-world/react-hello-world.node.js(16363,16): error no-self-assign: 't' is assigned to itself.
+bench/react-hello-world/react-hello-world.node.js(18140,13): error no-self-assign: 't' is assigned to itself.
+bench/react-hello-world/react-hello-world.node.js(18148,13): error no-self-assign: 't' is assigned to itself.
+test/bundler/bytecode-portability/builtin.js(8,31): error TS1005: 'class' expected.
+test/bundler/bytecode-portability/features.js(197,12): error no-self-assign: 'o[k]' is assigned to itself.
+test/bundler/bytecode-portability/features.js(289,21): error no-sparse-arrays: Unexpected comma in middle of array.
+test/bundler/bytecode-portability/records.js(55,21): error no-sparse-arrays: Unexpected comma in middle of array.
+test/bundler/bytecode-portability/records.js(55,26): error no-sparse-arrays: Unexpected comma in middle of array.
+test/bundler/bytecode-portability/records.js(55,28): error no-sparse-arrays: Unexpected comma in middle of array.
+test/bundler/bytecode-portability/records.js(56,24): error no-sparse-arrays: Unexpected comma in middle of array.
+test/bundler/bytecode-portability/records.js(337,3): error no-debugger: Unexpected 'debugger' statement.
+test/bundler/fixtures/bytecode-order-names.js(51,7): error no-debugger: Unexpected 'debugger' statement.
+test/bundler/fixtures/jsx-warning/index.jsx(1,22): warning syntax: "key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.
+test/bundler/transpiler/fixtures/lots-of-for-loop.js(30,10): error syntax: Maximum call stack size exceeded
+test/bundler/transpiler/react-compiler-fixtures/allow-ref-initialization-undefined.js(4,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/allow-ref-initialization-undefined.js(4,15): error TS1005: '=>' expected.
+test/bundler/transpiler/react-compiler-fixtures/allow-ref-initialization.js(4,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/allow-ref-initialization.js(4,15): error TS1005: '=>' expected.
+test/bundler/transpiler/react-compiler-fixtures/allow-ref-type-cast-in-render.js(8,21): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/allow-ref-type-cast-in-render.js(8,29): error syntax: This constant must be initialized
+test/bundler/transpiler/react-compiler-fixtures/allow-ref-type-cast-in-render.js(8,29): error TS1003: Identifier expected.
+test/bundler/transpiler/react-compiler-fixtures/component-declaration-basic.flow.js(2,26): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/component-declaration-basic.flow.js(2,33): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/component-declaration-basic.flow.js(2,35): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/component-declaration-basic.flow.js(2,41): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/component-in-object-method-body.flow.js(6,13): error TS1005: '{' expected.
+test/bundler/transpiler/react-compiler-fixtures/component-in-object-method-body.flow.js(6,34): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/component-in-object-method-body.flow.js(7,17): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/component-in-object-method-body.flow.js(7,25): error TS1005: '=>' expected.
+test/bundler/transpiler/react-compiler-fixtures/constant-propagation-unary-number.js(10,9): error no-compare-neg-zero: Do not use the '===' operator to compare against -0.
+test/bundler/transpiler/react-compiler-fixtures/debugger-memoized.js(3,3): error no-debugger: Unexpected 'debugger' statement.
+test/bundler/transpiler/react-compiler-fixtures/debugger.js(2,3): error no-debugger: Unexpected 'debugger' statement.
+test/bundler/transpiler/react-compiler-fixtures/debugger.js(4,5): error no-debugger: Unexpected 'debugger' statement.
+test/bundler/transpiler/react-compiler-fixtures/debugger.js(7,7): error no-debugger: Unexpected 'debugger' statement.
+test/bundler/transpiler/react-compiler-fixtures/debugger.js(10,3): error no-debugger: Unexpected 'debugger' statement.
+test/bundler/transpiler/react-compiler-fixtures/destructuring-default-at-array-hole.js(9,21): error no-sparse-arrays: Unexpected comma in middle of array.
+test/bundler/transpiler/react-compiler-fixtures/destructuring-with-typecast-as-default-value.flow.js(3,9): error syntax: This constant must be initialized
+test/bundler/transpiler/react-compiler-fixtures/destructuring-with-typecast-as-default-value.flow.js(3,17): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/destructuring-with-typecast-as-default-value.flow.js(3,19): error TS1005: ']' expected.
+test/bundler/transpiler/react-compiler-fixtures/destructuring-with-typecast-as-default-value.flow.js(3,24): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/destructuring-with-typecast-as-default-value.flow.js(3,32): error TS1109: Expression expected.
+test/bundler/transpiler/react-compiler-fixtures/effect-derived-computations/effect-with-cleanup-function-depending-on-derived-computation-value.js(5,24): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/effect-derived-computations/effect-with-cleanup-function-depending-on-derived-computation-value.js(5,26): error TS1005: '{' expected.
+test/bundler/transpiler/react-compiler-fixtures/effect-derived-computations/effect-with-cleanup-function-depending-on-derived-computation-value.js(5,30): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/error.bug-hir_loc_diff_2.js(8,13): error TS1005: 'from' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.invalid-assign-current-inferred-ref-during-render.js(4,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.invalid-assign-current-inferred-ref-during-render.js(4,21): error TS1005: '=>' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.invalid-assing-to-ref-current-in-render.js(3,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.invalid-assing-to-ref-current-in-render.js(3,17): error TS1005: '=>' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.invalid-ref-access-render-unary.js(4,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.invalid-ref-access-render-unary.js(4,15): error TS1005: '=>' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.invalid-ref-initialization-unary-not.js(4,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.invalid-ref-initialization-unary-not.js(4,15): error TS1005: '=>' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.invalid-uncalled-function-capturing-mutable-values-memoizes-with-captures-values.js(18,6): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.invalid-uncalled-function-capturing-mutable-values-memoizes-with-captures-values.js(18,24): error syntax: Expected identifier after "TInput:" in namespaced JSX name
+test/bundler/transpiler/react-compiler-fixtures/error.ref-initialization-arbitrary.js(6,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.ref-initialization-arbitrary.js(6,15): error TS1005: '=>' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.ref-initialization-call-2.js(4,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.ref-initialization-call-2.js(4,15): error TS1005: '=>' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.ref-initialization-call.js(4,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.ref-initialization-call.js(4,15): error TS1005: '=>' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.ref-initialization-linear.js(4,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.ref-initialization-linear.js(4,15): error TS1005: '=>' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.ref-initialization-nonif.js(4,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.ref-initialization-nonif.js(4,15): error TS1005: '=>' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.ref-initialization-other.js(4,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.ref-initialization-other.js(4,15): error TS1005: '=>' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.ref-initialization-post-access-2.js(4,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.ref-initialization-post-access-2.js(4,15): error TS1005: '=>' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.ref-initialization-post-access.js(4,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.ref-initialization-post-access.js(4,15): error TS1005: '=>' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-hir_fn_type_mismatch.js(7,26): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-hir_fn_type_mismatch.js(7,38): error TS1005: '=>' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-hir_fn_type_mismatch_1.js(8,13): error TS1005: 'from' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-hir_fn_type_mismatch_2.js(8,13): error TS1005: 'from' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-hir_jsxtext_nbsp.js(7,26): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-hir_jsxtext_nbsp.js(7,46): error TS1005: '=>' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-hir_loc_diff_1.js(17,44): error TS1005: '(' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-hir_loc_diff_1.js(18,16): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-hir_loc_diff_1.js(18,25): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-hir_silent_rust_fail.js(8,13): error TS1005: 'from' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-hir_unsupported_node_format.js(7,3): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-hir_unsupported_node_format.js(7,73): error TS1109: Expression expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-nested-method-calls-lower-property-load-into-temporary.js(4,20): error no-empty-pattern: Unexpected empty object pattern.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-pattern2_type_to_object.js(11,26): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-pattern2_type_to_object.js(11,38): error TS1005: '=>' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-pattern3_type_to_poly.js(8,47): error TS1005: '(' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-pattern3_type_to_poly.js(8,55): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-pattern3_type_to_poly.js(8,63): error TS1005: '{' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-pattern3_type_to_poly.js(8,69): error TS1109: Expression expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-repro-missed-memoization-from-capture-in-invoked-function-inferred-as-mutation.js(5,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-repro-missed-memoization-from-capture-in-invoked-function-inferred-as-mutation.js(5,23): error TS1005: '=>' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-repro-missed-memoization-from-inferred-mutation-in-logger.js(6,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-repro-missed-memoization-from-inferred-mutation-in-logger.js(6,25): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-repro-missed-memoization-from-inferred-mutation-in-logger.js(19,11): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-repro-missed-memoization-from-inferred-mutation-in-logger.js(19,13): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-repro-missed-memoization-from-inferred-mutation-in-logger.js(19,19): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-repro-missed-memoization-from-inferred-mutation-in-logger.js(19,21): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-round2_float_precision.js(6,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-round2_float_precision.js(6,26): error TS1005: '=>' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-round2_fn_type_component_to_other.js(6,26): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-round2_fn_type_component_to_other.js(7,11): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-round2_fn_type_component_to_other.js(7,13): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-round2_fn_type_component_to_other.js(7,18): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-round2_id_numbering.js(6,42): error TS1005: '(' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-round2_id_numbering.js(7,12): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-round2_id_numbering.js(7,20): error TS1005: '{' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-round2_id_numbering.js(8,1): error TS1109: Expression expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-round2_identifier_diff.js(6,44): error TS1005: '(' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-round2_identifier_diff.js(6,56): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-round2_identifier_diff.js(6,66): error TS1109: Expression expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-round2_severity_diff.js(7,7): error syntax: The constant "preloadedRequests" must be initialized
+test/bundler/transpiler/react-compiler-fixtures/error.todo-round2_severity_diff.js(7,24): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-round2_severity_diff.js(7,30): error TS1109: Expression expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-update-expression-context-variable-via-type-annotation.js(2,25): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/error.todo-update-expression-context-variable-via-type-annotation.js(2,56): error TS1109: Expression expected.
+test/bundler/transpiler/react-compiler-fixtures/flow-enum-inline.js(3,3): error syntax: Unexpected enum
+test/bundler/transpiler/react-compiler-fixtures/flow-reserved-word-as-identifier.flow.js(3,19): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/flow-reserved-word-as-identifier.flow.js(3,55): error TS1109: Expression expected.
+test/bundler/transpiler/react-compiler-fixtures/gating/component-syntax-ref-gating.flow.js(5,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/gating/component-syntax-ref-gating.flow.js(5,18): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/gating/component-syntax-ref-gating.flow.js(5,20): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/gating/component-syntax-ref-gating.flow.js(5,25): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/gating/gating-with-hoisted-type-reference.flow.js(4,6): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/gating/gating-with-hoisted-type-reference.flow.js(4,12): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/hir_id_numbering.js(5,36): error TS1005: '(' expected.
+test/bundler/transpiler/react-compiler-fixtures/hir_id_numbering.js(5,38): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/hir_id_numbering.js(5,39): error TS1005: '{' expected.
+test/bundler/transpiler/react-compiler-fixtures/hir_id_numbering.js(5,40): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/hir_loc_diff.js(6,23): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/hir_loc_diff.js(6,27): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/hoist-destruct.js(2,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/hoist-destruct.js(2,17): error TS1005: '=>' expected.
+test/bundler/transpiler/react-compiler-fixtures/hoisting-recursive-call-within-lambda.js(1,14): error no-empty-pattern: Unexpected empty object pattern.
+test/bundler/transpiler/react-compiler-fixtures/hoisting-skip-type-alias-declarations.js(2,6): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/hoisting-skip-type-alias-declarations.js(2,11): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/hoisting-within-lambda.js(1,20): error no-empty-pattern: Unexpected empty object pattern.
+test/bundler/transpiler/react-compiler-fixtures/holey-array-expr.js(4,12): error no-sparse-arrays: Unexpected comma in middle of array.
+test/bundler/transpiler/react-compiler-fixtures/hook-declaration-basic.flow.js(2,21): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/hook-declaration-basic.flow.js(2,31): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/hook-declaration-basic.flow.js(2,33): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/hook-declaration-basic.flow.js(2,39): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/incompatible-destructuring-kinds.js(4,20): error no-empty-pattern: Unexpected empty object pattern.
+test/bundler/transpiler/react-compiler-fixtures/infer-functions-component-with-ref-arg.js(3,14): error no-empty-pattern: Unexpected empty object pattern.
+test/bundler/transpiler/react-compiler-fixtures/infer-types-through-type-cast.flow.js(8,15): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/infer-types-through-type-cast.flow.js(8,17): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/infer-types-through-type-cast.flow.js(8,20): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/logical-reorder.flow.js(1,1): error syntax: Unexpected "..."
+test/bundler/transpiler/react-compiler-fixtures/logical-reorder.flow.js(5,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/logical-reorder.flow.js(5,23): error syntax: Unexpected "="
+test/bundler/transpiler/react-compiler-fixtures/logical-reorder.flow.js(5,37): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/match-expr-captured-var.flow.js(6,26): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/match-expr-captured-var.flow.js(6,48): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/match-expr-captured-var.flow.js(6,62): error TS1005: ':' expected.
+test/bundler/transpiler/react-compiler-fixtures/match-expr-captured-var.flow.js(6,65): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/match-expr-captured-var.flow.js(6,73): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/match-expr-captured-var.flow.js(7,23): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/match-expr-captured-var.flow.js(8,9): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/match-expr-captured-var.flow.js(10,3): error TS1109: Expression expected.
+test/bundler/transpiler/react-compiler-fixtures/match-expr-jsx-spread.flow.js(7,26): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/match-expr-jsx-spread.flow.js(8,8): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/match-expr-jsx-spread.flow.js(8,28): error TS1005: ':' expected.
+test/bundler/transpiler/react-compiler-fixtures/match-expr-jsx-spread.flow.js(9,3): error TS1109: Expression expected.
+test/bundler/transpiler/react-compiler-fixtures/match-expr-multi-gen-bindings.flow.js(7,26): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/match-expr-multi-gen-bindings.flow.js(8,4): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/match-expr-multi-gen-bindings.flow.js(8,18): error TS1005: ':' expected.
+test/bundler/transpiler/react-compiler-fixtures/match-expr-multi-gen-bindings.flow.js(9,4): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/match-expr-multi-gen-bindings.flow.js(9,6): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/match-expr-outlined-jsx.flow.js(8,26): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/match-expr-outlined-jsx.flow.js(9,7): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/match-expr-outlined-jsx.flow.js(9,26): error TS1005: ':' expected.
+test/bundler/transpiler/react-compiler-fixtures/match-expr-outlined-jsx.flow.js(10,8): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/match-expr-outlined-jsx.flow.js(11,1): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/match-expression-with-tuple-and-early-return.js(12,21): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/match-expression-with-tuple-and-early-return.js(12,48): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/match-expression-with-tuple-and-early-return.js(12,57): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/match-stmt-self-ref-const.flow.js(7,26): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/match-stmt-self-ref-const.flow.js(7,49): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/match-stmt-self-ref-const.flow.js(7,51): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/match-stmt-self-ref-const.flow.js(7,57): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/member-inc.js(3,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/member-inc.js(3,17): error TS1005: '=>' expected.
+test/bundler/transpiler/react-compiler-fixtures/new-mutability/nullable-objects-assume-invoked-direct-call.js(5,31): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/new-mutability/nullable-objects-assume-invoked-direct-call.js(5,55): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/new-mutability/repro-compiler-infinite-loop.js(5,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/new-mutability/repro-compiler-infinite-loop.js(5,23): error TS1005: '=>' expected.
+test/bundler/transpiler/react-compiler-fixtures/new-mutability/repro-internal-compiler-shared-mutablerange-bug.js(2,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/new-mutability/repro-internal-compiler-shared-mutablerange-bug.js(3,17): error TS1109: Expression expected.
+test/bundler/transpiler/react-compiler-fixtures/new-mutability/repro-jsx-captures-value-mutated-later.js(5,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/new-mutability/repro-jsx-captures-value-mutated-later.js(5,21): error TS1005: '=>' expected.
+test/bundler/transpiler/react-compiler-fixtures/new-mutability/repro-mutate-new-set-of-frozen-items-in-callback.js(4,60): error TS1109: Expression expected.
+test/bundler/transpiler/react-compiler-fixtures/panresponder-ref-in-callback.js(4,26): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/panresponder-ref-in-callback.js(4,39): error TS1005: '=>' expected.
+test/bundler/transpiler/react-compiler-fixtures/pattern1a_type_to_primitive.js(5,25): error TS1005: '=>' expected.
+test/bundler/transpiler/react-compiler-fixtures/pattern4_bare_type.js(5,33): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/pattern4_bare_type.js(5,35): error TS1005: '{' expected.
+test/bundler/transpiler/react-compiler-fixtures/pattern4_bare_type.js(5,41): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/preserve-memo-validation/error.useMemo-with-refs.flow.js(4,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/preserve-memo-validation/error.useMemo-with-refs.flow.js(4,43): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/preserve-memo-validation/error.useMemo-with-refs.flow.js(10,1): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/reassign-variable-in-usememo.js(2,8): error syntax: Unexpected hook
+test/bundler/transpiler/react-compiler-fixtures/repeated-dependencies-more-precise.js(11,28): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/repeated-dependencies-more-precise.js(11,58): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/repro-aliased-capture-aliased-mutate.js(37,23): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/repro-aliased-capture-aliased-mutate.js(37,38): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/repro-aliased-capture-aliased-mutate.js(37,47): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/repro-aliased-capture-mutate.js(19,20): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/repro-aliased-capture-mutate.js(19,35): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/repro-aliased-capture-mutate.js(19,44): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/repro-invalid-destructuring-reassignment-undefined-variable.js(12,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/repro-invalid-destructuring-reassignment-undefined-variable.js(12,62): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/repro-invalid-destructuring-reassignment-undefined-variable.js(27,1): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/repro-mutate-ref-in-function-passed-to-hook.js(2,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/repro-mutate-ref-in-function-passed-to-hook.js(2,21): error TS1005: '=>' expected.
+test/bundler/transpiler/react-compiler-fixtures/repro-propagate-type-of-ternary-jsx.js(1,21): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/repro-propagate-type-of-ternary-jsx.js(1,23): error TS1005: '{' expected.
+test/bundler/transpiler/react-compiler-fixtures/repro-propagate-type-of-ternary-jsx.js(1,26): error syntax: Expected JSX element name but found "{"
+test/bundler/transpiler/react-compiler-fixtures/repro-propagate-type-of-ternary-nested.js(1,17): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/repro-propagate-type-of-ternary-nested.js(1,19): error TS1005: '{' expected.
+test/bundler/transpiler/react-compiler-fixtures/repro-propagate-type-of-ternary-nested.js(1,22): error syntax: Expected JSX element name but found "{"
+test/bundler/transpiler/react-compiler-fixtures/repro-undefined-expression-of-jsxexpressioncontainer.js(9,11): warning syntax: "key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.
+test/bundler/transpiler/react-compiler-fixtures/return-ref-callback-structure.js(5,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/return-ref-callback-structure.js(5,19): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/return-ref-callback-structure.js(5,21): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/return-ref-callback-structure.js(5,28): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/return-ref-callback.js(5,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/return-ref-callback.js(5,17): error TS1005: '=>' expected.
+test/bundler/transpiler/react-compiler-fixtures/round2_loc_diff.js(6,35): error TS1005: '{' expected.
+test/bundler/transpiler/react-compiler-fixtures/round2_loc_diff.js(6,44): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/round2_loc_diff.js(22,26): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/round2_loc_diff.js(22,28): error TS1005: '{' expected.
+test/bundler/transpiler/react-compiler-fixtures/round2_loc_diff.js(22,34): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/todo-hir_identifier_diff.js(10,9): error syntax: The constant "tracePolicyCtxMod" must be initialized
+test/bundler/transpiler/react-compiler-fixtures/todo-hir_identifier_diff.js(10,26): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/todo-hir_identifier_diff.js(11,53): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/todo-hir_identifier_diff.js(13,14): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/todo-hir_identifier_diff.js(13,18): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/todo-hoist-type-alias-before-declaration.js(2,25): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/todo-hoist-type-alias-before-declaration.js(2,71): error TS1109: Expression expected.
+test/bundler/transpiler/react-compiler-fixtures/todo-pattern1b_type_to_primitive.js(6,9): error syntax: The constant "TEST_CASES" must be initialized
+test/bundler/transpiler/react-compiler-fixtures/todo-pattern1b_type_to_primitive.js(6,19): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/todo-pattern1b_type_to_primitive.js(6,31): error TS1109: Expression expected.
+test/bundler/transpiler/react-compiler-fixtures/type-alias-used-as-annotation_.flow.js(2,6): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/type-alias-used-as-annotation_.flow.js(2,10): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/type-alias-used-as-variable-annotation_.flow.js(2,6): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/type-alias-used-as-variable-annotation_.flow.js(2,10): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/type-alias.flow.js(3,8): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/type-alias.flow.js(3,13): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/type-annotation-indexer-no-rename-in-outlined.js(9,10): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/type-annotation-indexer-no-rename-in-outlined.js(9,12): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/type-annotation-indexer-no-rename-in-outlined.js(9,26): error TS1005: ']' expected.
+test/bundler/transpiler/react-compiler-fixtures/type-annotation-indexer-no-rename-in-outlined.js(9,28): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/type-annotation-indexer-no-rename-in-outlined.js(9,34): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/type-annotation-rename-in-type-cast.js(2,25): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/type-annotation-rename-in-type-cast.js(2,71): error TS1109: Expression expected.
+test/bundler/transpiler/react-compiler-fixtures/type-annotation-rename-position-based.js(2,28): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/type-annotation-rename-position-based.js(2,44): error TS1005: ']' expected.
+test/bundler/transpiler/react-compiler-fixtures/type-annotation-rename-position-based.js(2,46): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/type-annotation-rename-position-based.js(2,52): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/type-cast-expression.flow.js(2,6): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/type-cast-expression.flow.js(2,10): error TS1128: Declaration or statement expected.
+test/bundler/transpiler/react-compiler-fixtures/type-inference-array-from.js(36,3): error no-dupe-keys: Duplicate key 'params'.
+test/bundler/transpiler/react-compiler-fixtures/useCallback-ref-in-render.js(4,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/useCallback-ref-in-render.js(4,17): error TS1005: '=>' expected.
+test/bundler/transpiler/react-compiler-fixtures/useCallback-set-ref-nested-property.js(5,20): error no-empty-pattern: Unexpected empty object pattern.
+test/bundler/transpiler/react-compiler-fixtures/useImperativeHandle-ref-mutate.js(5,11): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/useImperativeHandle-ref-mutate.js(5,25): error TS1005: ')' expected.
+test/bundler/transpiler/react-compiler-fixtures/useImperativeHandle-ref-mutate.js(5,27): error TS1005: ';' expected.
+test/bundler/transpiler/react-compiler-fixtures/useImperativeHandle-ref-mutate.js(5,33): error TS1128: Declaration or statement expected.
+test/js/bun/jsc-stress/fixtures/dfg-try-catch-wrong-value-recovery-on-ic-miss.js(24,9): error no-dupe-keys: Duplicate key 'f'.
+test/js/bun/test/expect.test.js(149,16): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(149,34): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(218,13): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(218,28): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(219,13): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(219,34): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(220,13): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(221,30): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(222,13): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(223,36): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(224,13): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(225,13): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(226,13): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(227,13): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(228,37): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(229,47): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(230,36): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(231,42): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(235,16): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(236,13): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(237,13): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(237,32): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(238,13): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(269,13): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(271,16): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(272,13): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(273,13): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(273,32): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(274,13): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(485,20): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(493,20): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(494,20): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(502,20): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(503,20): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(1439,46): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(1439,48): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(1440,56): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(1440,58): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(1443,34): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(1444,34): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(1444,45): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(1444,47): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(1451,17): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(1451,19): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(1451,21): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(1451,23): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(1451,25): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(1451,27): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(1451,29): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(1451,31): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(1451,33): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(1451,35): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(1451,37): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/test/expect.test.js(1451,39): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/util/inspect-error-fixture-bad.js(2,7): error syntax: "duplicateConstDecl" has already been declared
+test/js/node/buffer.test.js(93,5): error no-duplicate-case: Duplicate case label.
+test/js/node/module/extensions-fixture/e.js(1,9): error TS1005: ';' expected.
+test/js/node/module/extensions-fixture/e.js(2,1): error syntax: Unexpected enum
+test/js/node/process/process-mainModule-fixture.js(1,22): error no-self-assign: 'process.mainModule' is assigned to itself.
+test/js/node/test/fixtures/console/stack_overflow.js(35,14): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/node/test/fixtures/debugger/backtrace.js(7,3): error no-debugger: Unexpected 'debugger' statement.
+test/js/node/test/fixtures/debugger/break.js(10,1): error no-debugger: Unexpected 'debugger' statement.
+test/js/node/test/fixtures/es-module-loaders/syntax-error.mjs(2,16): error syntax: Unexpected =>
+test/js/node/test/fixtures/es-modules/syntax-error.mjs(1,9): error TS1005: ';' expected.
+test/js/node/test/fixtures/es-modules/wasm-source-phase.js(1,15): error TS1005: 'from' expected.
+test/js/node/test/fixtures/rsa-oaep-test-vectors.js(2,12): error TS1005: ';' expected.
+test/js/node/test/fixtures/rsa-oaep-test-vectors.js(3,20): error TS1005: ';' expected.
+test/js/node/test/fixtures/syntax/bad_syntax.js(1,9): error TS1005: ';' expected.
+test/js/node/test/fixtures/syntax/bad_syntax.mjs(1,9): error TS1005: ';' expected.
+test/js/node/test/fixtures/syntax/bad_syntax_shebang.js(2,9): error TS1005: ';' expected.
+test/js/node/test/fixtures/throws_error4.js(42,1): error TS1010: '*/' expected.
+test/js/node/test/fixtures/throws_error5.js(1,1): error syntax: Syntax Error
+test/js/node/test/fixtures/throws_error6.js(1,1): error syntax: Syntax Error
+test/js/node/test/fixtures/uncaught-exceptions/parse-error-mod.js(2,11): error TS1002: Unterminated string literal.
+test/js/node/test/fixtures/utf8-bom-shebang-shebang.js(2,1): error syntax: Syntax Error
+test/js/node/test/parallel/test-console-self-assign.js(6,22): error no-self-assign: 'globalThis.console' is assigned to itself.
+test/js/node/test/parallel/test-stdin-script-child.js(6,34): error valid-typeof: Invalid typeof comparison value.
+test/js/node/util/node-inspect-tests/parallel/util-inspect.test.js(429,27): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/node/util/node-inspect-tests/parallel/util-inspect.test.js(2014,7): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/node/util/node-inspect-tests/parallel/util-inspect.test.js(2014,9): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/node/util/node-inspect-tests/parallel/util-inspect.test.js(2014,14): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/node/util/node-inspect-tests/parallel/util-inspect.test.js(2014,16): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/node/util/node-inspect-tests/parallel/util-inspect.test.js(2014,18): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/third_party/wpt-streams/resources/webidl2/lib/webidl2.js(14,8): error no-sparse-arrays: Unexpected comma in middle of array.

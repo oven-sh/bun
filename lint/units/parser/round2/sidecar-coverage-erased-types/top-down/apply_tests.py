@@ -404,6 +404,7 @@ edit(E, """    #[test]
             Loc { start: 8 },
             0,
             true,
+            &[],
         );
         tables.member_index_signature(&arena, index_signature(43));
         tables.member_read(
@@ -413,6 +414,7 @@ edit(E, """    #[test]
             Loc { start: 8 },
             0,
             false,
+            &[],
         );
         // No member waits for its place: nothing is recorded.
         tables.member_read(
@@ -422,6 +424,7 @@ edit(E, """    #[test]
             Loc { start: 8 },
             0,
             false,
+            &[],
         );
         tables.member_modifier(ErasedFlags::ABSTRACT);
         let [first, second] = tables.members.as_slice() else {
@@ -492,6 +495,8 @@ edit(K, """            starts.erased.member_read(cursor, at, at, 0, false);
 """, """            starts
                 .erased
                 .member_index_signature(p.arena, index_signature);
-            starts.erased.member_read(cursor, p.arena, at, at, 0, false);
+            starts
+                .erased
+                .member_read(cursor, p.arena, at, at, 0, false, &[]);
 """)
 print("applied tests")

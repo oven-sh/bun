@@ -75,7 +75,7 @@ pub struct TypeAliasDeclaration {
 pub struct StringLiteral {""")
 edit(E, """    /// An index signature: the parse pass builds nothing of it.
     IndexSignature,
-}""", """    /// An index signature: its modifier keywords, its parameters from the offset after the `[`, and its type.
+}""", """    /// An index signature: its decorators and modifier keywords, its parameters from the offset after the `[`, and its type.
     IndexSignature(StoreRef<ts::IndexSignature>),
 }""")
 edit(E, """    /// Records what `skip_type_script_type_stmt` read: what it held, or else the type alias `name`.
@@ -186,7 +186,7 @@ edit(E, """    /// Adds `flags` to the member that `parse_property` left out and
         }
     }
 
-    /// Places the member that `parse_property` left out: it starts at `first`, after `index` members of the body at `body`.
+    /// Places the member that `parse_property` left out: it starts at `first`, where `decorators` start, after `index` members of the body at `body`.
     #[cold]
     #[inline(never)]
     pub(crate) fn member_read(
@@ -197,6 +197,7 @@ edit(E, """    /// Adds `flags` to the member that `parse_property` left out and
         body: Loc,
         index: usize,
         is_static: bool,
+        decorators: &[Expr],
     ) {
         let Some(member) = self.unplaced() else {
             return;
@@ -210,7 +211,7 @@ edit(E, """    /// Adds `flags` to the member that `parse_property` left out and
             // The words between the decorators and the `[` are the modifiers that `parse_property` read past.
             let open_bracket = signature.parameters.start.saturating_sub(1);
             let modifiers =
-                modifiers_before(cursor.source, cursor.comments, member.start, open_bracket);
+                modifiers_of_index_signature(cursor, member.start, open_bracket, decorators);
             signature.modifiers = StoreSlice::new_mut(arena.alloc_slice_copy(&modifiers));
         }
     }
@@ -359,6 +360,33 @@ fn offset_of(at: usize) -> u32 {
     u32::try_from(at).unwrap_or(u32::MAX)
 }
 
+/// The decorators and the modifier keywords of the index signature that starts at `first` and whose `[` is at `open_bracket`, in the order of the source.
+fn modifiers_of_index_signature(
+    cursor: Cursor<'_>,
+    first: u32,
+    open_bracket: u32,
+    decorators: &[Expr],
+) -> Vec<ts::Modifier> {
+    let (source, comments) = (cursor.source, cursor.comments);
+    let keywords = modifiers_before(source, comments, first, open_bracket);
+    let after_decorators = keywords
+        .first()
+        .map_or(open_bracket, |keyword| keyword.start);
+    let starts: Vec<u32> = decorators
+        .iter()
+        .map(|decorator| at_sign_before(source, comments, offset(decorator.loc)))
+        .collect();
+    let mut modifiers = Vec::with_capacity(decorators.len() + keywords.len());
+    for (at, (decorator, &start)) in decorators.iter().zip(&starts).enumerate() {
+        // A decorator ends where the token before the next decorator, the first keyword or the `[` ends.
+        let next = starts.get(at + 1).copied().unwrap_or(after_decorators);
+        let end = token_end_before(source, comments, next);
+        modifiers.push(ts::Modifier::decorator(*decorator, start, end));
+    }
+    modifiers.extend(keywords);
+    modifiers
+}
+
 /// The modifier keywords that stand directly before `at` and not before `floor`, in the order of the source.
 fn modifiers_before(source: &[u8], comments: &[Range], floor: u32, at: u32) -> Vec<ts::Modifier> {
     let mut modifiers = Vec::new();
@@ -454,10 +482,10 @@ edit(G, """    /// An entry of `implements`: a type reference where one stands t
         while self.lexer.token == T::TExtends || self.lexer.is_contextual_keyword(b"implements") {
             let is_extends = self.lexer.token == T::TExtends;
             let keyword = offset_of(self.lexer.start);
+            // A clause without an entry ends with its keyword.
             let mut end = offset_of(self.lexer.end);
             self.lexer.next()?;
             let start = offset_of(self.lexer.start);
-            let mut list_end = start;
             let mut entries: Vec<ts::Type> = Vec::new();
             loop {
                 // isListElement of PCHeritageClauseElement: braces that are no object literal hold the members.
@@ -478,9 +506,8 @@ edit(G, """    /// An entry of `implements`: a type reference where one stands t
                 let entry = self.lint_heritage_entry(is_extends)?;
                 entries.push(entry);
                 end = entry.end;
-                list_end = entry.end;
                 if self.lexer.token == T::TComma {
-                    list_end = offset_of(self.lexer.end);
+                    end = offset_of(self.lexer.end);
                     self.lexer.next()?;
                     continue;
                 }
@@ -498,7 +525,7 @@ edit(G, """    /// An entry of `implements`: a type reference where one stands t
                 } else {
                     ts::HeritageToken::Implements
                 },
-                types: ts::List::from_slice(self.arena, &entries, start, list_end),
+                types: ts::List::from_slice(self.arena, &entries, start, end.max(start)),
             });
         }
         Ok(StoreSlice::new_mut(self.arena.alloc_slice_copy(&clauses)))
@@ -531,7 +558,7 @@ edit(G, """    /// An entry of `implements`: a type reference where one stands t
         let recorded = self.sidecar_mark();
         if reads_type {
             self.lexer.is_log_disabled = true;
-            let as_type = self.build_type_script_type(Level::Lowest);
+            let as_type = self.build_heritage_type();
             self.lexer.is_log_disabled = start.is_log_disabled;
             match as_type {
                 Ok(type_node)
@@ -602,7 +629,15 @@ edit(S, """    /// The members up to "}", in a list that starts at `start`.
     ) -> Result<ts::List<ts::Member>, Error> {""")
 edit(S, """    fn build_type_member_semicolon(&mut self, end: u32) -> Result<u32, Error> {""",
      """    pub(crate) fn build_type_member_semicolon(&mut self, end: u32) -> Result<u32, Error> {""")
-edit(S, """    /// Whether `test` holds from the token the lexer is on. Nothing moves.""", """    /// The entry of a heritage clause that `node` is where the reference reads a name: a type reference, also for the name of a keyword type.
+edit(S, """    /// Whether `test` holds from the token the lexer is on. Nothing moves.""", """    /// Reads the type that an entry of a heritage clause starts with: the `extends` after it starts another clause and no conditional type.
+    pub(crate) fn build_heritage_type(&mut self) -> Result<ts::Type, Error> {
+        self.build_type_with_opts(
+            Level::Lowest,
+            SkipTypeOptionsBitset::only(SkipTypeOptions::DisallowConditionalTypes),
+        )
+    }
+
+    /// The entry of a heritage clause that `node` is where the reference reads a name: a type reference, also for the name of a keyword type.
     pub(crate) fn build_heritage_type_reference(&self, node: ts::Type) -> Option<ts::Type> {
         match node.data {
             ts::TypeData::TypeReference(_) => Some(node),
@@ -763,8 +798,17 @@ edit(R, """                        if p.lexer.token == T::TColon && was_identifi
 M = "parse/mod.rs"
 edit(M, """                        starts.erased.member_read(
                             erased::Cursor::at(&p.lexer),
-                            first_decorator_loc,""", """                        starts.erased.member_read(
+                            first_decorator_loc,
+                            body_loc,
+                            properties.len(),
+                            opts.is_static,
+                        );""", """                        starts.erased.member_read(
                             erased::Cursor::at(&p.lexer),
                             p.arena,
-                            first_decorator_loc,""")
+                            first_decorator_loc,
+                            body_loc,
+                            properties.len(),
+                            opts.is_static,
+                            &opts.ts_decorators,
+                        );""")
 print("applied")

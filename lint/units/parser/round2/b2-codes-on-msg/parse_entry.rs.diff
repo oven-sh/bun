@@ -1,5 +1,5 @@
 --- /workspace/wt/parser/src/js_parser/parse/parse_entry.rs	2026-10-01 04:32:05.515914443 +0000
-+++ src/js_parser/parse/parse_entry.rs	2026-10-01 13:22:51.793516746 +0000
++++ src/js_parser/parse/parse_entry.rs	2026-10-01 14:11:09.319817057 +0000
 @@ -448,6 +448,54 @@
              orig_error_count,
          })

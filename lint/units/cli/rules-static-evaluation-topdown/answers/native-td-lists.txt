@@ -1,0 +1,41 @@
+DIFFER missing "if (Boolean(1)) { function Boolean() {}}"
+    eslint: no-constant-condition 1:5 Unexpected constant condition. | no-extra-boolean-cast 1:5 Redundant Boolean call.
+    native: (none)
+td-upstream-no-constant-condition.json: cases 280, same 279, differ 1
+td-upstream-no-constant-binary-expression.json: cases 283, same 283, differ 0
+DIFFER missing "function f() { var undefined; } if (undefined) {}"
+    eslint: no-constant-condition 1:37 Unexpected constant condition.
+    native: (none)
+DIFFER missing "if (Boolean(1)) { function Boolean() {} }"
+    eslint: no-constant-condition 1:5 Unexpected constant condition. | no-extra-boolean-cast 1:5 Redundant Boolean call.
+    native: (none)
+td-edge-no-constant-condition.json: cases 155, same 153, differ 2
+DIFFER missing "x = new Map === y; function g() { var Map; }"
+    eslint: no-constant-binary-expression 1:5 Unexpected comparison to newly constructed object. These two values can never be equal.
+    native: (none)
+td-edge-no-constant-binary-expression.json: cases 185, same 184, differ 1
+td-ts-no-constant-condition.json: cases 64, same 64, differ 0
+td-ts-no-constant-binary-expression.json: cases 63, same 63, differ 0
+DIFFER missing "enum Kind { Boolean, String } if (Boolean(a)) {}"
+    eslint: no-extra-boolean-cast 1:35 Redundant Boolean call.
+    native: (none)
+DIFFER missing "enum Kind { undefined } x = undefined ?? y"
+    eslint: no-constant-binary-expression 1:29 Unexpected constant nullishness on the left-hand side of a `??` expression.
+    native: (none)
+DIFFER missing "declare global { const undefined: any } if (undefined) {}"
+    eslint: no-constant-condition 1:45 Unexpected constant condition.
+    native: (none)
+DIFFER extra "import { type Boolean } from 'x'; if (Boolean(a)) {}"
+    eslint: (none)
+    native: no-extra-boolean-cast 1:39 Redundant Boolean call.
+td-ts-globals.json: cases 26, same 22, differ 4
+td-upstream-no-extra-boolean-cast.json: cases 246, same 246, differ 0
+DIFFER missing "function f() { var Boolean; } if (Boolean(a)) {}"
+    eslint: no-extra-boolean-cast 1:35 Redundant Boolean call.
+    native: (none)
+DIFFER missing "if (Boolean(a)) { let Boolean; }"
+    eslint: no-extra-boolean-cast 1:5 Redundant Boolean call.
+    native: (none)
+td-edge-no-extra-boolean-cast.json: cases 97, same 95, differ 2
+td-ts-no-extra-boolean-cast.json: cases 51, same 51, differ 0
+all: cases 1450, same 1440, differ 10 {"missing":9,"extra":1}; reports of ESLint 1117

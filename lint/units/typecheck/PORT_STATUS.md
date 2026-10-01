@@ -150,8 +150,8 @@ which cargo does not compile yet.
 `scanner/scanner.rs` (3,722 lines) and `scanner/utilities.rs` (232) came in with `4d40783efe`; `941cbf415f` took the
 stand-in call out of `re_scan_slash_token`. `scanner/mod.rs` and the line `pub mod scanner;` of `lib.rs` came in with
 `0aa0a67449`. `mod.rs` declares the two files and re-exports both (`pub use scanner::*;`, `pub use utilities::*;`), as
-the `mod.rs` of every other package does: 25 files of the later layers write `crate::scanner::<name>` (`checker` 19,
-`importer` 2, `printer` 2, `binder` 1, `lowering` 1), none writes `crate::scanner::scanner::<name>`. The two files name
+the `mod.rs` of every other package does: 25 files of the later layers reach the package as `crate::scanner` (`checker`
+19, `importer` 2, `printer` 2, `binder` 1, `lowering` 1), none as `crate::scanner::scanner`. The two files name
 `crate::ast` (with `crate::ast::Arg`, one argument of a message) and `bun_core::strings`, so they compile only in a
 tree whose `lib.rs` declares `ast`, whose `ast` has `Arg` and whose `Cargo.toml` has `bun_core`: `887629cf2c` is the
 first commit with the three (`Arg` and the dependency are of `a8b48548a6`). No `cargo check` was run with these

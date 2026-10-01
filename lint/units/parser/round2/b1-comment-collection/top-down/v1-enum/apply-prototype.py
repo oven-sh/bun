@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # usage: python3 apply-prototype.py <path to a copy of src/js_parser at be1ebe5295>
-# The edits that this directory ends with (second version): one byte `every_comment` behind the other fields of the lexer, the
-# two JSX arms that hand over to a cold copy of the function, the comments before the first token, the five places that move
-# the lexer ahead, the table on the side table. Parser::init, P::init, scan_comment_text, snapshot and restore stay as they are.
+# Applies the edits that the probes of this directory were run with: the lexer mode, the two JSX arms, the comments
+# before the first token, the five places that move the lexer ahead, the table on the side table.
 # Every replacement must match exactly once: the script stops where the tree differs.
 import sys, os
 
@@ -18,50 +17,49 @@ def edit(rel, pairs):
     print('ok', rel, len(pairs))
 
 edit('lexer.rs', [
- ("""    pub(crate) jsc_builtin_syntax: bool,
-    pub(crate) all_comments: Vec<Range>,
+ ("""#[derive(Clone, Copy)]
+pub struct ScanResult<'a> {
+    pub(crate) token: T,
+    pub(crate) contents: &'a [u8],
 }
-""", """    pub(crate) jsc_builtin_syntax: bool,
-    pub(crate) all_comments: Vec<Range>,
-    /// Not 0 in a lint parse: comments inside JSX tags go to `all_comments` too, and a forward move keeps those it passes. A `u8` has no niche, so it is laid out behind every other field and none of them moves.
-    pub(crate) every_comment: u8,
+""", """#[derive(Clone, Copy)]
+pub struct ScanResult<'a> {
+    pub(crate) token: T,
+    pub(crate) contents: &'a [u8],
 }
 
-#[cfg(target_pointer_width = "64")]
+/// Which comments `Lexer::all_comments` gets.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TrackComments {
+    /// None.
+    Off = 0,
+    /// Those that `next()` reads: what the character frequency of a minified build subtracts.
+    ForCharFreq = 1,
+    /// Every comment of the file, those inside a JSX tag too: a lint parse.
+    All = 2,
+}
+
+impl TrackComments {
+    #[inline]
+    pub(crate) const fn for_char_freq(minify_identifiers: bool) -> TrackComments {
+        if minify_identifiers {
+            TrackComments::ForCharFreq
+        } else {
+            TrackComments::Off
+        }
+    }
+}
+
 const _: () = assert!(core::mem::size_of::<Lexer<'static>>() == 336);
-#[cfg(target_pointer_width = "64")]
 const _: () = assert!(core::mem::size_of::<LexerSnapshot<'static>>() == 240);
 """),
- ("""            jsc_builtin_syntax: false,
-            all_comments: Vec::new(),
-        }
-""", """            jsc_builtin_syntax: false,
-            all_comments: Vec::new(),
-            every_comment: 0,
-        }
-"""),
- ("""    pub(crate) fn next_inside_jsx_element(&mut self) -> Result<(), Error> {
-        self.has_newline_before = false;
-
-        loop {
-""", """    pub(crate) fn next_inside_jsx_element(&mut self) -> Result<(), Error> {
-        self.has_newline_before = false;
-        self.next_inside_jsx_element_from::<false>()
-    }
-
-    /// `next_inside_jsx_element` of a lint parse, from behind the comment that it read: that comment and every one after it is recorded.
-    #[cold]
-    #[inline(never)]
-    fn next_inside_jsx_element_with_comments(&mut self) -> Result<(), Error> {
-        self.all_comments.push(self.range());
-        self.next_inside_jsx_element_from::<true>()
-    }
-
-    /// The reading of `next_inside_jsx_element`. `EVERY_COMMENT`: each comment is recorded; else the first one of a lint parse hands over to the copy that does.
-    #[inline(always)]
-    fn next_inside_jsx_element_from<const EVERY_COMMENT: bool>(&mut self) -> Result<(), Error> {
-        loop {
-"""),
+ ("    pub(crate) track_comments: bool,\n    pub(crate) track_react_suppressions: bool,\n    // Vec buffer lengths",
+  "    pub(crate) track_comments: TrackComments,\n    pub(crate) track_react_suppressions: bool,\n    // Vec buffer lengths"),
+ ("    pub(crate) track_comments: bool,\n    pub(crate) track_react_suppressions: bool,\n    /// `@name`",
+  "    pub(crate) track_comments: TrackComments,\n    pub(crate) track_react_suppressions: bool,\n    /// `@name`"),
+ ("        if self.track_comments {\n", "        if self.track_comments != TrackComments::Off {\n"),
+ ("            track_comments: false,\n", "            track_comments: TrackComments::Off,\n"),
  ("""                                    _ => {}
                                 }
                             }
@@ -72,10 +70,8 @@ const _: () = assert!(core::mem::size_of::<LexerSnapshot<'static>>() == 240);
                             'multi_line_comment: loop {""", """                                    _ => {}
                                 }
                             }
-                            if EVERY_COMMENT {
-                                self.all_comments.push(self.range());
-                            } else if self.every_comment != 0 {
-                                return self.next_inside_jsx_element_with_comments();
+                            if self.track_comments == TrackComments::All {
+                                self.push_comment_in_jsx_tag();
                             }
                             continue;
                         }
@@ -96,10 +92,8 @@ const _: () = assert!(core::mem::size_of::<LexerSnapshot<'static>>() == 240);
                                     }
                                 }
                             }
-                            if EVERY_COMMENT {
-                                self.all_comments.push(self.range());
-                            } else if self.every_comment != 0 {
-                                return self.next_inside_jsx_element_with_comments();
+                            if self.track_comments == TrackComments::All {
+                                self.push_comment_in_jsx_tag();
                             }
                             continue;
                         }
@@ -115,18 +109,24 @@ const _: () = assert!(core::mem::size_of::<LexerSnapshot<'static>>() == 240);
             .truncate(original.comments_to_preserve_before_len);
     }
 
-    /// Every comment goes to `all_comments` from here on. `primed`: the first token was read with `track_comments` on; else the comments before it are read again.
+    /// The comment that `next_inside_jsx_element` read goes to the list of a lint parse.
     #[cold]
     #[inline(never)]
-    pub(crate) fn track_every_comment(&mut self, primed: bool) {
-        self.track_comments = true;
-        self.every_comment = 1;
-        if primed || self.start == 0 {
+    fn push_comment_in_jsx_tag(&mut self) {
+        self.all_comments.push(self.range());
+    }
+
+    /// Every comment goes to `all_comments` from here on. `primed` is how the first token was read: where no comment was kept, the comments before it are read again.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn track_all_comments(&mut self, primed: TrackComments) {
+        self.track_comments = TrackComments::All;
+        if primed != TrackComments::Off || self.start == 0 {
             return;
         }
         let mut log = Log::default();
         let mut again = Lexer::init_without_reading(&mut log, self.source, self.arena);
-        again.track_comments = true;
+        again.track_comments = TrackComments::All;
         again.jsc_builtin_syntax = self.jsc_builtin_syntax;
         again.step();
         let _ = again.next();
@@ -137,7 +137,7 @@ const _: () = assert!(core::mem::size_of::<LexerSnapshot<'static>>() == 240);
     #[cold]
     #[inline(never)]
     pub(crate) fn comments_since(&self, len: usize) -> Vec<Range> {
-        if self.every_comment == 0 {
+        if self.track_comments != TrackComments::All {
             return Vec::new();
         }
         self.all_comments
@@ -159,11 +159,15 @@ const _: () = assert!(core::mem::size_of::<LexerSnapshot<'static>>() == 240);
 ])
 
 edit('p.rs', [
+ ("        lexer.track_comments = opts.features.minify_identifiers;\n",
+  "        lexer.track_comments =\n            js_lexer::TrackComments::for_char_freq(opts.features.minify_identifiers);\n"),
  ("    /// `Parser::parse_for_lint` made it: `Parser::parse_only` keeps no parentheses.\n    pub(crate) is_lint: bool,\n",
   "    /// Every comment of a lint-parsed file, in source order.\n    pub comments: crate::parse::comments::Comments,\n    /// `Parser::parse_for_lint` made it: `Parser::parse_only` keeps no parentheses.\n    pub(crate) is_lint: bool,\n"),
 ])
 
 edit('parse/parse_entry.rs', [
+ ("        lexer.track_comments = options.features.minify_identifiers;\n",
+  "        lexer.track_comments =\n            js_lexer::TrackComments::for_char_freq(options.features.minify_identifiers);\n"),
  ("""        let is_declaration_file = TS && is_declaration_file_name(source.path.text);
         let mut __p = init_p!(P<'_, TS, false>;
             bump, log, source, define, lexer, options);
@@ -185,7 +189,7 @@ edit('parse/parse_entry.rs', [
         let p: &mut P<'_, TS, false> = unsafe { __p.assume_init_mut() };
         p.starts_for_parse_only = Some(crate::p::StartsForParseOnly::for_lint());
         p.start_syntax_errors(orig_error_count);
-        p.lexer.track_every_comment(primed);
+        p.lexer.track_all_comments(primed);
         let mut first_token = 0usize;
         let parsed: Result<_, Error> = 'parse: {
             if p.lexer.token == js_lexer::T::THashbang

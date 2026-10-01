@@ -1,0 +1,80 @@
+=== 01.d.ts
+export const x: number;
+declare const y: string;
+let z: boolean;
+var v: string;
+=== 02.d.ts
+declare function f(): void;
+export function g(a: number): string;
+function h(): void;
+function h(a: number): void;
+export default function k(): void;
+=== 03.d.ts
+declare module "m" { export const y: string; export function f(): void; }
+declare namespace N { const a: number; function f(): void; class C { m(): void } }
+namespace M { export const x: number; }
+declare global { interface Window { a: number } }
+=== 04.d.ts
+interface A { b: number }
+type T = string | number;
+export interface B extends A { c(): void }
+export type U<T> = T[];
+=== 05.d.ts
+declare class C { m(): void; x: number; static s(): void; constructor(a: string); get g(): number; set g(v: number); private p; readonly r: string; [k: string]: any; }
+export class D { m(): void; x: number }
+export default class { a: number }
+export abstract class E { abstract m(): void; n(): void }
+=== 06.d.ts
+import type { A } from "./a";
+import { B } from "./b";
+import * as ns from "./c";
+export * from "x";
+export { A, B };
+export = ns;
+=== 07.d.ts
+export as namespace Foo;
+declare const enum E { A, B = 2 }
+enum F { A = 1 }
+export declare const u: unique symbol;
+declare let a: number, b: string;
+=== 08.d.ts
+/// <reference types="node" />
+/// <reference path="./other.d.ts" />
+declare var process: NodeJS.Process;
+export {};
+=== 09.d.ts
+debugger;
+=== 10.d.ts
+export const x: number = ;
+=== 11.d.ts
+declare function f(: void;
+=== 12.d.ts
+export const x = 1;
+const y = { a: 1, a: 2 };
+x === -0;
+=== 15.d.css.ts
+declare const styles: { readonly [k: string]: string };
+export default styles;
+export const x: number;
+=== 16.d.ts
+declare function f(a?: number, ...rest: string[]): asserts a is number;
+declare const fn: typeof f;
+export declare function over(a: string): string;
+export declare function over(a: number): number;
+declare module "*.svg" { const src: string; export default src; }
+declare module Foo.Bar { export var x: number; }
+export declare namespace NS { export { x } }
+=== 17.ts
+export const x: number;
+=== 18.d.ts
+class C { foo(): void; foo(): void; bar; bar; }
+switch (1) { case 1: case 1: }
+=== 19.d.ts
+export default interface Foo { a: 1 }
+export declare abstract class Q<T> extends R<T> implements S { protected constructor(); declare x: T; accessor y: number; static { } }
+=== 13.d.mts
+export const x: number;
+debugger;
+=== 14.d.cts
+export const x: number;
+let y 1;

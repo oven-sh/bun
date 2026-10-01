@@ -11,7 +11,7 @@ S=${S:-/tmp/b2codes/scratch}
 rustc --edition 2021 -O -o /tmp/b2codes-model "$HERE/table-model.rs" && /tmp/b2codes-model
 # 2. the prototype in a scratch copy of the crate: apply.py (the code), apply_tests.py + tests_module.rs (mod tests of syntax_errors.rs), zz_probe.rs
 /workspace/tools/lk sh "$HERE/build-scratch.sh" /workspace/wt/parser "$S"
-/workspace/tools/lk "$S/out/bun_js_parser"                       # 79 passed (61 of the other files, 17 of parse::syntax_errors, the probe)
+/workspace/tools/lk "$S/out/bun_js_parser"                       # 80 passed (61 of the other files, 18 of parse::syntax_errors, the probe)
 (cd "$S" && rustfmt --edition 2024 --check src/js_parser/parse/syntax_errors.rs src/js_parser/parse/parse_entry.rs)
 /workspace/tools/lk sh "$HERE/clippy-scratch.sh" /workspace/wt/parser "$S"   # only p.rs:7962, erased_tests.rs:147, generics.rs:719, which the head has too
 # 3. the same first error as the head for every source of the older probes (150,708 sources): no line differs

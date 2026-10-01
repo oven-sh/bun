@@ -1,0 +1,3 @@
+DIFFERENT test/bundler/transpiler/fixtures/lots-of-for-loop.js
+   parse_only: Err(StackOverflow) []
+   lint parse: Err(SyntaxError) ["err [3190+0 line 30] \"Maximum call stack size exceeded\" code=None notes=0"]

@@ -1,0 +1,34 @@
+== 01.d.ts: Ok, 3 statements, 1 erased, declaration file true, 0 reports, 0 messages
+== 02.d.ts: Ok, 0 statements, 5 erased, declaration file true, 0 reports, 0 messages
+== 03.d.ts: Ok, 0 statements, 8 erased, declaration file true, 0 reports, 0 messages
+== 04.d.ts: Ok, 0 statements, 4 erased, declaration file true, 0 reports, 0 messages
+== 05.d.ts: Ok, 1 statements, 3 erased, declaration file true, 0 reports, 0 messages
+== 06.d.ts: Ok, 5 statements, 1 erased, declaration file true, 0 reports, 0 messages
+== 07.d.ts: Ok, 0 statements, 5 erased, declaration file true, 0 reports, 0 messages
+== 08.d.ts: Ok, 1 statements, 1 erased, declaration file true, 0 reports, 0 messages
+== 09.d.ts: Ok, 1 statements, 0 erased, declaration file true, 1 reports, 0 messages
+== 10.d.ts: Err(SyntaxError), log.errors 1, 1 messages, 1 entries
+   0: err [25+1 line 1] "Unexpected ;" code=None notes=0 => TS1109 25..26 "Expression expected."
+== 11.d.ts: Err(SyntaxError), log.errors 2, 2 messages, 2 entries
+   0: err [19+1 line 1] "Expected identifier but found \":\"" code=None notes=0 => TS1003 19..20 "Identifier expected."
+   1: err [21+4 line 1] "Expected \")\" but found \"void\"" code=None notes=0 => TS1005 21..25 "')' expected."
+== 12.d.ts: Ok, 3 statements, 0 erased, declaration file true, 2 reports, 0 messages
+== 15.d.css.ts: Ok, 2 statements, 1 erased, declaration file true, 0 reports, 0 messages
+== 16.d.ts: Ok, 0 statements, 8 erased, declaration file true, 0 reports, 0 messages
+== 17.ts: Err(SyntaxError), log.errors 1, 1 messages, 0 entries
+   0: err [13+1 line 1] "The constant \"x\" must be initialized" code=None notes=0 => no entry
+== 18.d.ts: Ok, 1 statements, 1 erased, declaration file true, 1 reports, 0 messages
+== 19.d.ts: Ok, 0 statements, 2 erased, declaration file true, 0 reports, 0 messages
+== 13.d.mts: Ok, 2 statements, 0 erased, declaration file true, 1 reports, 0 messages
+== 14.d.cts: Err(SyntaxError), log.errors 1, 1 messages, 1 entries
+   0: err [30+1 line 2] "Expected \";\" but found \"1\"" code=None notes=0 => TS1005 30..31 "';' expected."
+09.d.ts(1,1): error no-debugger: Unexpected 'debugger' statement.
+10.d.ts(1,26): error TS1109: Expression expected.
+11.d.ts(1,20): error TS1003: Identifier expected.
+11.d.ts(1,22): error TS1005: ')' expected.
+12.d.ts(2,19): error no-dupe-keys: Duplicate key 'a'.
+12.d.ts(3,1): error no-compare-neg-zero: Do not use the '===' operator to compare against -0.
+13.d.mts(2,1): error no-debugger: Unexpected 'debugger' statement.
+14.d.cts(2,7): error TS1005: ';' expected.
+17.ts(1,14): error syntax: The constant "x" must be initialized
+18.d.ts(2,22): error no-duplicate-case: Duplicate case label.

@@ -1,0 +1,35 @@
+a.cjs(1,1): error no-debugger: Unexpected 'debugger' statement.
+a.cts(1,1): error no-debugger: Unexpected 'debugger' statement.
+a.d.cts(1,1): error no-debugger: Unexpected 'debugger' statement.
+a.d.mts(1,1): error no-debugger: Unexpected 'debugger' statement.
+a.d.ts(1,1): error no-debugger: Unexpected 'debugger' statement.
+a.js(1,1): error no-debugger: Unexpected 'debugger' statement.
+a.jsx(1,1): error no-debugger: Unexpected 'debugger' statement.
+a.mjs(1,1): error no-debugger: Unexpected 'debugger' statement.
+a.mts(1,1): error no-debugger: Unexpected 'debugger' statement.
+a.ts(1,1): error no-debugger: Unexpected 'debugger' statement.
+a.tsx(1,1): error no-debugger: Unexpected 'debugger' statement.
+bad.cjs(1,7): error syntax: Expected ";" but found "1"
+bad.cts(1,7): error TS1005: ';' expected.
+bad.d.cts(1,7): error TS1005: ';' expected.
+bad.d.mts(1,7): error TS1005: ';' expected.
+bad.d.ts(1,7): error TS1005: ';' expected.
+bad.js(1,7): error syntax: Expected ";" but found "1"
+bad.jsx(1,7): error syntax: Expected ";" but found "1"
+bad.mjs(1,7): error syntax: Expected ";" but found "1"
+bad.mts(1,7): error TS1005: ';' expected.
+bad.ts(1,7): error TS1005: ';' expected.
+bad.tsx(1,7): error TS1005: ';' expected.
+broken.d.ts(1,20): error TS1003: Identifier expected.
+broken.d.ts(1,22): error TS1005: ')' expected.
+open.d.ts(2,13): error TS1002: Unterminated string literal.
+open.js(2,9): error syntax: Unterminated string literal
+open.ts(2,13): error TS1002: Unterminated string literal.
+open.tsx(2,13): error TS1002: Unterminated string literal.
+plain.ts(1,14): error syntax: The constant "x" must be initialized
+w.d.ts(2,1): warning syntax: Treating "-->" as the start of a legacy HTML single-line comment
+w.d.ts(3,7): error TS1005: ';' expected.
+w.js(2,1): warning syntax: Treating "-->" as the start of a legacy HTML single-line comment
+w.js(3,7): error syntax: Expected ";" but found "1"
+w.ts(2,1): warning syntax: Treating "-->" as the start of a legacy HTML single-line comment
+w.ts(3,7): error TS1005: ';' expected.

@@ -85,12 +85,6 @@ fn zz_probe_reads_the_sources_of_a_file() {
     let Ok(out_path) = std::env::var("B1_OUT") else {
         return;
     };
-    if let Ok(bits) = std::env::var("B1_DISABLE") {
-        crate::lexer::B1_DISABLE.store(
-            bits.parse().unwrap_or(0),
-            core::sync::atomic::Ordering::Relaxed,
-        );
-    }
     let text = std::fs::read_to_string(inputs).unwrap_or_default();
     let mut out = std::io::BufWriter::new(std::fs::File::create(out_path).expect("out"));
     for line in text.lines() {

@@ -1,0 +1,39 @@
+DIFFER other "function f(undefined) {} ({}) === undefined"
+    eslint: no-constant-binary-expression 1:27 Unexpected constant binary expression. Compares constantly with the right-hand side of the `===`.
+    native: no-constant-binary-expression 1:27 Unexpected comparison to newly constructed object. These two values can never be equal.
+DIFFER missing "new Map() === x; function f(Map) {}"
+    eslint: no-constant-binary-expression 1:1 Unexpected comparison to newly constructed object. These two values can never be equal.
+    native: (none)
+seam.json: cases 112, same 110, differ 2
+left out (ESLint rejects): "abstract class A { abstract m(@(undefined ? a : b) p): void }"
+left out (ESLint rejects): "abstract class A { @(undefined ? a : b) abstract m(): void }"
+left out (ESLint rejects): "class A { m(@(undefined ? a : b) p): void; m(p: any) {} }"
+DIFFER missing "declare global { var undefined: any } if (undefined) {}"
+    eslint: no-constant-condition 1:43 Unexpected constant condition.
+    native: (none)
+DIFFER missing "declare module 'm' { const undefined: any } if (undefined) {}"
+    eslint: no-constant-condition 1:49 Unexpected constant condition.
+    native: (none)
+DIFFER missing "declare namespace N { const undefined: any } if (undefined) {}"
+    eslint: no-constant-condition 1:50 Unexpected constant condition.
+    native: (none)
+DIFFER missing "namespace N { const undefined = 1 } if (undefined) {}"
+    eslint: no-constant-condition 1:41 Unexpected constant condition.
+    native: (none)
+DIFFER missing "enum E { undefined = 1 } if (undefined) {}"
+    eslint: no-constant-condition 1:30 Unexpected constant condition.
+    native: (none)
+DIFFER extra "import { type undefined } from 'x'; if (undefined) {}"
+    eslint: (none)
+    native: no-constant-condition 1:41 Unexpected constant condition.
+DIFFER extra "import { type a as undefined } from 'x'; if (undefined) {}"
+    eslint: (none)
+    native: no-constant-condition 1:46 Unexpected constant condition.
+DIFFER missing "declare function f(undefined: any): void; if (undefined) {}"
+    eslint: no-constant-condition 1:47 Unexpected constant condition.
+    native: (none)
+DIFFER missing "class C { constructor(private undefined: any) {} } if (undefined) {}"
+    eslint: no-constant-condition 1:56 Unexpected constant condition.
+    native: (none)
+seam-ts.json: cases 102, same 93, differ 9
+all: cases 214, same 203, differ 11 {"other":1,"missing":8,"extra":2}; reports of ESLint 129

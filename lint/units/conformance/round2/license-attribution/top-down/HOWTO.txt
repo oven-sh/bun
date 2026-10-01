@@ -1,0 +1,66 @@
+The attribution of E1 (T1.5 of round 1): what is here, and how it is applied and checked.
+Read in /workspace/wt/conformance at 3110ce85cf (2026-10-01). Nothing in the worktree was changed for this.
+
+Files here
+  bullets.txt                               the three entries for "Additional credits": 3 lines, 1,001 bytes, ASCII,
+                                            sha256 b0e3c890e30ab8a6e2d1660ff0c16a95efabf1eb67e5a96e37fbc0dbdbb6812e
+  license-attribution.patch                 LICENSE.md and docs/project/license.mdx with those entries, against the
+                                            blobs 3ae7d083 and 67dc787c (e3566be889, unchanged on the branch and on main)
+  bullets-with-typecheck.txt                the same, `src/typecheck` in the first entry: for the merge of the typecheck branch
+  license-attribution-with-typecheck.patch  the change with that text
+  LOG.entry.txt                             the section for LOG.md of the unit, with MQ-2
+
+Where the entries go
+  LICENSE.md                 after line 83 (the port of esbuild), before line 84 (the name "Bun"), the last line,
+                             which has no line break after it and keeps none
+  docs/project/license.mdx   after line 89 (Lightning CSS and Servo), before line 90 (the name "Bun")
+
+1. Before: is each sentence true in the worktree?
+  cd /workspace/wt/conformance
+  git ls-files --error-unmatch src/js_parser/UPSTREAM_PORTED src/lint/UPSTREAM_PORTED src/lint/LICENSE.eslint \
+    test/cli/lint/conformance/runner/UPSTREAM_PORTED                 # entries 1 and 3
+  git ls-files --error-unmatch test/cli/lint/conformance/UPSTREAM test/cli/lint/conformance/LICENSE \
+    test/cli/lint/conformance/NOTICE.txt test/cli/lint/conformance/LICENSE.txt \
+    test/cli/lint/conformance/ThirdPartyNoticeText.txt               # entry 2: the corpus commit is in
+  git ls-files test/cli/lint/conformance/corpus/cases | head -1      # entry 2: a case is tracked
+  git ls-files src/typecheck                                         # Cargo.toml and lib.rs: bullets.txt.
+                                                                     # More files and an UPSTREAM_PORTED among them:
+                                                                     # bullets-with-typecheck.txt
+  git rev-parse HEAD:LICENSE.md HEAD:docs/project/license.mdx        # 3ae7d083..., 67dc787c...: the patch applies
+  If the second command fails, the corpus is not committed yet: entry 2 is not true. Commit the corpus first, or
+  put in entries 1 and 3 now and entry 2 with the corpus commit.
+
+2. Apply
+  git apply /workspace/notes/lint/units/conformance/round2/license-attribution/top-down/license-attribution.patch
+  Or by hand: the three lines of bullets.txt in front of the line `- Credit to [@kipply](https://github.com/kipply)
+  for the name "Bun"` of each file. That line ends with `!` in LICENSE.md and with `.` in the page.
+
+3. Check
+  git diff --stat -- LICENSE.md docs/project/license.mdx            # 2 files changed, 6 insertions(+)
+  git diff --check -- LICENSE.md docs/project/license.mdx           # prints nothing
+  git hash-object LICENSE.md docs/project/license.mdx               # b7151481d838..., b5409ae9f940...
+  tail -c 1 LICENSE.md | od -An -c                                  # !
+  diff <(sed -n '84,86p' LICENSE.md) <(sed -n '90,92p' docs/project/license.mdx) && echo same
+  bun --bun ./node_modules/.bin/prettier --plugin=prettier-plugin-organize-imports --config .prettierrc \
+    --check docs/project/license.mdx                                # All matched files use Prettier code style!
+  git grep -c -i typescript -- LICENSE.md docs/project/license.mdx  # 2 and 2
+  git grep -c -i eslint -- LICENSE.md docs/project/license.mdx      # 1 and 1
+  Never `bun run prettier`: it writes, over scripts, packages, src and docs.
+
+4. Commit and push, the two files by path
+  git add LICENSE.md docs/project/license.mdx
+  git diff --cached --name-only                                     # the two paths, nothing else
+  git commit -m "lint conformance: credit TypeScript, typescript-go and ESLint in LICENSE.md and the license page"
+  git push origin HEAD:robobun/abbc0c92/lint-conformance
+
+5. The log
+  /workspace/notes/lint/units/conformance/LOG.md did not exist on 2026-10-01. If it still does not, it starts with the
+  line `# Log of the conformance unit` and an empty line. LOG.entry.txt goes to its end, with the two commit ids in
+  the place of <ATTRIBUTION COMMIT> and <CORPUS COMMIT>. Then
+  /workspace/tools/save-notes "conformance: log the attribution and the open question of the notices"
+
+How the text was checked here
+  A copy of .prettierrc, .editorconfig, .prettierignore and package.json with node_modules linked and the page at
+  docs/project/license.mdx: the check of step 3 passes on the page as it is, fails on a line `* x` added to it, and
+  passes with bullets.txt and with bullets-with-typecheck.txt. `git apply --check` of both patches passes in the
+  worktree. The three links answer 200.

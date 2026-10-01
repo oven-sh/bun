@@ -1,0 +1,15 @@
+[
+{"g":"the list of the lowering's test (typecheck, lowering/tests.rs)"},
+["js","a + b = c;"], ["js","-a = b;"], ["js","a++ = b;"], ["js","{ await using [a] = null; }"], ["js","a++ ++;"], ["js","a--.toString();"], ["js","++ delete foo.bar;"], ["js","function* g() { yield*; }"],
+"{ await using [a] = null; }", "async function f() { await using [a] = null; }", "await using [a] = null; export {};", "using [a] = null;", "await x = y; export {};",
+["js","1 = 2;"], ["js","f() = 1;"],
+{"g":"yield where no assignment expression stands"},
+"function* g() { -yield x; }", "function* g() { x || yield y; }", "function* g() { x ? yield y : z; }", "function* g() { x = yield y; }", "function* g() { f(yield y); }", "function* g() { typeof yield; }", "function* g() { x + yield; }",
+{"g":"other forms near the list"},
+"a ** b = c;", "a++ ** 2;", "-a ** 2;", "a = b => c = d;", "a = b => c + d = e;", "() => {} = 1;", "() => {}.b;", "() => {}(1);", "() => {}++;", "x => x++ ++;", "x => {}\n(1);", "async () => {}\n.b;",
+"new a++();", "new a++;", "new a()++ ++;", "a`x`++ ++;", "a?.b++;", "a?.b = 1;", "a?.b++ ++;", "[a]++ ++;", "({})++ ++;",
+"a = b++ = c;", "a += b++ -= c;", "a++ += 1;", "a++ ??= b;", "a++ >>>= b;", "a ? b : c++ = d;", "(a ? b : c) = d;", "a ? b : c = d;",
+"<T>a = c;", "<T>a += c;", "<T>(a) = c;", "(<T>a) = c;", "<T>a\n= c;", "f(<T>a = c);", "(<T>a = c);", "-<T>a = b;", "<T>-a = b;", "<T><U>a = b;", "<T>a.b = c;", "<T>a! = c;", "<T>a++ = c;", "++<T>a;", "--<T>a.b;", "-<T>a;", "++<T>a++;", "<T>a++;", "<T>a++ ++;", "<T>++a;",
+"a as T = 1;", "a satisfies T = 1;", "a! = 1;", "a!! = 1;", "(a as T) = 1;", "a as T++;", "a! ++;", "a!++ ++;", "a++!;", "a++!!;", "a++! = 1;", "(a++)! = 1;", "a++!.b;", "f(a++!);", "(a++!);", "a++\n!b;",
+"a++<T>(x);", "a++<T>x;", "a++<T>;", "(a++)<T>(x);", "a++\n<T>(x);", "f(a++<T>(x));", "a--<T, U>(x);", "a++<T>`x`;", "a++ <T>(x) > y;"
+]

@@ -38,7 +38,8 @@ for (const input of inputs) {
 			files.push({ name, ext, code: c.code });
 		});
 	} else {
-		files.push({ name: path.resolve(input), ext: input.split(".").pop(), code: fs.readFileSync(input, "utf8") });
+		// The probe reads a file without its byte order mark, as `bun --lint` does.
+		files.push({ name: path.resolve(input), ext: input.split(".").pop(), code: fs.readFileSync(input, "utf8").replace(/^\uFEFF/, "") });
 	}
 }
 

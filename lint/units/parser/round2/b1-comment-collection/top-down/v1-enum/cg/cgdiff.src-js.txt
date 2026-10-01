@@ -1,0 +1,7 @@
+program  Ir 7,511,994,344 -> 7,513,139,608 (+1,145,264)  Bc 1,125,256,623 -> 1,125,303,849 (+47,226)  Bi 73,720,793 -> 73,724,023 (+3,230)
+matched /bun_js_parser/ 274 symbols  Ir 4,460,500,966 -> 4,460,742,942 (+241,976)  Bc 516,436,866 -> 516,436,866 (+0)  Bi 47,318,050 -> 47,318,050 (+0)
+4 matched symbols differ
+  Ir     +214,556  Bc          +0  Bi        +0  (a Ir 11,201,252) <bun_js_parser::lexer::Lexer>::scan_comment_text
+  Ir      +26,840  Bc          +0  Bi        +0  (a Ir 441,080) <bun_js_parser::p::P<true, false>>::skip_type_script_paren_or_fn_type::<bun_js_parser::parse::type_sink::Discard>
+  Ir         +380  Bc          +0  Bi        +0  (a Ir 28,500) <bun_js_parser::p::P<true, false>>::parse_bracketed_name
+  Ir         +200  Bc          +0  Bi        +0  (a Ir 7,997,240) <bun_js_parser::p::P<true, false>>::parse_class

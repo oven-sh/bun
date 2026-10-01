@@ -639,7 +639,7 @@
    const sample = [...cases().values()].filter(path => sampled(path, 250)).sort();
    const seen = { E: 0, C: 0 };
  
-@@ -1129,6 +1196,77 @@
+@@ -1129,6 +1196,84 @@
    });
  });
  
@@ -669,12 +669,14 @@
 +  test.concurrent(
 +    "a check that replays the oracle: pass for each instance that runs, in the order of the corpus whatever that of the selectors",
 +    async () => {
-+      // A case of the conformance suite, a case with two instances of which the reference skips one, two cases of the compiler suite.
++      // A directory, the name of an instance, the file name of a case with two instances of which the reference skips one, the path of a case, and an instance twice.
 +      const selectors = [
++        "conformance/types/tuple/named/",
 +        "castingTuple.ts",
 +        "abstractPropertyNegative.ts",
 +        "2dArrays.ts",
-+        "ArrowFunctionExpression1.ts",
++        "compiler/ArrowFunctionExpression1.ts",
++        "conformance/types/tuple/castingTuple.ts",
 +      ];
 +      const { stdout, stderr, exitCode } = await lines("replay-check-fixture.ts", selectors);
 +      expect(stdout).toBe(
@@ -682,9 +684,14 @@
 +          "pass ArrowFunctionExpression1.ts\n" +
 +          "pass abstractPropertyNegative(target=es2015).ts\n" +
 +          `${skipped}\n` +
-+          "pass castingTuple.ts\n",
++          "pass castingTuple.ts\n" +
++          "pass namedTupleMembers.ts\n" +
++          "pass namedTupleMembersErrors.ts\n" +
++          "pass partiallyNamedTuples.ts\n" +
++          "pass partiallyNamedTuples2.ts\n" +
++          "pass partiallyNamedTuples3.ts\n",
 +      );
-+      expect(stderr).toContain("instances 5: pass 4, skip 1\n");
++      expect(stderr).toContain("instances 10: pass 9, skip 1\n");
 +      expect(exitCode).toBe(0);
 +    },
 +    spawnTimeout,

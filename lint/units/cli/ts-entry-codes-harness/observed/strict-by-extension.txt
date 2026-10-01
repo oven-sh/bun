@@ -1,0 +1,127 @@
+with: "with (a) b;"
+    [all] ok
+octal: "var a = 071;"
+    [all] ok
+octalEscape: "var a = \"\\071\";"
+    [all] ok
+nonOctal8: "var a = \"\\8\";"
+    [all] ok
+deleteVar: "var x; delete x;"
+    [all] ok
+dupeArgs: "function f(a, a) {}"
+    [all] ok
+topReturn: "return;"
+    [all] ok
+topAwait: "await x;"
+    [all] ok
+importWith: "import x from \"y\"; with (a) b;"
+    [all] ok
+exportOctal: "export {}; var a = 071;"
+    [all] ok
+useStrictWith: "\"use strict\"; with (a) b;"
+    [all] ok
+useStrictOctal: "\"use strict\"; var a = 071;"
+    [all] ok
+classWith: "class A { m() { with (a) b; } }"
+    [all] ok
+letYield: "var yield;"
+    [all] ok
+varLet: "var let;"
+    [all] ok
+evalAssign: "eval = 1;"
+    [all] ok
+argumentsAssign: "arguments = 1;"
+    [all] ok
+reservedPublic: "var public;"
+    [all] ok
+reservedInterface: "var interface;"
+    [all] ok
+htmlComment: "a\n<!-- b\n"
+    [all] 2,2 syntax: Unsupported syntax: Legacy HTML comments not implemented yet!
+varAwait: "var await;"
+    [all] 1,5 syntax: Cannot use "yield" or "await" here.
+importMeta: "import.meta.url;"
+    [all] ok
+newTarget: "new.target;"
+    [all] ok
+labelledFn: "a: function f() {}"
+    [all] ok
+ifFn: "if (a) function f() {}"
+    [all] ok
+importAndReturn: "import x from \"y\"; return;"
+    [all] ok
+exportAndAwaitVar: "export {}; var await;"
+    [all] 1,16 syntax: Cannot use "yield" or "await" here.
+fnUseStrictOctal: "function f() { \"use strict\"; return 071; }"
+    [all] ok
+legacyOctalLike: "var a = 08;"
+    [all] ok
+enumWord: "var enum;"
+    [all] 1,5 TS1359: Identifier expected. 'enum' is a reserved word that cannot be used here.
+staticWord: "var static;"
+    [all] ok
+implementsWord: "var implements;"
+    [all] ok
+asyncArrowAwait: "async () => { await 1 };"
+    [all] ok
+redeclareLet: "let a; let a;"
+    [all] 1,12 syntax: "a" has already been declared
+redeclareVarLet: "var a; let a;"
+    [all] 1,12 syntax: "a" has already been declared
+fnRedeclare: "function f() {} function f() {}"
+    [all] ok
+letFnRedeclare: "let f; function f() {}"
+    [all] 1,17 syntax: "f" has already been declared
+catchRedeclare: "try {} catch (e) { let e; }"
+    [all] ok
+breakOutside: "break;"
+    [all] ok
+continueOutside: "continue;"
+    [all] ok
+undefinedLabel: "foo: while (1) { break bar; }"
+    [all] ok
+dupLabel: "a: a: ;"
+    [all] ok
+superOutside: "super.x;"
+    [all] 1,1 syntax: Unexpected "super"
+dupProto: "({ __proto__: 1, __proto__: 2 });"
+    [all] ok
+regexInvalid: "/(/;"
+    [all] ok
+regexFlags: "/a/gg;"
+    [all] 1,6 syntax: Duplicate flag "g" in regular expression
+privateUndeclared: "class A { m() { this.#x; } }"
+    [all] ok
+dupPrivate: "class A { #x; #x; }"
+    [all] 1,15 syntax: "#x" has already been declared
+dupConstructor: "class A { constructor() {} constructor() {} }"
+    [all] ok
+invalidAssign: "1 = 2;"
+    [all] ok
+invalidUpdate: "++a++;"
+    [all] ok
+constNoInit: "const a;"
+    [all] 1,7 syntax: The constant "a" must be initialized
+optionalAssign: "a?.b = 1;"
+    [all] ok
+yieldOutside: "yield 1;"
+    [all] 1,1 syntax: Cannot use "yield" outside a generator function | 1,7 TS1005: ';' expected.
+awaitInNonAsync: "function f() { await 1; }"
+    [all] 1,22 syntax: "await" can only be used inside an "async" function
+deleteIdentStrict: "\"use strict\"; var x; delete x;"
+    [all] ok
+dupeArgsStrict: "\"use strict\"; function f(a, a) {}"
+    [all] ok
+dupeArgsArrow: "(a, a) => 1;"
+    [all] ok
+exportDupe: "var a; export { a, a };"
+    [all] ok
+exportUndeclared: "export { nope };"
+    [all] ok
+importDupe: "import { a } from \"x\"; import { a } from \"y\";"
+    [js,jsx,mjs,cjs] 1,33 syntax: "a" has already been declared
+    [ts,tsx,mts,cts] ok
+usingDecl: "using x = y;"
+    [all] ok
+decorators: "@dec class A {}"
+    [all] ok

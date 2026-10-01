@@ -1,0 +1,49 @@
+class E instances where Bun's parser printed an error: 1292
+  every line of Bun is on a line where the oracle has an error: 1125
+  some lines: 107; no line: 60
+error lines of Bun: 3505; on a line where the oracle has an error: 3279
+codes of the oracle on the lines that Bun also reports (lines of Bun):
+    500  TS1005
+    310  TS2304
+    210  TS1109
+    149  TS2300
+    134  TS1003
+    121  TS1128
+     98  TS2356
+     89  TS2339
+     87  TS7026
+     79  TS1187
+     69  TS1212
+     64  TS2357
+     53  TS1042
+     52  TS1434
+     51  TS8017
+texts of Bun on lines where the oracle has nothing (lines):
+     55  Unexpected }
+     52  Expected "…" but found "…"
+     34  "…" has already been declared
+     14  Expected "…" but found end of file
+     13  Unexpected end of file
+      7  Expected identifier but found "…"
+      7  "…" is a reserved word and cannot be used in strict mode
+      5  Cannot use a declaration in a single-statement context
+      4  Cannot use "…" or "…" here.
+      4  The constant "…" must be initialized
+      4  x has already been declared
+      3  Unexpected export
+      3  Unexpected >
+      3  Expected "…" but found "…"./t1"…"
+      2  The keyword "…" cannot be used here
+      2  Unexpected =
+      2  Unexpected "…"
+      2  v has already been declared
+      1  Cannot use "…" here
+      1  The declaration "…" must be initialized
+      1  Unexpected #foo
+      1  Unexpected {
+      1  Unexpected ?
+      1  Unexpected ,
+      1  Syntax Error
+      1  Unexpected catch
+      1  x1 has already been declared
+      1  Multiple default clauses are not allowed

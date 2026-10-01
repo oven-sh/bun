@@ -1,0 +1,24 @@
+parse_prefix             P<false, false>  instructions  3016 ->  3071 (+55)  conditional jumps  349 ->  351 (+2)  differing lines 3263
+parse_prefix             P<true, false >  instructions  3265 ->  3301 (+36)  conditional jumps  382 ->  384 (+2)  differing lines 3544
+parse_prefix             P<false, true >  instructions  3018 ->  3072 (+54)  conditional jumps  347 ->  349 (+2)  differing lines 3224
+parse_prefix             P<true, true  >  instructions  3259 ->  3308 (+49)  conditional jumps  385 ->  388 (+3)  differing lines 2623
+parse_suffix             P<false, false>  instructions  4156 ->  4150 (-6)  conditional jumps  412 ->  410 (-2)  differing lines 1768
+parse_suffix             P<true, false >  instructions  4298 ->  4259 (-39)  conditional jumps  435 ->  433 (-2)  differing lines 2936
+parse_suffix             P<false, true >  instructions  4104 ->  4110 (+6)  conditional jumps  407 ->  405 (-2)  differing lines 1484
+parse_suffix             P<true, true  >  instructions  4255 ->  4253 (-2)  conditional jumps  429 ->  428 (-1)  differing lines 1096
+parse_expr_or_let_stmt   P<false, false>  instructions   508 ->   535 (+27)  conditional jumps   50 ->   53 (+3)  differing lines 748
+parse_expr_or_let_stmt   P<true, false >  instructions   511 ->   538 (+27)  conditional jumps   50 ->   53 (+3)  differing lines 750
+parse_expr_or_let_stmt   P<false, true >  instructions   508 ->   535 (+27)  conditional jumps   50 ->   53 (+3)  differing lines 748
+parse_expr_or_let_stmt   P<true, true  >  instructions   522 ->   549 (+27)  conditional jumps   52 ->   55 (+3)  differing lines 665
+parse_expr_common        P<false, false>  instructions    82 ->    82 (+0)  conditional jumps    7 ->    7 (+0)  differing lines 0
+parse_expr_common        P<true, false >  instructions    88 ->    88 (+0)  conditional jumps    8 ->    8 (+0)  differing lines 0
+parse_expr_common        P<false, true >  instructions    82 ->    82 (+0)  conditional jumps    7 ->    7 (+0)  differing lines 0
+parse_expr_common        P<true, true  >  instructions    88 ->    88 (+0)  conditional jumps    8 ->    8 (+0)  differing lines 0
+parse_stmt               P<false, false>  instructions   718 ->   718 (+0)  conditional jumps   77 ->   77 (+0)  differing lines 0
+parse_stmt               P<true, false >  instructions   911 ->   911 (+0)  conditional jumps   96 ->   96 (+0)  differing lines 0
+parse_stmt               P<false, true >  instructions   718 ->   718 (+0)  conditional jumps   77 ->   77 (+0)  differing lines 0
+parse_stmt               P<true, true  >  instructions   911 ->   911 (+0)  conditional jumps   96 ->   96 (+0)  differing lines 0
+t_for                    P<false, false>  instructions   749 ->   749 (+0)  conditional jumps   74 ->   74 (+0)  differing lines 0
+t_for                    P<true, false >  instructions   749 ->   749 (+0)  conditional jumps   74 ->   74 (+0)  differing lines 0
+t_for                    P<false, true >  instructions   749 ->   749 (+0)  conditional jumps   74 ->   74 (+0)  differing lines 0
+t_for                    P<true, true  >  instructions   749 ->   749 (+0)  conditional jumps   74 ->   74 (+0)  differing lines 0

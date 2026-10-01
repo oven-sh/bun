@@ -1,4 +1,4 @@
-// usage: bun direct.ts --tree <clone with the corpus> --bin <binary> --out <file.jsonl> (--not-laid-out | --units)
+// usage: bun direct.ts --tree <clone with the corpus> --bin <binary> --out <file.jsonl> (--not-laid-out | --units | --cases)
 //          [--jobs 2] [--timeout 120000] [--batch 40] [--from <k>] [--to <n>] [--keep <directory>] [--pty plain|color]
 // The files of the corpus that sweep.ts never hands to the command, straight through `<binary> --lint`:
 //   --not-laid-out  every run instance that the sweep refuses before it starts a process (outcome unsupported:
@@ -6,6 +6,9 @@
 //                   nothing but its operands, so the root files are written without the rest and given to it.
 //   --units         every file of every case (all units, roots or not, of instances that run or are skipped) that
 //                   has an extension with a loader, --batch files to a process. --from/--to cut the list of cases.
+//   --cases         every case file as it lies in the corpus (corpus/cases/**/*.ts and *.tsx, with its directive
+//                   lines, all units in one text, in the encoding of upstream: some have a byte order mark or are
+//                   UTF-16, which no laid-out unit is), --batch files to a process.
 // A run "died" by the rules of check_bun_lint.ts readRun: a signal, the time limit, an exit code that is not 0 or 2,
 // a text on stdout, or a line of stderr that is no diagnostic. Exit code 1 is in that list on purpose: it is what a
 // report of AddressSanitizer ends a debug build with when abort_on_error is not set.
@@ -28,7 +31,7 @@ for (let k = 0; k < argv.length; k++) {
   if (valued.has(argv[k])) options[argv[k]] = argv[++k];
   else flags.add(argv[k]);
 }
-const mode = flags.has("--not-laid-out") ? "not-laid-out" : flags.has("--units") ? "units" : undefined;
+const mode = flags.has("--not-laid-out") ? "not-laid-out" : flags.has("--units") ? "units" : flags.has("--cases") ? "cases" : undefined;
 if (mode === undefined || ["--tree", "--bin", "--out"].some(name => options[name] === undefined)) {
   console.error("usage: bun direct.ts --tree <clone> --bin <binary> --out <file.jsonl> (--not-laid-out | --units)");
   process.exit(2);
@@ -319,6 +322,10 @@ if (mode === "not-laid-out") {
   let libFiles = 0;
   const seenLib = new Set<string>();
   for (const [k, casePath] of cases.entries()) {
+    if (mode === "cases") {
+      units.push({ casePath, name: "(the case file)", real: `${paths.cases}/${casePath}` });
+      continue;
+    }
     const first = enumerateCase(paths.cases, casePath)[0];
     const laid = layOutWithoutDisk(casePath, first?.config);
     if (!laid.ok) withoutHarness++;
@@ -382,7 +389,7 @@ if (mode === "not-laid-out") {
     if (++done % 25 === 0) console.error(`${done} of ${batches.length} processes, ${seconds()} s, died ${deaths}`);
   });
   record({ summary: true, mode, cases: cases.length, from, to, files: units.length, withoutLoader, withoutHarness, libFiles, batch: batchSize, processes, batchesThatDied: deaths, filesThatDieAlone: deadFiles, codes: codesTotal, slowest, seconds: seconds() });
-  console.log(`direct.ts --units: ${units.length} files of ${cases.length} cases in ${batches.length} processes of ${batchSize}, died ${deaths}, files that die alone ${deadFiles}, ${seconds()} s`);
+  console.log(`direct.ts --${mode}: ${units.length} files of ${cases.length} cases in ${batches.length} processes of ${batchSize}, died ${deaths}, files that die alone ${deadFiles}, ${seconds()} s`);
   console.log(JSON.stringify({ codes: codesTotal, slowest }));
 }
 rmSync(base, { recursive: true, force: true });

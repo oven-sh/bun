@@ -1,0 +1,1293 @@
+# instance	case path	Bun error lines	of them on a line where the oracle has an error	first line of Bun without one
+ClassDeclarationWithInvalidConstOnPropertyDeclaration.ts	compiler/ClassDeclarationWithInvalidConstOnPropertyDeclaration.ts	2	2	
+ArrowFunction1.ts	conformance/parser/ecmascript5/ErrorRecovery/ArrowFunctions/ArrowFunction1.ts	1	1	
+ArrowFunctionExpression1.ts	compiler/ArrowFunctionExpression1.ts	4	4	
+ClassDeclaration26.ts	compiler/ClassDeclaration26.ts	8	8	
+ES5For-of12(target=es2015).ts	conformance/statements/for-ofStatements/ES5For-of12.ts	1	1	
+FunctionDeclaration10_es6.ts	conformance/es6/functionDeclarations/FunctionDeclaration10_es6.ts	1	1	
+FunctionDeclaration5_es6.ts	conformance/es6/functionDeclarations/FunctionDeclaration5_es6.ts	1	1	
+FunctionDeclaration12_es6.ts	conformance/es6/functionDeclarations/FunctionDeclaration12_es6.ts	1	1	
+FunctionDeclaration7_es6.ts	conformance/es6/functionDeclarations/FunctionDeclaration7_es6.ts	1	1	
+ES5For-of20(target=es2015).ts	conformance/statements/for-ofStatements/ES5For-of20.ts	1	1	
+FunctionDeclaration6_es6.ts	conformance/es6/functionDeclarations/FunctionDeclaration6_es6.ts	1	1	
+FunctionPropertyAssignments4_es6.ts	conformance/es6/functionPropertyAssignments/FunctionPropertyAssignments4_es6.ts	2	2	
+FunctionPropertyAssignments2_es6.ts	conformance/es6/functionPropertyAssignments/FunctionPropertyAssignments2_es6.ts	5	5	
+FunctionPropertyAssignments3_es6.ts	conformance/es6/functionPropertyAssignments/FunctionPropertyAssignments3_es6.ts	3	3	
+MemberFunctionDeclaration4_es6.ts	conformance/es6/memberFunctionDeclarations/MemberFunctionDeclaration4_es6.ts	5	3	MemberFunctionDeclaration4_es6.ts(3,1): error syntax: Expected ")" but found "}"
+FunctionPropertyAssignments6_es6.ts	conformance/es6/functionPropertyAssignments/FunctionPropertyAssignments6_es6.ts	3	3	
+MemberFunctionDeclaration8_es6.ts	conformance/es6/memberFunctionDeclarations/MemberFunctionDeclaration8_es6.ts	1	1	
+MemberFunctionDeclaration5_es6.ts	conformance/es6/memberFunctionDeclarations/MemberFunctionDeclaration5_es6.ts	2	2	
+ModuleAndFunctionWithSameNameAndCommonRoot.ts	conformance/internalModules/DeclarationMerging/ModuleAndFunctionWithSameNameAndCommonRoot.ts	1	0	simple.ts(8,21): error syntax: "Point" has already been declared
+MemberFunctionDeclaration6_es6.ts	conformance/es6/memberFunctionDeclarations/MemberFunctionDeclaration6_es6.ts	2	2	
+ModuleAndClassWithSameNameAndCommonRoot.ts	conformance/internalModules/DeclarationMerging/ModuleAndClassWithSameNameAndCommonRoot.ts	1	0	simple.ts(6,7): error syntax: "A" has already been declared
+Protected1.ts	conformance/parser/ecmascript5/Protected/Protected1.ts	3	2	Protected1.ts(2,1): error syntax: Unexpected }
+NonInitializedExportInInternalModule(alwaysstrict=true).ts	conformance/internalModules/exportDeclarations/NonInitializedExportInInternalModule.ts	3	3	
+TransportStream.ts	compiler/TransportStream.ts	2	2	
+TemplateExpression1.ts	conformance/es6/templates/TemplateExpression1.ts	2	2	
+Protected2.ts	conformance/parser/ecmascript5/Protected/Protected2.ts	3	2	Protected2.ts(2,1): error syntax: Unexpected }
+TupleType4.ts	conformance/parser/ecmascript5/TupleTypes/TupleType4.ts	1	1	
+TypeArgumentList1.ts	conformance/parser/ecmascript5/ErrorRecovery/TypeArgumentLists/TypeArgumentList1.ts	1	1	
+VariableDeclaration11_es6.ts	conformance/es6/variableDeclarations/VariableDeclaration11_es6.ts	1	1	
+VariableDeclaration13_es6.ts	conformance/es6/variableDeclarations/VariableDeclaration13_es6.ts	1	1	
+VariableDeclaration4_es6.ts	conformance/es6/variableDeclarations/VariableDeclaration4_es6.ts	1	1	
+TupleType6.ts	conformance/parser/ecmascript5/TupleTypes/TupleType6.ts	1	1	
+VariableDeclaration2_es6.ts	conformance/es6/variableDeclarations/VariableDeclaration2_es6.ts	1	1	
+YieldExpression14_es6.ts	conformance/es6/yieldExpressions/YieldExpression14_es6.ts	2	2	
+VariableDeclaration1_es6.ts	conformance/es6/variableDeclarations/VariableDeclaration1_es6.ts	2	2	
+YieldExpression12_es6.ts	conformance/es6/yieldExpressions/YieldExpression12_es6.ts	2	2	
+YieldExpression17_es6.ts	conformance/es6/yieldExpressions/YieldExpression17_es6.ts	2	2	
+YieldExpression15_es6.ts	conformance/es6/yieldExpressions/YieldExpression15_es6.ts	2	2	
+YieldExpression2_es6.ts	conformance/es6/yieldExpressions/YieldExpression2_es6.ts	2	2	
+YieldExpression16_es6.ts	conformance/es6/yieldExpressions/YieldExpression16_es6.ts	2	2	
+YieldExpression18_es6.ts	conformance/es6/yieldExpressions/YieldExpression18_es6.ts	1	1	
+YieldExpression20_es6.ts	conformance/es6/yieldExpressions/YieldExpression20_es6.ts	3	2	YieldExpression20_es6.ts(4,3): error syntax: Unexpected }
+accessorWithoutBody1(target=es2015).ts	compiler/accessorWithoutBody1.ts	2	2	
+accessorWithoutBody2(target=es2015).ts	compiler/accessorWithoutBody2.ts	2	2	
+aliasErrors.ts	compiler/aliasErrors.ts	3	3	
+YieldStarExpression2_es6.ts	conformance/es6/yieldExpressions/YieldStarExpression2_es6.ts	1	1	
+ambientModuleDeclarationWithReservedIdentifierInDottedPath.ts	conformance/ambient/ambientModuleDeclarationWithReservedIdentifierInDottedPath.ts	2	2	
+ambientModuleDeclarationWithReservedIdentifierInDottedPath2.ts	conformance/ambient/ambientModuleDeclarationWithReservedIdentifierInDottedPath2.ts	2	2	
+ambientWithStatements(alwaysstrict=true).ts	compiler/ambientWithStatements.ts	1	1	
+anonymousModules.ts	compiler/anonymousModules.ts	3	2	anonymousModules.ts(6,2): error syntax: Unexpected }
+ambiguousGenericAssertion1.ts	compiler/ambiguousGenericAssertion1.ts	1	1	
+ambientPropertyDeclarationInJs.ts	compiler/ambientPropertyDeclarationInJs.ts	2	2	
+arrowFunctionContexts(alwaysstrict=true).ts	conformance/expressions/functions/arrowFunctionContexts.ts	3	2	arrowFunctionContexts.ts(44,23): error syntax: Cannot use "this" here
+argumentsBindsToFunctionScopeArgumentList(alwaysstrict=true).ts	compiler/argumentsBindsToFunctionScopeArgumentList.ts	1	1	
+argumentsUsedInClassFieldInitializerOrStaticInitializationBlock.ts	compiler/argumentsUsedInClassFieldInitializerOrStaticInitializationBlock.ts	11	11	
+arbitraryModuleNamespaceIdentifiers_syntax.ts	conformance/es2022/arbitraryModuleNamespaceIdentifiers/arbitraryModuleNamespaceIdentifiers_syntax.ts	15	15	
+arrowFunctionErrorSpan.ts	compiler/arrowFunctionErrorSpan.ts	1	1	
+asiPreventsParsingAsInterface05.ts	conformance/interfaces/interfaceDeclarations/asiPreventsParsingAsInterface05.ts	1	1	
+assertInWrapSomeTypeParameter.ts	compiler/assertInWrapSomeTypeParameter.ts	1	1	
+assertionTypePredicates1.ts	conformance/controlFlow/assertionTypePredicates1.ts	3	3	
+arrowFunctionMissingCurlyWithSemicolon.ts	compiler/arrowFunctionMissingCurlyWithSemicolon.ts	1	1	
+assignToInvalidLHS.ts	compiler/assignToInvalidLHS.ts	1	1	
+arrowFunctionsMissingTokens.ts	compiler/arrowFunctionsMissingTokens.ts	1	1	
+assignmentLHSIsValue.ts	conformance/expressions/assignmentOperator/assignmentLHSIsValue.ts	1	1	
+assignmentToParenthesizedExpression1.ts	compiler/assignmentToParenthesizedExpression1.ts	1	1	
+asyncArrowFunction5_es5(target=es2015).ts	conformance/async/es5/asyncArrowFunction/asyncArrowFunction5_es5.ts	1	1	
+asyncArrowFunction6_es2017.ts	conformance/async/es2017/asyncArrowFunction/asyncArrowFunction6_es2017.ts	1	1	
+asyncArrowFunction5_es2017.ts	conformance/async/es2017/asyncArrowFunction/asyncArrowFunction5_es2017.ts	1	1	
+asyncArrowFunction6_es5(target=es2015).ts	conformance/async/es5/asyncArrowFunction/asyncArrowFunction6_es5.ts	1	1	
+asyncArrowFunction5_es6.ts	conformance/async/es6/asyncArrowFunction/asyncArrowFunction5_es6.ts	1	1	
+asyncArrowFunction7_es5(target=es2015).ts	conformance/async/es5/asyncArrowFunction/asyncArrowFunction7_es5.ts	1	1	
+asyncArrowFunction7_es6.ts	conformance/async/es6/asyncArrowFunction/asyncArrowFunction7_es6.ts	1	1	
+asyncArrowFunction8_es5(target=es2015).ts	conformance/async/es5/asyncArrowFunction/asyncArrowFunction8_es5.ts	1	1	
+asyncArrowFunction6_es6.ts	conformance/async/es6/asyncArrowFunction/asyncArrowFunction6_es6.ts	1	1	
+asyncArrowFunction8_es2017.ts	conformance/async/es2017/asyncArrowFunction/asyncArrowFunction8_es2017.ts	1	1	
+asyncArrowFunction8_es6.ts	conformance/async/es6/asyncArrowFunction/asyncArrowFunction8_es6.ts	1	1	
+asyncArrowFunction7_es2017.ts	conformance/async/es2017/asyncArrowFunction/asyncArrowFunction7_es2017.ts	1	1	
+asyncArrowFunction9_es5(target=es2015).ts	conformance/async/es5/asyncArrowFunction/asyncArrowFunction9_es5.ts	1	1	
+asyncClass_es5(target=es2015).ts	conformance/async/es5/asyncClass_es5.ts	3	2	asyncClass_es5.ts(2,1): error syntax: Unexpected }
+asyncArrowFunction9_es6.ts	conformance/async/es6/asyncArrowFunction/asyncArrowFunction9_es6.ts	1	1	
+asyncConstructor_es5(target=es2015).ts	conformance/async/es5/asyncConstructor_es5.ts	1	1	
+asyncEnum_es5(target=es2015).ts	conformance/async/es5/asyncEnum_es5.ts	3	2	asyncEnum_es5.ts(3,1): error syntax: Unexpected }
+asyncArrowFunction9_es2017.ts	conformance/async/es2017/asyncArrowFunction/asyncArrowFunction9_es2017.ts	1	1	
+asyncEnum_es6.ts	conformance/async/es6/asyncEnum_es6.ts	3	2	asyncEnum_es6.ts(3,1): error syntax: Unexpected }
+asyncFunctionDeclaration10_es2017.ts	conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration10_es2017.ts	1	1	
+asyncConstructor_es6.ts	conformance/async/es6/asyncConstructor_es6.ts	1	1	
+asyncFunctionDeclaration10_es6.ts	conformance/async/es6/functionDeclarations/asyncFunctionDeclaration10_es6.ts	1	1	
+asyncClass_es6.ts	conformance/async/es6/asyncClass_es6.ts	3	2	asyncClass_es6.ts(2,1): error syntax: Unexpected }
+asyncFunctionDeclaration12_es2017.ts	conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration12_es2017.ts	1	1	
+asyncFunctionDeclaration5_es2017.ts	conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration5_es2017.ts	1	1	
+asyncFunctionDeclaration10_es5(target=es2015).ts	conformance/async/es5/functionDeclarations/asyncFunctionDeclaration10_es5.ts	1	1	
+asyncFunctionDeclaration12_es5(target=es2015).ts	conformance/async/es5/functionDeclarations/asyncFunctionDeclaration12_es5.ts	1	1	
+asyncFunctionDeclaration12_es6.ts	conformance/async/es6/functionDeclarations/asyncFunctionDeclaration12_es6.ts	1	1	
+asyncFunctionDeclaration6_es2017.ts	conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration6_es2017.ts	1	1	
+asyncFunctionDeclaration5_es6.ts	conformance/async/es6/functionDeclarations/asyncFunctionDeclaration5_es6.ts	1	1	
+asyncFunctionDeclaration5_es5(target=es2015).ts	conformance/async/es5/functionDeclarations/asyncFunctionDeclaration5_es5.ts	1	1	
+asyncFunctionDeclaration6_es5(target=es2015).ts	conformance/async/es5/functionDeclarations/asyncFunctionDeclaration6_es5.ts	1	1	
+asyncFunctionDeclaration7_es6.ts	conformance/async/es6/functionDeclarations/asyncFunctionDeclaration7_es6.ts	1	1	
+asyncFunctionDeclaration6_es6.ts	conformance/async/es6/functionDeclarations/asyncFunctionDeclaration6_es6.ts	1	1	
+asyncFunctionDeclaration7_es2017.ts	conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration7_es2017.ts	1	1	
+asyncFunctionDeclaration7_es5(target=es2015).ts	conformance/async/es5/functionDeclarations/asyncFunctionDeclaration7_es5.ts	1	1	
+asyncFunctionDeclaration8_es2017.ts	conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration8_es2017.ts	1	1	
+asyncFunctionDeclaration8_es5(target=es2015).ts	conformance/async/es5/functionDeclarations/asyncFunctionDeclaration8_es5.ts	1	1	
+asyncFunctionDeclaration9_es2017.ts	conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration9_es2017.ts	1	1	
+asyncFunctionDeclaration9_es5(target=es2015).ts	conformance/async/es5/functionDeclarations/asyncFunctionDeclaration9_es5.ts	1	1	
+asyncFunctionDeclaration8_es6.ts	conformance/async/es6/functionDeclarations/asyncFunctionDeclaration8_es6.ts	1	1	
+asyncFunctionDeclaration9_es6.ts	conformance/async/es6/functionDeclarations/asyncFunctionDeclaration9_es6.ts	1	1	
+asyncGetter_es6.ts	conformance/async/es6/asyncGetter_es6.ts	2	2	
+asyncGetter_es5(target=es2015).ts	conformance/async/es5/asyncGetter_es5.ts	2	2	
+asyncInterface_es5(target=es2015).ts	conformance/async/es5/asyncInterface_es5.ts	3	2	asyncInterface_es5.ts(2,1): error syntax: Unexpected }
+asyncModule_es5(target=es2015).ts	conformance/async/es5/asyncModule_es5.ts	3	2	asyncModule_es5.ts(2,1): error syntax: Unexpected }
+asyncInterface_es6.ts	conformance/async/es6/asyncInterface_es6.ts	3	2	asyncInterface_es6.ts(2,1): error syntax: Unexpected }
+asyncSetter_es6.ts	conformance/async/es6/asyncSetter_es6.ts	5	5	
+asyncModule_es6.ts	conformance/async/es6/asyncModule_es6.ts	3	2	asyncModule_es6.ts(2,1): error syntax: Unexpected }
+asyncSetter_es5(target=es2015).ts	conformance/async/es5/asyncSetter_es5.ts	5	5	
+augmentedTypesClass2.ts	compiler/augmentedTypesClass2.ts	1	1	
+augmentedTypesClass2a.ts	compiler/augmentedTypesClass2a.ts	2	2	
+asyncOrYieldAsBindingIdentifier1.ts	conformance/async/es6/functionDeclarations/asyncOrYieldAsBindingIdentifier1.ts	6	6	
+augmentedTypesClass.ts	compiler/augmentedTypesClass.ts	2	2	
+augmentedTypesEnum2.ts	compiler/augmentedTypesEnum2.ts	1	1	
+augmentedTypesFunction.ts	compiler/augmentedTypesFunction.ts	3	3	
+augmentedTypesClass4.ts	compiler/augmentedTypesClass4.ts	1	1	
+augmentedTypesEnum.ts	compiler/augmentedTypesEnum.ts	4	4	
+augmentedTypesVar.ts	compiler/augmentedTypesVar.ts	5	5	
+augmentedTypesModules2.ts	compiler/augmentedTypesModules2.ts	3	0	augmentedTypesModules2.ts(6,10): error syntax: "m2a" has already been declared
+augmentedTypesModules3.ts	compiler/augmentedTypesModules3.ts	1	0	augmentedTypesModules3.ts(6,7): error syntax: "m3a" has already been declared
+autoAccessorDisallowedModifiers(target=es2017).ts	conformance/classes/propertyMemberDeclarations/autoAccessorDisallowedModifiers.ts	13	13	
+awaitAndYield.ts	conformance/enums/awaitAndYield.ts	2	2	
+autoAccessorDisallowedModifiers(target=esnext).ts	conformance/classes/propertyMemberDeclarations/autoAccessorDisallowedModifiers.ts	13	13	
+awaitInNonAsyncFunction.ts	compiler/awaitInNonAsyncFunction.ts	14	14	
+augmentedTypesModules.ts	compiler/augmentedTypesModules.ts	6	3	augmentedTypesModules.ts(26,10): error syntax: "m2a" has already been declared
+awaitUsingDeclarations.11.ts	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.11.ts	1	1	
+awaitLiteralValues.ts	compiler/awaitLiteralValues.ts	6	6	
+awaitUsingDeclarations.13.ts	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.13.ts	1	1	
+awaitUsingDeclarations.14.ts	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.14.ts	4	4	
+awaitUsingDeclarations.4.ts	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.4.ts	1	1	
+awaitUsingDeclarations.16.ts	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.16.ts	6	6	
+awaitUsingDeclarations.10.ts	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.10.ts	1	1	
+autoLift2.ts	compiler/autoLift2.ts	2	2	
+awaitUsingDeclarations.5.ts	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.5.ts	4	4	
+awaitUsingDeclarations.8.ts	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.8.ts	1	1	
+awaitUsingDeclarationsInForAwaitOf.3(target=esnext).ts	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsInForAwaitOf.3.ts	2	2	
+awaitUsingDeclarationsInForOf.5(target=esnext).ts	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsInForOf.5.ts	2	2	
+await_unaryExpression_es2017_3.ts	conformance/async/es2017/await_unaryExpression_es2017_3.ts	2	2	
+awaitUsingDeclarationsInForOf.3.ts	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsInForOf.3.ts	2	2	
+awaitUsingDeclarations.6.ts	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.6.ts	2	2	
+await_unaryExpression_es6_3.ts	conformance/async/es6/await_unaryExpression_es6_3.ts	2	2	
+awaitUsingDeclarations.7.ts	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.7.ts	4	4	
+badArrayIndex.ts	compiler/badArrayIndex.ts	1	1	
+bases.ts	compiler/bases.ts	2	2	
+bigintArbirtraryIdentifier.ts	compiler/bigintArbirtraryIdentifier.ts	9	9	
+badArraySyntax.ts	compiler/badArraySyntax.ts	1	1	
+bitwiseNotOperatorInvalidOperations.ts	conformance/expressions/unaryOperators/bitwiseNotOperator/bitwiseNotOperatorInvalidOperations.ts	3	3	
+binaryIntegerLiteralError.ts	conformance/es6/binaryAndOctalIntegerLiteral/binaryIntegerLiteralError.ts	1	1	
+bigintPropertyName.ts	compiler/bigintPropertyName.ts	1	1	
+breakNotInIterationOrSwitchStatement1.ts	compiler/breakNotInIterationOrSwitchStatement1.ts	1	1	
+breakNotInIterationOrSwitchStatement2.ts	compiler/breakNotInIterationOrSwitchStatement2.ts	1	1	
+breakTarget5.ts	compiler/breakTarget5.ts	1	1	
+breakTarget6.ts	compiler/breakTarget6.ts	1	1	
+callSignatureWithOptionalParameterAndInitializer.ts	conformance/types/objectTypeLiteral/callSignatures/callSignatureWithOptionalParameterAndInitializer.ts	1	1	
+callSignaturesWithAccessibilityModifiersOnParameters.ts	conformance/types/objectTypeLiteral/callSignatures/callSignaturesWithAccessibilityModifiersOnParameters.ts	3	3	
+canFollowGetSetKeyword.ts	conformance/classes/propertyMemberDeclarations/canFollowGetSetKeyword.ts	3	3	
+callSignaturesWithDuplicateParameters.ts	conformance/types/objectTypeLiteral/callSignatures/callSignaturesWithDuplicateParameters.ts	15	15	
+callSignaturesWithParameterInitializers2.ts	conformance/types/objectTypeLiteral/callSignatures/callSignaturesWithParameterInitializers2.ts	2	2	
+catchClauseWithTypeAnnotation.ts	conformance/statements/tryStatements/catchClauseWithTypeAnnotation.ts	1	1	
+checkJsxNamespaceNamesQuestionableForms.tsx	conformance/jsx/checkJsxNamespaceNamesQuestionableForms.tsx	4	4	
+checkSuperCallBeforeThisAccessing9.ts	compiler/checkSuperCallBeforeThisAccessing9.ts	1	1	
+cannotInvokeNewOnErrorExpression.ts	compiler/cannotInvokeNewOnErrorExpression.ts	1	1	
+class2.ts	compiler/class2.ts	2	2	
+classAbstractCrashedOnce.ts	conformance/classes/classDeclarations/classAbstractKeyword/classAbstractCrashedOnce.ts	2	1	classAbstractCrashedOnce.ts(10,19): error syntax: Unexpected end of file
+catchClauseWithInitializer1.ts	compiler/catchClauseWithInitializer1.ts	3	3	
+classAbstractManyKeywords.ts	conformance/classes/classDeclarations/classAbstractKeyword/classAbstractManyKeywords.ts	1	1	
+classAbstractWithInterface.ts	conformance/classes/classDeclarations/classAbstractKeyword/classAbstractWithInterface.ts	3	3	
+classAndVariableWithSameName.ts	conformance/classes/classDeclarations/classAndVariableWithSameName.ts	2	2	
+classAbstractMergedDeclaration.ts	conformance/classes/classDeclarations/classAbstractKeyword/classAbstractMergedDeclaration.ts	2	2	
+classBodyWithStatements.ts	conformance/classes/classDeclarations/classBody/classBodyWithStatements.ts	6	6	
+classExtendingPrimitive.ts	conformance/classes/classDeclarations/classHeritageSpecification/classExtendingPrimitive.ts	3	3	
+classCannotExtendVar.ts	compiler/classCannotExtendVar.ts	1	1	
+classExtendsEveryObjectType2.ts	conformance/classes/classDeclarations/classHeritageSpecification/classExtendsEveryObjectType2.ts	6	6	
+classExpressionPropertyModifiers.ts	compiler/classExpressionPropertyModifiers.ts	2	2	
+classExtendingPrimitive2.ts	conformance/classes/classDeclarations/classHeritageSpecification/classExtendingPrimitive2.ts	3	0	classExtendingPrimitive2.ts(4,1): error syntax: Expected "{" but found "class"
+classExtendsEveryObjectType.ts	conformance/classes/classDeclarations/classHeritageSpecification/classExtendsEveryObjectType.ts	7	3	classExtendsEveryObjectType.ts(7,13): error syntax: Expected ";" but found "x"
+classFieldsBrokenConstructorEmitNoCrash1.ts	compiler/classFieldsBrokenConstructorEmitNoCrash1.ts	1	1	
+classHeritageWithTrailingSeparator.ts	compiler/classHeritageWithTrailingSeparator.ts	3	2	classHeritageWithTrailingSeparator.ts(3,2): error syntax: Expected "}" but found end of file
+classMemberWithMissingIdentifier.ts	compiler/classMemberWithMissingIdentifier.ts	2	2	
+classOverloadForFunction.ts	compiler/classOverloadForFunction.ts	1	1	
+classExtendsMultipleBaseClasses.ts	compiler/classExtendsMultipleBaseClasses.ts	2	2	
+classMemberWithMissingIdentifier2.ts	compiler/classMemberWithMissingIdentifier2.ts	2	2	
+classStaticBlock16.ts	conformance/classes/classStaticBlock/classStaticBlock16.ts	2	2	
+classStaticBlock22(target=es2022).ts	conformance/classes/classStaticBlock/classStaticBlock22.ts	6	4	classStaticBlock22.ts(1,5): error syntax: Cannot use "yield" or "await" here.
+classStaticBlock22(target=esnext).ts	conformance/classes/classStaticBlock/classStaticBlock22.ts	6	4	classStaticBlock22.ts(1,5): error syntax: Cannot use "yield" or "await" here.
+classStaticBlock26(target=es2022).ts	conformance/classes/classStaticBlock/classStaticBlock26.ts	8	8	
+classStaticBlock23(target=esnext).ts	conformance/classes/classStaticBlock/classStaticBlock23.ts	2	2	
+classStaticBlock6(target=es2015).ts	conformance/classes/classStaticBlock/classStaticBlock6.ts	7	6	classStaticBlock6.ts(7,13): error syntax: Cannot use "yield" or "await" here.
+classStaticBlock7.ts	conformance/classes/classStaticBlock/classStaticBlock7.ts	10	10	
+classStaticBlock26(target=esnext).ts	conformance/classes/classStaticBlock/classStaticBlock26.ts	8	8	
+classUpdateTests.ts	compiler/classUpdateTests.ts	3	3	
+classStaticBlock23(target=es2022).ts	conformance/classes/classStaticBlock/classStaticBlock23.ts	2	2	
+classWithPredefinedTypesAsNames2.ts	conformance/classes/classDeclarations/classWithPredefinedTypesAsNames2.ts	1	1	
+classWithEmptyTypeParameter.ts	compiler/classWithEmptyTypeParameter.ts	2	2	
+classStaticBlock8.ts	conformance/classes/classStaticBlock/classStaticBlock8.ts	4	4	
+cloduleWithPriorInstantiatedModule.ts	compiler/cloduleWithPriorInstantiatedModule.ts	1	0	cloduleWithPriorInstantiatedModule.ts(9,7): error syntax: "Moclodule" has already been declared
+collisionArgumentsClassMethod(target=es2015).ts	compiler/collisionArgumentsClassMethod.ts	14	14	
+collisionArgumentsClassConstructor(target=es2015).ts	compiler/collisionArgumentsClassConstructor.ts	18	18	
+commaOperatorWithoutOperand.ts	conformance/expressions/commaOperator/commaOperatorWithoutOperand.ts	1	1	
+commonMissingSemicolons.ts	compiler/commonMissingSemicolons.ts	3	3	
+commonJsExportTypeDeclarationError(target=es2015).ts	compiler/commonJsExportTypeDeclarationError.ts	2	1	types2.ts(3,1): error syntax: Unexpected end of file
+computedPropertyNames19_ES5(target=es2015).ts	conformance/es6/computedProperties/computedPropertyNames19_ES5.ts	1	1	
+complicatedPrivacy(target=es2015).ts	compiler/complicatedPrivacy.ts	1	1	
+compoundAssignmentLHSIsValue.ts	conformance/expressions/assignmentOperator/compoundAssignmentLHSIsValue.ts	1	1	
+compoundExponentiationAssignmentLHSIsValue.ts	conformance/es7/exponentiationOperator/compoundExponentiationAssignmentLHSIsValue.ts	1	1	
+computedPropertyNames19_ES6.ts	conformance/es6/computedProperties/computedPropertyNames19_ES6.ts	1	1	
+computedPropertyNames26_ES5(target=es2015).ts	conformance/es6/computedProperties/computedPropertyNames26_ES5.ts	1	1	
+computedPropertyNames24_ES6.ts	conformance/es6/computedProperties/computedPropertyNames24_ES6.ts	1	1	
+computedPropertyNames27_ES5(target=es2015).ts	conformance/es6/computedProperties/computedPropertyNames27_ES5.ts	1	1	
+computedPropertyNames26_ES6.ts	conformance/es6/computedProperties/computedPropertyNames26_ES6.ts	1	1	
+computedPropertyNames49_ES5.ts	conformance/es6/computedProperties/computedPropertyNames49_ES5.ts	1	1	
+computedPropertyNames27_ES6.ts	conformance/es6/computedProperties/computedPropertyNames27_ES6.ts	1	1	
+computedPropertyNames24_ES5(target=es2015).ts	conformance/es6/computedProperties/computedPropertyNames24_ES5.ts	1	1	
+computedPropertyNames49_ES6.ts	conformance/es6/computedProperties/computedPropertyNames49_ES6.ts	1	1	
+computedPropertyNames50_ES5.ts	conformance/es6/computedProperties/computedPropertyNames50_ES5.ts	1	1	
+conflictMarkerDiff3Trivia1.ts	compiler/conflictMarkerDiff3Trivia1.ts	11	11	
+conflictMarkerDiff3Trivia2.ts	compiler/conflictMarkerDiff3Trivia2.ts	1	1	
+conflictMarkerTrivia1.ts	compiler/conflictMarkerTrivia1.ts	7	7	
+computedPropertyNames50_ES6.ts	conformance/es6/computedProperties/computedPropertyNames50_ES6.ts	1	1	
+conflictMarkerTrivia4.ts	compiler/conflictMarkerTrivia4.ts	1	1	
+conflictMarkerTrivia3.tsx	compiler/conflictMarkerTrivia3.tsx	1	1	
+conflictingDeclarationsImportFromNamespace1.ts	compiler/conflictingDeclarationsImportFromNamespace1.ts	1	1	
+constDeclarationShadowedByVarDeclaration.ts	compiler/constDeclarationShadowedByVarDeclaration.ts	2	2	
+conflictMarkerTrivia2.ts	compiler/conflictMarkerTrivia2.ts	1	1	
+constDeclarations-access2.ts	compiler/constDeclarations-access2.ts	17	17	
+conflictingDeclarationsImportFromNamespace2.ts	compiler/conflictingDeclarationsImportFromNamespace2.ts	1	1	
+constDeclarations-validContexts(alwaysstrict=true).ts	compiler/constDeclarations-validContexts.ts	3	3	
+constDeclarations-errors.ts	compiler/constDeclarations-errors.ts	8	8	
+constEnum4.ts	conformance/constEnums/constEnum4.ts	3	0	constEnum4.ts(2,5): error syntax: Cannot use a declaration in a single-statement context
+constInClassExpression.ts	compiler/constInClassExpression.ts	2	2	
+constDeclarations-invalidContexts(alwaysstrict=true).ts	compiler/constDeclarations-invalidContexts.ts	9	8	constDeclarations-invalidContexts.ts(16,5): error syntax: Cannot use a declaration in a single-statement context
+constructorArgsErrors5.ts	compiler/constructorArgsErrors5.ts	4	4	
+constructorNameInAccessor.ts	conformance/salsa/constructorNameInAccessor.ts	2	2	
+constructorNameInGenerator.ts	conformance/salsa/constructorNameInGenerator.ts	1	1	
+constructorArgsErrors1.ts	compiler/constructorArgsErrors1.ts	3	3	
+constDeclarations-scopes(alwaysstrict=true).ts	compiler/constDeclarations-scopes.ts	2	2	
+constructorArgsErrors2.ts	compiler/constructorArgsErrors2.ts	3	3	
+continueNotInIterationStatement2.ts	compiler/continueNotInIterationStatement2.ts	1	1	
+constructorWithIncompleteTypeAnnotation.ts	compiler/constructorWithIncompleteTypeAnnotation.ts	4	4	
+continueNotInIterationStatement3.ts	compiler/continueNotInIterationStatement3.ts	1	1	
+constructorStaticParamNameErrors.ts	compiler/constructorStaticParamNameErrors.ts	1	1	
+continueTarget1.ts	compiler/continueTarget1.ts	1	1	
+continueNotInIterationStatement4.ts	compiler/continueNotInIterationStatement4.ts	1	1	
+continueTarget5.ts	compiler/continueTarget5.ts	1	1	
+continueTarget6.ts	compiler/continueTarget6.ts	1	1	
+continueNotInIterationStatement1.ts	compiler/continueNotInIterationStatement1.ts	1	1	
+controlFlowFunctionLikeCircular1.ts	compiler/controlFlowFunctionLikeCircular1.ts	1	1	
+corrupted.ts	compiler/corrupted.ts	1	1	
+createArray.ts	compiler/createArray.ts	1	1	
+convertKeywordsYes(alwaysstrict=true).ts	compiler/convertKeywordsYes.ts	1	1	
+declarationEmitDestructuring2.ts	compiler/declarationEmitDestructuring2.ts	3	3	
+declarationEmitNestedBindingPattern.ts	compiler/declarationEmitNestedBindingPattern.ts	29	27	declarationEmitNestedBindingPattern.ts(36,5): error syntax: Expected identifier but found ")"
+declarationEmitDestructuringParameterProperties2.ts	compiler/declarationEmitDestructuringParameterProperties2.ts	12	12	
+declarationEmitUnknownImport2(target=es2015).ts	compiler/declarationEmitUnknownImport2.ts	1	1	
+declarationEmitDestructuringParameterProperties.ts	compiler/declarationEmitDestructuringParameterProperties.ts	12	12	
+decoratorInJsFile.ts	compiler/decoratorInJsFile.ts	3	3	
+decoratorInJsFile1.ts	compiler/decoratorInJsFile1.ts	3	3	
+declarationFileForHtmlImport(allowarbitraryextensions=false).ts	conformance/nonjsExtensions/declarationFileForHtmlImport.ts	1	0	component.d.html.ts(8,14): error syntax: The constant "blogPost" must be initialized
+decoratorOnArrowFunction.ts	conformance/decorators/invalid/decoratorOnArrowFunction.ts	1	1	
+decoratorOnAwait.ts	conformance/decorators/invalid/decoratorOnAwait.ts	1	0	decoratorOnAwait.ts(4,1): error syntax: Expected "class" but found "await"
+decoratorOnClassAccessor6(target=es2015).ts	conformance/decorators/class/accessor/decoratorOnClassAccessor6.ts	2	2	
+decoratorMetadata-jsdoc(target=es2015).ts	conformance/decorators/decoratorMetadata-jsdoc.ts	2	2	
+declarationEmitInvalidExport.ts	compiler/declarationEmitInvalidExport.ts	1	0	declarationEmitInvalidExport.ts(2,3): error syntax: Unexpected export
+decoratorOnClassConstructor1(target=es2015).ts	conformance/decorators/class/constructor/decoratorOnClassConstructor1.ts	1	1	
+decoratorOnClassMethod11(target=es2015).ts	conformance/decorators/class/method/decoratorOnClassMethod11.ts	1	1	
+decoratorOnClassConstructorParameter4(target=es2015).ts	conformance/decorators/class/constructor/parameter/decoratorOnClassConstructorParameter4.ts	4	4	
+decoratorOnClassMethod12(target=es2015).ts	conformance/decorators/class/method/decoratorOnClassMethod12.ts	1	1	
+decoratorOnClassMethodParameter3.ts	conformance/decorators/class/method/parameter/decoratorOnClassMethodParameter3.ts	6	6	
+decoratorOnClassMethodThisParameter(target=es2015).ts	conformance/decorators/class/method/parameter/decoratorOnClassMethodThisParameter.ts	2	2	
+decoratorOnClassAccessor3(target=es2015).ts	conformance/decorators/class/accessor/decoratorOnClassAccessor3.ts	2	2	
+decoratorOnClassMethod17.ts	conformance/decorators/class/method/decoratorOnClassMethod17.ts	1	1	
+decoratorOnClassProperty3(target=es2015).ts	conformance/decorators/class/property/decoratorOnClassProperty3.ts	2	2	
+decoratorOnFunctionDeclaration.ts	conformance/decorators/invalid/decoratorOnFunctionDeclaration.ts	1	0	decoratorOnFunctionDeclaration.ts(4,1): error syntax: Expected "class" but found "function"
+decoratorOnClassMethod3(target=es2015).ts	conformance/decorators/class/method/decoratorOnClassMethod3.ts	5	4	decoratorOnClassMethod3.ts(5,1): error syntax: Unexpected }
+decoratorOnFunctionParameter.ts	conformance/decorators/invalid/decoratorOnFunctionParameter.ts	4	4	
+decoratorOnEnum2.ts	conformance/decorators/invalid/decoratorOnEnum2.ts	1	1	
+decoratorOnImportEquals1.ts	conformance/decorators/invalid/decoratorOnImportEquals1.ts	1	0	decoratorOnImportEquals1.ts(9,5): error syntax: Expected "class" but found "import"
+decoratorOnFunctionExpression.ts	conformance/decorators/invalid/decoratorOnFunctionExpression.ts	1	1	
+decoratorOnInterface.ts	conformance/decorators/invalid/decoratorOnInterface.ts	1	0	decoratorOnInterface.ts(4,1): error syntax: Expected "class" but found "interface"
+decoratorOnImportEquals2.ts	conformance/decorators/invalid/decoratorOnImportEquals2.ts	1	0	decoratorOnImportEquals2_1.ts(2,1): error syntax: Expected "class" but found "import"
+decoratorOnInternalModule.ts	conformance/decorators/invalid/decoratorOnInternalModule.ts	1	0	decoratorOnInternalModule.ts(4,1): error syntax: Expected "class" but found "namespace"
+decoratorOnEnum.ts	conformance/decorators/invalid/decoratorOnEnum.ts	1	0	decoratorOnEnum.ts(4,1): error syntax: Expected "class" but found "enum"
+decoratorOnVar.ts	conformance/decorators/invalid/decoratorOnVar.ts	1	0	decoratorOnVar.ts(4,1): error syntax: Expected "class" but found "var"
+decrementAndIncrementOperators.ts	compiler/decrementAndIncrementOperators.ts	13	13	
+decoratorOnTypeAlias.ts	conformance/decorators/invalid/decoratorOnTypeAlias.ts	1	0	decoratorOnTypeAlias.ts(4,1): error syntax: Expected "class" but found "type"
+decrementOperatorWithNumberTypeInvalidOperations.ts	conformance/expressions/unaryOperators/decrementOperator/decrementOperatorWithNumberTypeInvalidOperations.ts	20	20	
+decrementOperatorWithAnyOtherTypeInvalidOperations.ts	conformance/expressions/unaryOperators/decrementOperator/decrementOperatorWithAnyOtherTypeInvalidOperations.ts	18	18	
+decrementOperatorWithEnumTypeInvalidOperations.ts	conformance/expressions/unaryOperators/decrementOperator/decrementOperatorWithEnumTypeInvalidOperations.ts	2	2	
+decoratorOnUsing.ts	conformance/decorators/invalid/decoratorOnUsing.ts	4	2	decoratorOnUsing.ts(7,1): error syntax: Expected "class" but found "using"
+decrementOperatorWithUnsupportedStringType.ts	conformance/expressions/unaryOperators/decrementOperator/decrementOperatorWithUnsupportedStringType.ts	20	20	
+defaultKeywordWithoutExport2.ts	compiler/defaultKeywordWithoutExport2.ts	1	1	
+definiteAssignmentAssertions.ts	conformance/controlFlow/definiteAssignmentAssertions.ts	3	3	
+defaultKeywordWithoutExport1.ts	compiler/defaultKeywordWithoutExport1.ts	1	1	
+decrementOperatorWithUnsupportedBooleanType.ts	conformance/expressions/unaryOperators/decrementOperator/decrementOperatorWithUnsupportedBooleanType.ts	18	18	
+derivedClassSuperCallsInNonConstructorMembers.ts	conformance/classes/constructorDeclarations/superCalls/derivedClassSuperCallsInNonConstructorMembers.ts	10	10	
+derivedClassConstructorWithoutSuperCall.ts	conformance/classes/constructorDeclarations/superCalls/derivedClassConstructorWithoutSuperCall.ts	1	1	
+definiteAssignmentAssertionsWithObjectShortHand.ts	conformance/controlFlow/definiteAssignmentAssertionsWithObjectShortHand.ts	2	2	
+deleteOperatorInvalidOperations.ts	conformance/expressions/unaryOperators/deleteOperator/deleteOperatorInvalidOperations.ts	2	2	
+destructionAssignmentError.ts	compiler/destructionAssignmentError.ts	1	1	
+destructuringObjectBindingPatternAndAssignment3.ts	conformance/es6/destructuring/destructuringObjectBindingPatternAndAssignment3.ts	2	2	
+destructuringControlFlowNoCrash.ts	compiler/destructuringControlFlowNoCrash.ts	1	1	
+destructuringParameterDeclaration1ES6.ts	conformance/es6/destructuring/destructuringParameterDeclaration1ES6.ts	2	2	
+destructuringParameterDeclaration2.ts	conformance/es6/destructuring/destructuringParameterDeclaration2.ts	2	2	
+destructuringParameterProperties1.ts	conformance/es6/destructuring/destructuringParameterProperties1.ts	12	12	
+destructuringParameterDeclaration4.ts	conformance/es6/destructuring/destructuringParameterDeclaration4.ts	4	4	
+destructuringParameterDeclaration6.ts	conformance/es6/destructuring/destructuringParameterDeclaration6.ts	6	6	
+destructuringParameterProperties2.ts	conformance/es6/destructuring/destructuringParameterProperties2.ts	21	20	destructuringParameterProperties2.ts(6,5): error syntax: Unexpected }
+destructuringParameterProperties3.ts	conformance/es6/destructuring/destructuringParameterProperties3.ts	21	20	destructuringParameterProperties3.ts(6,5): error syntax: Unexpected }
+destructuringSameNames.ts	conformance/es6/destructuring/destructuringSameNames.ts	8	8	
+destructuringParameterProperties4.ts	conformance/es6/destructuring/destructuringParameterProperties4.ts	21	20	destructuringParameterProperties4.ts(6,5): error syntax: Unexpected }
+destructuringParameterProperties5.ts	conformance/es6/destructuring/destructuringParameterProperties5.ts	9	6	destructuringParameterProperties5.ts(6,13): error syntax: Expected ";" but found "foo"
+disallowLineTerminatorBeforeArrow.ts	conformance/es6/arrowFunction/disallowLineTerminatorBeforeArrow.ts	1	1	
+disallowedBlockScopedInPresenceOfParseErrors1.ts	compiler/disallowedBlockScopedInPresenceOfParseErrors1.ts	2	2	
+dottedModuleName.ts	compiler/dottedModuleName.ts	1	1	
+downlevelLetConst1.ts	compiler/downlevelLetConst1.ts	2	2	
+downlevelLetConst2.ts	compiler/downlevelLetConst2.ts	1	1	
+dontShowCompilerGeneratedMembers.ts	compiler/dontShowCompilerGeneratedMembers.ts	2	2	
+duplicateDefaultExport.ts	compiler/duplicateDefaultExport.ts	1	1	
+downlevelLetConst11.ts	compiler/downlevelLetConst11.ts	1	1	
+duplicateIdentifierBindingElementInParameterDeclaration1(target=es2015).ts	compiler/duplicateIdentifierBindingElementInParameterDeclaration1.ts	13	13	
+downlevelLetConst4.ts	compiler/downlevelLetConst4.ts	1	1	
+duplicateIdentifierEnum.ts	compiler/duplicateIdentifierEnum.ts	2	2	
+duplicateIdentifierBindingElementInParameterDeclaration2(target=es2015).ts	compiler/duplicateIdentifierBindingElementInParameterDeclaration2.ts	13	13	
+duplicateSymbolsExportMatching.ts	compiler/duplicateSymbolsExportMatching.ts	1	1	
+dynamicImportDefer(module=commonjs).ts	conformance/importDefer/dynamicImportDefer.ts	2	1	b.ts(3,3): error syntax: Expected ")" but found ";"
+duplicateIdentifierInCatchBlock.ts	compiler/duplicateIdentifierInCatchBlock.ts	1	0	duplicateIdentifierInCatchBlock.ts(13,14): error syntax: "x" has already been declared
+duplicateVarAndImport2.ts	compiler/duplicateVarAndImport2.ts	1	0	duplicateVarAndImport2.ts(1,1): error syntax: "a" has already been declared
+dynamicImportDefer(module=es2020).ts	conformance/importDefer/dynamicImportDefer.ts	2	1	b.ts(3,3): error syntax: Expected ")" but found ";"
+dynamicImportDefer(module=nodenext).ts	conformance/importDefer/dynamicImportDefer.ts	2	1	b.ts(3,3): error syntax: Expected ")" but found ";"
+dynamicImportDefer(module=es2015).ts	conformance/importDefer/dynamicImportDefer.ts	2	1	b.ts(3,3): error syntax: Expected ")" but found ";"
+dynamicImportDeferInvalidStandalone.ts	conformance/importDefer/dynamicImportDeferInvalidStandalone.ts	2	2	
+elementAccessChain.3.ts	conformance/expressions/optionalChaining/elementAccessChain/elementAccessChain.3.ts	22	22	
+emitArrowFunctionWhenUsingArguments12(target=es2015).ts	conformance/es6/arrowFunction/emitArrowFunctionWhenUsingArguments12.ts	1	1	
+emitArrowFunctionWhenUsingArguments12_ES6.ts	conformance/es6/arrowFunction/emitArrowFunctionWhenUsingArguments12_ES6.ts	1	1	
+emitThisInSuperMethodCall.ts	compiler/emitThisInSuperMethodCall.ts	3	3	
+emptyGenericParamList.ts	compiler/emptyGenericParamList.ts	1	1	
+emptyMemberAccess.ts	compiler/emptyMemberAccess.ts	1	1	
+emptyVariableDeclarationBindingPatterns02_ES5(target=es2015).ts	conformance/es6/destructuring/emptyVariableDeclarationBindingPatterns02_ES5.ts	2	2	
+emptyVariableDeclarationBindingPatterns02_ES6.ts	conformance/es6/destructuring/emptyVariableDeclarationBindingPatterns02_ES6.ts	2	2	
+enumErrors.ts	conformance/enums/enumErrors.ts	3	2	enumErrors.ts(51,1): error syntax: Unexpected }
+emptyVariableDeclarationBindingPatterns02_ES5iterable(target=es2015).ts	conformance/es6/destructuring/emptyVariableDeclarationBindingPatterns02_ES5iterable.ts	2	2	
+enumGenericTypeClash.ts	compiler/enumGenericTypeClash.ts	1	1	
+enumConflictsWithGlobalIdentifier.ts	compiler/enumConflictsWithGlobalIdentifier.ts	2	0	enumConflictsWithGlobalIdentifier.ts(5,5): error syntax: Expected ";" but found "y"
+enumWithBigint.ts	compiler/enumWithBigint.ts	1	1	
+enumMemberResolution.ts	compiler/enumMemberResolution.ts	2	0	enumMemberResolution.ts(5,5): error syntax: Expected ";" but found "y"
+enumWithParenthesizedInitializer1.ts	compiler/enumWithParenthesizedInitializer1.ts	2	2	
+errorForUsingPropertyOfTypeAsType01.ts	compiler/errorForUsingPropertyOfTypeAsType01.ts	1	1	
+erasableSyntaxOnly2.ts	compiler/erasableSyntaxOnly2.ts	3	3	
+enumIdentifierLiterals.ts	compiler/enumIdentifierLiterals.ts	1	1	
+errorRecoveryWithDotFollowedByNamespaceKeyword.ts	compiler/errorRecoveryWithDotFollowedByNamespaceKeyword.ts	2	0	errorRecoveryWithDotFollowedByNamespaceKeyword.ts(7,19): error syntax: Expected ";" but found "B"
+errorSuperCalls.ts	conformance/expressions/superCalls/errorSuperCalls.ts	14	14	
+errorSuperPropertyAccess(target=es2015).ts	conformance/expressions/superPropertyAccess/errorSuperPropertyAccess.ts	4	4	
+errorSpanForUnclosedJsxTag.tsx	compiler/errorSpanForUnclosedJsxTag.tsx	1	1	
+es6ClassTest9.ts	compiler/es6ClassTest9.ts	5	2	es6ClassTest9.ts(2,10): error syntax: Expected ";" but found "foo"
+es5ModuleInternalNamedImports(target=es2015).ts	compiler/es5ModuleInternalNamedImports.ts	1	1	
+errorRecoveryInClassDeclaration.ts	compiler/errorRecoveryInClassDeclaration.ts	4	2	errorRecoveryInClassDeclaration.ts(5,13): error syntax: Expected identifier but found ")"
+es6ImportDefaultBindingFollowedWithNamedImport1InEs5(target=es2015).ts	compiler/es6ImportDefaultBindingFollowedWithNamedImport1InEs5.ts	1	1	
+es6ImportDefaultBindingMergeErrors(target=es2015).ts	compiler/es6ImportDefaultBindingMergeErrors.ts	2	1	es6ImportDefaultBindingMergeErrors_1.ts(6,5): error syntax: "defaultBinding2" has already been declared
+es6ImportDefaultBindingFollowedWithNamedImport1WithExport(target=es2015).ts	compiler/es6ImportDefaultBindingFollowedWithNamedImport1WithExport.ts	3	3	
+es6ImportDefaultBindingWithExport(target=es2015).ts	compiler/es6ImportDefaultBindingWithExport.ts	4	4	
+es6ImportNamedImportIdentifiersParsing.ts	compiler/es6ImportNamedImportIdentifiersParsing.ts	3	3	
+es6ImportDefaultBindingFollowedWithNamespaceBindingWithExport.ts	compiler/es6ImportDefaultBindingFollowedWithNamespaceBindingWithExport.ts	4	4	
+es6ImportNameSpaceImportMergeErrors(target=es2015).ts	compiler/es6ImportNameSpaceImportMergeErrors.ts	2	1	es6ImportNameSpaceImportMergeErrors_1.ts(8,5): error syntax: "nameSpaceBinding3" has already been declared
+es6ImportDefaultBindingFollowedWithNamedImportWithExport(target=es2015).ts	compiler/es6ImportDefaultBindingFollowedWithNamedImportWithExport.ts	3	3	
+es6ImportNamedImportMergeErrors.ts	compiler/es6ImportNamedImportMergeErrors.ts	3	1	es6ImportNamedImportMergeErrors_1.ts(6,5): error syntax: "x" has already been declared
+es6ImportNamedImportParsingError.ts	compiler/es6ImportNamedImportParsingError.ts	3	3	
+es6ImportNamedImportWithExport.ts	compiler/es6ImportNamedImportWithExport.ts	12	12	
+es6ImportParseErrors.ts	compiler/es6ImportParseErrors.ts	1	1	
+es6ImportWithoutFromClauseWithExport.ts	compiler/es6ImportWithoutFromClauseWithExport.ts	1	1	
+es6ModuleInternalNamedImports.ts	compiler/es6ModuleInternalNamedImports.ts	1	1	
+esDecorators-classDeclaration-exportModifier.2.ts	conformance/esDecorators/classDeclaration/esDecorators-classDeclaration-exportModifier.2.ts	17	15	file12.ts(2,21): error syntax: Expected "class" but found "abstract"
+esDecorators-classDeclaration-exportModifier.ts	conformance/esDecorators/classDeclaration/esDecorators-classDeclaration-exportModifier.ts	4	3	file7.js(3,1): error syntax: Expected "class" but found end of file
+esDecorators-decoratorExpression.1(experimentaldecorators=true).ts	conformance/esDecorators/esDecorators-decoratorExpression.1.ts	2	2	
+esDecorators-decoratorExpression.3(experimentaldecorators=true).ts	conformance/esDecorators/esDecorators-decoratorExpression.3.ts	1	1	
+esDecorators-decoratorExpression.3(experimentaldecorators=false).ts	conformance/esDecorators/esDecorators-decoratorExpression.3.ts	1	1	
+expandoFunctionContextualTypesNoValue.ts	compiler/expandoFunctionContextualTypesNoValue.ts	1	0	expandoFunctionContextualTypesNoValue.ts(4,17): error syntax: "Foo" has already been declared
+es6ModuleInternalNamedImports2.ts	compiler/es6ModuleInternalNamedImports2.ts	1	1	
+exponentiationOperatorInTemplateStringWithSyntaxError1(target=es2015).ts	conformance/es7/exponentiationOperator/exponentiationOperatorInTemplateStringWithSyntaxError1.ts	1	1	
+esDecorators-decoratorExpression.1(experimentaldecorators=false).ts	conformance/esDecorators/esDecorators-decoratorExpression.1.ts	2	2	
+esDecorators-privateFieldAccess.ts	conformance/esDecorators/esDecorators-privateFieldAccess.ts	5	1	esDecorators-privateFieldAccess.ts(4,1): error syntax: Expected ")" but found "class"
+exponentiationOperatorInTemplateStringWithSyntaxError2(target=es2015).ts	conformance/es7/exponentiationOperator/exponentiationOperatorInTemplateStringWithSyntaxError2.ts	1	1	
+exponentiationOperatorInTemplateStringWithSyntaxError3(target=es2015).ts	conformance/es7/exponentiationOperator/exponentiationOperatorInTemplateStringWithSyntaxError3.ts	1	1	
+exponentiationOperatorSyntaxError1(target=es2015).ts	conformance/es7/exponentiationOperator/exponentiationOperatorSyntaxError1.ts	1	1	
+exportAssignNonIdentifier.ts	conformance/externalModules/exportAssignNonIdentifier.ts	1	1	
+exportAlreadySeen.ts	compiler/exportAlreadySeen.ts	1	1	
+exportAssignmentImportMergeNoCrash.ts	compiler/exportAssignmentImportMergeNoCrash.ts	1	1	
+exponentiationOperatorSyntaxError2(target=es2015).ts	conformance/es7/exponentiationOperator/exponentiationOperatorSyntaxError2.ts	1	1	
+exportAssignmentWithDeclareAndExportModifiers.ts	compiler/exportAssignmentWithDeclareAndExportModifiers.ts	1	1	
+exportAssignmentWithDeclareModifier.ts	compiler/exportAssignmentWithDeclareModifier.ts	1	1	
+exportAssignmentWithExportModifier.ts	compiler/exportAssignmentWithExportModifier.ts	1	1	
+exportDeclaration_missingBraces.ts	conformance/externalModules/typeOnly/exportDeclaration_missingBraces.ts	6	5	exportDeclaration_missingBraces.ts(12,1): error syntax: Unexpected }
+exportDefaultClassAndValue.ts	compiler/exportDefaultClassAndValue.ts	1	1	
+exportClassWithoutName.ts	compiler/exportClassWithoutName.ts	1	1	
+exportDeclarationInInternalModule(target=es2015).ts	compiler/exportDeclarationInInternalModule.ts	1	1	
+exportDefaultClassInNamespace.ts	compiler/exportDefaultClassInNamespace.ts	1	1	
+exportDefaultInterfaceAndTwoFunctions.ts	compiler/exportDefaultInterfaceAndTwoFunctions.ts	1	1	
+exportDefaultInterfaceClassAndFunctionOverloads.ts	compiler/exportDefaultInterfaceClassAndFunctionOverloads.ts	1	1	
+exportDefaultFunctionInNamespace.ts	compiler/exportDefaultFunctionInNamespace.ts	1	1	
+exportDefaultTypeClassAndValue.ts	compiler/exportDefaultTypeClassAndValue.ts	1	1	
+exportDeferInvalid.ts	conformance/importDefer/exportDeferInvalid.ts	1	1	
+exportDefaultDuplicateCrash.ts	compiler/exportDefaultDuplicateCrash.ts	2	2	
+exportDefaultInterfaceClassAndValue.ts	compiler/exportDefaultInterfaceClassAndValue.ts	1	1	
+exportInFunction.ts	compiler/exportInFunction.ts	1	0	exportInFunction.ts(2,5): error syntax: Unexpected export
+exportNonInitializedVariablesCommonJS.ts	conformance/externalModules/exportNonInitializedVariablesCommonJS.ts	3	3	
+exportInterfaceClassAndValueWithDuplicatesInImportList.ts	compiler/exportInterfaceClassAndValueWithDuplicatesInImportList.ts	1	1	
+exportNamespace_js.ts	conformance/externalModules/typeOnly/exportNamespace_js.ts	1	1	
+exportNamespace9.ts	conformance/externalModules/typeOnly/exportNamespace9.ts	1	0	../c.ts(2,7): error syntax: "A" has already been declared
+exportNonInitializedVariablesES6.ts	conformance/externalModules/exportNonInitializedVariablesES6.ts	3	3	
+exportNonInitializedVariablesInIfThenStatementNoCrash1(module=esnext).ts	conformance/externalModules/exportNonInitializedVariablesInIfThenStatementNoCrash1.ts	1	1	
+exportNonInitializedVariablesInIfThenStatementNoCrash1(module=commonjs).ts	conformance/externalModules/exportNonInitializedVariablesInIfThenStatementNoCrash1.ts	1	1	
+exportSpecifiers_js.ts	conformance/externalModules/typeOnly/exportSpecifiers_js.ts	2	2	
+exportsAndImportsWithUnderscores1(target=es2015).ts	conformance/es6/modules/exportsAndImportsWithUnderscores1.ts	3	2	m1.ts(6,1): error syntax: Unexpected }
+expressionTypeNodeShouldError.ts	compiler/expressionTypeNodeShouldError.ts	15	15	
+expressionsForbiddenInParameterInitializers.ts	compiler/expressionsForbiddenInParameterInitializers.ts	5	5	
+expressionWithJSDocTypeArguments.ts	compiler/expressionWithJSDocTypeArguments.ts	1	1	
+extendsClauseAlreadySeen.ts	compiler/extendsClauseAlreadySeen.ts	2	2	
+extension.ts	compiler/extension.ts	1	1	
+exportSameNameFuncVar.ts	compiler/exportSameNameFuncVar.ts	1	1	
+externModule.ts	compiler/externModule.ts	2	2	
+fatarrowfunctionsOptionalArgs.ts	compiler/fatarrowfunctionsOptionalArgs.ts	3	3	
+fatarrowfunctionsErrors.ts	compiler/fatarrowfunctionsErrors.ts	3	3	
+fatarrowfunctionsOptionalArgsErrors1.ts	compiler/fatarrowfunctionsOptionalArgsErrors1.ts	1	1	
+fatarrowfunctionsOptionalArgsErrors2.ts	compiler/fatarrowfunctionsOptionalArgsErrors2.ts	1	1	
+fatarrowfunctionsOptionalArgsErrors3.ts	compiler/fatarrowfunctionsOptionalArgsErrors3.ts	1	1	
+fileWithNextLine3.ts	compiler/fileWithNextLine3.ts	1	1	
+fillInMissingTypeArgsOnJSConstructCalls.ts	compiler/fillInMissingTypeArgsOnJSConstructCalls.ts	14	12	BaseB.js(5,30): error syntax: Expected "}" but found ";"
+for-of-excess-declarations.ts	conformance/es6/for-ofStatements/for-of-excess-declarations.ts	1	1	
+extendsClauseAlreadySeen2.ts	compiler/extendsClauseAlreadySeen2.ts	5	2	extendsClauseAlreadySeen2.ts(5,8): error syntax: Expected ")" but found "("
+for-of2.ts	conformance/es6/for-ofStatements/for-of2.ts	1	1	
+fatarrowfunctionsOptionalArgsErrors4.ts	compiler/fatarrowfunctionsOptionalArgsErrors4.ts	1	1	
+for-of52.ts	conformance/es6/for-ofStatements/for-of52.ts	1	1	
+for-of51.ts	conformance/es6/for-ofStatements/for-of51.ts	1	1	
+for-of53.ts	conformance/es6/for-ofStatements/for-of53.ts	1	0	for-of53.ts(1,10): error syntax: v has already been declared
+for.ts	compiler/for.ts	1	1	
+for-of3.ts	conformance/es6/for-ofStatements/for-of3.ts	1	1	
+funClodule.ts	compiler/funClodule.ts	1	1	
+for-of54.ts	conformance/es6/for-ofStatements/for-of54.ts	1	0	for-of54.ts(1,10): error syntax: v has already been declared
+functionCall15.ts	compiler/functionCall15.ts	1	1	
+functionAndImportNameConflict.ts	compiler/functionAndImportNameConflict.ts	1	0	f2.ts(2,17): error syntax: "f" has already been declared
+functionsMissingReturnStatementsAndExpressions(target=es2015).ts	compiler/functionsMissingReturnStatementsAndExpressions.ts	2	1	functionsMissingReturnStatementsAndExpressions.ts(155,1): error syntax: Unexpected end of file
+functionOverloadErrorsSyntax.ts	conformance/functions/functionOverloadErrorsSyntax.ts	3	3	
+generatorTypeCheck32.ts	conformance/es6/yieldExpressions/generatorTypeCheck32.ts	2	2	
+functionTypesLackingReturnTypes.ts	compiler/functionTypesLackingReturnTypes.ts	1	1	
+functionsWithModifiersInBlocks1.ts	compiler/functionsWithModifiersInBlocks1.ts	1	1	
+identifierStartAfterNumericLiteral.ts	compiler/identifierStartAfterNumericLiteral.ts	1	1	
+genericCallWithoutArgs.ts	compiler/genericCallWithoutArgs.ts	1	1	
+grammarErrors.ts	conformance/externalModules/typeOnly/grammarErrors.ts	2	2	
+gettersAndSettersErrors.ts	compiler/gettersAndSettersErrors.ts	1	1	
+illegalModifiersOnClassElements.ts	compiler/illegalModifiersOnClassElements.ts	2	2	
+illegalSuperCallsInConstructor.ts	compiler/illegalSuperCallsInConstructor.ts	3	3	
+implementsClauseAlreadySeen.ts	compiler/implementsClauseAlreadySeen.ts	2	2	
+implementClausePrecedingExtends.ts	compiler/implementClausePrecedingExtends.ts	3	3	
+importAndVariableDeclarationConflict3.ts	compiler/importAndVariableDeclarationConflict3.ts	1	0	importAndVariableDeclarationConflict3.ts(1,1): error syntax: "x" has already been declared
+importAssertion1(module=es2015).ts	conformance/importAssertion/importAssertion1.ts	1	1	
+importAssertion1(module=esnext).ts	conformance/importAssertion/importAssertion1.ts	1	1	
+importAssertion4.ts	conformance/importAssertion/importAssertion4.ts	1	1	
+importAssertion5.ts	conformance/importAssertion/importAssertion5.ts	1	1	
+importAssertionNonstring.ts	compiler/importAssertionNonstring.ts	6	6	
+importAndVariableDeclarationConflict4.ts	compiler/importAndVariableDeclarationConflict4.ts	1	0	importAndVariableDeclarationConflict4.ts(1,1): error syntax: "x" has already been declared
+importAndVariableDeclarationConflict1.ts	compiler/importAndVariableDeclarationConflict1.ts	1	0	importAndVariableDeclarationConflict1.ts(6,5): error syntax: "x" has already been declared
+importAttributes1(module=es2015).ts	conformance/importAttributes/importAttributes1.ts	1	1	
+importAttributes1(module=commonjs).ts	conformance/importAttributes/importAttributes1.ts	1	1	
+importAssertion1(module=commonjs).ts	conformance/importAssertion/importAssertion1.ts	1	1	
+importAttributes10.ts	conformance/importAttributes/importAttributes10.ts	1	1	
+importAttributes4.ts	conformance/importAttributes/importAttributes4.ts	1	1	
+importAttributes5.ts	conformance/importAttributes/importAttributes5.ts	1	1	
+importAttributes6(module=node18).ts	conformance/importAttributes/importAttributes6.ts	6	6	
+importAttributes6(module=node20).ts	conformance/importAttributes/importAttributes6.ts	6	6	
+importAttributes6(module=nodenext).ts	conformance/importAttributes/importAttributes6.ts	6	6	
+importCallExpressionGrammarError.ts	conformance/dynamicImport/importCallExpressionGrammarError.ts	1	1	
+importCallExpressionInScriptContext2.ts	conformance/dynamicImport/importCallExpressionInScriptContext2.ts	1	1	
+importCallExpressionIncorrect2.ts	conformance/dynamicImport/importCallExpressionIncorrect2.ts	3	3	
+importCallExpressionWithTypeArgument.ts	conformance/dynamicImport/importCallExpressionWithTypeArgument.ts	4	4	
+importDeclWithClassModifiers.ts	compiler/importDeclWithClassModifiers.ts	1	1	
+importAttributes1(module=esnext).ts	conformance/importAttributes/importAttributes1.ts	1	1	
+importDeferFromInvalid.ts	conformance/importDefer/importDeferFromInvalid.ts	2	2	
+importDeferInvalidDefault.ts	conformance/importDefer/importDeferInvalidDefault.ts	1	1	
+importDeferTypeConflict1.ts	conformance/importDefer/importDeferTypeConflict1.ts	1	1	
+importCallExpressionIncorrect1.ts	conformance/dynamicImport/importCallExpressionIncorrect1.ts	1	1	
+importDeferInvalidNamed.ts	conformance/importDefer/importDeferInvalidNamed.ts	1	1	
+importDeclarationInModuleDeclaration2.ts	compiler/importDeclarationInModuleDeclaration2.ts	1	1	
+importMeta(module=esnext,target=esnext).ts	conformance/es2019/importMeta/importMeta.ts	5	5	
+importMeta(module=commonjs,target=esnext).ts	conformance/es2019/importMeta/importMeta.ts	5	5	
+importMeta(module=es2020,target=esnext).ts	conformance/es2019/importMeta/importMeta.ts	5	5	
+importDeferTypeConflict2.ts	conformance/importDefer/importDeferTypeConflict2.ts	1	1	
+importSpecifiers_js.ts	conformance/externalModules/typeOnly/importSpecifiers_js.ts	2	2	
+importSpecifiers1.ts	conformance/externalModules/typeOnly/importSpecifiers1.ts	5	5	
+importMetaPropertyInvalidInCall.ts	conformance/importDefer/importMetaPropertyInvalidInCall.ts	2	2	
+importNonStringLiteral.ts	conformance/externalModules/importNonStringLiteral.ts	1	1	
+importTypeGeneric.ts	conformance/types/import/importTypeGeneric.ts	2	2	
+importTypeGenericTypes.ts	conformance/types/import/importTypeGenericTypes.ts	3	0	usage.ts(1,14): error syntax: The constant "x" must be initialized
+importTypeNested.ts	conformance/types/import/importTypeNested.ts	5	5	
+importWithTypeArguments.ts	conformance/types/import/importWithTypeArguments.ts	1	1	
+importTypeNonString.ts	conformance/types/import/importTypeNonString.ts	5	5	
+incrementAndDecrement.ts	conformance/expressions/operators/incrementAndDecrement.ts	20	20	
+importTypeNestedNoRef.ts	conformance/types/import/importTypeNestedNoRef.ts	5	5	
+incompleteDottedExpressionAtEOF.ts	compiler/incompleteDottedExpressionAtEOF.ts	1	1	
+incompleteObjectLiteral1.ts	compiler/incompleteObjectLiteral1.ts	2	2	
+incrementOperatorWithEnumTypeInvalidOperations.ts	conformance/expressions/unaryOperators/incrementOperator/incrementOperatorWithEnumTypeInvalidOperations.ts	2	2	
+incrementOperatorWithAnyOtherTypeInvalidOperations.ts	conformance/expressions/unaryOperators/incrementOperator/incrementOperatorWithAnyOtherTypeInvalidOperations.ts	15	15	
+incrementOperatorWithUnsupportedBooleanType.ts	conformance/expressions/unaryOperators/incrementOperator/incrementOperatorWithUnsupportedBooleanType.ts	18	18	
+incrementOperatorWithNumberTypeInvalidOperations.ts	conformance/expressions/unaryOperators/incrementOperator/incrementOperatorWithNumberTypeInvalidOperations.ts	20	20	
+incrementOperatorWithUnsupportedStringType.ts	conformance/expressions/unaryOperators/incrementOperator/incrementOperatorWithUnsupportedStringType.ts	20	20	
+innerModExport1.ts	compiler/innerModExport1.ts	2	1	innerModExport1.ts(17,1): error syntax: Unexpected }
+innerModExport2.ts	compiler/innerModExport2.ts	2	1	innerModExport2.ts(18,1): error syntax: Unexpected }
+indexSignatureWithAccessibilityModifier.ts	compiler/indexSignatureWithAccessibilityModifier.ts	2	2	
+instantiateTypeParameter.ts	compiler/instantiateTypeParameter.ts	1	1	
+instantiationExpressionErrors.ts	conformance/types/typeParameters/typeArgumentLists/instantiationExpressionErrors.ts	1	1	
+instantiationExpressions.ts	conformance/types/typeParameters/typeArgumentLists/instantiationExpressions.ts	2	2	
+interfacesWithPredefinedTypesAsNames.ts	conformance/interfaces/interfaceDeclarations/interfacesWithPredefinedTypesAsNames.ts	1	1	
+interfaceDeclaration4.ts	compiler/interfaceDeclaration4.ts	2	2	
+interfaceNaming1.ts	compiler/interfaceNaming1.ts	3	2	interfaceNaming1.ts(2,20): error syntax: Unexpected {
+invalidBinaryIntegerLiteralAndOctalIntegerLiteral.ts	conformance/es6/binaryAndOctalIntegerLiteral/invalidBinaryIntegerLiteralAndOctalIntegerLiteral.ts	1	1	
+interfaceExtendingClass2.ts	conformance/interfaces/interfacesExtendingClasses/interfaceExtendingClass2.ts	1	1	
+invalidContinueInDownlevelAsync.ts	compiler/invalidContinueInDownlevelAsync.ts	1	1	
+invalidDoWhileBreakStatements.ts	conformance/statements/breakStatements/invalidDoWhileBreakStatements.ts	6	6	
+invalidForBreakStatements.ts	conformance/statements/breakStatements/invalidForBreakStatements.ts	6	6	
+invalidForContinueStatements.ts	conformance/statements/continueStatements/invalidForContinueStatements.ts	6	6	
+invalidDoWhileContinueStatements.ts	conformance/statements/continueStatements/invalidDoWhileContinueStatements.ts	6	6	
+invalidForInContinueStatements.ts	conformance/statements/continueStatements/invalidForInContinueStatements.ts	6	6	
+invalidInstantiatedModule.ts	conformance/internalModules/moduleDeclarations/invalidInstantiatedModule.ts	1	1	
+invalidLetInForOfAndForIn_ES6.ts	compiler/invalidLetInForOfAndForIn_ES6.ts	2	2	
+invalidModuleWithStatementsOfEveryKind.ts	conformance/internalModules/moduleBody/invalidModuleWithStatementsOfEveryKind.ts	6	5	invalidModuleWithStatementsOfEveryKind.ts(8,5): error syntax: Unexpected }
+invalidModuleWithVarStatements.ts	conformance/internalModules/moduleBody/invalidModuleWithVarStatements.ts	5	5	
+invalidForInBreakStatements.ts	conformance/statements/breakStatements/invalidForInBreakStatements.ts	6	6	
+invalidSwitchContinueStatement.ts	conformance/statements/continueStatements/invalidSwitchContinueStatement.ts	1	1	
+invalidTaggedTemplateEscapeSequences(target=es2015).ts	conformance/es2018/invalidTaggedTemplateEscapeSequences.ts	1	1	
+invalidSyntaxNamespaceImportWithCommonjs.ts	conformance/externalModules/invalidSyntaxNamespaceImportWithCommonjs.ts	1	1	
+invalidThrowStatement.ts	conformance/statements/throwStatements/invalidThrowStatement.ts	1	1	
+invalidLetInForOfAndForIn_ES5.ts	compiler/invalidLetInForOfAndForIn_ES5.ts	2	2	
+invalidTaggedTemplateEscapeSequences(target=esnext).ts	conformance/es2018/invalidTaggedTemplateEscapeSequences.ts	1	1	
+invalidTryStatements.ts	conformance/statements/tryStatements/invalidTryStatements.ts	1	1	
+invalidTypeOfTarget.ts	conformance/types/specifyingTypes/typeQueries/invalidTypeOfTarget.ts	2	2	
+invalidUnicodeEscapeSequance.ts	compiler/invalidUnicodeEscapeSequance.ts	1	1	
+invalidUnicodeEscapeSequance2.ts	compiler/invalidUnicodeEscapeSequance2.ts	1	1	
+invalidUnicodeEscapeSequance4.ts	compiler/invalidUnicodeEscapeSequance4.ts	1	1	
+invalidWhileContinueStatements.ts	conformance/statements/continueStatements/invalidWhileContinueStatements.ts	6	6	
+isolatedModulesExportDeclarationType.ts	compiler/isolatedModulesExportDeclarationType.ts	1	0	../test1.ts(2,7): error syntax: "T" has already been declared
+isolatedModulesSketchyAliasLocalMerge(isolatedmodules=false,verbatimmodulesyntax=true).ts	compiler/isolatedModulesSketchyAliasLocalMerge.ts	1	0	bad.ts(2,5): error syntax: "FC" has already been declared
+isolatedModulesSketchyAliasLocalMerge(isolatedmodules=true,verbatimmodulesyntax=true).ts	compiler/isolatedModulesSketchyAliasLocalMerge.ts	1	0	bad.ts(2,5): error syntax: "FC" has already been declared
+invalidWhileBreakStatements.ts	conformance/statements/breakStatements/invalidWhileBreakStatements.ts	6	6	
+invalidUnicodeEscapeSequance3.ts	compiler/invalidUnicodeEscapeSequance3.ts	1	1	
+jsDeclarationsEnums(target=es2015).ts	conformance/jsdoc/declarations/jsDeclarationsEnums.ts	1	1	
+jsDeclarationsClassesErr(target=es2015).ts	conformance/jsdoc/declarations/jsDeclarationsClassesErr.ts	59	59	
+jsDeclarationsInterfaces(target=es2015).ts	conformance/jsdoc/declarations/jsDeclarationsInterfaces.ts	1	1	
+jsDeclarationsExportFormsErr(target=es2015).ts	conformance/jsdoc/declarations/jsDeclarationsExportFormsErr.ts	2	2	
+jsFileCompilationAbstractModifier.ts	compiler/jsFileCompilationAbstractModifier.ts	4	3	a.js(3,1): error syntax: Unexpected }
+isolatedModulesSketchyAliasLocalMerge(isolatedmodules=true,verbatimmodulesyntax=false).ts	compiler/isolatedModulesSketchyAliasLocalMerge.ts	1	0	bad.ts(2,5): error syntax: "FC" has already been declared
+jsDeclarationsTypeReferences4(target=es2015).ts	conformance/jsdoc/declarations/jsDeclarationsTypeReferences4.ts	1	1	
+jsFileCompilationAmbientVarDeclarationSyntax.ts	compiler/jsFileCompilationAmbientVarDeclarationSyntax.ts	1	1	
+jsFileCompilationBindMultipleDefaultExports.ts	compiler/jsFileCompilationBindMultipleDefaultExports.ts	1	1	
+jsFileCompilationBindErrors.ts	compiler/jsFileCompilationBindErrors.ts	1	1	
+jsFileCompilationConstructorOverloadSyntax.ts	compiler/jsFileCompilationConstructorOverloadSyntax.ts	2	1	a.js(4,1): error syntax: Expected "}" but found end of file
+jsFileCompilationEnumSyntax.ts	compiler/jsFileCompilationEnumSyntax.ts	1	1	
+jsFileCompilationBindDuplicateIdentifier.ts	compiler/jsFileCompilationBindDuplicateIdentifier.ts	1	1	
+jsFileCompilationBindStrictModeErrors.ts	compiler/jsFileCompilationBindStrictModeErrors.ts	1	1	
+jsFileCompilationFunctionOverloadSyntax.ts	compiler/jsFileCompilationFunctionOverloadSyntax.ts	2	1	a.js(2,1): error syntax: Unexpected end of file
+jsFileCompilationHeritageClauseSyntaxOfClass.ts	compiler/jsFileCompilationHeritageClauseSyntaxOfClass.ts	2	2	
+jsFileCompilationInterfaceSyntax.ts	compiler/jsFileCompilationInterfaceSyntax.ts	1	1	
+jsFileCompilationImportEqualsSyntax.ts	compiler/jsFileCompilationImportEqualsSyntax.ts	1	1	
+jsFileCompilationExportAssignmentSyntax.ts	compiler/jsFileCompilationExportAssignmentSyntax.ts	1	1	
+jsFileCompilationModuleSyntax.ts	compiler/jsFileCompilationModuleSyntax.ts	1	1	
+jsFileCompilationMethodOverloadSyntax.ts	compiler/jsFileCompilationMethodOverloadSyntax.ts	2	1	a.js(4,1): error syntax: Expected "}" but found end of file
+jsFileCompilationPublicMethodSyntaxOfClass.ts	compiler/jsFileCompilationPublicMethodSyntaxOfClass.ts	4	3	a.js(4,1): error syntax: Unexpected }
+jsFileCompilationOptionalParameter.ts	compiler/jsFileCompilationOptionalParameter.ts	3	3	
+jsFileCompilationPublicParameterModifier.ts	compiler/jsFileCompilationPublicParameterModifier.ts	3	3	
+jsFileCompilationOptionalClassElementSyntaxOfClass.ts	compiler/jsFileCompilationOptionalClassElementSyntaxOfClass.ts	4	4	
+jsFileCompilationReturnTypeSyntaxOfFunction.ts	compiler/jsFileCompilationReturnTypeSyntaxOfFunction.ts	2	2	
+jsFileCompilationTypeAliasSyntax.ts	compiler/jsFileCompilationTypeAliasSyntax.ts	2	2	
+jsFileCompilationTypeParameterSyntaxOfClassExpression.ts	compiler/jsFileCompilationTypeParameterSyntaxOfClassExpression.ts	4	3	a.js(2,1): error syntax: Expected "}" but found end of file
+jsFileCompilationTypeParameterSyntaxOfClass.ts	compiler/jsFileCompilationTypeParameterSyntaxOfClass.ts	4	4	
+jsFileCompilationTypeOfParameter.ts	compiler/jsFileCompilationTypeOfParameter.ts	3	3	
+jsFileCompilationTypeArgumentSyntaxOfCall.ts	compiler/jsFileCompilationTypeArgumentSyntaxOfCall.ts	1	1	
+jsFileCompilationTypeParameterSyntaxOfFunction.ts	compiler/jsFileCompilationTypeParameterSyntaxOfFunction.ts	4	4	
+jsFileCompilationTypeSyntaxOfVar.ts	compiler/jsFileCompilationTypeSyntaxOfVar.ts	1	1	
+jsdocDisallowedInTypescript.ts	conformance/jsdoc/jsdocDisallowedInTypescript.ts	3	0	jsdocDisallowedInTypescript.ts(4,15): error syntax: Unexpected ?
+jsFileCompilationWithoutJsExtensions.ts	compiler/jsFileCompilationWithoutJsExtensions.ts	1	0	a.js(1,9): error syntax: Expected ";" but found "var"
+jsxAndTypeAssertion.tsx	conformance/jsx/jsxAndTypeAssertion.tsx	3	3	
+jsdocTypedefNoCrash2.ts	compiler/jsdocTypedefNoCrash2.ts	1	1	
+jsxAttributeInitializer(jsx=preserve).ts	conformance/jsx/jsxAttributeInitializer.ts	2	0	a.tsx(4,15): error syntax: Expected "{" but found "<"
+jsxAttributeInitializer(jsx=react).ts	conformance/jsx/jsxAttributeInitializer.ts	2	0	a.tsx(4,15): error syntax: Expected "{" but found "<"
+jsxEsprimaFbTestSuite.tsx	conformance/jsx/jsxEsprimaFbTestSuite.tsx	4	4	
+jsxAttributeMissingInitializer.tsx	compiler/jsxAttributeMissingInitializer.tsx	2	2	
+jsxAttributeWithoutExpressionReact.tsx	compiler/jsxAttributeWithoutExpressionReact.tsx	1	1	
+jsdocParseErrorsInTypescript.ts	conformance/jsdoc/jsdocParseErrorsInTypescript.ts	1	1	
+jsxNamespacePrefixInName.tsx	compiler/jsxNamespacePrefixInName.tsx	10	10	
+jsxInvalidEsprimaTestSuite.tsx	conformance/jsx/jsxInvalidEsprimaTestSuite.tsx	41	41	
+jsxNamespacePrefixInNameReact.tsx	compiler/jsxNamespacePrefixInNameReact.tsx	10	10	
+jsxParsingErrorImmediateSpreadInAttributeValue.tsx	conformance/jsx/jsxParsingErrorImmediateSpreadInAttributeValue.tsx	3	1	a.tsx(8,7): error syntax: The constant "X" must be initialized
+jsxParsingError2.tsx	conformance/jsx/jsxParsingError2.tsx	5	5	
+labeledStatementDeclarationListInLoopNoCrash1(target=es2015).ts	conformance/statements/labeledStatements/labeledStatementDeclarationListInLoopNoCrash1.ts	1	1	
+jsxUnclosedParserRecovery.ts	conformance/jsx/jsxUnclosedParserRecovery.ts	1	1	
+labeledStatementDeclarationListInLoopNoCrash4(target=es2015).ts	conformance/statements/labeledStatements/labeledStatementDeclarationListInLoopNoCrash4.ts	8	8	
+labeledStatementWithLabel.ts	conformance/statements/labeledStatements/labeledStatementWithLabel.ts	7	7	
+labeledStatementExportDeclarationNoCrash1(module=esnext).ts	conformance/statements/labeledStatements/labeledStatementExportDeclarationNoCrash1.ts	2	2	
+labeledStatementDeclarationListInLoopNoCrash3(target=es2015).ts	conformance/statements/labeledStatements/labeledStatementDeclarationListInLoopNoCrash3.ts	8	8	
+labeledStatementWithLabel_es2015.ts	conformance/statements/labeledStatements/labeledStatementWithLabel_es2015.ts	7	7	
+labeledStatementExportDeclarationNoCrash1(module=commonjs).ts	conformance/statements/labeledStatements/labeledStatementExportDeclarationNoCrash1.ts	2	2	
+labeledStatementWithLabel_strict.ts	conformance/statements/labeledStatements/labeledStatementWithLabel_strict.ts	7	7	
+lambdaPropSelf.ts	compiler/lambdaPropSelf.ts	1	1	
+letAndVarRedeclaration.ts	compiler/letAndVarRedeclaration.ts	6	6	
+letDeclarations-scopes-duplicates.ts	compiler/letDeclarations-scopes-duplicates.ts	12	12	
+letAsIdentifierInStrictMode.ts	compiler/letAsIdentifierInStrictMode.ts	2	2	
+letDeclarations-invalidContexts.ts	compiler/letDeclarations-invalidContexts.ts	9	8	letDeclarations-invalidContexts.ts(16,5): error syntax: Cannot use a declaration in a single-statement context
+letAsIdentifier.ts	compiler/letAsIdentifier.ts	1	1	
+letDeclarations-validContexts.ts	compiler/letDeclarations-validContexts.ts	9	9	
+letInConstDeclarations_ES5(target=es2015).ts	compiler/letInConstDeclarations_ES5.ts	2	2	
+letInLetConstDeclOfForOfAndForIn_ES6.ts	compiler/letInLetConstDeclOfForOfAndForIn_ES6.ts	8	8	
+letInLetConstDeclOfForOfAndForIn_ES5(target=es2015).ts	compiler/letInLetConstDeclOfForOfAndForIn_ES5.ts	8	8	
+letInConstDeclarations_ES6.ts	compiler/letInConstDeclarations_ES6.ts	2	2	
+letDeclarations-scopes.ts	compiler/letDeclarations-scopes.ts	3	3	
+literalsInComputedProperties1.ts	compiler/literalsInComputedProperties1.ts	1	1	
+letInLetDeclarations_ES5(target=es2015).ts	compiler/letInLetDeclarations_ES5.ts	2	2	
+letInLetDeclarations_ES6.ts	compiler/letInLetDeclarations_ES6.ts	2	2	
+logicalNotOperatorInvalidOperations.ts	conformance/expressions/unaryOperators/logicalNotOperator/logicalNotOperatorInvalidOperations.ts	1	1	
+libMembers.ts	compiler/libMembers.ts	1	1	
+missingArgument1.ts	compiler/missingArgument1.ts	1	1	
+mismatchedClassConstructorVariable.ts	compiler/mismatchedClassConstructorVariable.ts	1	1	
+missingCloseBrace.ts	compiler/missingCloseBrace.ts	1	1	
+manyCompilerErrorsInTheTwoFiles.ts	compiler/manyCompilerErrorsInTheTwoFiles.ts	1	0	a.ts(1,12): error syntax: Syntax Error
+missingCloseBracketInArray.ts	compiler/missingCloseBracketInArray.ts	1	1	
+missingCloseBraceInObjectLiteral.ts	compiler/missingCloseBraceInObjectLiteral.ts	1	1	
+modifierOnParameter1.ts	compiler/modifierOnParameter1.ts	3	3	
+modifiersInObjectLiterals.ts	compiler/modifiersInObjectLiterals.ts	4	4	
+missingCloseParenStatements(alwaysstrict=true).ts	compiler/missingCloseParenStatements.ts	8	6	missingCloseParenStatements.ts(12,5): error syntax: Expected ")" but found "}"
+misspelledNewMetaProperty.ts	compiler/misspelledNewMetaProperty.ts	1	1	
+moduleAugmentationGlobal6_1.ts	compiler/moduleAugmentationGlobal6_1.ts	2	1	moduleAugmentationGlobal6_1.ts(3,1): error syntax: Unexpected }
+moduleAugmentationGlobal7_1.ts	compiler/moduleAugmentationGlobal7_1.ts	2	1	moduleAugmentationGlobal7_1.ts(5,1): error syntax: Unexpected }
+moduleAugmentationGlobal8_1(target=es2015).ts	compiler/moduleAugmentationGlobal8_1.ts	2	1	moduleAugmentationGlobal8_1.ts(5,1): error syntax: Unexpected }
+moduleElementsInWrongContext.ts	compiler/moduleElementsInWrongContext.ts	2	2	
+moduleDuplicateIdentifiers.ts	compiler/moduleDuplicateIdentifiers.ts	1	1	
+moduleKeywordRepeatError.ts	compiler/moduleKeywordRepeatError.ts	2	2	
+moduleElementsInWrongContext2.ts	compiler/moduleElementsInWrongContext2.ts	2	2	
+modulePreserve4.ts	compiler/modulePreserve4.ts	1	1	
+moduleElementsInWrongContext3.ts	compiler/moduleElementsInWrongContext3.ts	2	2	
+moduleProperty1.ts	compiler/moduleProperty1.ts	2	2	
+moduleSharesNameWithImportDeclarationInsideIt3.ts	compiler/moduleSharesNameWithImportDeclarationInsideIt3.ts	1	0	moduleSharesNameWithImportDeclarationInsideIt3.ts(1,1): error syntax: "M" has already been declared
+module_augmentExistingVariable.ts	compiler/module_augmentExistingVariable.ts	1	1	
+moduleSharesNameWithImportDeclarationInsideIt5.ts	compiler/moduleSharesNameWithImportDeclarationInsideIt5.ts	1	0	moduleSharesNameWithImportDeclarationInsideIt5.ts(1,1): error syntax: "M" has already been declared
+multipleDefaultExports01(target=es2015).ts	conformance/es6/modules/multipleDefaultExports01.ts	2	2	
+multipleClassPropertyModifiersErrors.ts	compiler/multipleClassPropertyModifiersErrors.ts	1	1	
+multipleDefaultExports02(target=es2015).ts	conformance/es6/modules/multipleDefaultExports02.ts	1	1	
+multipleDefaultExports05(target=es2015).ts	conformance/es6/modules/multipleDefaultExports05.ts	2	2	
+multipleDefaultExports04(target=es2015).ts	conformance/es6/modules/multipleDefaultExports04.ts	1	1	
+multipleDefaultExports03(target=es2015).ts	conformance/es6/modules/multipleDefaultExports03.ts	1	1	
+multipleExportDefault1.ts	conformance/externalModules/multipleExportDefault1.ts	1	1	
+multipleExportDefault3.ts	conformance/externalModules/multipleExportDefault3.ts	1	1	
+multipleExportDefault5.ts	conformance/externalModules/multipleExportDefault5.ts	1	1	
+multipleExportDefault4.ts	conformance/externalModules/multipleExportDefault4.ts	1	1	
+multipleExportDefault2.ts	conformance/externalModules/multipleExportDefault2.ts	1	1	
+multipleExportDefault6.ts	conformance/externalModules/multipleExportDefault6.ts	1	1	
+multipleInheritance.ts	compiler/multipleInheritance.ts	4	4	
+nameCollisions.ts	compiler/nameCollisions.ts	5	4	nameCollisions.ts(19,11): error syntax: "y" has already been declared
+multipleExports.ts	compiler/multipleExports.ts	1	1	
+negateOperatorInvalidOperations.ts	conformance/expressions/unaryOperators/negateOperator/negateOperatorInvalidOperations.ts	1	1	
+namespaceMergedWithImportAliasNoCrash.ts	compiler/namespaceMergedWithImportAliasNoCrash.ts	1	0	file2.ts(2,11): error syntax: "Lib" has already been declared
+nestedClassDeclaration.ts	conformance/classes/nestedClassDeclaration.ts	3	3	
+nestedGlobalNamespaceInClass.ts	compiler/nestedGlobalNamespaceInClass.ts	1	1	
+nestedUnaryExpressionHang.ts	compiler/nestedUnaryExpressionHang.ts	1	0	nestedUnaryExpressionHang.ts(2,1): error syntax: Unexpected end of file
+newMissingIdentifier.ts	compiler/newMissingIdentifier.ts	1	1	
+newOperator.ts	compiler/newOperator.ts	1	1	
+nodeModulesAllowJs1(module=node16).ts	conformance/node/allowJs/nodeModulesAllowJs1.ts	3	3	
+newOperatorErrorCases.ts	conformance/expressions/newOperator/newOperatorErrorCases.ts	2	2	
+nodeModulesAllowJs1(module=node18).ts	conformance/node/allowJs/nodeModulesAllowJs1.ts	3	3	
+nodeModulesAllowJs1(module=node20).ts	conformance/node/allowJs/nodeModulesAllowJs1.ts	3	3	
+nodeModulesAllowJs1(module=nodenext).ts	conformance/node/allowJs/nodeModulesAllowJs1.ts	3	3	
+nodeModulesAllowJsExportAssignment(module=node16).ts	conformance/node/allowJs/nodeModulesAllowJsExportAssignment.ts	2	2	
+nodeModulesAllowJsExportAssignment(module=node18).ts	conformance/node/allowJs/nodeModulesAllowJsExportAssignment.ts	2	2	
+nodeModulesAllowJsImportAssignment(module=node16).ts	conformance/node/allowJs/nodeModulesAllowJsImportAssignment.ts	3	3	
+nodeModulesAllowJsImportAssignment(module=node20).ts	conformance/node/allowJs/nodeModulesAllowJsImportAssignment.ts	3	3	
+nodeModulesAllowJsImportAssignment(module=node18).ts	conformance/node/allowJs/nodeModulesAllowJsImportAssignment.ts	3	3	
+nodeModulesAllowJsImportAssignment(module=nodenext).ts	conformance/node/allowJs/nodeModulesAllowJsImportAssignment.ts	3	3	
+nodeModulesAllowJsExportAssignment(module=node20).ts	conformance/node/allowJs/nodeModulesAllowJsExportAssignment.ts	2	2	
+nodeModulesAllowJsSynchronousCallErrors(module=node18).ts	conformance/node/allowJs/nodeModulesAllowJsSynchronousCallErrors.ts	2	2	
+nodeModulesAllowJsExportAssignment(module=nodenext).ts	conformance/node/allowJs/nodeModulesAllowJsExportAssignment.ts	2	2	
+nodeModulesAllowJsSynchronousCallErrors(module=node16).ts	conformance/node/allowJs/nodeModulesAllowJsSynchronousCallErrors.ts	2	2	
+nodeModulesAllowJsSynchronousCallErrors(module=node20).ts	conformance/node/allowJs/nodeModulesAllowJsSynchronousCallErrors.ts	2	2	
+nodeModulesImportAttributesTypeModeDeclarationEmitErrors(module=node18).ts	conformance/node/nodeModulesImportAttributesTypeModeDeclarationEmitErrors.ts	4	4	
+nodeModulesImportAttributesTypeModeDeclarationEmitErrors(module=node20).ts	conformance/node/nodeModulesImportAttributesTypeModeDeclarationEmitErrors.ts	4	4	
+nodeModulesImportAttributesTypeModeDeclarationEmitErrors(module=node16).ts	conformance/node/nodeModulesImportAttributesTypeModeDeclarationEmitErrors.ts	4	4	
+nodeModulesAllowJsSynchronousCallErrors(module=nodenext).ts	conformance/node/allowJs/nodeModulesAllowJsSynchronousCallErrors.ts	2	2	
+nodeModulesImportAttributesTypeModeDeclarationEmitErrors(module=nodenext).ts	conformance/node/nodeModulesImportAttributesTypeModeDeclarationEmitErrors.ts	4	4	
+nodeModulesImportTypeModeDeclarationEmitErrors1(module=node16).ts	conformance/node/nodeModulesImportTypeModeDeclarationEmitErrors1.ts	4	4	
+nodeModulesImportTypeModeDeclarationEmitErrors1(module=node18).ts	conformance/node/nodeModulesImportTypeModeDeclarationEmitErrors1.ts	4	4	
+nullishCoalescingOperator5.ts	conformance/expressions/nullishCoalescingOperator/nullishCoalescingOperator5.ts	1	1	
+nodeModulesImportTypeModeDeclarationEmitErrors1(module=node20).ts	conformance/node/nodeModulesImportTypeModeDeclarationEmitErrors1.ts	4	4	
+nodeModulesImportTypeModeDeclarationEmitErrors1(module=nodenext).ts	conformance/node/nodeModulesImportTypeModeDeclarationEmitErrors1.ts	4	4	
+numberLiteralsWithLeadingZeros.ts	compiler/numberLiteralsWithLeadingZeros.ts	5	5	
+numericLiteralsWithTrailingDecimalPoints01.ts	compiler/numericLiteralsWithTrailingDecimalPoints01.ts	1	1	
+numericLiteralsWithTrailingDecimalPoints02.ts	compiler/numericLiteralsWithTrailingDecimalPoints02.ts	1	1	
+objectBindingPatternKeywordIdentifiers04.ts	conformance/es6/destructuring/objectBindingPatternKeywordIdentifiers04.ts	1	1	
+objectBindingPatternKeywordIdentifiers03.ts	conformance/es6/destructuring/objectBindingPatternKeywordIdentifiers03.ts	5	5	
+objectBindingPatternKeywordIdentifiers02.ts	conformance/es6/destructuring/objectBindingPatternKeywordIdentifiers02.ts	1	1	
+numericNamedPropertyDuplicates.ts	conformance/types/objectTypeLiteral/propertySignatures/numericNamedPropertyDuplicates.ts	3	2	numericNamedPropertyDuplicates.ts(21,1): error syntax: Unexpected }
+objectCreationExpressionInFunctionParameter.ts	compiler/objectCreationExpressionInFunctionParameter.ts	1	1	
+objectBindingPattern_restElementWithPropertyName.ts	compiler/objectBindingPattern_restElementWithPropertyName.ts	4	4	
+objectLitArrayDeclNoNew.ts	compiler/objectLitArrayDeclNoNew.ts	1	1	
+objectLiteralErrors(target=es2015).ts	conformance/expressions/objectLiterals/objectLiteralErrors.ts	2	2	
+objectLiteralMemberWithModifiers2.ts	compiler/objectLiteralMemberWithModifiers2.ts	3	3	
+objectLiteralMemberWithModifiers1.ts	compiler/objectLiteralMemberWithModifiers1.ts	3	3	
+objectLiteralMemberWithQuestionMark1.ts	compiler/objectLiteralMemberWithQuestionMark1.ts	3	3	
+objectLiteralMemberWithoutBlock1.ts	compiler/objectLiteralMemberWithoutBlock1.ts	2	2	
+objectLiteralShorthandPropertiesErrorWithModule.ts	conformance/es6/shorthandPropertyAssignment/objectLiteralShorthandPropertiesErrorWithModule.ts	3	2	objectLiteralShorthandPropertiesErrorWithModule.ts(12,1): error syntax: Unexpected }
+objectLiteralShorthandPropertiesErrorFromNotUsingIdentifier.ts	conformance/es6/shorthandPropertyAssignment/objectLiteralShorthandPropertiesErrorFromNotUsingIdentifier.ts	6	6	
+objectLiteralWithSemicolons1.ts	compiler/objectLiteralWithSemicolons1.ts	3	3	
+objectLiteralWithSemicolons3.ts	compiler/objectLiteralWithSemicolons3.ts	2	1	objectLiteralWithSemicolons3.ts(5,1): error syntax: Unexpected }
+objectLiteralWithSemicolons4.ts	compiler/objectLiteralWithSemicolons4.ts	1	1	
+objectLiteralWithSemicolons5.ts	compiler/objectLiteralWithSemicolons5.ts	3	3	
+objectLiteralWithSemicolons2.ts	compiler/objectLiteralWithSemicolons2.ts	2	1	objectLiteralWithSemicolons2.ts(5,1): error syntax: Unexpected }
+objectTypeLiteralSyntax2.ts	conformance/types/objectTypeLiteral/objectTypeLiteralSyntax2.ts	1	1	
+objectSpreadNegativeParse.ts	conformance/types/spread/objectSpreadNegativeParse.ts	1	1	
+objectTypeWithOptionalProperty1.ts	compiler/objectTypeWithOptionalProperty1.ts	3	2	objectTypeWithOptionalProperty1.ts(3,5): error syntax: Unexpected }
+objectRestPropertyMustBeLast.ts	conformance/types/rest/objectRestPropertyMustBeLast.ts	1	1	
+objectTypesWithOptionalProperties.ts	conformance/types/objectTypeLiteral/methodSignatures/objectTypesWithOptionalProperties.ts	3	2	objectTypesWithOptionalProperties.ts(25,1): error syntax: Unexpected }
+objectTypesWithOptionalProperties2.ts	conformance/types/objectTypeLiteral/methodSignatures/objectTypesWithOptionalProperties2.ts	1	1	
+octalLiteralAndEscapeSequence.ts	compiler/octalLiteralAndEscapeSequence.ts	1	1	
+octalIntegerLiteralError.ts	conformance/es6/binaryAndOctalIntegerLiteral/octalIntegerLiteralError.ts	1	1	
+optionalArgsWithDefaultValues.ts	compiler/optionalArgsWithDefaultValues.ts	1	1	
+objectRestNegative.ts	conformance/types/rest/objectRestNegative.ts	1	1	
+objectTypesWithPredefinedTypesAsName2.ts	conformance/types/specifyingTypes/predefinedTypes/objectTypesWithPredefinedTypesAsName2.ts	1	1	
+optionalPropertiesSyntax.ts	compiler/optionalPropertiesSyntax.ts	1	1	
+overloadConsecutiveness.ts	compiler/overloadConsecutiveness.ts	3	3	
+override_js3.ts	conformance/override/override_js3.ts	4	4	
+parametersSyntaxErrorNoCrash1.ts	compiler/parametersSyntaxErrorNoCrash1.ts	2	2	
+overloadingStaticFunctionsInFunctions.ts	compiler/overloadingStaticFunctionsInFunctions.ts	4	4	
+parametersSyntaxErrorNoCrash2.ts	compiler/parametersSyntaxErrorNoCrash2.ts	3	3	
+parametersSyntaxErrorNoCrash3.ts	compiler/parametersSyntaxErrorNoCrash3.ts	2	2	
+parse2.ts	compiler/parse2.ts	1	1	
+parseBigInt.ts	compiler/parseBigInt.ts	1	1	
+parseClassDeclarationInStrictModeByDefaultInES6.ts	conformance/es6/classDeclaration/parseClassDeclarationInStrictModeByDefaultInES6.ts	3	3	
+parse1.ts	compiler/parse1.ts	2	1	parse1.ts(5,1): error syntax: Unexpected end of file
+parseCommaSeparatedNewlineNew.ts	compiler/parseCommaSeparatedNewlineNew.ts	1	1	
+parseErrorDoubleCommaInCall.ts	compiler/parseErrorDoubleCommaInCall.ts	3	1	parseErrorDoubleCommaInCall.ts(3,2): error syntax: Expected "}" but found ")"
+parseIncompleteBinaryExpression1.ts	conformance/parser/ecmascript5/Expressions/parseIncompleteBinaryExpression1.ts	1	1	
+parseErrorIncorrectReturnToken.ts	compiler/parseErrorIncorrectReturnToken.ts	1	1	
+parseErrorInHeritageClause1.ts	compiler/parseErrorInHeritageClause1.ts	3	2	parseErrorInHeritageClause1.ts(2,2): error syntax: Expected "}" but found end of file
+parseInvalidNames.ts	compiler/parseInvalidNames.ts	8	8	
+parseInvalidNonNullableTypes.ts	compiler/parseInvalidNonNullableTypes.ts	16	16	
+parseJsxElementInUnaryExpressionNoCrash2.ts	compiler/parseJsxElementInUnaryExpressionNoCrash2.ts	1	0	a.js(2,1): error syntax: Unexpected end of file
+parseInvalidNullableTypes.ts	compiler/parseInvalidNullableTypes.ts	3	2	parseInvalidNullableTypes.ts(3,1): error syntax: Unexpected }
+parseJsxElementInUnaryExpressionNoCrash1.ts	compiler/parseJsxElementInUnaryExpressionNoCrash1.ts	1	1	
+parseJsxElementInUnaryExpressionNoCrash3.ts	compiler/parseJsxElementInUnaryExpressionNoCrash3.ts	1	1	
+parseUnaryExpressionNoTypeAssertionInJsx1.ts	compiler/parseUnaryExpressionNoTypeAssertionInJsx1.ts	1	1	
+parseUnmatchedTypeAssertion.ts	compiler/parseUnmatchedTypeAssertion.ts	1	1	
+parseUnaryExpressionNoTypeAssertionInJsx3.ts	compiler/parseUnaryExpressionNoTypeAssertionInJsx3.ts	1	1	
+parseUnaryExpressionNoTypeAssertionInJsx4.ts	compiler/parseUnaryExpressionNoTypeAssertionInJsx4.ts	1	1	
+parseUnaryExpressionNoTypeAssertionInJsx2.ts	compiler/parseUnaryExpressionNoTypeAssertionInJsx2.ts	1	1	
+parser.asyncGenerators.functionExpressions.es2018(alwaysstrict=true).ts	conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.functionExpressions.es2018.ts	10	9	awaitInParameterInitializerIsError.ts(2,3): error syntax: Unexpected end of file
+parser.asyncGenerators.functionDeclarations.es2018(alwaysstrict=true).ts	conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.functionDeclarations.es2018.ts	7	7	
+parser.asyncGenerators.classMethods.es2018(alwaysstrict=true).ts	conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.classMethods.es2018.ts	19	19	
+parser.asyncGenerators.objectLiteralMethods.es2018(alwaysstrict=true).ts	conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.objectLiteralMethods.es2018.ts	20	16	asyncGeneratorPropertyIsError.ts(3,1): error syntax: Expected "{" but found "}"
+parser.numericSeparators.hexNegative.ts	conformance/parser/ecmascript2021/numericSeparators/parser.numericSeparators.hexNegative.ts	6	6	
+parser.numericSeparators.octalNegative.ts	conformance/parser/ecmascript2021/numericSeparators/parser.numericSeparators.octalNegative.ts	6	6	
+parser.numericSeparators.binaryNegative.ts	conformance/parser/ecmascript2021/numericSeparators/parser.numericSeparators.binaryNegative.ts	6	6	
+parser.forAwait.es2018.ts	conformance/parser/ecmascript2018/forAwait/parser.forAwait.es2018.ts	6	6	
+parser.numericSeparators.decmialNegative.ts	conformance/parser/ecmascript2021/numericSeparators/parser.numericSeparators.decmialNegative.ts	50	50	
+parser0_004152.ts	conformance/parser/ecmascript5/Fuzz/parser0_004152.ts	1	1	
+parser10.1.1-8gs.ts	conformance/parser/ecmascript5/parser10.1.1-8gs.ts	1	1	
+parser509668.ts	conformance/parser/ecmascript5/RegressionTests/parser509668.ts	7	6	parser509668.ts(4,1): error syntax: Unexpected }
+parser509669.ts	conformance/parser/ecmascript5/RegressionTests/parser509669.ts	1	1	
+parser509630.ts	conformance/parser/ecmascript5/RegressionTests/parser509630.ts	1	1	
+parser509667.ts	conformance/parser/ecmascript5/RegressionTests/parser509667.ts	3	1	parser509667.ts(6,9): error syntax: Expected ")" but found "{"
+parser512097.ts	conformance/parser/ecmascript5/RegressionTests/parser512097.ts	2	2	
+parser512084.ts	conformance/parser/ecmascript5/RegressionTests/parser512084.ts	1	1	
+parser.numericSeparators.unicodeEscape.ts	conformance/parser/ecmascript2021/numericSeparators/parser.numericSeparators.unicodeEscape.ts	30	30	
+parser512325.ts	conformance/parser/ecmascript5/RegressionTests/parser512325.ts	1	1	
+parser521128.ts	conformance/parser/ecmascript5/RegressionTests/parser521128.ts	2	2	
+parser519458.ts	conformance/parser/ecmascript5/RegressionTests/parser519458.ts	2	2	
+parser585151.ts	conformance/parser/ecmascript5/RegressionTests/parser585151.ts	2	2	
+parser566700.ts	conformance/parser/ecmascript5/RegressionTests/parser566700.ts	1	1	
+parser618973.ts	conformance/parser/ecmascript5/RegressionTests/parser618973.ts	1	1	
+parser642331_1.ts	conformance/parser/ecmascript5/RegressionTests/parser642331_1.ts	1	1	
+parser645086_1.ts	conformance/parser/ecmascript5/RegressionTests/parser645086_1.ts	1	1	
+parser645086_2.ts	conformance/parser/ecmascript5/RegressionTests/parser645086_2.ts	1	1	
+parserAccessors7(target=es2015).ts	conformance/parser/ecmascript5/Accessors/parserAccessors7.ts	1	1	
+parserAccessors10(target=es2015).ts	conformance/parser/ecmascript5/Accessors/parserAccessors10.ts	3	3	
+parserAccessors8(target=es2015).ts	conformance/parser/ecmascript5/Accessors/parserAccessors8.ts	1	1	
+parserArrowFunctionExpression1.ts	conformance/parser/ecmascript5/ArrowFunctionExpressions/parserArrowFunctionExpression1.ts	4	4	
+parserAccessors9(target=es2015).ts	conformance/parser/ecmascript5/Accessors/parserAccessors9.ts	1	1	
+parserAccessibilityAfterStatic6.ts	conformance/parser/ecmascript5/ErrorRecovery/AccessibilityAfterStatic/parserAccessibilityAfterStatic6.ts	1	1	
+parserArrowFunctionExpression13.ts	conformance/parser/ecmascript5/ArrowFunctionExpressions/parserArrowFunctionExpression13.ts	1	1	
+parserArrowFunctionExpression10.ts	conformance/parser/ecmascript5/ArrowFunctionExpressions/parserArrowFunctionExpression10.ts	1	1	
+parserArrowFunctionExpression14.ts	conformance/parser/ecmascript5/ArrowFunctionExpressions/parserArrowFunctionExpression14.ts	3	3	
+parserArrowFunctionExpression16.ts	conformance/parser/ecmascript5/ArrowFunctionExpressions/parserArrowFunctionExpression16.ts	1	1	
+parserArrowFunctionExpression3.ts	conformance/parser/ecmascript5/ArrowFunctionExpressions/parserArrowFunctionExpression3.ts	3	3	
+parserArrowFunctionExpression2.ts	conformance/parser/ecmascript5/ArrowFunctionExpressions/parserArrowFunctionExpression2.ts	1	1	
+parserArrowFunctionExpression17.ts	conformance/parser/ecmascript5/ArrowFunctionExpressions/parserArrowFunctionExpression17.ts	1	1	
+parserArrowFunctionExpression15.ts	conformance/parser/ecmascript5/ArrowFunctionExpressions/parserArrowFunctionExpression15.ts	1	1	
+parserClassDeclaration1.ts	conformance/parser/ecmascript5/ClassDeclarations/parserClassDeclaration1.ts	2	2	
+parserClassDeclaration3.ts	conformance/parser/ecmascript5/ClassDeclarations/parserClassDeclaration3.ts	3	1	parserClassDeclaration3.ts(2,1): error syntax: Unexpected }
+parserAssignmentExpression1.ts	conformance/parser/ecmascript5/Expressions/parserAssignmentExpression1.ts	1	1	
+parserClassDeclaration2.ts	conformance/parser/ecmascript5/ClassDeclarations/parserClassDeclaration2.ts	2	2	
+parserClassDeclaration5.ts	conformance/parser/ecmascript5/ClassDeclarations/parserClassDeclaration5.ts	2	2	
+parserClassDeclaration4.ts	conformance/parser/ecmascript5/ClassDeclarations/parserClassDeclaration4.ts	3	1	parserClassDeclaration4.ts(2,1): error syntax: Unexpected }
+parserComputedPropertyName16.ts	conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName16.ts	1	1	
+parserComputedPropertyName1.ts	conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName1.ts	2	2	
+parserComputedPropertyName26.ts	conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName26.ts	1	1	
+parserClassDeclaration6.ts	conformance/parser/ecmascript5/ClassDeclarations/parserClassDeclaration6.ts	2	2	
+parserComputedPropertyName29.ts	conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName29.ts	1	1	
+parserComputedPropertyName30.ts	conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName30.ts	1	1	
+parserComputedPropertyName33.ts	conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName33.ts	2	2	
+parserComputedPropertyName27.ts	conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName27.ts	1	1	
+parserComputedPropertyName34.ts	conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName34.ts	1	1	
+parserComputedPropertyName35.ts	conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName35.ts	3	3	
+parserComputedPropertyName38.ts	conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName38.ts	1	1	
+parserComputedPropertyName39.ts	conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName39.ts	1	1	
+parserComputedPropertyName36.ts	conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName36.ts	1	1	
+parserComputedPropertyName5.ts	conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName5.ts	3	3	
+parserConstructorDeclaration11.ts	conformance/parser/ecmascript5/ConstructorDeclarations/parserConstructorDeclaration11.ts	2	2	
+parserConstructorDeclaration3.ts	conformance/parser/ecmascript5/ConstructorDeclarations/parserConstructorDeclaration3.ts	5	4	parserConstructorDeclaration3.ts(3,1): error syntax: Unexpected }
+parserES5ForOfStatement2(target=es2015).ts	conformance/parser/ecmascript5/Statements/parserES5ForOfStatement2.ts	2	2	
+parserConstructorDeclaration8.ts	conformance/parser/ecmascript5/ConstructorDeclarations/parserConstructorDeclaration8.ts	1	1	
+parserES5ComputedPropertyName6(target=es2015).ts	conformance/parser/ecmascript5/ComputedPropertyNames/parserES5ComputedPropertyName6.ts	1	1	
+parserES5ForOfStatement4(target=es2015).ts	conformance/parser/ecmascript5/Statements/parserES5ForOfStatement4.ts	1	1	
+parserES5ForOfStatement3(target=es2015).ts	conformance/parser/ecmascript5/Statements/parserES5ForOfStatement3.ts	1	1	
+parserConstructorDeclaration12.ts	compiler/parserConstructorDeclaration12.ts	16	16	
+parserES5ForOfStatement21(target=es2015).ts	conformance/parser/ecmascript5/Statements/parserES5ForOfStatement21.ts	1	1	
+parserEnum4.ts	conformance/parser/ecmascript5/EnumDeclarations/parserEnum4.ts	1	1	
+parserES5ForOfStatement6(target=es2015).ts	conformance/parser/ecmascript5/Statements/parserES5ForOfStatement6.ts	1	1	
+parserEnum5.ts	conformance/parser/ecmascript5/EnumDeclarations/parserEnum5.ts	2	2	
+parserEmptyParenthesizedExpression1.ts	conformance/parser/ecmascript5/ErrorRecovery/parserEmptyParenthesizedExpression1.ts	1	1	
+parserES5ForOfStatement7(target=es2015).ts	conformance/parser/ecmascript5/Statements/parserES5ForOfStatement7.ts	1	1	
+parserEnum7.ts	conformance/parser/ecmascript5/EnumDeclarations/parserEnum7.ts	1	1	
+parserEqualsGreaterThanAfterFunction1.ts	conformance/parser/ecmascript5/ErrorRecovery/parserEqualsGreaterThanAfterFunction1.ts	2	2	
+parserEnumDeclaration4.ts	conformance/parser/ecmascript5/EnumDeclarations/parserEnumDeclaration4.ts	1	1	
+parserEqualsGreaterThanAfterFunction2.ts	conformance/parser/ecmascript5/ErrorRecovery/parserEqualsGreaterThanAfterFunction2.ts	4	4	
+parserErrantAccessibilityModifierInModule1.ts	conformance/parser/ecmascript5/ErrorRecovery/parserErrantAccessibilityModifierInModule1.ts	2	2	
+parserErrantEqualsGreaterThanAfterFunction1.ts	conformance/parser/ecmascript5/ErrorRecovery/parserErrantEqualsGreaterThanAfterFunction1.ts	1	1	
+parserErrantEqualsGreaterThanAfterFunction2.ts	conformance/parser/ecmascript5/ErrorRecovery/parserErrantEqualsGreaterThanAfterFunction2.ts	1	1	
+parserErrorRecoveryArrayLiteralExpression1.ts	conformance/parser/ecmascript5/ErrorRecovery/ArrayLiteralExpressions/parserErrorRecoveryArrayLiteralExpression1.ts	5	5	
+parserErrantSemicolonInClass1.ts	conformance/parser/ecmascript5/ErrorRecovery/parserErrantSemicolonInClass1.ts	1	1	
+parserErrorRecoveryIfStatement1.ts	conformance/parser/ecmascript5/ErrorRecovery/IfStatements/parserErrorRecoveryIfStatement1.ts	1	1	
+parserErrorRecoveryArrayLiteralExpression3.ts	conformance/parser/ecmascript5/ErrorRecovery/ArrayLiteralExpressions/parserErrorRecoveryArrayLiteralExpression3.ts	3	3	
+parserErrorRecoveryIfStatement2.ts	conformance/parser/ecmascript5/ErrorRecovery/IfStatements/parserErrorRecoveryIfStatement2.ts	2	1	parserErrorRecoveryIfStatement2.ts(5,8): error syntax: Expected ";" but found "{"
+parserErrorRecoveryIfStatement3.ts	conformance/parser/ecmascript5/ErrorRecovery/IfStatements/parserErrorRecoveryIfStatement3.ts	2	1	parserErrorRecoveryIfStatement3.ts(5,8): error syntax: Expected ";" but found "{"
+parserErrorRecoveryIfStatement4.ts	conformance/parser/ecmascript5/ErrorRecovery/IfStatements/parserErrorRecoveryIfStatement4.ts	1	1	
+parserErrorRecoveryArrayLiteralExpression2.ts	conformance/parser/ecmascript5/ErrorRecovery/ArrayLiteralExpressions/parserErrorRecoveryArrayLiteralExpression2.ts	6	6	
+parserErrorRecoveryIfStatement5.ts	conformance/parser/ecmascript5/ErrorRecovery/IfStatements/parserErrorRecoveryIfStatement5.ts	1	1	
+parserErrorRecovery_ArgumentList1.ts	conformance/parser/ecmascript5/ErrorRecovery/ArgumentLists/parserErrorRecovery_ArgumentList1.ts	1	1	
+parserErrorRecoveryIfStatement6.ts	conformance/parser/ecmascript5/ErrorRecovery/IfStatements/parserErrorRecoveryIfStatement6.ts	2	2	
+parserErrorRecovery_ArgumentList3.ts	conformance/parser/ecmascript5/ErrorRecovery/ArgumentLists/parserErrorRecovery_ArgumentList3.ts	1	1	
+parserErrorRecovery_ArgumentList4.ts	conformance/parser/ecmascript5/ErrorRecovery/ArgumentLists/parserErrorRecovery_ArgumentList4.ts	1	1	
+parserErrorRecovery_ArgumentList2.ts	conformance/parser/ecmascript5/ErrorRecovery/ArgumentLists/parserErrorRecovery_ArgumentList2.ts	1	1	
+parserErrorRecovery_ArgumentList7.ts	conformance/parser/ecmascript5/ErrorRecovery/ArgumentLists/parserErrorRecovery_ArgumentList7.ts	1	1	
+parserErrorRecovery_Block1.ts	conformance/parser/ecmascript5/ErrorRecovery/Blocks/parserErrorRecovery_Block1.ts	1	1	
+parserErrorRecovery_ArgumentList6.ts	conformance/parser/ecmascript5/ErrorRecovery/ArgumentLists/parserErrorRecovery_ArgumentList6.ts	1	1	
+parserErrorRecovery_ClassElement1.ts	conformance/parser/ecmascript5/ErrorRecovery/ClassElements/parserErrorRecovery_ClassElement1.ts	3	2	parserErrorRecovery_ClassElement1.ts(6,2): error syntax: Expected "}" but found end of file
+parserErrorRecovery_Block2.ts	conformance/parser/ecmascript5/ErrorRecovery/Blocks/parserErrorRecovery_Block2.ts	1	1	
+parserErrorRecovery_Block3.ts	conformance/parser/ecmascript5/ErrorRecovery/Blocks/parserErrorRecovery_Block3.ts	2	2	
+parserErrorRecovery_ExtendsOrImplementsClause1.ts	conformance/parser/ecmascript5/ErrorRecovery/ExtendsOrImplementsClauses/parserErrorRecovery_ExtendsOrImplementsClause1.ts	1	0	parserErrorRecovery_ExtendsOrImplementsClause1.ts(2,2): error syntax: Expected "{" but found end of file
+parserErrorRecovery_ClassElement3.ts	conformance/parser/ecmascript5/ErrorRecovery/ClassElements/parserErrorRecovery_ClassElement3.ts	1	1	
+parserErrorRecovery_ExtendsOrImplementsClause2.ts	conformance/parser/ecmascript5/ErrorRecovery/ExtendsOrImplementsClauses/parserErrorRecovery_ExtendsOrImplementsClause2.ts	3	2	parserErrorRecovery_ExtendsOrImplementsClause2.ts(2,2): error syntax: Expected "}" but found end of file
+parserErrorRecovery_ExtendsOrImplementsClause3.ts	conformance/parser/ecmascript5/ErrorRecovery/ExtendsOrImplementsClauses/parserErrorRecovery_ExtendsOrImplementsClause3.ts	3	2	parserErrorRecovery_ExtendsOrImplementsClause3.ts(2,2): error syntax: Expected "}" but found end of file
+parserErrorRecovery_ClassElement2.ts	conformance/parser/ecmascript5/ErrorRecovery/ClassElements/parserErrorRecovery_ClassElement2.ts	3	2	parserErrorRecovery_ClassElement2.ts(6,2): error syntax: Unexpected end of file
+parserErrorRecovery_Expression1.ts	conformance/parser/ecmascript5/ErrorRecovery/Expressions/parserErrorRecovery_Expression1.ts	1	1	
+parserErrorRecovery_IncompleteMemberVariable2.ts	conformance/parser/ecmascript5/ErrorRecovery/IncompleteMemberVariables/parserErrorRecovery_IncompleteMemberVariable2.ts	1	1	
+parserErrorRecovery_ExtendsOrImplementsClause4.ts	conformance/parser/ecmascript5/ErrorRecovery/ExtendsOrImplementsClauses/parserErrorRecovery_ExtendsOrImplementsClause4.ts	1	0	parserErrorRecovery_ExtendsOrImplementsClause4.ts(2,2): error syntax: Expected "{" but found end of file
+parserErrorRecovery_ExtendsOrImplementsClause5.ts	conformance/parser/ecmascript5/ErrorRecovery/ExtendsOrImplementsClauses/parserErrorRecovery_ExtendsOrImplementsClause5.ts	3	3	
+parserErrorRecovery_ModuleElement1.ts	conformance/parser/ecmascript5/ErrorRecovery/ModuleElements/parserErrorRecovery_ModuleElement1.ts	1	1	
+parserErrorRecovery_ModuleElement2.ts	conformance/parser/ecmascript5/ErrorRecovery/ModuleElements/parserErrorRecovery_ModuleElement2.ts	1	1	
+parserErrorRecovery_LeftShift1.ts	conformance/parser/ecmascript5/ErrorRecovery/LeftShifts/parserErrorRecovery_LeftShift1.ts	1	1	
+parserErrorRecovery_ObjectLiteral1.ts	conformance/parser/ecmascript5/ErrorRecovery/ObjectLiterals/parserErrorRecovery_ObjectLiteral1.ts	3	3	
+parserErrorRecovery_ObjectLiteral3.ts	conformance/parser/ecmascript5/ErrorRecovery/ObjectLiterals/parserErrorRecovery_ObjectLiteral3.ts	1	1	
+parserErrorRecovery_ObjectLiteral2.ts	conformance/parser/ecmascript5/ErrorRecovery/ObjectLiterals/parserErrorRecovery_ObjectLiteral2.ts	1	1	
+parserErrorRecovery_ObjectLiteral4.ts	conformance/parser/ecmascript5/ErrorRecovery/ObjectLiterals/parserErrorRecovery_ObjectLiteral4.ts	1	1	
+parserErrorRecovery_ParameterList2.ts	conformance/parser/ecmascript5/ErrorRecovery/ParameterLists/parserErrorRecovery_ParameterList2.ts	1	1	
+parserErrorRecovery_ObjectLiteral5.ts	conformance/parser/ecmascript5/ErrorRecovery/ObjectLiterals/parserErrorRecovery_ObjectLiteral5.ts	2	2	
+parserErrorRecovery_ParameterList1.ts	conformance/parser/ecmascript5/ErrorRecovery/ParameterLists/parserErrorRecovery_ParameterList1.ts	2	2	
+parserErrorRecovery_SwitchStatement1.ts	conformance/parser/ecmascript5/ErrorRecovery/SwitchStatements/parserErrorRecovery_SwitchStatement1.ts	1	1	
+parserErrorRecovery_ParameterList4.ts	conformance/parser/ecmascript5/ErrorRecovery/ParameterLists/parserErrorRecovery_ParameterList4.ts	1	1	
+parserErrorRecovery_ParameterList5.ts	conformance/parser/ecmascript5/ErrorRecovery/ParameterLists/parserErrorRecovery_ParameterList5.ts	2	2	
+parserErrorRecovery_SourceUnit1.ts	conformance/parser/ecmascript5/ErrorRecovery/SourceUnits/parserErrorRecovery_SourceUnit1.ts	1	1	
+parserErrorRecovery_VariableList1.ts	conformance/parser/ecmascript5/ErrorRecovery/VariableLists/parserErrorRecovery_VariableList1.ts	1	1	
+parserErrorRecovery_SwitchStatement2.ts	conformance/parser/ecmascript5/ErrorRecovery/SwitchStatements/parserErrorRecovery_SwitchStatement2.ts	3	3	
+parserExportAssignment3.ts	conformance/parser/ecmascript5/ExportAssignments/parserExportAssignment3.ts	1	1	
+parserForInStatement2.ts	conformance/parser/ecmascript5/Statements/parserForInStatement2.ts	3	3	
+parserExportAssignment9.ts	conformance/parser/ecmascript5/ExportAssignments/parserExportAssignment9.ts	1	1	
+parserForInStatement7.ts	conformance/parser/ecmascript5/Statements/parserForInStatement7.ts	1	1	
+parserExportAssignment4.ts	conformance/parser/ecmascript5/ExportAssignments/parserExportAssignment4.ts	1	1	
+parserForOfStatement2.ts	conformance/parser/ecmascript6/Iterators/parserForOfStatement2.ts	2	2	
+parserForInStatement3.ts	conformance/parser/ecmascript5/Statements/parserForInStatement3.ts	1	1	
+parserForOfStatement21.ts	conformance/parser/ecmascript6/Iterators/parserForOfStatement21.ts	1	1	
+parserForInStatement6.ts	conformance/parser/ecmascript5/Statements/parserForInStatement6.ts	1	1	
+parserForOfStatement3.ts	conformance/parser/ecmascript6/Iterators/parserForOfStatement3.ts	1	1	
+parserForOfStatement4.ts	conformance/parser/ecmascript6/Iterators/parserForOfStatement4.ts	1	1	
+parserForOfStatement6.ts	conformance/parser/ecmascript6/Iterators/parserForOfStatement6.ts	1	1	
+parserForOfStatement22.ts	conformance/parser/ecmascript6/Iterators/parserForOfStatement22.ts	1	1	
+parserForStatement4.ts	conformance/parser/ecmascript5/Statements/parserForStatement4.ts	1	1	
+parserForStatement8.ts	conformance/parser/ecmascript5/Statements/parserForStatement8.ts	1	1	
+parserForStatement7.ts	conformance/parser/ecmascript5/Statements/parserForStatement7.ts	1	1	
+parserForStatement6.ts	conformance/parser/ecmascript5/Statements/parserForStatement6.ts	1	1	
+parserGreaterThanTokenAmbiguity11.ts	conformance/parser/ecmascript5/Generics/parserGreaterThanTokenAmbiguity11.ts	1	1	
+parserForOfStatement7.ts	conformance/parser/ecmascript6/Iterators/parserForOfStatement7.ts	1	1	
+parserFuzz1.ts	conformance/parser/ecmascript5/ErrorRecovery/parserFuzz1.ts	3	3	
+parserGreaterThanTokenAmbiguity12.ts	conformance/parser/ecmascript5/Generics/parserGreaterThanTokenAmbiguity12.ts	1	1	
+parserGreaterThanTokenAmbiguity13.ts	conformance/parser/ecmascript5/Generics/parserGreaterThanTokenAmbiguity13.ts	1	1	
+parserGreaterThanTokenAmbiguity17.ts	conformance/parser/ecmascript5/Generics/parserGreaterThanTokenAmbiguity17.ts	1	1	
+parserGreaterThanTokenAmbiguity14.ts	conformance/parser/ecmascript5/Generics/parserGreaterThanTokenAmbiguity14.ts	1	1	
+parserGreaterThanTokenAmbiguity15.ts	conformance/parser/ecmascript5/Generics/parserGreaterThanTokenAmbiguity15.ts	1	1	
+parserGreaterThanTokenAmbiguity16.ts	conformance/parser/ecmascript5/Generics/parserGreaterThanTokenAmbiguity16.ts	1	1	
+parserGreaterThanTokenAmbiguity18.ts	conformance/parser/ecmascript5/Generics/parserGreaterThanTokenAmbiguity18.ts	1	1	
+parserGreaterThanTokenAmbiguity2.ts	conformance/parser/ecmascript5/Generics/parserGreaterThanTokenAmbiguity2.ts	1	1	
+parserGreaterThanTokenAmbiguity19.ts	conformance/parser/ecmascript5/Generics/parserGreaterThanTokenAmbiguity19.ts	1	1	
+parserGreaterThanTokenAmbiguity4.ts	conformance/parser/ecmascript5/Generics/parserGreaterThanTokenAmbiguity4.ts	1	1	
+parserGreaterThanTokenAmbiguity3.ts	conformance/parser/ecmascript5/Generics/parserGreaterThanTokenAmbiguity3.ts	1	1	
+parserGreaterThanTokenAmbiguity20.ts	conformance/parser/ecmascript5/Generics/parserGreaterThanTokenAmbiguity20.ts	1	1	
+parserGreaterThanTokenAmbiguity7.ts	conformance/parser/ecmascript5/Generics/parserGreaterThanTokenAmbiguity7.ts	1	1	
+parserGreaterThanTokenAmbiguity8.ts	conformance/parser/ecmascript5/Generics/parserGreaterThanTokenAmbiguity8.ts	1	1	
+parserIndexMemberDeclaration9.ts	conformance/parser/ecmascript5/IndexMemberDeclarations/parserIndexMemberDeclaration9.ts	3	3	
+parserGreaterThanTokenAmbiguity9.ts	conformance/parser/ecmascript5/Generics/parserGreaterThanTokenAmbiguity9.ts	1	1	
+parserIndexMemberDeclaration10.ts	conformance/parser/ecmascript5/IndexMemberDeclarations/parserIndexMemberDeclaration10.ts	3	3	
+parserInterfaceDeclaration4.ts	conformance/parser/ecmascript5/InterfaceDeclarations/parserInterfaceDeclaration4.ts	3	2	parserInterfaceDeclaration4.ts(2,1): error syntax: Unexpected }
+parserIndexMemberDeclaration5.ts	conformance/parser/ecmascript5/IndexMemberDeclarations/parserIndexMemberDeclaration5.ts	1	1	
+parserIndexSignature2.ts	conformance/parser/ecmascript5/IndexSignatures/parserIndexSignature2.ts	2	2	
+parserInterfaceDeclaration3.ts	conformance/parser/ecmascript5/InterfaceDeclarations/parserInterfaceDeclaration3.ts	3	2	parserInterfaceDeclaration3.ts(2,1): error syntax: Unexpected }
+parserInterfaceDeclaration6.ts	conformance/parser/ecmascript5/InterfaceDeclarations/parserInterfaceDeclaration6.ts	1	1	
+parserKeywordsAsIdentifierName2.ts	conformance/parser/ecmascript5/parserKeywordsAsIdentifierName2.ts	1	1	
+parserMemberAccessorDeclaration12(target=es2015).ts	conformance/parser/ecmascript5/MemberAccessorDeclarations/parserMemberAccessorDeclaration12.ts	1	1	
+parserInvalidIdentifiersInVariableStatements1.ts	conformance/parser/ecmascript5/ErrorRecovery/VariableLists/parserInvalidIdentifiersInVariableStatements1.ts	2	2	
+parserMemberAccessorDeclaration10(target=es2015).ts	conformance/parser/ecmascript5/MemberAccessorDeclarations/parserMemberAccessorDeclaration10.ts	1	1	
+parserMemberAccessorDeclaration13(target=es2015).ts	conformance/parser/ecmascript5/MemberAccessorDeclarations/parserMemberAccessorDeclaration13.ts	1	1	
+parserMemberAccessorDeclaration8(target=es2015).ts	conformance/parser/ecmascript5/MemberAccessorDeclarations/parserMemberAccessorDeclaration8.ts	1	1	
+parserMemberFunctionDeclaration2.ts	conformance/parser/ecmascript5/MemberFunctionDeclarations/parserMemberFunctionDeclaration2.ts	4	3	parserMemberFunctionDeclaration2.ts(3,1): error syntax: Unexpected }
+parserMemberAccessorDeclaration14(target=es2015).ts	conformance/parser/ecmascript5/MemberAccessorDeclarations/parserMemberAccessorDeclaration14.ts	1	1	
+parserMemberFunctionDeclaration4.ts	conformance/parser/ecmascript5/MemberFunctionDeclarations/parserMemberFunctionDeclaration4.ts	4	3	parserMemberFunctionDeclaration4.ts(3,1): error syntax: Unexpected }
+parserMissingLambdaOpenBrace1.ts	conformance/parser/ecmascript5/ErrorRecovery/parserMissingLambdaOpenBrace1.ts	1	1	
+parserMissingToken1.ts	conformance/parser/ecmascript5/MissingTokens/parserMissingToken1.ts	1	1	
+parserMemberVariableDeclaration4.ts	conformance/parser/ecmascript5/MemberVariableDeclarations/parserMemberVariableDeclaration4.ts	1	1	
+parserMemberVariableDeclaration2.ts	conformance/parser/ecmascript5/MemberVariableDeclarations/parserMemberVariableDeclaration2.ts	1	1	
+parserModifierOnStatementInBlock4.ts	conformance/parser/ecmascript5/ErrorRecovery/parserModifierOnStatementInBlock4.ts	1	1	
+parserModifierOnStatementInBlock3.ts	conformance/parser/ecmascript5/ErrorRecovery/parserModifierOnStatementInBlock3.ts	1	1	
+parserModifierOnStatementInBlock1.ts	conformance/parser/ecmascript5/ErrorRecovery/parserModifierOnStatementInBlock1.ts	1	1	
+parserMissingToken2.ts	conformance/parser/ecmascript5/MissingTokens/parserMissingToken2.ts	1	1	
+parserModuleDeclaration1.ts	conformance/parser/ecmascript5/ModuleDeclarations/parserModuleDeclaration1.ts	1	1	
+parserObjectCreationArrayLiteral3.ts	conformance/parser/ecmascript5/parserObjectCreationArrayLiteral3.ts	1	1	
+parserObjectCreationArrayLiteral1.ts	conformance/parser/ecmascript5/parserObjectCreationArrayLiteral1.ts	1	1	
+parserObjectType5.ts	conformance/parser/ecmascript5/ObjectTypes/parserObjectType5.ts	1	1	
+parserPostfixUnaryExpression1.ts	conformance/parser/ecmascript5/Expressions/parserPostfixUnaryExpression1.ts	1	1	
+parserPostfixPostfixExpression1.ts	conformance/parser/ecmascript5/Expressions/parserPostfixPostfixExpression1.ts	1	1	
+parserParameterList10.ts	conformance/parser/ecmascript5/ParameterLists/parserParameterList10.ts	4	3	parserParameterList10.ts(3,1): error syntax: Unexpected }
+parserParameterList1.ts	conformance/parser/ecmascript5/ParameterLists/parserParameterList1.ts	4	4	
+parserRealSource10.ts	conformance/parser/ecmascript5/parserRealSource10.ts	1	1	
+parserPublicBreak1.ts	conformance/parser/ecmascript5/ErrorRecovery/parserPublicBreak1.ts	1	1	
+parserPrivateIdentifierInArrayAssignment.ts	compiler/parserPrivateIdentifierInArrayAssignment.ts	1	1	
+parserRealSource7.ts	conformance/parser/ecmascript5/parserRealSource7.ts	1	1	
+parserRealSource4.ts	conformance/parser/ecmascript5/parserRealSource4.ts	1	1	
+parserRealSource11.ts	conformance/parser/ecmascript5/parserRealSource11.ts	1	1	
+parserRealSource9.ts	conformance/parser/ecmascript5/parserRealSource9.ts	1	1	
+parserS12.11_A3_T4.ts	conformance/parser/ecmascript5/parserS12.11_A3_T4.ts	1	1	
+parserRegularExpressionDivideAmbiguity3.ts	conformance/parser/ecmascript5/RegularExpressions/parserRegularExpressionDivideAmbiguity3.ts	1	1	
+parserS7.9_A5.7_T1.ts	conformance/parser/ecmascript5/parserS7.9_A5.7_T1.ts	1	1	
+parserShorthandPropertyAssignment2.ts	conformance/parser/ecmascript6/ShorthandPropertyAssignment/parserShorthandPropertyAssignment2.ts	2	2	
+parserRegularExpressionDivideAmbiguity7.ts	conformance/parser/ecmascript5/RegularExpressions/parserRegularExpressionDivideAmbiguity7.ts	2	2	
+parserRegularExpressionDivideAmbiguity4.ts	conformance/parser/ecmascript5/RegularExpressions/parserRegularExpressionDivideAmbiguity4.ts	1	1	
+parserShorthandPropertyAssignment1.ts	conformance/parser/ecmascript6/ShorthandPropertyAssignment/parserShorthandPropertyAssignment1.ts	2	2	
+parserShorthandPropertyAssignment3.ts	conformance/parser/ecmascript6/ShorthandPropertyAssignment/parserShorthandPropertyAssignment3.ts	2	2	
+parserShorthandPropertyAssignment4.ts	conformance/parser/ecmascript6/ShorthandPropertyAssignment/parserShorthandPropertyAssignment4.ts	2	2	
+parserSkippedTokens1.ts	conformance/parser/ecmascript5/SkippedTokens/parserSkippedTokens1.ts	1	1	
+parserSkippedTokens11.ts	conformance/parser/ecmascript5/SkippedTokens/parserSkippedTokens11.ts	1	1	
+parserShorthandPropertyAssignment5.ts	conformance/parser/ecmascript6/ShorthandPropertyAssignment/parserShorthandPropertyAssignment5.ts	2	2	
+parserSkippedTokens12.ts	conformance/parser/ecmascript5/SkippedTokens/parserSkippedTokens12.ts	1	1	
+parserSkippedTokens10.ts	conformance/parser/ecmascript5/SkippedTokens/parserSkippedTokens10.ts	1	1	
+parserSkippedTokens13.ts	conformance/parser/ecmascript5/SkippedTokens/parserSkippedTokens13.ts	1	1	
+parserSkippedTokens16.ts	conformance/parser/ecmascript5/SkippedTokens/parserSkippedTokens16.ts	3	3	
+parserSkippedTokens17.ts	conformance/parser/ecmascript5/SkippedTokens/parserSkippedTokens17.ts	1	1	
+parserSkippedTokens19.ts	conformance/parser/ecmascript5/SkippedTokens/parserSkippedTokens19.ts	1	1	
+parserSkippedTokens2.ts	conformance/parser/ecmascript5/SkippedTokens/parserSkippedTokens2.ts	1	1	
+parserSkippedTokens18.ts	conformance/parser/ecmascript5/SkippedTokens/parserSkippedTokens18.ts	1	1	
+parserSkippedTokens14.ts	conformance/parser/ecmascript5/SkippedTokens/parserSkippedTokens14.ts	1	1	
+parserSkippedTokens3.ts	conformance/parser/ecmascript5/SkippedTokens/parserSkippedTokens3.ts	1	1	
+parserSkippedTokens15.ts	conformance/parser/ecmascript5/SkippedTokens/parserSkippedTokens15.ts	1	1	
+parserSkippedTokens20.ts	conformance/parser/ecmascript5/SkippedTokens/parserSkippedTokens20.ts	1	1	
+parserSkippedTokens5.ts	conformance/parser/ecmascript5/SkippedTokens/parserSkippedTokens5.ts	1	1	
+parserSkippedTokens6.ts	conformance/parser/ecmascript5/SkippedTokens/parserSkippedTokens6.ts	1	1	
+parserSkippedTokens7.ts	conformance/parser/ecmascript5/SkippedTokens/parserSkippedTokens7.ts	1	1	
+parserSkippedTokens9.ts	conformance/parser/ecmascript5/SkippedTokens/parserSkippedTokens9.ts	1	1	
+parserSkippedTokens4.ts	conformance/parser/ecmascript5/SkippedTokens/parserSkippedTokens4.ts	1	1	
+parserStrictMode10.ts	conformance/parser/ecmascript5/StrictMode/parserStrictMode10.ts	1	1	
+parserSkippedTokens8.ts	conformance/parser/ecmascript5/SkippedTokens/parserSkippedTokens8.ts	1	1	
+parserStrictMode11.ts	conformance/parser/ecmascript5/StrictMode/parserStrictMode11.ts	1	1	
+parserStrictMode2.ts	conformance/parser/ecmascript5/StrictMode/parserStrictMode2.ts	1	1	
+parserStrictMode13.ts	conformance/parser/ecmascript5/StrictMode/parserStrictMode13.ts	1	1	
+parserStrictMode12(target=es2015).ts	conformance/parser/ecmascript5/StrictMode/parserStrictMode12.ts	1	1	
+parserStrictMode3.ts	conformance/parser/ecmascript5/StrictMode/parserStrictMode3.ts	1	1	
+parserStrictMode5.ts	conformance/parser/ecmascript5/StrictMode/parserStrictMode5.ts	1	1	
+parserStrictMode4.ts	conformance/parser/ecmascript5/StrictMode/parserStrictMode4.ts	1	1	
+parserStrictMode6-negative.ts	conformance/parser/ecmascript5/StrictMode/parserStrictMode6-negative.ts	1	1	
+parserStrictMode6.ts	conformance/parser/ecmascript5/StrictMode/parserStrictMode6.ts	1	1	
+parserStrictMode8.ts	conformance/parser/ecmascript5/StrictMode/parserStrictMode8.ts	1	1	
+parserStrictMode7.ts	conformance/parser/ecmascript5/StrictMode/parserStrictMode7.ts	1	1	
+parserStrictMode9.ts	conformance/parser/ecmascript5/StrictMode/parserStrictMode9.ts	1	1	
+parserSuperExpression2.ts	conformance/parser/ecmascript5/SuperExpressions/parserSuperExpression2.ts	1	1	
+parserTypeQuery3.ts	conformance/parser/ecmascript5/Types/parserTypeQuery3.ts	1	1	
+parserSymbolIndexer5.ts	conformance/parser/ecmascript6/Symbols/parserSymbolIndexer5.ts	3	3	
+parserTypeQuery4.ts	conformance/parser/ecmascript5/Types/parserTypeQuery4.ts	1	1	
+parserStrictMode3-negative.ts	conformance/parser/ecmascript5/StrictMode/parserStrictMode3-negative.ts	1	1	
+parserUnaryExpression1.ts	conformance/parser/ecmascript5/Expressions/parserUnaryExpression1.ts	1	1	
+parserUnaryExpression2.ts	conformance/parser/ecmascript5/Expressions/parserUnaryExpression2.ts	1	1	
+parserUnaryExpression5.ts	conformance/parser/ecmascript5/Expressions/parserUnaryExpression5.ts	1	1	
+parserUnfinishedTypeNameBeforeKeyword1.ts	conformance/parser/ecmascript5/ErrorRecovery/parserUnfinishedTypeNameBeforeKeyword1.ts	1	0	parserUnfinishedTypeNameBeforeKeyword1.ts(2,11): error syntax: Expected ";" but found "TypeModule2"
+parserUnparsedTokenCrash1.ts	compiler/parserUnparsedTokenCrash1.ts	3	3	
+parserUnaryExpression7.ts	conformance/parser/ecmascript5/Expressions/parserUnaryExpression7.ts	1	1	
+parserUnaryExpression3.ts	conformance/parser/ecmascript5/Expressions/parserUnaryExpression3.ts	1	1	
+parserUnterminatedGeneric1.ts	conformance/parser/ecmascript5/ErrorRecovery/parserUnterminatedGeneric1.ts	1	1	
+parserVariableDeclaration10.ts	conformance/parser/ecmascript5/VariableDeclarations/parserVariableDeclaration10.ts	1	1	
+parserUnparsedTokenCrash2.ts	compiler/parserUnparsedTokenCrash2.ts	1	1	
+parserUnterminatedGeneric2.ts	conformance/parser/ecmascript5/ErrorRecovery/parserUnterminatedGeneric2.ts	2	2	
+parserVariableDeclaration5.ts	conformance/parser/ecmascript5/VariableDeclarations/parserVariableDeclaration5.ts	1	1	
+parserX_ArrowFunction1.ts	conformance/parser/ecmascript5/ErrorRecovery/ArrowFunctions/parserX_ArrowFunction1.ts	1	1	
+parserVariableDeclaration8.ts	conformance/parser/ecmascript5/VariableDeclarations/parserVariableDeclaration8.ts	1	1	
+parserX_TypeArgumentList1.ts	conformance/parser/ecmascript5/ErrorRecovery/TypeArgumentLists/parserX_TypeArgumentList1.ts	1	1	
+parserVariableDeclaration6.ts	conformance/parser/ecmascript5/VariableDeclarations/parserVariableDeclaration6.ts	1	1	
+parser_breakNotInIterationOrSwitchStatement2.ts	conformance/parser/ecmascript5/Statements/BreakStatements/parser_breakNotInIterationOrSwitchStatement2.ts	1	1	
+parser_breakNotInIterationOrSwitchStatement1.ts	conformance/parser/ecmascript5/Statements/BreakStatements/parser_breakNotInIterationOrSwitchStatement1.ts	1	1	
+parser_continueNotInIterationStatement1.ts	conformance/parser/ecmascript5/Statements/ContinueStatements/parser_continueNotInIterationStatement1.ts	1	1	
+parser_breakTarget6.ts	conformance/parser/ecmascript5/Statements/BreakStatements/parser_breakTarget6.ts	1	1	
+parser_continueNotInIterationStatement3.ts	conformance/parser/ecmascript5/Statements/ContinueStatements/parser_continueNotInIterationStatement3.ts	1	1	
+parser_breakTarget5.ts	conformance/parser/ecmascript5/Statements/BreakStatements/parser_breakTarget5.ts	1	1	
+parser_continueNotInIterationStatement2.ts	conformance/parser/ecmascript5/Statements/ContinueStatements/parser_continueNotInIterationStatement2.ts	1	1	
+parser_continueNotInIterationStatement4.ts	conformance/parser/ecmascript5/Statements/ContinueStatements/parser_continueNotInIterationStatement4.ts	1	1	
+parser_continueTarget1.ts	conformance/parser/ecmascript5/Statements/ContinueStatements/parser_continueTarget1.ts	1	1	
+parser_continueTarget6.ts	conformance/parser/ecmascript5/Statements/ContinueStatements/parser_continueTarget6.ts	1	1	
+plainJSBinderErrors.ts	conformance/salsa/plainJSBinderErrors.ts	4	4	
+parserharness.ts	conformance/parser/ecmascript5/RealWorld/parserharness.ts	2	2	
+parser_continueTarget5.ts	conformance/parser/ecmascript5/Statements/ContinueStatements/parser_continueTarget5.ts	1	1	
+plainJSGrammarErrors.ts	conformance/salsa/plainJSGrammarErrors.ts	13	10	plainJSGrammarErrors.js(4,5): error syntax: Expected "in" but found "m"
+plainJSRedeclare.ts	conformance/salsa/plainJSRedeclare.ts	1	1	
+plainJSGrammarErrors3.ts	conformance/salsa/plainJSGrammarErrors3.ts	1	1	
+privacyTopLevelAmbientExternalModuleImportWithExport.ts	compiler/privacyTopLevelAmbientExternalModuleImportWithExport.ts	1	1	
+prettyContextNotDebugAssertion.ts	compiler/prettyContextNotDebugAssertion.ts	1	0	index.ts(2,1): error syntax: Unexpected end of file
+plainJSRedeclare2.ts	conformance/salsa/plainJSRedeclare2.ts	1	1	
+privacyTopLevelAmbientExternalModuleImportWithoutExport.ts	compiler/privacyTopLevelAmbientExternalModuleImportWithoutExport.ts	1	1	
+privateIndexer2.ts	conformance/classes/indexMemberDeclarations/privateIndexer2.ts	3	3	
+plusOperatorInvalidOperations.ts	conformance/expressions/unaryOperators/plusOperator/plusOperatorInvalidOperations.ts	1	1	
+privateNameAccessorssDerivedClasses.ts	conformance/classes/members/privateNames/privateNameAccessorssDerivedClasses.ts	1	1	
+privateNameAndAny.ts	conformance/classes/members/privateNames/privateNameAndAny.ts	3	3	
+privateNameAccessorsAccess.ts	conformance/classes/members/privateNames/privateNameAccessorsAccess.ts	2	2	
+privateNameAndIndexSignature.ts	conformance/classes/members/privateNames/privateNameAndIndexSignature.ts	1	1	
+privateNameBadAssignment.ts	conformance/classes/members/privateNames/privateNameBadAssignment.ts	6	6	
+privateNameBadDeclaration(target=es2015).ts	conformance/classes/members/privateNames/privateNameBadDeclaration.ts	8	8	
+privateNameEnum.ts	conformance/classes/members/privateNames/privateNameEnum.ts	1	1	
+privateNameConstructorReserved.ts	conformance/classes/members/privateNames/privateNameConstructorReserved.ts	1	1	
+privateNameHashCharName.ts	conformance/classes/members/privateNames/privateNameHashCharName.ts	1	1	
+privateNameDuplicateField.ts	conformance/classes/members/privateNames/privateNameDuplicateField.ts	60	60	
+privateNameFieldDerivedClasses.ts	conformance/classes/members/privateNames/privateNameFieldDerivedClasses.ts	1	1	
+privateNameInInExpressionTransform(target=es2020).ts	conformance/classes/members/privateNames/privateNameInInExpressionTransform.ts	1	1	
+privateNameInInExpressionTransform(target=es2022).ts	conformance/classes/members/privateNames/privateNameInInExpressionTransform.ts	1	1	
+privateNameInInExpression(target=es2022).ts	conformance/classes/members/privateNames/privateNameInInExpression.ts	2	2	
+privateNameInInExpression(target=esnext).ts	conformance/classes/members/privateNames/privateNameInInExpression.ts	2	2	
+privateNameInObjectLiteral-1.ts	conformance/classes/members/privateNames/privateNameInObjectLiteral-1.ts	1	1	
+privateNameInObjectLiteral-2.ts	conformance/classes/members/privateNames/privateNameInObjectLiteral-2.ts	1	1	
+privateNameJsBadAssignment.ts	conformance/classes/members/privateNames/privateNameJsBadAssignment.ts	6	6	
+privateNameInObjectLiteral-3(target=es2015).ts	conformance/classes/members/privateNames/privateNameInObjectLiteral-3.ts	1	1	
+privateNameInInExpressionTransform(target=esnext).ts	conformance/classes/members/privateNames/privateNameInInExpressionTransform.ts	1	1	
+privateNameJsBadDeclaration(target=es2015).ts	conformance/classes/members/privateNames/privateNameJsBadDeclaration.ts	8	8	
+privateNameJsx.tsx	compiler/privateNameJsx.tsx	1	1	
+privateNameMethodsDerivedClasses.ts	conformance/classes/members/privateNames/privateNameMethodsDerivedClasses.ts	1	1	
+privateNameMethodAccess.ts	conformance/classes/members/privateNames/privateNameMethodAccess.ts	4	4	
+privateNameMethodClassExpression.ts	conformance/classes/members/privateNames/privateNameMethodClassExpression.ts	2	2	
+privateNameNotAccessibleOutsideDefiningClass.ts	conformance/classes/members/privateNames/privateNameNotAccessibleOutsideDefiningClass.ts	2	2	
+privateNameNestedMethodAccess.ts	conformance/classes/members/privateNames/privateNameNestedMethodAccess.ts	1	1	
+privateNameNotAllowedOutsideClass.ts	conformance/classes/members/privateNames/privateNameNotAllowedOutsideClass.ts	1	1	
+privateNameStaticFieldDerivedClasses.ts	conformance/classes/members/privateNames/privateNameStaticFieldDerivedClasses.ts	2	2	
+privateNameStaticMethodAsync.ts	conformance/classes/members/privateNames/privateNameStaticMethodAsync.ts	7	6	privateNameStaticMethodAsync.ts(12,1): error syntax: Unexpected }
+privateNameStaticAccessorssDerivedClasses.ts	conformance/classes/members/privateNames/privateNameStaticAccessorssDerivedClasses.ts	1	1	
+privateNamesAndGenericClasses-2.ts	conformance/classes/members/privateNames/privateNamesAndGenericClasses-2.ts	1	1	
+privateNameStaticAccessorsAccess.ts	conformance/classes/members/privateNames/privateNameStaticAccessorsAccess.ts	2	2	
+privateNamesInGenericClasses.ts	conformance/classes/members/privateNames/privateNamesInGenericClasses.ts	3	3	
+privateNamesAndIndexedAccess.ts	conformance/classes/members/privateNames/privateNamesAndIndexedAccess.ts	4	4	
+privateNamesIncompatibleModifiers.ts	conformance/classes/members/privateNames/privateNamesIncompatibleModifiers.ts	7	7	
+privateNamesNoDelete.ts	conformance/classes/members/privateNames/privateNamesNoDelete.ts	1	1	
+privateNamesNotAllowedAsParameters.ts	conformance/classes/members/privateNames/privateNamesNotAllowedAsParameters.ts	1	1	
+privateNameStaticMethodClassExpression.ts	conformance/classes/members/privateNames/privateNameStaticMethodClassExpression.ts	2	2	
+privateNamesUnique-3.ts	conformance/classes/members/privateNames/privateNamesUnique-3.ts	1	1	
+privateNamesNotAllowedInVariableDeclarations.ts	conformance/classes/members/privateNames/privateNamesNotAllowedInVariableDeclarations.ts	1	1	
+privateNamesInterfaceExtendingClass.ts	conformance/classes/members/privateNames/privateNamesInterfaceExtendingClass.ts	2	2	
+propertyAccessChain.3.ts	conformance/expressions/optionalChaining/propertyAccessChain/propertyAccessChain.3.ts	22	22	
+propertyNamedConstructor.ts	conformance/classes/propertyMemberDeclarations/propertyNamedConstructor.ts	1	1	
+propertyNamedPrototype.ts	conformance/classes/propertyMemberDeclarations/propertyNamedPrototype.ts	1	1	
+propertyWrappedInTry.ts	compiler/propertyWrappedInTry.ts	2	1	propertyWrappedInTry.ts(7,7): error syntax: Unexpected catch
+propertyAccessNumericLiterals.ts	conformance/expressions/propertyAccess/propertyAccessNumericLiterals.ts	1	1	
+redeclareParameterInCatchBlock.ts	compiler/redeclareParameterInCatchBlock.ts	1	1	
+reachabilityChecksNoCrash1.ts	compiler/reachabilityChecksNoCrash1.ts	3	3	
+quotedModuleNameMustBeAmbient.ts	compiler/quotedModuleNameMustBeAmbient.ts	1	1	
+regularExpressionScanning(target=es2015).ts	compiler/regularExpressionScanning.ts	11	11	
+regularExpressionScanning(target=esnext).ts	compiler/regularExpressionScanning.ts	11	11	
+reservedNamesInAliases.ts	conformance/types/typeAliases/reservedNamesInAliases.ts	2	2	
+readonlyInNonPropertyParameters(target=es2015).ts	compiler/readonlyInNonPropertyParameters.ts	3	3	
+regularExpressionWithNonBMPFlags.ts	compiler/regularExpressionWithNonBMPFlags.ts	3	3	
+restElementMustBeLast.ts	conformance/types/rest/restElementMustBeLast.ts	1	1	
+reservedWords2.ts	compiler/reservedWords2.ts	1	1	
+reservedWords3.ts	compiler/reservedWords3.ts	5	5	
+restArgMissingName.ts	compiler/restArgMissingName.ts	3	3	
+restElementWithInitializer2.ts	conformance/es6/destructuring/restElementWithInitializer2.ts	1	1	
+restElementWithInitializer1.ts	conformance/es6/destructuring/restElementWithInitializer1.ts	3	3	
+restParamAsOptional.ts	compiler/restParamAsOptional.ts	3	3	
+restParamModifier2.ts	compiler/restParamModifier2.ts	7	6	restParamModifier2.ts(3,1): error syntax: Unexpected }
+restParameterWithBindingPattern3.ts	compiler/restParameterWithBindingPattern3.ts	4	4	
+restParameterNotLast.ts	compiler/restParameterNotLast.ts	3	3	
+restParametersOfNonArrayTypes2.ts	conformance/types/objectTypeLiteral/callSignatures/restParametersOfNonArrayTypes2.ts	5	5	
+restParameterWithoutAnnotationIsAnyArray.ts	conformance/types/objectTypeLiteral/callSignatures/restParameterWithoutAnnotationIsAnyArray.ts	5	5	
+restParametersWithArrayTypeAnnotations.ts	conformance/types/objectTypeLiteral/callSignatures/restParametersWithArrayTypeAnnotations.ts	5	5	
+restParametersOfNonArrayTypes.ts	conformance/types/objectTypeLiteral/callSignatures/restParametersOfNonArrayTypes.ts	5	5	
+scanner10.1.1-8gs.ts	conformance/scanner/ecmascript5/scanner10.1.1-8gs.ts	1	1	
+restPropertyWithBindingPattern(target=es2015).ts	conformance/es6/destructuring/restPropertyWithBindingPattern.ts	2	2	
+scannerNumericLiteral3(target=es2015).ts	conformance/scanner/ecmascript5/scannerNumericLiteral3.ts	1	1	
+scannerES3NumericLiteral4.ts	conformance/scanner/ecmascript3/scannerES3NumericLiteral4.ts	1	1	
+scannerES3NumericLiteral6.ts	conformance/scanner/ecmascript3/scannerES3NumericLiteral6.ts	1	1	
+scannerES3NumericLiteral3.ts	conformance/scanner/ecmascript3/scannerES3NumericLiteral3.ts	1	1	
+scannerNumericLiteral6(target=es2015).ts	conformance/scanner/ecmascript5/scannerNumericLiteral6.ts	1	1	
+scannerS7.8.4_A7.1_T4.ts	conformance/scanner/ecmascript5/scannerS7.8.4_A7.1_T4.ts	1	1	
+scannerS7.4_A2_T2.ts	conformance/scanner/ecmascript5/scannerS7.4_A2_T2.ts	1	1	
+scannerS7.8.3_A6.1_T1.ts	conformance/scanner/ecmascript5/scannerS7.8.3_A6.1_T1.ts	1	1	
+scannerStringLiterals.ts	conformance/scanner/ecmascript5/scannerStringLiterals.ts	1	1	
+scannerNumericLiteral4(target=es2015).ts	conformance/scanner/ecmascript5/scannerNumericLiteral4.ts	1	1	
+scannerUnicodeEscapeInKeyword1.ts	conformance/scanner/ecmascript5/scannerUnicodeEscapeInKeyword1.ts	1	1	
+scannerUnicodeEscapeInKeyword2.ts	conformance/scanner/ecmascript5/scannerUnicodeEscapeInKeyword2.ts	6	5	file1.ts(1,5): error syntax: Cannot use "yield" or "await" here.
+shadowedFunctionScopedVariablesByBlockScopedOnes.ts	compiler/shadowedFunctionScopedVariablesByBlockScopedOnes.ts	5	3	shadowedFunctionScopedVariablesByBlockScopedOnes.ts(14,13): error syntax: x has already been declared
+scannerUnexpectedNullCharacter1.ts	conformance/scanner/ecmascript5/scannerUnexpectedNullCharacter1.ts	2	2	
+shadowedInternalModule.ts	conformance/internalModules/importDeclarations/shadowedInternalModule.ts	2	0	shadowedInternalModule.ts(32,9): error syntax: "Y" has already been declared
+shadowingViaLocalValue.ts	compiler/shadowingViaLocalValue.ts	2	0	shadowingViaLocalValue.ts(2,9): error syntax: x has already been declared
+shadowedReservedCompilerDeclarationsWithNoEmit(target=es2015).ts	compiler/shadowedReservedCompilerDeclarationsWithNoEmit.ts	1	1	
+shadowingViaLocalValueOrBindingElement.ts	compiler/shadowingViaLocalValueOrBindingElement.ts	1	0	shadowingViaLocalValueOrBindingElement.ts(2,9): error syntax: x has already been declared
+shorthandPropertyAssignmentsInDestructuring(target=es2015).ts	compiler/shorthandPropertyAssignmentsInDestructuring.ts	1	1	
+shebangError.ts	compiler/shebangError.ts	1	1	
+shorthandPropertyAssignmentsInDestructuring_ES6.ts	compiler/shorthandPropertyAssignmentsInDestructuring_ES6.ts	1	1	
+slashBeforeVariableDeclaration1.ts	compiler/slashBeforeVariableDeclaration1.ts	1	1	
+spaceBeforeQuestionMarkInPropertyAssignment.ts	compiler/spaceBeforeQuestionMarkInPropertyAssignment.ts	3	3	
+sourceMapValidationEnums.ts	compiler/sourceMapValidationEnums.ts	1	1	
+standaloneBreak.ts	compiler/standaloneBreak.ts	1	1	
+staticAsIdentifier.ts	compiler/staticAsIdentifier.ts	6	5	staticAsIdentifier.ts(17,1): error syntax: Unexpected }
+staticClassProps.ts	compiler/staticClassProps.ts	2	2	
+staticModifierAlreadySeen.ts	compiler/staticModifierAlreadySeen.ts	6	5	staticModifierAlreadySeen.ts(4,1): error syntax: Unexpected }
+staticPropertyNameConflicts(target=es2015,usedefineforclassfields=false).ts	conformance/classes/propertyMemberDeclarations/staticPropertyNameConflicts.ts	5	5	
+staticPropertyNameConflicts(target=es2015,usedefineforclassfields=true).ts	conformance/classes/propertyMemberDeclarations/staticPropertyNameConflicts.ts	5	5	
+staticPrototypeProperty.ts	compiler/staticPrototypeProperty.ts	2	2	
+staticsInAFunction.ts	compiler/staticsInAFunction.ts	4	4	
+staticsInConstructorBodies.ts	compiler/staticsInConstructorBodies.ts	2	2	
+strictModeReservedWord.ts	compiler/strictModeReservedWord.ts	14	14	
+strictModeReservedWord2.ts	compiler/strictModeReservedWord2.ts	8	2	strictModeReservedWord2.ts(8,5): error syntax: "public" is a reserved word and cannot be used in strict mode
+strictModeReservedWordInDestructuring.ts	compiler/strictModeReservedWordInDestructuring.ts	7	7	
+strictModeReservedWordInImportEqualDeclaration.ts	compiler/strictModeReservedWordInImportEqualDeclaration.ts	1	0	strictModeReservedWordInImportEqualDeclaration.ts(1,1): error syntax: "public" is a reserved word and cannot be used in strict mode
+stringLiteralTypesInVariableDeclarations01.ts	conformance/types/stringLiteral/stringLiteralTypesInVariableDeclarations01.ts	1	1	
+strictModeReservedWordInModuleDeclaration.ts	compiler/strictModeReservedWordInModuleDeclaration.ts	3	3	
+strictModeWordInImportDeclaration.ts	compiler/strictModeWordInImportDeclaration.ts	3	3	
+strictModeReservedWordInClassDeclaration.ts	compiler/strictModeReservedWordInClassDeclaration.ts	6	6	
+superAccess2.ts	compiler/superAccess2.ts	7	7	
+stringLiteralsErrors.ts	compiler/stringLiteralsErrors.ts	1	1	
+stringNamedPropertyDuplicates.ts	conformance/types/objectTypeLiteral/propertySignatures/stringNamedPropertyDuplicates.ts	3	2	stringNamedPropertyDuplicates.ts(21,1): error syntax: Unexpected }
+superCallFromClassThatHasNoBaseType1.ts	compiler/superCallFromClassThatHasNoBaseType1.ts	1	1	
+superCallFromFunction1.ts	compiler/superCallFromFunction1.ts	1	1	
+superCallInConstructorWithNoBaseType.ts	conformance/classes/constructorDeclarations/superCalls/superCallInConstructorWithNoBaseType.ts	2	2	
+superCallOutsideConstructor.ts	compiler/superCallOutsideConstructor.ts	2	2	
+superCallFromClassThatHasNoBaseTypeButWithSameSymbolInterface.ts	conformance/es6/classDeclaration/superCallFromClassThatHasNoBaseTypeButWithSameSymbolInterface.ts	1	1	
+superInObjectLiterals_ES6.ts	compiler/superInObjectLiterals_ES6.ts	5	5	
+superErrors.ts	compiler/superErrors.ts	11	11	
+superInObjectLiterals_ES5(target=es2015).ts	compiler/superInObjectLiterals_ES5.ts	5	5	
+superInLambdas(target=es2015).ts	compiler/superInLambdas.ts	2	2	
+superWithTypeArgument2.ts	compiler/superWithTypeArgument2.ts	1	1	
+superWithTypeArgument.ts	compiler/superWithTypeArgument.ts	1	1	
+superWithTypeArgument3.ts	compiler/superWithTypeArgument3.ts	1	1	
+superNewCall1.ts	compiler/superNewCall1.ts	1	1	
+super_inside-object-literal-getters-and-setters(target=es2015).ts	compiler/super_inside-object-literal-getters-and-setters.ts	1	1	
+switchStatementsWithMultipleDefaults.ts	compiler/switchStatementsWithMultipleDefaults.ts	1	0	switchStatementsWithMultipleDefaults.ts(8,5): error syntax: Multiple default clauses are not allowed
+switchStatementsWithMultipleDefaults1.ts	compiler/switchStatementsWithMultipleDefaults1.ts	1	1	
+taggedTemplateChain.ts	conformance/expressions/optionalChaining/taggedTemplateChain/taggedTemplateChain.ts	3	3	
+taggedTemplatesWithIncompleteNoSubstitutionTemplate1.ts	compiler/taggedTemplatesWithIncompleteNoSubstitutionTemplate1.ts	1	1	
+taggedTemplatesWithIncompleteNoSubstitutionTemplate2.ts	compiler/taggedTemplatesWithIncompleteNoSubstitutionTemplate2.ts	1	1	
+taggedTemplatesWithIncompleteTemplateExpressions1.ts	compiler/taggedTemplatesWithIncompleteTemplateExpressions1.ts	1	1	
+taggedTemplatesWithIncompleteTemplateExpressions2.ts	compiler/taggedTemplatesWithIncompleteTemplateExpressions2.ts	1	1	
+taggedTemplatesWithIncompleteTemplateExpressions3.ts	compiler/taggedTemplatesWithIncompleteTemplateExpressions3.ts	1	1	
+taggedTemplatesWithIncompleteTemplateExpressions4.ts	compiler/taggedTemplatesWithIncompleteTemplateExpressions4.ts	1	1	
+taggedTemplatesWithTypeArguments2.ts	conformance/es6/templates/taggedTemplatesWithTypeArguments2.ts	1	1	
+taggedTemplatesWithIncompleteTemplateExpressions6.ts	compiler/taggedTemplatesWithIncompleteTemplateExpressions6.ts	1	1	
+templateLiteralEscapeSequence.ts	compiler/templateLiteralEscapeSequence.ts	1	1	
+taggedTemplatesWithIncompleteTemplateExpressions5.ts	compiler/taggedTemplatesWithIncompleteTemplateExpressions5.ts	1	1	
+templateStringInModuleNameES6.ts	conformance/es6/templates/templateStringInModuleNameES6.ts	2	2	
+templateStringInModuleName.ts	conformance/es6/templates/templateStringInModuleName.ts	2	2	
+templateStringInFunctionParameterType.ts	conformance/es6/templates/templateStringInFunctionParameterType.ts	1	1	
+templateStringInFunctionParameterTypeES6.ts	conformance/es6/templates/templateStringInFunctionParameterTypeES6.ts	1	1	
+templateStringInObjectLiteralES6.ts	conformance/es6/templates/templateStringInObjectLiteralES6.ts	3	3	
+templateStringInObjectLiteral.ts	conformance/es6/templates/templateStringInObjectLiteral.ts	3	3	
+templateStringInPropertyName1.ts	conformance/es6/templates/templateStringInPropertyName1.ts	3	3	
+templateStringInPropertyNameES6_2.ts	conformance/es6/templates/templateStringInPropertyNameES6_2.ts	3	3	
+templateStringUnterminated1.ts	conformance/es6/templates/templateStringUnterminated1.ts	1	1	
+templateStringInPropertyNameES6_1.ts	conformance/es6/templates/templateStringInPropertyNameES6_1.ts	3	3	
+templateStringInPropertyName2.ts	conformance/es6/templates/templateStringInPropertyName2.ts	3	3	
+templateStringUnterminated1_ES6.ts	conformance/es6/templates/templateStringUnterminated1_ES6.ts	1	1	
+templateStringUnterminated2_ES6.ts	conformance/es6/templates/templateStringUnterminated2_ES6.ts	1	1	
+templateStringUnterminated2.ts	conformance/es6/templates/templateStringUnterminated2.ts	1	1	
+templateStringUnterminated3_ES6.ts	conformance/es6/templates/templateStringUnterminated3_ES6.ts	1	1	
+templateStringUnterminated4_ES6.ts	conformance/es6/templates/templateStringUnterminated4_ES6.ts	1	1	
+templateStringUnterminated4.ts	conformance/es6/templates/templateStringUnterminated4.ts	1	1	
+templateStringUnterminated5_ES6.ts	conformance/es6/templates/templateStringUnterminated5_ES6.ts	1	1	
+templateStringUnterminated5.ts	conformance/es6/templates/templateStringUnterminated5.ts	1	1	
+templateStringUnterminated3.ts	conformance/es6/templates/templateStringUnterminated3.ts	1	1	
+thisAssignmentInNamespaceDeclaration1.ts	compiler/thisAssignmentInNamespaceDeclaration1.ts	2	2	
+thisInModule.ts	compiler/thisInModule.ts	1	1	
+thisKeyword.ts	compiler/thisKeyword.ts	1	1	
+thisTypeErrors.ts	conformance/types/thisType/thisTypeErrors.ts	1	1	
+thisInInvalidContextsExternalModule(target=es2015).ts	conformance/expressions/thisKeyword/thisInInvalidContextsExternalModule.ts	3	3	
+templateStringWithEmbeddedYieldKeyword.ts	conformance/es6/templates/templateStringWithEmbeddedYieldKeyword.ts	7	6	templateStringWithEmbeddedYieldKeyword.ts(4,1): error syntax: Unexpected }
+thisInInvalidContexts.ts	conformance/expressions/thisKeyword/thisInInvalidContexts.ts	3	3	
+this_inside-enum-should-not-be-allowed.ts	compiler/this_inside-enum-should-not-be-allowed.ts	2	2	
+throwWithoutNewLine1.ts	compiler/throwWithoutNewLine1.ts	1	1	
+throwWithoutNewLine2.ts	compiler/throwWithoutNewLine2.ts	1	1	
+thisTypeInFunctionsNegative.ts	conformance/types/thisType/thisTypeInFunctionsNegative.ts	3	3	
+topLevelAwaitErrors.1(module=es2022).ts	conformance/externalModules/topLevelAwaitErrors.1.ts	1	1	
+topLevelAwaitErrors.1(module=esnext).ts	conformance/externalModules/topLevelAwaitErrors.1.ts	1	1	
+topLevelAwaitErrors.2(module=es2022).ts	conformance/externalModules/topLevelAwaitErrors.2.ts	1	1	
+topLevelAwaitErrors.2(module=esnext).ts	conformance/externalModules/topLevelAwaitErrors.2.ts	1	1	
+topLevelAwaitErrors.4(module=es2022).ts	conformance/externalModules/topLevelAwaitErrors.4.ts	1	1	
+topLevelAwaitErrors.4(module=esnext).ts	conformance/externalModules/topLevelAwaitErrors.4.ts	1	1	
+topLevelAwaitErrors.5(module=es2022).ts	conformance/externalModules/topLevelAwaitErrors.5.ts	1	1	
+topLevelLambda.ts	compiler/topLevelLambda.ts	1	1	
+topLevelAwaitErrors.5(module=esnext).ts	conformance/externalModules/topLevelAwaitErrors.5.ts	1	1	
+trailingCommasInBindingPatterns.ts	conformance/es7/trailingCommasInBindingPatterns.ts	1	1	
+trailingCommasInFunctionParametersAndArguments(target=es2015).ts	conformance/es7/trailingCommasInFunctionParametersAndArguments.ts	1	1	
+tsxErrorRecovery2.tsx	conformance/jsx/tsxErrorRecovery2.tsx	2	2	
+tsxAttributeInvalidNames.tsx	conformance/jsx/tsxAttributeInvalidNames.tsx	1	1	
+tsxErrorRecovery1.tsx	conformance/jsx/tsxErrorRecovery1.tsx	1	1	
+tsxFragmentErrors.tsx	conformance/jsx/tsxFragmentErrors.tsx	1	1	
+tsxNamespacedAttributeName1.tsx	conformance/jsx/tsxNamespacedAttributeName1.tsx	4	4	
+trailingCommasInGetter.ts	conformance/es7/trailingCommasInGetter.ts	2	2	
+tsxErrorRecovery3.tsx	conformance/jsx/tsxErrorRecovery3.tsx	2	2	
+tsxNamespacedAttributeName2.tsx	conformance/jsx/tsxNamespacedAttributeName2.tsx	4	4	
+tsxNamespacedTagName1.tsx	conformance/jsx/tsxNamespacedTagName1.tsx	4	4	
+typeGuardFunctionErrors.ts	conformance/expressions/typeGuards/typeGuardFunctionErrors.ts	1	1	
+typeAliasDeclareKeywordNewlines.ts	compiler/typeAliasDeclareKeywordNewlines.ts	1	0	typeAliasDeclareKeywordNewlines.ts(5,9): error syntax: Unexpected "type"
+tsxNamespacedTagName2.tsx	conformance/jsx/tsxNamespacedTagName2.tsx	4	4	
+typeOfThisInStaticMembers6.ts	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers6.ts	1	1	
+typeOfThisInStaticMembers9(target=esnext).ts	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers9.ts	2	2	
+typeOfThisInStaticMembers9(target=es6).ts	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers9.ts	2	2	
+typeOfThisInStaticMembers9(target=es2022).ts	conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers9.ts	2	2	
+typeParameterConstModifiers.ts	conformance/types/typeParameters/typeParameterLists/typeParameterConstModifiers.ts	2	2	
+typeofANonExportedType.ts	conformance/types/specifyingTypes/typeQueries/typeofANonExportedType.ts	1	1	
+typeOnlyMerge3.ts	conformance/externalModules/typeOnlyMerge3.ts	1	0	b.ts(2,11): error syntax: "A" has already been declared
+typeofAnExportedType.ts	conformance/types/specifyingTypes/typeQueries/typeofAnExportedType.ts	1	1	
+typeofImportDefer.ts	conformance/importDefer/typeofImportDefer.ts	5	5	
+typeofOperatorInvalidOperations.ts	conformance/expressions/unaryOperators/typeofOperator/typeofOperatorInvalidOperations.ts	2	2	
+unaryOperatorsInStrictMode.ts	compiler/unaryOperatorsInStrictMode.ts	8	8	
+uncaughtCompilerError2.ts	compiler/uncaughtCompilerError2.ts	1	1	
+unclosedExportClause01.ts	compiler/unclosedExportClause01.ts	5	5	
+unexpectedStatementBlockTerminator.ts	compiler/unexpectedStatementBlockTerminator.ts	1	1	
+unicodeExtendedEscapesInStrings12(target=es6).ts	conformance/es6/unicodeExtendedEscapes/unicodeExtendedEscapesInStrings12.ts	1	1	
+unicodeExtendedEscapesInStrings07(target=es6).ts	conformance/es6/unicodeExtendedEscapes/unicodeExtendedEscapesInStrings07.ts	1	1	
+unicodeExtendedEscapesInStrings17(target=es6).ts	conformance/es6/unicodeExtendedEscapes/unicodeExtendedEscapesInStrings17.ts	1	1	
+unicodeExtendedEscapesInStrings19(target=es6).ts	conformance/es6/unicodeExtendedEscapes/unicodeExtendedEscapesInStrings19.ts	1	1	
+unclosedExportClause02.ts	compiler/unclosedExportClause02.ts	4	1	t2.ts(2,5): error syntax: Expected "}" but found ""./t1""
+unicodeExtendedEscapesInStrings20(target=es6).ts	conformance/es6/unicodeExtendedEscapes/unicodeExtendedEscapesInStrings20.ts	1	1	
+unicodeExtendedEscapesInStrings14(target=es6).ts	conformance/es6/unicodeExtendedEscapes/unicodeExtendedEscapesInStrings14.ts	1	1	
+unicodeExtendedEscapesInStrings21(target=es6).ts	conformance/es6/unicodeExtendedEscapes/unicodeExtendedEscapesInStrings21.ts	1	1	
+unicodeExtendedEscapesInStrings22(target=es6).ts	conformance/es6/unicodeExtendedEscapes/unicodeExtendedEscapesInStrings22.ts	1	1	
+unicodeExtendedEscapesInStrings25(target=es6).ts	conformance/es6/unicodeExtendedEscapes/unicodeExtendedEscapesInStrings25.ts	1	1	
+unicodeExtendedEscapesInStrings24(target=es6).ts	conformance/es6/unicodeExtendedEscapes/unicodeExtendedEscapesInStrings24.ts	1	1	
+unicodeExtendedEscapesInTemplates12(target=es6).ts	conformance/es6/unicodeExtendedEscapes/unicodeExtendedEscapesInTemplates12.ts	1	1	
+unicodeExtendedEscapesInTemplates07(target=es6).ts	conformance/es6/unicodeExtendedEscapes/unicodeExtendedEscapesInTemplates07.ts	1	1	
+unicodeExtendedEscapesInTemplates14(target=es6).ts	conformance/es6/unicodeExtendedEscapes/unicodeExtendedEscapesInTemplates14.ts	1	1	
+unicodeExtendedEscapesInTemplates17(target=es6).ts	conformance/es6/unicodeExtendedEscapes/unicodeExtendedEscapesInTemplates17.ts	1	1	
+unicodeExtendedEscapesInTemplates19(target=es6).ts	conformance/es6/unicodeExtendedEscapes/unicodeExtendedEscapesInTemplates19.ts	1	1	
+unicodeIdentifierName2.ts	compiler/unicodeIdentifierName2.ts	2	2	
+unreachableDeclarations(preserveconstenums=false).ts	compiler/unreachableDeclarations.ts	2	2	
+uniqueSymbolsErrors.ts	conformance/types/uniqueSymbol/uniqueSymbolsErrors.ts	1	1	
+unterminatedRegexAtEndOfSource1.ts	compiler/unterminatedRegexAtEndOfSource1.ts	1	1	
+unreachableDeclarations(preserveconstenums=true).ts	compiler/unreachableDeclarations.ts	2	2	
+unterminatedStringLiteralWithBackslash1.ts	compiler/unterminatedStringLiteralWithBackslash1.ts	1	1	
+usingDeclarations.13.ts	conformance/statements/VariableStatements/usingDeclarations/usingDeclarations.13.ts	1	1	
+unusedLocalsAndParameters.ts	compiler/unusedLocalsAndParameters.ts	3	2	unusedLocalsAndParameters.ts(86,1): error syntax: Expected "}" but found end of file
+unusedLocalsInMethod4.ts	compiler/unusedLocalsInMethod4.ts	1	1	
+usingDeclarations.10.ts	conformance/statements/VariableStatements/usingDeclarations/usingDeclarations.10.ts	1	1	
+usingDeclarations.5.ts	conformance/statements/VariableStatements/usingDeclarations/usingDeclarations.5.ts	4	4	
+usingDeclarations.6.ts	conformance/statements/VariableStatements/usingDeclarations/usingDeclarations.6.ts	2	2	
+usingDeclarations.7.ts	conformance/statements/VariableStatements/usingDeclarations/usingDeclarations.7.ts	4	4	
+usingDeclarations.16.ts	conformance/statements/VariableStatements/usingDeclarations/usingDeclarations.16.ts	4	4	
+valuesMergingAcrossModules.ts	conformance/externalModules/valuesMergingAcrossModules.ts	1	0	c.ts(2,11): error syntax: "A" has already been declared
+usingDeclarations.8.ts	conformance/statements/VariableStatements/usingDeclarations/usingDeclarations.8.ts	1	1	
+usingDeclarationsInForOf.3.ts	conformance/statements/VariableStatements/usingDeclarations/usingDeclarationsInForOf.3.ts	2	2	
+validRegexp.ts	compiler/validRegexp.ts	1	1	
+varArgWithNoParamName.ts	compiler/varArgWithNoParamName.ts	3	3	
+varArgConstructorMemberParameter.ts	compiler/varArgConstructorMemberParameter.ts	7	6	varArgConstructorMemberParameter.ts(11,1): error syntax: Unexpected }
+variableDeclarationInStrictMode1.ts	compiler/variableDeclarationInStrictMode1.ts	1	1	
+varianceAnnotationsWithCircularlyReferencesError.ts	conformance/types/typeParameters/typeParameterLists/varianceAnnotationsWithCircularlyReferencesError.ts	5	5	
+varianceAnnotations.ts	conformance/types/typeParameters/typeParameterLists/varianceAnnotations.ts	3	3	
+voidOperatorInvalidOperations.ts	conformance/expressions/unaryOperators/voidOperator/voidOperatorInvalidOperations.ts	2	2	
+withStatementErrors.ts	compiler/withStatementErrors.ts	1	0	withStatementErrors.ts(15,15): error syntax: Expected ";" but found "M"
+yieldStringLiteral.ts	compiler/yieldStringLiteral.ts	2	2	

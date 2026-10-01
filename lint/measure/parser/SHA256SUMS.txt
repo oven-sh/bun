@@ -1,0 +1,14 @@
+# release builds for the parser unit, round 2 (binaries are not committed: base/ and head/ are ignored)
+# base = e3566be889995ffff8b08823b9233617f979c889 built in /workspace/wt/parser-base; head = be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb built in /workspace/wt/parser
+31248200b0fcf27351d066f0b55e0eecaac97d4f7287d44b3c41f9c4b23d7d3c  base/bun
+edb507372ba4829b15688674b800acf91ac4d2407e3b3d0a240bfe745f05b710  base/bun-profile
+e306138e348ff3c339b8982158a65c827c525a5016229e3e0f49701c26c28220  base/bun-profile.linker-map
+7e1111b462362a5748907049a1c7a424638fbdc976790a9e265d05ebfb04b8e6  head/bun
+1816498a6b5d6e19d19dd7c013c465383ca112a76199a2b084f5de24e1fff46b  head/bun-profile
+9b65438645cb32f6dc4aef33bd1842e31a6baeaa50258db62bae6baa54bfda1b  head/bun-profile.linker-map
+80832072 base/bun
+169917688 base/bun-profile
+81204808 head/bun
+170775520 head/bun-profile
+base/bun --revision: 1.4.3-canary.1+e3566be88
+head/bun --revision: 1.4.3-canary.1+be1ebe529

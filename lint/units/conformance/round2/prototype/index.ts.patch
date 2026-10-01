@@ -1,0 +1,12 @@
+diff --git a/test/cli/lint/conformance/runner/index.ts b/test/cli/lint/conformance/runner/index.ts
+index 8c612a628e..43587e9c5c 100644
+--- a/test/cli/lint/conformance/runner/index.ts
++++ b/test/cli/lint/conformance/runner/index.ts
+@@ -38,3 +38,7 @@ export type {
+   Symlink,
+ } from "./run";
+ export type { Diagnostic, InputFile } from "./shape";
++export { getCompilerVaryByMap, skippedTests } from "./compiler_runner";
++export { openCorpus } from "./corpus";
++export type { Corpus, CorpusInstance } from "./corpus";
++export { getFileBasedTestConfigurations } from "./harnessutil_variations";

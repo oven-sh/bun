@@ -1,0 +1,585 @@
+names: same size 987, different size 167, only in a 22, only in b 395; bytes a 1551774 b 1842605 delta +290831
+       0    13587  +13587  <bun_js_parser::p::P<true, false>>::parse_type_operator_or_higher::<bun_js_parser::parse::type_sink::Build>
+       0    13587  +13587  <bun_js_parser::p::P<true, true>>::parse_type_operator_or_higher::<bun_js_parser::parse::type_sink::Build>
+       0     7402   +7402  <bun_js_parser::p::P<true, false>>::build_type_member_list
+       0     7402   +7402  <bun_js_parser::p::P<true, true>>::build_type_member_list
+    7017        0   -7017  <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_opts::<SINK metadata>
+    7001        0   -7001  <bun_js_parser::p::P<true, true>>::skip_type_script_type_with_opts::<SINK metadata>
+       0     5130   +5130  <bun_js_parser::p::P<true, false>>::lint_class_implements
+       0     5130   +5130  <bun_js_parser::p::P<true, true>>::lint_class_implements
+       0     4949   +4949  <bun_js_parser::p::P<true, false>>::parse_stmt_named_like_cast
+       0     4949   +4949  <bun_js_parser::p::P<true, true>>::parse_stmt_named_like_cast
+       0     4920   +4920  <bun_js_parser::p::P<true, true>>::build_parameter_list
+       0     4873   +4873  <bun_js_parser::p::P<true, false>>::build_parameter_list
+       0     4132   +4132  <bun_js_parser::p::P<true, false>>::parse_paren_expr_for_lint
+    3446        0   -3446  <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_opts::<SINK discard>
+    3446        0   -3446  <bun_js_parser::p::P<true, true>>::skip_type_script_type_with_opts::<SINK discard>
+       0     3294   +3294  <bun_js_parser::p::P<true, false>>::parse_type_operator_or_higher::<SINK metadata>
+       0     3289   +3289  <bun_js_parser::p::P<true, true>>::parse_type_operator_or_higher::<SINK metadata>
+    2319     5489   +3170  <bun_js_parser::p::P<true, false>>::parse_stmt_fallthrough_ts_keyword
+    2319     5489   +3170  <bun_js_parser::p::P<true, true>>::parse_stmt_fallthrough_ts_keyword
+       0     3008   +3008  <bun_js_parser::p::P<true, false>>::build_in_type::<bun_ast::expr::Expr, <bun_js_parser::p::P<true, false>>::build_expr_in_type::{closure#0}>
+       0     3008   +3008  <bun_js_parser::p::P<true, true>>::build_in_type::<bun_ast::expr::Expr, <bun_js_parser::p::P<true, true>>::build_expr_in_type::{closure#0}>
+       0     2846   +2846  <bun_js_parser::p::P<true, false>>::build_in_type::<bun_ast::binding::Binding, <bun_js_parser::p::P<true, false>>::build_next_is_start_of_fn_type::{closure#0}>
+       0     2846   +2846  <bun_js_parser::p::P<true, true>>::build_in_type::<bun_ast::binding::Binding, <bun_js_parser::p::P<true, true>>::build_next_is_start_of_fn_type::{closure#0}>
+       0     2640   +2640  <bun_js_parser::p::P<true, false>>::parse_type_member
+       0     2640   +2640  <bun_js_parser::p::P<true, true>>::parse_type_member
+       0     2536   +2536  <bun_js_parser::p::P<true, false>>::parse_type_operator_or_higher::<SINK discard>
+       0     2536   +2536  <bun_js_parser::p::P<true, true>>::parse_type_operator_or_higher::<SINK discard>
+       0     2447   +2447  <bun_js_parser::p::P<true, false>>::try_skip_type_script_constraint_of_infer_type_with_backtracking::<bun_js_parser::parse::type_sink::Build>
+       0     2447   +2447  <bun_js_parser::p::P<true, true>>::try_skip_type_script_constraint_of_infer_type_with_backtracking::<bun_js_parser::parse::type_sink::Build>
+       0     2290   +2290  <bun_js_parser::p::P<true, false>>::skip_type_script_interface_stmt
+       0     2290   +2290  <bun_js_parser::p::P<true, true>>::skip_type_script_interface_stmt
+       0     2207   +2207  <bun_js_parser::p::P<true, false>>::lint_arrow_return_type
+       0     2205   +2205  <bun_js_parser::p::P<true, false>>::try_skip_type_script_constraint_of_infer_type_with_backtracking::<SINK discard>
+       0     2205   +2205  <bun_js_parser::p::P<true, true>>::try_skip_type_script_constraint_of_infer_type_with_backtracking::<SINK discard>
+       0     1983   +1983  <scopeguard::ScopeGuard<core::mem::maybe_uninit::MaybeUninit<bun_js_parser::p::P<false, false>>, <bun_js_parser::parse::parse_entry::Parser>::parse_only<alloc::vec::Vec<b
+       0     1957   +1957  <bun_js_parser::p::P<true, false>>::skip_type_script_predicate_of_keyword_name
+       0     1957   +1957  <bun_js_parser::p::P<true, true>>::skip_type_script_predicate_of_keyword_name
+    3762     1983   -1779  <scopeguard::ScopeGuard<core::mem::maybe_uninit::MaybeUninit<bun_js_parser::p::P<true, false>>, <bun_runtime::test_runner::snapshot::Snapshots>::write_inline_snapshots::{
+       0     1769   +1769  <bun_js_parser::p::P<true, false>>::next_is_start_of_mapped_type
+       0     1769   +1769  <bun_js_parser::p::P<true, true>>::next_is_start_of_mapped_type
+       0     1715   +1715  <bun_js_parser::parse::parse_entry::Parser>::parse_only::<alloc::vec::Vec<bun_lint::diagnostic::Diagnostic>, bun_runtime::cli::lint_command::parse::{closure#1}::{closure#
+    1542     3189   +1647  <bun_js_parser::p::P<false, false>>::parse_path
+    1542     3189   +1647  <bun_js_parser::p::P<false, true>>::parse_path
+    1542     3189   +1647  <bun_js_parser::p::P<true, false>>::parse_path
+    1542     3189   +1647  <bun_js_parser::p::P<true, true>>::parse_path
+       0     1643   +1643  <bun_js_parser::p::P<true, false>>::pfx_t_less_than_for_lint
+       0     1560   +1560  <bun_js_parser::p::P<true, false>>::parse_tuple_element_name_or_tuple_element_type
+       0     1560   +1560  <bun_js_parser::p::P<true, true>>::parse_tuple_element_name_or_tuple_element_type
+       0     1467   +1467  <bun_js_parser::p::P<true, false>>::next_token_matches::<<bun_js_parser::p::P<true, false>>::is_declaration_before_what_follows_braces::{closure#0}>
+       0     1467   +1467  <bun_js_parser::p::P<true, true>>::next_token_matches::<<bun_js_parser::p::P<true, true>>::is_declaration_before_what_follows_braces::{closure#0}>
+       0     1449   +1449  <bun_js_parser::p::P<false, false>>::parse_arrow_body_with_flags
+       0     1449   +1449  <bun_js_parser::p::P<false, true>>::parse_arrow_body_with_flags
+       0     1442   +1442  <bun_js_parser::p::P<true, false>>::build_typescript_return_type
+       0     1442   +1442  <bun_js_parser::p::P<true, true>>::build_typescript_return_type
+       0     1439   +1439  <bun_js_parser::p::P<true, false>>::parse_arrow_body_with_flags
+       0     1439   +1439  <bun_js_parser::p::P<true, true>>::parse_arrow_body_with_flags
+    1433        0   -1433  <bun_js_parser::p::P<false, false>>::parse_arrow_body
+    1433        0   -1433  <bun_js_parser::p::P<false, true>>::parse_arrow_body
+    1433        0   -1433  <bun_js_parser::p::P<true, false>>::parse_arrow_body
+    1433        0   -1433  <bun_js_parser::p::P<true, true>>::parse_arrow_body
+       0     1366   +1366  <bun_js_parser::p::P<true, false>>::parse_and_drop_in_type
+       0     1366   +1366  <bun_js_parser::p::P<true, true>>::parse_and_drop_in_type
+       0     1365   +1365  <bun_js_parser::p::P<true, false>>::build_import_attributes
+       0     1365   +1365  <bun_js_parser::p::P<true, true>>::build_import_attributes
+    6401     5046   -1355  <bun_js_parser::p::P<false, false>>::emit_decorator_metadata_for_prop
+    6401     5046   -1355  <bun_js_parser::p::P<true, false>>::emit_decorator_metadata_for_prop
+       0     1350   +1350  <bun_js_parser::p::P<true, false>>::build_type_script_type_parameters
+       0     1350   +1350  <bun_js_parser::p::P<true, false>>::lexer_backtracker_bool::<<bun_js_parser::p::P<true, false>>::skip_type_script_type_arguments_with_backtracking, bool>
+       0     1350   +1350  <bun_js_parser::p::P<true, true>>::build_type_script_type_parameters
+       0     1350   +1350  <bun_js_parser::p::P<true, true>>::lexer_backtracker_bool::<<bun_js_parser::p::P<true, true>>::skip_type_script_type_arguments_with_backtracking, bool>
+       0     1268   +1268  <bun_js_parser::p::P<true, false>>::skip_type_script_predicate_type_after_newline
+       0     1268   +1268  <bun_js_parser::p::P<true, true>>::skip_type_script_predicate_type_after_newline
+    3434     4671   +1237  <bun_js_parser::p::P<true, false>>::t_import
+       0     1231   +1231  <bun_js_parser::p::P<true, false>>::parser_snapshot
+       0     1231   +1231  <bun_js_parser::p::P<true, true>>::parser_snapshot
+       0     1218   +1218  <bun_js_parser::p::P<true, false>>::build_modifiers
+       0     1218   +1218  <bun_js_parser::p::P<true, true>>::build_modifiers
+    3546     4713   +1167  <bun_js_parser::p::P<true, true>>::t_import
+     162     1309   +1147  <bun_js_parser::p::P<true, false>>::skip_type_script_paren_or_fn_type::<SINK discard>
+     162     1309   +1147  <bun_js_parser::p::P<true, true>>::skip_type_script_paren_or_fn_type::<SINK discard>
+       0     1139   +1139  <bun_js_parser::p::P<true, false>>::lint_type_metadata
+       0     1118   +1118  <bun_js_parser::p::P<true, false>>::parse_type::<SINK discard>
+       0     1118   +1118  <bun_js_parser::p::P<true, true>>::parse_type::<SINK discard>
+       0     1084   +1084  <bun_js_parser::p::P<true, false>>::parse_type_reference::<bun_js_parser::parse::type_sink::Build>
+       0     1078   +1078  <bun_js_parser::p::P<true, true>>::parse_type_reference::<bun_js_parser::parse::type_sink::Build>
+       0     1065   +1065  <bun_js_parser::p::P<true, false>>::is_class_index_signature
+       0     1065   +1065  <bun_js_parser::p::P<true, true>>::is_class_index_signature
+       0     1064   +1064  <bun_js_parser::p::P<true, false>>::parse_union_or_intersection_type_rest::<bun_js_parser::parse::type_sink::DecoratorMetadata, true>
+       0     1064   +1064  <bun_js_parser::p::P<true, true>>::parse_union_or_intersection_type_rest::<bun_js_parser::parse::type_sink::DecoratorMetadata, true>
+       0     1059   +1059  <bun_js_parser::p::P<true, false>>::parse_and_drop_in_class
+       0     1059   +1059  <bun_js_parser::p::P<true, true>>::parse_and_drop_in_class
+       0     1058   +1058  <bun_js_parser::parse::syntax_errors::SyntaxErrors>::record
+       0     1052   +1052  <bun_js_parser::p::P<true, false>>::try_build_type_script_type_arguments_with_backtracking
+    1052        0   -1052  <bun_js_parser::p::P<true, false>>::try_skip_type_script_constraint_of_infer_type_with_backtracking
+       0     1052   +1052  <bun_js_parser::p::P<true, true>>::try_build_type_script_type_arguments_with_backtracking
+    1052        0   -1052  <bun_js_parser::p::P<true, true>>::try_skip_type_script_constraint_of_infer_type_with_backtracking
+       0     1018   +1018  <bun_js_parser::p::P<true, false>>::parse_type::<SINK metadata>
+       0     1018   +1018  <bun_js_parser::p::P<true, true>>::parse_type::<SINK metadata>
+       0      989    +989  <bun_js_parser::p::P<true, true>>::skip_class_index_signature
+       0      973    +973  <bun_js_parser::p::P<true, false>>::skip_class_index_signature
+     130     1089    +959  core::ptr::drop_glue::<core::option::Option<alloc::boxed::Box<bun_js_parser::p::StartsForParseOnly>>>
+       0      958    +958  <bun_js_parser::p::P<true, false>>::parse_type_reference::<SINK metadata>
+     958        0    -958  <bun_js_parser::p::P<true, false>>::try_skip_type_script_type_arguments_with_backtracking
+     958        0    -958  <bun_js_parser::p::P<true, true>>::try_skip_type_script_type_arguments_with_backtracking
+     949        0    -949  <bun_js_parser::p::P<true, false>>::skip_type_script_object_type
+     949        0    -949  <bun_js_parser::p::P<true, true>>::skip_type_script_object_type
+       0      942    +942  <bun_js_parser::p::P<true, true>>::parse_type_reference::<SINK metadata>
+       0      921    +921  <bun_js_parser::p::P<true, false>>::is_index_signature
+       0      921    +921  <bun_js_parser::p::P<true, true>>::is_index_signature
+       0      918    +918  <bun_js_parser::p::P<true, false>>::build_type_script_fn_type
+       0      918    +918  <bun_js_parser::p::P<true, true>>::build_type_script_fn_type
+       0      913    +913  <bun_js_parser::p::P<true, false>>::parse_type_reference::<SINK discard>
+       0      913    +913  <bun_js_parser::p::P<true, true>>::parse_type_reference::<SINK discard>
+       0      895    +895  <bun_js_parser::p::P<true, false>>::parse_postfix_type_rest::<bun_js_parser::parse::type_sink::Build>
+       0      895    +895  <bun_js_parser::p::P<true, true>>::parse_postfix_type_rest::<bun_js_parser::parse::type_sink::Build>
+       0      894    +894  <bun_js_parser::p::P<true, false>>::parse_union_or_intersection_type_rest::<bun_js_parser::parse::type_sink::DecoratorMetadata, false>
+       0      894    +894  <bun_js_parser::p::P<true, true>>::parse_union_or_intersection_type_rest::<bun_js_parser::parse::type_sink::DecoratorMetadata, false>
+    5589     6473    +884  <bun_js_parser::p::P<true, false>>::t_export
+    5741     6622    +881  <bun_js_parser::p::P<true, true>>::t_export
+       0      867    +867  <bun_js_parser::p::P<true, false>>::lexer_backtracker_result::<<bun_js_parser::p::P<true, false>>::skip_type_script_type_parameters_then_open_paren_with_backtracking>
+       0      867    +867  <bun_js_parser::p::P<true, true>>::lexer_backtracker_result::<<bun_js_parser::p::P<true, true>>::skip_type_script_type_parameters_then_open_paren_with_backtracking>
+       0      857    +857  <bun_js_parser::parse::type_sink::Build as bun_js_parser::parse::type_sink::TypeSink>::b_token
+    2901     3757    +856  <bun_js_parser::p::P<true, false>>::parse_class
+       0      850    +850  <bun_js_parser::p::P<true, false>>::lint_try_async_type_parameters
+       0      839    +839  <bun_js_parser::p::P<true, true>>::parse_asserts_type_predicate::<bun_js_parser::parse::type_sink::Build>
+       0      828    +828  <bun_js_parser::p::P<true, false>>::parse_asserts_type_predicate::<bun_js_parser::parse::type_sink::Build>
+       0      822    +822  <bun_js_parser::p::P<true, false>>::build_modifier_kind
+       0      822    +822  <bun_js_parser::p::P<true, true>>::build_modifier_kind
+       0      814    +814  <bun_js_parser::p::P<true, false>>::build_type_script_type_arguments::<false, true>
+       0      814    +814  <bun_js_parser::p::P<true, true>>::build_type_script_type_arguments::<false, true>
+       0      809    +809  <bun_js_parser::p::P<true, false>>::look_ahead::<<bun_js_parser::p::P<true, false>>::next_is_parenthesized_or_function_type>
+       0      809    +809  <bun_js_parser::p::P<true, true>>::look_ahead::<<bun_js_parser::p::P<true, true>>::next_is_parenthesized_or_function_type>
+       0      778    +778  <bun_js_parser::p::P<true, false>>::is_token_of_modifier
+       0      778    +778  <bun_js_parser::p::P<true, true>>::is_token_of_modifier
+     569     1341    +772  <bun_js_parser::p::P<true, false>>::skip_type_script_type_stmt
+     569     1341    +772  <bun_js_parser::p::P<true, true>>::skip_type_script_type_stmt
+       0      767    +767  <bun_js_parser::p::P<true, false>>::is_enum_member_name_in_brackets
+       0      767    +767  <bun_js_parser::p::P<true, true>>::is_enum_member_name_in_brackets
+       0      766    +766  <bun_js_parser::parse::type_sink::Build as bun_js_parser::parse::type_sink::TypeSink>::b_member
+       0      765    +765  <bun_js_parser::p::P<true, false>>::skip_type_script_type_arguments_in::<bun_js_parser::parse::type_sink::Build, false, false>
+       0      765    +765  <bun_js_parser::p::P<true, true>>::skip_type_script_type_arguments_in::<bun_js_parser::parse::type_sink::Build, false, false>
+    4526     5290    +764  <bun_js_parser::p::P<true, false>>::parse_type_script_namespace_stmt
+    4526     5290    +764  <bun_js_parser::p::P<true, true>>::parse_type_script_namespace_stmt
+       0      739    +739  <bun_js_parser::p::P<true, false>>::set_aside_failed_read
+       0      739    +739  <bun_js_parser::p::P<true, true>>::set_aside_failed_read
+       0      732    +732  <bun_js_parser::p::P<true, false>>::look_ahead::<<bun_js_parser::p::P<true, false>>::next_is_start_of_type>
+       0      732    +732  <bun_js_parser::p::P<true, true>>::look_ahead::<<bun_js_parser::p::P<true, true>>::next_is_start_of_type>
+       0      731    +731  <bun_js_parser::p::P<true, false>>::next_token_is_on_same_line
+       0      731    +731  <bun_js_parser::p::P<true, true>>::next_token_is_on_same_line
+       0      728    +728  <bun_js_parser::p::P<true, false>>::look_ahead::<<bun_js_parser::p::P<true, false>>::next_token_is_numeric_or_big_int_literal>
+       0      728    +728  <bun_js_parser::p::P<true, true>>::look_ahead::<<bun_js_parser::p::P<true, true>>::next_token_is_numeric_or_big_int_literal>
+     726        0    -726  <bun_js_parser::p::P<true, false>>::try_skip_type_script_type_parameters_then_open_paren_with_backtracking
+     726        0    -726  <bun_js_parser::p::P<true, true>>::try_skip_type_script_type_parameters_then_open_paren_with_backtracking
+       0      723    +723  <bun_js_parser::p::P<true, false>>::parse_union_or_intersection_type_rest::<bun_js_parser::parse::type_sink::Build, true>
+       0      723    +723  <bun_js_parser::p::P<true, true>>::parse_union_or_intersection_type_rest::<bun_js_parser::parse::type_sink::Build, true>
+     349     1069    +720  <bun_js_parser::p::P<true, false>>::skip_type_script_paren_or_fn_type::<SINK metadata>
+     349     1069    +720  <bun_js_parser::p::P<true, true>>::skip_type_script_paren_or_fn_type::<SINK metadata>
+    1346     2065    +719  <bun_js_parser::p::P<true, true>>::parse_class_stmt
+    2901     3614    +713  <bun_js_parser::p::P<true, true>>::parse_class
+       0      710    +710  <bun_js_parser::p::P<true, false>>::restore_failed_read
+       0      710    +710  <bun_js_parser::p::P<true, true>>::restore_failed_read
+       0      708    +708  <bun_js_parser::p::P<true, false>>::parse_property_or_method_signature
+       0      708    +708  <bun_js_parser::p::P<true, true>>::parse_property_or_method_signature
+       0      702    +702  <bun_js_parser::p::P<true, false>>::build_type_script_type_arguments::<true, false>
+       0      702    +702  <bun_js_parser::p::P<true, true>>::build_type_script_type_arguments::<true, false>
+       0      695    +695  <bun_js_parser::p::P<true, false>>::lint_class_extends
+       0      695    +695  <bun_js_parser::p::P<true, true>>::lint_class_extends
+   10091    10780    +689  <bun_js_parser::p::P<true, false>>::parse_property
+       0      677    +677  <bun_js_parser::p::P<true, false>>::build_type_script_import_type
+       0      677    +677  <bun_js_parser::p::P<true, true>>::build_type_script_import_type
+    1346     2012    +666  <bun_js_parser::p::P<true, false>>::parse_class_stmt
+       0      646    +646  <bun_js_parser::p::P<true, false>>::parse_accessor_declaration
+       0      646    +646  <bun_js_parser::p::P<true, true>>::parse_accessor_declaration
+       0      641    +641  <bun_js_parser::p::P<false, false>>::next_token_is_close_paren
+       0      641    +641  <bun_js_parser::p::P<false, true>>::next_token_is_close_paren
+       0      641    +641  <bun_js_parser::p::P<true, false>>::look_ahead::<<bun_js_parser::p::P<true, false>>::next_token_is_new_keyword>
+       0      641    +641  <bun_js_parser::p::P<true, false>>::next_token_is_close_paren
+       0      641    +641  <bun_js_parser::p::P<true, true>>::look_ahead::<<bun_js_parser::p::P<true, true>>::next_token_is_new_keyword>
+       0      641    +641  <bun_js_parser::p::P<true, true>>::next_token_is_close_paren
+       0      639    +639  <bun_js_parser::parse::type_sink::Build as bun_js_parser::parse::type_sink::TypeSink>::b_operand
+       0      633    +633  <bun_js_parser::parse::erased::ErasedTables>::namespace
+       0      623    +623  <bun_js_parser::p::P<false, false>>::pfx_t_open_paren_for_lint
+       0      623    +623  <bun_js_parser::p::P<true, false>>::pfx_t_open_paren_for_lint
+       0      620    +620  <bun_js_parser::p::P<true, false>>::parse_import_type_attributes
+       0      620    +620  <bun_js_parser::p::P<true, true>>::parse_import_type_attributes
+       0      613    +613  <bun_js_parser::parse::type_sink::Build as bun_js_parser::parse::type_sink::TypeSink>::b_finish
+   17491    18102    +611  <bun_js_parser::p::P<true, true>>::parse_suffix
+       0      602    +602  <bun_js_parser::p::P<true, false>>::parse_type::<bun_js_parser::parse::type_sink::Build>
+       0      602    +602  <bun_js_parser::p::P<true, true>>::parse_type::<bun_js_parser::parse::type_sink::Build>
+       0      571    +571  <bun_js_parser::p::P<true, false>>::skip_type_script_signature_property_name
+       0      571    +571  <bun_js_parser::p::P<true, true>>::skip_type_script_signature_property_name
+       0      568    +568  <bun_js_parser::p::P<true, false>>::build_property_name
+       0      568    +568  <bun_js_parser::p::P<true, true>>::build_property_name
+       0      558    +558  bun_js_parser::parse::erased::token_end_before
+       0      555    +555  <bun_js_parser::p::P<true, false>>::parse_mapped_type
+       0      555    +555  <bun_js_parser::p::P<true, true>>::parse_mapped_type
+       0      543    +543  <bun_js_parser::parse::type_sink::Build as bun_js_parser::parse::type_sink::TypeSink>::b_predicate
+       0      530    +530  <bun_js_parser::p::P<true, false>>::pfx_type_before_paren_for_lint
+       0      520    +520  <bun_js_parser::p::P<true, false>>::build_tuple_element_type
+       0      520    +520  <bun_js_parser::p::P<true, true>>::build_tuple_element_type
+       0      505    +505  <bun_js_parser::p::P<true, false>>::reread_type_script_fn_type
+       0      505    +505  <bun_js_parser::p::P<true, true>>::reread_type_script_fn_type
+   10123    10626    +503  <bun_js_parser::p::P<true, true>>::parse_property
+       0      497    +497  <bun_js_parser::p::P<true, false>>::parse_union_or_intersection_type_rest::<bun_js_parser::parse::type_sink::Build, false>
+       0      497    +497  <bun_js_parser::p::P<true, true>>::parse_union_or_intersection_type_rest::<bun_js_parser::parse::type_sink::Build, false>
+    1636     2128    +492  <bun_js_parser::p::P<true, false>>::parse_fn_stmt
+       0      492    +492  <bun_js_parser::p::P<true, false>>::parse_import_attributes_of_import_type
+    1636     2128    +492  <bun_js_parser::p::P<true, true>>::parse_fn_stmt
+       0      492    +492  <bun_js_parser::p::P<true, true>>::parse_import_attributes_of_import_type
+       0      475    +475  <bun_js_parser::p::P<true, false>>::is_modifier_kind
+       0      475    +475  <bun_js_parser::p::P<true, true>>::is_modifier_kind
+       0      474    +474  <bun_js_parser::p::P<true, false>>::parse_right_side_of_dot::<SINK metadata>
+       0      472    +472  <bun_js_parser::p::P<true, false>>::parse_asserts_type_predicate::<SINK metadata>
+       0      472    +472  <bun_js_parser::p::P<true, true>>::parse_asserts_type_predicate::<SINK metadata>
+       0      468    +468  bun_js_parser::parse::erased::first_token
+       0      462    +462  <bun_js_parser::parse::erased::ErasedTables>::declared
+       0      458    +458  <bun_js_parser::p::P<true, true>>::parse_right_side_of_dot::<SINK metadata>
+       0      458    +458  bun_js_parser::parse::erased::module_keyword
+       0      456    +456  <bun_js_parser::parse::erased::ErasedTables>::global
+       0      455    +455  <bun_js_parser::p::P<true, false>>::parse_type_arguments_of_import_type::<SINK discard>
+       0      455    +455  <bun_js_parser::p::P<true, false>>::parse_type_arguments_of_import_type::<SINK metadata>
+       0      455    +455  <bun_js_parser::p::P<true, true>>::parse_type_arguments_of_import_type::<SINK discard>
+       0      455    +455  <bun_js_parser::p::P<true, true>>::parse_type_arguments_of_import_type::<SINK metadata>
+       0      447    +447  <bun_js_parser::p::P<true, false>>::parse_function_or_constructor_type_to_error::<bun_js_parser::parse::type_sink::Build, true>
+       0      447    +447  <bun_js_parser::p::P<true, true>>::parse_function_or_constructor_type_to_error::<bun_js_parser::parse::type_sink::Build, true>
+       0      443    +443  <bun_js_parser::parse::parse_entry::Options as core::default::Default>::default
+       0      440    +440  <bun_js_parser::p::P<false, false> as core::ops::drop::Drop>::drop
+       0      440    +440  <bun_js_parser::p::P<true, false>>::type_expected
+       0      440    +440  <bun_js_parser::p::P<true, true>>::type_expected
+    3122     3560    +438  <bun_js_parser::p::P<true, false>>::parse_async_prefix_expr
+       0      425    +425  <bun_js_parser::p::P<true, false>>::parse_import_type::<SINK metadata>
+       0      425    +425  <bun_js_parser::p::P<true, false>>::parse_property_or_method_signature_of_reference
+       0      425    +425  <bun_js_parser::p::P<true, true>>::parse_import_type::<SINK metadata>
+       0      425    +425  <bun_js_parser::p::P<true, true>>::parse_property_or_method_signature_of_reference
+    3455     3878    +423  <bun_js_parser::p::P<true, false>>::parse_stmt
+    3455     3878    +423  <bun_js_parser::p::P<true, true>>::parse_stmt
+       0      419    +419  <bun_js_parser::p::P<true, false>>::build_signature_member
+       0      419    +419  <bun_js_parser::p::P<true, true>>::build_signature_member
+       0      413    +413  <bun_js_parser::p::P<true, false>>::parse_bracketed_name
+       0      413    +413  <bun_js_parser::p::P<true, true>>::parse_bracketed_name
+       0      410    +410  <bun_js_parser::p::P<true, false>>::parse_postfix_type_rest::<SINK discard>
+       0      410    +410  <bun_js_parser::p::P<true, true>>::parse_postfix_type_rest::<SINK discard>
+       0      405    +405  <bun_js_parser::p::P<true, false>>::parse_import_type::<SINK discard>
+       0      405    +405  <bun_js_parser::p::P<true, true>>::parse_import_type::<SINK discard>
+       0      405    +405  <bun_js_parser::parse::syntax_errors::SyntaxErrors>::refine
+       0      398    +398  bun_js_parser::parse::type_sink::literal_of
+       0      388    +388  <bun_js_parser::p::P<true, false>>::parse_initializer_in_type
+       0      388    +388  <bun_js_parser::p::P<true, true>>::parse_initializer_in_type
+       0      384    +384  <bun_js_parser::p::P<true, false>>::parse_asserts_type_predicate::<SINK discard>
+       0      384    +384  <bun_js_parser::p::P<true, false>>::parse_postfix_type_rest::<SINK metadata>
+       0      384    +384  <bun_js_parser::p::P<true, true>>::parse_asserts_type_predicate::<SINK discard>
+       0      384    +384  <bun_js_parser::p::P<true, true>>::parse_postfix_type_rest::<SINK metadata>
+       0      380    +380  <bun_js_parser::parse::erased::ErasedTables>::list_of
+       0      375    +375  <bun_js_parser::p::P<true, false>>::lint_type_arguments_before_paren
+       0      375    +375  <bun_js_parser::p::P<true, false>>::lint_type_parameters_before_paren
+       0      371    +371  <bun_js_parser::p::P<true, false>>::build_signature
+       0      371    +371  <bun_js_parser::p::P<true, true>>::build_signature
+    3163     3511    +348  <bun_js_parser::p::P<true, false>>::parse_typescript_enum_stmt
+    3163     3511    +348  <bun_js_parser::p::P<true, true>>::parse_typescript_enum_stmt
+    6598     6259    -339  <bun_js_parser::p::P<false, true>>::parse_jsx_element
+       0      338    +338  <bun_js_parser::p::P<true, false>>::function_or_constructor_type_to_error
+       0      338    +338  <bun_js_parser::p::P<true, true>>::function_or_constructor_type_to_error
+    6542     6218    -324  <bun_js_parser::p::P<true, false>>::parse_paren_expr
+    6582     6259    -323  <bun_js_parser::p::P<false, false>>::parse_jsx_element
+       0      323    +323  <bun_js_parser::p::P<true, false>>::skip_type_script_parameter_modifiers
+       0      323    +323  <bun_js_parser::p::P<true, true>>::skip_type_script_parameter_modifiers
+       0      305    +305  <bun_js_parser::p::P<true, false>>::skip_type_script_bracketed_name
+       0      305    +305  <bun_js_parser::p::P<true, true>>::skip_type_script_bracketed_name
+       0      304    +304  <bun_js_parser::p::P<true, false>>::parse_index_signature_declaration
+       0      304    +304  <bun_js_parser::p::P<true, true>>::parse_index_signature_declaration
+       0      301    +301  <bun_js_parser::p::P<true, false>>::log_unexpected_in_attempt
+       0      301    +301  <bun_js_parser::p::P<true, true>>::log_unexpected_in_attempt
+       0      300    +300  <bun_js_parser::p::P<true, false>>::skip_known_type_script_fn_type
+       0      300    +300  <bun_js_parser::p::P<true, true>>::skip_known_type_script_fn_type
+       0      298    +298  <bun_js_parser::parse::erased::ErasedTables>::import
+   23845    23549    -296  <bun_js_parser::p::P<true, false>>::to_ast
+       0      295    +295  <bun_js_parser::parse::type_sink::DecoratorMetadata as bun_js_parser::parse::type_sink::TypeSink>::conditional_false
+       0      294    +294  <bun_js_parser::p::P<true, false>>::sfx_typescript_as_for_lint
+       0      294    +294  <bun_js_parser::p::P<true, true>>::sfx_typescript_as_for_lint
+       0      294    +294  <bun_js_parser::parse::generics::Generics>::declaration_type_parameter_list
+       0      290    +290  <bun_js_parser::parse::type_sink::DecoratorMetadata as bun_js_parser::parse::type_sink::TypeSink>::conditional_true::<<bun_js_parser::p::P<true, false>>::parse_conditiona
+       0      290    +290  <bun_js_parser::parse::type_sink::DecoratorMetadata as bun_js_parser::parse::type_sink::TypeSink>::conditional_true::<<bun_js_parser::p::P<true, true>>::parse_conditional
+    9190     9478    +288  <bun_js_parser::parse::parse_entry::Parser>::parse_only::<bun_js_parser::function_identities::FunctionIdentities, <bun_js_parser::function_identities::FunctionIdentities>
+       0      287    +287  bun_js_parser::parse::erased::keyword_before
+       0      286    +286  <bun_js_parser::parse::generics::Generics>::type_argument_list
+    3786     3502    -284  <bun_js_parser::p::P<true, true>>::parse_fn
+       0      280    +280  <bun_js_parser::p::P<true, false>>::parse_union_or_intersection_type::<bun_js_parser::parse::type_sink::Discard, false>
+       0      280    +280  <bun_js_parser::p::P<true, true>>::parse_union_or_intersection_type::<bun_js_parser::parse::type_sink::Discard, false>
+       0      280    +280  <bun_js_parser::parse::type_sink::Build as bun_js_parser::parse::type_sink::TypeSink>::b_template
+       0      279    +279  <bun_js_parser::p::P<true, false>>::lint_this_parameter
+       0      278    +278  <bun_js_parser::p::P<true, false>>::parse_conditional_type_rest::<bun_js_parser::parse::type_sink::Build>
+       0      278    +278  <bun_js_parser::p::P<true, true>>::parse_conditional_type_rest::<bun_js_parser::parse::type_sink::Build>
+       0      275    +275  <bun_js_parser::p::P<true, false>>::parse_function_or_constructor_type_to_error::<bun_js_parser::parse::type_sink::Build, false>
+       0      275    +275  <bun_js_parser::p::P<true, true>>::parse_function_or_constructor_type_to_error::<bun_js_parser::parse::type_sink::Build, false>
+       0      274    +274  <bun_js_parser::parse::erased::ErasedTables>::export
+       0      273    +273  <bun_js_parser::parse::erased::ErasedTables>::statement
+   22714    22443    -271  <bun_js_parser::p::P<false, false>>::to_ast
+    8648     8377    -271  <bun_js_parser::p::P<true, false>>::lower_class
+       0      270    +270  <bun_js_parser::p::P<true, false>>::reread_bracketed_name
+       0      270    +270  <bun_js_parser::p::P<true, true>>::reread_bracketed_name
+    6492     6225    -267  <bun_js_parser::p::P<true, true>>::parse_paren_expr
+    1605     1868    +263  <bun_js_parser::p::P<true, false>>::parse_type_script_import_equals_stmt
+       0      261    +261  <bun_js_parser::p::P<true, false>>::parse_type_predicate_after_name::<bun_js_parser::parse::type_sink::Build>
+       0      261    +261  <bun_js_parser::p::P<true, true>>::parse_type_predicate_after_name::<bun_js_parser::parse::type_sink::Build>
+       0      254    +254  <bun_js_parser::p::P<false, false>>::code_syntax_error
+       0      254    +254  <bun_js_parser::p::P<false, true>>::code_syntax_error
+       0      253    +253  <bun_js_parser::p::P<true, false>>::skip_type_script_paren_type::<SINK metadata>
+       0      253    +253  <bun_js_parser::p::P<true, true>>::skip_type_script_paren_type::<SINK metadata>
+       0      252    +252  <bun_js_parser::p::P<true, false>>::code_syntax_error
+       0      252    +252  <bun_js_parser::p::P<true, true>>::code_syntax_error
+    8893     8643    -250  <bun_js_parser::p::P<true, false>>::visit_class
+    2638     2888    +250  <bun_js_parser::p::P<true, true>>::parse_type_script_decorators
+       0      249    +249  <bun_js_parser::parse::erased::ErasedTables>::member_read
+       0      247    +247  <bun_js_parser::p::P<true, false>>::skip_type_script_type_arguments_in::<bun_js_parser::parse::type_sink::Discard, false, false>
+       0      247    +247  <bun_js_parser::p::P<true, true>>::skip_type_script_type_arguments_in::<bun_js_parser::parse::type_sink::Discard, false, false>
+       0      244    +244  <bun_js_parser::p::P<true, false>>::lint_type_parameters
+       0      244    +244  <bun_js_parser::p::P<true, false>>::parse_function_or_constructor_type_to_error::<bun_js_parser::parse::type_sink::Discard, true>
+       0      244    +244  <bun_js_parser::p::P<true, true>>::lint_type_parameters
+       0      244    +244  <bun_js_parser::p::P<true, true>>::parse_function_or_constructor_type_to_error::<bun_js_parser::parse::type_sink::Discard, true>
+    1635     1874    +239  <bun_js_parser::p::P<true, true>>::parse_type_script_import_equals_stmt
+       0      239    +239  <bun_js_parser::parse::type_sink::Build as bun_js_parser::parse::type_sink::TypeSink>::b_conditional
+       0      231    +231  <bun_js_parser::p::P<true, false>>::lint_declaration_type_parameters
+       0      231    +231  <bun_js_parser::p::P<true, false>>::parse_union_or_intersection_type::<bun_js_parser::parse::type_sink::DecoratorMetadata, false>
+       0      231    +231  <bun_js_parser::p::P<true, true>>::lint_declaration_type_parameters
+       0      231    +231  <bun_js_parser::p::P<true, true>>::parse_union_or_intersection_type::<bun_js_parser::parse::type_sink::DecoratorMetadata, false>
+       0      225    +225  <bun_js_parser::p::P<true, false>>::set_type_script_memo_at
+       0      225    +225  <bun_js_parser::p::P<true, true>>::set_type_script_memo_at
+       0      224    +224  <bun_js_parser::p::P<true, false>>::can_follow_default_keyword
+       0      224    +224  <bun_js_parser::p::P<true, false>>::reread_heritage_clause_element
+       0      224    +224  <bun_js_parser::p::P<true, true>>::can_follow_default_keyword
+       0      224    +224  <bun_js_parser::p::P<true, true>>::reread_heritage_clause_element
+       0      222    +222  <bun_js_parser::p::P<true, false>>::lint_return_type
+   15583    15804    +221  <bun_js_parser::p::P<true, false>>::parse_prefix
+       0      220    +220  <bun_js_parser::parse::erased::ErasedTables>::class
+       0      218    +218  <bun_js_parser::parse::erased::ErasedData>::export
+       0      215    +215  <bun_js_parser::p::P<false, false>>::statement_expected
+       0      215    +215  <bun_js_parser::p::P<false, true>>::statement_expected
+       0      215    +215  <bun_js_parser::p::P<true, false>>::statement_expected
+       0      215    +215  <bun_js_parser::p::P<true, true>>::statement_expected
+       0      209    +209  <bun_js_parser::p::P<true, false>>::parse_type_after_leading_operators::<SINK metadata>
+       0      209    +209  <bun_js_parser::p::P<true, true>>::parse_type_after_leading_operators::<SINK metadata>
+       0      208    +208  <bun_js_parser::p::P<true, false>>::reread_import_type_attributes
+       0      208    +208  <bun_js_parser::p::P<true, true>>::reread_import_type_attributes
+       0      208    +208  <bun_js_parser::p::StartsForParseOnly>::mark
+       0      206    +206  <bun_js_parser::p::P<true, false>>::lint_type_arguments_after
+       0      206    +206  <bun_js_parser::p::P<true, true>>::lint_type_arguments_after
+       0      204    +204  <bun_js_parser::p::P<true, false>>::parse_type_after_leading_operators::<SINK discard>
+       0      204    +204  <bun_js_parser::p::P<true, true>>::parse_type_after_leading_operators::<SINK discard>
+    8639     8443    -196  <bun_js_parser::p::P<false, false>>::lower_class
+       0      196    +196  core::ptr::drop_glue::<bun_js_parser::parse::syntax_errors::SyntaxErrors>
+       0      195    +195  <bun_js_parser::p::P<true, false>>::reread_class_implements_entry
+       0      195    +195  <bun_js_parser::p::P<true, true>>::reread_class_implements_entry
+       0      195    +195  <bun_js_parser::parse::generics::Generics>::rewind_to
+   14869    14675    -194  <bun_js_parser::p::P<false, false>>::parse_prefix
+       0      191    +191  <bun_js_parser::p::P<true, false>>::parse_type_arguments_of_type_reference::<bun_js_parser::parse::type_sink::Build>
+       0      191    +191  <bun_js_parser::p::P<true, true>>::parse_type_arguments_of_type_reference::<bun_js_parser::parse::type_sink::Build>
+       0      190    +190  <bun_js_parser::p::P<true, false>>::lint_jsx_type_arguments
+       0      190    +190  <bun_js_parser::p::P<true, true>>::lint_jsx_type_arguments
+   31187    31375    +188  <bun_js_parser::parse::parse_entry::Parser>::_parse::<true>
+   16939    16752    -187  <bun_js_parser::p::P<false, false>>::lower_class_body
+       0      187    +187  <bun_js_parser::parse::erased::ErasedTables>::member_property
+    2743     2929    +186  <bun_js_parser::p::P<false, false>>::parse_type_script_decorators
+     185        0    -185  <bun_js_parser::p::P<true, false>>::s::<bun_ast::s::Function>
+     185        0    -185  <bun_js_parser::p::P<true, true>>::s::<bun_ast::s::Function>
+       0      184    +184  <bun_js_parser::p::P<true, false>>::lint_type_parameters_of_arrow
+    1416     1235    -181  <bun_js_parser::p::P<false, false>>::parse_fn_stmt
+    1416     1235    -181  <bun_js_parser::p::P<false, true>>::parse_fn_stmt
+     181        0    -181  <bun_js_parser::p::P<true, false>>::skip_type_script_type_arguments::<false, false>
+     181        0    -181  <bun_js_parser::p::P<true, true>>::skip_type_script_type_arguments::<false, false>
+       0      174    +174  <bun_js_parser::p::P<true, false>>::skip_typescript_return_type
+       0      174    +174  <bun_js_parser::p::P<true, true>>::skip_typescript_return_type
+    3786     3959    +173  <bun_js_parser::p::P<true, false>>::parse_fn
+       0      173    +173  <bun_js_parser::parse::attached::Attached>::this_parameter
+     273      443    +170  <bun_js_parser::p::P<true, false>>::skip_typescript_fn_args
+     273      443    +170  <bun_js_parser::p::P<true, true>>::skip_typescript_fn_args
+    2627     2796    +169  <bun_js_parser::p::P<false, true>>::parse_type_script_decorators
+       0      167    +167  <bun_js_parser::p::P<true, false>>::lint_type_arguments_in_expression
+       0      167    +167  <bun_js_parser::p::P<true, true>>::lint_type_arguments_in_expression
+   14869    14704    -165  <bun_js_parser::p::P<false, true>>::parse_prefix
+       0      165    +165  <bun_js_parser::p::P<true, false>>::parse_function_or_constructor_type::<SINK metadata>
+       0      165    +165  <bun_js_parser::p::P<true, false>>::parse_tuple_element_at_reserved_word
+       0      165    +165  <bun_js_parser::p::P<true, true>>::parse_function_or_constructor_type::<SINK metadata>
+       0      165    +165  <bun_js_parser::p::P<true, true>>::parse_tuple_element_at_reserved_word
+       0      159    +159  <bun_js_parser::p::P<true, false>>::paren_expr_has_type_parameters
+       0      159    +159  <bun_js_parser::p::P<true, true>>::paren_expr_has_type_parameters
+       0      157    +157  <bun_js_parser::p::StartsForParseOnly>::rewind
+       0      155    +155  <bun_js_parser::p::P<true, false>>::is_declaration_before_what_follows_braces
+       0      155    +155  <bun_js_parser::p::P<true, false>>::parse_function_or_constructor_type::<SINK discard>
+       0      155    +155  <bun_js_parser::p::P<true, true>>::is_declaration_before_what_follows_braces
+       0      155    +155  <bun_js_parser::p::P<true, true>>::parse_function_or_constructor_type::<SINK discard>
+       0      154    +154  <bun_js_parser::p::P<true, false>>::parse_function_or_constructor_type_to_error::<bun_js_parser::parse::type_sink::Discard, false>
+       0      154    +154  <bun_js_parser::p::P<true, true>>::parse_function_or_constructor_type_to_error::<bun_js_parser::parse::type_sink::Discard, false>
+       0      154    +154  <bun_js_parser::parse::attached::Attached>::annotation
+       0      154    +154  <bun_js_parser::parse::attached::Attached>::type_parameter_list
+       0      153    +153  <bun_js_parser::p::P<true, false>>::parse_entity_name_rest::<bun_js_parser::parse::type_sink::Build>
+       0      153    +153  <bun_js_parser::p::P<true, true>>::parse_entity_name_rest::<bun_js_parser::parse::type_sink::Build>
+     404      251    -153  core::ptr::drop_glue::<bun_js_parser::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr>
+       0      152    +152  <bun_js_parser::parse::erased::ErasedTables>::import_equals
+       0      151    +151  <bun_js_parser::parse::wrappers::Wrappers>::type_assertion
+       0      150    +150  <bun_js_parser::parse::wrappers::Wrappers>::as_or_satisfies
+       0      149    +149  <bun_js_parser::p::P<true, false>>::is_start_of_predicate_type
+       0      149    +149  <bun_js_parser::p::P<true, true>>::is_start_of_predicate_type
+    8370     8518    +148  <bun_js_parser::p::P<false, false>>::parse_property
+    8370     8518    +148  <bun_js_parser::p::P<false, true>>::parse_property
+       0      148    +148  <bun_js_parser::parse::wrappers::Wrappers>::parenthesized_before
+       0      145    +145  <bun_js_parser::parse::attached::Attached>::jsx_type_argument_list
+       0      140    +140  <bun_js_parser::p::P<true, false>>::parse_conditional_type_rest::<SINK discard>
+       0      140    +140  <bun_js_parser::p::P<true, true>>::parse_conditional_type_rest::<SINK discard>
+    2338     2477    +139  <bun_js_parser::p::P<false, false>>::parse_fn
+    2338     2477    +139  <bun_js_parser::p::P<false, true>>::parse_fn
+       0      139    +139  <bun_js_parser::p::P<true, false>>::unexpected_as
+       0      139    +139  <bun_js_parser::p::P<true, true>>::unexpected_as
+       0      138    +138  <bun_js_parser::p::P<true, false>>::is_end_of_heritage_clause_element
+     781      919    +138  <bun_js_parser::p::P<true, false>>::lexer_backtracker_bool::<<bun_js_parser::p::P<true, false>>::skip_type_script_arrow_args_with_backtracking, bool>
+       0      138    +138  <bun_js_parser::p::P<true, true>>::is_end_of_heritage_clause_element
+     781      919    +138  <bun_js_parser::p::P<true, true>>::lexer_backtracker_bool::<<bun_js_parser::p::P<true, true>>::skip_type_script_arrow_args_with_backtracking, bool>
+       0      137    +137  <bun_js_parser::parse::erased::ErasedTables>::member_modifier
+       0      133    +133  <bun_js_parser::p::P<true, false>>::lint_type_annotation
+       0      132    +132  <bun_js_parser::p::P<true, false>>::parse_entity_name_rest::<SINK discard>
+       0      132    +132  <bun_js_parser::p::P<true, false>>::parse_type_of_index_signature
+       0      132    +132  <bun_js_parser::p::P<true, true>>::parse_entity_name_rest::<SINK discard>
+       0      132    +132  <bun_js_parser::p::P<true, true>>::parse_type_of_index_signature
+       0      131    +131  <bun_js_parser::p::P<false, false>>::unexpected_as
+       0      131    +131  <bun_js_parser::p::P<false, true>>::unexpected_as
+       0      127    +127  <bun_js_parser::parse::attached::Attached>::rewind
+       0      127    +127  core::ptr::drop_glue::<bun_collections::array_hash_map::ArrayHashMap<bun_ast::Loc, &[bun_js_parser::parser::ScopeOrder]>>
+       0      126    +126  <bun_js_parser::parse::type_sink::Build as bun_js_parser::parse::type_sink::TypeSink>::b_query
+       0      125    +125  <bun_js_parser::p::P<true, false>>::lint_async_type_lists
+    2984     3107    +123  <bun_js_parser::p::P<false, false>>::parse_class
+    9107     8986    -121  <bun_js_parser::p::P<true, false>>::s_export_default
+     121        0    -121  <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_metadata
+     121        0    -121  <bun_js_parser::p::P<true, true>>::skip_type_script_type_with_metadata
+       0      121    +121  <bun_js_parser::parse::erased::ErasedTables>::dropped
+     124      244    +120  <bun_js_parser::p::P<true, false>>::skip_typescript_return_type_with_metadata
+     124      244    +120  <bun_js_parser::p::P<true, true>>::skip_typescript_return_type_with_metadata
+       0      117    +117  <bun_js_parser::parse::wrappers::Wrappers>::parenthesized
+       0      116    +116  <bun_js_parser::p::P<true, false>>::build_type_script_type_arguments::<false, false>
+       0      116    +116  <bun_js_parser::p::P<true, true>>::build_type_script_type_arguments::<false, false>
+    6374     6261    -113  <bun_js_parser::p::P<true, false>>::parse_jsx_element
+    6374     6261    -113  <bun_js_parser::p::P<true, true>>::parse_jsx_element
+    4565     4677    +112  <bun_js_parser::parse::parse_entry::Parser>::_scan_imports::<false>
+    5199     5311    +112  <bun_js_parser::parse::parse_entry::Parser>::_scan_imports::<true>
+    2525     2637    +112  core::ptr::drop_glue::<bun_js_parser::p::P<false, false>>
+     609      720    +111  <bun_js_parser::p::P<true, false>>::skip_type_script_binding
+     609      720    +111  <bun_js_parser::p::P<true, true>>::skip_type_script_binding
+    1802     1912    +110  <bun_js_parser::p::P<true, false>>::parse_stmts_up_to
+    1802     1912    +110  <bun_js_parser::p::P<true, true>>::parse_stmts_up_to
+       0      109    +109  <bun_js_parser::p::P<true, false>>::parse_right_side_of_dot::<bun_js_parser::parse::type_sink::Build>
+       0      109    +109  <bun_js_parser::p::P<true, true>>::parse_right_side_of_dot::<bun_js_parser::parse::type_sink::Build>
+       0      106    +106  <bun_js_parser::p::P<true, false>>::parse_computed_property_name
+       0      106    +106  <bun_js_parser::p::P<true, true>>::parse_computed_property_name
+       0      103    +103  <bun_js_parser::p::P<true, false>>::build_type_script_type
+       0      103    +103  <bun_js_parser::p::P<true, false>>::build_type_with_opts
+       0      103    +103  <bun_js_parser::p::P<true, true>>::build_type_with_opts
+       0      103    +103  <bun_js_parser::parse::type_sink::Build as bun_js_parser::parse::type_sink::TypeSink>::b_operator
+       0      102    +102  <bun_js_parser::p::P<true, false>>::parse_entity_name_rest::<SINK metadata>
+       0      102    +102  <bun_js_parser::p::P<true, true>>::parse_entity_name_rest::<SINK metadata>
+       0       99     +99  <alloc::raw_vec::RawVec<bun_js_parser::parse::attached::Annotation>>::grow_one
+       0       99     +99  <alloc::raw_vec::RawVec<bun_js_parser::parse::attached::Heritage>>::grow_one
+       0       99     +99  <alloc::raw_vec::RawVec<bun_js_parser::parse::attached::JsxTypeArguments>>::grow_one
+       0       99     +99  <alloc::raw_vec::RawVec<bun_js_parser::parse::attached::ReturnType>>::grow_one
+       0       99     +99  <alloc::raw_vec::RawVec<bun_js_parser::parse::attached::ThisParameter>>::grow_one
+       0       99     +99  <alloc::raw_vec::RawVec<bun_js_parser::parse::attached::TypeParameters>>::grow_one
+       0       99     +99  <alloc::raw_vec::RawVec<bun_js_parser::parse::erased::Erased>>::grow_one
+       0       99     +99  <alloc::raw_vec::RawVec<bun_js_parser::parse::erased::ErasedMember>>::grow_one
+       0       99     +99  <alloc::raw_vec::RawVec<bun_js_parser::parse::erased::ListFrame>>::grow_one
+       0       99     +99  <alloc::raw_vec::RawVec<bun_js_parser::parse::generics::DeclarationTypeParameters>>::grow_one
+       0       99     +99  <alloc::raw_vec::RawVec<bun_js_parser::parse::generics::TypeArguments>>::grow_one
+       0       99     +99  <alloc::raw_vec::RawVec<bun_js_parser::parse::syntax_errors::Recorded>>::grow_one
+       0       99     +99  <alloc::raw_vec::RawVec<bun_js_parser::parse::wrappers::Wrapper>>::grow_one
+       0       99     +99  <bun_js_parser::p::P<true, false>>::is_start_of_type
+       0       99     +99  <bun_js_parser::p::P<true, true>>::is_start_of_type
+       0       99     +99  <bun_js_parser::parse::type_sink::Build as bun_js_parser::parse::type_sink::TypeSink>::b_type_arguments
+       0       98     +98  <bun_js_parser::parse::wrappers::Wrappers>::non_null
+       0       93     +93  <bun_js_parser::parse::erased::ErasedTables>::statement_after_type
+       0       91     +91  <bun_js_parser::p::P<true, false>>::parse_right_side_of_dot::<SINK discard>
+       0       91     +91  <bun_js_parser::p::P<true, true>>::parse_right_side_of_dot::<SINK discard>
+    2687     2771     +84  <bun_js_parser::p::P<true, false>>::parse_type_script_decorators
+    4216     4138     -78  <bun_js_parser::p::P<false, false>>::e_jsx_element
+    4216     4138     -78  <bun_js_parser::p::P<true, false>>::e_jsx_element
+    2410     2338     -72  <bun_js_parser::p::P<false, false>>::t_import
+    2410     2338     -72  <bun_js_parser::p::P<false, true>>::t_import
+       0       72     +72  <bun_js_parser::p::P<true, false>>::parse_type_literal
+       0       72     +72  <bun_js_parser::p::P<true, false>>::parse_type_member_list
+       0       72     +72  <bun_js_parser::p::P<true, true>>::parse_type_literal
+       0       72     +72  <bun_js_parser::p::P<true, true>>::parse_type_member_list
+       0       71     +71  <bun_js_parser::p::P<true, false>>::rewind_to_read_mark
+       0       71     +71  <bun_js_parser::p::P<true, true>>::rewind_to_read_mark
+   17763    17833     +70  <bun_js_parser::p::P<true, false>>::parse_suffix
+    5630     5560     -70  <bun_js_parser_jsc::Macro::Run>::coerce
+     763      694     -69  <bun_js_parser::p::P<false, false>>::e_function
+     763      694     -69  <bun_js_parser::p::P<true, false>>::e_function
+       0       64     +64  <bun_js_parser::p::P<true, false>>::lint_forget_skipped_type_parameters
+       0       64     +64  <bun_js_parser::p::P<true, false>>::rewind_class_implements_entry
+       0       64     +64  <bun_js_parser::p::P<true, true>>::rewind_class_implements_entry
+       0       64     +64  <bun_js_parser::parse::erased::ErasedTables>::exported_by_default
+   12022    11958     -64  <bun_js_parser::scan::scan_imports::ImportScanner>::scan::<false, false, true>
+   13351    13287     -64  <bun_js_parser::scan::scan_imports::ImportScanner>::scan::<true, false, true>
+     942      881     -61  <bun_js_parser::p::P<false, false>>::visit_binding_and_expr_for_macro
+     942      881     -61  <bun_js_parser::p::P<true, false>>::visit_binding_and_expr_for_macro
+       0       60     +60  <bun_js_parser::p::P<true, false>>::parse_function_block_in_type
+       0       60     +60  <bun_js_parser::p::P<true, true>>::parse_function_block_in_type
+       0       57     +57  <bun_js_parser::p::P<true, false>>::rewind_lint_attempt
+       0       57     +57  <bun_js_parser::p::P<true, true>>::rewind_lint_attempt
+       0       56     +56  <bun_js_parser::p::P<true, false>>::arrow_parameters_could_be_expr
+       0       56     +56  <bun_js_parser::p::P<true, true>>::arrow_parameters_could_be_expr
+       0       53     +53  <bun_js_parser::p::P<true, false>>::lint_arrow_type_parameters
+       0       51     +51  <bun_js_parser::p::P<true, false>>::parse_expression_with_type_arguments
+       0       51     +51  <bun_js_parser::p::P<true, true>>::parse_expression_with_type_arguments
+     433      475     +42  <bun_js_parser::p::P<false, false>>::default_name_for_expr
+     433      475     +42  <bun_js_parser::p::P<false, true>>::default_name_for_expr
+     433      475     +42  <bun_js_parser::p::P<true, false>>::default_name_for_expr
+     433      475     +42  <bun_js_parser::p::P<true, true>>::default_name_for_expr
+    1311     1350     +39  <bun_js_parser::p::P<true, false>>::restore_parser_snapshot
+    1311     1350     +39  <bun_js_parser::p::P<true, true>>::restore_parser_snapshot
+    1535     1572     +37  <bun_js_parser::p::P<true, false>>::parse_fn_expr
+    1535     1572     +37  <bun_js_parser::p::P<true, true>>::parse_fn_expr
+    3043     3007     -36  <bun_js_parser::p::P<false, false>>::s_function
+    3043     3007     -36  <bun_js_parser::p::P<true, false>>::s_function
+    3611     3576     -35  <bun_js_parser::scan::scan_side_effects::SideEffects>::simplify_unused_expr::<false, false>
+    3611     3576     -35  <bun_js_parser::scan::scan_side_effects::SideEffects>::simplify_unused_expr::<true, false>
+    7084     7116     +32  <bun_js_parser::p::P<false, false>>::s_local
+   10074    10042     -32  <bun_js_parser::p::P<false, false>>::visit_stmts
+    7004     7036     +32  <bun_js_parser::p::P<true, false>>::s_local
+    1674     1642     -32  <bun_js_parser::p::P<true, false>>::skip_type_script_type_parameters
+    1674     1642     -32  <bun_js_parser::p::P<true, true>>::skip_type_script_type_parameters
+    2984     2953     -31  <bun_js_parser::p::P<false, true>>::parse_class
+    1361     1390     +29  <bun_js_parser::p::P<true, false>>::parse_and_declare_decls
+    1461     1490     +29  <bun_js_parser::p::P<true, false>>::t_try
+     107       81     -26  <bun_alloc::mimalloc_arena::MimallocArena>::alloc_slice_fill_with::<bun_ast::g::Arg, <bun_js_parser::p::P<true, false>>::parse_async_prefix_expr::{closure#1}>
+     107       81     -26  <bun_alloc::mimalloc_arena::MimallocArena>::alloc_slice_fill_with::<bun_ast::g::Arg, <bun_js_parser::p::P<true, true>>::parse_async_prefix_expr::{closure#1}>
+    1830     1804     -26  <bun_js_parser::p::P<false, false>>::parse_async_prefix_expr
+    1830     1804     -26  <bun_js_parser::p::P<false, true>>::parse_async_prefix_expr
+       0       24     +24  <bun_js_parser::p::P<true, false>>::rewind_sidecar
+       0       24     +24  <bun_js_parser::p::P<true, true>>::rewind_sidecar
+   26320    26340     +20  <bun_js_parser::parse::parse_entry::Parser>::_parse::<false>
+    1844     1860     +16  <bun_js_parser::function_identities::Walker>::declare_stmt_at_depth
+    1873     1889     +16  <bun_js_parser::p::P<false, false>>::visit_func
+   10225    10209     -16  <bun_js_parser::p::P<true, false>>::visit_stmts
+   16827    16842     +15  <bun_js_parser::p::P<true, false>>::lower_class_body
+    1382     1395     +13  <bun_js_parser::p::P<true, false>>::new_constructor
+     679      667     -12  <bun_js_parser::p::P<false, false>>::e_array
+    4301     4313     +12  <bun_js_parser::p::P<false, false>>::t_export
+    4301     4313     +12  <bun_js_parser::p::P<false, true>>::t_export
+     679      667     -12  <bun_js_parser::p::P<true, false>>::e_array
+     433      422     -11  <bun_js_parser::p::P<false, false>>::make_static_block
+     433      422     -11  <bun_js_parser::p::P<true, false>>::make_static_block
+     276      287     +11  <bun_js_parser::p::P<true, true>>::parse_expr_common
+     642      652     +10  <bun_js_parser::p::P<false, false>>::hosted_initializer
+     642      652     +10  <bun_js_parser::p::P<true, false>>::hosted_initializer
+       0       10     +10  <bun_js_parser::p::P<true, false>>::parse_paren_expr_for_lint_cold
+    4873     4863     -10  <bun_js_parser::visit::visit_binary::BinaryExpressionVisitor>::visit_right_and_finish::<false, false>
+    4873     4863     -10  <bun_js_parser::visit::visit_binary::BinaryExpressionVisitor>::visit_right_and_finish::<true, false>
+    1575     1584      +9  <bun_js_parser::p::P<false, false>>::new_constructor
+    3004     2995      -9  <bun_js_parser::p::P<false, false>>::parse_stmt
+    1022     1013      -9  <bun_js_parser::p::P<false, false>>::repl_wrap_expr_in_value_object
+    2182     2173      -9  <bun_js_parser::p::P<false, false>>::serialize_metadata
+    3004     2995      -9  <bun_js_parser::p::P<false, true>>::parse_stmt
+    1022     1013      -9  <bun_js_parser::p::P<true, false>>::repl_wrap_expr_in_value_object
+     182      174      -8  <bun_js_parser::p::P<false, false>>::new_expr::<bun_ast::e::Function>
+     182      174      -8  <bun_js_parser::p::P<true, false>>::new_expr::<bun_ast::e::Function>
+    3032     3025      -7  <bun_js_parser::p::P<false, false>>::generate_closure_for_type_script_namespace_or_enum
+    2002     1995      -7  <bun_js_parser::p::P<false, false>>::repl_convert_binding_to_expr
+    3132     3125      -7  <bun_js_parser::p::P<true, false>>::generate_closure_for_type_script_namespace_or_enum
+    2002     1995      -7  <bun_js_parser::p::P<true, false>>::repl_convert_binding_to_expr
+     920      925      +5  <bun_js_parser::p::P<false, false>>::mark_strict_mode_feature
+     545      550      +5  <bun_js_parser::p::P<false, false>>::record_export
+   17694    17699      +5  <bun_js_parser::p::P<false, false>>::visit_expr_in_out
+    2457     2462      +5  <bun_js_parser::p::P<false, true>>::declare_symbol
+     920      925      +5  <bun_js_parser::p::P<true, false>>::mark_strict_mode_feature
+     545      550      +5  <bun_js_parser::p::P<true, false>>::record_export
+    2250     2255      +5  <bun_js_parser::p::P<true, false>>::serialize_metadata
+   17555    17560      +5  <bun_js_parser::p::P<true, false>>::visit_expr_in_out
+    2583     2588      +5  <bun_js_parser::p::P<true, true>>::declare_symbol
+    1274     1277      +3  <bun_js_parser::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr>::visit_ref_to_export::<false, false>
+    1274     1277      +3  <bun_js_parser::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr>::visit_ref_to_export::<true, false>
+    1421     1424      +3  <bun_js_parser::p::P<false, false>>::parse_fn_expr
+    8557     8554      -3  <bun_js_parser::p::P<false, false>>::s_export_default
+    1409     1412      +3  <bun_js_parser::p::P<false, true>>::parse_fn_expr
+    3831     3833      +2  <bun_js_parser::p::P<false, false>>::init
+    1361     1359      -2  <bun_js_parser::p::P<true, true>>::parse_and_declare_decls
+    1461     1459      -2  <bun_js_parser::p::P<true, true>>::t_try
+    3208     3209      +1  <bun_js_parser::p::P<true, true>>::parse_async_prefix_expr
+   15706    15705      -1  <bun_js_parser::p::P<true, true>>::parse_prefix

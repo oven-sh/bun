@@ -1655,6 +1655,13 @@ pub fn init(
                 no_project = true;
                 break 'child bun_sys::File::from_fd(bun_sys::Fd::INVALID);
             }
+            if cli.global {
+                // The global dir is self-contained: bootstrap its package.json so any
+                // `-g` command works before the first global add (#30658).
+                this_cwd = original_cwd;
+                created_package_json = true;
+                break 'child attempt_to_create_package_json_and_open()?;
+            }
             return Err(crate::Error::MissingPackageJSON);
         };
 

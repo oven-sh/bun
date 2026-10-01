@@ -3067,8 +3067,8 @@ it("first `bun add -g` creates the global package.json instead of adopting ~/pac
 // https://github.com/oven-sh/bun/issues/30658
 // Same walk-up, different symptom: a stray package.json with an old npm v1
 // package-lock.json next to it in a parent directory (typically $HOME on
-// Windows) was adopted as the root project, and lockfile migration then failed
-// with "Please upgrade package-lock.json to lockfileVersion 2 or 3".
+// Windows) was adopted as the root project, and the migrator then reported
+// that lockfile ("... is lockfileVersion 1, which bun cannot migrate").
 it("`bun add -g` ignores package.json/package-lock.json above the global dir", async () => {
   using home = tempDir("bun-add-global-parent-lockfile", {
     // stray files in the parent of <home>/.bun/install/global
@@ -3095,8 +3095,8 @@ it("`bun add -g` ignores package.json/package-lock.json above the global dir", a
   });
 
   const err = await stderr.text();
-  // the bug: the stray lockfile used to get picked up and migration failed here.
-  expect(err).not.toContain("Please upgrade package-lock.json");
+  // the bug: the stray lockfile used to get picked up by the migrator here.
+  expect(err).not.toContain("which bun cannot migrate");
   expect(err).not.toContain("lockfileVersion");
   await stdout.text();
   // The install itself fails (registry is unreachable on purpose), but the
@@ -3200,4 +3200,37 @@ it("`bun add -g` does not adopt a parent workspace that lists the global dir", a
   );
   await stdout.text();
   expect(await exited).not.toBe(0);
+});
+
+// Any `-g` command must work before the first global add. The walk-up stop
+// alone would make `bun pm bin -g` return MissingPackageJSON on a fresh
+// machine that has a ~/package.json, where it used to "work" only by adopting
+// that project. The global dir is self-contained, so init bootstraps its
+// package.json instead.
+it("`bun pm bin -g` works before the first global add and does not adopt ~/package.json", async () => {
+  const homeProject = JSON.stringify({ name: "home-project", private: true });
+  using home = tempDir("bun-pm-bin-global-fresh", {
+    "package.json": homeProject,
+  });
+  const homeDir = String(home);
+  const globalDir = join(homeDir, ".bun", "install", "global");
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "pm", "bin", "-g"],
+    cwd: homeDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: globalInstallEnv(homeDir),
+  });
+
+  const err = await stderr.text();
+  expect(err).not.toContain("No package.json");
+  const out = await stdout.text();
+  expect(out.trim()).toBe(join(homeDir, ".bun", "bin"));
+  expect(await exited).toBe(0);
+
+  // The global dir got its own package.json, and the home project is untouched.
+  expect(await file(join(globalDir, "package.json")).json()).toEqual({ dependencies: {} });
+  expect(await file(join(homeDir, "package.json")).text()).toBe(homeProject);
 });

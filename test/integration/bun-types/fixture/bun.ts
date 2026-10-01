@@ -71,6 +71,12 @@ tsd
   )
   .is<Promise<void>>();
 
+Bun.secrets.set({ service: "hey", name: "hey", value: "hey", persist: "local" });
+Bun.secrets.set({ service: "hey", name: "hey", value: "hey", persist: "enterprise" });
+Bun.secrets.set({ service: "hey", name: "hey", value: "hey", persist: undefined });
+// @ts-expect-error - Bun does not expose CRED_PERSIST_SESSION
+Bun.secrets.set({ service: "hey", name: "hey", value: "hey", persist: "session" });
+
 tsd
   .expectType(
     Bun.secrets.delete({

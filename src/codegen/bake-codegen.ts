@@ -17,10 +17,9 @@ process.chdir(base_dir); // to make bun build predictable in development
 function convertRustEnum(rust: string, names: string[]) {
   let output = "/** Generated from dev_server/mod.rs */\n";
   for (const name of names) {
-    const startTrigger = `\npub enum ${name} {`;
-    const start = rust.indexOf(startTrigger);
-    if (start === -1) throw new Error(`bake-codegen: enum ${name} not found in dev_server/mod.rs`);
-    const bodyStart = start + startTrigger.length;
+    const startTrigger = new RegExp(`\\npub(?:\\([^)]*\\))? enum ${name} \\{`).exec(rust);
+    if (startTrigger === null) throw new Error(`bake-codegen: enum ${name} not found in dev_server/mod.rs`);
+    const bodyStart = startTrigger.index + startTrigger[0].length;
     const end = rust.indexOf("\n}", bodyStart);
     let values = "";
     for (const m of rust.slice(bodyStart, end).matchAll(/^\s*(\w+)\s*=\s*b'(.)'\s*,?/gm)) {

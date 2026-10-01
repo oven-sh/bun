@@ -262,7 +262,7 @@ function main() {
 				return `${line}:${before.length - last}`;
 			};
 			const fmt = list => { const out = list.map(x => `${x.rule} ${place(x.at)} ${x.message}`).sort(); return out.filter((x, k) => k === 0 || out[k - 1] !== x); };
-			const keep = x => !only || x.startsWith(only + " ");
+			const keep = x => !only || only.split(",").some(rule => x.startsWith(rule + " "));
 			const expected = e.expected.slice().sort().filter(keep);
 			const actual = fmt(all).filter(keep);
 			count.reports += expected.length;

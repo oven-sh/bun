@@ -30,7 +30,7 @@ jobs:
           persist-credentials: false
 
       - name: Run Claude Code slash command
-        uses: anthropics/claude-code-action/base-action@2261fcfc88e7de1b55f179edd588805e12de71f2 # v1.0.228
+        uses: anthropics/claude-code-action/base-action@9171db3e57d6a3140a37ddc2ba92788584e0ead6 # v1.0.234
         env:
           ANTHROPIC_MODEL: claude-opus-5
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

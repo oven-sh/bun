@@ -1,4 +1,5 @@
-// usage: bun tables.ts <directory observed/> <raw.jsonl of raw.ts>
+// usage: bun tables.ts <directory observed/> <raw.jsonl of raw.ts> [clone with the corpus]
+// With the clone, class-c-diagnostics.txt shows below each line the line of the unit that it points into.
 // Reads instances.tsv (merge.ts), roots.tsv (roots.ts) and the raw runs of the instances whose outcome was crash or
 // timeout, and writes into observed/:
 //   codes.txt                 the diagnostics of Bun by class, category and code: lines and instances; the most frequent texts
@@ -10,7 +11,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-const [observedArg, rawPath] = process.argv.slice(2);
+const [observedArg, rawPath, scratch] = process.argv.slice(2);
 if (observedArg === undefined || rawPath === undefined) {
   console.error("usage: bun tables.ts <directory observed/> <raw.jsonl>");
   process.exit(2);
@@ -159,6 +160,45 @@ for (const [shape, n] of mostFirst(texts)) codes.push(`  ${pad(n)} ${pad(textIns
 writeFileSync(join(observed, "codes.txt"), codes.join("\n") + "\n");
 writeFileSync(join(observed, "raw-diagnostic-lines.tsv"), allLines.join("\n") + "\n");
 
+// The line of a unit of an instance that a printed path and a line name; undefined without the clone or the unit.
+let sourceLineOf = (_name: string, _casePath: string, _printed: string, _line: number): string | undefined => undefined;
+if (scratch !== undefined) {
+  const home = resolve(scratch, "test/cli/lint/conformance");
+  const { corpusPaths } = await import(join(home, "runner/paths.ts"));
+  const { enumerateCase } = await import(join(home, "runner/compiler_runner.ts"));
+  const { instanceInput } = await import(join(home, "runner/materialise.ts"));
+  const { parseTestFilesAndSymlinks } = await import(join(home, "runner/test_case_parser.ts"));
+  const { readFile } = await import(join(home, "runner/vfs.ts"));
+  const { getNormalizedAbsolutePath } = await import(join(home, "runner/tspath.ts"));
+  const paths = corpusPaths(join(home, "corpus"));
+  const unitsOf = new Map<string, { currentDirectory: string; units: { unitName: string; content: string }[] } | undefined>();
+  sourceLineOf = (name, casePath, printed, line) => {
+    if (!unitsOf.has(name)) {
+      let laid: { currentDirectory: string; units: { unitName: string; content: string }[] } | undefined;
+      const enumerated = enumerateCase(paths.cases, casePath).find((i: { name: string }) => i.name === name);
+      const filename = `${paths.cases}/${casePath}`;
+      const read = readFile(filename);
+      if (enumerated !== undefined && read.ok) {
+        const units = parseTestFilesAndSymlinks(read.contents, filename, (unitName: string, content: string) => ({
+          value: { name: unitName, content },
+          error: undefined,
+        }));
+        const made = units.ok ? instanceInput(units, enumerated.config, undefined, { libDirectory: paths.lib }) : units;
+        if (made.ok) {
+          laid = { currentDirectory: getNormalizedAbsolutePath(made.input.currentDirectory, "/"), units: made.input.units };
+        }
+      }
+      unitsOf.set(name, laid);
+    }
+    const laid = unitsOf.get(name);
+    if (laid === undefined) return undefined;
+    const virtual = getNormalizedAbsolutePath(printed, laid.currentDirectory);
+    const unit = laid.units.find(u => getNormalizedAbsolutePath(u.unitName, laid.currentDirectory) === virtual);
+    // The lines of ECMAScript, which the command counts by.
+    return unit?.content.split(/\r\n|[\r\n\u2028\u2029]/)[line - 1];
+  };
+}
+
 // class-c-diagnostics.txt: grouped by case and by what was printed.
 const classC: string[] = [];
 const groups = new Map<string, { casePath: string; names: string[]; roots: string[]; stderr: string; exitCode: number | null | undefined }>();
@@ -185,7 +225,15 @@ for (const group of [...groups.values()].sort((a, b) => (a.casePath < b.casePath
   classC.push(`${group.casePath}`);
   classC.push(`  instances: ${group.names.join(", ")}`);
   classC.push(`  root files: ${group.roots.join(" ")}; exit code ${group.exitCode}`);
-  for (const line of group.stderr.trimEnd().split("\n")) classC.push(`    ${line}`);
+  for (const line of group.stderr.trimEnd().split("\n")) {
+    classC.push(`    ${line}`);
+    const [d] = diagnosticsOf(line);
+    const source = d === undefined || d.file === "" ? undefined : sourceLineOf(group.names[0], group.casePath, d.file, d.line);
+    if (source !== undefined) {
+      const from = Math.max(0, d.column - 1 - 70);
+      classC.push(`        | ${JSON.stringify(source.slice(from, from + 160))}${from > 0 ? ` (from column ${from + 1})` : ""}`);
+    }
+  }
   classC.push("");
 }
 writeFileSync(join(observed, "class-c-diagnostics.txt"), classC.join("\n") + "\n");

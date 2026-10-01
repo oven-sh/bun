@@ -58,7 +58,7 @@ JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGloba
     }
 
     auto* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto impl = EventEmitter::create(*globalObject->scriptExecutionContext());
+    auto impl = EventEmitter::create(*globalObject->currentScriptExecutionContext());
     impl->setThisObject(thisObject);
 
     auto result = toJSNewlyCreated<IDLInterface<EventEmitter>>(*lexicalGlobalObject, *globalObject, throwScope, WTF::move(impl));

@@ -308,7 +308,6 @@ fn uint_less_than(r: &mut bun_core::rand::DefaultPrng, less_than: u64) -> u64 {
             l = m as u64;
         }
     }
-    let _ = x;
     (m >> 64) as u64
 }
 

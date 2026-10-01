@@ -311,16 +311,12 @@ fn spans(text: &[u8]) -> Vec<(String, (u32, u32), (u32, u32))> {
         let c = text[at];
         match c {
             b'/' if text.get(at + 1) == Some(&b'/') => {
-                at += text[at..]
-                    .iter()
-                    .position(|&c| c == b'\n')
+                at += bun_core::strings::index_of_char_usize(&text[at..], b'\n')
                     .unwrap_or(text.len() - at);
                 continue;
             }
             b'/' if text.get(at + 1) == Some(&b'*') => {
-                at += text[at..]
-                    .windows(2)
-                    .position(|w| w == b"*/")
+                at += bun_core::strings::index_of(&text[at..], b"*/")
                     .map_or(text.len() - at, |end| end + 2);
                 continue;
             }

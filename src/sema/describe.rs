@@ -413,7 +413,7 @@ impl<'c, 'p> Describer<'c, 'p> {
                 &[]
             };
             let cut = |text: &[u8]| {
-                let end = text.iter().position(|&b| b == b'@').unwrap_or(text.len());
+                let end = bun_core::strings::index_of_char_usize(text, b'@').unwrap_or(text.len());
                 String::from_utf8_lossy(&text[..end]).into_owned()
             };
             if let Some(rest) = bytes

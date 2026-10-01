@@ -164,15 +164,11 @@ fn after_missing_commas(
             match text[at] {
                 b',' => return true,
                 b'/' if text.get(at + 1) == Some(&b'/') => {
-                    at += text[at..]
-                        .iter()
-                        .position(|&c| c == b'\n')
+                    at += bun_core::strings::index_of_char_usize(&text[at..], b'\n')
                         .unwrap_or(text.len() - at);
                 }
                 b'/' if text.get(at + 1) == Some(&b'*') => {
-                    at += text[at + 2..]
-                        .windows(2)
-                        .position(|w| w == b"*/")
+                    at += bun_core::strings::index_of(&text[at + 2..], b"*/")
                         .map_or(text.len() - at, |end| end + 4);
                 }
                 _ => at += 1,

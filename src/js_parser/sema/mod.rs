@@ -171,14 +171,14 @@ pub(crate) fn early_error(text: &[u8], at: &[u8]) -> Option<(u32, i32)> {
 pub(crate) fn error_argument(text: &[u8]) -> Option<Box<str>> {
     // `Lexer::ts_error_about`
     let said = (text.starts_with(b"TS") || text.starts_with(b"TG"))
-        .then(|| text.iter().position(|&b| b == b' '))
+        .then(|| bun_core::strings::index_of_char_usize(text, b' '))
         .flatten();
     let token = match said {
         Some(space) => &text[space + 1..],
         // `Lexer::expected_string`: `Expected ";" but found "x"`
         None => {
             let rest = text.strip_prefix(b"Expected ")?;
-            let end = rest.windows(11).position(|w| w == b" but found ")?;
+            let end = bun_core::strings::index_of(rest, b" but found ")?;
             let token = &rest[..end];
             token
                 .strip_prefix(b"\"")
@@ -269,7 +269,7 @@ fn early_error_in_place(text: &[u8]) -> Option<u32> {
         || text == b"Invalid field name"
         || text == b"Invalid static method name \"prototype\""
         // `checkGrammarModifiers`: 1491 1495. `checkGrammarVariableDeclarationList`: 1545 1546.
-        || starts(b"Cannot use ") && ends(b" declaration") && text.windows(8).any(|w| w == b"\" with a")
+        || starts(b"Cannot use ") && ends(b" declaration") && bun_core::strings::contains(text, b"\" with a")
         // `checkContextualIdentifier`: 1212 1213 1214.
         || text == b"An generator function expression cannot be named \"yield\""
         // `checkDeleteExpression`: 18011.
@@ -390,7 +390,7 @@ pub fn summarize(
     let is_declaration_file = base.ends_with(b".d.ts")
         || base.ends_with(b".d.mts")
         || base.ends_with(b".d.cts")
-        || base.ends_with(b".ts") && base.windows(3).any(|w| w == b".d.");
+        || base.ends_with(b".ts") && bun_core::strings::contains(base, b".d.");
     let is_js = [&b".js"[..], b".jsx", b".mjs", b".cjs"]
         .iter()
         .any(|e| path.ends_with(e));
@@ -490,10 +490,7 @@ pub fn summarize(
 /// `getCommentPragmas`, `extractPragmas`, for `ts-check` and `ts-nocheck`: looked for in the comments before the first token.
 fn check_directive(text: &[u8]) -> Option<bool> {
     let line_end = |from: usize| {
-        text[from..]
-            .iter()
-            .position(|&c| c == b'\n' || c == b'\r')
-            .map_or(text.len(), |n| from + n)
+        bun_core::strings::index_of_any(&text[from..], b"\n\r").map_or(text.len(), |n| from + n)
     };
     let mut i = if text.starts_with(b"\xEF\xBB\xBF") {
         3
@@ -531,7 +528,7 @@ fn check_directive(text: &[u8]) -> Option<bool> {
             }
             i = end;
         } else if text[i..].starts_with(b"/*") {
-            match text[i + 2..].windows(2).position(|w| w == b"*/") {
+            match bun_core::strings::index_of(&text[i + 2..], b"*/") {
                 Some(n) => i += n + 4,
                 None => return found,
             }

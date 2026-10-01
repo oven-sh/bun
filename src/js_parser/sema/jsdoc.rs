@@ -244,7 +244,10 @@ pub(crate) fn read_comments<'a>(
     for range in &ranges {
         let (start, end) = (range.loc.to_usize(), range.end_i().min(source.len()));
         let comment = &source[start.min(end)..end];
-        if !is_jsdoc_like(comment) || !comment.ends_with(b"*/") || !comment.contains(&b'@') {
+        if !is_jsdoc_like(comment)
+            || !comment.ends_with(b"*/")
+            || !bun_core::strings::contains_char(comment, b'@')
+        {
             continue;
         }
         if comments
@@ -1032,9 +1035,7 @@ impl<'p, 'a> Reader<'p, 'a> {
 
     /// `parseJSDocCommentWorker`. Of the text only what decides where the tags are is kept track of.
     fn comment(&mut self, start: usize) -> Vec<Tag> {
-        let line_start = self.text[..start]
-            .iter()
-            .rposition(|&c| c == b'\n')
+        let line_start = bun_core::strings::last_index_of_char(&self.text[..start], b'\n')
             .map_or(0, |at| at + 1);
         // For the leading `/** `.
         let mut indent = start + 4 - line_start;

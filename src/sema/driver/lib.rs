@@ -240,25 +240,22 @@ fn located(
 fn line_starts(text: &[u8]) -> Vec<u32> {
     let mut starts = vec![0u32];
     let mut i = 0;
-    while i < text.len() {
+    // 0xE2 starts U+2028 and U+2029, which end a line too.
+    while let Some(found) = bun_core::strings::index_of_any(&text[i..], b"\n\r\xE2") {
+        i += found;
         match text[i] {
-            b'\r' => {
-                if text.get(i + 1) == Some(&b'\n') {
+            b'\r' if text.get(i + 1) == Some(&b'\n') => i += 1,
+            0xE2 => {
+                if text.get(i + 1) != Some(&0x80) || !matches!(text.get(i + 2), Some(0xA8 | 0xA9)) {
                     i += 1;
+                    continue;
                 }
-                starts.push(i as u32 + 1);
-            }
-            b'\n' => starts.push(i as u32 + 1),
-            // U+2028 and U+2029
-            0xE2 if text.get(i + 1) == Some(&0x80)
-                && matches!(text.get(i + 2), Some(0xA8 | 0xA9)) =>
-            {
                 i += 2;
-                starts.push(i as u32 + 1);
             }
             _ => {}
         }
         i += 1;
+        starts.push(i as u32);
     }
     starts
 }

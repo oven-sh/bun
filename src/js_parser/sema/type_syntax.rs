@@ -2885,9 +2885,7 @@ impl<'a> Builder<'a> {
         let written = statement.trim_ascii_end();
         written.ends_with(b";")
             || written.ends_with(b"*/")
-            || statement[written.len()..]
-                .iter()
-                .any(|&b| matches!(b, b'\n' | b'\r'))
+            || bun_core::strings::contains_any(&statement[written.len()..], b"\n\r")
             || matches!(text.get(end as usize), None | Some(b'}'))
     }
 

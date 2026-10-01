@@ -67,12 +67,9 @@ pub(super) fn skip_trivia(text: &[u8], mut at: usize) -> usize {
         }
         let rest = text.get(at..).unwrap_or_default();
         if rest.starts_with(b"/*") {
-            at += rest[2..]
-                .windows(2)
-                .position(|w| w == b"*/")
-                .map_or(rest.len(), |end| end + 4);
+            at += bun_core::strings::index_of(&rest[2..], b"*/").map_or(rest.len(), |end| end + 4);
         } else if rest.starts_with(b"//") {
-            at += rest.iter().position(|&c| c == b'\n').unwrap_or(rest.len());
+            at += bun_core::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len());
         } else {
             return at.min(text.len());
         }
@@ -655,7 +652,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 || !matches!(code, 1029 | 1030 | 1038 | 1040)
                 || source
                     .get(start as usize..at as usize)
-                    .is_none_or(|before| before.contains(&b'{'))
+                    .is_none_or(|before| bun_core::strings::contains_char(before, b'{'))
         });
     }
 
@@ -719,9 +716,7 @@ impl<'p, 'a> Lower<'p, 'a> {
     fn statement_start(&self, stmt: &Stmt) -> u32 {
         let first_decorator = |class: &G::Class| {
             let first = class.ts_decorators.first()?;
-            self.source[..pos_of(first.loc) as usize]
-                .iter()
-                .rposition(|&b| b == b'@')
+            bun_core::strings::last_index_of_char(&self.source[..pos_of(first.loc) as usize], b'@')
         };
         let (is_export, decorator) = match &stmt.data {
             StmtData::SLocal(s) => (s.is_export, None),
@@ -1291,7 +1286,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 if kind == CastKind::As
                     && (to as u32) < at
                     && let Some(less_than) =
-                        self.source[..to as usize].iter().rposition(|&b| b == b'<')
+                        bun_core::strings::last_index_of_char(&self.source[..to as usize], b'<')
                 {
                     at = less_than as u32;
                 }
@@ -1428,9 +1423,10 @@ impl<'p, 'a> Lower<'p, 'a> {
             let default = self.optional_expr(arg.default.as_ref());
             // It starts with what decorates it.
             if let Some(first) = arg.ts_decorators.first()
-                && let Some(at) = self.b.lexer.contents[..pos_of(first.loc) as usize]
-                    .iter()
-                    .rposition(|&b| b == b'@')
+                && let Some(at) = bun_core::strings::last_index_of_char(
+                    &self.b.lexer.contents[..pos_of(first.loc) as usize],
+                    b'@',
+                )
             {
                 pos = at as u32;
             }
@@ -1594,9 +1590,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             && !rest.last().is_some_and(|&c| {
                 c.is_ascii_alphanumeric() || matches!(c, b'_' | b'$') || c >= 0x80
             })
-            && !before[trimmed.len()..]
-                .iter()
-                .any(|&c| matches!(c, b'\n' | b'\r'))
+            && !bun_core::strings::contains_any(&before[trimmed.len()..], b"\n\r")
         {
             flags |= Flags::ABSTRACT;
         }
@@ -1944,8 +1938,10 @@ impl<'p, 'a> Lower<'p, 'a> {
                     CastKind::As => {
                         // `parseTypeAssertion`: `<T>e` starts at its `<`, and so does what is made of it afterwards.
                         if (at as u32) < pos
-                            && let Some(less_than) =
-                                self.source[..at as usize].iter().rposition(|&b| b == b'<')
+                            && let Some(less_than) = bun_core::strings::last_index_of_char(
+                                &self.source[..at as usize],
+                                b'<',
+                            )
                         {
                             pos = less_than as u32;
                         }

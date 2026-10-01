@@ -1354,6 +1354,7 @@ name = "bun_sema"
 version = "0.0.0"
 dependencies = [
  "bitflags",
+ "bun_core",
  "smallvec",
 ]
 

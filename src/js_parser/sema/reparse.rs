@@ -66,7 +66,7 @@ fn modifiers_of(flags: Flags) -> Flags {
 /// `IsValidIdentifier`. What is not ASCII is taken for a letter.
 fn is_valid_identifier(text: &[u8]) -> bool {
     let unescaped;
-    let text = if text.contains(&b'\\') {
+    let text = if bun_core::strings::contains_char(text, b'\\') {
         unescaped = jsdoc::unescaped_name(text);
         &unescaped[..]
     } else {
@@ -103,7 +103,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 || self
                     .source
                     .get(at..start)
-                    .is_some_and(|between| between.iter().any(|&c| matches!(c, b'\n' | b'\r')));
+                    .is_some_and(|between| bun_core::strings::contains_any(between, b"\n\r"));
             at = end;
             let text = self.source.get(start..end).unwrap_or_default();
             if !is_collecting || !jsdoc::is_jsdoc_like(text) {
@@ -249,7 +249,7 @@ impl<'p, 'a> Lower<'p, 'a> {
 
     fn name_atom(&self, name: Name) -> Atom {
         let text = name.text(self.source);
-        if text.contains(&b'\\') {
+        if bun_core::strings::contains_char(text, b'\\') {
             return self.b.atom(&jsdoc::unescaped_name(text));
         }
         self.b.atom(text)

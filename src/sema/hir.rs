@@ -1199,10 +1199,8 @@ impl JsxPragmas {
             if !rest.starts_with(b"/*") {
                 break;
             }
-            let end = rest[2..]
-                .windows(2)
-                .position(|w| w == b"*/")
-                .map_or(rest.len(), |at| at + 2);
+            let end =
+                bun_core::strings::index_of(&rest[2..], b"*/").map_or(rest.len(), |at| at + 2);
             let comment = &rest[2..end];
             rest = &rest[(end + 2).min(rest.len())..];
             for line in comment.split(is_line_break) {

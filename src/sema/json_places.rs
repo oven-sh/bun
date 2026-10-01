@@ -60,15 +60,11 @@ impl Reader<'_> {
                 // A mark at the start of the file.
                 Some(0xEF) if self.text[self.at..].starts_with(&[0xEF, 0xBB, 0xBF]) => self.at += 3,
                 Some(b'/') if self.text.get(self.at + 1) == Some(&b'/') => {
-                    self.at += self.text[self.at..]
-                        .iter()
-                        .position(|&c| c == b'\n')
+                    self.at += bun_core::strings::index_of_char_usize(&self.text[self.at..], b'\n')
                         .unwrap_or(self.text.len() - self.at);
                 }
                 Some(b'/') if self.text.get(self.at + 1) == Some(&b'*') => {
-                    self.at += self.text[self.at + 2..]
-                        .windows(2)
-                        .position(|w| w == b"*/")
+                    self.at += bun_core::strings::index_of(&self.text[self.at + 2..], b"*/")
                         .map_or(self.text.len() - self.at, |end| end + 4);
                 }
                 _ => return,

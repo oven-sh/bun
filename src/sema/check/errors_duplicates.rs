@@ -936,18 +936,21 @@ impl Checker<'_> {
                     } => matches!(hir[operand].kind, ExprKind::Number(_)) && !is_in_parens(operand),
                     _ => false,
                 };
-            while !is_literal {
-                if is_in_parens(e) {
-                    return None;
-                }
-                match hir[e].kind {
-                    ExprKind::Ident(_) => break,
-                    ExprKind::Dot { obj, name, .. }
-                        if self.files().atoms.bytes(name).first() != Some(&b'#') =>
-                    {
-                        e = obj
+            if !is_literal {
+                // An entity name expression: `a.b.c`, without parentheses or private names.
+                loop {
+                    if is_in_parens(e) {
+                        return None;
                     }
-                    _ => return None,
+                    match hir[e].kind {
+                        ExprKind::Ident(_) => break,
+                        ExprKind::Dot { obj, name, .. }
+                            if self.files().atoms.bytes(name).first() != Some(&b'#') =>
+                        {
+                            e = obj
+                        }
+                        _ => return None,
+                    }
                 }
             }
         }

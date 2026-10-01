@@ -886,10 +886,8 @@ ALWAYS_INLINE bool isRetiredTestIsolationRealm(const JSC::JSGlobalObject* global
 }
 
 // `callee`: what native code is about to call.
-ALWAYS_INLINE bool isOfRetiredTestIsolationRealm(const WebCore::JSVMClientData& clientData, JSC::JSValue callee)
+ALWAYS_INLINE bool isOfRetiredTestIsolationRealm(JSC::JSValue callee)
 {
-    if (!clientData.hasRetiredTestIsolationRealm) [[likely]]
-        return false;
     JSC::JSObject* object = callee.getObject();
     return object && isRetiredTestIsolationRealm(object->globalObject());
 }

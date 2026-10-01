@@ -4728,7 +4728,6 @@ extern "C" void Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(Zig::Glo
 extern "C" void Zig__GlobalObject__retireForTestIsolation(Zig::GlobalObject* globalObject)
 {
     globalObject->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
-    WebCore::clientData(globalObject->vm())->hasRetiredTestIsolationRealm = true;
 }
 
 extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)

@@ -6,9 +6,14 @@ or is upstream's own test). "Not ported" in the last column names what the row l
 
 ## Leaf packages
 
-Commit `1e45ca9abb`. None of these modules is compiled by cargo yet: `lib.rs` does not declare `core`, `collections`,
-`jsnum`, `stringutil`, `tspath`. `ported` and `tested` below mean compiled and run with `rustc` alone from the scratch
-root of `leaf-packages-scratch/port/` (API.md, "Verified").
+Commit `1e45ca9abb`. `ported` and `tested` below mean compiled and run with `rustc` alone from the scratch root of
+`leaf-packages-scratch/port/` (API.md, "Verified"). Cargo compiles a package in the real crate from the commit that
+declares it in `lib.rs`:
+
+- `collections`: declared by `65ab2f65bc` (`pub mod collections;`, its six files are unchanged since `1e45ca9abb`).
+  No `cargo check` and no `cargo test` was run with that commit: the survey of round 2
+  (`/workspace/notes/lint/tools/typecheck-survey.sh`) is the first cargo compile of the six files, and their tests
+  have run from the scratch root only.
 
 | upstream file, lines | Rust module under `src/typecheck/` | state | not ported |
 | --- | --- | --- | --- |

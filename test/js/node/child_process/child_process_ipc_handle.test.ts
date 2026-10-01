@@ -632,6 +632,40 @@ server.listen(0, '127.0.0.1', () => {
     },
   );
 
+  test.concurrent(
+    "sending an http.Server throws ERR_INVALID_HANDLE_TYPE instead of silently dropping the handle",
+    async () => {
+      // An http.Server listens through Bun.serve and has no handle to pass.
+      using dir = tempDir("ipc-handle-http-server", {
+        "parent.js": `
+const { fork } = require('node:child_process');
+const http = require('node:http');
+const child = fork('child.js');
+const finish = out => { console.log(JSON.stringify(out)); server.close(); child.disconnect(); };
+child.on('message', m => finish({ childReceived: m }));
+const server = http.createServer((req, res) => res.end('ok'));
+server.listen(0, '127.0.0.1', () => {
+  try { child.send('server', server); } catch (err) { finish({ code: err.code, childReceived: null }); }
+});
+`,
+        "child.js": `process.on('message', (m, handle) => process.send('unexpected:' + m + ':' + typeof handle));`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+        out: { code: "ERR_INVALID_HANDLE_TYPE", childReceived: null },
+        stderr: expect.any(String),
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
   test.concurrent("a received handle that lands on fd 0 is adopted", async () => {
     using dir = tempDir("ipc-handle-fd0", {
       "parent.js": `

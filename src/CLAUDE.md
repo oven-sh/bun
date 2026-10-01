@@ -1,8 +1,8 @@
 ## Rust
 
 `src/` is a Cargo workspace (rooted at the repo's top-level `Cargo.toml`, ~200
-member crates). The runtime is built as `libbun_runtime.a` via `cargo build -p
-bun_runtime` (driven by `scripts/build/rust.ts`). Key crates:
+member crates). Each crate is one rustc invocation producing an rlib,
+planned by cargo and run by ninja (`scripts/build/rust.ts`, `scripts/build/rust/`). Key crates:
 
 - `bun_core` (`src/bun_core/`) — strings, formatting, logging, env vars, allocator/heap helpers, the foundation everything else uses
 - `bun_sys` (`src/sys/`) — cross-platform syscall wrappers (`File`, `Fd`, `Dir`, `Error`)
@@ -11,8 +11,8 @@ bun_runtime` (driven by `scripts/build/rust.ts`). Key crates:
 - `bun_runtime` (`src/runtime/`) — JS-visible APIs (server, fetch, node compat, crypto)
 - `bun_js_parser`, `bun_js_printer`, `bun_resolver`, `bun_bundler`, `bun_install`, `bun_collections`, `bun_threading`, `bun_alloc` — the rest of the pipeline
 - `bun_runtime::bin_entry` (`src/runtime/bin_entry/`) — the process entry point (`main`) and the
-  C-ABI symbols that must be direct link inputs; `bun_runtime` itself is the
-  `staticlib` that `cargo build` produces for the C++ link.
+  C-ABI symbols the C++ side and the C runtime look up; `bun_runtime` is the root of the crate graph, and the
+  final link takes every crate's rlib beside the C/C++ objects.
 
 Conventions:
 
@@ -59,7 +59,7 @@ Key types and functions:
 
 - `Fd` (`bun_core::Fd`, re-exported) — cross-platform file descriptor. `Fd::cwd()`, `Fd::stdin()/stdout()/stderr()`, `fd.close()`.
 - `File::open(path: &ZStr, flags, mode)` / `File::openat(dir: Fd, path: &[u8], flags, mode)` / `File::make_open(...)` (creates parent dirs) / `File::create(dir, path, truncate)`
-- `file.read(buf)` / `read_all(buf)` / `read_to_end()` / `read_to_end_small()` / `write(buf)` / `write_all(buf)`
+- `file.read(buf)` / `read_all(buf)` / `read_to_end()` / `read_to_end_small()` / `write_all(buf)`
 - `bun_sys::open`, `read`, `write`, `pread`, `pwrite`, `stat`, `fstat`, `lstat`, `mkdir`, `unlink`, `rename`, `symlink`, `chmod` — free fns over `Fd`
 - Open flags: `bun_sys::O::RDONLY`, `O::WRONLY | O::CREAT | O::TRUNC`, etc.
 
@@ -138,7 +138,7 @@ ASCII literals / `&'static` ASCII tables, bytes already validated as ASCII,
 or bytes that really are Latin-1; `utf16(units)`.
 `String::to_encoded_slice()` borrows any `String` as one;
 `EncodedSlice::to_utf8() -> Utf8Bytes<'a>`; `bun_jsc::EncodedSliceJsc` adds
-`to_js`, `to_{,type_,range_,syntax_}error_instance`, `to_json_object`, and
+`to_js`, `to_error_instance` / `to_syntax_error_instance`, `to_json_object`, and
 `to_external_value` / `external` (hand a globally-allocated buffer to JSC).
 
 Bytes → JS string: `bun_string_jsc::create_utf8_for_js(global, bytes)?`
@@ -146,13 +146,13 @@ Bytes → JS string: `bun_string_jsc::create_utf8_for_js(global, bytes)?`
 `bun_string_jsc::owned_utf8_into_js(global, vec)?`; an owned `Vec<u16>`:
 `bun_string_jsc::owned_utf16_into_js(global, vec)?` (or `owned_latin1_into_js` for a
 known-Latin-1/ASCII `Vec<u8>`); all three hand the allocation to JSC in one call. An ASCII literal or
-`&'static` ASCII: `String::static_("lit").to_js(global)?`. → `Error` (each
-with `type_error`/`range_error`/`syntax_error` siblings, one C++ entry):
-`global.create_error_instance(format_args!(..))` (argument-free ASCII
+`&'static` ASCII: `String::static_("lit").to_js(global)?`. → `Error` (one
+C++ entry each): `global.create_error_instance(format_args!(..))` (with
+`type_error`/`range_error`/`syntax_error` siblings; argument-free ASCII
 literal → atomized; formatted → copied once), `string.to_error_instance(global)`
-(WTF-backed shares the impl, static atomizes, borrowed `EncodedSlice`
-copies), `EncodedSlice::utf8(bytes).to_error_instance(global)` for raw UTF-8
-bytes (copied). The infallible
+(plus `to_type_error_instance`; WTF-backed shares the impl, static atomizes,
+borrowed `EncodedSlice` copies), `EncodedSlice::utf8(bytes).to_error_instance(global)`
+(plus `to_syntax_error_instance`) for raw UTF-8 bytes (copied). The infallible
 `EncodedSlice::…(bytes).to_js(global)` is only for callbacks that cannot
 return `JsResult`, or for bytes already validated as ASCII where a rescan
 is unwanted (`EncodedSlice::latin1(bytes).to_js(global)`).
@@ -231,8 +231,8 @@ and the narrow (`u8`) variant on POSIX.
 WHATWG-compliant, backed by WebKit's URL parser. `Parsed` owns the C++
 `WTF::URL` (freed on `Drop`) and derefs to `URL` for the getters; parsing
 returns `None` for invalid input. `bun_jsc::url` re-exports both; the
-JS-value entry points (`URL::from_js` → `Option<Parsed>`, `URL::href_from_js`)
-come from the `bun_jsc::URLJsc` trait.
+JS-value entry point (`URL::href_from_js`) comes from the `bun_jsc::URLJsc`
+trait.
 
 ```rust
 use bun_url::whatwg::Parsed;

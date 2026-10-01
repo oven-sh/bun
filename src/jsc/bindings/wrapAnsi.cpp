@@ -1,12 +1,15 @@
 #include "root.h"
 #include "wrapAnsi.h"
 #include "ANSIHelpers.h"
+#include "VectorSizeLimit.h"
 
+#include <JavaScriptCore/ExceptionHelpers.h>
 #include <wtf/text/WTFString.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/Vector.h>
 #include <wtf/MathExtras.h>
 #include <cmath>
+#include <optional>
 
 // Native exports (implemented in stringWidth.cpp) for visible width calculation
 extern "C" size_t Bun__visibleWidthExcludeANSI_utf16(const uint16_t* ptr, size_t len, bool ambiguous_as_wide);
@@ -132,24 +135,30 @@ static const Char* findWordSeparator(const Char* start, const Char* end)
 // Row Management (using WTF::Vector)
 // ============================================================================
 
+// The input sizes a row and the row list, and Vector::append() calls CRASH() when it cannot grow, so every append is fallible.
 template<typename Char>
 class Row {
 public:
     Vector<Char> m_data;
 
-    void append(Char c)
+    [[nodiscard]] bool append(Char c)
     {
-        m_data.append(c);
+        return m_data.size() < maxVectorSize<Char>() && m_data.tryAppend(c);
     }
 
-    void append(const Char* start, const Char* end)
+    [[nodiscard]] bool append(std::span<const Char> chars)
     {
-        m_data.append(std::span { start, end });
+        return m_data.size() + chars.size() <= maxVectorSize<Char>() && m_data.tryAppend(chars);
     }
 
-    void append(const Row& other)
+    [[nodiscard]] bool append(const Char* start, const Char* end)
     {
-        m_data.appendVector(other.m_data);
+        return append(std::span<const Char> { start, end });
+    }
+
+    [[nodiscard]] bool append(const Row& other)
+    {
+        return append(other.m_data.span());
     }
 
     size_t width(bool ambiguousIsNarrow) const
@@ -208,12 +217,18 @@ public:
     bool m_leadingTrimComplete = false;
 };
 
+template<typename Char>
+[[nodiscard]] static bool appendRow(Vector<Row<Char>>& rows)
+{
+    return rows.size() < maxVectorSize<Row<Char>>() && rows.tryAppend(Row<Char>());
+}
+
 // ============================================================================
 // Word Wrapping Core Logic
 // ============================================================================
 
 template<typename Char>
-static void wrapWord(Vector<Row<Char>>& rows, const Char* wordStart, const Char* wordEnd, size_t columns, const WrapAnsiOptions& options)
+[[nodiscard]] static bool wrapWord(Vector<Row<Char>>& rows, const Char* wordStart, const Char* wordEnd, size_t columns, const WrapAnsiOptions& options)
 {
     size_t vis = rows.last().width(options.ambiguousIsNarrow);
 
@@ -222,7 +237,8 @@ static void wrapWord(Vector<Row<Char>>& rows, const Char* wordStart, const Char*
         // An escape sequence is zero-width and never split across rows.
         if (ANSI::isEscapeCharacter(*it)) {
             const Char* seqEnd = ANSI::consumeANSI(it, wordEnd);
-            rows.last().append(it, seqEnd);
+            if (!rows.last().append(it, seqEnd))
+                return false;
             it = seqEnd;
             continue;
         }
@@ -239,15 +255,18 @@ static void wrapWord(Vector<Row<Char>>& rows, const Char* wordStart, const Char*
 
         if (vis + charWidth > columns) {
             // Character doesn't fit on current line, start a new line
-            rows.append(Row<Char>());
+            if (!appendRow(rows))
+                return false;
             vis = 0;
         }
-        rows.last().append(it, it + charLen);
+        if (!rows.last().append(it, it + charLen))
+            return false;
         vis += charWidth;
         it += charLen;
 
         if (vis == columns && it < wordEnd) {
-            rows.append(Row<Char>());
+            if (!appendRow(rows))
+                return false;
             vis = 0;
         }
     }
@@ -256,15 +275,17 @@ static void wrapWord(Vector<Row<Char>>& rows, const Char* wordStart, const Char*
     if (vis == 0 && !rows.last().m_data.isEmpty() && rows.size() > 1) {
         Row<Char> lastRow = std::move(rows.last());
         rows.removeLast();
-        rows.last().append(lastRow);
+        if (!rows.last().append(lastRow))
+            return false;
     }
+    return true;
 }
 
 template<typename Char>
 static void trimRowTrailingSpaces(Row<Char>& row, bool ambiguousIsNarrow)
 {
-    auto span = row.m_data.span();
-    const Char* const data = span.data();
+    auto span = row.m_data.mutableSpan();
+    Char* const data = span.data();
     const Char* const end = data + span.size();
 
     // Find the end of the last space-delimited word with visible content
@@ -283,21 +304,23 @@ static void trimRowTrailingSpaces(Row<Char>& row, bool ambiguousIsNarrow)
 
     // wrap-ansi's stringVisibleTrimSpacesRight: past the last visible word only
     // the separator spaces go; escapes and zero-width text stay.
-    Vector<Char> tail;
+    Char* write = data + (lastVisibleEnd - data);
     for (const Char* it = lastVisibleEnd; it != end;) {
         if (ANSI::isEscapeCharacter(*it)) {
             const Char* seqEnd = ANSI::consumeANSI(it, end);
-            tail.append(std::span { it, seqEnd });
+            const size_t seqLen = seqEnd - it;
+            if (write != it)
+                memmove(write, it, seqLen * sizeof(Char));
+            write += seqLen;
             it = seqEnd;
         } else {
             if (*it != ' ')
-                tail.append(*it);
+                *write++ = *it;
             ++it;
         }
     }
 
-    row.m_data.shrink(lastVisibleEnd - data);
-    row.m_data.appendVector(tail);
+    row.m_data.shrink(write - data);
 }
 
 // ============================================================================
@@ -523,7 +546,7 @@ static void joinRowsWithAnsiPreservation(const Vector<Row<Char>>& rows, StringBu
 // ============================================================================
 
 template<typename Char>
-static void processLine(const Char* lineStart, const Char* lineEnd, size_t columns, const WrapAnsiOptions& options, Vector<Row<Char>>& rows)
+[[nodiscard]] static bool processLine(const Char* lineStart, const Char* lineEnd, size_t columns, const WrapAnsiOptions& options, Vector<Row<Char>>& rows)
 {
     // Handle empty or whitespace-only strings with trim
     if (options.trim) {
@@ -534,16 +557,17 @@ static void processLine(const Char* lineStart, const Char* lineEnd, size_t colum
         while (trimEnd > trimStart && (*(trimEnd - 1) == ' ' || *(trimEnd - 1) == '\t'))
             trimEnd--;
         if (trimStart >= trimEnd)
-            return;
+            return true;
     }
 
     // Start with empty first row
-    rows.append(Row<Char>());
+    if (!appendRow(rows))
+        return false;
 
     size_t lastRowWidth = 0;
     bool lastRowWidthDirty = false;
 
-    const auto placeWord = [&](const Char* wordStart, const Char* wordEnd, size_t wordIndex) {
+    const auto placeWord = [&](const Char* wordStart, const Char* wordEnd, size_t wordIndex) -> bool {
         if (options.trim) {
             size_t removedWidth = rows.last().trimLeadingSpaces();
             if (!lastRowWidthDirty)
@@ -561,12 +585,14 @@ static void processLine(const Char* lineStart, const Char* lineEnd, size_t colum
 
         if (wordIndex != 0) {
             if (rowLength >= columns && (!options.wordWrap || !options.trim)) {
-                rows.append(Row<Char>());
+                if (!appendRow(rows))
+                    return false;
                 rowLength = 0;
             }
 
             if (rowLength > 0 || !options.trim) {
-                rows.last().append(static_cast<Char>(' '));
+                if (!rows.last().append(static_cast<Char>(' ')))
+                    return false;
                 rowLength++;
             } else if (!rows.last().m_data.isEmpty()) {
                 spacePrecedesWord = false;
@@ -581,42 +607,43 @@ static void processLine(const Char* lineStart, const Char* lineEnd, size_t colum
             size_t remainingColumns = columns > rowLength ? columns - rowLength : 0;
             size_t breaksStartingThisLine = 1 + (wordLen > remainingColumns ? (wordLen - remainingColumns - 1) / columns : 0);
             size_t breaksStartingNextLine = wordLen > 0 ? (wordLen - 1) / columns : 0;
-            if (breaksStartingNextLine < breaksStartingThisLine)
-                rows.append(Row<Char>());
+            if (breaksStartingNextLine < breaksStartingThisLine && !appendRow(rows))
+                return false;
 
-            wrapWord(rows, wordStart, wordEnd, columns, options);
             lastRowWidthDirty = true;
-            return;
+            return wrapWord(rows, wordStart, wordEnd, columns, options);
         }
 
         if (rowLength + wordLen > columns && rowLength > 0 && wordLen > 0) {
             if (!options.wordWrap && rowLength < columns) {
-                wrapWord(rows, wordStart, wordEnd, columns, options);
                 lastRowWidthDirty = true;
-                return;
+                return wrapWord(rows, wordStart, wordEnd, columns, options);
             }
 
-            rows.append(Row<Char>());
+            if (!appendRow(rows))
+                return false;
             rowLength = 0;
         }
 
         if (rowLength + wordLen > columns && !options.wordWrap) {
-            wrapWord(rows, wordStart, wordEnd, columns, options);
             lastRowWidthDirty = true;
-            return;
+            return wrapWord(rows, wordStart, wordEnd, columns, options);
         }
 
-        rows.last().append(wordStart, wordEnd);
+        if (!rows.last().append(wordStart, wordEnd))
+            return false;
         if (spacePrecedesWord ? wordStartsNewCluster(wordStart, wordEnd) : wordSeamIsAscii(rowTail, wordStart, wordEnd))
             lastRowWidth = rowLength + wordLen;
         else
             lastRowWidthDirty = true;
+        return true;
     };
 
     const Char* wordStart = lineStart;
     for (size_t wordIndex = 0;; ++wordIndex) {
         const Char* wordEnd = findWordSeparator(wordStart, lineEnd);
-        placeWord(wordStart, wordEnd, wordIndex);
+        if (!placeWord(wordStart, wordEnd, wordIndex))
+            return false;
         if (wordEnd == lineEnd)
             break;
         wordStart = wordEnd + 1;
@@ -627,14 +654,16 @@ static void processLine(const Char* lineStart, const Char* lineEnd, size_t colum
         for (auto& row : rows)
             trimRowTrailingSpaces(row, options.ambiguousIsNarrow);
     }
+    return true;
 }
 
 // ============================================================================
 // Main Implementation
 // ============================================================================
 
+// nullopt: a row, or the list of rows, could not grow.
 template<typename Char>
-static WTF::String wrapAnsiImpl(std::span<const Char> input, size_t columns, const WrapAnsiOptions& options)
+static std::optional<WTF::String> wrapAnsiImpl(std::span<const Char> input, size_t columns, const WrapAnsiOptions& options)
 {
     if (columns == 0 || input.empty()) {
         // Return copy of input
@@ -674,7 +703,8 @@ static WTF::String wrapAnsiImpl(std::span<const Char> input, size_t columns, con
 
         // Process this input line
         Vector<Row<Char>> lineRows;
-        processLine(lineStart, lineEnd, columns, options, lineRows);
+        if (!processLine(lineStart, lineEnd, columns, options, lineRows)) [[unlikely]]
+            return std::nullopt;
 
         // Join and append this line's rows with ANSI preservation
         if (!lineRows.isEmpty()) {
@@ -751,14 +781,19 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionBunWrapAnsi, (JSC::JSGlobalObject * globalObj
     }
 
     // Process based on encoding
-    WTF::String result;
+    std::optional<WTF::String> result;
     if (view->is8Bit()) {
         result = wrapAnsiImpl<Latin1Character>(view->span8(), columns, options);
     } else {
         result = wrapAnsiImpl<UChar>(view->span16(), columns, options);
     }
 
-    return JSC::JSValue::encode(JSC::jsString(vm, result));
+    if (!result) [[unlikely]] {
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+
+    return JSC::JSValue::encode(JSC::jsString(vm, WTF::move(*result)));
 }
 
 } // namespace Bun

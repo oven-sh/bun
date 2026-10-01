@@ -20,6 +20,7 @@
 
 #include "config.h"
 #include "JSWorker.h"
+#include "CodeGenerationFromStrings.h"
 
 #include "ActiveDOMObject.h"
 #include "BunCPUProfiler.h"
@@ -156,6 +157,11 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
         return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "filename"_s, "string or an instance of URL"_s, argument0.value());
     }
     RETURN_IF_EXCEPTION(throwScope, {});
+    // node:worker_threads' `eval: true` arrives here as a blob: URL of the source.
+    if (Bun::isDataOrBlobURL(scriptUrl)) [[unlikely]] {
+        Bun::throwIfMayNotMakeScriptFromStrings(lexicalGlobalObject, throwScope);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
     EnsureStillAliveScope argument1 = callFrame->argument(1);
 
     WorkerOptions options {};
@@ -344,6 +350,16 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
     if (shareEnv) {
         options.sharedEnvStore = Bun::ensureSharedEnvStoreForWorker(globalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
+    }
+
+    // A worker made by script of a Bun.ModuleGraph that was already disposed is terminated at birth
+    // and reports nothing (Worker::create), so nothing is sent to it. The ports node:worker_threads
+    // made for it in that context (in the transfer list, and inside workerData) were closed at
+    // birth the same way: serializing them would throw from the constructor, into a loop that may
+    // be retrying without ever yielding.
+    if (context->isStopped()) {
+        transferList.clear();
+        workerData = jsUndefined();
     }
 
     Vector<RefPtr<MessagePort>> ports;

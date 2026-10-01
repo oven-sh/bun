@@ -29,6 +29,7 @@ import net from "net";
 import { join } from "path";
 import { Readable } from "stream";
 import { gzipSync } from "zlib";
+import { deadPort } from "../../bun/http/proxy-stress-helpers";
 
 const tmp_dir = tmpdirSync();
 const fetchFixture3 = join(import.meta.dir, "fetch-leak-test-fixture-3.js");
@@ -1790,6 +1791,165 @@ it("fetch() file:// works", async () => {
   expect(fileResponseText).toEqual(bunFileText);
   gc(true);
 });
+it("fetch() file:// rejects a host that is not this machine", async () => {
+  const path = Bun.fileURLToPath(new URL("fixture.html", import.meta.url));
+  const expected = await Bun.file(path).text();
+  const pathname = new URL(import.meta.url).pathname.replace(/[^/]*$/, "fixture.html");
+  const outcome = (url: string) =>
+    fetch(url).then(
+      r => r.text(),
+      e => `${e.name} ${e.code}: ${e.message}`,
+    );
+  expect(await outcome(`file://${pathname}`)).toBe(expected);
+  expect(await outcome(`file://localhost${pathname}`)).toBe(expected);
+  expect(await outcome(`file://LOCALHOST${pathname}`)).toBe(expected);
+  const rejected =
+    `TypeError ERR_INVALID_FILE_URL_HOST: File URL host must be "localhost" or empty` +
+    (isWindows ? ": fetch() does not read UNC paths" : ` on ${process.platform}`);
+  expect(await outcome(`file://any.host${pathname}`)).toBe(rejected);
+  expect(await outcome(`file://127.0.0.1${pathname}`)).toBe(rejected);
+  // fileURLToPath's other rule: an encoded separator would become a real one.
+  const encoded =
+    "TypeError ERR_INVALID_FILE_URL_PATH: File URL path must not include encoded " +
+    (isWindows ? "\\ or / characters" : "/ characters");
+  expect(await outcome(`file://${pathname.replace(/\/([^/]*)$/, "%2F$1")}`)).toBe(encoded);
+  expect(await outcome(`file://${pathname.replace(/\/([^/]*)$/, "/sub/..%2f$1")}`)).toBe(encoded);
+});
+
+it("proxy: true is rejected, since it names no proxy", async () => {
+  expect(await fetch("http://example.invalid/", { proxy: true } as any).catch(e => e.code)).toBe(
+    "ERR_INVALID_ARG_TYPE",
+  );
+  expect(() => new Bun.FetchSession({ proxy: true } as any)).toThrow(
+    'The "proxy" argument must be a string, a URL, an object with a "url", or false. Received type boolean (true)',
+  );
+});
+
+it("URL userinfo is sent as Basic credentials unless an Authorization header is given", async () => {
+  const seen: Record<string, string | null> = {};
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      seen[new URL(req.url).pathname] = req.headers.get("authorization");
+      return new Response(req.url);
+    },
+  });
+  const base = `localhost:${server.port}`;
+  const urls = await Promise.all(
+    [
+      fetch(`http://user:p%40ss@${base}/a`),
+      fetch(`http://user@${base}/b`),
+      fetch(new Request(`http://user:pass@${base}/c`)),
+      fetch(`http://user:pass@${base}/d`, { headers: { authorization: "Bearer explicit" } }),
+      fetch(`http://${base}/e`),
+    ].map(p => p.then(r => r.text())),
+  );
+  // The request line and Host never carry the userinfo.
+  expect(urls).toEqual(["a", "b", "c", "d", "e"].map(p => `http://${base}/${p}`));
+  expect(seen).toEqual({
+    "/a": `Basic ${btoa("user:p@ss")}`,
+    "/b": `Basic ${btoa("user:")}`,
+    "/c": `Basic ${btoa("user:pass")}`,
+    "/d": "Bearer explicit",
+    "/e": null,
+  });
+});
+
+it("URL userinfo does not displace the Content-Type a body brings", async () => {
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const form = await req.formData();
+      return Response.json({ authorization: req.headers.get("authorization"), field: form.get("field") });
+    },
+  });
+  const body = new FormData();
+  body.set("field", "value");
+  const response = await fetch(`http://user:pass@localhost:${server.port}/`, { method: "POST", body });
+  expect(await response.json()).toEqual({ authorization: `Basic ${btoa("user:pass")}`, field: "value" });
+});
+
+it("URL credentials are not forwarded on a cross-origin redirect", async () => {
+  const seen: (string | null)[] = [];
+  using target = Bun.serve({
+    port: 0,
+    fetch(req) {
+      seen.push(req.headers.get("authorization"));
+      return new Response("target");
+    },
+  });
+  using origin = Bun.serve({
+    port: 0,
+    fetch(req) {
+      seen.push(req.headers.get("authorization"));
+      return Response.redirect(`http://localhost:${target.port}/`, 302);
+    },
+  });
+  expect(await (await fetch(`http://user:pass@localhost:${origin.port}/`)).text()).toBe("target");
+  expect(seen).toEqual([`Basic ${btoa("user:pass")}`, null]);
+});
+
+it("URL credentials survive a same-origin redirect whose Location leaves them out", async () => {
+  const seen: [string, string | null][] = [];
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const { pathname } = new URL(req.url);
+      seen.push([pathname, req.headers.get("authorization")]);
+      return pathname === "/a" ? Response.redirect(`http://localhost:${server.port}/b`, 302) : new Response("b");
+    },
+  });
+  expect(await (await fetch(`http://user:pass@localhost:${server.port}/a`)).text()).toBe("b");
+  const basic = `Basic ${btoa("user:pass")}`;
+  expect(seen).toEqual([
+    ["/a", basic],
+    ["/b", basic],
+  ]);
+});
+
+it("connection failures reject with an errno-style code that the message starts with", async () => {
+  using dead = await deadPort();
+  const refused = await fetch(`http://127.0.0.1:${dead.port}/`).catch(e => e);
+  expect({ name: refused.name, code: refused.code, message: refused.message }).toEqual({
+    name: "TypeError",
+    code: "ECONNREFUSED",
+    message: "ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
+  });
+
+  // A name with several addresses, none of which accepts: the path Windows reports differently.
+  const viaName = await fetch(`http://localhost:${dead.port}/`).catch(e => e);
+  expect(viaName.code).toBe("ECONNREFUSED");
+  // The URL an error names does not carry the URL's credentials.
+  const withUserinfo = await fetch(`http://user:secret@127.0.0.1:${dead.port}/x`).catch(e => e);
+  expect(withUserinfo.path).toBe(`http://127.0.0.1:${dead.port}/x`);
+
+  const resetter = net.createServer(socket => socket.once("data", () => socket.destroy()));
+  resetter.listen(0, "127.0.0.1");
+  await once(resetter, "listening");
+  try {
+    const reset = await fetch(`http://127.0.0.1:${(resetter.address() as net.AddressInfo).port}/`, {
+      method: "POST",
+      body: "not retried",
+    }).catch(e => e);
+    expect({ name: reset.name, code: reset.code, message: reset.message }).toEqual({
+      name: "TypeError",
+      code: "ECONNRESET",
+      message:
+        "ECONNRESET: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()",
+    });
+  } finally {
+    resetter.close();
+  }
+
+  using looping = Bun.serve({ port: 0, fetch: req => Response.redirect(req.url, 302) });
+  const tooMany = await fetch(looping.url, { maxRedirects: 2 }).catch(e => e);
+  expect({ code: tooMany.code, message: tooMany.message }).toEqual({
+    code: "TooManyRedirects",
+    message:
+      "TooManyRedirects: The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()",
+  });
+});
+
 it("cloned response headers are independent before accessing", () => {
   const response = new Response("hello", {
     headers: {
@@ -2923,6 +3083,38 @@ it("rejects a response with an unparseable Content-Length instead of treating it
   expect(await ok.text()).toBe("hello");
 });
 
+it("never sends the URL fragment in the request-target", async () => {
+  // The request-target is `new URL(s).pathname + search`. A fragment is never
+  // sent, even one that contains a `?`.
+  const targets: string[] = [];
+  await using server = net.createServer(socket => {
+    socket.once("data", data => {
+      targets.push(data.toString("utf8").split("\r\n")[0]);
+      socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+    });
+  });
+  await once(server.listen(0, "localhost"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const tails = [
+    "/p#frag?x=1",
+    "/p#/route?id=7",
+    "/#?",
+    "/cb#access_token=abc&scope=x?y",
+    "/p?q=1#frag?x=2",
+    "/p#plain",
+    "/a//b?q=1#/c?d",
+  ];
+  const expected: string[] = [];
+  for (const tail of tails) {
+    const href = `http://localhost:${port}${tail}`;
+    const url = new URL(href);
+    expected.push(`GET ${url.pathname}${url.search} HTTP/1.1`);
+    await (await fetch(href)).text();
+  }
+  expect(targets).toEqual(expected);
+});
+
 it("combines duplicate response headers per the Fetch spec", async () => {
   // WHATWG Fetch requires repeated header fields to be combined with ", " when
   // read via Headers.get(), except Set-Cookie which is stored as separate
@@ -3124,6 +3316,372 @@ it("fetch() does not forward a caller-supplied Content-Length on a request witho
 
   const withBodyHeaders = headerLinesOf(requests[1]);
   expect(withBodyHeaders.filter(line => line.startsWith("content-length:"))).toEqual(["content-length: 2"]);
+});
+
+describe("fetch() with a streaming request body and caller framing headers", () => {
+  // fetch() cannot measure a ReadableStream, an async generator or a node
+  // stream.Readable body. It sends such a body in one of two ways: raw bytes
+  // behind a Content-Length the caller declared, or chunk-encoded bytes behind a
+  // Transfer-Encoding that ends in "chunked". A caller header that asks for
+  // anything else describes framing fetch() does not produce, so the fetch
+  // rejects before a byte is written. A declared Content-Length must match the
+  // body: a surplus byte would land on the connection after the declared end,
+  // where a keep-alive peer reads it as the start of the next request, and a
+  // missing byte leaves the peer waiting for a body that never completes.
+  type RawRequest = { framing: string[]; body: string };
+
+  // A raw origin that records, per connection, the framing header lines exactly
+  // as written and the body bytes exactly as received.
+  async function rawOrigin() {
+    const queue: RawRequest[] = [];
+    const waiting: ((request: RawRequest) => void)[] = [];
+    let connections = 0;
+    const record = (raw: string) => {
+      const headerEnd = raw.indexOf("\r\n\r\n");
+      const request: RawRequest = {
+        framing: raw
+          .slice(0, headerEnd === -1 ? raw.length : headerEnd)
+          .split("\r\n")
+          .filter(line => /^(content-length|transfer-encoding):/i.test(line)),
+        body: headerEnd === -1 ? "" : raw.slice(headerEnd + 4),
+      };
+      const resolve = waiting.shift();
+      if (resolve) resolve(request);
+      else queue.push(request);
+    };
+    const server = net.createServer(socket => {
+      connections++;
+      let raw = "";
+      let replied = false;
+      socket.on("error", () => {});
+      // The client resets a connection whose body does not match its
+      // Content-Length, so the close is the only signal that the request is
+      // over. Record whatever arrived.
+      socket.on("close", () => {
+        if (!replied) record(raw);
+      });
+      socket.on("data", data => {
+        raw += data.toString("latin1");
+        const headerEnd = raw.indexOf("\r\n\r\n");
+        if (headerEnd === -1 || replied) return;
+        const head = raw.slice(0, headerEnd);
+        const received = raw.slice(headerEnd + 4);
+        if (/^transfer-encoding:.*chunked\s*$/im.test(head)) {
+          if (!received.endsWith("0\r\n\r\n")) return;
+        } else {
+          const declared = Number(/^content-length:\s*(\d+)\s*$/im.exec(head)?.[1] ?? 0);
+          if (received.length < declared) return;
+        }
+        replied = true;
+        record(raw);
+        socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK");
+      });
+    });
+    await once(server.listen(0, "localhost"), "listening");
+    return {
+      url: `http://localhost:${(server.address() as AddressInfo).port}/`,
+      nextRequest: () =>
+        queue.length > 0 ? Promise.resolve(queue.shift()!) : new Promise<RawRequest>(resolve => waiting.push(resolve)),
+      get connections() {
+        return connections;
+      },
+      [Symbol.asyncDispose]: () => server[Symbol.asyncDispose](),
+    };
+  }
+
+  const body = "nr1-nr2"; // 7 bytes
+  const chunked = `${body.length.toString(16)}\r\n${body}\r\n0\r\n\r\n`;
+  const bodyKinds: [string, () => unknown][] = [
+    [
+      "ReadableStream",
+      () =>
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(body));
+            controller.close();
+          },
+        }),
+    ],
+    [
+      "async generator",
+      async function* () {
+        yield body;
+      },
+    ],
+    ["stream.Readable", () => Readable.from([body])],
+  ];
+  const post = (url: string, headers: HeadersInit, makeBody: () => unknown) =>
+    fetch(url, { method: "POST", headers, body: makeBody(), duplex: "half" } as RequestInit);
+  // The response text, or what the fetch rejected with.
+  const outcome = (response: Promise<Response>) =>
+    response.then(
+      r => r.text(),
+      e => ({ name: e?.name, code: e?.code }),
+    );
+  const invalidHeader = { name: "TypeError", code: "ERR_HTTP_INVALID_HEADER_VALUE" };
+  const mismatch = { name: "Error", code: "ERR_HTTP_CONTENT_LENGTH_MISMATCH" };
+
+  describe.each(bodyKinds)("%s body", (_, makeBody) => {
+    it("sends the raw bytes behind a Content-Length that matches them", async () => {
+      await using origin = await rawOrigin();
+      expect(await outcome(post(origin.url, { "Content-Length": String(body.length) }, makeBody))).toBe("OK");
+      expect(await origin.nextRequest()).toEqual({ framing: ["Content-Length: 7"], body });
+    });
+
+    it("fails the request when the body does not match its Content-Length", async () => {
+      await using origin = await rawOrigin();
+      // Longer than declared: no byte of the surplus chunk is written, so
+      // nothing can be read as the start of the next request.
+      expect(await outcome(post(origin.url, { "Content-Length": "2" }, makeBody))).toEqual(mismatch);
+      expect((await origin.nextRequest()).body).toBe("");
+      // Shorter than declared: the request fails instead of leaving the peer
+      // waiting for 43 bytes that never come. The peer sees the connection reset
+      // mid-message. How much it read before the reset is up to its TCP stack.
+      expect(await outcome(post(origin.url, { "Content-Length": "50" }, makeBody))).toEqual(mismatch);
+      expect((await origin.nextRequest()).body.length).toBeLessThanOrEqual(body.length);
+      // The next request gets a connection of its own.
+      expect(await outcome(post(origin.url, {}, makeBody))).toBe("OK");
+      expect(await origin.nextRequest()).toEqual({ framing: ["Transfer-Encoding: chunked"], body: chunked });
+    });
+
+    it("forwards a Transfer-Encoding whose final coding is chunked, as written", async () => {
+      await using origin = await rawOrigin();
+      for (const value of ["chunked", "Chunked", "gzip, chunked"]) {
+        expect(await outcome(post(origin.url, { "Transfer-Encoding": value }, makeBody))).toBe("OK");
+        expect(await origin.nextRequest()).toEqual({ framing: [`Transfer-Encoding: ${value}`], body: chunked });
+      }
+      // Two caller rows reach the client joined, like any list header.
+      const joined = new Headers();
+      joined.append("Transfer-Encoding", "gzip");
+      joined.append("Transfer-Encoding", "chunked");
+      expect(await outcome(post(origin.url, joined, makeBody))).toBe("OK");
+      expect(await origin.nextRequest()).toEqual({ framing: ["Transfer-Encoding: gzip, chunked"], body: chunked });
+      // A Content-Length next to it is neither sent nor counted.
+      for (const contentLength of [String(body.length), "2"]) {
+        const headers = { "Transfer-Encoding": "chunked", "Content-Length": contentLength };
+        expect(await outcome(post(origin.url, headers, makeBody))).toBe("OK");
+        expect(await origin.nextRequest()).toEqual({ framing: ["Transfer-Encoding: chunked"], body: chunked });
+      }
+    });
+
+    it("rejects a Content-Length that is not a count of bytes, before anything is sent", async () => {
+      await using origin = await rawOrigin();
+      const twoRows = new Headers();
+      twoRows.append("Content-Length", "5");
+      twoRows.append("Content-Length", "7");
+      const rows: HeadersInit[] = [
+        ...["abc", "+5", "0x5", "5.0", "-1", "", "99999999999999999999"].map(value => ({ "Content-Length": value })),
+        // FetchHeaders joins two caller rows into "5, 7".
+        twoRows,
+        { "content-length": "7", "Content-Length": "7" },
+        // Not a count even when a usable Transfer-Encoding makes it moot.
+        { "Content-Length": "abc", "Transfer-Encoding": "chunked" },
+      ];
+      for (const headers of rows) {
+        expect(await outcome(post(origin.url, headers, makeBody))).toEqual(invalidHeader);
+        // The next fetch to the origin works, and is the only request it sees.
+        expect(await outcome(post(origin.url, {}, makeBody))).toBe("OK");
+        expect(await origin.nextRequest()).toEqual({ framing: ["Transfer-Encoding: chunked"], body: chunked });
+      }
+      expect(origin.connections).toBe(rows.length);
+    });
+
+    it("rejects a Transfer-Encoding that is not a list of known codings ending in chunked, before anything is sent", async () => {
+      await using origin = await rawOrigin();
+      const rows: HeadersInit[] = [
+        ...["identity", "gzip", "chunked, gzip", "chunked, chunked", "gzip; q=1, chunked", "br2, chunked", ""].map(
+          value => ({ "Transfer-Encoding": value }),
+        ),
+        // A usable Content-Length does not rescue it.
+        { "Transfer-Encoding": "gzip", "Content-Length": String(body.length) },
+      ];
+      for (const headers of rows) {
+        expect(await outcome(post(origin.url, headers, makeBody))).toEqual(invalidHeader);
+        expect(await outcome(post(origin.url, {}, makeBody))).toBe("OK");
+        expect(await origin.nextRequest()).toEqual({ framing: ["Transfer-Encoding: chunked"], body: chunked });
+      }
+      expect(origin.connections).toBe(rows.length);
+    });
+  });
+
+  it("treats fetch(new Request(url, init)) and fetch(request, { headers }) like fetch(url, init)", async () => {
+    await using origin = await rawOrigin();
+    const [, makeBody] = bodyKinds[0];
+    const init = (headers: HeadersInit) =>
+      ({ method: "POST", headers, body: makeBody(), duplex: "half" }) as RequestInit;
+    expect(await outcome(fetch(new Request(origin.url, init({ "Content-Length": "abc" }))))).toEqual(invalidHeader);
+    expect(
+      await outcome(fetch(new Request(origin.url, init({})), { headers: { "Transfer-Encoding": "gzip" } })),
+    ).toEqual(invalidHeader);
+    expect(await outcome(fetch(new Request(origin.url, init({ "Content-Length": "2" }))))).toEqual(mismatch);
+    expect((await origin.nextRequest()).body).toBe("");
+    expect(origin.connections).toBe(1);
+  });
+
+  it("keeps the computed Content-Length for a body it can measure", async () => {
+    await using origin = await rawOrigin();
+    // A blob-backed stream has a known size. The caller's framing headers are
+    // dropped and the computed Content-Length wins, as for a string or a Blob.
+    for (const headers of [{ "Content-Length": "2" }, { "Content-Length": "abc" }, { "Transfer-Encoding": "gzip" }]) {
+      expect(await outcome(post(origin.url, headers, () => new Response(body).body))).toBe("OK");
+      expect(await origin.nextRequest()).toEqual({ framing: [`Content-Length: ${body.length}`], body });
+    }
+  });
+
+  describe("across a redirect", () => {
+    // A 303 (or a 301/302 on POST) drops the stream body and follows with a GET.
+    // The caller's framing headers describe that dropped body, so the follow-up
+    // must carry neither of them: a bodyless GET that announces Content-Length: 7
+    // makes the target read the next request on the connection as its body.
+    type Seen = { connection: number; request: string; framing: string[]; body: string };
+
+    // A keep-alive origin: it parses every request on a connection by its own
+    // framing, records it, and answers by path. "/early-303" answers before it
+    // reads the body. "/303" and "/307" answer once the body is complete.
+    async function redirectOrigin() {
+      const queue: Seen[] = [];
+      const waiting: ((seen: Seen) => void)[] = [];
+      const seenPaths = new Map<string, PromiseWithResolvers<void>>();
+      const whenSeen = (request: string) => {
+        if (!seenPaths.has(request)) seenPaths.set(request, Promise.withResolvers<void>());
+        return seenPaths.get(request)!.promise;
+      };
+      let connections = 0;
+      let requests = 0;
+      const record = (seen: Seen) => {
+        requests++;
+        whenSeen(seen.request);
+        seenPaths.get(seen.request)!.resolve();
+        const resolve = waiting.shift();
+        if (resolve) resolve(seen);
+        else queue.push(seen);
+      };
+      const reply = (status: string, extra = "", text = "") =>
+        `HTTP/1.1 ${status}\r\n${extra}Content-Length: ${text.length}\r\n\r\n${text}`;
+      const sockets = new Set<net.Socket>();
+      const server = net.createServer(socket => {
+        const connection = ++connections;
+        let raw = "";
+        let abandoned = false;
+        sockets.add(socket);
+        socket.on("close", () => sockets.delete(socket));
+        socket.on("error", () => {});
+        socket.on("data", data => {
+          if (abandoned) return;
+          raw += data.toString("latin1");
+          for (;;) {
+            const headerEnd = raw.indexOf("\r\n\r\n");
+            if (headerEnd === -1) return;
+            const lines = raw.slice(0, headerEnd).split("\r\n");
+            const request = lines[0].replace(/ HTTP\/1\.1$/, "");
+            const framing = lines.slice(1).filter(line => /^(content-length|transfer-encoding):/i.test(line));
+            const rest = raw.slice(headerEnd + 4);
+            if (request === "POST /early-303") {
+              // The rest of this connection is the body the client gives up on.
+              abandoned = true;
+              record({ connection, request, framing, body: "" });
+              socket.write(reply("303 See Other", "Location: /next\r\n"));
+              return;
+            }
+            let bodyLength = 0;
+            if (framing.some(line => /^transfer-encoding:.*chunked\s*$/i.test(line))) {
+              const end = rest.indexOf("0\r\n\r\n");
+              if (end === -1) return;
+              bodyLength = end + 5;
+            } else {
+              bodyLength = Number(/^content-length:\s*(\d+)\s*$/i.exec(framing[0] ?? "")?.[1] ?? 0);
+              if (rest.length < bodyLength) return;
+            }
+            record({ connection, request, framing, body: rest.slice(0, bodyLength) });
+            raw = rest.slice(bodyLength);
+            if (request === "POST /303") socket.write(reply("303 See Other", "Location: /next\r\n"));
+            else if (request === "POST /307") socket.write(reply("307 Temporary Redirect", "Location: /next\r\n"));
+            else socket.write(reply("200 OK", "", "OK"));
+          }
+        });
+      });
+      await once(server.listen(0, "localhost"), "listening");
+      return {
+        url: `http://localhost:${(server.address() as AddressInfo).port}/`,
+        take: () =>
+          queue.length > 0 ? Promise.resolve(queue.shift()!) : new Promise<Seen>(resolve => waiting.push(resolve)),
+        whenSeen,
+        get requests() {
+          return requests;
+        },
+        // The client keeps these connections alive in its pool; close() would wait for them.
+        [Symbol.asyncDispose]: () => {
+          for (const socket of sockets) socket.destroy();
+          return server[Symbol.asyncDispose]();
+        },
+      };
+    }
+
+    const [, makeBody] = bodyKinds[0];
+    const framings: [string, HeadersInit, Pick<Seen, "framing" | "body">][] = [
+      ["Content-Length: 7", { "Content-Length": "7" }, { framing: ["Content-Length: 7"], body }],
+      [
+        "Transfer-Encoding: gzip, chunked",
+        { "Transfer-Encoding": "gzip, chunked" },
+        { framing: ["Transfer-Encoding: gzip, chunked"], body: chunked },
+      ],
+      ["no framing header", {}, { framing: ["Transfer-Encoding: chunked"], body: chunked }],
+    ];
+
+    it.each(framings)("a 303 follow-up carries no framing header (%s)", async (_, headers, hop1) => {
+      await using origin = await redirectOrigin();
+      const response = await post(origin.url + "303", headers, makeBody);
+      expect([response.status, response.redirected, await response.text()]).toEqual([200, true, "OK"]);
+      expect(await origin.take()).toMatchObject({ request: "POST /303", ...hop1 });
+      const followUp = await origin.take();
+      expect(followUp).toEqual({ connection: followUp.connection, request: "GET /next", framing: [], body: "" });
+      // Nothing is left over on the follow-up's connection: the next fetch reuses
+      // it and the origin parses that request as its own.
+      expect(await outcome(fetch(origin.url + "after", { method: "POST", body: "hello" }))).toBe("OK");
+      expect(await origin.take()).toEqual({
+        connection: followUp.connection,
+        request: "POST /after",
+        framing: ["Content-Length: 5"],
+        body: "hello",
+      });
+    });
+
+    it("a 303 that arrives before the body resolves with the final response and drops hop 1's connection", async () => {
+      await using origin = await redirectOrigin();
+      // The stream says nothing until the follow-up has reached the origin, then
+      // ends 7 bytes short of its declared length. That body was already dropped,
+      // so the count does not fail the fetch.
+      const followedUp = origin.whenSeen("GET /next");
+      const late = new ReadableStream({
+        async pull(controller) {
+          await followedUp;
+          controller.close();
+        },
+      });
+      const response = await post(origin.url + "early-303", { "Content-Length": "7" }, () => late);
+      expect([response.status, response.redirected, await response.text()]).toEqual([200, true, "OK"]);
+      const hop1 = await origin.take();
+      expect(hop1).toMatchObject({ request: "POST /early-303", framing: ["Content-Length: 7"] });
+      const followUp = await origin.take();
+      expect(followUp).toMatchObject({ request: "GET /next", framing: [], body: "" });
+      // Hop 1 still owed 7 body bytes, so its connection was closed, not pooled.
+      expect(followUp.connection).not.toBe(hop1.connection);
+    });
+
+    it.each(framings)("a 307 rejects as not replayable (%s)", async (_, headers, hop1) => {
+      await using origin = await redirectOrigin();
+      const rejection = await post(origin.url + "307", headers, makeBody).then(
+        response => response.status,
+        e => ({ name: e?.name, message: e?.message }),
+      );
+      expect(rejection).toEqual({
+        name: "TypeError",
+        message: "Request body is a ReadableStream and cannot be replayed for this redirect",
+      });
+      expect(await origin.take()).toMatchObject({ request: "POST /307", ...hop1 });
+      expect(origin.requests).toBe(1);
+    });
+  });
 });
 
 it("releases interim 1xx response bytes as they are parsed while waiting for the final response", async () => {

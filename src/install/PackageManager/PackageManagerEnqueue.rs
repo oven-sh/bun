@@ -1720,13 +1720,19 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 }
                 return Ok(());
             }
-            let res: Resolution = match &tarball.uri {
-                dependency::tarball::Uri::Local(path) => {
-                    Resolution::init(ResolutionTagged::LocalTarball(*path))
+            let local_path: Option<SemverString> = match &tarball.uri {
+                dependency::tarball::Uri::Local(path) if !version_was_replaced => {
+                    Some(locate_next_to_declaring_tarball(this, id, *path).unwrap_or(*path))
                 }
-                dependency::tarball::Uri::Remote(url) => {
+                dependency::tarball::Uri::Local(path) => Some(*path),
+                dependency::tarball::Uri::Remote(_) => None,
+            };
+            let res: Resolution = match (&tarball.uri, local_path) {
+                (_, Some(path)) => Resolution::init(ResolutionTagged::LocalTarball(path)),
+                (dependency::tarball::Uri::Remote(url), None) => {
                     Resolution::init(ResolutionTagged::RemoteTarball(*url))
                 }
+                (dependency::tarball::Uri::Local(_), None) => unreachable!(),
             };
 
             // First: see if we already loaded the tarball package in-memory
@@ -1741,9 +1747,10 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             // SAFETY: the enqueue callees copy `url` into the filename store
             // before any `string_bytes` resize.
             let url = unsafe {
-                detach_lifetime(match &tarball.uri {
-                    dependency::tarball::Uri::Local(path) => this.lockfile.str(path),
-                    dependency::tarball::Uri::Remote(url) => this.lockfile.str(url),
+                detach_lifetime(match (&tarball.uri, &local_path) {
+                    (_, Some(path)) => this.lockfile.str(path),
+                    (dependency::tarball::Uri::Remote(url), None) => this.lockfile.str(url),
+                    (dependency::tarball::Uri::Local(_), None) => unreachable!(),
                 })
             };
             let task_id = Task::Id::for_tarball(url);
@@ -2185,7 +2192,7 @@ fn enqueue_local_tarball(
                 Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
                     FileSystem::instance().top_level_dir(),
                     &mut abs_buf,
-                    &[&base_dir, path],
+                    &[base_dir, path],
                 ),
                 false,
             ),
@@ -2241,12 +2248,12 @@ fn enqueue_local_tarball(
     unsafe { &raw mut (*task).threadpool_task }
 }
 
-/// The directory that `path` is relative to, itself relative to the top-level dir; `None` is the top-level dir.
-fn local_tarball_base_dir(
-    lockfile: &Lockfile::Lockfile,
+/// The workspace or `file:` folder directory that `path` is relative to; `None` is the top-level dir.
+fn local_tarball_base_dir<'a>(
+    lockfile: &'a Lockfile::Lockfile,
     dependency_id: DependencyID,
     path: &[u8],
-) -> Option<Vec<u8>> {
+) -> Option<&'a [u8]> {
     let declared = &lockfile.buffers.dependencies[dependency_id as usize].version;
     let declared_by_parent = declared.tag == dependency::version::Tag::Tarball
         && matches!(
@@ -2262,29 +2269,59 @@ fn local_tarball_base_dir(
     local_package_dir(lockfile, declarer)
 }
 
-/// The directory `package_id` was read from, relative to the top-level dir. `None` for the root and the cache.
-fn local_package_dir(lockfile: &Lockfile::Lockfile, package_id: PackageID) -> Option<Vec<u8>> {
+/// The workspace or `file:` folder directory of `package_id`; `None` for every other package.
+fn local_package_dir(lockfile: &Lockfile::Lockfile, package_id: PackageID) -> Option<&[u8]> {
     let res = &lockfile.packages.items_resolution()[package_id as usize];
-    match res.tag {
-        ResolutionTag::Workspace => Some(lockfile.str(res.workspace()).to_vec()),
-        ResolutionTag::Folder => Some(lockfile.str(res.folder()).to_vec()),
-        // Like npm, a local tarball's own `file:` tarballs are read next to it.
-        ResolutionTag::LocalTarball => {
-            let tarball = lockfile.str(res.local_tarball());
-            let base_dir = lockfile
-                .first_dependency_resolving_to(package_id)
-                .and_then(|edge| lockfile.get_parent_pkg_of_dependency(edge))
-                .and_then(|declarer| local_package_dir(lockfile, declarer));
-            let location = match base_dir {
-                Some(base_dir) => {
-                    Path::resolve_path::join::<Path::platform::Auto>(&[&base_dir, tarball])
-                }
-                None => tarball,
-            };
-            Some(bun_paths::dirname(location).unwrap_or(b"").to_vec())
-        }
-        _ => None,
+    let dir = match res.tag {
+        ResolutionTag::Workspace => res.workspace(),
+        ResolutionTag::Folder => res.folder(),
+        _ => return None,
+    };
+    Some(lockfile.str(dir))
+}
+
+/// Like npm, a local tarball's own `file:` tarballs are read next to it. The path
+/// stored for such an edge is the file's location from the top-level dir, so that the
+/// package identity, the read task and a later install all name the same file.
+/// `None` leaves the declared path as it is.
+fn locate_next_to_declaring_tarball(
+    this: &mut PackageManager,
+    dependency_id: DependencyID,
+    declared: SemverString,
+) -> Option<SemverString> {
+    let lockfile = &this.lockfile;
+    let declarer = lockfile.get_parent_pkg_of_dependency(dependency_id)?;
+    let declarer_res = &lockfile.packages.items_resolution()[declarer as usize];
+    if declarer_res.tag != ResolutionTag::LocalTarball {
+        return None;
     }
+    let declared_path = lockfile.str(&declared);
+    if bun_paths::is_absolute(declared_path) {
+        return None;
+    }
+    // The declaring tarball's own path is relative to the workspace or folder that
+    // declared it, or to the top-level dir (a root declaration, or a location stored here).
+    let declarer_tarball = lockfile.str(declarer_res.local_tarball());
+    let declarer_base_dir = lockfile
+        .first_dependency_resolving_to(declarer)
+        .and_then(|edge| lockfile.get_parent_pkg_of_dependency(edge))
+        .and_then(|declarer_of_declarer| local_package_dir(lockfile, declarer_of_declarer));
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let declarer_location = match declarer_base_dir {
+        Some(base_dir) => Path::resolve_path::join_string_buf::<Path::platform::Auto>(
+            &mut *buf,
+            &[base_dir, declarer_tarball],
+        ),
+        None => declarer_tarball,
+    };
+    let declarer_dir = bun_paths::dirname(declarer_location).unwrap_or(b"");
+    let location = Path::resolve_path::join::<Path::platform::Auto>(&[declarer_dir, declared_path]);
+    let mut builder = this.lockfile.string_builder();
+    builder.count(location);
+    builder.allocate().unwrap_or_oom();
+    let located = builder.append::<SemverString>(location);
+    builder.clamp();
+    Some(located)
 }
 
 fn update_name_and_name_hash_from_version_replacement(

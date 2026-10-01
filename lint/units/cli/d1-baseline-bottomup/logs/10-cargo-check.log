@@ -1,0 +1,15 @@
+### cmd: cargo check -p bun_lint -p bun_runtime --message-format=short
+### start: 2026-10-01T10:29:51Z
+src/shell_parser/lib.rs:1:30: warning: `feature(generic_const_exprs)` is not supported with the next-generation trait solver
+warning: `bun_shell_parser` (lib) generated 1 warning
+warning: unused dependency `bun_typecheck`
+  --> src/runtime/Cargo.toml:68:1
+   |
+68 | bun_typecheck.workspace = true
+   | ^^^^^^^^^^^^^
+   |
+   = note: `cargo::unused_dependencies` is set to `warn` by default
+help: consider removing the dependency on `bun_typecheck`
+warning: `bun_runtime` (manifest) generated 1 warning
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.84s
+### finished: 2026-10-01T10:29:53Z rc=0 wall=3s

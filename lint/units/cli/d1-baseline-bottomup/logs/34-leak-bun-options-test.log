@@ -1,0 +1,27 @@
+### cmd: env BUN_DESTRUCT_VM_ON_EXIT=1 ASAN_OPTIONS=allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1 LSAN_OPTIONS=malloc_context_size=30:print_suppressions=0:suppressions=/workspace/wt/cli/test/leaksan.supp bun bd test test/cli/env/bun-options.test.ts
+### start: 2026-10-01T10:37:54Z
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet test test/cli/env/bun-options.test.ts
+bun test v1.4.3 (be1ebe529)
+
+test/cli/env/bun-options.test.ts:
+(pass) BUN_OPTIONS environment variable > basic usage - passes options to bun command [2415.90ms]
+(pass) BUN_OPTIONS environment variable > multiple options - passes all options to bun command [1109.26ms]
+(pass) BUN_OPTIONS environment variable > options with quotes - properly handles quoted options [1177.56ms]
+(pass) BUN_OPTIONS environment variable > priority - environment options go before command line options [2129.36ms]
+(pass) BUN_OPTIONS environment variable > bare flag before flag with value is recognized [1444.99ms]
+(pass) BUN_OPTIONS environment variable > bare flag before flag with value is recognized (standalone executable) [10236.00ms]
+(pass) BUN_OPTIONS environment variable > empty BUN_OPTIONS - should work normally [1623.15ms]
+(pass) BUN_OPTIONS environment variable > --lint > BUN_OPTIONS='--lint' is refused and `bun x.ts` runs nothing [2383.20ms]
+(pass) BUN_OPTIONS environment variable > --lint > BUN_OPTIONS='--lint' is refused and `bun run x.ts` runs nothing [2614.12ms]
+(pass) BUN_OPTIONS environment variable > --lint > BUN_OPTIONS='--smol --lint' is refused and `bun x.ts` runs nothing [2946.70ms]
+killed 1 dangling process
+(fail) BUN_OPTIONS environment variable > --lint > BUN_OPTIONS='--lint' is refused and `bun --lint x.ts` runs nothing [5889.33ms]
+  ^ this test timed out after 5000ms.
+(pass) BUN_OPTIONS environment variable > --lint > another option in BUN_OPTIONS does not refuse --lint on the command line [1407.55ms]
+
+ 11 pass
+ 1 fail
+ 30 expect() calls
+Ran 12 tests across 1 file. [40.56s]
+error: script "bd" exited with code 1
+### finished: 2026-10-01T10:38:51Z rc=1 wall=58s

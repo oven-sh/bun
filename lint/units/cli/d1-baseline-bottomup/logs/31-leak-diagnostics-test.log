@@ -1,0 +1,29 @@
+### cmd: env BUN_DESTRUCT_VM_ON_EXIT=1 ASAN_OPTIONS=allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1 LSAN_OPTIONS=malloc_context_size=30:print_suppressions=0:suppressions=/workspace/wt/cli/test/leaksan.supp bun bd test test/cli/lint/diagnostics.test.ts
+### start: 2026-10-01T10:36:03Z
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet test test/cli/lint/diagnostics.test.ts
+bun test v1.4.3 (be1ebe529)
+
+test/cli/lint/diagnostics.test.ts:
+(pass) bun --lint diagnostics > stderr is not a terminal > files are in the order of their names, not of the operands [627.92ms]
+(pass) bun --lint diagnostics > stderr is not a terminal > the diagnostics of a file are in the order of their positions [854.25ms]
+(pass) bun --lint diagnostics > stderr is not a terminal > what belongs to no file comes first and the other files are still read [925.15ms]
+(pass) bun --lint diagnostics > stderr is not a terminal > a column counts UTF-16 code units [1016.46ms]
+(pass) bun --lint diagnostics > stderr is not a terminal > the absolute name gives the order, the printed name is relative [2022.16ms]
+(pass) bun --lint diagnostics > stderr is not a terminal > a file that is given more than once is reported once [1849.24ms]
+(pass) bun --lint diagnostics > stderr is not a terminal > a diagnostic is one line in the format of tsc, without colour [2965.66ms]
+(pass) bun --lint diagnostics > stderr is not a terminal > line and column are those of tsc where Bun's own differ [1643.95ms]
+(pass) bun --lint diagnostics > the exit code > is 0 when nothing is reported [949.13ms]
+(pass) bun --lint diagnostics > the exit code > is 0 when only warnings are reported [1270.79ms]
+(pass) bun --lint diagnostics > the exit code > is 2 when an operand cannot be read [1205.83ms]
+(pass) bun --lint diagnostics > stderr is a terminal > frames have the code before the message [940.20ms]
+(pass) bun --lint diagnostics > the exit code > is 2 when one file of several has an error [2589.19ms]
+(pass) bun --lint diagnostics > stderr is a terminal > a diagnostic is a code frame and not a line of tsc [2219.48ms]
+(pass) bun --lint diagnostics > the exit code > is 1 when no file is given [2446.64ms]
+(pass) bun --lint diagnostics > stderr is a terminal > the frame has colour when colour is on [1962.98ms]
+(pass) bun --lint diagnostics > stderr is a terminal > related information is a note under the frame, once [2353.60ms]
+
+ 17 pass
+ 0 fail
+ 27 expect() calls
+Ran 17 tests across 1 file. [11.73s]
+### finished: 2026-10-01T10:36:23Z rc=0 wall=20s

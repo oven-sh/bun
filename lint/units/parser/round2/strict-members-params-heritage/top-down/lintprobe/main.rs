@@ -107,7 +107,7 @@ fn run(index: usize, loader_name: &str, text: &'static [u8]) {
                 record.clause.token,
                 record.clause.start,
                 record.clause.end,
-                record.clause.types.len()
+                record.clause.types.items.slice().len()
             ));
         }
         format!(

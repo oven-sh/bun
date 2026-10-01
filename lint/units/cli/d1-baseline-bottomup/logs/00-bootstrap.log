@@ -1,0 +1,4 @@
+### cmd: bash -c if [ -x build/debug/bun-debug ] && [ -d node_modules ] && [ -d test/node_modules ] && [ -f vendor/lolhtml/Cargo.toml ]; then echo "bootstrapped: build/debug/bun-debug, node_modules, test/node_modules and vendor/ exist"; else bun install && (cd test && bun install); fi
+### start: 2026-10-01T10:29:36Z
+bootstrapped: build/debug/bun-debug, node_modules, test/node_modules and vendor/ exist
+### finished: 2026-10-01T10:29:36Z rc=0 wall=1s

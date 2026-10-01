@@ -913,4 +913,4 @@ if (require.main === module) {
 	}
 	console.log(`cases ${cases.length}: same ${same}, differ ${differ}, rejected by the parser ${fatal}`);
 }
-module.exports = { run };
+module.exports = { run, lint, plugin };

@@ -1,0 +1,24 @@
+### cmd: env BUN_DESTRUCT_VM_ON_EXIT=1 ASAN_OPTIONS=allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1 LSAN_OPTIONS=malloc_context_size=30:print_suppressions=0:suppressions=/workspace/wt/cli/test/leaksan.supp bun bd test test/cli/env/bun-options.test.ts --timeout 180000
+### start: 2026-10-01T10:38:53Z
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet test test/cli/env/bun-options.test.ts --timeout "180000"
+bun test v1.4.3 (be1ebe529)
+
+test/cli/env/bun-options.test.ts:
+(pass) BUN_OPTIONS environment variable > basic usage - passes options to bun command [4521.14ms]
+(pass) BUN_OPTIONS environment variable > multiple options - passes all options to bun command [4199.52ms]
+(pass) BUN_OPTIONS environment variable > options with quotes - properly handles quoted options [2922.06ms]
+(pass) BUN_OPTIONS environment variable > priority - environment options go before command line options [2706.08ms]
+(pass) BUN_OPTIONS environment variable > bare flag before flag with value is recognized [3208.51ms]
+(pass) BUN_OPTIONS environment variable > bare flag before flag with value is recognized (standalone executable) [14083.42ms]
+(pass) BUN_OPTIONS environment variable > empty BUN_OPTIONS - should work normally [1958.89ms]
+(pass) BUN_OPTIONS environment variable > --lint > BUN_OPTIONS='--lint' is refused and `bun x.ts` runs nothing [2384.91ms]
+(pass) BUN_OPTIONS environment variable > --lint > BUN_OPTIONS='--lint' is refused and `bun run x.ts` runs nothing [1443.99ms]
+(pass) BUN_OPTIONS environment variable > --lint > BUN_OPTIONS='--smol --lint' is refused and `bun x.ts` runs nothing [913.47ms]
+(pass) BUN_OPTIONS environment variable > --lint > BUN_OPTIONS='--lint' is refused and `bun --lint x.ts` runs nothing [1285.84ms]
+(pass) BUN_OPTIONS environment variable > --lint > another option in BUN_OPTIONS does not refuse --lint on the command line [1022.38ms]
+
+ 12 pass
+ 0 fail
+ 30 expect() calls
+Ran 12 tests across 1 file. [53.56s]
+### finished: 2026-10-01T10:40:06Z rc=0 wall=73s

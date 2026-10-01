@@ -1,0 +1,3 @@
+### cmd: cargo fmt -p bun_lint -- --check
+### start: 2026-10-01T10:32:08Z
+### finished: 2026-10-01T10:32:11Z rc=0 wall=4s

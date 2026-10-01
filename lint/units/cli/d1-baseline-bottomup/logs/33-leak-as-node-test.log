@@ -1,0 +1,25 @@
+### cmd: env BUN_DESTRUCT_VM_ON_EXIT=1 ASAN_OPTIONS=allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1 LSAN_OPTIONS=malloc_context_size=30:print_suppressions=0:suppressions=/workspace/wt/cli/test/leaksan.supp bun bd test test/cli/run/as-node.test.ts
+### start: 2026-10-01T10:37:13Z
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet test test/cli/run/as-node.test.ts
+bun test v1.4.3 (be1ebe529)
+
+test/cli/run/as-node.test.ts:
+(pass) fake node cli > the node cli actually works [2057.07ms]
+(pass) fake node cli > doesnt resolve bins [1247.28ms]
+(pass) fake node cli > doesnt resolve scripts [1443.97ms]
+(pass) fake node cli > can run a script named run.js [1234.57ms]
+(pass) fake node cli > entrypoint file extension picking > picks tsx over any other ext [2174.28ms]
+(pass) fake node cli > entrypoint file extension picking > picks jsx over ts [3188.45ms]
+(pass) fake node cli > entrypoint file extension picking > picks mts over ts [2523.45ms]
+(pass) fake node cli > entrypoint file extension picking > picks ts over js/cjs/etc [3543.35ms]
+(pass) fake node cli > node -e  [1983.61ms]
+(pass) fake node cli > process args work [1539.40ms]
+(pass) fake node cli > --lint is ignored and the script runs, with BUN_FEATURE_FLAG_EXPERIMENTAL_LINT set to 1 [2459.06ms]
+(pass) fake node cli > --lint is ignored and the script runs, with BUN_FEATURE_FLAG_EXPERIMENTAL_LINT not set [2462.65ms]
+(pass) fake node cli > no args with piped stdin errors with 'Missing script' [2860.85ms]
+
+ 13 pass
+ 0 fail
+ 14 expect() calls
+Ran 13 tests across 1 file. [31.82s]
+### finished: 2026-10-01T10:37:53Z rc=0 wall=40s

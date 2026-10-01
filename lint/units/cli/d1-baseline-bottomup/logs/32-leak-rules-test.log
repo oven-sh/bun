@@ -1,0 +1,25 @@
+### cmd: env BUN_DESTRUCT_VM_ON_EXIT=1 ASAN_OPTIONS=allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1 LSAN_OPTIONS=malloc_context_size=30:print_suppressions=0:suppressions=/workspace/wt/cli/test/leaksan.supp bun bd test test/cli/lint/rules.test.ts
+### start: 2026-10-01T10:36:24Z
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet test test/cli/lint/rules.test.ts
+bun test v1.4.3 (be1ebe529)
+
+test/cli/lint/rules.test.ts:
+(pass) bun --lint rules > no-compare-neg-zero [3462.67ms]
+(pass) bun --lint rules > no-debugger [4560.14ms]
+(pass) bun --lint rules > no-dupe-class-members [6949.84ms]
+(pass) bun --lint rules > no-duplicate-case [6469.25ms]
+(pass) bun --lint rules > no-dupe-keys [7084.34ms]
+(fail) bun --lint rules > no-empty-pattern [5331.41ms]
+  ^ this test timed out after 5000ms.
+(pass) bun --lint rules > no-self-assign [6378.14ms]
+(pass) bun --lint rules > no-sparse-arrays [3857.96ms]
+(pass) bun --lint rules > no-unsafe-negation [3287.15ms]
+(pass) bun --lint rules > use-isnan [3367.21ms]
+(pass) bun --lint rules > valid-typeof [3059.15ms]
+
+ 10 pass
+ 1 fail
+ 11 expect() calls
+Ran 11 tests across 1 file. [15.53s]
+error: script "bd" exited with code 1
+### finished: 2026-10-01T10:36:47Z rc=1 wall=23s

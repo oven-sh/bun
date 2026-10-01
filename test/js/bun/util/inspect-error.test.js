@@ -169,6 +169,28 @@ describe("observable properties", () => {
   }
 });
 
+// util.inspect prints `[cause]: undefined` for an own `cause` that is undefined.
+test("an error that bun creates without a cause has no own cause", async () => {
+  const thrown = async run => {
+    try {
+      await run();
+    } catch (error) {
+      return error;
+    }
+  };
+  const errors = [
+    await thrown(() => process.cpuUsage({ user: -1, system: 0 })),
+    await thrown(() => new Bun.Transpiler().transformSync("export function f() {\n  const v = {b: {},),r,};\n}\n")),
+    await thrown(() => Bun.build({ entrypoints: ["/broken.js"], files: { "/broken.js": "const a = ;" } })),
+  ];
+  expect(errors.map(error => [error?.name, Object.hasOwn(error ?? {}, "cause")])).toEqual([
+    ["RangeError", false],
+    ["AggregateError", false],
+    ["AggregateError", false],
+  ]);
+  expect(require("util").inspect(errors[0])).not.toContain("[cause]");
+});
+
 describe("error.code is a String object that has no primitive value", () => {
   const codes = {
     "toString throws": `Object.assign(new String("E_X"), { toString() { throw new Error("toString threw"); } })`,

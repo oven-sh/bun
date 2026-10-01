@@ -1,0 +1,169 @@
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet test test/cli/run/transpiler-cache.test.ts
+bun test v1.4.3 (be1ebe529)
+
+test/cli/run/transpiler-cache.test.ts:
+(pass) transpiler cache > works [3716.05ms]
+(pass) transpiler cache > works with empty files [4998.80ms]
+(pass) transpiler cache > ignores files under the minimum cache size [1799.70ms]
+killed 1 dangling process
+(fail) transpiler cache > does not cache a file whose parse logged an error [5007.15ms]
+  ^ this test timed out after 5000ms.
+
+# Unhandled error between tests
+-------------------------------
+118 |       "require ./mixed.js": mixed,
+119 |       "import ./first.js": first,
+120 |       "require ./first.js": first,
+121 |     });
+122 |     expect(await bunRun(join(temp_dir, "main.js"), env)).toSpawn(expected);
+123 |     expect(await bunRun(join(temp_dir, "main.js"), env)).toSpawn(expected);
+                                                               ^
+error: expect(received).toSpawn(expectedStdout)
+
+Expected process to exit with code 0 but got 1
+stderr: error: Module not found "/tmp/bun.test.6F6Aqf/main.js"
+stdout: 
+      at <anonymous> (/workspace/wt/parser/test/cli/run/transpiler-cache.test.ts:123:58)
+-------------------------------
+
+(pass) transpiler cache > it is indeed content addressable [4530.49ms]
+(pass) transpiler cache > doing 50 buns at once does not crash [15975.08ms]
+(pass) transpiler cache > disables the cache instead of falling back to the shared temp directory [3593.12ms]
+killed 1 dangling process
+(fail) transpiler cache > works if the cache is not user-readable [5017.26ms]
+  ^ this test timed out after 5000ms.
+
+# Unhandled error between tests
+-------------------------------
+222 |     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("b");
+223 |     expect(newCacheCount()).toBe(0);
+224 | 
+225 |     chmodSync(join(cache_dir), "0");
+226 |     try {
+227 |       expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("b");
+                                                              ^
+error: expect(received).toSpawn(expectedStdout)
+
+Expected process to exit with code 0 but got 143 (signal: SIGTERM)
+stderr: 
+stdout: b
+      at <anonymous> (/workspace/wt/parser/test/cli/run/transpiler-cache.test.ts:227:57)
+-------------------------------
+
+(pass) transpiler cache > works if the cache is not user-writable [2035.87ms]
+(pass) transpiler cache > a fifo in place of an entry is removed instead of opened [2450.23ms]
+(pass) transpiler cache > does not inline process.env [3103.12ms]
+killed 1 dangling process
+291 |       const result = Bun.spawnSync({
+292 |         cmd: [bunExe(), ...extra, "a.js"],
+293 |         cwd: temp_dir,
+294 |         env,
+295 |       });
+296 |       if (!result.success) throw new Error(result.stderr.toString());
+                                                                         ^
+Error: 
+      at run (/workspace/wt/parser/test/cli/run/transpiler-cache.test.ts:296:68)
+      at <anonymous> (/workspace/wt/parser/test/cli/run/transpiler-cache.test.ts:309:12)
+(fail) transpiler cache > --feature flag invalidates cache [5036.19ms]
+  ^ this test timed out after 5000ms.
+killed 1 dangling process
+328 |     const code = `console.log(typeof BVAL === "undefined" ? "undefined" : BVAL);`;
+329 |     const filler = Buffer.alloc((50 * 1024 * 1.5) | 0, "/").toString();
+330 | 
+331 |     const run = (cwd: string, args: string[]) => {
+332 |       const result = Bun.spawnSync({ cmd: [bunExe(), ...args], cwd, env });
+333 |       if (!result.success) throw new Error(result.stderr.toString());
+                                                                         ^
+Error: 
+      at run (/workspace/wt/parser/test/cli/run/transpiler-cache.test.ts:333:68)
+      at <anonymous> (/workspace/wt/parser/test/cli/run/transpiler-cache.test.ts:363:14)
+(fail) transpiler cache > defines are part of the cache key > bunfig [define] invalidates cache [5196.60ms]
+  ^ this test timed out after 5000ms.
+killed 1 dangling process
+328 |     const code = `console.log(typeof BVAL === "undefined" ? "undefined" : BVAL);`;
+329 |     const filler = Buffer.alloc((50 * 1024 * 1.5) | 0, "/").toString();
+330 | 
+331 |     const run = (cwd: string, args: string[]) => {
+332 |       const result = Bun.spawnSync({ cmd: [bunExe(), ...args], cwd, env });
+333 |       if (!result.success) throw new Error(result.stderr.toString());
+                                                                         ^
+Error: 
+      at run (/workspace/wt/parser/test/cli/run/transpiler-cache.test.ts:333:68)
+      at <anonymous> (/workspace/wt/parser/test/cli/run/transpiler-cache.test.ts:383:14)
+(fail) transpiler cache > defines are part of the cache key > --define invalidates cache [5065.97ms]
+  ^ this test timed out after 5000ms.
+killed 1 dangling process
+328 |     const code = `console.log(typeof BVAL === "undefined" ? "undefined" : BVAL);`;
+329 |     const filler = Buffer.alloc((50 * 1024 * 1.5) | 0, "/").toString();
+330 | 
+331 |     const run = (cwd: string, args: string[]) => {
+332 |       const result = Bun.spawnSync({ cmd: [bunExe(), ...args], cwd, env });
+333 |       if (!result.success) throw new Error(result.stderr.toString());
+                                                                         ^
+error: 
+a.test.js:
+(pass) x [1.14ms]
+
+ 1 pass
+ 0 fail
+Ran 1 test across 1 file. [784.00ms]
+
+      at run (/workspace/wt/parser/test/cli/run/transpiler-cache.test.ts:333:68)
+      at lastLine (/workspace/wt/parser/test/cli/run/transpiler-cache.test.ts:420:44)
+      at <anonymous> (/workspace/wt/parser/test/cli/run/transpiler-cache.test.ts:430:14)
+(fail) transpiler cache > defines are part of the cache key > --define passed to bun test invalidates cache [5034.68ms]
+  ^ this test timed out after 5000ms.
+killed 1 dangling process
+328 |     const code = `console.log(typeof BVAL === "undefined" ? "undefined" : BVAL);`;
+329 |     const filler = Buffer.alloc((50 * 1024 * 1.5) | 0, "/").toString();
+330 | 
+331 |     const run = (cwd: string, args: string[]) => {
+332 |       const result = Bun.spawnSync({ cmd: [bunExe(), ...args], cwd, env });
+333 |       if (!result.success) throw new Error(result.stderr.toString());
+                                                                         ^
+Error: 
+      at run (/workspace/wt/parser/test/cli/run/transpiler-cache.test.ts:333:68)
+      at <anonymous> (/workspace/wt/parser/test/cli/run/transpiler-cache.test.ts:442:14)
+(fail) transpiler cache > defines are part of the cache key > --drop invalidates cache [5228.57ms]
+  ^ this test timed out after 5000ms.
+(pass) transpiler cache > a cached entry point does not change how later modules load > require.extensions is still consulted [3361.60ms]
+(pass) transpiler cache > a cached entry point does not change how later modules load > unknown extensions still use the file loader [3138.19ms]
+killed 1 dangling process
+594 |   expect(first.exitCode).toBe(0);
+595 | 
+596 |   // Second run restores from the intact cache entry: the legitimate record is
+597 |   // accepted and the module still works.
+598 |   const second = run();
+599 |   expect(second.stderr.toString() + second.stdout.toString()).toContain("1 pass");
+                                                                    ^
+error: expect(received).toContain(expected)
+
+Expected to contain: "1 pass"
+Received: "\nuses-lib.test.js:\nbun test v1.4.3 (be1ebe529)\n"
+
+      at <anonymous> (/workspace/wt/parser/test/cli/run/transpiler-cache.test.ts:599:63)
+(fail) rejects cached module records containing out-of-range string indices [5265.86ms]
+  ^ this test timed out after 5000ms.
+killed 1 dangling process
+685 |   expect(corrupted).toBeGreaterThanOrEqual(1);
+686 | 
+687 |   // Third run: the corrupt section is rejected, the entry regenerates, and the
+688 |   // module runs clean with a normal (non-signal) exit.
+689 |   const third = run();
+690 |   expect(third.stdout.toString()).toContain("OK");
+                                        ^
+error: expect(received).toContain(expected)
+
+Expected to contain: "OK"
+Received: ""
+
+      at <anonymous> (/workspace/wt/parser/test/cli/run/transpiler-cache.test.ts:690:35)
+(fail) rejects a cached entry whose sourcemap section header is corrupt [5337.18ms]
+  ^ this test timed out after 5000ms.
+
+ 11 pass
+ 9 fail
+ 2 errors
+ 184 expect() calls
+Ran 20 tests across 1 file. [97.99s]
+error: script "bd" exited with code 1

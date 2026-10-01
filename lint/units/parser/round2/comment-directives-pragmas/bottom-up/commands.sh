@@ -16,5 +16,13 @@ diff /tmp/pragmas-go-reduced.txt "$here/pragmas/expected-go-reduced.txt"
 cd "$here/proto"
 node gen-vectors.cjs && node gen-context.cjs
 rustc --edition 2024 -O -o proto main.rs && ./proto
+# 4. The same port on random texts (generators: the copies in fuzz/ of ../top-down/fuzz), bytes that are no UTF-8 included. Ten lines of "same".
+(cd "$here/directives/oracle" && go build -o /tmp/oracle-directives . ) && (cd "$here/pragmas/oracle" && go build -o /tmp/oracle-pragmas .)
+node "$here/fuzz/gen.cjs" directives 300000 999 > /tmp/d.hex
+node "$here/fuzz/gen.cjs" pragmas 300000 12345 > /tmp/p.hex
+node "$here/fuzz/gen2.cjs" 400000 4242 > /tmp/p2.hex
+/tmp/oracle-directives /tmp/d.hex > /tmp/d.go.out && ./proto directives-hex /tmp/d.hex /tmp/d.go.out | cmp - /tmp/d.go.out && echo "directives on 300000 random texts: same"
+for f in p p2; do /tmp/oracle-pragmas /tmp/$f.hex > /tmp/$f.go.out && ./proto pragmas-hex /tmp/$f.hex | cmp - /tmp/$f.go.out && echo "pragmas on $f.hex: same"; done
+rm -f "$here/directives/oracle/main.go" "$here/pragmas/oracle/main.go"
 CLIPPY_CONF_DIR=/workspace/wt/parser clippy-driver --edition 2024 --crate-type lib --emit=metadata -o libproto.rmeta lib.rs
 rustfmt --edition 2024 --check comment_directives.rs pragmas.rs

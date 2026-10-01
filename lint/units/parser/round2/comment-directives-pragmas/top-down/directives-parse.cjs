@@ -20,6 +20,16 @@ const inputs = [
   ["string.ts", "let s = '// @ts-ignore'; let u = \"/* @ts-expect-error */\";\n"],
   ["arrow-return-type-attempt.ts", "let r = c ? (a) /* @ts-ignore */ : b => d /* @ts-expect-error */ : e;\n"],
   ["type-arguments-attempt.ts", "let r = a < /* @ts-ignore */ b > /* @ts-expect-error */ c;\n"],
+  ["leading-and-last.ts", "// @ts-ignore\nlet x: number = 'a';\n/* @ts-expect-error */"],
+  ["after-hashbang.ts", "#!/usr/bin/env bun\n// @ts-expect-error\nlet x: number = 'a';\n"],
+  ["expression-in-type-computed.ts", "type T = { [a /* @ts-ignore */ + b]: 1 };\n"],
+  ["expression-in-type-parameter-initializer.ts", "let f: (a = 1 /* @ts-ignore */, b: X) => void;\n"],
+  ["expression-in-type-property-initializer.ts", "type U = { a: number = 1 /* @ts-expect-error */ ; b: 2 };\n"],
+  ["expression-in-type-accessor-body.ts", "class I { [k: string]: { get x() { return 1 /* @ts-expect-error */ ; } }; }\n"],
+  ["expression-in-type-import-attributes.ts", "let t: import(\"x\", { with: { a: \"b\" /* @ts-ignore */ } }).Y;\n"],
+  ["heritage-expression.ts", "class C implements A /* @ts-ignore */ [0] {}\nclass E extends f( /* @ts-expect-error */ )<T> {}\n"],
+  ["class-index-signature-initializer.ts", "class F { [k: string = \"a\" /* @ts-ignore */ ]: number; }\n"],
+  ["erased-statements.ts", "interface I { // @ts-ignore\n a: 1 }\ndeclare const v: number; /* @ts-expect-error */\ntype A = /*\n @ts-ignore */ 1;\n"],
 ];
 fs.writeFileSync(path.join(__dirname, "directives-parse-inputs.json"), JSON.stringify(inputs, null, 1) + "\n");
 for (const [name, source] of inputs) {

@@ -9,7 +9,13 @@ const linter = new Linter({ configType: "flat" });
 const [bin, countArg, seedArg] = process.argv.slice(2);
 const count = Number(countArg || 20000);
 let seed = Number(seedArg || 1);
-const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff), seed / 0x7fffffff);
+const rnd = () => {
+	// mulberry32
+	seed = (seed + 0x6d2b79f5) | 0;
+	let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+	t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+	return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+};
 const int = n => Math.floor(rnd() * n);
 const pick = a => a[int(a.length)];
 const digits = (n, set = "0123456789") => Array.from({ length: n }, () => pick(set)).join("");

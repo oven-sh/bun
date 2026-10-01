@@ -60,7 +60,50 @@ fn describe(text: &[u8]) -> String {
     )
 }
 
+fn unhex(h: &str) -> Vec<u8> {
+    (0..h.len() / 2)
+        .map(|i| u8::from_str_radix(&h[2 * i..2 * i + 2], 16).unwrap())
+        .collect()
+}
+
+/// `proto pragmas-hex <file.hex>`: the header of each `name<TAB>hex` line, as the oracle prints it.
+/// `proto directives-hex <file.hex> <oracle output>`: the directives of each line for the comments that the oracle found.
+fn hex_mode(args: &[String]) {
+    use std::io::Write;
+    let input = std::fs::read_to_string(&args[2]).unwrap();
+    let mut out = std::io::BufWriter::new(std::io::stdout().lock());
+    if args[1] == "pragmas-hex" {
+        for line in input.lines() {
+            let Some((_, h)) = line.split_once('\t') else { continue };
+            writeln!(out, "{}", describe(&unhex(h))).unwrap();
+        }
+        return;
+    }
+    let oracle = std::fs::read_to_string(&args[3]).unwrap();
+    for (line, found) in input.lines().zip(oracle.lines()) {
+        let Some((name, h)) = line.split_once('\t') else { continue };
+        let text = unhex(h);
+        let comments = found.split('\t').nth(1).unwrap_or("");
+        let list: Vec<(u32, u32)> = comments
+            .split(' ')
+            .filter_map(|c| c.split_once(".."))
+            .map(|(a, b)| (a.parse().unwrap(), b.parse().unwrap()))
+            .collect();
+        let got = comment_directives(&text, list.iter().copied())
+            .iter()
+            .map(|d| format!("{} {}..{}", if d.kind == CommentDirectiveKind::Ignore { "Ignore" } else { "ExpectError" }, d.start, d.end))
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(out, "{}\t{}\t{}", name, comments, got).unwrap();
+    }
+}
+
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() > 2 {
+        hex_mode(&args);
+        return;
+    }
     let expected: Vec<&str> = include_str!("../pragmas/expected-go-reduced.txt").lines().collect();
     let (mut same, mut diff) = (0, 0);
     for (i, text) in vectors::PRAGMA_TEXTS.iter().enumerate() {

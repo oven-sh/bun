@@ -43,7 +43,7 @@ for (const [ecmaVersion, strict] of options) {
     const r = run(() => regexpp.parseRegExpLiteral(source, opts));
     lines.push(r.hash ? ["A", ecmaVersion, strict, esc(source), r.hash].join("\t") : ["E", ecmaVersion, strict, esc(source), r.index, esc(r.message)].join("\t"));
     // The same text as a pattern, under each pair of flags: a `/` is an ordinary character there.
-    if (ecmaVersion !== 2025) continue;
+    if (ecmaVersion !== 2025 || strict) continue;
     for (const [u, v] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
       const p = run(() => new regexpp.RegExpParser(opts).parsePattern(source, 0, source.length, { unicode: Boolean(u), unicodeSets: Boolean(v) }));
       lines.push(p.hash ? ["PA", ecmaVersion, strict, u, v, esc(source), p.hash].join("\t") : ["PE", ecmaVersion, strict, u, v, esc(source), p.index, esc(p.message)].join("\t"));

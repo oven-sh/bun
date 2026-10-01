@@ -1,0 +1,13 @@
+pass 1a of the research unit rules-source-text: inputs for the oracle, and the prototypes that were compared with ESLint at the pin.
+Before: sh /workspace/notes/lint/units/cli/round2-oracle/proto-1a/setup.sh (ESLint and typescript-eslint under /workspace/ref).
+
+tools/probe.cjs   <rules> <ext>[:script|module] <code>...   ESLint's reports for codes given as arguments
+tools/probe2.cjs  <rules> <cases.cjs|json>                  ESLint's reports for a list of { code, ext?, st? }
+tools/cross-count.cjs                                       how many cases of the fixtures in the tree get a report of each of the seven rules
+tools/cross7.cjs                                            which codes of ESLint's own test of one of the seven rules get a report of another rule
+tools/parsecheck.cjs                                        which codes of ESLint's own tests the parser of the debug build rejects
+cases/*.cjs                                                 the probe lists (JavaScript, JSX and TypeScript cases)
+proto/lop-proto.cjs, lop-proto2.cjs                         no-loss-of-precision as planned (lop-proto2: with the 15-digit short cut) against ESLint: 60044 literals, 0 differences
+proto/tp.rs + gen.cjs                                       the planned to_precision in Rust against toPrecision of the engine: node gen.cjs > cases.txt; rustc -O tp.rs; ./tp < cases.txt (250097 pairs, 0 differences)
+proto/iw-proto.cjs                                          no-irregular-whitespace candidates and positions as planned against ESLint: 3441 codes, 0 differences
+proto/nde-proto.cjs                                         the scan of no-nonoctal-decimal-escape as planned against ESLint: 0 differences

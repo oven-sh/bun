@@ -1,0 +1,9 @@
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet test test/cli/run/transpiler-cache.test.ts --timeout "180000"
+bun test v1.4.3 (be1ebe529)
+
+test/cli/run/transpiler-cache.test.ts:
+(pass) transpiler cache > works [5099.66ms]
+(pass) transpiler cache > works with empty files [3797.05ms]
+(pass) transpiler cache > ignores files under the minimum cache size [999.45ms]
+(pass) transpiler cache > does not cache a file whose parse logged an error [3925.01ms]
+(pass) transpiler cache > it is indeed content addressable [5442.27ms]

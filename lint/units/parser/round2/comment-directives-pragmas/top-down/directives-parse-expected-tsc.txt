@@ -39,3 +39,27 @@ directive ExpectError 42..64
 --- type-arguments-attempt.ts bytes=59 parseDiagnostics=0 raw=6
 directive Ignore 12..28
 directive ExpectError 33..55
+--- leading-and-last.ts bytes=57 parseDiagnostics=0 raw=2
+directive Ignore 0..13
+directive ExpectError 35..57
+--- after-hashbang.ts bytes=60 parseDiagnostics=0 raw=1
+directive ExpectError 19..38
+--- expression-in-type-computed.ts bytes=42 parseDiagnostics=0 raw=3
+directive Ignore 14..30
+--- expression-in-type-parameter-initializer.ts bytes=47 parseDiagnostics=0 raw=1
+directive Ignore 14..30
+--- expression-in-type-property-initializer.ts bytes=58 parseDiagnostics=0 raw=1
+directive ExpectError 25..47
+--- expression-in-type-accessor-body.ts bytes=76 parseDiagnostics=0 raw=1
+directive ExpectError 44..66
+--- expression-in-type-import-attributes.ts bytes=61 parseDiagnostics=0 raw=1
+directive Ignore 36..52
+--- heritage-expression.ts bytes=95 parseDiagnostics=0 raw=2
+directive Ignore 21..37
+directive ExpectError 64..86
+--- class-index-signature-initializer.ts bytes=57 parseDiagnostics=0 raw=1
+directive Ignore 27..43
+--- erased-statements.ts bytes=114 parseDiagnostics=0 raw=3
+directive Ignore 14..27
+directive ExpectError 61..83
+directive Ignore 96..110

@@ -84,9 +84,16 @@ func main() {
 		for _, pragma := range pragmas {
 			var keys []string
 			for k := range pragma.Args {
+				// The arguments that a reader of the pragma takes: six of a reference, factory of a JSX pragma.
 				switch k {
-				case "types", "lib", "path", "resolution-mode", "preserve", "no-default-lib", "factory":
-					keys = append(keys, k)
+				case "types", "lib", "path", "resolution-mode", "preserve", "no-default-lib":
+					if pragma.Name == "reference" {
+						keys = append(keys, k)
+					}
+				case "factory":
+					if pragma.Name != "reference" {
+						keys = append(keys, k)
+					}
 				}
 			}
 			sort.Strings(keys)

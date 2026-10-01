@@ -10,3 +10,5 @@ leak test/bundler/transpiler/transpiler.test.js rc=0 secs=92 ::  237 pass; 1 ski
 leak test/bundler/bundler_decorator_metadata.test.ts rc=0 secs=24 ::  2 pass; 0 fail; 2 expect() calls;Ran 2 tests across 1 file. [14.26s];
 leak test/bundler/esbuild/ts.test.ts rc=0 secs=93 ::  59 pass; 16 todo; 0 fail; 43 expect() calls;Ran 75 tests across 1 file. [85.63s];
 leak test/js/bun/typescript/type-export.test.ts rc=1 secs=118 ::  52 pass; 18 skip; 18 fail; 189 expect() calls;Ran 88 tests across 1 file. [107.39s];
+leak test/js/bun/typescript/type-export.test.ts --timeout 180000 rc=0 secs=176 timed_out_lines_first_run=36 ::  70 pass; 18 skip; 0 fail; 196 expect() calls;Ran 88 tests across 1 file. [163.36s];
+leak test/cli/run/transpiler-cache.test.ts rc=1 secs=126 ::  1 pass; 0 fail; 11 pass; 9 fail; 184 expect() calls;Ran 20 tests across 1 file. [97.99s];

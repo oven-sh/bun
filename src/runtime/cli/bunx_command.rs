@@ -766,7 +766,11 @@ impl BunxCommand {
                     prefix_package_with_uid: false,
                 });
             }
-            bun_output::scoped_log!(bunx, "install cache root unusable: {}", BStr::new(&root[..]));
+            bun_output::scoped_log!(
+                bunx,
+                "install cache root unusable: {}",
+                BStr::new(&root[..])
+            );
         }
 
         // A failure to create this one is reported by the install below, which

@@ -2232,8 +2232,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         jsc::mark_binding!();
         this.set_latest_session(ptr::null_mut());
         let write_errno = this.write_errno.replace(0);
-        // A Duplex or named-pipe transport can close from inside its own send, which still reads the queue.
-        if this.is_usockets_backed() {
+        // Not for a Duplex or pipe, which can close inside its own send. `this.socket` is DETACHED after `close()`.
+        if matches!(socket.socket, uws::InternalSocket::Connected(_)) {
             this.discard_pending_writes();
         }
         // A late close on a socket that already released its Handlers through
@@ -3300,7 +3300,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         let [arg] = callframe.arguments_as_array::<1>();
         if callframe.arguments_count() > 0 && arg.to_boolean() {
             this.socket.get().shutdown_read();
-        } else if !this.buffered_data_for_node_net.defer_fin() {
+        } else if this.flags.get().contains(Flags::BYPASS_TLS)
+            || !this.buffered_data_for_node_net.defer_fin()
+        {
+            // No writable event reaches the raw half of an `upgradeTLS` pair, so nothing would send a deferred FIN.
             this.socket.get().shutdown();
         }
 

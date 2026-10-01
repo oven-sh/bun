@@ -1294,27 +1294,39 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec *timeout
     if (loop->ready_ops_head || held_packets)
         timeout_ns = 0;
 
-    /* What follows prepares to park the thread. A tick that finds packets
-     * waiting does not park, however long it would have been willing to. */
+    /* The scavenger sweeps our heaps while we are in the kernel. The hand-off wakes its
+     * thread (a syscall), and it sweeps one thread's heaps once in this long at most
+     * (mi_option_purge_holes_min_interval): a loop that parks more often than that hands
+     * them over that often. A park in between lasts until the next one is due at the
+     * longest, so heaps left by a burst are swept however long the quiet after it. */
+    static const uint64_t idle_handoff_interval_ns = 100 * 1000000ULL;
+    static _Thread_local uint64_t idle_handoff_due_ns = 0;
     int found_packets = 0;
+    int handed_off = 0;
     if (timeout_ns != 0) {
-        us_internal_iocp_dequeue(loop, 0);
-        found_packets = loop->num_ready_polls != 0;
+        const uint64_t idle_now_ns = now_ns ? now_ns : us_internal_monotonic_ns();
+        if (idle_now_ns < idle_handoff_due_ns) {
+            const uint64_t left_ns = idle_handoff_due_ns - idle_now_ns;
+            if (timeout_ns < 0 || (uint64_t) timeout_ns > left_ns)
+                timeout_ns = (long long) left_ns;
+        } else {
+            /* Only on a tick that really parks: one that finds packets waiting takes the
+             * heaps back before they could be swept. */
+            us_internal_iocp_dequeue(loop, 0);
+            found_packets = loop->num_ready_polls != 0;
+            if (!found_packets) {
+                idle_handoff_due_ns = idle_now_ns + idle_handoff_interval_ns;
+                /* Not at startup: this loads powrprof.dll, and only a wait that blocks needs it. */
+                InitOnceExecuteOnce(&resume_once, us_internal_resume_register, NULL, NULL);
+                /* Must come after Bun__JSC_onBeforeWait, which allocates: nothing may touch
+                 * our heaps until the matching _end. With no scavenger to hand off to, fall
+                 * back to sweeping inline, rate-limited. */
+                handed_off = mi_on_thread_idle_start();
+                if (!handed_off)
+                    us_internal_idle_sweep(now_ns);
+            }
+        }
     }
-    const int will_idle_inside_event_loop = timeout_ns != 0 && !found_packets;
-
-    /* Not at startup: this loads powrprof.dll, and only a wait that blocks needs it. */
-    if (will_idle_inside_event_loop)
-        InitOnceExecuteOnce(&resume_once, us_internal_resume_register, NULL, NULL);
-
-    /* The scavenger sweeps our heaps while we are in the kernel. Must come after
-     * Bun__JSC_onBeforeWait, which allocates: nothing may touch our heaps until the matching
-     * _end. Only on a tick that really parks: the hand-off wakes the scavenger thread (a
-     * syscall), and a tick that does not block takes the heaps back before it could sweep.
-     * With no scavenger to hand off to, fall back to sweeping inline, rate-limited. */
-    const int handed_off = will_idle_inside_event_loop && mi_on_thread_idle_start();
-    if (!handed_off && will_idle_inside_event_loop)
-        us_internal_idle_sweep(now_ns);
 
     if (!found_packets)
         us_internal_iocp_wait(loop, timeout_ns, now_ns);

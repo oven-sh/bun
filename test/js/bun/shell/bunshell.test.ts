@@ -7,7 +7,7 @@
 import { $ } from "bun";
 import { dlopen, ptr } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, closeSync, mkdirSync, openSync, readFileSync, statSync } from "fs";
+import { chmodSync, closeSync, mkdirSync, openSync, readdirSync, readFileSync, statSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import { bunExe, isPosix, isWindows, rss, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { spawn as nodeSpawn } from "node:child_process";
@@ -4378,4 +4378,44 @@ test.skipIf(!isWindows)("a redirect target is closed when the command that wrote
     }
   }
   expect(stillOpen).toEqual([]);
+});
+
+test("relative redirect targets are relative to the shell's directory", async () => {
+  using dir = tempDir("shell-redirect-relative", { "sub/deep/keep.txt": "", "in.txt": "from in\n" });
+  await $`
+    echo a > one.txt
+    echo b > deep/two.txt
+    echo c > ../three.txt
+    echo d > ./deep/../four.txt
+    echo e >> one.txt
+    cat ../in.txt > five.txt
+    cd deep
+    echo f > six.txt
+    echo g > ../seven.txt
+  `.cwd(join(String(dir), "sub"));
+  expect(await $`cat < ../in.txt; cat < deep/two.txt`.cwd(join(String(dir), "sub")).text()).toBe("from in\nb\n");
+  const written: Record<string, string> = {};
+  for (const name of readdirSync(String(dir), { recursive: true }) as string[]) {
+    const path = join(String(dir), name);
+    if (statSync(path).isFile()) written[name.replaceAll("\\", "/")] = readFileSync(path, "utf8");
+  }
+  expect(written).toEqual({
+    "in.txt": "from in\n",
+    "three.txt": "c\n",
+    "sub/one.txt": "a\ne\n",
+    "sub/four.txt": "d\n",
+    "sub/five.txt": "from in\n",
+    "sub/seven.txt": "g\n",
+    "sub/deep/keep.txt": "",
+    "sub/deep/two.txt": "b\n",
+    "sub/deep/six.txt": "f\n",
+  });
+});
+
+test.skipIf(!isWindows)("a redirect to nul, however it is reached, goes to the device", async () => {
+  using dir = tempDir("shell-redirect-nul", { "sub/keep.txt": "" });
+  await $`echo a > nul; echo b > NUL; echo c > sub/nul; echo d > ./NUL; echo e >> nul; echo f > ${join(String(dir), "nul")}`.cwd(
+    String(dir),
+  );
+  expect((readdirSync(String(dir), { recursive: true }) as string[]).sort()).toEqual(["sub", join("sub", "keep.txt")]);
 });

@@ -37,7 +37,12 @@ The doc comment of `SyncReader` describes how the loop and that thread take
 turns. Input leaves the pipe only after the loop thread has run with it
 waiting, as with a readiness poll: while the loop is blocked (a synchronous
 spawn whose child inherits the handle), it stays for the child. libuv does the
-same: its pool thread only ever does the zero-byte read.
+same: its pool thread only ever does the zero-byte read. And the loop thread
+waits while the bytes are taken and hands them over at once, so nothing of the
+owner's runs with bytes out of the pipe that it has not been given: it can stop
+reading from anywhere and lose nothing for a child. The wait is short. A reader
+thread that is queued behind another process's read answers later, with a
+packet, which is what keeps the loop from blocking where libuv's does.
 
 ### Finding out whether a handle is synchronous
 
@@ -81,10 +86,33 @@ full:
 | reader thread that takes the next chunk while the loop handles the current one              | 4342 / 2591 / 605 | that chunk is gone from the pipe if the owner pauses in its callback                             |
 | reader thread that takes what is there as soon as it is asked, else waits and says readable | 3116 / 1600 / 515 | asked, the owner may still pause before the loop comes round: what was taken is gone for a child |
 | a pool work item per chunk (wait, peek, read, post)                                         | 2730 / 1579 / 494 | same as the row above                                                                            |
-| **reader thread: wait, say readable, be asked, peek + read (`SyncReader`)**                 | 1891 / 1099 / 478 | in use: two loop round trips per chunk                                                           |
+| reader thread: wait, say readable, be asked, peek + read, post                              | 1891 / 1099 / 478 | two loop round trips per chunk, and the second has the window of the two rows above              |
 
 With a writer slower than the reader (the pipe drains between chunks) every row
 runs at the writer's speed.
+
+That window is real. A process reads a bulk transfer, calls `pause()` from a
+timer and starts a child that inherits stdin. Runs of 40 in which the child
+missed a chunk: 4 to 7 for the last row, 40 for the row that takes as soon as it
+is asked (29 with `setImmediate`), none for libuv.
+
+In use (`SyncReader`): wait and say readable, as in the last row; then the loop
+thread asks for the bytes and waits for them, hands them over, and asks again
+for as long as there are any, up to `TAKES_PER_TICK` times. The hops are those
+of the row that takes as soon as it is asked and the window is gone: none of 380
+runs missed anything, 300 of them with several at once on one or two CPUs.
+
+libuv's number comes from reading on, 64 KiB at a time, for as long as reads
+come back full: one pair of thread hops for a burst, not for a chunk. The reader
+thread gets the same from taking more at once: room is made for twice what the
+pipe held the last time, up to the 256 KiB a POSIX reader takes
+(`PIPE_READ_BUFFER_SIZE`), so a trickle keeps its 64 KiB buffers. `process.stdin`
+of a child, 1 GiB, against libuv: 0.9 to 1.3 times its speed on 24 CPUs, 0.96 to
+1.29 with the process tree held to 1, 2 or 4.
+
+Spinning on the reader thread for about 30 µs before it parks hides the cost of
+waking an idle core: +26 % with 24 idle CPUs, and -10 % to -50 % on 1, 2 or 4,
+where it competes with the writer and the loop. Not done.
 
 ## Follow-ups
 

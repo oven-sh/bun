@@ -2390,7 +2390,8 @@ pub(crate) fn shell_lstatat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<
 /// POSIX: `bun_sys::openat` with the error tagged `.with_path(path)`.
 /// Windows: for `O_DIRECTORY` opens, rewrite POSIX-absolute paths via
 /// `shell_get_path` and use `openDirAtWindowsA(.iterable=true)`; for file
-/// opens, resolve via `shell_get_path` then `bun_sys::open`.
+/// opens, a relative path is opened relative to `dir`, anything else is
+/// resolved via `shell_get_path` and then `bun_sys::open`.
 pub(crate) fn shell_openat(
     dir: Fd,
     path: &bun_core::ZStr,
@@ -2424,6 +2425,14 @@ pub(crate) fn shell_openat(
                 },
             )
             .map_err(|e| e.with_path(path.as_bytes()));
+        }
+        let bytes = path.as_bytes();
+        // `nul` is the device only at the end of an absolute path.
+        if !bun_paths::Platform::Posix.is_absolute(bytes)
+            && !bun_paths::Platform::Windows.is_absolute(bytes)
+            && !matches!(bun_paths::basename(bytes), b"nul" | b"NUL")
+        {
+            return bun_sys::openat(dir, path, flags, perm).map_err(|e| e.with_path(bytes));
         }
         let mut buf = bun_paths::path_buffer_pool::get();
         let p = shell_get_path(dir, path, &mut buf)?;

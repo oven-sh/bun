@@ -1,7 +1,9 @@
 //! Anything that is neither a pipe nor a console: regular files, `NUL`, other
 //! devices. There is no readiness or completion to wait for, so each read or
 //! write runs on the work pool and its result comes back through the loop's
-//! port. One operation at a time.
+//! port. One operation at a time. A small write to a disk file, which goes to
+//! the file cache, costs less than the two thread hops: it is made by the
+//! caller, as on POSIX, and only its result comes from the loop.
 //!
 //! A request that is out belongs to the work pool until it has handed the
 //! result to the port. `state` is how it changes hands: the pool thread moves
@@ -40,6 +42,9 @@ const POSTED: u32 = 4;
 /// of the request instead of posting it.
 const ORPHANED: u32 = 5;
 
+/// The largest write to a disk file that the calling thread makes itself.
+const INLINE_WRITE_MAX: usize = 64 * 1024;
+
 enum Request {
     None,
     Read { len: usize, offset: Option<u64> },
@@ -50,6 +55,15 @@ enum WriteData {
     /// The owner's, valid as [`File::write`] asks.
     Borrowed(*const u8, usize),
     Owned(Vec<u8>),
+}
+
+impl WriteData {
+    fn len(&self) -> usize {
+        match self {
+            WriteData::Borrowed(_, len) => *len,
+            WriteData::Owned(data) => data.len(),
+        }
+    }
 }
 
 impl Request {
@@ -68,6 +82,8 @@ struct Inner {
     task: Task,
     fd: Fd,
     close_fd: bool,
+    /// Not a device, which can take as long as it likes over a write.
+    disk: bool,
     /// A write was asked for.
     wrote: bool,
     port: Arc<Port>,
@@ -98,8 +114,9 @@ struct Inner {
 bun_threading::intrusive_work_task!(Inner, task);
 
 impl File {
-    /// `fd` is closed with the file when `close_fd` is set.
-    pub fn open(loop_: *mut Loop, fd: Fd, close_fd: bool) -> sys::Result<File> {
+    /// `fd` is closed with the file when `close_fd` is set. `disk`: it is a
+    /// file on a disk.
+    pub fn open(loop_: *mut Loop, fd: Fd, close_fd: bool, disk: bool) -> sys::Result<File> {
         // SAFETY: `loop_` is the caller's live loop.
         let Some(port) = (unsafe { super::port_for(loop_) }) else {
             return Err(sys::Error::from_win32(super::sys::last_error(), Tag::open).with_fd(fd));
@@ -113,6 +130,7 @@ impl File {
             },
             fd,
             close_fd,
+            disk,
             wrote: false,
             port,
             state: AtomicU32::new(IDLE),
@@ -422,11 +440,23 @@ impl Inner {
     unsafe fn schedule(this: *mut Inner) {
         // SAFETY: caller contract.
         unsafe {
-            super::op_submitted((*this).link.loop_);
-            (*(*this).link.loop_).add_active(1);
-            if matches!((*this).request, Request::Write { .. }) {
+            let loop_ = (*this).link.loop_;
+            (*loop_).add_active(1);
+            if let Request::Write { data } = &(*this).request {
+                if (*this).disk
+                    && data.len() <= INLINE_WRITE_MAX
+                    && (*this)
+                        .state
+                        .compare_exchange(QUEUED, RUNNING, Ordering::SeqCst, Ordering::SeqCst)
+                        .is_ok()
+                {
+                    (*this).result = Self::perform(this);
+                    (*this).state.store(POSTED, Ordering::SeqCst);
+                    return super::complete_from_loop(loop_, &raw mut (*this).op);
+                }
                 WorkPool::owe_write();
             }
+            super::op_submitted(loop_);
             WorkPool::schedule(&raw mut (*this).task);
         }
     }
@@ -477,7 +507,7 @@ impl Inner {
     }
 
     /// # Safety
-    /// `this` is live and `RUNNING`; called from the work pool.
+    /// `this` is live and `RUNNING`, by the calling thread.
     unsafe fn perform(this: *mut Inner) -> sys::Result<usize> {
         // SAFETY: caller contract.
         unsafe {

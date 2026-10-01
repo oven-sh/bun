@@ -61,7 +61,7 @@ impl Source {
             FileKind::CharacterDevice if bun_sys::windows::fs::is_console(fd.native()) => {
                 Tty::open(loop_, fd, close_fd).map(Source::Tty)
             }
-            _ => File::open(loop_, fd, close_fd).map(Source::File),
+            _ => File::open(loop_, fd, close_fd, kind == FileKind::File).map(Source::File),
         }
     }
 

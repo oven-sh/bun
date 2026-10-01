@@ -1214,7 +1214,7 @@ impl BufferedReader {
         MaxBuf::clamp_read_len(
             self.maxbuf,
             self.limit
-                .clamp_len(crate::windows::pipe::DEFAULT_READ_SIZE),
+                .clamp_len(crate::pipe_read_scratch::PIPE_READ_BUFFER_SIZE),
         )
         .max(1)
     }

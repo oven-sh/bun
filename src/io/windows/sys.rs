@@ -50,14 +50,6 @@ unsafe extern "system" {
     ) -> BOOL;
     pub(crate) fn GetNamedPipeClientProcessId(Pipe: HANDLE, ClientProcessId: *mut u32) -> BOOL;
     pub(crate) fn GetNamedPipeServerProcessId(Pipe: HANDLE, ServerProcessId: *mut u32) -> BOOL;
-    pub(crate) fn PeekNamedPipe(
-        hNamedPipe: HANDLE,
-        lpBuffer: *mut c_void,
-        nBufferSize: DWORD,
-        lpBytesRead: *mut DWORD,
-        lpTotalBytesAvail: *mut DWORD,
-        lpBytesLeftThisMessage: *mut DWORD,
-    ) -> BOOL;
     pub(crate) fn SetNamedPipeHandleState(
         hNamedPipe: HANDLE,
         lpMode: *mut DWORD,

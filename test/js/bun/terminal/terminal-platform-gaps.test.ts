@@ -410,6 +410,44 @@ describe("Bun.Terminal platform behaviour", () => {
     expect(Bun.stripANSI(output)).toContain('SEEN=[[2,true,0,false,2],false,["file: true"]] DONE');
   });
 
+  // A screen buffer has a mode as well, whose bits mean other things.
+  test.skipIf(!isWindows)("setRawMode() tells a console's input from its screen buffer every time", async () => {
+    const { output } = await runInTerminal(
+      `const { dlopen, ptr } = require("bun:ffi");
+       const { ReadStream } = require("node:tty");
+       const { openSync } = require("node:fs");
+       const k32 = dlopen("kernel32.dll", {
+         GetStdHandle: { args: ["i32"], returns: "ptr" },
+         GetConsoleMode: { args: ["ptr", "ptr"], returns: "i32" },
+       }).symbols;
+       const mode = which => {
+         const word = new Uint32Array(1);
+         if (!k32.GetConsoleMode(k32.GetStdHandle(which), ptr(word))) throw new Error("GetConsoleMode");
+         return word[0];
+       };
+       const refused = [];
+       const input = new ReadStream(openSync("CONIN$", "r+"));
+       const screen = new ReadStream(openSync("CONOUT$", "r+"));
+       input.on("error", error => refused.push("input"));
+       screen.on("error", error => refused.push("screen"));
+       const screenMode = mode(-11);
+       const seen = [];
+       for (const stream of [input, screen, process.stdin, screen, input, input, screen]) {
+         stream.setRawMode(true);
+         // ENABLE_LINE_INPUT is what raw mode takes away.
+         seen.push(mode(-10) & 0x2);
+         stream.setRawMode(false);
+         seen.push(mode(-10) & 0x2);
+       }
+       process.stdout.write("SEEN=" + JSON.stringify([seen.join(""), refused.join(), mode(-11) === screenMode]) + " DONE");
+       process.exit(0);`,
+      { readyMarker: " DONE", done: o => o.includes(" DONE") },
+    );
+    expect(Bun.stripANSI(output)).toContain(
+      'SEEN=["02220222020222","screen,screen,screen,screen,screen,screen",true] DONE',
+    );
+  });
+
   // A Windows console hands over key records. Raw mode asks it to make VT sequences of the keys
   // itself; for one that cannot (legacy console mode), Bun does, with libuv's (so Node's) mappings.
   // The child puts the records into its own console's queue, each case followed by a key that

@@ -51,6 +51,9 @@ pub enum Mode {
 static INPUT_MODE: AtomicU8 = AtomicU8::new(Mode::Normal as u8);
 /// The console's input mode before the first change; `u32::MAX` until then.
 static ORIGINAL_INPUT_MODE: AtomicU32 = AtomicU32::new(u32::MAX);
+/// The HANDLE [`set_console_mode`] last found to be a console's input. Every
+/// question put to a console is a round trip to another process.
+static CHECKED_INPUT: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 /// A manual-reset event that is set while the console is in line mode, made by
 /// the first change to a raw mode. Every raw reader waits on it next to the
 /// console's input.
@@ -134,15 +137,21 @@ pub fn set_console_mode(input: HANDLE, mode: Mode) -> sys::Result<()> {
     let fail = |err: Win32Error| sys::Error::from_win32(err, Tag::uv_tty_set_mode);
     let (wanted, fallback) = mode_flags(mode);
     let _lock = LINE_LOCK.lock_guard();
+    let checked = CHECKED_INPUT.load(Ordering::Acquire) == input;
     let mut previous: u32 = 0;
-    if win::GetConsoleMode(input, &mut previous) == 0 {
+    if (!checked || ORIGINAL_INPUT_MODE.load(Ordering::Acquire) == u32::MAX)
+        && win::GetConsoleMode(input, &mut previous) == 0
+    {
         return Err(fail(win::last_error()));
     }
-    // A screen buffer has a mode too, with other bits.
-    let mut events: u32 = 0;
-    // SAFETY: `events` is a live local.
-    if unsafe { win::GetNumberOfConsoleInputEvents(input, &raw mut events) } == 0 {
-        return Err(sys::Error::from_code(E::EINVAL, Tag::uv_tty_set_mode));
+    if !checked {
+        // A screen buffer has a mode too, with other bits.
+        let mut events: u32 = 0;
+        // SAFETY: `events` is a live local.
+        if unsafe { win::GetNumberOfConsoleInputEvents(input, &raw mut events) } == 0 {
+            return Err(sys::Error::from_code(E::EINVAL, Tag::uv_tty_set_mode));
+        }
+        CHECKED_INPUT.store(input, Ordering::Release);
     }
     if mode == Mode::Normal && current_mode() == Mode::Normal {
         // The console is as it was found. Its other bits (QuickEdit, insert

@@ -998,6 +998,67 @@ test.concurrent("pause() and resume() around chunks of a bulk transfer lose and 
   expect(exitCode).toBe(0);
 });
 
+// What a process has not been given when it stops reading is still in the pipe, wherever pause() is called
+// from. A synchronous pipe is read by a thread of its own on Windows, which must not be ahead of the owner.
+describe.skipIf(!isWindows)("a child that inherits stdin after pause() reads on where its parent stopped", () => {
+  const total = 2 * 1024 * 1024;
+  const at = (i: number) => (i * 31 + ((i >> 8) & 0xff)) % 251;
+  const payload = Buffer.alloc(total);
+  for (let i = 0; i < total; i++) payload[i] = at(i);
+
+  test.concurrent.each([
+    ["the 'data' listener", "stop()"],
+    ["a setImmediate() callback", "setImmediate(stop)"],
+    ["a timer", "setTimeout(stop, 0)"],
+  ])("pause() in %s", async (_, schedule) => {
+    using dir = tempDir("stdin-pause-inherit", {
+      "grandchild.js": `
+        const at = ${at};
+        let offset = +process.argv[2], count = 0, wrong = 0;
+        for await (const chunk of Bun.stdin.stream()) {
+          for (let i = 0; i < chunk.length; i++, offset++) if (chunk[i] !== at(offset)) wrong++;
+          count += chunk.length;
+        }
+        process.stdout.write(count + " " + wrong);`,
+      "child.js": `
+        let taken = 0, scheduled = false;
+        const stop = () => {
+          process.stdin.pause();
+          const { stdout } = Bun.spawnSync({
+            cmd: [process.execPath, "grandchild.js", String(taken)],
+            stdin: "inherit",
+            stdout: "pipe",
+            stderr: "inherit",
+          });
+          process.stdout.write(taken + " " + stdout);
+          process.exit(0);
+        };
+        process.stdin.on("data", chunk => {
+          taken += chunk.length;
+          if (taken < ${total / 4} || scheduled) return;
+          scheduled = true;
+          ${schedule};
+        });`,
+    });
+    // The window is a few microseconds in every chunk.
+    for (let round = 0; round < (isDebug || isASAN ? 2 : 8); round++) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "child.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      proc.stdin.write(payload);
+      const [, stdout, exitCode] = await Promise.all([proc.stdin.end(), proc.stdout.text(), proc.exited]);
+      const [taken, inherited, wrong] = stdout.split(" ").map(Number);
+      expect({ round, missing: total - taken - inherited, wrong }).toEqual({ round, missing: 0, wrong: 0 });
+      expect(exitCode).toBe(0);
+    }
+  });
+});
+
 // The limit counts what earlier reads took. The child says when it is reading, so the first write is one
 // read of its own; the second arrives once the grandchild's marker cannot have been printed without it.
 test.concurrent("a size-limited read of stdin that takes several reads stops at its limit", async () => {

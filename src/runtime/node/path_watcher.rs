@@ -2071,15 +2071,18 @@ mod windows_impl {
         }
     }
 
-    /// Whether `component` has the shape of an 8.3 name: at most eight
-    /// characters, then at most one dot with at most three after it. Only such
-    /// a component can be a short alias of a longer name.
+    /// Whether `component` has the shape of the 8.3 alias a file system makes
+    /// for a longer name: at most eight characters with a `~` among them, then
+    /// at most one dot with at most three after it. Without the `~` every
+    /// `index.js` and `src` would be looked up. An alias of another shape is one
+    /// that `SetFileShortNameW` gave the file, and is reported as it is.
     fn is_short_shaped(component: &[u16]) -> bool {
         let mut parts = component.split(|&unit| unit == u16::from(b'.'));
         let base = parts.next().unwrap_or(&[]);
         let extension = parts.next();
         parts.next().is_none()
             && (1..=8).contains(&base.len())
+            && base.contains(&u16::from(b'~'))
             && extension.is_none_or(|extension| extension.len() <= 3)
     }
 

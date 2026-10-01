@@ -777,21 +777,27 @@ minimumReleaseAgeExcludes = ["@types/bun", "typescript"]
 ### `install.blockExoticSubdeps`
 
 When set to `true`, `bun install` fails if any _transitive_ dependency is
-**specified** with a non-registry source — a git URL, GitHub reference,
+**specified** with a non-registry source: a git URL, GitHub reference,
 remote or local tarball, local folder (`file:`), symlink (`link:`), or a
 literal `workspace:` reference pulled in by a non-workspace parent. Direct
 dependencies of the root package (and any workspace package) are not
 restricted. Default `false`.
 
-For workspace redirection the check inspects the specifier written in each
-nested `package.json`, not the final resolution, so enabling this does not
-interact with `install.linkWorkspacePackages` — a registry package asking
-for a plain semver range is still allowed even if Bun redirects it to a
-local workspace copy. Root `overrides`/`resolutions` replace the nested
-specifier before the check runs: an override pointing a transitive
-dependency at a registry version clears a block, while an override
-pointing one at a non-registry source is itself blocked. `catalog:`
-references are always allowed since the root defines the catalog.
+A nested `package.json` that asks for a plain semver range or a dist-tag
+names no source, so two resolutions of such a range are allowed. One is a
+local workspace copy that `install.linkWorkspacePackages` redirects it to.
+The other is a package that the root or a workspace depends on directly
+from a non-registry source, for example a plugin's peer dependency on a
+library that the project pins to a tarball or a fork. A lockfile entry that
+binds a plain range to any other non-registry package is refused.
+
+Root `overrides`/`resolutions` replace the nested specifier before the
+check runs: an override pointing a transitive dependency at a registry
+version clears a block, while an override pointing one at a non-registry
+source is itself blocked. Bun looks up an override for a git or tarball
+dependency by the name in that package's own `package.json`. The error
+message prints that name when it differs from the dependency key.
+`catalog:` references are always allowed since the root defines the catalog.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]

@@ -1,6 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 /**
  * Tests for `install.blockExoticSubdeps` — a supply-chain hardening flag
@@ -17,6 +18,58 @@ import { join } from "node:path";
 // and so leftover state from unrelated runs can't affect resolution.
 function envForDir(dir: string): NodeJS.Dict<string> {
   return { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") };
+}
+
+type PackageJson = { name: string; version: string; [key: string]: unknown };
+
+async function tarball(pkg: PackageJson): Promise<Uint8Array> {
+  return await new Bun.Archive({ "package/package.json": JSON.stringify(pkg) }, { compress: "gzip" }).bytes();
+}
+
+// A loopback registry. It serves the manifest of each package at `/<name>`
+// and its tarball at `/<name>.tgz`. `manifest` can give a package a
+// dependency on a URL of the registry itself.
+async function serveRegistry(
+  packages: PackageJson[],
+  manifest: (pkg: PackageJson, origin: string) => PackageJson = pkg => pkg,
+) {
+  const byName = new Map(packages.map(pkg => [pkg.name, pkg]));
+  const tarballs = new Map<string, Uint8Array>();
+  const server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req) {
+      const { pathname, origin } = new URL(req.url);
+      const tgz = tarballs.get(pathname);
+      if (tgz) return new Response(tgz);
+      const pkg = byName.get(pathname.slice(1));
+      if (!pkg) return new Response("{}", { status: 404 });
+      return Response.json({
+        name: pkg.name,
+        "dist-tags": { latest: pkg.version },
+        versions: { [pkg.version]: { ...manifest(pkg, origin), dist: { tarball: `${origin}/${pkg.name}.tgz` } } },
+      });
+    },
+  });
+  const origin = `http://127.0.0.1:${server.port}`;
+  for (const pkg of packages) tarballs.set(`/${pkg.name}.tgz`, await tarball(manifest(pkg, origin)));
+  return { server, origin, [Symbol.asyncDispose]: () => server.stop(true) };
+}
+
+function bunfigWithRegistry(origin: string): string {
+  return `[install]\nblockExoticSubdeps = true\nregistry = "${origin}/"\n`;
+}
+
+async function install(dir: string, ...args: string[]) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install", ...args],
+    cwd: dir,
+    env: envForDir(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stderr, exitCode };
 }
 
 describe.concurrent("install.blockExoticSubdeps", () => {
@@ -541,5 +594,183 @@ blockExoticSubdeps = true
     // is the non-registry source.
     expect(stderr).toContain("my-fork");
     expect(exitCode).not.toBe(0);
+  });
+
+  // The root may take `lib` from any source. A registry package's plain peer
+  // range binds to that same package, and names no source of its own.
+  describe.each([
+    ["a local tarball", () => "file:./lib.tgz"],
+    ["a folder", () => "file:./lib"],
+    ["a tarball URL", (origin: string) => `${origin}/lib.tgz`],
+  ] as const)("a plain peer range on a package the root takes from %s", (_, source) => {
+    test.each([
+      ["a peer dependency", {}],
+      ["an optional peer dependency", { peerDependenciesMeta: { lib: { optional: true } } }],
+    ] as const)("is allowed as %s, in the first install and in the second", async (_, meta) => {
+      const lib = { name: "lib", version: "1.0.0" };
+      await using registry = await serveRegistry([
+        lib,
+        { name: "plugin", version: "1.0.0", peerDependencies: { lib: "^1.0.0" }, ...meta },
+      ]);
+      using dir = tempDir("block-exotic-peer-range", {
+        "package.json": JSON.stringify({
+          name: "root",
+          version: "1.0.0",
+          dependencies: { lib: source(registry.origin), plugin: "1.0.0" },
+        }),
+        "bunfig.toml": bunfigWithRegistry(registry.origin),
+        "lib.tgz": Buffer.from(await tarball(lib)),
+        "lib/package.json": JSON.stringify(lib),
+      });
+
+      const allowed = { stderr: expect.not.stringContaining("blockExoticSubdeps"), exitCode: 0 };
+      expect({ first: await install(String(dir)), second: await install(String(dir)) }).toEqual({
+        first: allowed,
+        second: allowed,
+      });
+    });
+  });
+
+  test("still blocks a peer dependency that names the root's tarball itself", async () => {
+    const lib = { name: "lib", version: "1.0.0" };
+    await using registry = await serveRegistry([
+      { name: "plugin", version: "1.0.0", peerDependencies: { lib: "file:./lib.tgz" } },
+    ]);
+    using dir = tempDir("block-exotic-peer-tarball", {
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        dependencies: { lib: "file:./lib.tgz", plugin: "1.0.0" },
+      }),
+      "bunfig.toml": bunfigWithRegistry(registry.origin),
+      "lib.tgz": Buffer.from(await tarball(lib)),
+    });
+
+    const { stderr, exitCode } = await install(String(dir));
+    expect(stderr).toContain("plugin@1.0.0 depends on lib@file:./lib.tgz via local_tarball source");
+    expect(exitCode).toBe(1);
+  });
+
+  test("blocks a lockfile entry that binds a plain range to a tarball the root does not depend on", async () => {
+    await using registry = await serveRegistry(
+      [
+        { name: "lib", version: "1.0.0" },
+        { name: "plugin", version: "1.0.0" },
+      ],
+      (pkg, origin) => (pkg.name === "plugin" ? { ...pkg, dependencies: { lib: `${origin}/lib.tgz` } } : pkg),
+    );
+    using dir = tempDir("block-exotic-lockfile-entry", {
+      "package.json": JSON.stringify({ name: "root", version: "1.0.0", dependencies: { plugin: "1.0.0" } }),
+      "bunfig.toml": `[install]\nregistry = "${registry.origin}/"\n`,
+    });
+
+    // The option is off, so the tarball URL installs and bun.lock records it.
+    expect((await install(String(dir))).exitCode).toBe(0);
+    const lockfile = join(String(dir), "bun.lock");
+    const recorded = await Bun.file(lockfile).text();
+    const literal = `"lib": "${registry.origin}/lib.tgz"`;
+    expect(recorded).toContain(literal);
+    await Bun.write(lockfile, recorded.replace(literal, `"lib": "^1.0.0"`));
+    await Bun.write(join(String(dir), "bunfig.toml"), bunfigWithRegistry(registry.origin));
+
+    const { stderr, exitCode } = await install(String(dir), "--frozen-lockfile");
+    expect(stderr).toContain("plugin@1.0.0 depends on lib@^1.0.0 via remote_tarball source");
+    expect(exitCode).toBe(1);
+  });
+
+  test("blocks a tarball URL that a registry package depends on", async () => {
+    await using registry = await serveRegistry(
+      [
+        { name: "lib", version: "1.0.0" },
+        { name: "plugin", version: "1.0.0" },
+      ],
+      (pkg, origin) => (pkg.name === "plugin" ? { ...pkg, dependencies: { lib: `${origin}/lib.tgz` } } : pkg),
+    );
+    using dir = tempDir("block-exotic-remote-tarball", {
+      "package.json": JSON.stringify({ name: "root", version: "1.0.0", dependencies: { plugin: "1.0.0" } }),
+      "bunfig.toml": bunfigWithRegistry(registry.origin),
+    });
+
+    const { stderr, exitCode } = await install(String(dir));
+    expect(stderr).toContain(`plugin@1.0.0 depends on lib@${registry.origin}/lib.tgz via remote_tarball source`);
+    expect(exitCode).toBe(1);
+  });
+
+  test("blocks a local tarball that the root's tarball dependency depends on", async () => {
+    using dir = tempDir("block-exotic-local-tarball", {
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        dependencies: { parent: "file:./parent.tgz" },
+      }),
+      "bunfig.toml": `[install]\nblockExoticSubdeps = true\n`,
+      "parent.tgz": Buffer.from(
+        await tarball({ name: "parent", version: "1.0.0", dependencies: { inner: "file:./inner.tgz" } }),
+      ),
+      "inner.tgz": Buffer.from(await tarball({ name: "inner", version: "1.0.0" })),
+    });
+
+    const { stderr, exitCode } = await install(String(dir));
+    expect(stderr).toContain("parent@./parent.tgz depends on inner@file:./inner.tgz via local_tarball source");
+    expect(exitCode).toBe(1);
+  });
+
+  describe("a git repository that the root's tarball dependency depends on", () => {
+    // The dependency key is `loot`. The repository names itself `private-thing`.
+    let repo: ReturnType<typeof tempDir>;
+    let url: string;
+    beforeAll(async () => {
+      repo = tempDir("block-exotic-git-repo", {
+        "package.json": JSON.stringify({ name: "private-thing", version: "9.9.9" }),
+      });
+      for (const args of [
+        ["init", "-q"],
+        ["add", "."],
+        ["-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "init"],
+      ]) {
+        await using git = Bun.spawn({
+          cmd: ["git", ...args],
+          cwd: String(repo),
+          env: bunEnv,
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        const [gitStderr, gitExitCode] = await Promise.all([git.stderr.text(), git.exited]);
+        expect({ args, gitStderr, gitExitCode }).toEqual({ args, gitStderr: "", gitExitCode: 0 });
+      }
+      url = `git+${pathToFileURL(String(repo))}`;
+    });
+    afterAll(() => repo[Symbol.dispose]());
+
+    async function project(bunfig: string, rootFields: object = {}) {
+      return tempDir("block-exotic-git", {
+        "package.json": JSON.stringify({
+          name: "root",
+          version: "1.0.0",
+          dependencies: { evil: "file:./evil.tgz" },
+          ...rootFields,
+        }),
+        "bunfig.toml": bunfig,
+        "evil.tgz": Buffer.from(await tarball({ name: "evil", version: "1.0.0", dependencies: { loot: url } })),
+      });
+    }
+
+    test("is blocked, and the message prints the package's own name", async () => {
+      using dir = await project(`[install]\nblockExoticSubdeps = true\n`);
+
+      const { stderr, exitCode } = await install(String(dir));
+      expect(stderr).toContain(`evil@./evil.tgz depends on loot@${url} via git source (package name: private-thing)`);
+      expect(exitCode).toBe(1);
+    });
+
+    test("is not blocked when an override for that name points at a registry version", async () => {
+      await using registry = await serveRegistry([{ name: "private-thing", version: "2.0.0" }]);
+      using dir = await project(bunfigWithRegistry(registry.origin), { overrides: { "private-thing": "2.0.0" } });
+
+      expect(await install(String(dir))).toEqual({
+        stderr: expect.not.stringContaining("blockExoticSubdeps"),
+        exitCode: 0,
+      });
+    });
   });
 });

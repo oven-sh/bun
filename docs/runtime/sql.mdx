@@ -931,7 +931,7 @@ const sql = new SQL({
 | `verify-ca`   | Verifies server certificate is signed by trusted CA. Fails if verification fails.                                    |
 | `verify-full` | Most secure mode. Verifies certificate and hostname match. Protects against untrusted certificates and MITM attacks. |
 
-`verify-ca` and `verify-full` always verify the server certificate, whether the mode comes from the connection string, `PGSSLMODE`, or the `tls` option. A `tls` object with `ca`, `caFile` or `rejectUnauthorized: true` raises a weaker mode to `verify-full`. `NODE_TLS_REJECT_UNAUTHORIZED=0` does not turn this verification off. To connect without it, pass `tls: { rejectUnauthorized: false }`.
+`verify-ca` and `verify-full` always verify the server certificate, whether the mode comes from the connection string, `PGSSLMODE`, or the `tls` option. A `tls` object with `ca`, `caFile` or `rejectUnauthorized: true` raises a weaker mode to `verify-full`. `NODE_TLS_REJECT_UNAUTHORIZED=0` does not turn this verification off. To connect without it, pass `tls: { rejectUnauthorized: false }`. With that option, `ca` and `caFile` do not raise the mode.
 
 ### Using With Connection Strings
 

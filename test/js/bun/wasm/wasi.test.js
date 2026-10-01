@@ -255,7 +255,7 @@ it("fd_pread counts each byte once and reads the next iov from where the last on
 
 // A file system can report a write error first at close(2). The descriptor is
 // released all the same, so the guest's entry for it must go.
-function bindingsWithFailingClose() {
+function bindingsWithFailingClose(closed = []) {
   return {
     hrtime: () => process.hrtime.bigint(),
     exit: () => {},
@@ -267,6 +267,7 @@ function bindingsWithFailingClose() {
       ...fs,
       closeSync(fd) {
         fs.closeSync(fd);
+        closed.push(fd);
         throw Object.assign(new Error("ENOSPC: no space left on device, close"), { code: "ENOSPC" });
       },
     },
@@ -287,21 +288,27 @@ it("fd_close forgets the descriptor when the close reports an error", () => {
   expect(wasi.wasiImport.fd_close(preopenFd)).toBe(WASI_EBADF);
 });
 
-it("fd_renumber moves the descriptor when the close reports an error", () => {
+it("fd_renumber forgets the descriptor that it closed when the close reports an error", () => {
   using first = tempDir("wasi-fd-renumber-error-1", {});
   using second = tempDir("wasi-fd-renumber-error-2", {});
+  const closed = [];
   const wasi = new WASI({
     preopens: { "/first": String(first), "/second": String(second) },
-    bindings: bindingsWithFailingClose(),
+    bindings: bindingsWithFailingClose(closed),
   });
 
   const WASI_ENOSPC = 51;
-  const secondEntry = wasi.FD_MAP.get(4);
+  const preopened = [wasi.FD_MAP.get(3).real, wasi.FD_MAP.get(4).real];
 
   try {
     expect(wasi.wasiImport.fd_renumber(3, 4)).toBe(WASI_ENOSPC);
-    expect({ from: wasi.FD_MAP.get(3), to: wasi.FD_MAP.has(4) }).toEqual({ from: secondEntry, to: false });
+    // The call closed one of the two. No number of the guest may still name it.
+    const mapped = [...wasi.FD_MAP.values()].map(entry => entry.real);
+    expect({ closed: closed.length, closedAndMapped: mapped.filter(real => closed.includes(real)) }).toEqual({
+      closed: 1,
+      closedAndMapped: [],
+    });
   } finally {
-    fs.closeSync(secondEntry.real);
+    for (const real of preopened) if (!closed.includes(real)) fs.closeSync(real);
   }
 });

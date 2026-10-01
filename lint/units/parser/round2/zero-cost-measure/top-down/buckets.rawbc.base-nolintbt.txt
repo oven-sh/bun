@@ -1,0 +1,10 @@
+cause (Bc)              bun-types typescript-lib         src-js            tsx     js-control
+startup-js                     +0             +0             +0             +0             +0
+backtracker                 -2220             +0        -148760        -196000             +0
+type grammar             +4921460      +22501000       +3725760       +8400000             +0
+type statements           +291360       +1859580        +161860        +366000             +0
+lexer                     +830080       +4566720        +424480        +712000             +0
+statements                 +49300        +287480        +184700         +78000        -110660
+expressions+class           +7860          +3100         +66660        +136000         +10880
+visit+layout                -6840          -9200        -269300        -216000         -56280
+parser symbols           +6091000      +29208680       +4145400       +9280000        -156060

@@ -42,10 +42,34 @@ rules-sim.cjs          node rules-sim.cjs [--probe bin] [--list cases.json]... [
 Results (2026-10-01):
   model.cjs: ESLint's own tests of the four rules 265/265 (135 reports); edge lists 134 + 171 + 133 + 65 the same; every
   JavaScript case of ESLint's rule tests 25,161/25,161 (785 reports); 2,922 real files the same (75 reports); fuzz: 47,416
-  constructors (110,991 reports), 14,722 getters, 14,878 switches, all the same. Without the replay 31 of the first 32,619
-  constructors get another answer (a `default` that is not the last clause: its body gets its previous segments when the
-  statement ends). --update-enter-only changes nothing in 13,945 constructors.
+  constructors (110,991 reports), 14,722 getters, 14,878 switches, all the same; the lists of ../rules-code-path-topdown
+  and of ../walk-order-code-paths the same but for 3 names declared in another scope. Without the replay 31 of the first
+  32,619 constructors get another answer (a `default` that is not the last clause: its body gets its previous segments
+  when the statement ends). --update-enter-only changes nothing in 13,945 constructors; without the steps of unreachable
+  segments nothing changes either.
   tokens-check.cjs: ESLint's rule tests (27,894 sources), 2,922 JavaScript files and 1,734 TypeScript files: 6,821 properties
-  that do not start with their key, 880 `default` clauses, 8,434 `case` clauses, 9,314 colons, 7,670 clauses by the one rule:
-  no difference.
+  that do not start with their key, 8,434 `case` clauses, 9,314 colons, 7,670 clauses by the one rule, and 18,680 clauses of
+  two fuzz lists (710 read from the clause before itself because its statements are all `;`): no difference. (The first
+  form of the read for `default`, from the test of an empty clause before, fails when that test is in parentheses: 6 of
+  5,994 in the fuzz lists. The one rule does not read from a test.)
   comment-matcher.cjs: 700,000 random texts, no difference.
+  rules-sim.cjs with the probe built at 19:15 (Bun's tree and Bun's lexer; /tmp/rcp-1a/rcpprobe):
+    ESLint's own tests of the four rules: 264/265 the same, 1 with a place the probe did not find (see `;` below).
+    edge lists: getter-return 65/65, constructor-super 171/171, no-this-before-super 133/133, no-fallthrough 131 of 133
+    (one `-->` comment, one `;`); ../walk-order-code-paths/cases: edge 142/145 (3 names declared in another scope), cross 99/99.
+    every case of ESLint's rule tests (27,833 that both parsers take, JavaScript and TypeScript), three rules without
+    no-fallthrough: 27,450 the same, 381 the same but for the start of a class member of a TypeScript file (no reader: X9),
+    2 `public constructor` (the same cause). 2,922 JavaScript files: the same, all four rules (75 reports). 1,734
+    TypeScript files: 1,731 the same; the 2 others are src/js/node/http2.ts and src/js/node/test.ts, where ESLint reports
+    four `super()` of classes that extend `(X as T)` as "not a constructor" and the probe, which looks through the `as`, does not.
+    fuzz: 7,443 constructors 7,425 the same and 18 with a `;` clause; 7,403 getters 7,382 + 20 + 1 likewise; 7,439 switches
+    7,214 the same and 225 not, every one of them with a clause whose last statement is `;`.
+    TypeScript lists: no-fallthrough 22/22; constructor-super 37/48 (9 a TypeScript node around the superclass, 2 `public
+    constructor`), with --strict-heritage 45/48 (`(B<T>)`, which the probe does not know as a node, and the same 2);
+    no-this-before-super 29/36 (3 `typeof this` in a type, 4 a TypeScript node around the superclass), with
+    --strict-heritage 33/36; getter-return (../walk-order-code-paths/cases/ts-getter-return.json) 35 + 11 (member start) of
+    53, 4 names declared as types or in a namespace, and 3 where a name inside a type is the first throwable of a `try`
+    for ESLint (`try { return 1 as Foo; } catch {}`: the `catch` is reachable for ESLint and not for Bun's tree).
+  What the probe showed that reading had not: a `;` statement has no place (`Stmt::empty()`, loc -1): a read of the text
+  cannot start at it. probe/src/main.rs has the fix (`placed_tail`) and the `-->` arm of the comment scan; that text is
+  NOT built yet (the second build waited for the lock when this was written: /tmp/rcp-1a/build2.done says whether it ran).

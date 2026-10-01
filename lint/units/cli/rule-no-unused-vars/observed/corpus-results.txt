@@ -3,3 +3,5 @@ core-model.cjs against ESLint no-unused-vars:
   {"total":7299,"same":7181,"fatal":118,"differ":0,"reportsOfEslint":2456}
 ts-model.cjs against @typescript-eslint/no-unused-vars:
   {"total":15185,"same":13888,"fatal":1297,"differ":0,"reportsOfTseslint":46074}
+ts-model.cjs with BUN_VIEW=chain BUN_SIG= (what a lint parse does not build is not seen; the marks stand in):
+  {"total":15185,"same":13619,"fatal":1297,"differ":269,"reportsOfTseslint":46074,"extra":0,"missing":541,"movedOrOtherText":0}

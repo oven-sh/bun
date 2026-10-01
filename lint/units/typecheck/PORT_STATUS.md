@@ -403,10 +403,14 @@ compiled. What was checked before:
   reached, and no file of `importer/` is outside.
 - The six files have no `unsafe`, `unwrap()`, `expect(`, `panic!`, `todo!`, `unimplemented!`, `unreachable!` and no
   `allow(`, and none of the seven has a run of two comment lines.
-- Not run on these bytes in the real crate: clippy (the scratch root had it clean at `3febf04ee5`, API.md). `cargo check`
-  does not compile `javascript/tests.rs` (805 lines) and `mod tests` of `javascript/tree.rs` (lines 875 to 922), which
-  are `#[cfg(test)]`: no compiler has seen the two beside the `ast` of today, so whether they still compile is not
-  known.
+- Not run on these bytes in the real crate: clippy. `clippy-driver` was clean at `3febf04ee5` from the scratch root of
+  `jsdoc-reparser-js-trees/port/`, which has stand-ins for `core`, `internal`, `tspath`, `diagnostics`, five scanner
+  functions, `ast/ast.rs` and `ast/utilities.rs` (API.md, "Importer: the JavaScript step", "Verified"): that is not the
+  crate of today.
+- `cargo check` does not compile `javascript/tests.rs` (805 lines) and `mod tests` of `javascript/tree.rs` (lines 875
+  to 922), which are `#[cfg(test)]`, and the look-ahead did not either. They were compiled and run from that scratch
+  root only: no compiler has seen the two beside the modules of today, so whether they compile in the real crate is
+  not known.
 
 | upstream file, lines | Rust module under `src/typecheck/` | state | not ported |
 | --- | --- | --- | --- |

@@ -1212,12 +1212,10 @@ test("removeAllListeners() releases an explicit ref() like off() does", async ()
 // unref()'d only if that removed its last 'message' listener. Clearing a handler that
 // was never set, or while on() listeners remain, leaves the ref state alone.
 //
-// A non-callable object is not a removal: the event handler attribute installs it (the
-// getter returns it, and it occupies the 'message' listener slot), so the ref state simply
-// follows the listener list: ref'd while it is installed, released when it is cleared.
-// node agrees on installing one over nothing; it differs on the two rarer transitions
-// (it only counts functions, so replacing a function with an object unrefs there and
-// clearing an object does not), where bun keeps hasRef() in step with the listener list.
+// A non-callable object is installed as the handler (the getter returns it) and counts as a
+// listener while it is there, as in node. Replacing a function with one unrefs the port, as
+// in node, which only counts functions. Clearing an object handler releases the port here
+// (the listener is gone), where node stays ref'd.
 test("onmessage = <non-function> releases the port only when it removed the last 'message' listener", async () => {
   const f = () => {};
   const g = () => {};
@@ -1259,6 +1257,15 @@ test("onmessage = <non-function> releases the port only when it removed the last
       p.onmessage = {} as any;
       p.onmessage = null;
     }),
+    objectReplacedByObject: await hasRefAfter(p => {
+      p.onmessage = {} as any;
+      p.onmessage = {} as any;
+    }),
+    functionReplacedByObjectThenFunction: await hasRefAfter(p => {
+      p.onmessage = f;
+      p.onmessage = {} as any;
+      p.onmessage = g;
+    }),
   };
   expect(results).toEqual({
     handlerCleared: false,
@@ -1268,8 +1275,10 @@ test("onmessage = <non-function> releases the port only when it removed the last
     onListenerRemains: true,
     onListenerOnly: true,
     objectHandlerInstalled: true,
-    functionReplacedByObject: true,
+    functionReplacedByObject: false,
     objectHandlerCleared: false,
+    objectReplacedByObject: true,
+    functionReplacedByObjectThenFunction: true,
   });
 });
 

@@ -104,15 +104,10 @@ test.skipIf(!isASAN)(
        // port now survives on its self-ref alone.
        for (let i = 0; i < 5; i++) Bun.gc(true);
        // Drop the realm. Destroying its global destroys the context the port is registered on.
-       // A stale stack slot can keep the realm alive through a collection or two, so collect
-       // (with a different call in between each time) until its global is actually gone.
+       // The global goes on the first collection; the check proves that teardown ran.
        realm = null;
-       let collected = false;
-       for (let i = 0; i < 50 && !collected; i++) {
-         Bun.gc(true);
-         collected = globals() === baseline;
-       }
-       console.log(collected ? "PASS" : "the realm's global was never collected");`,
+       Bun.gc(true);
+       console.log(globals() === baseline ? "PASS" : "the realm's global was never collected");`,
       ],
       env: { ...bunEnv, ...(isWindows ? {} : { Malloc: "1" }) },
       stdout: "pipe",
@@ -125,7 +120,4 @@ test.skipIf(!isASAN)(
     expect(stdout).toBe("PASS\n");
     expect(exitCode).toBe(0);
   },
-  // The passing run takes about a second; a failing one has to symbolize an ASAN report
-  // for the debug binary first, which takes longer than the default timeout.
-  30_000,
 );

@@ -608,6 +608,12 @@ registry=http://127.0.0.1:4873/ ; default registry
     ['ignore-scripts="1"', true],
     ['ignore-scripts="0"', false],
     ["ignore-scripts='null'", false],
+    ["ignore-scripts='{}'", true],
+    ["ignore-scripts='[]'", undefined],
+    // npm trims the value first
+    ['ignore-scripts=" false "', false],
+    ['ignore-scripts=" null "', false],
+    ['ignore-scripts="\\u000b"', true],
     // the inline comment is cut before the value is coerced
     ["ignore-scripts=false ; allow scripts", false],
     ["ignore-scripts=0 # allow scripts", false],
@@ -615,6 +621,45 @@ registry=http://127.0.0.1:4873/ ; default registry
     ["ignore-scripts = ; bare", true],
   ])("boolean option: %s", (line, expected) => {
     expect(loadNpmrc(line + "\n").ignore_scripts).toBe(expected);
+  });
+
+  // npm reads a literal empty value and a literal `undefined` before it expands
+  // ${VAR}. The same text from a variable goes through the numeric rule.
+  test.each([
+    ["ignore-scripts=${EMPTY}", false],
+    ["ignore-scripts=${EMPTY?}", false],
+    ["ignore-scripts=${EMPTY}${EMPTY}", false],
+    ['ignore-scripts="${EMPTY}"', false],
+    ["ignore-scripts=${EMPTY} ; comment", false],
+    ["ignore-scripts=${UNSET?}", false],
+    ["ignore-scripts=${BLANK}", false],
+    ['ignore-scripts="${BLANK}"', false],
+    ["ignore-scripts=${PADDED_FALSE}", false],
+    ["ignore-scripts=${UNDEFINED}", true],
+    ["ignore-scripts=${UNSET}", true],
+    ["ignore-scripts=${FALSE}", false],
+    ["ignore-scripts=${NULL}", false],
+    ["ignore-scripts=${ZERO}", false],
+    ["ignore-scripts=${HEX_ZERO}", false],
+    ["ignore-scripts=${ONE}", true],
+    ["ignore-scripts=${TRUE}", true],
+    // the reference is in the comment, so the value is a literal
+    ["ignore-scripts= ; ${EMPTY}", true],
+    ["ignore-scripts=undefined ; ${EMPTY}", false],
+  ])("boolean option from the environment: %s", (line, expected) => {
+    const env = {
+      EMPTY: "",
+      BLANK: " ",
+      PADDED_FALSE: " false ",
+      UNDEFINED: "undefined",
+      FALSE: "false",
+      NULL: "null",
+      ZERO: "0",
+      HEX_ZERO: "0x0",
+      ONE: "1",
+      TRUE: "true",
+    };
+    expect(loadNpmrc(line + "\n", env).ignore_scripts).toBe(expected);
   });
 
   test("every boolean option uses the same coercion", () => {

@@ -1238,19 +1238,38 @@ mod draft {
     // loadNpmrcConfig / loadNpmrc
     // ──────────────────────────────────────────────────────────────────────────
 
+    /// Whether the text of the value at `loc` has a `${VAR}` reference before any comment.
+    fn has_env_reference(source: &Source, loc: Loc) -> bool {
+        let Ok(start) = usize::try_from(loc.start) else {
+            return false;
+        };
+        let Some(rest) = source.contents().get(start..) else {
+            return false;
+        };
+        let end = bun_core::strings::index_of_any(rest, b"\n;#").unwrap_or(rest.len());
+        bun_core::strings::contains(&rest[..end], b"${")
+    }
+
     /// npm's Boolean coercion: `@npmcli/config` parse-field, then nopt `validateBoolean`.
-    fn npmrc_bool(expr: &Expr) -> Option<bool> {
+    fn npmrc_bool(expr: &Expr, source: &Source) -> Option<bool> {
         match &expr.data {
             ExprData::EBoolean(b) => Some(b.value),
             ExprData::ENull(_) => Some(false),
-            // a single-quoted `'1'` is JSON-parsed to a number, as in ini
+            // ini JSON-parses a single-quoted value: `'1'` is a number, `'{}'` an object
             ExprData::ENumber(_) => expr.as_number().map(|n| n != 0.0),
+            ExprData::EObject(_) => Some(true),
             ExprData::EString(_) => {
-                let value = bun_core::trim(expr.as_utf8_string_literal()?, b" \n\r\t");
-                if value.is_empty() {
-                    return Some(true);
+                let value = bun_core::strings::trim(
+                    expr.as_utf8_string_literal()?,
+                    &bun_core::strings::WHITESPACE_CHARS,
+                );
+                // parse-field reads these two spellings before it expands `${VAR}`
+                if (value.is_empty() || value == b"undefined")
+                    && !has_env_reference(source, expr.loc)
+                {
+                    return Some(value.is_empty());
                 }
-                if value == b"false" || value == b"null" || value == b"undefined" {
+                if value == b"false" || value == b"null" {
                     return Some(false);
                 }
                 // nopt: a numeric string is `!!Number(value)`, any other string is true
@@ -1469,19 +1488,19 @@ mod draft {
         }
 
         if let Some(ignore_scripts) = out.get(b"ignore-scripts") {
-            if let Some(ignore) = npmrc_bool(&ignore_scripts) {
+            if let Some(ignore) = npmrc_bool(&ignore_scripts, source) {
                 install.ignore_scripts = Some(ignore);
             }
         }
 
         if let Some(link_workspace_packages) = out.get(b"link-workspace-packages") {
-            if let Some(link) = npmrc_bool(&link_workspace_packages) {
+            if let Some(link) = npmrc_bool(&link_workspace_packages, source) {
                 install.link_workspace_packages = Some(link);
             }
         }
 
         if let Some(save_exact) = out.get(b"save-exact") {
-            if let Some(exact) = npmrc_bool(&save_exact) {
+            if let Some(exact) = npmrc_bool(&save_exact, source) {
                 install.exact = Some(exact);
             }
         }
@@ -1532,7 +1551,7 @@ mod draft {
         }
 
         if let Some(hoist_expr) = out.get(b"hoist") {
-            if let Some(hoist) = npmrc_bool(&hoist_expr) {
+            if let Some(hoist) = npmrc_bool(&hoist_expr, source) {
                 install.hoist = Some(hoist);
             }
         }

@@ -165,6 +165,33 @@ test.concurrent.each(["ignore-scripts=1", "ignore-scripts=True", "ignore-scripts
   expect(await exists(join(packageDir, "postinstall.txt"))).toBe(false);
 });
 
+// npm expands ${VAR} after it has read a literal empty value, so a variable
+// that is set but empty is the number 0: the scripts run
+test.concurrent("ignore-scripts=${VAR} in npmrc follows the value of the variable", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.2.3",
+        dependencies: { "no-deps": "1.0.0" },
+        scripts: {
+          postinstall: `${bunExe()} -e 'await Bun.write("postinstall.txt", "postinstall!!")'`,
+        },
+      }),
+    ),
+    write(join(packageDir, ".npmrc"), "ignore-scripts=${SKIP_SCRIPTS}"),
+  ]);
+
+  await runBunInstall({ ...env, SKIP_SCRIPTS: "true" }, packageDir);
+  expect(await exists(join(packageDir, "postinstall.txt"))).toBe(false);
+
+  await runBunInstall({ ...env, SKIP_SCRIPTS: "" }, packageDir, { savesLockfile: false });
+  expect(await exists(join(packageDir, "postinstall.txt"))).toBe(true);
+});
+
 test.concurrent("trustedDependencies matches the resolved package name, not the dependency alias", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;

@@ -14,7 +14,8 @@ for (let i = 0; i < 5; i++) {
 if (typeof Bun !== "undefined") Bun.gc(true);
 const baseline = rss();
 
-for (let i = 0; i < 100000; i++) {
+// An import takes ~0.35ms under ASAN, and the full count does not fit the test's 60s on the slowest CI agents.
+for (let i = 0; i < (isASAN ? 40000 : 100000); i++) {
   delete require.cache[dest];
   await import(dest);
 }

@@ -268,6 +268,9 @@ describe.concurrent("require.cache", () => {
       expect(exitCode).toBe(0);
     }, 60000); // takes 4s on an M1 in release build
 
+    // An ASAN build returns what a collection freed to the OS about a second later, and every load of this module leaves
+    // megabytes of garbage. The reading then depends on how far behind the collector was, which depends on how much CPU
+    // the fixture had. A collection every 4 loads makes both readings see the same amount.
     test("via import() with a lot of long export names", async () => {
       let text = "";
       for (let i = 0; i < 10000; i++) {
@@ -280,8 +283,10 @@ describe.concurrent("require.cache", () => {
           const path = require.resolve("./index.js");
           const gc = global.gc || globalThis?.Bun?.gc || (() => {});
           const rss = process.memoryUsage.rss;
+          let loads = 0;
           function bust() {
             delete require.cache[path];
+            if (${isASAN} && ++loads % 4 === 0) gc(true);
           }
 
           for (let i = 0; i < ${isASAN ? 40 : 50}; i++) {

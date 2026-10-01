@@ -871,16 +871,23 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
                 // ASM-verified PROVEN_CACHED on the `self.close()` path's
                 // field reads. Launder so `close()` sees fresh state.
                 let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-                let parent = Self::r(this).parent();
-                // As in `_on_error`: `close()` is still to run.
-                // SAFETY: parent BACKREF valid.
-                let _keep_alive = unsafe { ParentKeepAlive::new(parent) };
-                // SAFETY: parent BACKREF valid.
-                unsafe { Parent::on_error(parent, err) };
-                Self::r(this).close();
+                Self::on_register_poll_error(this, err);
             }
             sys::Result::Ok(()) => {}
         }
+    }
+
+    /// Out of line so that `register_poll`, which runs on every buffered write, stays small.
+    #[cold]
+    #[inline(never)]
+    fn on_register_poll_error(this: *mut Self, err: sys::Error) {
+        let parent = Self::r(this).parent();
+        // As in `_on_error`: `close()` is still to run.
+        // SAFETY: parent BACKREF valid.
+        let _keep_alive = unsafe { ParentKeepAlive::new(parent) };
+        // SAFETY: parent BACKREF valid.
+        unsafe { Parent::on_error(parent, err) };
+        Self::r(this).close();
     }
 
     pub fn write_utf16(&mut self, buf: &[u16]) -> WriteResult {

@@ -163,10 +163,13 @@ fn count_lines_in_file(
 ) -> Result<u32, &'static [u8]> {
     use bun_sys::O;
     // With O_NONBLOCK the open of a FIFO that has no writer returns at once.
+    // On Windows the flag opens the file for overlapped I/O, which the read
+    // below is not.
+    let nonblock = if cfg!(unix) { O::NONBLOCK } else { 0 };
     let file = bun_sys::File::openat(
         bun_sys::Fd::cwd(),
         path.as_bytes(),
-        O::RDONLY | O::NONBLOCK | O::CLOEXEC,
+        O::RDONLY | O::CLOEXEC | nonblock,
         0,
     )
     .map_err(|err| err.name())?;

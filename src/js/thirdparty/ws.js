@@ -424,8 +424,6 @@ class BunWebSocket extends EventEmitter {
             if (isBinary) {
               this.emit("message", this.#fragments ? [data] : data, isBinary);
             } else {
-              // binaryType selects the shape of a binary message only:
-              // https://github.com/websockets/ws/blob/8.21.0/lib/receiver.js#L634-L655
               this.emit("message", Buffer.from(data), isBinary);
             }
           },

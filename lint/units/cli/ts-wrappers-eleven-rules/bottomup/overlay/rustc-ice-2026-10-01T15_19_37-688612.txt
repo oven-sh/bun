@@ -1,0 +1,30 @@
+thread 'main' panicked at /cargo/registry/25cdd57fae9f0462/ignore-0.4.25/src/gitignore.rs:232:9:
+path is expected to be under the root
+stack backtrace:
+   0:     0x79847281f255 - <std[e88b123c45551a4b]::backtrace::Backtrace>::create
+   1:     0x79847281f1a5 - <std[e88b123c45551a4b]::backtrace::Backtrace>::force_capture
+   2:     0x798471562275 - std[e88b123c45551a4b]::panicking::update_hook::<alloc[d256a4456fbff4f9]::boxed::Box<rustc_driver_impl[c5d5f53170729273]::install_ice_hook::{closure#1}>>::{closure#0}
+   3:     0x7984728350b2 - std[e88b123c45551a4b]::panicking::panic_with_hook
+   4:     0x798472813254 - std[e88b123c45551a4b]::panicking::panic_handler::{closure#0}
+   5:     0x79847280c039 - std[e88b123c45551a4b]::sys::backtrace::__rust_end_short_backtrace::<std[e88b123c45551a4b]::panicking::panic_handler::{closure#0}, !>
+   6:     0x798472814dfd - __rustc[4dff85908f3a4c57]::rust_begin_unwind
+   7:     0x79846f26134c - core[e3370a31d8f1c8c0]::panicking::panic_fmt
+   8:     0x5e1d3a58312e - <rustfmt_nightly[b6c03925b2caf942]::ignore_path::IgnorePathSet>::is_match
+   9:     0x5e1d3a500792 - <scoped_tls[9aacb4df539ede0b]::ScopedKey<rustc_span[caaced1e687b12a]::SessionGlobals>>::with::<<rustfmt_nightly[b6c03925b2caf942]::Session<std[e88b123c45551a4b]::io::stdio::Stdout>>::format_input_inner::{closure#0}, core[e3370a31d8f1c8c0]::result::Result<rustfmt_nightly[b6c03925b2caf942]::FormatReport, rustfmt_nightly[b6c03925b2caf942]::ErrorKind>>
+  10:     0x5e1d3a4fb87f - rustfmt[cd557df5297f6643]::format_and_emit_report::<std[e88b123c45551a4b]::io::stdio::Stdout>
+  11:     0x5e1d3a5109ab - rustfmt[cd557df5297f6643]::execute
+  12:     0x5e1d3a50c006 - rustfmt[cd557df5297f6643]::main
+  13:     0x5e1d3a50a15b - std[e88b123c45551a4b]::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  14:     0x5e1d3a50aae9 - std[e88b123c45551a4b]::rt::lang_start::<()>::{closure#0}
+  15:     0x798474113e68 - std[e88b123c45551a4b]::rt::lang_start_internal
+  16:     0x5e1d3a51b458 - main
+  17:     0x79846d235ca8 - __libc_start_call_main
+                               at ./csu/../sysdeps/nptl/libc_start_call_main.h:58:16
+  18:     0x79846d235d65 - __libc_start_main_impl
+                               at ./csu/../csu/libc-start.c:360:3
+  19:     0x5e1d3a3e1009 - <unknown>
+  20:                0x0 - <unknown>
+
+
+rustc version: 1.100.0-nightly (574ff7d98 2026-09-14)
+platform: x86_64-unknown-linux-gnu

@@ -143,3 +143,19 @@
             "TypeAliasDeclaration[65,112) name[70,71) TypeLiteral[74,111) NumberKeyword[85,91) LiteralType[108,109)",
         ],
     },
+    Payloads {
+        name: "member-modifiers-and-private-names",
+        text: b"interface I { export a: 1; readonly #b: 2; get #c(): 3; static #d: 4; export readonly e: 5; export [k: string]: 6 }\ntype T = { #f: 7; set #g(v: 8) };\n",
+        lines: &[
+            "InterfaceDeclaration[0,115) name[10,11) members[13,113) PropertySignature[14,26) Export[14,20) name[21,22) LiteralType[24,25) PropertySignature[27,42) Readonly[27,35) name[36,38) LiteralType[40,41) GetAccessor[43,55) name[47,49) parameters[50,50) LiteralType[53,54) PropertySignature[56,69) Static[56,62) name[63,65) LiteralType[67,68) PropertySignature[70,91) Export[70,76) Readonly[77,85) name[86,87) LiteralType[89,90) IndexSignature[92,113) Export[92,98) parameters[100,109) Parameter[100,109) StringKeyword[103,109) LiteralType[112,113)",
+            "TypeAliasDeclaration[116,149) name[121,122) TypeLiteral[125,148) LiteralType[131,132) LiteralType[144,145)",
+        ],
+    },
+    Payloads {
+        name: "heritage-of-reserved-words",
+        text: b"interface A extends class {} {}\ninterface B extends this, null, function () {} {}\nclass C implements class {} {}\n",
+        lines: &[
+            "InterfaceDeclaration[0,31) name[10,11) extends[12,28) ExpressionWithTypeArguments[20,28) members[30,30)",
+            "InterfaceDeclaration[32,81) name[42,43) extends[44,78) ExpressionWithTypeArguments[52,56) ExpressionWithTypeArguments[58,62) ExpressionWithTypeArguments[64,78) members[80,80)",
+        ],
+    },

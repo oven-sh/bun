@@ -1,4 +1,4 @@
-use-isnan: 563 cases: same 519, merged 8, missing 23, extra 12, eslint-rejects 1
+use-isnan: 587 cases: same 539, merged 8, missing 27, extra 12, eslint-rejects 1
 missing: "x === NaN; function g(NaN) {}" [js] [script]
     eslint: 1:1 Use the isNaN function to compare with NaN.
     bun:    (none)
@@ -106,4 +106,16 @@ missing: "enum E { NaN } x === NaN" [ts] [module]
     bun:    (none)
 eslint-rejects: "x === Number<T>.NaN" [ts] [module]
     eslint: FATAL Parsing error: An instantiation expression cannot be followed by a property access.
+    bun:    (none)
+missing: "namespace A.NaN { export const q = 1 } x === NaN" [ts] [module]
+    eslint: 1:40 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "declare namespace A.NaN { const q: number } x === NaN" [ts] [module]
+    eslint: 1:45 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "namespace NaN.A { export const q = 1 } x === NaN" [ts] [module]
+    eslint: 1:40 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "declare enum E { NaN } x === NaN" [ts] [module]
+    eslint: 1:24 Use the isNaN function to compare with NaN.
     bun:    (none)

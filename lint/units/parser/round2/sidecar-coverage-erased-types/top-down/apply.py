@@ -556,7 +556,8 @@ edit(G, """    /// An entry of `implements`: a type reference where one stands t
         let start = self.lexer.snapshot();
         let logged = self.lint_logged();
         let recorded = self.sidecar_mark();
-        if reads_type {
+        // A reserved word names no type here: `class {}` and `this` are expressions.
+        if reads_type && self.lexer.token == T::TIdentifier {
             self.lexer.is_log_disabled = true;
             let as_type = self.build_heritage_type();
             self.lexer.is_log_disabled = start.is_log_disabled;
@@ -718,6 +719,54 @@ edit(S, """                type_node,
             };""", """                type_node,
                 body,
             };""", count=2)
+
+# ───────────────────────── the modifiers and names of a type member that the reference reads and the sink that builds did not ─────────────────────────
+edit(S, """            T::TIn => Some(ts::ModifierKind::In),
+            T::TConst => Some(ts::ModifierKind::Const),
+            T::TIdentifier => Some(match self.lexer.raw() {""", """            T::TIn => Some(ts::ModifierKind::In),
+            T::TConst => Some(ts::ModifierKind::Const),
+            T::TExport => Some(ts::ModifierKind::Export),
+            T::TDefault => Some(ts::ModifierKind::Default),
+            T::TIdentifier => Some(match self.lexer.raw() {""")
+edit(S, """    /// isLiteralPropertyName
+    fn build_is_literal_property_name(&self) -> bool {
+        self.lexer.is_identifier_or_keyword()
+            || matches!(
+                self.lexer.token,
+                T::TStringLiteral | T::TNumericLiteral | T::TBigIntegerLiteral
+            )
+    }""", """    /// isLiteralPropertyName. A private name counts, as it does in the reference.
+    fn build_is_literal_property_name(&self) -> bool {
+        self.lexer.is_identifier_or_keyword()
+            || matches!(
+                self.lexer.token,
+                T::TPrivateIdentifier
+                    | T::TStringLiteral
+                    | T::TNumericLiteral
+                    | T::TBigIntegerLiteral
+            )
+    }""")
+edit(S, """            // nextTokenCanFollowModifier: only "static" may stand before a line break
+            let can_follow = self.build_look_ahead(|p| {
+                p.lexer.next()?;
+                Ok((is_static || !p.lexer.has_newline_before) && p.build_can_follow_modifier())
+            });""", """            // nextTokenCanFollowModifier: only "static" may stand before a line break
+            let can_follow = self.build_look_ahead(|p| {
+                p.lexer.next()?;
+                Ok(match kind {
+                    ts::ModifierKind::Export => p.can_follow_export_keyword(),
+                    ts::ModifierKind::Default => p.can_follow_default_keyword(),
+                    _ => {
+                        (is_static || !p.lexer.has_newline_before) && p.build_can_follow_modifier()
+                    }
+                })
+            });""")
+edit(K, """    /// nextTokenCanFollowDefaultKeyword, after "default".
+    fn can_follow_default_keyword(&mut self) -> bool {""", """    /// nextTokenCanFollowDefaultKeyword, after "default".
+    pub(crate) fn can_follow_default_keyword(&mut self) -> bool {""")
+edit(K, """    /// nextTokenCanFollowModifier for "export", after "export".
+    fn can_follow_export_keyword(&mut self) -> bool {""", """    /// nextTokenCanFollowModifier for "export", after "export".
+    pub(crate) fn can_follow_export_keyword(&mut self) -> bool {""")
 
 # ───────────────────────── typescript.rs: the predicates of the reference, for the heritage reader ─────────────────────────
 Y = "typescript.rs"

@@ -50,5 +50,13 @@
  {
   "name": "accessor-bodies",
   "text": "interface X { get a() { return 0 } set a(v: number) { v } b: 1 }\ntype Y = { get c(): number { return 1 } d: 2 };\n"
+ },
+ {
+  "name": "member-modifiers-and-private-names",
+  "text": "interface I { export a: 1; readonly #b: 2; get #c(): 3; static #d: 4; export readonly e: 5; export [k: string]: 6 }\ntype T = { #f: 7; set #g(v: 8) };\n"
+ },
+ {
+  "name": "heritage-of-reserved-words",
+  "text": "interface A extends class {} {}\ninterface B extends this, null, function () {} {}\nclass C implements class {} {}\n"
  }
 ]

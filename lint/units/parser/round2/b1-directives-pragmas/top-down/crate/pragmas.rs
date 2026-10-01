@@ -471,6 +471,7 @@ mod tests {
     use crate::defines::Define;
     use crate::parse::comment_directives::CommentDirectiveKind;
     use crate::parse::parse_entry::{Options, ParsedForLint, Parser};
+    use crate::parse::syntax_errors::SyntaxErrors;
     use bun_alloc::Arena;
     use bun_ast::{Loader, Loc, Log, Source};
 
@@ -931,8 +932,8 @@ mod tests {
         assert_eq!((references, diagnostics), (vec![], vec![(TS1084, 0, 21)]));
     }
 
-    /// A message of the log as the number of its diagnostic, its offset, its length and its text.
-    type Logged = (Option<u32>, usize, usize, Vec<u8>);
+    /// A message of the log as the number of its diagnostic, its offset, its length, its text, and the start and end that the table of the parse has for it.
+    type Logged = (Option<u32>, usize, usize, Vec<u8>, Option<(u32, u32)>);
 
     /// What `read` makes of the lint parse of `text`, or the errors that the parse left. The lexer keeps its comments as it does for a build that minifies names.
     fn lint_parse<R>(
@@ -949,20 +950,23 @@ mod tests {
         options.features.minify_identifiers = true;
         let define = Define::default();
         let mut log = Log::init();
+        let mut errors = SyntaxErrors::default();
         let parsed = match Parser::init(options, &mut log, &source, &define, &arena) {
-            Ok(parser) => parser.parse_for_lint(read).ok(),
+            Ok(parser) => parser.parse_for_lint_with_codes(&mut errors, read).ok(),
             Err(_) => None,
         };
         parsed.ok_or_else(|| {
             log.msgs
                 .iter()
-                .map(|msg| {
+                .enumerate()
+                .map(|(index, msg)| {
                     let (offset, length) = msg
                         .data
                         .location
                         .as_ref()
                         .map_or((0, 0), |location| (location.offset, location.length));
-                    (msg.code(), offset, length, msg.data.text.to_vec())
+                    let marked = errors.get(index).map(|entry| (entry.start, entry.end));
+                    (msg.code(), offset, length, msg.data.text.to_vec(), marked)
                 })
                 .collect()
         })
@@ -1045,7 +1049,14 @@ mod tests {
             let expected: Vec<Logged> = expected
                 .iter()
                 .map(|&(code, offset, length, said)| {
-                    (Some(code), offset, length, said.as_bytes().to_vec())
+                    let marked = (offset as u32, (offset + length) as u32);
+                    (
+                        Some(code),
+                        offset,
+                        length,
+                        said.as_bytes().to_vec(),
+                        Some(marked),
+                    )
                 })
                 .collect();
             assert_eq!(

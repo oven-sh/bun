@@ -649,7 +649,12 @@ test.each([
     `new Request("http://example.com/other", source)`,
     "Body is disturbed or locked",
   ],
-  ["new Request(url, response)", `new Response(stream)`, `new Request("http://example.com/", source)`, "Body is disturbed or locked"],
+  [
+    "new Request(url, response)",
+    `new Response(stream)`,
+    `new Request("http://example.com/", source)`,
+    "Body is disturbed or locked",
+  ],
 ])(
   "%s with a locked stream body throws a catchable TypeError and does not fail the process",
   async (_, makeSource, construct, message) => {
@@ -885,7 +890,8 @@ describe("clone() throws when the body is disturbed or locked", () => {
 // inputBody is non-null, then: If input is unusable, then throw a TypeError."
 // Without the check the copy of a consumed Request silently carries an empty
 // body. The Request can arrive as `input`, or as `init` (a Bun extension that
-// copies the Request's fields the same way).
+// copies the Request's fields the same way). As `input` the error has Node's
+// constructor text; as `init` it has the clone() text.
 describe("new Request() throws when the input Request's body is disturbed or locked", () => {
   async function usedRequest() {
     const request = new Request("http://example.com/used", { method: "POST", body: "once" });
@@ -894,7 +900,10 @@ describe("new Request() throws when the input Request's body is disturbed or loc
     return request;
   }
 
-  function expectUnusable(construct: () => Request) {
+  const asInit = "Body is disturbed or locked";
+  const asInput = "Cannot construct a Request with a Request object that has already been used.";
+
+  function expectUnusable(construct: () => Request, message: string) {
     let error: unknown;
     try {
       construct();
@@ -902,24 +911,24 @@ describe("new Request() throws when the input Request's body is disturbed or loc
       error = e;
     }
     expect(error).toBeInstanceOf(TypeError);
-    expect((error as Error).message).toBe("Body is disturbed or locked");
+    expect((error as Error).message).toBe(message);
     expect((error as Error & { code: string }).code).toBe("ERR_BODY_ALREADY_USED");
   }
 
   test("new Request(usedRequest)", async () => {
     const used = await usedRequest();
-    expectUnusable(() => new Request(used));
+    expectUnusable(() => new Request(used), asInput);
   });
 
   test("new Request(url, usedRequest)", async () => {
     const used = await usedRequest();
-    expectUnusable(() => new Request("http://example.com/other", used));
+    expectUnusable(() => new Request("http://example.com/other", used), asInit);
   });
 
   test("new Request(usedRequest, init) when init has no body", async () => {
     const used = await usedRequest();
-    expectUnusable(() => new Request(used, {}));
-    expectUnusable(() => new Request(used, { method: "PUT" }));
+    expectUnusable(() => new Request(used, {}), asInput);
+    expectUnusable(() => new Request(used, { method: "PUT" }), asInput);
   });
 
   test("new Request(usedRequest, { body }) takes the init body", async () => {
@@ -934,9 +943,9 @@ describe("new Request() throws when the input Request's body is disturbed or loc
       body: new ReadableStream({ start() {} }),
     });
     source.body!.getReader();
-    expectUnusable(() => new Request(source));
-    expectUnusable(() => new Request("http://example.com/other", source));
-    expectUnusable(() => new Request(source, {}));
+    expectUnusable(() => new Request(source), asInput);
+    expectUnusable(() => new Request("http://example.com/other", source), asInit);
+    expectUnusable(() => new Request(source, {}), asInput);
   });
 
   test("a partially read stream input throws", async () => {
@@ -953,13 +962,13 @@ describe("new Request() throws when the input Request's body is disturbed or loc
     await reader.read();
     reader.releaseLock();
     expect(source.bodyUsed).toBe(true);
-    expectUnusable(() => new Request(source));
+    expectUnusable(() => new Request(source), asInput);
   });
 
   test("new Request(url, usedResponse) throws, an unread Response as init still copies", async () => {
     const used = new Response("once");
     await used.text();
-    expectUnusable(() => new Request("http://example.com/other", used));
+    expectUnusable(() => new Request("http://example.com/other", used), asInit);
 
     const unread = new Response("hello");
     const copy = new Request("http://example.com/other", unread);
@@ -974,21 +983,25 @@ describe("new Request() throws when the input Request's body is disturbed or loc
     expect(new Request(get, {}).body).toBeNull();
   });
 
-  test("an unread input still copies and stays readable", async () => {
+  test("an unread Request as init still copies and stays readable", async () => {
     const source = new Request("http://example.com/", { method: "POST", body: "hello" });
-    const copy = new Request(source);
+    const copy = new Request("http://example.com/other", source);
     expect(await Promise.all([source.text(), copy.text()])).toEqual(["hello", "hello"]);
   });
 
-  test("an empty-string body input is copied, not shared through the body getter", async () => {
-    const source = new Request("http://example.com/", { method: "POST", body: "" });
-    const copy = new Request(source, {});
-    expect(copy.body).not.toBe(source.body);
-    expect(await Promise.all([source.text(), copy.text()])).toEqual(["", ""]);
-
+  // The input form transfers an empty body like any other (covered below).
+  // A Request or a Response as init is copied: before, the copy shared the
+  // init's stream through its `body` getter and the second read rejected.
+  test("an empty-string body given as init is copied, not shared through the body getter", async () => {
     const response = new Response("");
     const fromResponse = new Request("http://example.com/", response);
+    expect(fromResponse.body).not.toBe(response.body);
     expect(await Promise.all([response.text(), fromResponse.text()])).toEqual(["", ""]);
+
+    const init = new Request("http://example.com/", { method: "POST", body: "" });
+    const fromRequest = new Request(new Request("http://example.com/a", { method: "POST" }), init);
+    expect(fromRequest.body).not.toBe(init.body);
+    expect(await Promise.all([init.text(), fromRequest.text()])).toEqual(["", ""]);
   });
 
   test("Bun.serve: new Request(req) of an already-read incoming request throws", async () => {
@@ -1012,7 +1025,7 @@ describe("new Request() throws when the input Request's body is disturbed or loc
     });
     const response = await fetch(server.url, { method: "POST", body: "hello" });
     expect(response.status).toBe(200);
-    expect(await promise).toBe("TypeError: Body is disturbed or locked");
+    expect(await promise).toBe(`TypeError: ${asInput}`);
   });
 
   test("server.fetch(usedRequest) rejects instead of sending an empty body", async () => {

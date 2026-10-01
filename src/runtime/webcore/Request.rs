@@ -1544,7 +1544,8 @@ impl Request {
         preserve_url: bool,
         body_mode: BodyCloneMode,
     ) -> JsResult<()> {
-        // Every copy of a Request passes here, so the fetch-spec usability check lives here only.
+        // The fetch-spec usability check for every whole copy of a Request: the
+        // constructor's single-value arm, `clone()`, `server.fetch(request)`.
         match body_mode {
             BodyCloneMode::Transfer => self.throw_if_input_body_unusable(cx.global())?,
             BodyCloneMode::Tee => self.throw_if_body_unusable(cx.global())?,

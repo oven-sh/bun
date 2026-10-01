@@ -292,8 +292,7 @@ pub struct VirtualMachine {
     pub rare_data: Option<Box<RareData>>,
     pub proxy_env_storage: crate::rare_data::ProxyEnvStorage,
     pub(crate) resolved_path_dups: Vec<Box<[u8]>>,
-    pub pending_internal_promise: Option<*mut JSInternalPromise>,
-    pub pending_internal_promise_is_protected: bool,
+    pending_internal_promise: crate::strong::Optional,
     pub pending_internal_promise_reported_at: u32,
     pub(crate) hot_reload_deferred: bool,
     pub entry_point_result: EntryPointResult,
@@ -3470,10 +3469,7 @@ impl VirtualMachine {
                     // SAFETY: hook contract.
                     let p = unsafe { (hooks.load_preloads)(self) }?;
                     if !p.is_null() {
-                        JSValue::from_cell(p).ensure_still_alive();
-                        JSValue::from_cell(p).protect();
-                        self.pending_internal_promise = Some(p);
-                        self.pending_internal_promise_is_protected = true;
+                        self.set_pending_internal_promise(Some(p));
                         return Ok(p);
                     }
                 }
@@ -3481,8 +3477,7 @@ impl VirtualMachine {
                 // Check if Module.runMain was patched.
                 if self.has_patched_run_main {
                     bun_core::hint::cold();
-                    self.pending_internal_promise = None;
-                    self.pending_internal_promise_is_protected = false;
+                    self.set_pending_internal_promise(None);
                     let global_ref = self.global();
                     let argv1 = bun_string_jsc::create_utf8_for_js(global_ref, MAIN_FILE_NAME)
                         .map_err(|_| crate::CrateError::JSError)?;
@@ -3492,7 +3487,7 @@ impl VirtualMachine {
                     .map_err(|_| crate::CrateError::JSError)?;
                     // If the override stored a promise itself, use that; otherwise
                     // wrap its return value.
-                    if let Some(stored) = self.pending_internal_promise {
+                    if let Some(stored) = self.pending_internal_promise() {
                         return Ok(stored);
                     }
                     // `Promise.resolve(ret)` reads `ret.constructor` / `ret.then`,
@@ -3501,8 +3496,7 @@ impl VirtualMachine {
                         JSC__JSInternalPromise__resolvedPromise(global_ref, ret)
                     })
                     .map_err(|_| crate::CrateError::JSError)?;
-                    self.pending_internal_promise = Some(resolved);
-                    self.pending_internal_promise_is_protected = false;
+                    self.set_pending_internal_promise(Some(resolved));
                     return Ok(resolved);
                 }
             }
@@ -3529,9 +3523,7 @@ impl VirtualMachine {
                 p
             };
 
-            self.pending_internal_promise = Some(promise);
-            self.pending_internal_promise_is_protected = false;
-            JSValue::from_cell(promise).ensure_still_alive();
+            self.set_pending_internal_promise(Some(promise));
             Ok(promise)
         } else {
             self.entry_evaluation_started = false;
@@ -3541,9 +3533,7 @@ impl VirtualMachine {
                 jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&main_str))
                     .map(NonNull::as_ptr)
                     .ok_or(crate::CrateError::JSError)?;
-            self.pending_internal_promise = Some(promise);
-            self.pending_internal_promise_is_protected = false;
-            JSValue::from_cell(promise).ensure_still_alive();
+            self.set_pending_internal_promise(Some(promise));
             Ok(promise)
         }
     }
@@ -3559,7 +3549,7 @@ impl VirtualMachine {
         // pending_internal_promise can change if hot module reloading is enabled
         if self.is_watcher_enabled() {
             loop {
-                let Some(p) = self.pending_internal_promise else {
+                let Some(p) = self.pending_internal_promise() else {
                     break;
                 };
                 // SAFETY: `p` is a live JSC heap cell tracked by the VM.
@@ -3567,7 +3557,7 @@ impl VirtualMachine {
                     break;
                 }
                 self.event_loop_mut().tick();
-                let Some(p) = self.pending_internal_promise else {
+                let Some(p) = self.pending_internal_promise() else {
                     break;
                 };
                 // SAFETY: see above.
@@ -3583,7 +3573,7 @@ impl VirtualMachine {
             let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         }
 
-        Ok(self.pending_internal_promise.unwrap_or(promise))
+        Ok(self.pending_internal_promise().unwrap_or(promise))
     }
 }
 
@@ -4451,9 +4441,24 @@ impl VirtualMachine {
         (self.on_unhandled_rejection)(self, global_object, reason);
     }
 
+    /// The promise of the latest load of the entry point. `--hot` looks at it on every tick,
+    /// long after it has settled and the module loader has let go of it.
+    pub fn pending_internal_promise(&self) -> Option<*mut JSInternalPromise> {
+        Some(self.pending_internal_promise.get()?.to_cell()?.cast())
+    }
+
+    pub fn set_pending_internal_promise(&mut self, promise: Option<*mut JSInternalPromise>) {
+        match promise {
+            Some(promise) => self
+                .pending_internal_promise
+                .set(self.global(), JSValue::from_cell(promise)),
+            None => self.pending_internal_promise.clear_without_deallocation(),
+        }
+    }
+
     /// After a hot reload, surfaces the entry-point promise's rejection (if any) and re-arms the watcher.
     pub fn report_exception_in_hot_reloaded_module_if_needed(&mut self) {
-        let promise = match self.pending_internal_promise {
+        let promise = match self.pending_internal_promise() {
             Some(p) => p,
             None => {
                 self.add_main_to_watcher_if_needed();
@@ -4564,7 +4569,7 @@ impl VirtualMachine {
             bun_core::reload_process(should_clear_terminal, false);
         }
 
-        if let Some(p) = self.pending_internal_promise {
+        if let Some(p) = self.pending_internal_promise() {
             // SAFETY: `p` is a live JSC heap cell tracked by the VM.
             match crate::JSPromise::status_ptr(p) {
                 crate::js_promise::Status::Pending => {
@@ -4602,12 +4607,6 @@ impl VirtualMachine {
         // the JSC module loader registry.
         self.global().reload().expect("Failed to reload");
         self.hot_reload_counter += 1;
-        if self.pending_internal_promise_is_protected {
-            if let Some(p) = self.pending_internal_promise {
-                JSValue::from_cell(p).unprotect();
-            }
-            self.pending_internal_promise_is_protected = false;
-        }
         // reload_entry_point() stores into pending_internal_promise on every return path.
         let main = self.main;
         // Note: reshaped for borrowck — copy the `RawSlice` first to avoid
@@ -5474,6 +5473,7 @@ impl VirtualMachine {
         drop(core::mem::take(&mut self.main_resolved_path));
 
         self.overridden_main.deinit();
+        self.pending_internal_promise.deinit();
 
         // `timer`/`entry_point` live in the high-tier `RuntimeState` box, so
         // dispatch the reclaim through the hook.
@@ -5546,10 +5546,7 @@ impl VirtualMachine {
                 // SAFETY: hook contract.
                 let p = unsafe { (hooks.load_preloads)(self) }?;
                 if !p.is_null() {
-                    JSValue::from_cell(p).ensure_still_alive();
-                    self.pending_internal_promise = Some(p);
-                    JSValue::from_cell(p).protect();
-                    self.pending_internal_promise_is_protected = true;
+                    self.set_pending_internal_promise(Some(p));
                     return Ok(p);
                 }
             }
@@ -5561,9 +5558,7 @@ impl VirtualMachine {
         let promise = jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&main_str))
             .map(NonNull::as_ptr)
             .ok_or(crate::CrateError::JSError)?;
-        self.pending_internal_promise = Some(promise);
-        self.pending_internal_promise_is_protected = false;
-        JSValue::from_cell(promise).ensure_still_alive();
+        self.set_pending_internal_promise(Some(promise));
         Ok(promise)
     }
 
@@ -5596,7 +5591,7 @@ impl VirtualMachine {
         // pending_internal_promise can change if hot module reloading is enabled
         if self.is_watcher_enabled() {
             loop {
-                let Some(p) = self.pending_internal_promise else {
+                let Some(p) = self.pending_internal_promise() else {
                     break;
                 };
                 // SAFETY: `p` is a live JSC heap cell tracked by the VM.
@@ -5604,7 +5599,7 @@ impl VirtualMachine {
                     break;
                 }
                 self.event_loop_mut().tick();
-                let Some(p) = self.pending_internal_promise else {
+                let Some(p) = self.pending_internal_promise() else {
                     break;
                 };
                 // SAFETY: see above.
@@ -5623,7 +5618,7 @@ impl VirtualMachine {
         // Pre-arm the waker so this settled-promise tick cannot park (#36450).
         self.wakeup();
         self.auto_tick();
-        Ok(self.pending_internal_promise.unwrap())
+        Ok(self.pending_internal_promise().unwrap())
     }
 
     /// Tracks a listening socket so watch-mode reloads can close it.
@@ -5788,13 +5783,7 @@ impl VirtualMachine {
         self.entry_point_result.value.deinit();
         self.entry_point_result.cjs_set_value = false;
         self.entry_point_result.evaluated_as_cjs = false;
-        if let Some(promise) = self.pending_internal_promise {
-            if self.pending_internal_promise_is_protected {
-                JSValue::from_cell(promise).unprotect();
-                self.pending_internal_promise_is_protected = false;
-            }
-            self.pending_internal_promise = None;
-        }
+        self.set_pending_internal_promise(None);
         self.has_patched_run_main = false;
         self.set_main(b"");
         self.main_hash = 0;

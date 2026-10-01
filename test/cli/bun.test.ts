@@ -568,16 +568,24 @@ describe.concurrent("global flag before subcommand", () => {
   // Shebang + chmod bin stub is Unix-only; see test/regression/issue/26207.test.ts.
   // bunx reads the flags in front of `x` itself (`--bun`), but not the value
   // that a global flag consumed, even when the value looks like a bunx flag.
-  for (const pre of [["--bun"], ["--cwd", ".", "--bun"], ["--env-file", "--package", "--bun"]]) {
+  // A leading `--env-file` is loaded for the package.
+  for (const [pre, expected] of [
+    [["--bun"], "under-bun unset"],
+    [["--cwd", ".", "--bun"], "under-bun unset"],
+    [["--preload", "--package", "--bun"], "under-bun unset"],
+    [["--env-file", "my.env", "--bun"], "under-bun loaded"],
+    [["--env-file=my.env", "--bun"], "under-bun loaded"],
+  ] as const) {
     test.skipIf(isWindows)(`bun ${pre.join(" ")} x <bin> runs the bin under bun`, async () => {
       using dir = tempDir("which-bunx-bun", {
-        "node_modules/.bin/probe": `#!/usr/bin/env node\nconsole.log(process.isBun ? "under-bun" : "under-node");`,
+        "node_modules/.bin/probe": `#!/usr/bin/env node\nconsole.log(process.isBun ? "under-bun" : "under-node", process.env.FROM_ENV_FILE ?? "unset");`,
         "package.json": JSON.stringify({ name: "p" }),
+        "my.env": "FROM_ENV_FILE=loaded\n",
       });
       fs.chmodSync(`${dir}/node_modules/.bin/probe`, 0o755);
       const { stdout, stderr, exitCode } = await run(String(dir), [...pre, "x", "probe"]);
       expect(stderr).not.toContain("Script not found");
-      expect(stdout.trim()).toBe("under-bun");
+      expect(stdout.trim()).toBe(expected);
       expect(exitCode).toBe(0);
     });
   }

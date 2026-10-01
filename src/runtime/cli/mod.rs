@@ -1571,6 +1571,19 @@ pub(crate) mod command {
         Ok(())
     }
 
+    /// The `--env-file` paths in front of the keyword. `bun x` and `bun create`
+    /// do not run a clap parse, and the package they start must see the file.
+    fn leading_env_files() -> impl Iterator<Item = Box<[u8]>> {
+        leading_flags().filter_map(|(flag, value)| {
+            let path = if flag == b"--env-file" {
+                value
+            } else {
+                flag.strip_prefix(b"--env-file=")
+            };
+            path.map(Box::<[u8]>::from)
+        })
+    }
+
     /// `--help` or `-h` in front of the keyword (`bun --help init`).
     fn help_requested_before_keyword() -> bool {
         leading_flags().any(|(flag, _)| flag == b"--help" || flag == b"-h")
@@ -1621,10 +1634,12 @@ pub(crate) mod command {
     fn exec_bunx(log: &mut bun_ast::Log) -> CmdResult {
         apply_leading_cwd()?;
         let ctx = init(Tag::BunxCommand, log)?;
+        ctx.args.env_files.extend(leading_env_files());
         // bunx reads each flag in front of `x` as one token, so a value that
         // a flag consumed is joined to it (`--cwd dir` is `--cwd=dir`).
         let argv = bun::argv();
         let mut tokens: Vec<&'static [u8]> = leading_flags()
+            .filter(|(flag, _)| !flag.starts_with(b"--env-file"))
             .map(|(flag, value)| match value {
                 Some(value) => super::cli_dupe(&[flag, b"=", value].concat()),
                 None => flag,
@@ -1878,6 +1893,7 @@ pub(crate) mod command {
         // Create command wraps bunx
         apply_leading_cwd()?;
         let ctx = init(Tag::CreateCommand, log)?;
+        ctx.args.env_files.extend(leading_env_files());
         let args = argv_zslice();
         let cmd_idx = subcommand_argv_index();
 

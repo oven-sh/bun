@@ -1089,14 +1089,6 @@ pub(crate) struct H2FrameParser {
     /// Receive-window growth requested by setLocalWindowSize() while a dispatch held the engine
     /// borrow; applied by rewrite_read() on its next pass.
     pending_recv_window_growth: Cell<i64>,
-    /// Bridge: outbound DATA bytes the legacy encoder wrote since the engine last ran, applied to
-    /// the engine's connection-level send window in rewrite_read (the engine cell may be borrowed
-    /// when the DATA goes out). Without this the engine's window only ever grows and a compliant
-    /// peer's cumulative WINDOW_UPDATEs would eventually trip the §6.9.1 overflow error.
-    pending_send_window_consumed: Cell<u64>,
-    /// Same bridge per stream: (stream id, bytes) pairs drained into the engine's per-stream send
-    /// windows in rewrite_read.
-    pending_stream_send_consumed: JsCell<Vec<(u32, u64)>>,
     /// Local-settings snapshot of each SETTINGS frame the legacy encoder sent, in send order,
     /// drained into the engine's per-SETTINGS ack queue in rewrite_read (§6.5.3: ACKs apply in
     /// order).
@@ -1572,7 +1564,6 @@ impl Stream {
                     client
                         .remote_used_window_size
                         .set(client.remote_used_window_size.get() + payload_size as u64);
-                    client.note_engine_send_consumed(self.id, payload_size as u64);
 
                     let mut flags: u8 = 0; // we ignore end_stream for now because we know we have more data to send
                     if padding != 0 {
@@ -1621,7 +1612,6 @@ impl Stream {
                     client
                         .remote_used_window_size
                         .set(client.remote_used_window_size.get() + payload_size as u64);
-                    client.note_engine_send_consumed(self.id, payload_size as u64);
                     let mut flags: u8 = if frame.end_stream && !self.wait_for_trailers {
                         DataFrameFlags::END_STREAM as u8
                     } else {
@@ -3521,26 +3511,6 @@ impl H2FrameParser {
         JSValue::UNDEFINED
     }
 
-    /// Record outbound DATA the legacy encoder wrote so the engine's send windows track reality.
-    /// Buffered in cells and applied in rewrite_read: inbound WINDOW_UPDATE handling always goes
-    /// through rewrite_read first, so the windows are in sync before any overflow check runs.
-    pub(crate) fn note_engine_send_consumed(&self, stream_id: u32, n: u64) {
-        if n == 0 {
-            return;
-        }
-        self.pending_send_window_consumed
-            .set(self.pending_send_window_consumed.get() + n);
-        self.pending_stream_send_consumed.with_mut(|v| {
-            if let Some(last) = v.last_mut()
-                && last.0 == stream_id
-            {
-                last.1 += n;
-            } else {
-                v.push((stream_id, n));
-            }
-        });
-    }
-
     /// Mirror the engine's frame counters into plain Cells so getFrameCounters() never
     /// contends with the engine borrow (destroy can run inside a dispatch).
     fn sync_engine_frame_counters(&self) {
@@ -3588,29 +3558,6 @@ impl H2FrameParser {
             if pending > 0 {
                 engine.recv_window.grow(pending);
             }
-            // Apply outbound DATA the legacy encoder wrote since the last batch, so the engine's
-            // send windows reflect what is actually in flight (§6.9.1 overflow stays peer-error
-            // only).
-            let sent = self.pending_send_window_consumed.replace(0);
-            if sent > 0 {
-                engine.send_window.consume(sent as i64);
-            }
-            self.pending_stream_send_consumed.with_mut(|v| {
-                // A client-initiated stream has no engine entry until its first inbound
-                // frame; dropping its consume here would leave the engine's send window
-                // permanently wider than the peer's view. Keep unmatched entries queued —
-                // but only while the legacy stream is still alive: a pushed stream the
-                // client never sends frames on would otherwise park its entry forever
-                // (and get scanned on every read).
-                v.retain(|&(id, n)| {
-                    if let Some(s) = engine.streams.get_mut(&id) {
-                        s.send_window.consume(n as i64);
-                        false
-                    } else {
-                        self.streams.get().contains_key(&id)
-                    }
-                });
-            });
             // Register SETTINGS submissions the legacy encoder sent since the last batch, so the
             // engine attributes each inbound ACK to the right submission (§6.5.3).
             self.pending_settings_window_submissions.with_mut(|v| {
@@ -3822,21 +3769,24 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             max_header_list_size: settings.max_header_list_size,
             enable_connect_protocol: settings.enable_connect_protocol,
         };
+        // handle_received_stream_id opens every stream with this value.
+        let old_initial_window = self
+            .remote_settings
+            .get()
+            .map(|s| s.initial_window_size)
+            .unwrap_or(DEFAULT_WINDOW_SIZE as u32);
         self.remote_settings.set(Some(fp));
-        // §6.9.2 (mirrors the legacy inbound): when the peer's INITIAL_WINDOW_SIZE grows, raise the
-        // send window of streams opened before its SETTINGS arrived (a client's first request is
-        // typically sent before the server's SETTINGS lands), then resume queued sends.
-        let mut window_grew = false;
-        for (_, item) in self.streams.get().iter() {
-            // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
-            let stream = unsafe { &mut **item };
-            if (settings.initial_window_size as u64) > stream.remote_window_size {
-                stream.remote_window_size = settings.initial_window_size as u64;
-                window_grew = true;
+        // §6.9.2. remote_window_size is cumulative: a decrease can leave it below the used count.
+        let delta = settings.initial_window_size as i64 - old_initial_window as i64;
+        if delta != 0 {
+            for (_, item) in self.streams.get().iter() {
+                // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
+                let stream = unsafe { &mut **item };
+                stream.remote_window_size = stream.remote_window_size.saturating_add_signed(delta);
             }
         }
         // Resume queued sends only when a window actually grew; there is nothing to flush otherwise.
-        if window_grew {
+        if delta > 0 && !self.streams.get().is_empty() {
             let _ = self.flush();
         }
         let g = self.global();
@@ -3910,22 +3860,40 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         );
     }
 
-    fn on_window_update(&self, stream_id: u32, increment: u32) {
+    fn credit_send_window(
+        &self,
+        stream_id: u32,
+        increment: u32,
+    ) -> crate::api::h2::connection::SendCredit {
+        use crate::api::h2::connection::SendCredit;
         bun_output::scoped_log!(
             H2FrameParser,
             "engine WU received stream={} inc={}",
             stream_id,
             increment
         );
-        // Bridge: the legacy outbound reads its own window cells to decide how much DATA to send.
+        // The window is `granted - used`, and it is negative after the peer lowered
+        // SETTINGS_INITIAL_WINDOW_SIZE below what the stream used (§6.9.2).
+        let overflows =
+            |granted: u64, used: u64| granted + increment as u64 > used + MAX_WINDOW_SIZE as u64;
         if stream_id == 0 {
-            self.remote_window_size
-                .set(self.remote_window_size.get() + increment as u64);
+            let granted = self.remote_window_size.get();
+            if overflows(granted, self.remote_used_window_size.get()) {
+                return SendCredit::Overflow;
+            }
+            self.remote_window_size.set(granted + increment as u64);
         } else if let Some(stream) = self.streams.get().get(&stream_id).copied() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
-            unsafe { (*stream).remote_window_size += increment as u64 };
+            let stream = unsafe { &mut *stream };
+            if overflows(stream.remote_window_size, stream.remote_used_window_size) {
+                return SendCredit::Overflow;
+            }
+            stream.remote_window_size += increment as u64;
+        } else {
+            return SendCredit::NotOwned;
         }
         let _ = self.flush();
+        SendCredit::Applied
     }
 
     fn on_altsvc(&self, stream_id: u32, origin: &[u8], value: &[u8]) {
@@ -5248,7 +5216,6 @@ impl H2FrameParser {
                     stream.remote_used_window_size += payload_size as u64;
                     self.remote_used_window_size
                         .set(self.remote_used_window_size.get() + payload_size as u64);
-                    self.note_engine_send_consumed(stream_id, payload_size as u64);
                     let mut flags: u8 = if end_stream {
                         DataFrameFlags::END_STREAM as u8
                     } else {
@@ -7461,8 +7428,6 @@ impl H2FrameParser {
             max_header_list_pairs: Cell::new(128),
             max_settings: Cell::new(32),
             pending_recv_window_growth: Cell::new(0),
-            pending_send_window_consumed: Cell::new(0),
-            pending_stream_send_consumed: JsCell::new(Vec::new()),
             pending_engine_stream_closes: JsCell::new(Vec::new()),
             dispatch_depth: Cell::new(0),
             pending_settings_window_submissions: JsCell::new(Vec::new()),

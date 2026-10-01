@@ -6443,12 +6443,12 @@ impl<'a> Resolver<'a> {
                     }
                 }
                 if let Some(found) = tsconfig_path {
-                    if is_shared_scratch_dir(fd) {
+                    if !auto_discovered_config_is_trusted(found) {
                         let _ = self.log_mut().add_debug_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
                             format_args!(
-                                "Ignoring {} because its directory is writable by every user on the system. Pass --tsconfig-override to load it anyway.",
+                                "Ignoring {} because another user owns it. Pass --tsconfig-override to load it anyway.",
                                 bun_core::fmt::quote(found)
                             ),
                         );
@@ -6759,20 +6759,68 @@ fn is_dot_slash(path: &[u8]) -> bool {
     }
 }
 
-/// Mode `1777` like `/tmp` (any user can create a file in it), or a mode that cannot be read.
-fn is_shared_scratch_dir(dir: FD) -> bool {
+/// Owner of the directory bun was started in, or `NO_UID` when it cannot be read.
+#[cfg(unix)]
+fn top_level_dir_owner() -> libc::uid_t {
+    use core::sync::atomic::{AtomicU32, Ordering};
+    const UNREAD: u32 = u32::MAX - 1;
+    static OWNER: AtomicU32 = AtomicU32::new(UNREAD);
+
+    let cached = OWNER.load(Ordering::Relaxed);
+    if cached != UNREAD {
+        return cached;
+    }
+    let dir = Fs::FileSystem::instance().top_level_dir;
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let mut owner = NO_UID;
+    if !dir.is_empty() && dir.len() < buf.len() {
+        buf[..dir.len()].copy_from_slice(dir);
+        buf[dir.len()] = 0;
+        let span = bun_core::ZStr::from_buf(&buf[..], dir.len());
+        if let Ok(stat) = bun_sys::stat(span) {
+            owner = stat.st_uid;
+        }
+    }
+    OWNER.store(owner, Ordering::Relaxed);
+    owner
+}
+
+#[cfg(unix)]
+const NO_UID: libc::uid_t = u32::MAX;
+
+/// True when a uid's files are this process's own: the invoking user, root, or
+/// the owner of the directory bun was started in. The last one keeps a container
+/// that runs as root over a bind mount owned by the host user reading its own
+/// config.
+#[cfg(unix)]
+fn owner_is_trusted(owner: libc::uid_t) -> bool {
+    if owner == 0 || owner == bun_sys::c::getuid() {
+        return true;
+    }
+    let top = top_level_dir_owner();
+    top != NO_UID && owner == top
+}
+
+/// Whether an auto-discovered `tsconfig.json` / `jsconfig.json` is one this
+/// process trusts. `lstat`, so a symlink that another user planted is judged by
+/// who planted it, not by what it points at. An owner that cannot be read is not
+/// trusted.
+fn auto_discovered_config_is_trusted(path: &[u8]) -> bool {
     #[cfg(unix)]
     {
-        const SHARED: libc::mode_t = libc::S_ISVTX | libc::S_IWOTH;
-        if !dir.is_valid() {
-            return true;
+        let mut buf = bun_paths::path_buffer_pool::get();
+        if path.is_empty() || path.len() >= buf.len() {
+            return false;
         }
-        bun_sys::fstat(dir).map_or(true, |st| (st.st_mode & SHARED) == SHARED)
+        buf[..path.len()].copy_from_slice(path);
+        buf[path.len()] = 0;
+        let span = bun_core::ZStr::from_buf(&buf[..], path.len());
+        bun_sys::lstat(span).is_ok_and(|stat| owner_is_trusted(stat.st_uid))
     }
     #[cfg(not(unix))]
     {
-        let _ = dir;
-        false
+        let _ = path;
+        true
     }
 }
 

@@ -1,6 +1,16 @@
 import { pathToFileURL } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
+import {
+  chmodSync,
+  chownSync,
+  lchownSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  symlinkSync,
+  writeFileSync,
+} from "fs";
 import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
 import { join, resolve, sep } from "path";
 
@@ -1758,16 +1768,17 @@ describe("tsconfig paths skip `.d.ts` substitutions", () => {
   });
 });
 
-// `/tmp`, `/var/tmp` and `/dev/shm` are world-writable and sticky (mode 1777).
-// Every user can create a file in them, so a `tsconfig.json` found there during
-// the upward walk can belong to any user on the system. Because tsconfig `paths`
-// win over the node_modules walk, such a file would rewrite a project's bare
-// imports to code the project never installed. Auto-discovery skips it.
-describe.skipIf(isWindows)("tsconfig in a world-writable sticky directory", () => {
-  // `shared/` stands in for `/tmp`: another user plants the config, the victim's
+// A `tsconfig.json` or `jsconfig.json` found by the upward walk applies to every
+// directory below it, and its `paths` beat the node_modules walk. In a directory
+// another user can write, such as `/tmp`, that lets them rewrite a project's bare
+// imports to code the project never installed. Auto-discovery reads such a file
+// only when this process already trusts its owner: the invoking user, root, or
+// the owner of the directory bun was started in.
+describe.skipIf(isWindows)("ownership of an auto-discovered tsconfig", () => {
+  // `shared/` stands in for `/tmp`: the config sits above the project, and the
   // project is a private subdirectory with its own package.json and node_modules.
   function plantedFixture(configName: "tsconfig.json" | "jsconfig.json") {
-    return tempDir("tsconfig-shared-dir", {
+    return tempDir("tsconfig-owner", {
       [`shared/${configName}`]: JSON.stringify({
         compilerOptions: { paths: { "lib": ["./planted.js"] } },
       }),
@@ -1779,10 +1790,16 @@ describe.skipIf(isWindows)("tsconfig in a world-writable sticky directory", () =
     });
   }
 
-  test.concurrent("a planted tsconfig does not rewrite a bare import at runtime", async () => {
+  // Only root can hand a file to another uid, so the tests that need a config
+  // this process does not own do not run unprivileged.
+  const isRoot = process.getuid?.() === 0;
+  const OTHER_UID = 65534;
+  const OTHER_GID = 65534;
+
+  test.concurrent.skipIf(!isRoot)("a tsconfig another user owns does not rewrite a bare import", async () => {
     using dir = plantedFixture("tsconfig.json");
     const shared = join(String(dir), "shared");
-    chmodSync(shared, 0o1777);
+    chownSync(join(shared, "tsconfig.json"), OTHER_UID, OTHER_GID);
 
     expect(await runWildcardScript(join(shared, "proj"), "app.js")).toEqual({
       stdout: "GENUINE",
@@ -1791,10 +1808,10 @@ describe.skipIf(isWindows)("tsconfig in a world-writable sticky directory", () =
     });
   });
 
-  test.concurrent("a planted jsconfig does not rewrite a bare import at runtime", async () => {
+  test.concurrent.skipIf(!isRoot)("a jsconfig another user owns does not rewrite a bare import", async () => {
     using dir = plantedFixture("jsconfig.json");
     const shared = join(String(dir), "shared");
-    chmodSync(shared, 0o1777);
+    chownSync(join(shared, "jsconfig.json"), OTHER_UID, OTHER_GID);
 
     expect(await runWildcardScript(join(shared, "proj"), "app.js")).toEqual({
       stdout: "GENUINE",
@@ -1803,10 +1820,10 @@ describe.skipIf(isWindows)("tsconfig in a world-writable sticky directory", () =
     });
   });
 
-  test.concurrent("a planted tsconfig does not reach the bundle", async () => {
+  test.concurrent.skipIf(!isRoot)("a tsconfig another user owns does not reach the bundle", async () => {
     using dir = plantedFixture("tsconfig.json");
     const shared = join(String(dir), "shared");
-    chmodSync(shared, 0o1777);
+    chownSync(join(shared, "tsconfig.json"), OTHER_UID, OTHER_GID);
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", "./app.js", "--target", "node"],
@@ -1822,13 +1839,33 @@ describe.skipIf(isWindows)("tsconfig in a world-writable sticky directory", () =
     expect(exitCode).toBe(0);
   });
 
-  // The sticky bit is the boundary. A directory that only the owner can write
-  // keeps supplying its tsconfig to every subdirectory, which is what a monorepo
-  // with a root tsconfig above per-package package.json files relies on.
-  test.concurrent("an owner-only ancestor directory still supplies its tsconfig", async () => {
+  // A symlink another user planted is judged by who planted it, not by what it
+  // points at, so the owner check reads the link itself.
+  test.concurrent.skipIf(!isRoot)("a tsconfig symlink another user owns does not rewrite a bare import", async () => {
     using dir = plantedFixture("tsconfig.json");
     const shared = join(String(dir), "shared");
-    chmodSync(shared, 0o755);
+    const real = join(shared, "real-tsconfig.json");
+    renameSync(join(shared, "tsconfig.json"), real);
+    symlinkSync(real, join(shared, "tsconfig.json"));
+    chownSync(real, OTHER_UID, OTHER_GID);
+    lchownSync(join(shared, "tsconfig.json"), OTHER_UID, OTHER_GID);
+
+    expect(await runWildcardScript(join(shared, "proj"), "app.js")).toEqual({
+      stdout: "GENUINE",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The owner of the working directory counts as this process's own. A container
+  // that runs as root over a bind mount owned by the host user still reads the
+  // project's config.
+  test.concurrent.skipIf(!isRoot)("a tsconfig owned by the owner of the working directory still applies", async () => {
+    using dir = plantedFixture("tsconfig.json");
+    const shared = join(String(dir), "shared");
+    chownSync(join(shared, "tsconfig.json"), OTHER_UID, OTHER_GID);
+    chownSync(join(shared, "planted.js"), OTHER_UID, OTHER_GID);
+    chownSync(join(shared, "proj"), OTHER_UID, OTHER_GID);
 
     expect(await runWildcardScript(join(shared, "proj"), "app.js")).toEqual({
       stdout: "PLANTED",
@@ -1837,12 +1874,36 @@ describe.skipIf(isWindows)("tsconfig in a world-writable sticky directory", () =
     });
   });
 
-  // `--tsconfig-override` is an explicit choice by the person running bun, so it
-  // is loaded whatever the directory mode is.
-  test.concurrent("--tsconfig-override loads the file anyway", async () => {
+  // The check is on the owner, not on the directory mode: your own config in a
+  // world-writable sticky directory is still yours.
+  test.concurrent("your own tsconfig in a world-writable sticky directory still applies", async () => {
     using dir = plantedFixture("tsconfig.json");
     const shared = join(String(dir), "shared");
     chmodSync(shared, 0o1777);
+
+    expect(await runWildcardScript(join(shared, "proj"), "app.js")).toEqual({
+      stdout: "PLANTED",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A monorepo keeps one tsconfig above per-package package.json files.
+  test.concurrent("an ordinary ancestor tsconfig still applies", async () => {
+    using dir = plantedFixture("tsconfig.json");
+
+    expect(await runWildcardScript(join(String(dir), "shared", "proj"), "app.js")).toEqual({
+      stdout: "PLANTED",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // `--tsconfig-override` names the file, so it is loaded whoever owns it.
+  test.concurrent.skipIf(!isRoot)("--tsconfig-override loads a config another user owns", async () => {
+    using dir = plantedFixture("tsconfig.json");
+    const shared = join(String(dir), "shared");
+    chownSync(join(shared, "tsconfig.json"), OTHER_UID, OTHER_GID);
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--tsconfig-override", join(shared, "tsconfig.json"), "app.js"],

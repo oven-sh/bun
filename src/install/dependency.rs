@@ -551,6 +551,11 @@ pub(crate) fn is_safe_install_folder_name(name: &[u8]) -> bool {
     true
 }
 
+/// Leaves the project root (`..` or absolute); same rule `file:` uses.
+pub(crate) fn link_path_escapes_root(target: &[u8]) -> bool {
+    crate::bin::bin_target_escapes_package_dir(target)
+}
+
 /// assumes version is valid
 pub fn without_build_tag(version: &[u8]) -> &[u8] {
     if let Some(plus) = strings::index_of_char(version, b'+') {

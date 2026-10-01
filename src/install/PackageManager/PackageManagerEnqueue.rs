@@ -1597,16 +1597,13 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         dependency::version::Tag::Symlink | dependency::version::Tag::Workspace => {
             let dependency_tag = version.tag;
 
+            // Same trust rule as the `file:` arm below and both installers.
             if dependency_tag == dependency::version::Tag::Symlink
-                && !version_was_replaced
-                && crate::bin::bin_target_escapes_package_dir(this.lockfile.str(version.symlink()))
-                && let Some(declarer) = this.lockfile.get_parent_pkg_of_dependency(id)
-                && !this.lockfile.packages.items_resolution()[declarer as usize]
-                    .tag
-                    .is_local_package()
+                && dependency::link_path_escapes_root(this.lockfile.str(version.symlink()))
+                && !this.lockfile.is_trusted_folder_dependency(id)
             {
                 if dependency.behavior.is_required() {
-                    reject_escaping_link_of_remote_package(this, declarer, dependency);
+                    reject_link_path_of_remote_package(this, id, dependency);
                 }
                 return Ok(());
             }
@@ -1866,27 +1863,37 @@ fn warn_unmet_peer_dependency(
     );
 }
 
-/// `normalize_package_json_path` resolves the value against the project, not the declaring package, so only package.json files read from the project may use `..` or an absolute path.
 #[cold]
 #[inline(never)]
-fn reject_escaping_link_of_remote_package(
+fn reject_link_path_of_remote_package(
     this: &PackageManager,
-    declarer: PackageID,
+    dependency_id: DependencyID,
     dependency: &Dependency,
 ) {
+    const REASON: &str = "only the root package.json, a workspace, or an override may link to a path outside the project";
     let buf = this.lockfile.buffers.string_bytes.as_slice();
     let packages = this.lockfile.packages.slice();
-    this.log_mut().add_error_fmt(
-        None,
-        bun_ast::Loc::EMPTY,
-        format_args!(
-            "refusing to resolve \"{}@{}\" declared by {}@{}: link: paths with \"..\" or an absolute path are only allowed in the package.json files of this project",
-            bstr::BStr::new(dependency.name.slice(buf)),
-            bstr::BStr::new(dependency.version.literal.slice(buf)),
-            bstr::BStr::new(packages.items_name()[declarer as usize].slice(buf)),
-            packages.items_resolution()[declarer as usize].fmt(buf, bun_fmt::PathSep::Posix),
+    let name = bstr::BStr::new(dependency.name.slice(buf));
+    let literal = bstr::BStr::new(dependency.version.literal.slice(buf));
+    match this.lockfile.get_parent_pkg_of_dependency(dependency_id) {
+        Some(declarer) => this.log_mut().add_error_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "refusing to resolve \"{}@{}\" declared by {}@{}: {}",
+                name,
+                literal,
+                bstr::BStr::new(packages.items_name()[declarer as usize].slice(buf)),
+                packages.items_resolution()[declarer as usize].fmt(buf, bun_fmt::PathSep::Posix),
+                REASON,
+            ),
         ),
-    );
+        None => this.log_mut().add_error_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!("refusing to resolve \"{}@{}\": {}", name, literal, REASON),
+        ),
+    }
 }
 
 /// Allocate and initialise an `.extract` Task for an npm tarball.

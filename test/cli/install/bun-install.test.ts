@@ -11190,7 +11190,7 @@ describe.concurrent("link: paths with .. or an absolute path declared by a depen
 
   // `declarer` is how bun prints the package declaring the dependency.
   function refusal(name: string, spec: string, declarer: string) {
-    return `error: refusing to resolve "${name}@${spec}" declared by ${declarer}: link: paths with ".." or an absolute path are only allowed in the package.json files of this project`;
+    return `error: refusing to resolve "${name}@${spec}" declared by ${declarer}: only the root package.json, a workspace, or an override may link to a path outside the project`;
   }
 
   // The rest of stderr is progress output ("Resolving dependencies", ...).
@@ -11285,6 +11285,74 @@ describe.concurrent("link: paths with .. or an absolute path declared by a depen
       expect(exitCode).toBe(0);
     });
   });
+
+  // A row bun.lock already holds is not resolved again, so both linkers repeat
+  // the check. The link target is planted where the linker reads it from, the
+  // global link dir, so that it is linked when nothing refuses it.
+  for (const linker of ["hoisted", "isolated"]) {
+    it(`are not installed by the ${linker} linker from a bun.lock that already holds one under a tarball dependency`, async () => {
+      using dir = tempDir(`escaping-link-in-lockfile-${linker}`, {
+        "global/outside/package.json": JSON.stringify({ name: "outside-dir", version: "1.0.0" }),
+        "project/package.json": rootPackageJson({ tb: "file:./tb-1.0.0.tgz" }),
+        "project/bun.lock": JSON.stringify({
+          lockfileVersion: 2,
+          configVersion: 1,
+          workspaces: { "": { name: "my-app", dependencies: { tb: "file:./tb-1.0.0.tgz" } } },
+          packages: {
+            outside: ["outside-dir@link:../outside", {}],
+            tb: ["tb@./tb-1.0.0.tgz", { dependencies: { outside: "link:../outside" } }],
+          },
+        }),
+      });
+      const root = String(dir);
+      await packDeclarer(root, { dependencies: { outside: "link:../outside" } });
+
+      const { err, exitCode } = await install(root, "--linker", linker);
+      expect(errorLines(err)).toEqual([
+        'error: refusing to link dependency outside-dir to "../outside": only the root package.json, a workspace, or an override may link to a path outside the project',
+      ]);
+      expect(await exists(join(root, "project", "node_modules", "outside"))).toBe(false);
+      expect(exitCode).toBe(1);
+    });
+  }
+
+  // The trust rule of the linkers is keyed on the package, not on the one
+  // dependency they place: `--production` drops the root's devDependency, and
+  // the only dependency left on the link is the peer dependency of `bar`.
+  for (const linker of ["hoisted", "isolated"]) {
+    it(`are still linked by the ${linker} linker when --production leaves only a registry package's peer dependency on a root-declared one`, async () => {
+      await withContext(defaultOpts, async ctx => {
+        using dir = tempDir(`root-link-peer-production-${linker}`, {
+          ...linkTargets(),
+          "global/outside/package.json": linkTargets()["outside/package.json"],
+        });
+        const root = String(dir);
+        await writeRegistryProject(
+          ctx,
+          root,
+          { peerDependencies: { outside: "*" }, peerDependenciesMeta: { outside: { optional: true } } },
+          { devDependencies: { outside: "link:../outside" } },
+        );
+
+        const full = await install(root, "--linker", linker);
+        expect(full.err).not.toContain("error:");
+        expect(full.exitCode).toBe(0);
+        await rm(join(root, "project", "node_modules"), { recursive: true, force: true });
+
+        const { err, exitCode } = await install(root, "--linker", linker, "--production");
+        expect(err).not.toContain("error:");
+        const nodeModules = join(root, "project", "node_modules");
+        let linked = join(nodeModules, "outside");
+        if (linker === "isolated") {
+          const store = join(nodeModules, ".bun");
+          const barEntry = (await readdirSorted(store)).find(name => name.startsWith("bar@"))!;
+          linked = join(store, barEntry, "node_modules", "outside");
+        }
+        expect(await file(join(linked, "package.json")).json()).toEqual({ name: "outside-dir", version: "1.0.0" });
+        expect(exitCode).toBe(0);
+      });
+    });
+  }
 
   // What stays allowed. These only assert the resolution (`--lockfile-only`):
   // bun currently creates the link for a target with ".." relative to the global

@@ -2096,6 +2096,28 @@ pub(crate) fn install_isolated_packages(
             .iter()
             .any(|r| r.tag == ResolutionTag::Symlink)
         {
+            // A bun.lock row never passes the resolver, so its trust rule is
+            // repeated here, before any dependent symlinks to the target.
+            for (pkg_id, res) in pkg_resolutions.iter().enumerate() {
+                if res.tag != ResolutionTag::Symlink {
+                    continue;
+                }
+                let target = res.symlink().slice(string_buf);
+                let pkg_id = PackageID::try_from(pkg_id).expect("int cast");
+                if crate::dependency::link_path_escapes_root(target)
+                    && !lockfile_ro.is_trusted_folder_package(pkg_id)
+                {
+                    Output::err_generic(
+                        "refusing to link dependency <b>{}<r> to \"{}\": only the root package.json, a workspace, or an override may link to a path outside the project",
+                        (
+                            BStr::new(pkg_names[pkg_id as usize].slice(string_buf)),
+                            BStr::new(target),
+                        ),
+                    );
+                    Output::flush();
+                    Global::exit(1);
+                }
+            }
             let _ = crate::package_manager_real::directories::global_link_dir_path(
                 installer.manager_mut(),
             );

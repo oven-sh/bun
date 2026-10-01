@@ -6,6 +6,7 @@ import { createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { connect, listen } from "node:quic";
+import { rawQuicExchange, type RawQuicOptions, type RawQuicStream } from "./raw-quic-client";
 
 const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
@@ -371,6 +372,159 @@ describe("headers queued before the handshake", () => {
       () => "closed",
     );
     expect(await Promise.race([gotHeaders.promise, closed])).toBe("/queued");
+    client.close();
+  });
+});
+
+// RFC 9114 section 4.1 requires HEADERS first on a request stream. A peer that
+// sends a DATA frame first gets CONNECTION_CLOSE with H3_FRAME_UNEXPECTED
+// (0x105), and the listener keeps serving. The raw client below decides which
+// datagram carries that stream: the one with its Finished, so the server reads
+// the stream and the end of the handshake in one batch, or a later one.
+describe("a malformed first request stream", () => {
+  const malformed: Record<string, RawQuicStream[]> = {
+    // An empty DATA frame (type 0x00, length 0).
+    "an empty DATA frame": [{ id: 0, data: Uint8Array.of(0x00, 0x00) }],
+    // A control stream (type 0x00) first, then DATA "a" on the request stream.
+    "a DATA frame behind a control stream": [
+      { id: 2, data: Uint8Array.of(0x00, 0x04, 0x00) },
+      { id: 0, data: Uint8Array.of(0x00, 0x01, 0x61) },
+    ],
+  };
+
+  /** The first session's events, in order, and the status a later request gets. */
+  async function exchange(streams: RawQuicStream[], send: RawQuicOptions["send"]) {
+    const events: unknown[] = [];
+    const sessions: Promise<unknown>[] = [];
+    await using server = await listen(
+      (session: any) => {
+        const closed = Promise.withResolvers<void>();
+        sessions.push(closed.promise);
+        const record = sessions.length === 1 ? (event: unknown[]) => events.push(event) : () => {};
+        session.onerror = (err: any) => record(["error", err?.code]);
+        session.onhandshake = (info: any) => record(["handshake", info.protocol, info.cipher, info.servername]);
+        session.onstream = (stream: any) => {
+          record(["stream"]);
+          stream.closed.catch(() => {});
+        };
+        session.closed.then(closed.resolve, closed.resolve);
+      },
+      {
+        alpn: ["h3"],
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 5 },
+        onheaders(this: any) {
+          this.sendHeaders({ ":status": "200" }, { terminal: true });
+        },
+      },
+    );
+
+    const close = await rawQuicExchange({ port: server.address!.port, alpn: "h3", streams, send });
+
+    // The listener is still serving: answer a well-formed request on a new
+    // connection through it.
+    const client = await connect(server.address!, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 5 },
+    });
+    const answered = Promise.withResolvers<string>();
+    const stream = await client.createBidirectionalStream({
+      headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+      onheaders: (headers: Record<string, string>) => answered.resolve(headers[":status"]),
+    });
+    stream.closed.catch(() => {});
+    const status = await answered.promise;
+    client.close();
+    await Promise.all(sessions);
+    return { close, events, status };
+  }
+
+  for (const [name, streams] of Object.entries(malformed)) {
+    // The same exchange, with the stream in the handshake's last flight and in
+    // a later one, reports the same events to the listener.
+    test(`${name} in the handshake's last flight closes only that connection`, async () => {
+      const expected = {
+        close: { application: true, code: 0x105, reason: "unexpected HTTP/3 frame on stream 0" },
+        events: [["handshake", "h3", "TLS_AES_128_GCM_SHA256", "localhost"], ["stream"], ["error", "ERR_QUIC_TRANSPORT_ERROR"]],
+        status: "200",
+      };
+      expect(await exchange(streams, "with-finished")).toEqual(expected);
+      expect(await exchange(streams, "after-handshake-done")).toEqual(expected);
+    });
+  }
+
+  test("the listen()-time stream callbacks reach a received stream", async () => {
+    const applied = Promise.withResolvers<string[]>();
+    await using server = await listen(
+      (session: any) => {
+        session.onerror = () => {};
+        session.onstream = (stream: any) => {
+          applied.resolve(
+            ["onheaders", "ontrailers", "oninfo", "onwanttrailers"].filter(name => typeof stream[name] === "function"),
+          );
+          stream.closed.catch(() => {});
+        };
+      },
+      {
+        alpn: ["h3"],
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 5 },
+        onheaders(this: any) {
+          this.sendHeaders({ ":status": "200" }, { terminal: true });
+        },
+        ontrailers() {},
+        oninfo() {},
+        onwanttrailers(this: any) {
+          this.sendTrailers({ "x-done": "1" });
+        },
+      },
+    );
+
+    const client = await connect(server.address!, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 5 },
+    });
+    const stream = await client.createBidirectionalStream({
+      headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+    });
+    stream.closed.catch(() => {});
+    expect(await applied.promise).toEqual(["onheaders", "ontrailers", "oninfo", "onwanttrailers"]);
+    client.close();
+  });
+
+  // The assert stays where the application can see it: a raw-QUIC session has
+  // no headers, so the setter inside `onstream` throws and destroys that
+  // session through onerror.
+  test("a raw-QUIC listener still throws when onstream sets onheaders", async () => {
+    const failed = Promise.withResolvers<string>();
+    await using server = await listen(
+      (session: any) => {
+        session.onerror = (err: any) => failed.resolve(err?.code);
+        session.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+          stream.onheaders = () => {};
+        };
+      },
+      {
+        alpn: ["quic-test"],
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 5 },
+      },
+    );
+
+    const client = await connect(server.address!, {
+      alpn: "quic-test",
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 5 },
+      onerror() {},
+    });
+    client.closed.catch(() => {});
+    const stream = await client.createBidirectionalStream({ body: new TextEncoder().encode("hi") });
+    stream.closed.catch(() => {});
+    expect(await failed.promise).toBe("ERR_INVALID_STATE");
     client.close();
   });
 });

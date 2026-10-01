@@ -5115,10 +5115,10 @@ impl<'p> Checker<'p> {
     fn assigned_type(&mut self, walk: &mut Walk, value: ExprId) -> TypeId {
         let file = walk.reference.file;
         if self.flow_loops.is_empty() || value.is_none() {
-            return self.type_of_expr(file, value);
+            return self.type_of_declaration_initializer(file, value);
         }
         let outer = std::mem::replace(&mut self.met_loop_under_way, false);
-        let ty = self.type_of_expr(file, value);
+        let ty = self.type_of_declaration_initializer(file, value);
         let met_silent_never = std::mem::replace(&mut self.met_loop_under_way, outer);
         if !met_silent_never {
             return ty;
@@ -5435,7 +5435,7 @@ impl<'p> Checker<'p> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let (ty, default) = match bound.pat_parent[pat.idx()] {
             PatParent::Var(d) if hir[d].init.is_some() => {
-                return Some(self.type_of_expr(file, hir[d].init));
+                return Some(self.type_of_declaration_initializer(file, hir[d].init));
             }
             PatParent::Var(_) | PatParent::Param(_) | PatParent::None => return None,
             PatParent::Prop(parent, prop) => {
@@ -5465,7 +5465,8 @@ impl<'p> Checker<'p> {
         if default.is_none() {
             return Some(ty);
         }
-        let (ty, default) = (self.without_undefined(ty), self.type_of_expr(file, default));
+        let default = self.type_of_declaration_initializer(file, default);
+        let ty = self.without_undefined(ty);
         Some(self.union(&[ty, default]))
     }
 

@@ -635,6 +635,10 @@ enum Query {
     Symbol(Sym),
     Declared(Sym),
     Return(FileId, FnId),
+    /// `contextuallyCheckFunctionExpressionOrObjectLiteralMethod`: what a function that something is expected of returns, worked out
+    /// the first time the function is looked at. No resolution is pushed for it: whoever asks for the return type meanwhile begins
+    /// a resolution of their own.
+    ReturnAtFirstLook(FileId, FnId),
     Shape(TypeId),
     Bases(Sym),
     Constraint(TypeId),

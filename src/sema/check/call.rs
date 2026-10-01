@@ -782,6 +782,59 @@ impl<'p> Checker<'p> {
         Some(self.sig_return(only))
     }
 
+    /// `getQuickTypeOfExpression`, of a call: what the only call signature of what is called returns, if that is not generic. The
+    /// arguments are not looked at.
+    pub(super) fn quick_type_of_call(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
+        let hir = self.hir(file);
+        let ExprKind::Call(c) = hir[e].kind else {
+            return None;
+        };
+        let callee = hir[c].callee;
+        if matches!(
+            hir[callee].kind,
+            ExprKind::Super | ExprKind::Ident(known::require)
+        ) || self.is_symbol_or_symbol_for_call(file, e)
+            || hir[c].chain != Chain::No
+            || self.is_in_optional_chain(file, callee)
+        {
+            return None;
+        }
+        let callee = self.type_of_expr(file, callee);
+        let callee = self.receiver_that_is_there(callee);
+        let only = self.single_signature(callee, false, true)?;
+        if !self.sig_type_params(only).is_empty() {
+            return None;
+        }
+        Some(self.sig_return(only))
+    }
+
+    /// `chooseOverload` holds the arguments against a candidate though it is the only one and nothing depends on how that goes. What
+    /// leads back from there to something that is being worked out is a circle.
+    fn hold_arguments_against(
+        &mut self,
+        file: FileId,
+        call: ExprId,
+        id: CallId,
+        declared: SigId,
+        sig: SigId,
+        this_arg: Option<ExprId>,
+        is_new: bool,
+    ) {
+        let params = self.sig_params(sig);
+        self.resolving.push(Resolving::new(
+            file,
+            call,
+            Some(declared),
+            params,
+            MapperId::IDENTITY,
+        ));
+        let with_nodes = self.args_with_nodes(file, call, id);
+        let uncertain = self.uncertain;
+        self.is_signature_applicable(file, call, id, &with_nodes, sig, this_arg, is_new, None);
+        self.uncertain = uncertain;
+        self.resolving.pop();
+    }
+
     /// The end of `resolveCall`: which of `declared`, the signatures of what is called, the call, `new` or tagged template `call`
     /// is a call of. `is_sure`: what is called was found out for sure, so that it can be told when none of them will do.
     /// `wants_return`: the caller reads `ret`. Otherwise `ret` is `any` and the return type of the signature is not resolved:
@@ -914,7 +967,11 @@ impl<'p> Checker<'p> {
         // inferred. The return type and the contextual types of the arguments can both depend on them.
         let is_inferred = type_args.is_empty() && is_generic;
         let can_differ = sigs.len() > 1 || is_inferred;
-        if !can_differ || !is_sure || self.is_provisional_here() {
+        if !is_sure || self.is_provisional_here() {
+            return resolved;
+        }
+        if !can_differ {
+            self.hold_arguments_against(file, call, id, first, sig, this_arg, is_new);
             return resolved;
         }
         // What is left is the round of `chooseOverload` in which no argument is left out.
@@ -923,6 +980,9 @@ impl<'p> Checker<'p> {
             .any(|a| matches!(a, Arg::Expr(e) if self.is_context_sensitive(file, *e)));
         let waits = has_sensitive || is_inferred && self.has_generic_function_argument(file, args);
         if !waits && (sigs.len() == 1 || is_tested) {
+            if !is_tested {
+                self.hold_arguments_against(file, call, id, first, sig, this_arg, is_new);
+            }
             return resolved;
         }
         // While the call is under way its arguments go by what it has been taken for.
@@ -5256,6 +5316,7 @@ impl<'p> Checker<'p> {
                 // `NodeCheckFlagsContextChecked` is set before the body is looked at.
                 if hir[func].ret.is_some()
                     || self.stack.contains(&Query::Return(file, func))
+                    || self.stack.contains(&Query::ReturnAtFirstLook(file, func))
                     || self.contextual_signature(file, func).is_none()
                 {
                     return;

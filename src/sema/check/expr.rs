@@ -52,6 +52,7 @@ impl<'p> Checker<'p> {
                 Some(self.awaited(ty))
             }
             ExprKind::New(_) => self.quick_type_of_new(file, e),
+            ExprKind::Call(_) => self.quick_type_of_call(file, e),
             _ => None,
         }
     }
@@ -1170,7 +1171,11 @@ impl<'p> Checker<'p> {
     /// `checkSatisfiesExpression` reports 1360 as soon as the expression is checked, and the message prints both types. Inside a
     /// function whose return type is being inferred that can close a circularity.
     fn print_unsatisfied_types(&mut self, file: FileId, source: TypeId, ty: TypeNodeId) {
-        if !self.stack.iter().any(|q| matches!(q, Query::Return(..))) {
+        if !self
+            .stack
+            .iter()
+            .any(|q| matches!(q, Query::Return(..) | Query::ReturnAtFirstLook(..)))
+        {
             return;
         }
         let uncertain = self.uncertain;

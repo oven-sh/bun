@@ -1236,6 +1236,7 @@ impl<'p> Checker<'p> {
                         | Query::Pat(..)
                         | Query::Symbol(_)
                         | Query::Return(..)
+                        | Query::ReturnAtFirstLook(..)
                         | Query::Member(..)
                 )
             })
@@ -2106,7 +2107,10 @@ impl<'p> Checker<'p> {
                 );
                 // The return type of a composite signature is resolved on demand, and nobody asks while that of a member is being
                 // resolved (`isResolvingReturnTypeOfSignature`).
-                if found.iter().any(|&s| self.is_resolving_return_type(s)) {
+                if found
+                    .iter()
+                    .any(|&s| self.is_resolving_return_type(s) || self.is_at_first_look(s))
+                {
                     return Some(self.p.types.intern_sig(SigData::Synth {
                         type_params: type_params.into(),
                         params: params.into(),
@@ -2493,8 +2497,11 @@ impl<'p> Checker<'p> {
         if let Some(returned) = self.return_type_of_full_signature(file, func) {
             return Some(returned);
         }
+        // What is expected of a function may be the function itself, where a type argument was inferred from it. At its first look
+        // TypeScript then works out what it returns once more, this time with that under way, and keeps the answer.
         if let Some(sig) = self.contextual_signature(file, func)
             && !self.is_resolving_return_type(sig)
+            && !self.is_at_first_look(sig)
         {
             let expected = self.sig_return(sig);
             let (is_generator, is_async) = (
@@ -2557,6 +2564,18 @@ impl<'p> Checker<'p> {
         self.is_type_variable(ty)
             || self.is_no_infer(ty)
             || matches!(self.data(ty), TypeData::Cond { .. })
+    }
+
+    /// Whether `sig` is of a function that is being looked at for the first time: see `Query::ReturnAtFirstLook`.
+    fn is_at_first_look(&self, sig: SigId) -> bool {
+        match *self.p.types.sig(sig) {
+            SigData::Decl { file, func, .. } => {
+                self.p.fn_return_types.get(file, func.idx()).is_none()
+                    && self.stack.contains(&Query::ReturnAtFirstLook(file, func))
+            }
+            SigData::Synth { ref of, .. } => of.iter().any(|&s| self.is_at_first_look(s)),
+            _ => false,
+        }
     }
 
     /// `isResolvingReturnTypeOfSignature`

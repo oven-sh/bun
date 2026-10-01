@@ -1824,7 +1824,7 @@ impl Checker<'_> {
             for (i, &(arg, _)) in args.iter().enumerate() {
                 if let Arg::Expr(x) = arg
                     && self.explicit_context(file, x).is_none()
-                    && let Some(param) = self.param_type_at(&expected, i)
+                    && let Some(param) = self.context_of_arg_at(&expected, i, Some(args.len()))
                     && param != TypeId::UNRESOLVED
                 {
                     let param = self.without_no_infer(param);

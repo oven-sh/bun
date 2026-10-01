@@ -1287,29 +1287,24 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `checkDeclarationInitializer`: `getQuickTypeOfExpression` comes first. Where the call goes through the two agree, so it only
-    /// shows for a `new` that is refused (abstract, a constructor out of reach): that is what the one construct signature returns,
-    /// if it is not generic, whatever is wrong with the call.
+    /// `checkDeclarationInitializer`, `getTypeOfExpression`: `getQuickTypeOfExpression` comes first. A call or a `new` of the only
+    /// signature there is, if that is not generic, is what the signature returns. Its arguments are not looked at, so nothing in them
+    /// can lead back here.
     pub(super) fn type_of_declaration_initializer(&mut self, file: FileId, e: ExprId) -> TypeId {
-        let ty = self.type_of_expr(file, e);
-        if ty != TypeId::ANY {
-            return ty;
+        if e.is_some()
+            && matches!(
+                self.hir(file)[e].kind,
+                ExprKind::Call(_) | ExprKind::New(_) | ExprKind::Await(_)
+            )
+            && self.enter(Query::Expr(file, e))
+        {
+            let quick = self.quick_type_of_expr(file, e);
+            self.leave();
+            if let Some(quick) = quick {
+                return quick;
+            }
         }
-        let hir = self.hir(file);
-        let ExprKind::New(call) = hir[e].kind else {
-            return ty;
-        };
-        let callee = self.type_of_expr(file, hir[call].callee);
-        // `getSingleSignature`
-        if !self.is_object_type(callee) || !self.signatures(callee, false).is_empty() {
-            return ty;
-        }
-        let sigs = self.signatures(callee, true);
-        let &[only] = &sigs[..] else { return ty };
-        if !self.sig_type_params(only).is_empty() {
-            return ty;
-        }
-        self.sig_return(only)
+        self.type_of_expr(file, e)
     }
 
     /// The tail of `getBindingElementTypeFromParentType`: what `pat`, an element of a pattern, is bound to when `ty` is what is found for
@@ -1555,7 +1550,7 @@ impl<'p> Checker<'p> {
         }
         // `getTypeOfInitializer` is asked whatever `ty` is: an initializer that reads a name of the pattern is a circle.
         let uncertain = self.uncertain;
-        let given = self.type_of_expr(file, initializer);
+        let given = self.type_of_declaration_initializer(file, initializer);
         // `TypeFactsNEUndefined`, which `void` does not have either.
         if !self.some_type(ty, |_, m| m.is_undefined() || m == TypeId::VOID) {
             self.uncertain = uncertain;
@@ -2467,6 +2462,37 @@ impl<'p> Checker<'p> {
         {
             return known;
         }
+        if matches!(self.bound(file).fns[func.idx()].owner, FnOwner::Expr(_))
+            && self.hir(file)[func].ret.is_none()
+            && !self.stack.contains(&Query::ReturnAtFirstLook(file, func))
+        {
+            // What is expected of the function may go by what the function is.
+            if !self.enter(Query::ReturnAtFirstLook(file, func)) {
+                return TypeId::UNRESOLVED;
+            }
+            if self.contextual_signature(file, func).is_some() {
+                let ty = match self.p.fn_return_types.get(file, func.idx()) {
+                    Some(known) => known,
+                    None => {
+                        let ty = self.return_type_of_fn_uncached(file, func);
+                        self.force(ty)
+                    }
+                };
+                let holds = self.leave();
+                // `if signature.resolvedReturnType == nil`
+                if let Some(known) = self.p.fn_return_types.get(file, func.idx()) {
+                    return known;
+                }
+                if holds {
+                    self.p.fn_return_types.set(file, func.idx(), ty);
+                }
+                return ty;
+            }
+            self.leave();
+            if let Some(known) = self.p.fn_return_types.get(file, func.idx()) {
+                return known;
+            }
+        }
         if !self.enter(Query::Return(file, func)) {
             return if self.came_full_circle {
                 TypeId::ANY
@@ -3032,6 +3058,7 @@ impl<'p> Checker<'p> {
                         | Query::Pat(..)
                         | Query::Symbol(_)
                         | Query::Return(..)
+                        | Query::ReturnAtFirstLook(..)
                         | Query::Member(..)
                 )
             })

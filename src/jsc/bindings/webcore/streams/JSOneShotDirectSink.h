@@ -47,12 +47,6 @@ public:
     static JSOneShotDirectSink* create(JSC::VM&, JSC::Structure*);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 
-    static size_t allocationSize(Checked<size_t> inlineCapacity)
-    {
-        ASSERT_UNUSED(inlineCapacity, inlineCapacity == 0U);
-        return sizeof(JSOneShotDirectSink);
-    }
-
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
@@ -83,6 +77,8 @@ public:
 
     // Set by end()/close(): later write()/end()/close()/flush() calls are no-ops.
     bool m_closed : 1 { false };
+    // The pull() call is on the stack: its caller ends the stream once it knows whether the call threw.
+    bool m_insidePullCall : 1 { false };
     // true ⇒ resolve with a Uint8Array (toBytes); false ⇒ an ArrayBuffer (toArrayBuffer).
     bool m_asUint8Array : 1 { false };
 

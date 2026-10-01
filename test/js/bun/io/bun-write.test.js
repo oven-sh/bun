@@ -13,6 +13,7 @@ import {
 } from "harness";
 import { once } from "node:events";
 import http from "node:http";
+import { finished } from "node:stream/promises";
 import path, { join } from "path";
 
 let i = 0;
@@ -1131,13 +1132,14 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
           e => "rejected: " + e.message,
         ),
       ).toBe("rejected: boom");
-      // directStreamOnClose released the sink's lock, so the terminal state is observable through a reader.
+      // The stream stays locked to the sink that consumed it, so finished() is what observes its terminal state.
       expect(
-        await stream.getReader().closed.then(
+        await finished(stream).then(
           () => "closed",
           e => "errored: " + e.message,
         ),
       ).toBe("errored: boom");
+      expect(stream.locked).toBe(true);
     });
 
     it("a stream whose source fails rejects with that error", async () => {
@@ -1406,6 +1408,30 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       await expect(Bun.write(join(String(dir), "out.bin"), res)).rejects.toThrow(
         expect.objectContaining({ code: "ECONNRESET" }),
       );
+    });
+
+    it("rejects a body that a pending text() waits for, and text() still resolves", async () => {
+      using dir = tempDir("bun-write-response-pending-text", {});
+      const sendBody = Promise.withResolvers();
+      using listener = Bun.listen({
+        port: 0,
+        hostname: "127.0.0.1",
+        socket: {
+          async data(socket) {
+            socket.write("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n");
+            socket.flush();
+            await sendBody.promise;
+            socket.end("hello");
+          },
+        },
+      });
+      const res = await fetch(`http://127.0.0.1:${listener.port}/`);
+      const text = res.text();
+      await expect(Bun.write(join(String(dir), "out.txt"), res)).rejects.toThrow(
+        expect.objectContaining({ code: "ERR_BODY_ALREADY_USED" }),
+      );
+      sendBody.resolve();
+      expect(await text).toBe("hello");
     });
 
     it("rejects a body that was already used, and createPath: false into a missing directory", async () => {

@@ -126,9 +126,10 @@ pub fn stat_ctime(s: &Stat) -> Timespec {
 }
 #[inline]
 pub fn stat_birthtime(s: &Stat) -> Timespec {
-    // Linux gets the epoch arm; everything else reads the real birthtime.
-    // Windows `Stat` is `uv_stat_t` and libuv fills `birthtim` from NTFS
-    // CreationTime, so it must NOT fall into the epoch arm.
+    // Linux `struct stat` has no birthtime (only `statx` does), so it gets the
+    // ctime arm like libuv's `uv__to_stat`; everything else reads the real
+    // birthtime. Windows `Stat` is `uv_stat_t` and libuv fills `birthtim` from
+    // NTFS CreationTime, so it must NOT fall into the ctime arm.
     #[cfg(windows)]
     {
         Timespec {
@@ -160,8 +161,7 @@ pub fn stat_birthtime(s: &Stat) -> Timespec {
         target_os = "dragonfly"
     )))]
     {
-        let _ = s;
-        Timespec::EPOCH
+        stat_ctime(s)
     }
 }
 

@@ -351,7 +351,9 @@ pub mod lib {
                     break;
                 }
                 // SAFETY: `archive_read_data` returns exactly the byte count it wrote (`<= to_read`).
-                unsafe { bun_core::vec::commit_spare(out, usize::try_from(read).expect("int cast")) };
+                unsafe {
+                    bun_core::vec::commit_spare(out, usize::try_from(read).expect("int cast"))
+                };
             }
             Ok(true)
         }
@@ -1823,8 +1825,10 @@ impl Archiver {
                                         if plucker_.filename_hash == h {
                                             plucker_.contents.list.clear();
                                             // SAFETY: archive valid
-                                            let read_ok = unsafe { &*archive }
-                                                .read_data_to_vec(size, &mut plucker_.contents.list)?;
+                                            let read_ok = unsafe { &*archive }.read_data_to_vec(
+                                                size,
+                                                &mut plucker_.contents.list,
+                                            )?;
                                             if !read_ok {
                                                 if options.log {
                                                     // SAFETY: `archive` is the live

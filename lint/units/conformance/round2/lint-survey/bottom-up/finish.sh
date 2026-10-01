@@ -4,6 +4,8 @@
 # raw runs of a release build where that file is there, and writes CRASHES.md and LOG.entry.txt. It starts no process
 # of the binary under test. The log of the driver is <work directory>/driver.log.
 # Exit code 3: the driver has not written its last line, nothing is made.
+# DERIVED="<binary and where its raw runs are from>": the work directory was made by from-release-raw.py and no sweep
+# ran; the heads of CRASHES.md and LOG.entry.txt then say so.
 set -euo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 scratch=${1:-/tmp/ls1a-scratch}
@@ -51,20 +53,36 @@ finished=$(sed -n 's/^### finished \(.*\)/\1/p' "$log" | tail -1)
 revision=$(sed -n 's/^### lock acquired .* bin \(.*\)/\1/p' "$log" | head -1)
 commit=$(git -C "$scratch" rev-parse HEAD 2> /dev/null || echo unknown)
 upstream=$(grep '^commit ' "$scratch/test/cli/lint/conformance/UPSTREAM" | awk '{print $2 " " substr($3, 1, 7)}' | paste -sd, - | sed 's/,/, /')
-bun "$here/crashes-md.ts" "$out/observed" "$work/raw.jsonl" "$here/class-c-causes.tsv" "$out/CRASHES.md" "${leak[@]}" \
-  --say "Survey of $acquired to $finished, Linux x64. Nothing below \`src/\` was changed for it." \
-  --say "" \
-  --say "- Binary: the debug build of the worktree, \`$revision\` (debug assertions, AddressSanitizer with the defaults of the build: \`detect_stack_use_after_return=0:detect_leaks=0\`). The environment had \`ASAN_OPTIONS=allow_user_segv_handler=1:disable_coredump=0\`, and the default check adds \`BUN_FEATURE_FLAG_EXPERIMENTAL_LINT=1 BUN_DEBUG_QUIET_LOGS=1 NO_COLOR=1\`." \
-  --say "- Corpus: $upstream, laid over a clone of \`$commit\` with \`sync.sh\`." \
-  --say "- Sweep: \`sweep.ts\` of that commit as it is, the default check, \`--jobs 4 --timeout 120000\`, nine chunks by the first character of the instance name. Then every instance whose outcome was \`crash\` or \`timeout\` again with \`raw.ts\`, which keeps the exit code, the signal, stdout and stderr, and gives every root file to the command alone where the command died." \
-  --say "- The scripts and the tables are in \`round2/lint-survey/bottom-up/\` of these notes (\`HOWTO.txt\`)." \
+if [ -n "${DERIVED:-}" ]; then
+  said=(
+    --say "No sweep ran for this file, and nothing below \`src/\` was changed for it."
+    --say ""
+    --say "- Binary: $DERIVED."
+    --say "- Corpus: $upstream, laid over a clone of \`$commit\` with \`sync.sh\`."
+    --say "- Outcomes: the rules of the default check of that commit (\`check_bun_lint.ts\` readRun and toCheckResult, \`run.ts\` compare) applied by \`from-release-raw.py\` to what each process gave back: exit code, signal, stdout, stderr."
+    --say "- The scripts and the tables are in \`round2/lint-survey/bottom-up/\` of these notes (\`HOWTO.txt\`)."
+  )
+  title="E4, numbers of a release build: \`bun --lint\` of $DERIVED, over every run instance of the corpus"
+  how="No sweep: the outcomes are the rules of the default check of $commit applied by from-release-raw.py to the raw runs. Corpus: $upstream."
+else
+  said=(
+    --say "Survey of $acquired to $finished, Linux x64. Nothing below \`src/\` was changed for it."
+    --say ""
+    --say "- Binary: the debug build of the worktree, \`$revision\` (debug assertions, AddressSanitizer with the defaults of the build: \`detect_stack_use_after_return=0:detect_leaks=0\`). The environment had \`ASAN_OPTIONS=allow_user_segv_handler=1:disable_coredump=0\`, and the default check adds \`BUN_FEATURE_FLAG_EXPERIMENTAL_LINT=1 BUN_DEBUG_QUIET_LOGS=1 NO_COLOR=1\`."
+    --say "- Corpus: $upstream, laid over a clone of \`$commit\` with \`sync.sh\`."
+    --say "- Sweep: \`sweep.ts\` of that commit as it is, the default check, \`--jobs 4 --timeout 120000\`, nine chunks by the first character of the instance name. Then every instance whose outcome was \`crash\` or \`timeout\` again with \`raw.ts\`, which keeps the exit code, the signal, stdout and stderr, and gives every root file to the command alone where the command died."
+    --say "- The scripts and the tables are in \`round2/lint-survey/bottom-up/\` of these notes (\`HOWTO.txt\`)."
+  )
+  title="E4, the first numbers: \`bun --lint\` of $revision (debug build of the worktree) over every run instance of the corpus"
+  how="When: $acquired to $finished (one hold of the heavy lock). Corpus: $upstream. Runner: sweep.ts and runner/ of $commit as they are, default check, --jobs 4 --timeout 120000, lists empty (--expectations round2/prototype/expectations.json). Script host: the installed bun."
+fi
+bun "$here/crashes-md.ts" "$out/observed" "$work/raw.jsonl" "$here/class-c-causes.tsv" "$out/CRASHES.md" "${leak[@]}" "${said[@]}" \
   > "$out/observed/crashes-md.txt"
 
 {
-  echo "E4, the first numbers: \`bun --lint\` of $revision (debug build of the worktree) over every run instance of the corpus"
+  echo "$title"
   echo
-  echo "When: $acquired to $finished (one hold of the heavy lock). Corpus: $upstream. Runner: sweep.ts and runner/ of $commit as they are,"
-  echo "default check, --jobs 4 --timeout 120000, lists empty (--expectations round2/prototype/expectations.json). Script host: the installed bun."
+  echo "$how"
   echo "The driver, the helpers, the tables and how to run them again: round2/lint-survey/bottom-up/ (HOWTO.txt)."
   echo
   sed 's/^/  /' "$log"

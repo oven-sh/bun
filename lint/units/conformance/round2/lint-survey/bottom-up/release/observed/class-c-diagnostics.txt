@@ -1,0 +1,194 @@
+class C instances where Bun printed a diagnostic: 28, of 27 cases
+TypeScript (typescript-go at the pinned commit) reports nothing for these. A line is as the command printed it: the path is relative to the current directory /.src, the line and the column are those of the unit, not of the case file.
+
+      27  error syntax
+       1  error no-empty-pattern
+
+compiler/continueTarget3.ts
+  instances: continueTarget3.ts
+  root files: /.src/continueTarget3.ts; exit code 2
+    continueTarget3.ts(4,3): error syntax: Cannot "continue" to label target1
+        | "  continue target1;"
+
+compiler/declarationEmitClassSetAccessorParamNameInJs2.ts
+  instances: declarationEmitClassSetAccessorParamNameInJs2.ts
+  root files: /.src/foo.js; exit code 2
+    foo.js(7,13): error no-empty-pattern: Unexpected empty object pattern.
+        | "    set bar({}) {}"
+
+compiler/duplicateVarAndImport.ts
+  instances: duplicateVarAndImport.ts
+  root files: /.src/duplicateVarAndImport.ts; exit code 2
+    duplicateVarAndImport.ts(1,1): error syntax: "a" has already been declared
+        | "// no error since module is not instantiated"
+
+compiler/elidedEmbeddedStatementsReplacedWithSemicolon.ts
+  instances: elidedEmbeddedStatementsReplacedWithSemicolon.ts
+  root files: /.src/elidedEmbeddedStatementsReplacedWithSemicolon.ts; exit code 2
+    elidedEmbeddedStatementsReplacedWithSemicolon.ts(2,5): error syntax: Cannot use a declaration in a single-statement context
+        | "    const enum A {}"
+    elidedEmbeddedStatementsReplacedWithSemicolon.ts(4,5): error syntax: Cannot use a declaration in a single-statement context
+        | "    const enum B {}"
+    elidedEmbeddedStatementsReplacedWithSemicolon.ts(7,5): error syntax: Cannot use a declaration in a single-statement context
+        | "    const enum C {}"
+    elidedEmbeddedStatementsReplacedWithSemicolon.ts(11,5): error syntax: Cannot use a declaration in a single-statement context
+        | "    const enum D {}"
+    elidedEmbeddedStatementsReplacedWithSemicolon.ts(14,5): error syntax: Cannot use a declaration in a single-statement context
+        | "    const enum E {}"
+    elidedEmbeddedStatementsReplacedWithSemicolon.ts(17,5): error syntax: Cannot use a declaration in a single-statement context
+        | "    const enum F {}"
+    elidedEmbeddedStatementsReplacedWithSemicolon.ts(20,5): error syntax: Cannot use a declaration in a single-statement context
+        | "    const enum G {}"
+    elidedEmbeddedStatementsReplacedWithSemicolon.ts(24,5): error syntax: Cannot use a declaration in a single-statement context
+        | "    const enum H {}"
+
+compiler/fileWithNextLine2.ts
+  instances: fileWithNextLine2.ts
+  root files: /.src/fileWithNextLine2.ts; exit code 2
+    fileWithNextLine2.ts(3,8): error syntax: Unexpected 
+        | "var v =0;"
+
+compiler/isolatedModulesSketchyAliasLocalMerge.ts
+  instances: isolatedModulesSketchyAliasLocalMerge(isolatedmodules=false,verbatimmodulesyntax=false).ts
+  root files: /.src/types.ts /.src/bad.ts /.src/good.ts; exit code 2
+    bad.ts(2,5): error syntax: "FC" has already been declared
+        | "let FC: FC | null = null;"
+
+compiler/sourceMap-LineBreaks.ts
+  instances: sourceMap-LineBreaks(target=es2015).ts
+  root files: /.src/sourceMap-LineBreaks.ts; exit code 2
+    sourceMap-LineBreaks.ts(3,26): error syntax: Unexpected 
+        | "var endsWithNextLine = 1;var endsWithLineFeed = 1;"
+
+compiler/strictModeEnumMemberNameReserved.ts
+  instances: strictModeEnumMemberNameReserved.ts
+  root files: /.src/strictModeEnumMemberNameReserved.ts; exit code 2
+    strictModeEnumMemberNameReserved.ts(3,5): error syntax: "static" is a reserved word and cannot be used in strict mode
+        | "    static"
+
+compiler/symbolMergeValueAndImportedType.ts
+  instances: symbolMergeValueAndImportedType.ts
+  root files: /.src/main.ts /.src/other.ts; exit code 2
+    main.ts(2,7): error syntax: "X" has already been declared
+        | "const X = 42;"
+
+compiler/usedImportNotElidedInJs.ts
+  instances: usedImportNotElidedInJs.ts
+  root files: /.src/test.js; exit code 2
+    test.js(3,14): error syntax: "moment" has already been declared
+        | "export const moment = rollupMoment__default || moment;"
+
+conformance/async/es2017/asyncArrowFunction/asyncArrowFunction2_es2017.ts
+  instances: asyncArrowFunction2_es2017.ts
+  root files: /.src/asyncArrowFunction2_es2017.ts; exit code 2
+    asyncArrowFunction2_es2017.ts(1,15): error syntax: Unexpected )
+        | "var f = (await) => {"
+
+conformance/async/es2017/asyncArrowFunction/asyncArrowFunction4_es2017.ts
+  instances: asyncArrowFunction4_es2017.ts
+  root files: /.src/asyncArrowFunction4_es2017.ts; exit code 2
+    asyncArrowFunction4_es2017.ts(1,5): error syntax: Cannot use "yield" or "await" here.
+        | "var await = () => {"
+
+conformance/async/es5/asyncArrowFunction/asyncArrowFunction2_es5.ts
+  instances: asyncArrowFunction2_es5(target=es2015).ts
+  root files: /.src/asyncArrowFunction2_es5.ts; exit code 2
+    asyncArrowFunction2_es5.ts(1,15): error syntax: Unexpected )
+        | "var f = (await) => {"
+
+conformance/async/es5/asyncArrowFunction/asyncArrowFunction4_es5.ts
+  instances: asyncArrowFunction4_es5(target=es2015).ts
+  root files: /.src/asyncArrowFunction4_es5.ts; exit code 2
+    asyncArrowFunction4_es5.ts(1,5): error syntax: Cannot use "yield" or "await" here.
+        | "var await = () => {"
+
+conformance/async/es6/asyncArrowFunction/asyncArrowFunction2_es6.ts
+  instances: asyncArrowFunction2_es6.ts
+  root files: /.src/asyncArrowFunction2_es6.ts; exit code 2
+    asyncArrowFunction2_es6.ts(1,15): error syntax: Unexpected )
+        | "var f = (await) => {"
+
+conformance/async/es6/asyncArrowFunction/asyncArrowFunction4_es6.ts
+  instances: asyncArrowFunction4_es6.ts
+  root files: /.src/asyncArrowFunction4_es6.ts; exit code 2
+    asyncArrowFunction4_es6.ts(1,5): error syntax: Cannot use "yield" or "await" here.
+        | "var await = () => {"
+
+conformance/async/es6/asyncWithVarShadowing_es6.ts
+  instances: asyncWithVarShadowing_es6.ts
+  root files: /.src/asyncWithVarShadowing_es6.ts; exit code 2
+    asyncWithVarShadowing_es6.ts(130,14): error syntax: x has already been declared
+        | "    catch ({ x }) {"
+
+conformance/externalModules/typeOnly/namespaceImportTypeQuery2.ts
+  instances: namespaceImportTypeQuery2.ts
+  root files: /z.ts /a.ts /b.ts; exit code 2
+    ../a.ts(2,7): error syntax: "A" has already been declared
+        | "const A = 0;"
+
+conformance/externalModules/typeOnlyMerge1.ts
+  instances: typeOnlyMerge1.ts
+  root files: /.src/a.ts /.src/b.ts /.src/c.ts; exit code 2
+    b.ts(2,7): error syntax: "A" has already been declared
+        | "const A = 0;"
+
+conformance/importDefer/dynamicImportDefer.ts
+  instances: dynamicImportDefer(module=esnext).ts, dynamicImportDefer(module=preserve).ts
+  root files: /.src/a.ts /.src/b.ts; exit code 2
+    b.ts(1,8): error syntax: Expected "meta" but found "defer"
+        | "import.defer(\"./a.js\").then(ns => {"
+    b.ts(3,3): error syntax: Expected ")" but found ";"
+        | "});"
+
+conformance/nonjsExtensions/declarationFileForHtmlFileWithinDeclarationFile.ts
+  instances: declarationFileForHtmlFileWithinDeclarationFile.ts
+  root files: /.src/component.d.html.ts /.src/file.d.ts /.src/main.ts; exit code 2
+    component.d.html.ts(8,14): error syntax: The constant "blogPost" must be initialized
+        | "export const blogPost: Element;"
+
+conformance/nonjsExtensions/declarationFileForHtmlImport.ts
+  instances: declarationFileForHtmlImport(allowarbitraryextensions=true).ts
+  root files: /.src/component.d.html.ts /.src/file.ts; exit code 2
+    component.d.html.ts(8,14): error syntax: The constant "blogPost" must be initialized
+        | "export const blogPost: Element;"
+
+conformance/parser/ecmascript5/EnumDeclarations/parserInterfaceKeywordInEnum1.ts
+  instances: parserInterfaceKeywordInEnum1.ts
+  root files: /.src/parserInterfaceKeywordInEnum1.ts; exit code 2
+    parserInterfaceKeywordInEnum1.ts(4,5): error syntax: "interface" is a reserved word and cannot be used in strict mode
+        | "    interface,"
+
+conformance/parser/ecmascript5/Statements/ContinueStatements/parser_continueTarget3.ts
+  instances: parser_continueTarget3.ts
+  root files: /.src/parser_continueTarget3.ts; exit code 2
+    parser_continueTarget3.ts(4,3): error syntax: Cannot "continue" to label target1
+        | "  continue target1;"
+
+conformance/salsa/plainJSRedeclare3.ts
+  instances: plainJSRedeclare3.ts
+  root files: /.src/plainJSRedeclare.js; exit code 2
+    plainJSRedeclare.js(2,5): error syntax: "orbitol" has already been declared
+        | "var orbitol = 1 + false"
+
+conformance/salsa/privateIdentifierExpando.ts
+  instances: privateIdentifierExpando.ts
+  root files: /.src/privateIdentifierExpando.js; exit code 2
+    privateIdentifierExpando.js(2,3): error syntax: Expected identifier but found "#bar"
+        | "x.#bar.baz = 20;"
+    privateIdentifierExpando.js(2,8): error syntax: Expected ";" but found "baz"
+        | "x.#bar.baz = 20;"
+    privateIdentifierExpando.js(2,12): error syntax: Unexpected =
+        | "x.#bar.baz = 20;"
+
+conformance/types/conditional/inferTypesWithExtends1.ts
+  instances: inferTypesWithExtends1.ts
+  root files: /.src/inferTypesWithExtends1.ts; exit code 2
+    inferTypesWithExtends1.ts(102,61): error syntax: Expected "?" but found ";"
+        | "type X14<T> = T extends keyof infer U extends number ? 1 : 0; // ok, parsed as `infer..extends` (precedence wouldn't have parsed the `?` as part of a type opera"
+    inferTypesWithExtends1.ts(103,6): error syntax: Expected ":" but found "X15"
+        | "type X15<T> = T extends { [P in infer U extends keyof T ? 1 : 0]: 1; } ? 1 : 0; // ok, parsed as conditional"
+    inferTypesWithExtends1.ts(103,13): error syntax: Expected "(" but found "="
+        | "type X15<T> = T extends { [P in infer U extends keyof T ? 1 : 0]: 1; } ? 1 : 0; // ok, parsed as conditional"
+    inferTypesWithExtends1.ts(103,79): error syntax: Expected ")" but found ";"
+        | "<T> = T extends { [P in infer U extends keyof T ? 1 : 0]: 1; } ? 1 : 0; // ok, parsed as conditional" (from column 9)
+

@@ -875,7 +875,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let mut opts = ParseStatementOptions::default();
         let stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut opts)?;
-        p.end_of_block()?;
+        p.end_of_block(loc)?;
 
         if pushed_scope_for_function_body {
             p.pop_scope();
@@ -1053,7 +1053,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.expect(T::TOpenBrace)?;
         let mut opts = ParseStatementOptions::default();
         let stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut opts)?;
-        p.end_of_block()?;
+        p.end_of_block(loc)?;
         p.pop_scope();
 
         p.allow_in = old_allow_in;

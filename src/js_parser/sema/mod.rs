@@ -60,8 +60,12 @@ pub(crate) enum Mark {
     SkippedToken,
     /// From the `import` of `import.defer(..)`, to its `)`.
     DeferredImportClose,
+    /// From the `<` of an opening or closing JSX tag in which something was objected to, to where the tag ends.
+    JsxTagEnd,
     /// From a decorator that decorates nothing (`note_stray_decorators`), to where what comes after the decorators starts.
     StrayDecorator,
+    /// From the bracket that opens an array or object literal whose closing bracket is missed, to where the token before the miss ends.
+    UnclosedLiteral,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -183,6 +187,49 @@ pub(crate) fn error_argument(text: &[u8]) -> Option<Box<str>> {
         }
     };
     Some(String::from_utf8_lossy(token).into())
+}
+
+/// `hir::File::error_ends`, of the error the parser logged as `said`: its start, its code and its end. `None`: where it ends is read
+/// off the source. `has_jsx`: `LanguageVariantJSX`.
+pub(crate) fn error_end(
+    said: &bun_ast::Data,
+    source: &[u8],
+    has_jsx: bool,
+) -> Option<(u32, u32, u32)> {
+    let location = said.location.as_ref()?;
+    let (start, mut len) = (location.offset, location.length);
+    let at = source.get(start..)?;
+    let Some((code, 0)) = early_error(&said.text, at) else {
+        return None;
+    };
+    // Those that are logged with the range `parseErrorAtCurrentToken` or `parseErrorAt` reports.
+    if !matches!(
+        code,
+        1003 | 1005
+            | 1068
+            | 1109
+            | 1128..=1140
+            | 1144..=1146
+            | 1161
+            | 1179..=1181
+            | 1185
+            | 1436
+            | 1441
+            | 1442
+            | 1478
+            | 1490
+            | 17014
+    ) {
+        return None;
+    }
+    match at {
+        // `Scan` makes one token of `</`, unless the `/` starts a comment. This lexer makes two.
+        [b'<', b'/', rest @ ..] if has_jsx && len == 1 && rest.first() != Some(&b'*') => len = 2,
+        // `Scan` makes a token of `>` whatever follows. `reScanGreaterThanToken` is asked after an operand, where a token is missed.
+        [b'>', b'>' | b'=', ..] if code != 1005 => len = len.min(1),
+        _ => {}
+    }
+    Some((start as u32, code, (start + len) as u32))
 }
 
 fn early_error_in_place(text: &[u8]) -> Option<u32> {

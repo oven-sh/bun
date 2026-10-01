@@ -361,9 +361,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         loop {
             p.lexer.next()?;
+            let open_paren = p.lexer.loc();
             p.lexer.expect(T::TOpenParen)?;
             let test = p.parse_expr(Level::Lowest)?;
-            p.lexer.expect(T::TCloseParen)?;
+            p.lexer.expect_closing(T::TCloseParen, open_paren)?;
             let mut stmt_opts = ParseStatementOptions {
                 lexical_decl: LexicalDecl::AllowFnInsideIf,
                 ..Default::default()
@@ -429,9 +430,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut stmt_opts = ParseStatementOptions::default();
         let body = p.parse_stmt(&mut stmt_opts)?;
         p.lexer.expect(T::TWhile)?;
+        let open_paren = p.lexer.loc();
         p.lexer.expect(T::TOpenParen)?;
         let test = p.parse_expr(Level::Lowest)?;
-        p.lexer.expect(T::TCloseParen)?;
+        p.lexer.expect_closing(T::TCloseParen, open_paren)?;
 
         // This is a weird corner case where automatic semicolon insertion applies
         // even without a newline present
@@ -445,9 +447,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn t_while(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
 
+        let open_paren = p.lexer.loc();
         p.lexer.expect(T::TOpenParen)?;
         let test = p.parse_expr(Level::Lowest)?;
-        p.lexer.expect(T::TCloseParen)?;
+        p.lexer.expect_closing(T::TCloseParen, open_paren)?;
 
         let mut stmt_opts = ParseStatementOptions::default();
         let body = p.parse_stmt(&mut stmt_opts)?;
@@ -459,10 +462,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline(never)]
     fn t_with(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
+        let open_paren = p.lexer.loc();
         p.lexer.expect(T::TOpenParen)?;
         let test = p.parse_expr(Level::Lowest)?;
         let body_loc = p.lexer.loc();
-        p.lexer.expect(T::TCloseParen)?;
+        p.lexer.expect_closing(T::TCloseParen, open_paren)?;
 
         // Push a scope so we make sure to prevent any bare identifiers referenced
         // within the body from being renamed. Renaming them might change the
@@ -662,7 +666,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
         p.pop_scope();
         if has_block {
-            p.end_of_block()?;
+            p.end_of_block(body_loc)?;
         }
 
         let mut catch: Option<js_ast::Catch> = None;
@@ -725,7 +729,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
             p.pop_scope();
             if has_block {
-                p.end_of_block()?;
+                p.end_of_block(catch_body_loc)?;
             }
             catch = Some(js_ast::Catch {
                 loc: catch_loc,
@@ -747,6 +751,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             } else {
                 p.lexer.expect(T::TFinally)?;
             }
+            let finally_body_loc = p.lexer.loc();
             let has_block = Self::open_block(p)?;
             let stmts = if has_block {
                 p.parse_stmts_up_to(T::TCloseBrace, &mut stmt_opts)?
@@ -754,7 +759,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 StmtList::new_in(p.arena)
             };
             if has_block {
-                p.end_of_block()?;
+                p.end_of_block(finally_body_loc)?;
             }
             finally = Some(js_ast::Finally {
                 loc: finally_loc,
@@ -1204,7 +1209,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut stmt_opts = ParseStatementOptions::default();
             let stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut stmt_opts)?;
             let close_brace_loc = p.lexer.loc();
-            p.end_of_block()?;
+            p.end_of_block(loc)?;
             Ok(p.s(
                 S::Block {
                     stmts: bun_ast::StoreSlice::from_bump(stmts),
@@ -2301,6 +2306,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let specifier = p.parse_expr(Level::Lowest)?;
         if !matches!(specifier.data, js_ast::ExprData::EMissing(_)) {
             p.ts_checker_error(specifier.loc, 1141);
+            if let Some(syntax) = &mut p.type_syntax {
+                syntax.specifier_expressions.push(specifier);
+            }
         }
         p.lexer.expect_or_insert_semicolon()?;
         // Read again from the source, which only finds that the file is a module.

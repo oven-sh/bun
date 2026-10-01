@@ -220,9 +220,40 @@ impl Checker<'_> {
         }
     }
 
+    /// What was last noted at `start` is an error of its own as well: see `explain_another`.
+    pub(super) fn explain_as_another(&self, start: u32) {
+        if let Some(note) = self
+            .notes
+            .borrow_mut()
+            .iter_mut()
+            .rev()
+            .find(|n| n.start == start)
+        {
+            note.is_another = true;
+        }
+    }
+
     /// `name` as it is written in a message.
     pub(super) fn atom_text(&self, name: crate::atom::Atom) -> String {
         String::from_utf8_lossy(self.files().atoms.bytes(name)).into_owned()
+    }
+
+    /// In what was last noted of the error `code` at `start`, the type that reads `from` goes by the name `to`.
+    pub(super) fn explain_renamed(&self, start: u32, code: u32, from: &str, to: &str) {
+        if let Some(note) = self
+            .notes
+            .borrow_mut()
+            .iter_mut()
+            .rev()
+            .find(|n| n.start == start && n.code == code)
+        {
+            let reasons = note.chain.iter_mut().map(|line| &mut line.args);
+            for arg in std::iter::once(&mut note.args).chain(reasons).flatten() {
+                if arg.as_str() == from {
+                    *arg = to.to_owned();
+                }
+            }
+        }
     }
 
     /// The source text of `file` from `start` to `end`.
@@ -366,7 +397,13 @@ impl Checker<'_> {
             end: match note {
                 Some(note) if note.end == NO_LENGTH => d.start,
                 Some(note) if note.end > d.start => note.end,
-                _ => token_end,
+                // What the parser reported it on, if it is one of its errors.
+                _ => self
+                    .hir(file)
+                    .error_ends
+                    .iter()
+                    .find(|e| e.0 == d.start && e.1 == d.code)
+                    .map_or(token_end, |e| e.2),
             },
             code: d.code,
             category,

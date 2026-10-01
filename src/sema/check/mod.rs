@@ -164,6 +164,8 @@ pub struct Program {
     global_errors: std::sync::Mutex<std::collections::BTreeSet<(u32, Vec<String>)>>,
     /// Which property of which mapped type it is, for the message.
     circular_mapped_prop_names: ByNodeKept<(FileId, TypeNodeId), (TypeId, Atom)>,
+    /// `MappedType.containsError`
+    mapped_types_with_errors: IdSet<TypeId>,
     /// Type nodes whose resolution produced a tuple of 10,000 or more elements (2799). `TupleNormalizer.normalize`
     too_large_tuples: NodeSet<(FileId, TypeNodeId)>,
     /// The variables in a circle that goes through a call: whoever asks first is told what the initializer comes to.
@@ -391,6 +393,7 @@ impl Program {
             circular_mapped_props: NodeSet::new(&type_nodes),
             global_errors: Default::default(),
             circular_mapped_prop_names: ByNodeKept::new(&type_nodes),
+            mapped_types_with_errors: Default::default(),
             too_large_tuples: NodeSet::new(&type_nodes),
             circular_through_call: NodeSet::new(&pats),
             initializer_is_undefined: ByNode::new(&params),
@@ -1371,6 +1374,7 @@ impl<'p> Checker<'p> {
         {
             let (_, node) = self.pending_circular_mapped_props.swap_remove(i);
             self.p.circular_mapped_props.insert(node, ());
+            self.p.mapped_types_with_errors.insert(mapped, ());
             self.p
                 .circular_mapped_prop_names
                 .insert(node, (mapped, name));

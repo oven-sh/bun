@@ -69,6 +69,30 @@ impl Checker<'_> {
         hir.check_directive != Some(false)
             && (!hir.is_js || self.is_plain_js(file) || self.is_check_js(file))
     }
+
+    /// `transformSourceFile` of the declaration transformer: 6424, on each `module.exports = ..` of a module that has several.
+    pub(super) fn check_module_exports_assignments(&self, file: FileId, out: &mut Vec<Diagnostic>) {
+        let files = self.files();
+        if !self.hir(file).is_js || !files.options.emits_declarations {
+            return;
+        }
+        let Some(equals) = files.export(files.file_symbol(file), known::export_equals) else {
+            return;
+        };
+        let declarations = files.decls(equals);
+        if declarations.len() < 2 {
+            return;
+        }
+        for (of, declaration) in declarations {
+            if of == file
+                && let crate::bind::Decl::ModuleExports(assignment) = declaration
+            {
+                let start = self.start_of(file, assignment);
+                out.push(Diagnostic { start, code: 6424 });
+                self.note(start, self.end_of_expr(file, assignment), 6424, Vec::new());
+            }
+        }
+    }
 }
 
 fn is_word_byte(b: u8) -> bool {
@@ -362,7 +386,7 @@ impl Checker<'_> {
                             code: 1123,
                         });
                         // The list is empty, and so is the error.
-                        self.note(end as u32, end as u32, 1123, Vec::new());
+                        self.note(end as u32, super::explain::NO_LENGTH, 1123, Vec::new());
                         break;
                     }
                     b"export" | b"declare" | b"await" => at = skip_trivia(&hir.text, end),

@@ -143,22 +143,27 @@ impl Checker<'_> {
                     };
                     let start = self.start_of_signature(file, func);
                     out.push(Diagnostic { start, code });
-                    // `GetErrorRangeForNode` has no case for a method signature: the error is on the whole of it.
-                    let (name_end, end) = match bound.fns[f].owner {
-                        FnOwner::Member(m) => {
-                            let name_end = self.end_of_member_name(file, m);
-                            match bound.member_owner[m.idx()] {
-                                MemberOwner::Class(_) => (name_end, name_end),
-                                _ => (name_end, self.end_of_member(file, m)),
-                            }
-                        }
-                        _ => (self.end_of_name_at(file, start), 0),
-                    };
                     let is_missing = match bound.fns[f].owner {
                         FnOwner::Member(m) => {
                             matches!(hir[m].key, PropKey::None | PropKey::Name(known::empty))
                         }
                         _ => decl.name == known::empty,
+                    };
+                    // `GetErrorRangeForNode` has no case for a method signature: the error is on the whole of it. A name that is
+                    // missing takes no room.
+                    let (name_end, end) = match bound.fns[f].owner {
+                        FnOwner::Member(m) => {
+                            let name_end = self.end_of_member_name(file, m);
+                            match bound.member_owner[m.idx()] {
+                                MemberOwner::Class(_) if is_missing => {
+                                    (name_end, super::explain::NO_LENGTH)
+                                }
+                                MemberOwner::Class(_) => (name_end, name_end),
+                                _ => (name_end, self.end_of_member(file, m)),
+                            }
+                        }
+                        _ if is_missing => (start, super::explain::NO_LENGTH),
+                        _ => (self.end_of_name_at(file, start), 0),
                     };
                     self.explain_to(start, end, code, |c| {
                         if matches!(code, 7011 | 7012) {
@@ -900,7 +905,13 @@ impl Checker<'_> {
                     let is_rest = param.flags.contains(Flags::REST);
                     // A leading `this` parameter is counted, and is not among `params`.
                     let position = index + usize::from(decl.this_ty.is_some());
-                    let end = self.end_of_param(file, p);
+                    // A parameter of which nothing is written takes no room.
+                    let end = match self.end_of_param(file, p) {
+                        end if name == known::empty && end <= param.pos => {
+                            super::explain::NO_LENGTH
+                        }
+                        end => end,
+                    };
                     self.explain_to(param.pos, end, code, |c| {
                         let name = if name == known::empty {
                             "(Missing)".to_owned()
@@ -988,7 +999,7 @@ impl Checker<'_> {
                     let start = hir[element].pos;
                     out.push(Diagnostic { start, code: 7031 });
                     if name == known::empty {
-                        self.explain_to(start, start, 7031, |_| {
+                        self.explain_to(start, super::explain::NO_LENGTH, 7031, |_| {
                             vec!["(Missing)".to_owned(), "any".to_owned()]
                         });
                     }

@@ -385,7 +385,12 @@ impl Checker<'_> {
             let start = self.start_of(file, left);
             if !self.is_in_adjacent_jsx_elements(file, id, start) {
                 out.push(Diagnostic { start, code: 2695 });
-                self.note(start, self.error_end_of(file, left), 2695, Vec::new());
+                // An operand that is left out is a name that takes no room (`createMissingNode`).
+                let end = match hir[left].kind {
+                    ExprKind::Missing | ExprKind::Ident(known::empty) => super::explain::NO_LENGTH,
+                    _ => self.error_end_of(file, left),
+                };
+                self.note(start, end, 2695, Vec::new());
             }
         }
     }
@@ -570,10 +575,9 @@ impl Checker<'_> {
                     op: UnOp::Delete,
                     operand,
                 } if matches!(hir[operand].kind, ExprKind::Missing) => {
-                    out.push(Diagnostic {
-                        start: e.pos + b"delete".len() as u32,
-                        code: 1102,
-                    });
+                    let start = e.pos + b"delete".len() as u32;
+                    out.push(Diagnostic { start, code: 1102 });
+                    self.note(start, super::explain::NO_LENGTH, 1102, Vec::new());
                 }
                 _ => {}
             }

@@ -250,7 +250,11 @@ impl<'a> RegExpParser<'a> {
                 code,
             });
             if let Some(noted) = self.noted.as_mut() {
-                noted.push((start as u32, (start + length) as u32, code, args()));
+                let end = match length {
+                    0 => super::explain::NO_LENGTH,
+                    _ => (start + length) as u32,
+                };
+                noted.push((start as u32, end, code, args()));
             }
         }
     }

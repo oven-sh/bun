@@ -218,6 +218,18 @@ impl<'p, 'a> Lower<'p, 'a> {
             .filter(|mark| mark.1 == Mark::StrayDecorator)
             .map(|mark| (mark.0 as u32, mark.2 as u32))
             .collect();
+        this.b.file.unclosed_literals = this
+            .marks
+            .iter()
+            .filter(|mark| mark.1 == Mark::UnclosedLiteral)
+            .map(|mark| (mark.0 as u32, mark.2 as u32))
+            .collect();
+        this.b.file.jsx_tag_ends = this
+            .marks
+            .iter()
+            .filter(|mark| mark.1 == Mark::JsxTagEnd)
+            .map(|mark| (mark.0 as u32, mark.2 as u32))
+            .collect();
         this.b.file.body = body;
         // `checkImportAttributes`
         for (with_keyword, attributes) in syntax.import_attributes {

@@ -1079,7 +1079,7 @@ impl Checker<'_> {
     }
 
     /// `getExportsOfModuleWorker`: 2308
-    fn xa_export_star_conflicts(&self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn xa_export_star_conflicts(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let files = self.files();
         if self.bound(file).export_stars.len() < 2 || !files.module(file).is_module() {
             return;
@@ -1110,7 +1110,8 @@ impl Checker<'_> {
             .collect();
         said.sort();
         for (start, args) in said {
-            self.note(start, self.xa_statement_end(file, start), 2308, args);
+            let end = self.xa_statement_end(file, start);
+            self.explain_another(start, end, 2308, |_| args);
         }
     }
 

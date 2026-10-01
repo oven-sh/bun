@@ -411,6 +411,11 @@ impl<'p> Checker<'p> {
                         None => shape.props.push(implied),
                     }
                 }
+                // `getNamedMembers`: what nothing declares comes in the order of the names.
+                let atoms = &self.files().atoms;
+                shape
+                    .props
+                    .sort_by(|a, b| atoms.bytes(a.name).cmp(atoms.bytes(b.name)));
                 // `patternForType`
                 if for_context {
                     shape.literal = if has_computed_names {

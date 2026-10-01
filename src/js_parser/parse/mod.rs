@@ -2593,7 +2593,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.next()?;
             }
             p.lexer.list_contexts = saved_contexts;
-            p.lexer.expect(T::TCloseBrace)?;
+            p.lexer.expect_close_brace_of_attributes(open_brace_loc)?;
         }
 
         let object = p.new_expr(
@@ -2641,10 +2641,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 break;
             }
             if p.lexer.tolerant && !p.lexer.is_log_disabled {
-                // The block is never closed (`parseExpectedMatchingBrackets`). Whoever called moves on from the end of the file to
-                // the end of the file.
+                // The block is never closed. Whoever called says so, and moves on from the end of the file to the end of the file.
                 if p.lexer.token == T::TEndOfFile {
-                    p.lexer.expected(eend)?;
                     break;
                 }
                 // The loop of `reparseTopLevelAwait` calls `parseStatement` whatever the token is.
@@ -2759,6 +2757,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(stmts)
     }
 
+    /// Call where `closer` is expected to close the array or object literal that opens at `open`. If it is not there, the literal ends
+    /// where the token before does (`finishNode`).
+    #[inline]
+    pub(crate) fn note_literal_if_unclosed(&mut self, closer: T, open: bun_ast::Loc) {
+        if self.lexer.token != closer && self.lexer.tolerant && !self.lexer.is_log_disabled {
+            let end = self.lexer.full_start();
+            self.mark_type_syntax(open, crate::sema::Mark::UnclosedLiteral, end);
+        }
+    }
+
     /// Makes statements of what `note_stray_decorators` kept, from `base` on, while the last statement was parsed.
     #[cold]
     #[inline(never)]
@@ -2774,12 +2782,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// The "}" of a block of statements, where `parse_stmts_up_to` stopped. `parseBlock`
+    /// The "}" of the block of statements whose "{" is at `open`, or was missed there, where `parse_stmts_up_to` stopped. `parseBlock`
     #[inline]
-    pub(crate) fn end_of_block(&mut self) -> Result<(), Error> {
+    pub(crate) fn end_of_block(&mut self, open: bun_ast::Loc) -> Result<(), Error> {
         if self.lexer.token != T::TCloseBrace && self.lexer.tolerant {
             // `parseExpectedMatchingBrackets`: it is missed, and nothing is consumed.
-            self.lexer.expected(T::TCloseBrace)?;
+            self.lexer.expected_closing(T::TCloseBrace, open)?;
         } else {
             self.lexer.next()?;
         }

@@ -258,9 +258,24 @@ pub struct Property {
     pub initializer: Option<Expression>,
 }
 
+/// What `parseJSONText` objects to, from where to where.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SyntaxError {
+    pub start: u32,
+    pub end: u32,
+    pub code: u32,
+    /// The token in `'{0}' expected.`
+    pub expected: &'static str,
+}
+
 impl Expression {
     /// `parseJSONText`. `None` for text that takes more of the parser than literals, names, objects and arrays.
     pub fn parse(text: &[u8]) -> Option<Expression> {
+        Some(Expression::parse_with_errors(text)?.0)
+    }
+
+    /// The same, with `SourceFile.Diagnostics()`.
+    pub fn parse_with_errors(text: &[u8]) -> Option<(Expression, Vec<SyntaxError>)> {
         let mut p = TolerantParser {
             scanner: Parser {
                 text,
@@ -269,6 +284,11 @@ impl Expression {
             },
             token: Token::EndOfFile,
             contexts: 0,
+            token_start: 0,
+            full_start: 0,
+            errors: Vec::new(),
+            invalid: Vec::new(),
+            computed_names: 0,
         };
         if text.starts_with(b"\xEF\xBB\xBF") {
             p.scanner.at = 3;
@@ -276,6 +296,10 @@ impl Expression {
         p.next_token()?;
         let mut expressions = Vec::new();
         while p.token != Token::EndOfFile {
+            // Nothing is expected after the first expression.
+            if expressions.len() == 1 {
+                p.error_at_token(1012, "");
+            }
             let is_literal = match p.token.clone() {
                 Token::OpenBracket => {
                     expressions.push(p.parse_array_literal_expression()?);
@@ -310,11 +334,13 @@ impl Expression {
             });
         }
         // Several expressions at the top are the elements of an array.
-        if expressions.len() == 1 {
-            expressions.pop()
+        let expression = if expressions.len() == 1 {
+            expressions.pop()?
         } else {
-            Some(Expression::Array(expressions))
-        }
+            Expression::Array(expressions)
+        };
+        p.errors.append(&mut p.invalid);
+        Some((expression, p.errors))
     }
 }
 
@@ -412,12 +438,54 @@ struct TolerantParser<'a> {
     token: Token,
     /// `parsingContexts`
     contexts: u8,
+    /// `TokenStart`. The token ends where the scanner is.
+    token_start: usize,
+    /// `TokenFullStart`, `nodePos()`: where the token before ends.
+    full_start: usize,
+    /// `p.diagnostics`, as far as parsing goes.
+    errors: Vec<SyntaxError>,
+    /// What `validateJsonValue` adds in the end.
+    invalid: Vec<SyntaxError>,
+    /// How many computed names are being read. `validateJsonValue` does not look into them.
+    computed_names: u32,
 }
 
 impl TolerantParser<'_> {
+    /// `parseErrorAtRange`: an error where the last one is adds nothing.
+    fn error_at(&mut self, start: usize, end: usize, code: u32, expected: &'static str) {
+        let (start, end) = (start as u32, end as u32);
+        if self.errors.last().is_none_or(|last| last.start != start) {
+            self.errors.push(SyntaxError {
+                start,
+                end,
+                code,
+                expected,
+            });
+        }
+    }
+
+    /// `parseErrorAtCurrentToken`
+    fn error_at_token(&mut self, code: u32, expected: &'static str) {
+        self.error_at(self.token_start, self.scanner.at, code, expected);
+    }
+
+    /// `validateJsonValue`, `validateJsonObjectLiteral`: objects to the node that starts at `start` and ends with the last token taken.
+    fn refuse(&mut self, start: usize, code: u32) {
+        if self.computed_names == 0 {
+            self.invalid.push(SyntaxError {
+                start: start as u32,
+                end: self.full_start.max(start) as u32,
+                code,
+                expected: "",
+            });
+        }
+    }
+
     fn next_token(&mut self) -> Option<()> {
+        self.full_start = self.scanner.at;
         self.scanner.skip();
         let start = self.scanner.at;
+        self.token_start = start;
         let Some(c) = self.scanner.peek() else {
             self.token = Token::EndOfFile;
             return Some(());
@@ -539,9 +607,11 @@ impl TolerantParser<'_> {
     /// `lookAhead`
     fn look_ahead<T>(&mut self, look: impl FnOnce(&mut Self) -> Option<T>) -> Option<T> {
         let (at, token) = (self.scanner.at, self.token.clone());
+        let (token_start, full_start) = (self.token_start, self.full_start);
         let result = look(self);
         self.scanner.at = at;
         self.token = token;
+        (self.token_start, self.full_start) = (token_start, full_start);
         result
     }
 
@@ -612,6 +682,7 @@ impl TolerantParser<'_> {
                     break;
                 }
                 // The comma is missing. A semicolon in its place is skipped.
+                self.error_at_token(1005, ",");
                 if kind == OBJECT_LITERAL_MEMBERS && self.token == Token::Semicolon {
                     self.next_token()?;
                 }
@@ -620,7 +691,13 @@ impl TolerantParser<'_> {
             if self.is_list_terminator(kind) {
                 break;
             }
-            // `abortParsingListOrMoveToNextToken`
+            // `abortParsingListOrMoveToNextToken`, `parsingContextErrors`
+            let code = if kind == OBJECT_LITERAL_MEMBERS {
+                1136
+            } else {
+                1137
+            };
+            self.error_at_token(code, "");
             if self.is_in_some_parsing_context()? {
                 break;
             }
@@ -632,6 +709,8 @@ impl TolerantParser<'_> {
 
     /// `parseLiteralExpression`, `parseTokenNode`
     fn parse_literal_expression(&mut self) -> Option<Expression> {
+        let start = self.token_start;
+        let is_single_quoted = self.scanner.text.get(start) == Some(&b'\'');
         let literal = match std::mem::replace(&mut self.token, Token::EndOfFile) {
             Token::String(text) => Expression::String(text),
             Token::Number(n) => Expression::Number(n),
@@ -641,6 +720,10 @@ impl TolerantParser<'_> {
             _ => return None,
         };
         self.next_token()?;
+        // `isDoubleQuotedString`
+        if is_single_quoted {
+            self.refuse(start, 1327);
+        }
         Some(literal)
     }
 
@@ -668,6 +751,8 @@ impl TolerantParser<'_> {
         self.enter()?;
         if self.token == Token::OpenBracket {
             self.next_token()?;
+        } else {
+            self.error_at_token(1005, "[");
         }
         let elements = self.parse_delimited_list(
             ARRAY_LITERAL_MEMBERS,
@@ -675,6 +760,8 @@ impl TolerantParser<'_> {
         )?;
         if self.token == Token::CloseBracket {
             self.next_token()?;
+        } else {
+            self.error_at_token(1005, "]");
         }
         self.scanner.depth -= 1;
         Some(Expression::Array(elements))
@@ -683,6 +770,7 @@ impl TolerantParser<'_> {
     /// `parseArgumentOrArrayLiteralElement`
     fn parse_argument_or_array_literal_element(&mut self) -> Option<Expression> {
         if self.token == Token::Comma {
+            self.refuse(self.token_start, 1328);
             return Some(Expression::Missing);
         }
         self.parse_assignment_expression_or_higher()
@@ -693,11 +781,15 @@ impl TolerantParser<'_> {
         self.enter()?;
         if self.token == Token::OpenBrace {
             self.next_token()?;
+        } else {
+            self.error_at_token(1005, "{");
         }
         let properties =
             self.parse_delimited_list(OBJECT_LITERAL_MEMBERS, Self::parse_object_literal_element)?;
         if self.token == Token::CloseBrace {
             self.next_token()?;
+        } else {
+            self.error_at_token(1005, "}");
         }
         self.scanner.depth -= 1;
         Some(Expression::Object(properties))
@@ -705,6 +797,8 @@ impl TolerantParser<'_> {
 
     /// `parseObjectLiteralElement`
     fn parse_object_literal_element(&mut self) -> Option<Property> {
+        let start = self.token_start;
+        let is_double_quoted = self.scanner.text.get(start) == Some(&b'"');
         let mut token_is_identifier = false;
         // `parsePropertyName`
         let name = match std::mem::replace(&mut self.token, Token::EndOfFile) {
@@ -736,7 +830,10 @@ impl TolerantParser<'_> {
             // `parseComputedPropertyName`
             Token::OpenBracket => {
                 self.next_token()?;
-                let expression = self.parse_assignment_expression_or_higher()?;
+                self.computed_names += 1;
+                let expression = self.parse_assignment_expression_or_higher();
+                self.computed_names -= 1;
+                let expression = expression?;
                 if self.token != Token::CloseBracket {
                     return None;
                 }
@@ -746,13 +843,20 @@ impl TolerantParser<'_> {
             _ => return None,
         };
         if token_is_identifier && self.token != Token::Colon {
+            // It is no `PropertyAssignment`.
+            self.refuse(start, 1136);
             return Some(Property {
                 name,
                 initializer: None,
             });
         }
+        if !is_double_quoted {
+            self.refuse(start, 1327);
+        }
         if self.token == Token::Colon {
             self.next_token()?;
+        } else {
+            self.error_at_token(1005, ":");
         }
         Some(Property {
             name,
@@ -762,6 +866,7 @@ impl TolerantParser<'_> {
 
     /// `parseAssignmentExpressionOrHigher`, of a literal, a name, an object, an array, or nothing at all.
     fn parse_assignment_expression_or_higher(&mut self) -> Option<Expression> {
+        let start = self.token_start;
         let expression = match self.token.clone() {
             Token::OpenBrace => self.parse_object_literal_expression()?,
             Token::OpenBracket => self.parse_array_literal_expression()?,
@@ -776,11 +881,21 @@ impl TolerantParser<'_> {
                     return None;
                 } else {
                     self.next_token()?;
+                    self.refuse(start, 1328);
                     Expression::Identifier(word)
                 }
             }
-            // `parseIdentifier(Expression_expected)`: no token is taken.
-            _ => return Some(Expression::Missing),
+            // `parseIdentifier(Expression_expected)`: no token is taken. `createIdentifierWithDiagnostic`: at the end of the file it is said
+            // where the last token ends.
+            _ => {
+                if self.token == Token::EndOfFile {
+                    self.error_at(self.full_start, self.full_start, 1109, "");
+                } else {
+                    self.error_at_token(1109, "");
+                }
+                self.refuse(start, 1328);
+                return Some(Expression::Missing);
+            }
         };
         // The expression goes on: an element access, an operator, an assertion.
         match &self.token {

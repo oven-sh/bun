@@ -3011,6 +3011,25 @@ impl Pass<'_, '_> {
                 };
                 vec![c.declaration_name_at(here, name_pos), on]
             });
+            if is_shadowed && let Some((_, _, shadowing)) = lexical {
+                let meant = hir[type_class]
+                    .members
+                    .iter()
+                    .find(|&m| hir[m].key == PropKey::Private(name));
+                self.c.relate(name_pos, code, |c| {
+                    let name = c.declaration_name_at(here, name_pos);
+                    [(Some(shadowing), 18017), (meant, 18018)]
+                        .into_iter()
+                        .filter_map(|(member, code)| {
+                            Some(super::explain::Related {
+                                at: Some(c.place_of_token(here, hir[member?].pos)),
+                                code,
+                                args: vec![name.clone()],
+                            })
+                        })
+                        .collect()
+                });
+            }
             return;
         }
         // 1111, through `grammarErrorOnNode`.

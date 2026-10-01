@@ -2864,7 +2864,7 @@ impl<'p> Checker<'p> {
 
     /// `Alias` or `Alias<Args>` written at `node` with a valid number of type arguments: the alias and its type argument nodes.
     /// `None` for an alias declared under outer type parameters: a `LazyAlias` holds only the alias's own type arguments.
-    fn deferrable_alias_reference(
+    pub(super) fn deferrable_alias_reference(
         &mut self,
         file: FileId,
         node: TypeNodeId,

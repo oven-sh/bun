@@ -236,6 +236,9 @@ impl<'p, 'a> Lower<'p, 'a> {
                 if !doc.error_arguments.is_empty() {
                     file.error_arguments.extend_from_slice(&doc.error_arguments);
                 }
+                if !doc.error_ends.is_empty() {
+                    file.error_ends.extend_from_slice(&doc.error_ends);
+                }
             }
         }
         file.jsdoc_types.sort_unstable_by_key(|t| t.0);

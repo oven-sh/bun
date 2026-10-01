@@ -664,6 +664,7 @@ impl Checker<'_> {
                             start: pos,
                             code: 1108,
                         });
+                        self.note(pos, pos + b"return".len() as u32, 1108, Vec::new());
                     }
                 }
                 // `checkIfStatement`. Other statements of which nothing is kept are empty as well: it has to be written that way.
@@ -858,7 +859,7 @@ impl Checker<'_> {
 
     /// `checkGrammarVariableDeclarationList`, of `using` and `await using`, and what comes before it in `checkVariableStatement`.
     fn check_declaration_list_of_using(
-        &self,
+        &mut self,
         file: FileId,
         s: StmtId,
         decls: Span<VarDeclId>,
@@ -962,6 +963,20 @@ impl Checker<'_> {
             }
             AwaitPlace::Elsewhere if parses => {
                 out.push(Diagnostic { start, code: 2852 });
+                // `checkAwaitGrammar`
+                if let Some(function) = self.enclosing_fn(file, Parent::Stmt(s))
+                    && hir[function].kind != FnKind::Constructor
+                    && !hir[function].flags.contains(Flags::ASYNC)
+                {
+                    self.relate(start, 2852, |c| {
+                        let (from, to) = c.error_range_of_fn(file, function);
+                        vec![super::explain::Related {
+                            at: Some((file, from, to)),
+                            code: 1356,
+                            args: Vec::new(),
+                        }]
+                    });
+                }
                 true
             }
             _ => false,

@@ -62,6 +62,87 @@ impl Checker<'_> {
         }
     }
 
+    /// `prop.Declarations[0]`, where `GetErrorRangeForNode` points at it. `None`: nothing declares it.
+    pub(super) fn place_of_first_prop_declaration(&mut self, prop: &Prop) -> Option<Place> {
+        self.place_of_first_prop_declaration_within(prop, 0)
+    }
+
+    fn place_of_first_prop_declaration_within(&mut self, prop: &Prop, depth: u32) -> Option<Place> {
+        use crate::hir::PropKind;
+        if depth > 8 {
+            return None;
+        }
+        // The text of the default library and of JSON is not kept: there is nothing to tell an end by.
+        let has_text = |c: &Self, file: FileId| !c.hir(file).text.is_empty();
+        match &prop.source {
+            PropSource::Members(members) => {
+                let &(file, member) = members.first()?;
+                if !has_text(self, file) {
+                    return Some(self.place_of_token(file, self.hir(file)[member].pos));
+                }
+                let (start, end) = self.error_range_of_member(file, member);
+                Some((file, start, end))
+            }
+            &PropSource::Parameter(file, param) => Some((
+                file,
+                self.hir(file)[param].pos,
+                self.end_of_param(file, param),
+            )),
+            &PropSource::Literal(file, written) => {
+                let start = self.hir(file)[written].pos;
+                if !has_text(self, file) {
+                    return Some(self.place_of_token(file, start));
+                }
+                let end = match self.hir(file)[written].kind {
+                    PropKind::Method | PropKind::Getter | PropKind::Setter => {
+                        self.end_of_prop_name(file, written)
+                    }
+                    _ => self.end_of_prop(file, written),
+                };
+                Some((file, start, end))
+            }
+            &PropSource::Symbol(sym) => {
+                let (file, decl) = self.files().decls_of(sym).first().copied()?;
+                self.place_of_declaration(file, decl)
+            }
+            PropSource::Assigned(file, assignments) => {
+                let &first = assignments.first()?;
+                Some((
+                    *file,
+                    self.start_inside_parentheses(*file, first),
+                    self.end_inside_parentheses(*file, first),
+                ))
+            }
+            // `createUnionOrIntersectionProperty`: the declarations of all of them, one after the other.
+            PropSource::Intersected(_, parts) => parts
+                .iter()
+                .find_map(|part| self.place_of_first_prop_declaration_within(part, depth + 1)),
+            // `resolveMappedTypeMembers`: those of the property the modifiers come from.
+            &PropSource::Mapped(of, _) => {
+                let (file, node, mapper) = self.mapped_origin(of)?;
+                if self.hir(file)[self.mapped_decl(file, node).param]
+                    .constraint
+                    .is_none()
+                {
+                    return None;
+                }
+                // `MappedTypeNameTypeKindRemapping`
+                if let Some(renamed) = self.mapped_name_type(of) {
+                    let key = self.mapped_type_param(of);
+                    if !self.is_assignable(renamed, key) {
+                        return None;
+                    }
+                }
+                let (declared, _) = self.mapped_modifiers_source(file, node)?;
+                let modifiers = self.instantiate(declared, mapper);
+                let modifiers = self.apparent_type(modifiers);
+                let (origin, _) = self.prop_of(modifiers, prop.name)?;
+                self.place_of_first_prop_declaration_within(&origin, depth + 1)
+            }
+            PropSource::Type(_) => None,
+        }
+    }
+
     /// `'{0}' is declared here.`
     pub(super) fn declared_here(&self, at: Place, name: String) -> Related {
         Related {

@@ -993,6 +993,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn skip_import_type_attributes(
         &mut self,
     ) -> Result<(ResolutionMode, Option<bun_ast::Loc>), Error> {
+        let open_brace = self.lexer.loc();
         self.lexer.expect(T::TOpenBrace)?;
         let mut assert_keyword_loc = None;
         if self.lexer.token == T::TWith {
@@ -1018,6 +1019,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Reported, and there are no attributes.
             self.lexer.expect(T::TOpenBrace)?;
         } else {
+            let attributes_open_brace = self.lexer.loc();
             self.lexer.next()?;
             let saved_contexts = self.enter_list(ListKind::ImportAttributes);
             while self.lexer.token != T::TCloseBrace {
@@ -1072,13 +1074,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.lexer.next()?;
             }
             self.lexer.list_contexts = saved_contexts;
-            self.lexer.expect(T::TCloseBrace)?;
+            self.lexer
+                .expect_close_brace_of_attributes(attributes_open_brace)?;
         }
 
         if self.lexer.token == T::TComma {
             self.lexer.next()?;
         }
-        self.lexer.expect(T::TCloseBrace)?;
+        self.lexer.expect_close_brace_of_attributes(open_brace)?;
         Ok((mode, assert_keyword_loc))
     }
 

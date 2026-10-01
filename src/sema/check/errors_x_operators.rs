@@ -1458,6 +1458,7 @@ fn is_has_instance_applicable(
                     vec![given, expected]
                 });
                 c.explain_chain(start, 2684, |c| c.assignability_chain(r, wanted));
+                c.relate(start, 2684, |c| c.assignability_related(r, wanted));
             }
             return Some(false);
         }

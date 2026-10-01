@@ -95,14 +95,26 @@ impl Checker<'_> {
                                 c.type_names_for_error_display(static_type, static_base);
                             vec![heir, base]
                         });
-                        self.explain_chain(name_or_node, 2417, |c| {
-                            c.relation_chain_under(
+                        let static_base = if self.explains
+                            && self.fits_each_without_signatures(static_type, static_base)
+                        {
+                            properties
+                        } else {
+                            static_base
+                        };
+                        if self.explains {
+                            let (lines, related) = self.relation_lines_with_related(
                                 static_type,
                                 static_base,
                                 super::relate::Relation::Assignable,
-                                2417,
-                            )
-                        });
+                                Some(2417),
+                                0,
+                            );
+                            self.explain_chain(name_or_node, 2417, |_| {
+                                lines.into_iter().skip(1).collect()
+                            });
+                            self.relate(name_or_node, 2417, |_| related);
+                        }
                         self.report_not_assignable(
                             static_type,
                             properties,
@@ -145,6 +157,21 @@ impl Checker<'_> {
         self.check_index_constraints(file, class_type, &locals, false, None, out);
         let static_type = self.type_of_symbol(sym);
         self.check_index_constraints(file, static_type, &locals, true, None, out);
+    }
+
+    /// Whether `base` is an intersection and `ty` fits each member of it less its signatures.
+    fn fits_each_without_signatures(&mut self, ty: TypeId, base: TypeId) -> bool {
+        if !self.is_intersection(base) {
+            return false;
+        }
+        for &part in self.constituents(base) {
+            if let Some(bare) = self.type_without_signatures(part)
+                && !self.is_assignable(ty, bare)
+            {
+                return false;
+            }
+        }
+        true
     }
 
     /// `getTypeWithoutSignatures`, of what a class extends. `None`: that cannot be extended, which is an error of its own
@@ -322,7 +349,7 @@ impl Checker<'_> {
                     code: 2416,
                 });
                 let end = self.end_of_member_name(file, m);
-                self.explain_to(member.pos, end, 2416, |c| {
+                self.explain_another(member.pos, end, 2416, |c| {
                     let declared = match c.prop_of(plain.0, name) {
                         Some((prop, _)) => c.prop_to_string(&prop),
                         None => c.atom_text(name),
@@ -330,21 +357,29 @@ impl Checker<'_> {
                     vec![
                         declared,
                         c.type_to_string(plain.0),
-                        c.type_to_string(plain.1),
+                        c.base_with_this_to_string(plain.1),
                     ]
                 });
-                self.explain_chain(member.pos, 2416, |c| {
-                    let (Some((own, own_mapper)), Some((inherited, base_mapper))) =
-                        (c.prop_of(with_this.0, name), c.prop_of(with_this.1, name))
-                    else {
-                        return Vec::new();
-                    };
+                if self.explains
+                    && let (Some((own, own_mapper)), Some((inherited, base_mapper))) = (
+                        self.prop_of(with_this.0, name),
+                        self.prop_of(with_this.1, name),
+                    )
+                {
                     let (given, wanted) = (
-                        c.type_of_prop(&own, own_mapper),
-                        c.type_of_prop(&inherited, base_mapper),
+                        self.type_of_prop(&own, own_mapper),
+                        self.type_of_prop(&inherited, base_mapper),
                     );
-                    c.assignability_lines(given, wanted, 1)
-                });
+                    let (lines, related) = self.relation_lines_with_related(
+                        given,
+                        wanted,
+                        super::relate::Relation::Assignable,
+                        None,
+                        1,
+                    );
+                    self.explain_chain(member.pos, 2416, |_| lines);
+                    self.relate(member.pos, 2416, |_| related);
+                }
                 issued = true;
             }
         }
@@ -355,6 +390,52 @@ impl Checker<'_> {
                 hir[c].pos
             };
             self.report_not_assignable(plain.0, plain.1, at, broad, out);
+            self.explain_as_another(at);
+            self.explain_base_with_this(at, broad, plain.1);
+        }
+    }
+
+    /// `typeToString(baseWithThis)`: an intersection that `getTypeWithThisArgument` makes anew goes by no alias.
+    fn base_with_this_to_string(&mut self, base: TypeId) -> String {
+        if self.is_intersection(base) && self.takes_this_argument(base) {
+            self.type_to_string_written_out(base)
+        } else {
+            self.type_to_string(base)
+        }
+    }
+
+    /// Has what was last noted of the error `code` at `start` name `base` as `base_with_this_to_string` does.
+    fn explain_base_with_this(&mut self, start: u32, code: u32, base: TypeId) {
+        if !self.explains || !self.is_intersection(base) {
+            return;
+        }
+        let (plain, with_this) = (
+            self.type_to_string(base),
+            self.base_with_this_to_string(base),
+        );
+        self.explain_renamed(start, code, &plain, &with_this);
+    }
+
+    /// The same for 2430 and the base type `base` of the interface `sym`. One that stays the type it is goes by the alias it is
+    /// written as after `extends`.
+    fn explain_base_of_interface(&mut self, sym: Sym, start: u32, base: TypeId) {
+        if !self.explains || !self.is_intersection(base) {
+            return;
+        }
+        if self.takes_this_argument(base) {
+            self.explain_base_with_this(start, 2430, base);
+            return;
+        }
+        for (file, decl) in self.files().decls(sym) {
+            let Decl::Interface(i) = decl else { continue };
+            let hir = self.hir(file);
+            for node in hir.ids(hir[i].extends) {
+                if let Some(alias) = self.alias_name_as_written(file, node, base) {
+                    let written_out = self.type_to_string(base);
+                    self.explain_renamed(start, 2430, &written_out, &alias);
+                    return;
+                }
+            }
         }
     }
 
@@ -680,6 +761,8 @@ impl Checker<'_> {
                     && self.heir_against_base(ty, base, this).is_some()
                 {
                     self.report_not_assignable(ty, base, name_pos, 2430, out);
+                    self.explain_as_another(name_pos);
+                    self.explain_base_of_interface(sym, name_pos, base);
                 }
             }
         } else if !self.inherited_properties_are_identical(sym, ty, &bases, &mut None) {
@@ -891,7 +974,7 @@ impl Checker<'_> {
                 {
                     out.push(Diagnostic { start, code: 2411 });
                     let end = self.end_of_reported(file, node);
-                    self.explain_to(start, end, 2411, |c| {
+                    self.explain_another(start, end, 2411, |c| {
                         vec![
                             c.prop_to_string(prop),
                             c.type_to_string(prop_type),
@@ -899,6 +982,26 @@ impl Checker<'_> {
                             c.type_to_string(info.value),
                         ]
                     });
+                    // `propDeclaration`
+                    if local_prop.is_none()
+                        && let Some(&(of, m)) = self.declarations_of_prop(prop).first()
+                    {
+                        let (text, member) = (&self.hir(of).text, &self.hir(of)[m]);
+                        if matches!(member.key, PropKey::Computed(_))
+                            || text.get(member.pos as usize) == Some(&b'[')
+                        {
+                            self.relate(start, 2411, |c| {
+                                let place = if text.is_empty() {
+                                    c.place_of_token(of, member.pos)
+                                } else {
+                                    let (from, to) = c.error_range_of_member(of, m);
+                                    (of, from, to)
+                                };
+                                let name = c.prop_to_string(prop);
+                                vec![c.declared_here(place, name)]
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -951,7 +1054,7 @@ impl Checker<'_> {
                             code: 2411,
                         });
                         let end = self.end_of_member_name(f, m);
-                        self.explain_to(member.pos, end, 2411, |c| {
+                        self.explain_another(member.pos, end, 2411, |c| {
                             vec![
                                 c.source_text(f, member.pos, end),
                                 c.type_to_string(prop_type),

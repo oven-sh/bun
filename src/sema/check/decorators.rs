@@ -503,8 +503,57 @@ impl<'p> Checker<'p> {
                     code: 1497,
                 });
                 self.note(written.start, written.end, 1497, Vec::new());
+                self.relate(written.start, 1497, |c| {
+                    c.invalid_syntax_in_decorator(file, e)
+                        .map(|(from, to)| super::explain::Related {
+                            at: Some((file, from, to)),
+                            code: 1498,
+                            args: Vec::new(),
+                        })
+                        .into_iter()
+                        .collect()
+                });
             }
             self.check_decorator(file, owner, e, written, out);
+        }
+    }
+
+    /// `checkGrammarDecorator`: its `errorNode`, from where to where. Of all in `e` that is more than a name, `a.b.c`, or a call of either,
+    /// what comes first, and a `?.` rather than what it is in.
+    fn invalid_syntax_in_decorator(&self, file: FileId, e: ExprId) -> Option<(u32, u32)> {
+        let hir = self.hir(file);
+        let question_dot_after = |before: ExprId| {
+            let at = self.skip_trivia_from(file, self.end_of_expr(file, before));
+            (at, at + 2)
+        };
+        let (mut node, mut can_have_call, mut found) = (e, true, None);
+        loop {
+            let whole = (self.start_of(file, node), self.end_of_expr(file, node));
+            if node != e && hir.parens.binary_search_by_key(&node.0, |p| p.0.0).is_ok() {
+                return Some(whole);
+            }
+            match hir[node].kind {
+                ExprKind::Instantiation { expr: inner, .. } | ExprKind::NonNull(inner) => {
+                    node = inner
+                }
+                ExprKind::Call(c) => {
+                    if !can_have_call {
+                        found = Some(whole);
+                    }
+                    if hir[c].chain == Chain::Start {
+                        found = Some(question_dot_after(hir[c].callee));
+                    }
+                    (node, can_have_call) = (hir[c].callee, false);
+                }
+                ExprKind::Dot { obj, chain, .. } => {
+                    if chain == Chain::Start {
+                        found = Some(question_dot_after(obj));
+                    }
+                    (node, can_have_call) = (obj, false);
+                }
+                ExprKind::Ident(_) => return found,
+                _ => return Some(whole),
+            }
         }
     }
 
@@ -937,6 +986,7 @@ impl<'p> Checker<'p> {
                     vec![returned, wanted]
                 });
                 self.explain_chain(start, code, |c| c.assignability_chain(returned, wanted));
+                self.relate(start, code, |c| c.assignability_related(returned, wanted));
             }
         }
     }

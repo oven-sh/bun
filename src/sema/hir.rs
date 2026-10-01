@@ -1261,9 +1261,15 @@ pub struct File {
     /// What an error of the parser names (`{0}`) that cannot be told from where it is: the token in `'{0}' expected.`, say. By where the
     /// error is.
     pub error_arguments: Few<(u32, Box<str>)>,
+    /// Where the errors of the parser end that say what was expected: start, code and end. `parseErrorAtCurrentToken` reports the token
+    /// the parser is at, as its scanner sees it there, and `parseErrorAt` what it is given, which can be nothing at all.
+    pub error_ends: Few<(u32, u32, u32)>,
     /// `hasParseDiagnostics`: the parser or the scanner reported an error. `grammarErrorOnNode` and the binder's checks of
     /// reserved names then report nothing.
     pub has_parse_diagnostics: bool,
+    /// `parseExpectedMatchingBrackets`: where the parser missed a closing bracket, where the bracket it would have closed is, and which
+    /// bracket that is.
+    pub opening_brackets: Few<(u32, u32, u8)>,
     /// Errors about syntax that tsgo reports with a plain `c.error`, so parse errors do not silence them: start and code.
     pub checker_errors: Few<(u32, u32)>,
     /// Pieces of type syntax that were given up on.
@@ -1284,9 +1290,15 @@ pub struct File {
     pub with_bodies: Few<(u32, u32)>,
     /// The start of each token that follows a token the parser skipped in a list (`abortParsingListOrMoveToNextToken`). Sorted.
     pub after_skipped: Few<u32>,
+    /// The array and object literals whose closing bracket the parser missed: where they open, and where they end, which is where the
+    /// last token they took does (`finishNode`). Sorted.
+    pub unclosed_literals: Few<(u32, u32)>,
     /// The decorators of missing declarations and of `this` parameters, which `checkDecorators` never looks at: from where the
     /// expression starts to where what comes after the decorators starts. The expressions are statements of their own.
     pub stray_decorators: Few<(u32, u32)>,
+    /// The opening and closing JSX tags in which the parser objected to something: where their `<` is, and where they end
+    /// (`finishNode`). Sorted.
+    pub jsx_tag_ends: Few<(u32, u32)>,
     /// Where module specifiers are written, but for those of `import()`, which are expressions.
     pub specifier_uses: Vec<SpecifierUse>,
     /// The specifier of an `import()` that has a second argument, and that argument.

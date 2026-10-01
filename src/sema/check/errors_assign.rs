@@ -824,6 +824,20 @@ impl Checker<'_> {
                     Diagnostic { start: at, code }
                 }
             };
+            if self.explains {
+                let written = [
+                    (self.annotation_of_reference(file, expr), given),
+                    (Some((file, ty)), target),
+                ];
+                for (node, named) in written {
+                    if let Some((of, node)) = node
+                        && let Some(alias) = self.alias_name_as_written(of, node, named)
+                    {
+                        let written_out = self.type_to_string(named);
+                        self.explain_renamed(said.start, said.code, &written_out, &alias);
+                    }
+                }
+            }
             out.push(said);
         }
     }
@@ -2244,6 +2258,7 @@ impl Checker<'_> {
             return true;
         };
         let (at, end) = place(&*self);
+        let said_before = out.len();
         self.report_unassignable(
             file,
             source,
@@ -2256,6 +2271,12 @@ impl Checker<'_> {
             head,
             out,
         );
+        if self.explains
+            && let [said] = out[said_before..]
+            && said.start == at
+        {
+            self.explain_aliases_as_written(file, said, (e, source), (written, target));
+        }
         false
     }
 
@@ -2326,6 +2347,19 @@ impl Checker<'_> {
             self.explain_to(at, end, 2859, |c| {
                 vec![c.type_to_string(source), c.type_to_string(target)]
             });
+            // `isTypeRelatedTo` has come upon it before, with no node to report it on but `c.currentNode`: the assignment.
+            if e.is_some()
+                && let Parent::Expr(whole) = self.bound(file).expr_parent[e.idx()]
+                && whole.is_some()
+                && matches!(self.hir(file)[whole].kind, ExprKind::Assign { value, .. } if value == e)
+            {
+                let start = self.start_inside_parentheses(file, whole);
+                let end = self.end_inside_parentheses(file, whole);
+                out.push(Diagnostic { start, code: 2859 });
+                self.explain_to(start, end, 2859, |c| {
+                    vec![c.type_to_string(source), c.type_to_string(target)]
+                });
+            }
             return;
         }
         if e.is_none() || !self.elaborate_from(file, e, is_effective, source, target, head, out) {
@@ -2481,6 +2515,155 @@ impl Checker<'_> {
         Some((host, self.fill_type_args(&params, &args)))
     }
 
+    /// Has what was noted of the error `said`, that `given.1`, the type of `given.0`, does not fit `wanted.1`, go by `Type.alias` where
+    /// the printer cannot tell it.
+    fn explain_aliases_as_written(
+        &mut self,
+        file: FileId,
+        said: Diagnostic,
+        given: (ExprId, TypeId),
+        wanted: (Written, TypeId),
+    ) {
+        let annotation = if given.0.is_some() {
+            self.annotation_of_reference(file, given.0)
+        } else {
+            None
+        };
+        let sides = [
+            (annotation, given.1, false),
+            (self.written_at(file, wanted.0), wanted.1, true),
+        ];
+        let mut names = Vec::new();
+        for (written, ty, writing) in sides {
+            // `getNormalizedUnionOrIntersectionType` makes an intersection anew, without alias.
+            let compared = self.normalized(ty, writing);
+            if compared != ty && self.is_intersection(ty) && self.is_intersection(compared) {
+                names.push((
+                    self.type_to_string(compared),
+                    self.type_to_string_written_out(compared),
+                ));
+            }
+            let Some((of, node)) = written else {
+                continue;
+            };
+            // Narrowed, it is no longer what is written.
+            let there = self.type_from_node(of, node);
+            if self.force(there) == self.force(ty) {
+                self.aliases_as_written(of, node, MapperId::IDENTITY, 0, &mut names);
+            }
+        }
+        for (printed, alias) in names {
+            self.explain_renamed(said.start, said.code, &printed, &alias);
+        }
+    }
+
+    /// `getTypeFromTypeAliasReference`, `instantiateTypeWithAlias`. For the reference to a generic type alias at `node`, and for those
+    /// its body is made of: what the printer calls the type and what `Type.alias` calls it, if the body is a reference to another
+    /// generic alias, a union or an intersection. `mapper`: what the type parameters around `node` stand for.
+    fn aliases_as_written(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+        mapper: MapperId,
+        depth: u32,
+        names: &mut Vec<(String, String)>,
+    ) {
+        if node.is_none() || depth > 4 {
+            return;
+        }
+        let hir = self.hir(file);
+        if let TypeNodeKind::Union(members) | TypeNodeKind::Intersection(members) = hir[node].kind {
+            for member in hir.ids(members) {
+                self.aliases_as_written(file, member, mapper, depth + 1, names);
+            }
+            return;
+        }
+        let Some((sym, arguments)) = self.deferrable_alias_reference(file, node) else {
+            return;
+        };
+        let Some((of, alias)) = self.generic_alias_declaration(sym) else {
+            return;
+        };
+        let body = self.hir(of)[alias].ty;
+        if body.is_none() {
+            return;
+        }
+        let declared = self.type_from_node(file, node);
+        let ty = self.instantiate(declared, mapper);
+        let ty = self.force(ty);
+        let params = self.local_type_params_of_symbol(sym);
+        let mut given = self.types_from_nodes(file, arguments);
+        for argument in &mut given {
+            *argument = self.instantiate(*argument, mapper);
+        }
+        let given = self.fill_type_args(&params, &given);
+        let is_named = match self.hir(of)[body].kind {
+            TypeNodeKind::Union(_) | TypeNodeKind::Intersection(_) => {
+                ty != TypeId::BOOLEAN && self.is_union_or_intersection(ty) && self.reduced(ty) == ty
+            }
+            TypeNodeKind::Ref { .. } => self.is_hosted_by(of, alias, ty),
+            _ => false,
+        };
+        if is_named {
+            // The printer names one of these by its alias.
+            let named = self.intern(TypeData::LazyAlias {
+                sym,
+                args: given.clone().into(),
+            });
+            let (printed, named) = (self.type_to_string(ty), self.type_to_string(named));
+            if printed != named {
+                names.push((printed, named));
+            }
+        }
+        let inner = self.mapper_from(&params, &given);
+        self.aliases_as_written(of, body, inner, depth + 1, names);
+    }
+
+    /// `getTypeFromTypeAliasReference`: whether `ty`, which comes of the generic type alias declared as `alias` of `file`, whose body
+    /// is a reference to another generic alias, has the former for its `Type.alias`.
+    fn is_hosted_by(&mut self, file: FileId, alias: AliasId, ty: TypeId) -> bool {
+        use crate::bind::ScopeKind;
+        if !self.may_have_hosting_alias(ty) {
+            return false;
+        }
+        // The alias at the end of the references: the one `alias_of` knows.
+        let (mut of, mut body) = (file, self.hir(file)[alias].ty);
+        let mut innermost = None;
+        for _ in 0..8 {
+            let Some((hosted, _)) = self.deferrable_alias_reference(of, body) else {
+                break;
+            };
+            let Some((next, declaration)) = self.generic_alias_declaration(hosted) else {
+                break;
+            };
+            innermost = Some(hosted);
+            (of, body) = (next, self.hir(next)[declaration].ty);
+        }
+        if innermost.is_none() || self.alias_of(ty).map(|found| found.0) != innermost {
+            return false;
+        }
+        // `instantiateMappedType`: an instantiation of a homomorphic mapped type keeps the alias of the mapped type.
+        if let Some((mapped_in, mapped, _)) = self.mapped_origin(ty) {
+            let param = self.type_param(mapped_in, self.mapped_decl(mapped_in, mapped).param);
+            if let Some(constraint) = self.constraint_of_type_param(param)
+                && matches!(self.data(constraint), TypeData::Keyof(_))
+            {
+                return false;
+            }
+        }
+        // `isLocalTypeAlias`: an alias declared in a function does not host a reference to a top-level alias.
+        let bound = self.bound(file);
+        let mut around = bound.alias_scope[alias.idx()];
+        while around.is_some() {
+            let scope = &bound.scopes[around.idx()];
+            if matches!(scope.kind, ScopeKind::Fn(_)) {
+                return false;
+            }
+            around = scope.parent;
+        }
+        true
+    }
+
     /// The declaration of `sym`, if it is a type alias with type parameters and no class or interface as well.
     fn generic_alias_declaration(&self, sym: Sym) -> Option<(FileId, AliasId)> {
         use crate::bind::Decl;
@@ -2499,6 +2682,69 @@ impl Checker<'_> {
                 }
                 _ => None,
             })
+    }
+
+    /// How `typeToString` names the union or intersection `ty` that is written at `node` as `A<..>`, where the body of the generic
+    /// type alias `A` is a union or an intersection: `getTypeAliasInstantiation` gives it `A<..>` for `Type.alias`. `None`: it is
+    /// not written so, or the printer has a name for it.
+    pub(super) fn alias_name_as_written(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+        ty: TypeId,
+    ) -> Option<String> {
+        let forced = self.force(ty);
+        if !matches!(
+            self.data(forced),
+            TypeData::Union(_) | TypeData::Intersection(_)
+        ) || self.reduced(forced) != forced
+            || self.alias_for_display(forced).is_some()
+        {
+            return None;
+        }
+        let (sym, arguments) = self.deferrable_alias_reference(file, node)?;
+        if arguments.is_empty() {
+            return None;
+        }
+        let (of, alias) = self.generic_alias_declaration(sym)?;
+        let body = self.hir(of)[alias].ty;
+        if body.is_none()
+            || !matches!(
+                self.hir(of)[body].kind,
+                TypeNodeKind::Union(_) | TypeNodeKind::Intersection(_)
+            )
+        {
+            return None;
+        }
+        // Narrowed, it is no longer what is written.
+        let written = self.type_from_node(file, node);
+        if self.force(written) != forced {
+            return None;
+        }
+        let hir = self.hir(file);
+        let nodes: Vec<TypeNodeId> = hir.ids(arguments).collect();
+        let given = self.types_from_nodes(file, arguments);
+        let params = self.local_type_params_of_symbol(sym);
+        let mut names = Vec::with_capacity(params.len());
+        for (i, argument) in self.fill_type_args(&params, &given).into_iter().enumerate() {
+            // `getAliasSymbolForTypeNode`: a union or an intersection that is written out there has no alias.
+            let is_written_out = nodes.get(i).is_some_and(|&n| {
+                matches!(
+                    hir[n].kind,
+                    TypeNodeKind::Union(_) | TypeNodeKind::Intersection(_)
+                )
+            });
+            names.push(if is_written_out {
+                self.type_to_string_written_out(argument)
+            } else {
+                self.type_to_string(argument)
+            });
+        }
+        Some(format!(
+            "{}<{}>",
+            self.symbol_to_string(sym),
+            names.join(", ")
+        ))
     }
 
     /// Where the type of the variable or parameter that `e` names is written.
@@ -3314,12 +3560,13 @@ impl Checker<'_> {
             c.relation_too_complex = too_complex;
             arguments
         });
-        // Nothing is said under these.
-        if matches!(code, 2741 | 2739 | 2740 | 4104 | 2559 | 2560) {
+        if !self.explains {
             return;
         }
-        self.explain_chain(start, code, |c| {
-            let mut lines = c.relation_lines(source, target, relation, Some(head), 0);
+        let (mut lines, related) =
+            self.relation_lines_with_related(source, target, relation, Some(head), 0);
+        // Nothing is said under these.
+        if !matches!(code, 2741 | 2739 | 2740 | 4104 | 2559 | 2560) {
             let starts_with_head = lines.first().is_some_and(|first| {
                 first.code == code
                     || first.code == head
@@ -3332,8 +3579,9 @@ impl Checker<'_> {
                     line.level += 1;
                 }
             }
-            lines
-        });
+            self.explain_chain(start, code, |_| lines);
+        }
+        self.relate(start, code, |_| related);
     }
 
     /// The arguments of the message `code` that stands first in the error for `source` not being related to `target`.
@@ -4039,6 +4287,19 @@ impl Checker<'_> {
             }
         }
         self.base_types(target).len() == 1 && self.is_declared_as_reference(target, 0)
+    }
+
+    /// Whether `getTypeWithThisArgument` makes another type of `ty`: a reference with a `this` type to fill in, or an intersection
+    /// with such a member.
+    pub(super) fn takes_this_argument(&mut self, ty: TypeId) -> bool {
+        match self.data(ty) {
+            TypeData::Ref { target, .. } => self.is_declared_as_reference(*target, 0),
+            TypeData::Tuple { .. } => true,
+            TypeData::Intersection(parts) => {
+                parts.iter().any(|&part| self.takes_this_argument(part))
+            }
+            _ => false,
+        }
     }
 
     /// Whether the declared type of the class or interface `sym` is a type reference, one with a `this` type

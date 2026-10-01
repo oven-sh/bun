@@ -546,6 +546,8 @@ impl<'a> Parser<'a> {
             let syntax = *p.type_syntax.take().unwrap();
             let logged = Self::logged_syntax_errors(p.log(), self.source.contents());
             let error_arguments = Self::error_arguments(p.log());
+            let error_ends = Self::error_ends(p.log(), self.source.contents(), p.is_jsx_enabled());
+            let opening_brackets = Self::opening_brackets(p.log());
             let mut file = crate::sema::lower::Lower::run_declaration_file(
                 p,
                 syntax,
@@ -556,9 +558,11 @@ impl<'a> Parser<'a> {
             if file.has_parse_diagnostics
                 && let Some((syntactic, checker)) = logged
             {
+                file.opening_brackets.extend(opening_brackets);
                 file.early_errors.extend(syntactic);
                 file.checker_errors.extend(checker);
                 file.error_arguments.extend(error_arguments);
+                file.error_ends.extend(error_ends);
             }
             return (file, false);
         }
@@ -569,6 +573,8 @@ impl<'a> Parser<'a> {
         // Sorted by which part of TypeScript reports it.
         let (mut syntactic, mut grammar, mut checker) = (Vec::new(), Vec::new(), Vec::new());
         let error_arguments = Self::error_arguments(p.log());
+        let error_ends = Self::error_ends(p.log(), self.source.contents(), p.is_jsx_enabled());
+        let opening_brackets = Self::opening_brackets(p.log());
         let mut has_errors = false;
         for msg in p.log().msgs.iter().filter(|m| m.kind == bun_ast::Kind::Err) {
             let offset = msg.data.location.as_ref().map(|l| l.offset);
@@ -600,8 +606,14 @@ impl<'a> Parser<'a> {
             scratch_lexer(&self),
         );
         file.has_errors = has_errors;
+        if !opening_brackets.is_empty() {
+            file.opening_brackets.extend(opening_brackets);
+        }
         if !error_arguments.is_empty() {
             file.error_arguments.extend(error_arguments);
+        }
+        if !error_ends.is_empty() {
+            file.error_ends.extend(error_ends);
         }
         // `hasParseDiagnostics`. The lowering does not say who reports what it pushed, so `check_file` sorts that by code.
         file.has_parse_diagnostics = has_errors
@@ -622,6 +634,24 @@ impl<'a> Parser<'a> {
         (file, awaited)
     }
 
+    /// `hir::File::opening_brackets`, of what is in `log`: the notes of `Lexer::note_opening_bracket`.
+    fn opening_brackets(log: &bun_ast::Log) -> Vec<(u32, u32, u8)> {
+        let mut found = Vec::new();
+        for msg in log.msgs.iter().filter(|msg| msg.kind == bun_ast::Kind::Err) {
+            let Some(at) = msg.data.location.as_ref() else {
+                continue;
+            };
+            for note in msg.notes.iter() {
+                if let (Some(&[bracket]), Some(open)) =
+                    (note.text.strip_prefix(b"TS1007 "), note.location.as_ref())
+                {
+                    found.push((at.offset as u32, open.offset as u32, bracket));
+                }
+            }
+        }
+        found
+    }
+
     /// `hir::File::error_arguments`, of what is in `log`.
     fn error_arguments(log: &bun_ast::Log) -> Vec<(u32, Box<str>)> {
         log.msgs
@@ -631,6 +661,15 @@ impl<'a> Parser<'a> {
                 let offset = msg.data.location.as_ref()?.offset;
                 Some((offset as u32, crate::sema::error_argument(&msg.data.text)?))
             })
+            .collect()
+    }
+
+    /// `hir::File::error_ends`, of what is in `log`.
+    fn error_ends(log: &bun_ast::Log, contents: &[u8], has_jsx: bool) -> Vec<(u32, u32, u32)> {
+        log.msgs
+            .iter()
+            .filter(|msg| msg.kind == bun_ast::Kind::Err)
+            .filter_map(|msg| crate::sema::error_end(&msg.data, contents, has_jsx))
             .collect()
     }
 

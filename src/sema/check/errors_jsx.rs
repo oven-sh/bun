@@ -425,6 +425,25 @@ impl Checker<'_> {
                     most.to_string(),
                 ]
             });
+            // `getSymbolAtLocation(tagName).ValueDeclaration`
+            self.relate(tag_name, 6229, |c| {
+                let at = match hir[jsx.tag].kind {
+                    ExprKind::Ident(name) => c
+                        .symbol_of_identifier(file, jsx.tag, name)
+                        .filter(|&sym| c.files().flags(sym).intersects(SymFlags::VALUE))
+                        .and_then(|sym| c.place_of_symbol(sym)),
+                    ExprKind::Dot { obj, name, .. } => {
+                        let object = c.type_of_expr(file, obj);
+                        let object = c.apparent_type(object);
+                        let prop = c.prop_ref(object, name);
+                        prop.and_then(|(prop, _)| c.place_of_prop(prop))
+                    }
+                    _ => None,
+                };
+                let tag = c.source_text(file, tag_name, tag_end);
+                let tag = tag.split_whitespace().collect::<String>();
+                at.map(|at| c.declared_here(at, tag)).into_iter().collect()
+            });
             if wanted.len() > 1 {
                 self.explain_under(tag_name, 6229, 2770, Vec::new());
                 self.explain_under(tag_name, 2770, 2769, Vec::new());

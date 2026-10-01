@@ -186,6 +186,8 @@ pub(crate) struct JsDoc {
     pub(crate) checker_errors: Vec<(u32, u32)>,
     /// `hir::File::error_arguments`
     pub(crate) error_arguments: Vec<(u32, Box<str>)>,
+    /// `hir::File::error_ends`
+    pub(crate) error_ends: Vec<(u32, u32, u32)>,
 }
 
 /// The JSDoc comments of a file that can have tags, in source order.
@@ -479,7 +481,7 @@ impl<'p, 'a> Reader<'p, 'a> {
             is_in_lexer: false,
         };
         let tags = reader.comment(start);
-        let (errors, checker_errors, error_arguments) = reader.take_errors(logged);
+        let (errors, checker_errors, error_arguments, error_ends) = reader.take_errors(logged);
         JsDoc {
             start: start as u32,
             end: end as u32,
@@ -487,6 +489,7 @@ impl<'p, 'a> Reader<'p, 'a> {
             errors,
             checker_errors,
             error_arguments,
+            error_ends,
         }
     }
 
@@ -496,11 +499,16 @@ impl<'p, 'a> Reader<'p, 'a> {
     fn take_errors(
         &mut self,
         before: (usize, u32, u32),
-    ) -> (Vec<(u32, u32)>, Vec<(u32, u32)>, Vec<(u32, Box<str>)>) {
+    ) -> (
+        Vec<(u32, u32)>,
+        Vec<(u32, u32)>,
+        Vec<(u32, Box<str>)>,
+        Vec<(u32, u32, u32)>,
+    ) {
         let source = self.p.source.contents();
         let log = self.p.log();
         let (mut errors, mut checker_errors) = (Vec::new(), Vec::new());
-        let mut error_arguments = Vec::new();
+        let (mut error_arguments, mut error_ends) = (Vec::new(), Vec::new());
         for msg in log.msgs.drain(before.0..) {
             if msg.kind != bun_ast::Kind::Err {
                 continue;
@@ -526,11 +534,13 @@ impl<'p, 'a> Reader<'p, 'a> {
                     if let Some(token) = super::error_argument(&msg.data.text) {
                         error_arguments.push((start, token));
                     }
+                    // `ScanJSDocToken` makes no token of `</`.
+                    error_ends.extend(super::error_end(&msg.data, source, false));
                 }
             }
         }
         (log.errors, log.warnings) = (before.1, before.2);
-        (errors, checker_errors, error_arguments)
+        (errors, checker_errors, error_arguments, error_ends)
     }
 
     /// `parseErrorAt`
@@ -863,6 +873,15 @@ impl<'p, 'a> Reader<'p, 'a> {
 
     /// `parseImportTag`, from the token after the name of the tag on.
     fn read_import(&mut self) -> Import {
+        // Nothing but blanks is left of the comment, and `skipWhitespaceOrAsterisk` leaves those. `parseModuleSpecifier` misses an
+        // expression at that token, which stays.
+        if !self.is_in_lexer && matches!(self.token, Token::Whitespace | Token::NewLine) {
+            self.error_at_token(1109);
+            return Import {
+                end: self.start as u32,
+                ..Import::default()
+            };
+        }
         self.enter_lexer();
         let from = self.start;
         let mut import = Import::default();

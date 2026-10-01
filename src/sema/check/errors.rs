@@ -50,6 +50,9 @@ impl PartialEq for Container {
 impl Checker<'_> {
     pub fn check_file(&mut self, file: FileId) -> Vec<Diagnostic> {
         let hir = self.hir(file);
+        if hir.kind == FileKind::Json {
+            return self.check_json_file(file);
+        }
         // `GetSyntacticDiagnostics` and `getBindAndCheckDiagnosticsWithChecker` are separate: only the second depends on whether the
         // file is checked.
         let (mut syntactic, early): (Vec<Diagnostic>, Vec<Diagnostic>) = hir
@@ -61,6 +64,24 @@ impl Checker<'_> {
             for &(start, code) in hir.early_errors.iter().chain(hir.jsdoc_errors.iter()) {
                 explain_early_error(self, file, start, code);
             }
+            // `parseExpectedMatchingBrackets`
+            for &(start, open, bracket) in hir.opening_brackets.iter() {
+                let closing = match bracket {
+                    b'(' => ")",
+                    b'[' => "]",
+                    _ => "}",
+                };
+                self.relate(start, 1005, |_| {
+                    vec![super::explain::Related {
+                        at: Some((file, open, open)),
+                        code: 1007,
+                        args: vec![char::from(bracket).to_string(), closing.to_owned()],
+                    }]
+                });
+            }
+        }
+        if self.explains {
+            self.relate_early_errors(file);
         }
         // `hasParseDiagnostics`: in a file with parser or scanner errors, `grammarErrorOnNode` and its like report nothing, and neither do
         // the binder's `checkContextualIdentifier` and `checkPrivateIdentifier`. Early errors with their codes are dropped as well.
@@ -84,6 +105,11 @@ impl Checker<'_> {
                 .iter()
                 .map(|&(start, code)| Diagnostic { start, code }),
         );
+        if self.explains {
+            for &(start, code) in hir.checker_errors.iter() {
+                explain_early_error(self, file, start, code);
+            }
+        }
         // `checkUnmatchedJSDocParameters`
         out.extend(
             self.bound(file)
@@ -91,6 +117,13 @@ impl Checker<'_> {
                 .iter()
                 .map(|&(start, code)| Diagnostic { start, code }),
         );
+        if self.explains {
+            for &(start, code) in self.bound(file).jsdoc_param_errors.iter() {
+                if code == 8032 {
+                    explain_qualified_parameter_name(self, file, start);
+                }
+            }
+        }
         self.check_js_syntax(file, &mut syntactic);
         if self.only_syntax || !self.reports_semantic_errors(file) {
             syntactic.sort_unstable();
@@ -210,11 +243,77 @@ impl Checker<'_> {
                         .any(|&(start, end)| (start..end).contains(&d.start))
             });
         }
+        // `GetDeclarationDiagnostics`: nor these.
+        self.check_module_exports_assignments(file, &mut out);
         // `GetSyntacticDiagnostics`: no comment directive takes these back.
         out.append(&mut syntactic);
         out.sort_unstable();
         out.dedup();
         out
+    }
+
+    /// `GetSyntacticDiagnostics` of a JSON file. `getBindAndCheckDiagnostics` has nothing to say of one.
+    fn check_json_file(&self, file: FileId) -> Vec<Diagnostic> {
+        let parsed = crate::json::Expression::parse_with_errors(&self.hir(file).text);
+        let mut out = Vec::new();
+        for error in parsed.map_or_else(Vec::new, |parsed| parsed.1) {
+            let (start, code) = (error.start, error.code);
+            out.push(Diagnostic { start, code });
+            let end = if error.end > start {
+                error.end
+            } else {
+                super::explain::NO_LENGTH
+            };
+            let arguments = match error.expected {
+                "" => Vec::new(),
+                token => vec![token.to_owned()],
+            };
+            self.note(start, end, code, arguments);
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// `AddRelatedInfo`, of what arrives as an early error.
+    fn relate_early_errors(&mut self, file: FileId) {
+        let hir = self.hir(file);
+        for &(start, code) in hir.early_errors.iter().chain(hir.jsdoc_errors.iter()) {
+            let (from, to, related) = match code {
+                // `parseTypedefTag`: it does not say where.
+                8033 => (0, 0, 8034),
+                // `checkGrammarModifiers`, `checkJSDecoratorSyntax`: the first decorator of what the one at `start` decorates.
+                8038 => {
+                    let at_sign = |c: &Self, e: ExprId| {
+                        let name = (c.start_of(file, e) as usize).min(hir.text.len());
+                        let found = hir.text[..name].iter().rposition(|&b| b == b'@');
+                        found.map(|at| at as u32)
+                    };
+                    let after_export = hir
+                        .decorators
+                        .iter()
+                        .find(|d| at_sign(self, d.1) == Some(start));
+                    let Some(&(owner, _)) = after_export else {
+                        continue;
+                    };
+                    let Some(&(_, first)) = hir.decorators.iter().find(|d| d.0 == owner) else {
+                        continue;
+                    };
+                    let Some(from) = at_sign(self, first) else {
+                        continue;
+                    };
+                    (from, self.end_of_expr(file, first), 1486)
+                }
+                _ => continue,
+            };
+            self.relate(start, code, |_| {
+                vec![super::explain::Related {
+                    at: Some((file, from, to)),
+                    code: related,
+                    args: Vec::new(),
+                }]
+            });
+        }
     }
 
     /// `checkContextualIdentifier`: 1212 1213 1214, 1262 1359, of a reserved word the parser came upon at `start` where a name goes.
@@ -701,6 +800,18 @@ impl Checker<'_> {
                     }
                     arguments
                 });
+                if code == 1192 {
+                    self.relate(start, code, |c| {
+                        c.export_star_past_a_default(module)
+                            .map(|at| super::explain::Related {
+                                at: Some(at),
+                                code: 1195,
+                                args: Vec::new(),
+                            })
+                            .into_iter()
+                            .collect()
+                    });
+                }
             }
             for s in import.named.iter() {
                 self.check_imported_name(
@@ -743,6 +854,31 @@ impl Checker<'_> {
                 );
             }
         }
+    }
+
+    /// `reportNonDefaultExport`: the first `export *` of `module` that leads to a module with a default export, which is not passed on.
+    fn export_star_past_a_default(&self, module: Sym) -> Option<(FileId, u32, u32)> {
+        let files = self.files();
+        for part in files.parts(module) {
+            let hir = self.hir(part.file);
+            for &decl in &files.symbol(part).decls {
+                let body = match decl {
+                    Decl::File => hir.body,
+                    Decl::Module(m) => hir[m].body,
+                    _ => continue,
+                };
+                for s in hir.ids(body) {
+                    if let StmtKind::ExportStar { spec, alias, .. } = hir[s].kind
+                        && alias.is_none()
+                        && let Some(target) = files.module_of_specifier(part.file, spec)
+                        && files.export(target, known::default).is_some()
+                    {
+                        return Some((part.file, hir[s].pos, self.end_of_stmt(part.file, s)));
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// `getTargetOfExportSpecifier`, `markExportSpecifierAliasReferenced`: what the `x`th `export { a }` of the file names has to be there.
@@ -2112,10 +2248,26 @@ impl Checker<'_> {
                     vec![c.atom_text(first), c.atom_text(property)]
                 });
             }
-            2833 => self.explain(start, code, |c| {
-                let meant = name_meant(c, file, scope, first, SymFlags::NAMESPACE);
-                vec![c.atom_text(first), meant]
-            }),
+            2833 => {
+                self.explain(start, code, |c| {
+                    let meant = name_meant(c, file, scope, first, SymFlags::NAMESPACE);
+                    vec![c.atom_text(first), meant]
+                });
+                // `suggestion.ValueDeclaration`
+                self.relate(start, code, |c| {
+                    let meant =
+                        what_is_similar_in_scope(c, file, scope, first, SymFlags::NAMESPACE);
+                    let Some(Meant::Symbol(sym)) = meant else {
+                        return Vec::new();
+                    };
+                    if !c.files().flags(sym).intersects(SymFlags::VALUE) {
+                        return Vec::new();
+                    }
+                    let name = c.symbol_to_string(sym);
+                    let at = c.place_of_symbol(sym);
+                    at.map(|at| c.declared_here(at, name)).into_iter().collect()
+                });
+            }
             _ => {}
         }
     }
@@ -2180,6 +2332,8 @@ impl Checker<'_> {
         }
         // In `typeof import("m").a.b`: the type the names so far come to, once they are past what modules and namespaces export.
         let mut ty: Option<TypeId> = None;
+        // `sym` is what an `export { a }` stands for: who says so, and under which name. That alias is `currentNamespace`.
+        let mut exported_by: Option<(Sym, Atom)> = None;
         for (i, n) in hir.ids(name).enumerate() {
             at = skip_trivia(text, at);
             if text.get(at) != Some(&b'.') {
@@ -2198,13 +2352,14 @@ impl Checker<'_> {
                 SymFlags::NAMESPACE
             };
             // `currentNamespace`, as long as it is a symbol here.
-            let namespace = ty.is_none().then_some(sym);
-            // `getSymbol`, `symbolIsValueEx`: an alias is what it stands for, be it exported as a type only.
-            let exported = match if ty.is_none() {
+            let namespace = ty.is_none().then_some((sym, exported_by));
+            let member = if ty.is_none() {
                 self.files().namespace_member(sym, n)
             } else {
                 None
-            } {
+            };
+            // `getSymbol`, `symbolIsValueEx`: an alias is what it stands for, be it exported as a type only.
+            let exported = match member {
                 Some(member) if self.files().flags(member).intersects(wanted) => Some(member),
                 Some(member) => match self.files().resolve_alias_if_needed(member) {
                     Some(target) => self
@@ -2219,6 +2374,12 @@ impl Checker<'_> {
             };
             let is_there = match exported {
                 Some(exported) => {
+                    exported_by = member
+                        .filter(|&member| {
+                            self.files().flags(member).contains(SymFlags::ALIAS)
+                                && self.files().export(sym, n) == Some(member)
+                        })
+                        .map(|_| (sym, n));
                     sym = exported;
                     true
                 }
@@ -2245,9 +2406,16 @@ impl Checker<'_> {
                     start: at as u32,
                     code: 2694,
                 });
-                if let Some(namespace) = namespace {
+                if let Some((namespace, exported_by)) = namespace {
                     self.explain(at as u32, 2694, |c| {
-                        vec![fully_qualified_name(c, namespace), c.atom_text(n)]
+                        let qualified = match exported_by {
+                            Some((module, name)) => {
+                                let module = fully_qualified_name(c, module);
+                                format!("{module}.{}", c.atom_text(name))
+                            }
+                            None => fully_qualified_name(c, namespace),
+                        };
+                        vec![qualified, c.atom_text(n)]
                     });
                 }
                 return;
@@ -2902,6 +3070,13 @@ impl Checker<'_> {
                 }
                 arguments
             });
+        } else if self.explains {
+            // `DeclarationNameToString`: a name with an escape in it is said as it is written.
+            let end = self.end_of_token_at(file, start);
+            let written = self.source_text(file, start, end);
+            if written.contains('\\') {
+                self.note(start, end, code, vec![written]);
+            }
         }
         code
     }
@@ -3377,6 +3552,86 @@ fn edit_distance_within(a: &[u8], b: &[u8], max: f32) -> bool {
 }
 
 // ───────────────────────────── what goes into the messages ─────────────────────────────
+
+/// Where the element of a tuple type that `start` is in ends: before the `,` or the `]` that comes next and is in no brackets.
+fn end_of_tuple_element(c: &Checker<'_>, file: FileId, start: u32) -> u32 {
+    let text = &c.hir(file).text[..];
+    let (mut end, mut angles) = (start, 0u32);
+    loop {
+        let at = c.skip_trivia_from(file, end);
+        let next = match text.get(at as usize) {
+            None | Some(b']' | b')' | b'}') => return end,
+            Some(b',' | b';') if angles == 0 => return end,
+            Some(b'(' | b'[' | b'{') => c.end_of_bracket_at(file, at),
+            Some(b'<') => {
+                angles += 1;
+                at + 1
+            }
+            Some(b'>') => {
+                angles = angles.saturating_sub(1);
+                at + 1
+            }
+            Some(_) => c.end_of_token_at(file, at),
+        };
+        if next <= at {
+            return end;
+        }
+        end = next;
+    }
+}
+
+/// `node.End()` of the member of a type literal that `from` is in: past the `;` or the `,` that comes next and is in no brackets, or
+/// before the `}`.
+fn end_of_type_member_from(c: &Checker<'_>, file: FileId, from: u32) -> u32 {
+    let text = &c.hir(file).text[..];
+    let (mut end, mut angles) = (from, 0u32);
+    loop {
+        let at = c.skip_trivia_from(file, end);
+        let next = match text.get(at as usize) {
+            None | Some(b'}' | b')' | b']') => return end,
+            Some(b';' | b',') if angles == 0 => return at + 1,
+            Some(b'(' | b'[' | b'{') => c.end_of_bracket_at(file, at),
+            Some(b'<') => {
+                angles += 1;
+                at + 1
+            }
+            Some(b'>') => {
+                angles = angles.saturating_sub(1);
+                at + 1
+            }
+            Some(_) => c.end_of_token_at(file, at),
+        };
+        if next <= at {
+            return end;
+        }
+        end = next;
+    }
+}
+
+/// `checkUnmatchedJSDocParameters`: 8032 is said of all of the `a.b.c` written at `start`, and names it and `a.b`.
+fn explain_qualified_parameter_name(c: &Checker<'_>, file: FileId, start: u32) {
+    let text = &c.hir(file).text[..];
+    let is_part = |at: usize| {
+        text.get(at)
+            .is_some_and(|&b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'$') || b >= 0x80)
+    };
+    let (mut end, mut last_dot) = (start as usize, None);
+    loop {
+        while is_part(end) {
+            end += 1;
+        }
+        if text.get(end) != Some(&b'.') || !is_part(end + 1) {
+            break;
+        }
+        last_dot = Some(end);
+        end += 1;
+    }
+    if let Some(dot) = last_dot {
+        let whole = c.source_text(file, start, end as u32);
+        let left = c.source_text(file, start, dot as u32);
+        c.note(start, end as u32, 8032, vec![whole, left]);
+    }
+}
 
 /// `DeclarationNameToString`, `TokenText`: the name or the word written at `start`.
 fn word_at(c: &Checker<'_>, file: FileId, start: u32) -> String {
@@ -4018,6 +4273,34 @@ fn explain_jsdoc_nullable_type(c: &mut Checker<'_>, file: FileId, start: u32, co
     });
 }
 
+/// Past the `>` that closes the list whose `<` is at `open`. The parser took it for a list of types.
+fn end_of_angle_brackets(c: &Checker<'_>, file: FileId, open: u32) -> Option<u32> {
+    let text = &c.hir(file).text[..];
+    if text.get(open as usize) != Some(&b'<') {
+        return None;
+    }
+    let (mut at, mut depth) = (open, 0u32);
+    loop {
+        match text.get(at as usize)? {
+            b'<' => {
+                depth += 1;
+                at += 1;
+            }
+            b'>' => {
+                depth -= 1;
+                at += 1;
+                if depth == 0 {
+                    return Some(at);
+                }
+            }
+            b'(' | b'[' | b'{' => at = c.end_of_bracket_at(file, at).max(at + 1),
+            // `=>` is one token.
+            _ => at = c.end_of_token_at(file, at).max(at + 1),
+        }
+        at = c.skip_trivia_from(file, at);
+    }
+}
+
 /// What goes with an entry of `early_errors`, which is a place and a code, where the source or the tree says it.
 fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
     let hir = c.hir(file);
@@ -4029,16 +4312,58 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
                 c.note(start, 0, code, vec![named.to_string()]);
             }
         }
+        // `parseJsxElementOrSelfClosingElementOrFragment`: from the first of the elements, which commas join, to the end of the last.
+        2657 => {
+            let joined = hir.exprs.iter().position(|x| {
+                matches!(x.kind, ExprKind::Binary { op: BinOp::Comma, left, .. }
+                    if hir[left].pos == start && matches!(hir[left].kind, ExprKind::Jsx(_)))
+            });
+            let Some(joined) = joined else {
+                return;
+            };
+            let mut last = ExprId(joined as u32);
+            while let ExprKind::Binary {
+                op: BinOp::Comma,
+                right,
+                ..
+            } = hir[last].kind
+            {
+                last = right;
+            }
+            let mut end = c.end_of_expr(file, last);
+            // One that is never closed takes all that follows for its children.
+            if let ExprKind::Jsx(jsx) = hir[last].kind
+                && hir[jsx].close_pos == u32::MAX
+                && !text[..(end as usize).saturating_sub(1).min(text.len())]
+                    .trim_ascii_end()
+                    .ends_with(b"/")
+            {
+                end = text.len() as u32;
+            }
+            c.note(start, end, code, Vec::new());
+        }
         1029 | 1040 | 1243 => {
             let (word, before) = (word_at(c, file, start), modifiers_before(text, at));
             if let Some(arguments) = modifiers_in_message(code, &word, &before) {
                 c.note(start, 0, code, arguments);
             }
         }
+        // `reportObviousDecoratorErrors` points at the `@`. `checkGrammarModifiers` objects to all of the decorator between `export` and
+        // `default`, which the class keeps.
+        1206 if !hir.is_js => {
+            let kept = hir.decorators.iter().find(|decorator| {
+                matches!(decorator.0, DecoratorOwner::Class(_))
+                    && start_of_token_before(text, c.start_of(file, decorator.1), b"@")
+                        == Some(start)
+            });
+            let end = kept.map_or(start + 1, |decorator| c.end_of_expr(file, decorator.1));
+            c.note(start, end, code, Vec::new());
+        }
         // `createIdentifierWithDiagnostic`, `parsingContextErrors`, `parseErrorForInvalidName`: these name the word they are reported at.
         1359 | 1389 | 1390 | 2819 => c.note(start, 0, code, vec![word_at(c, file, start)]),
-        // `makeQuestionIfOptional`: the `?` is as long as the `@param` tag, which goes on to the next tag.
-        1047 | 1051 if hir.is_in_jsdoc(start) => {
+        // What is made of a tag is as long as the tag, which goes on to the next one: the `?` of `makeQuestionIfOptional`, the modifier that
+        // `@readonly` is, the type parameters of `@template`.
+        1024 | 1047 | 1051 | 1092 if hir.is_in_jsdoc(start) => {
             let comment = hir.jsdoc_comments.partition_point(|c| c.0 <= start) - 1;
             let last = (hir.jsdoc_comments[comment].1 as usize)
                 .saturating_sub(2)
@@ -4057,7 +4382,24 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
                 .rposition(|b| !b.is_ascii_alphabetic())
                 .map_or(0, |before| before + 1);
             let keyword = c.source_text(file, from as u32, end as u32);
-            c.note(start, start, code, vec![keyword]);
+            c.note(start, super::explain::NO_LENGTH, code, vec![keyword]);
+        }
+        // `Scanner.error`, `parseElementAccessExpressionRest`, `checkGrammarVariableDeclarationList`: said of a place, whatever is there.
+        1002 | 1011 | 1123 | 1124 | 1125 | 1177 | 1178 | 1199 => {
+            c.note(start, super::explain::NO_LENGTH, code, Vec::new());
+        }
+        // `parseErrorAtCurrentToken`, and `scanNumber` of all of a literal: the token, whatever it is.
+        1034 | 1260 | 1357 | 1489 => {
+            c.note(start, c.end_of_token_at(file, start), code, Vec::new());
+        }
+        // `createIdentifierWithDiagnostic`: at the end of the file it is said where the last token ends.
+        1110 => {
+            let end = if skip_trivia(text, at) >= text.len() {
+                super::explain::NO_LENGTH
+            } else {
+                c.end_of_token_at(file, start)
+            };
+            c.note(start, end, code, Vec::new());
         }
         // `scanNumber`: after a `-` the error starts one character before the literal.
         1121 => {
@@ -4078,6 +4420,14 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
             let sign = if with_minus { "-" } else { "" };
             c.note(start, end as u32, code, vec![format!("{sign}0o{digits}")]);
         }
+        // `scanNumberFragment`, `scanHexDigits`: the `_`.
+        6188 | 6189 => c.note(start, start + 1, code, Vec::new()),
+        // `Scan`: the `#!`.
+        18026 => c.note(start, start + 2, code, Vec::new()),
+        // `checkGrammarIndexSignatureParameters`: the `...`.
+        1017 => c.note(start, start + 3, code, Vec::new()),
+        // `scanConflictMarkerTrivia`: the seven characters of the marker.
+        1185 => c.note(start, start + 7, code, Vec::new()),
         // `checkGrammarVariableDeclaration`
         1155 | 1492 => {
             let Some(decl) = hir.var_decls.iter().find(|d| hir[d.pat].pos == start) else {
@@ -4097,7 +4447,10 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
             let keywords = VIABLE_KEYWORD_SUGGESTIONS
                 .iter()
                 .map(|&keyword| (keyword.as_bytes(), Meant::Word(keyword)));
-            let suggestion = match closest(c, word.as_bytes(), keywords) {
+            // `GetSpellingSuggestion` counts code points. One byte for each will do: the keywords are ASCII, and the first byte of a
+            // longer code point is none of their letters.
+            let letters: Vec<u8> = word.bytes().filter(|byte| byte & 0xC0 != 0x80).collect();
+            let suggestion = match closest(c, &letters, keywords) {
                 Some(Meant::Word(keyword)) => keyword.to_owned(),
                 // `getSpaceSuggestion`
                 _ => match VIABLE_KEYWORD_SUGGESTIONS
@@ -4109,6 +4462,40 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
                 },
             };
             c.note(start, 0, code, vec![suggestion]);
+        }
+        // `checkGrammarTypeParameterList`, `checkGrammarForAtLeastOneTypeArgument`: from the `<` to what comes after the empty list.
+        1098 | 1099 if text.get(at) == Some(&b'<') => {
+            c.note(
+                start,
+                skip_trivia(text, at + 1) as u32 + 1,
+                code,
+                Vec::new(),
+            );
+        }
+        // `parsePropertyAccessExpressionRest`: the type arguments and their brackets.
+        1477 => {
+            if let Some(end) = end_of_angle_brackets(c, file, start) {
+                c.note(start, end, code, Vec::new());
+            }
+        }
+        // `parseSuperExpression`: from where `super` ends to where its type arguments do.
+        2754 => {
+            if let Some(end) = end_of_angle_brackets(c, file, skip_trivia(text, at) as u32) {
+                c.note(start, end, code, Vec::new());
+            }
+        }
+        // `checkGrammarExpressionWithTypeArguments`: `import<T>`. `checkGrammarImportCallExpression`: all of `import<T>(x)`.
+        1326 => {
+            let open = skip_trivia(text, at + b"import".len()) as u32;
+            if let Some(end) = end_of_angle_brackets(c, file, open) {
+                let next = c.skip_trivia_from(file, end);
+                let end = if text.get(next as usize) == Some(&b'(') {
+                    c.end_of_bracket_at(file, next)
+                } else {
+                    end
+                };
+                c.note(start, end, code, Vec::new());
+            }
         }
         // `scanEscapeSequence`: up to three octal digits, two after `4` to `7`.
         1487 => {
@@ -4126,12 +4513,111 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
                 c.note(start, end as u32, code, vec![format!("\\x{value:02x}")]);
             }
         }
+        // `checkGrammarIndexSignatureParameters`: without a parameter it is said of the signature.
+        1096 => {
+            let signature = hir
+                .members
+                .iter()
+                .position(|m| m.kind == MemberKind::IndexSignature && m.pos == start);
+            if let Some(m) = signature {
+                let end = c.end_of_member(file, MemberId(m as u32));
+                c.note(start, end, code, Vec::new());
+            }
+        }
+        // `checkGrammarAccessor`: in an interface or a type literal it is said of the body. `checkGrammarStatementInAmbientContext` points
+        // at the `{`.
+        1183 => {
+            let bound = c.bound(file);
+            let is_in_a_type = hir.members.iter().enumerate().any(|(m, member)| {
+                matches!(member.kind, MemberKind::Getter | MemberKind::Setter)
+                    && member.func.is_some()
+                    && !matches!(bound.member_owner[m], MemberOwner::Class(_))
+                    && skip_trivia(text, c.end_of_signature(file, member.func) as usize) == at
+            });
+            if is_in_a_type {
+                c.note(start, c.end_of_bracket_at(file, start), code, Vec::new());
+            }
+        }
+        // `checkGrammarModifiers`: said of the parameter.
+        1187 | 1317 => {
+            if let Some(p) = hir.params.iter().position(|p| p.pos == start) {
+                c.note(
+                    start,
+                    c.end_of_param(file, ParamId(p as u32)),
+                    code,
+                    Vec::new(),
+                );
+            }
+        }
         1488 => c.note(
             start,
             start + 2,
             code,
             vec![c.source_text(file, start, start + 2)],
         ),
+        // `scanNumber`: all of the literal, from the `.` it may start with to its `n`.
+        1352 | 1353 => c.note(start, c.end_of_token_at(file, start), code, Vec::new()),
+        // `processPragmasIntoFields`: said of the comment, which ends with its line.
+        1084 => {
+            let rest = text.get(at..).unwrap_or_default();
+            let length = rest
+                .iter()
+                .position(|&b| matches!(b, b'\n' | b'\r'))
+                .unwrap_or(rest.len());
+            c.note(start, start + length as u32, code, Vec::new());
+        }
+        // `GetErrorRangeForNode` of a clause: up to its `:`.
+        1113 => {
+            let colon = c.skip_trivia_from(file, c.end_of_token_at(file, start));
+            if text.get(colon as usize) == Some(&b':') {
+                c.note(start, colon + 1, code, Vec::new());
+            }
+        }
+        // `checkGrammarComputedPropertyName`: said of all that is between the brackets.
+        1171 => {
+            if let Some(open) = start_of_token_before(text, start, b"[") {
+                let close = c.end_of_bracket_at(file, open);
+                c.note(
+                    start,
+                    c.end_of_token_before(file, close - 1),
+                    code,
+                    Vec::new(),
+                );
+            }
+        }
+        // `checkGrammarClassDeclarationHeritageClauses`: the tag, the last name in it, the last name of what the class extends.
+        8023 => {
+            let word = |from: usize| {
+                let rest = &text[from.min(text.len())..];
+                let len = rest
+                    .iter()
+                    .take_while(|&&b| {
+                        b.is_ascii_alphanumeric() || matches!(b, b'_' | b'$') || b >= 0x80
+                    })
+                    .count();
+                c.source_text(file, from as u32, (from + len) as u32)
+            };
+            let Some(tag) = text[..at.min(text.len())].iter().rposition(|&b| b == b'@') else {
+                return;
+            };
+            // The comment is on the class that comes next.
+            let class = hir
+                .classes
+                .iter()
+                .filter(|class| class.pos >= start && class.extends.is_some())
+                .min_by_key(|class| class.pos);
+            let extended = match class.map(|class| hir[class.extends].kind) {
+                Some(ExprKind::Ident(name) | ExprKind::Dot { name, .. }) => c.atom_text(name),
+                _ => return,
+            };
+            let name = word(at);
+            let end = if name.is_empty() {
+                super::explain::NO_LENGTH
+            } else {
+                start + name.len() as u32
+            };
+            c.note(start, end, code, vec![word(tag + 1), name, extended]);
+        }
         // `parseUnaryExpressionOrHigher`: said of all that is on the left of the `**`.
         17006 | 17007 => {
             let end = hir.exprs.iter().find_map(|x| match x.kind {
@@ -4149,12 +4635,61 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
             };
             c.note(start, end.unwrap_or(0), code, arguments);
         }
+        // `checkGrammarMappedType`: on the first member there is besides. `GetErrorRangeForNode` takes the name of a property, and the
+        // whole of a method signature.
+        7061 => {
+            let mut after = c.skip_trivia_from(file, c.end_of_name_at(file, start));
+            if text.get(after as usize) == Some(&b'?') {
+                after = c.skip_trivia_from(file, after + 1);
+            }
+            if matches!(text.get(after as usize), Some(b'(' | b'<')) {
+                c.note(
+                    start,
+                    end_of_type_member_from(c, file, after),
+                    code,
+                    Vec::new(),
+                );
+            }
+        }
         // `parseJsxElementOrSelfClosingElementOrFragment`, `parseJsxChild`: the name in the opening tag.
         17008 => {
             let name = skip_trivia(text, at) as u32;
             let end = super::errors_jsx::jsx_name_end(text, name);
-            c.note(start, end, code, vec![c.source_text(file, name, end)]);
+            // A name that is missing is where the `<` ends, before any blanks.
+            let reaches = if end == name {
+                super::explain::NO_LENGTH
+            } else {
+                end
+            };
+            c.note(start, reaches, code, vec![c.source_text(file, name, end)]);
         }
+        // `getTypeFromImportTypeNode`: said of what `import(..)` is given. `checkExternalImportOrExportDeclaration`: of the expression where
+        // the module specifier goes.
+        1141 => {
+            let argument = hir.types.iter().find_map(|t| match t.kind {
+                TypeNodeKind::Import { spec, args, .. } if spec.is_none() && !args.is_empty() => {
+                    let argument = hir.id_at(args, 0);
+                    (hir[argument].pos == start).then_some(argument)
+                }
+                _ => None,
+            });
+            let specifier = hir
+                .specifier_expressions
+                .iter()
+                .find(|&&e| c.start_of(file, e) == start);
+            if let Some(argument) = argument {
+                c.note(start, c.end_of_type_node(file, argument), code, Vec::new());
+            } else if let Some(&specifier) = specifier {
+                c.note(start, c.end_of_expr(file, specifier), code, Vec::new());
+            }
+        }
+        // `checkNamedTupleMember`: said of the member or of its type, which end where the element of the tuple does.
+        5085..=5087 => c.note(
+            start,
+            end_of_tuple_element(c, file, start),
+            code,
+            Vec::new(),
+        ),
         // `checkGrammarMetaProperty`
         17012 => {
             let Some(dot) = start_of_token_before(text, start, b".") else {
@@ -4177,6 +4712,10 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
             );
         }
         _ => {}
+    }
+    // `parseErrorAtCurrentToken`, of an error whose argument is noted above.
+    if code == 1209 {
+        c.explain_moved(start, code, start, c.end_of_token_at(file, start));
     }
 }
 

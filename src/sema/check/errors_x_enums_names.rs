@@ -1063,6 +1063,9 @@ impl EnumValues<'_, '_> {
                         self.c.explain_chain(start, 18033, |c| {
                             c.relation_chain_under(ty, TypeId::NUMBER, relation, 18033)
                         });
+                        self.c.relate(start, 18033, |c| {
+                            c.assignability_related(ty, TypeId::NUMBER)
+                        });
                     }
                 }
             }

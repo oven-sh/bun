@@ -2128,6 +2128,67 @@ impl Checker<'_> {
         }
     }
 
+    /// `parseImportType` in a file that does not parse: where the last token it takes ends, if it never gets to its `)`. The keyword is at
+    /// `import`.
+    fn xm_end_of_unfinished_import_type(&self, file: FileId, import: u32) -> Option<u32> {
+        let hir = self.hir(file);
+        if !hir.has_parse_diagnostics {
+            return None;
+        }
+        let text = &hir.text[..];
+        // `parseExpected`, `parseOptional`: takes what comes after `end` if it is `token`.
+        let take = |end: &mut u32, token: &[u8]| {
+            let at = self.skip_trivia_from(file, *end);
+            let token_end = self.end_of_token_at(file, at);
+            let is_next = text.get(at as usize..token_end as usize) == Some(token);
+            if is_next {
+                *end = token_end;
+            }
+            is_next
+        };
+        // Takes the name or the string that comes after `end`, or the number if it is a value that is wanted.
+        let take_word = |end: &mut u32, is_name: bool| {
+            let at = self.skip_trivia_from(file, *end);
+            let is_next = text.get(at as usize).is_some_and(|&b| {
+                b.is_ascii_alphabetic()
+                    || matches!(b, b'_' | b'$' | b'"' | b'\'')
+                    || !is_name && b.is_ascii_digit()
+            });
+            if is_next {
+                *end = self.end_of_token_at(file, at);
+            }
+            is_next
+        };
+        let mut end = self.end_of_token_at(file, import);
+        take(&mut end, b"(");
+        let specifier = self.skip_trivia_from(file, end);
+        if !matches!(text.get(specifier as usize), Some(b'"' | b'\'')) {
+            return None;
+        }
+        end = self.end_of_token_at(file, specifier);
+        if take(&mut end, b",") {
+            take(&mut end, b"{");
+            if !take(&mut end, b"with") {
+                take(&mut end, b"assert");
+            }
+            take(&mut end, b":");
+            // `parseImportAttributes`
+            if take(&mut end, b"{") {
+                while take_word(&mut end, true) {
+                    take(&mut end, b":");
+                    take_word(&mut end, false);
+                    if !take(&mut end, b",") {
+                        break;
+                    }
+                }
+                take(&mut end, b"}");
+            }
+            take(&mut end, b",");
+            take(&mut end, b"}");
+        }
+        (!take(&mut end, b")")).then_some(end)
+    }
+
     /// `checkGrammarImportCallExpression`, `checkImportType`, `getTypeFromImportTypeNode`
     fn xm_import_calls_and_types(&mut self, cx: &Cx<'_>, out: &mut Vec<Diagnostic>) {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
@@ -2188,12 +2249,15 @@ impl Checker<'_> {
                     start: node.pos,
                     code,
                 });
-                self.note(
-                    node.pos,
-                    self.end_of_type_node(cx.file, TypeNodeId(i as u32)),
-                    code,
-                    vec![self.atom_text(spec)],
-                );
+                let import = if is_typeof {
+                    self.skip_trivia_from(cx.file, self.end_of_token_at(cx.file, node.pos))
+                } else {
+                    node.pos
+                };
+                let end = self
+                    .xm_end_of_unfinished_import_type(cx.file, import)
+                    .unwrap_or_else(|| self.end_of_type_node(cx.file, TypeNodeId(i as u32)));
+                self.note(node.pos, end, code, vec![self.atom_text(spec)]);
             }
         }
     }

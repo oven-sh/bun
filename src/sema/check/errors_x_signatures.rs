@@ -778,7 +778,7 @@ fn use_strict_prologue(text: &[u8], open: usize) -> Option<u32> {
 
 /// `checkGrammarForUseStrictSimpleParameterList`
 fn check_use_strict_with_simple_parameters(
-    c: &Checker<'_>,
+    c: &mut Checker<'_>,
     file: FileId,
     f: FnId,
     out: &mut Vec<Diagnostic>,
@@ -807,13 +807,6 @@ fn check_use_strict_with_simple_parameters(
                 code: 1346,
             }),
     );
-    for p in func.params.iter().filter(|&p| !is_simple(p)) {
-        c.note(hir[p].pos, c.end_of_param(file, p), 1346, vec![]);
-    }
-    out.push(Diagnostic {
-        start: directive,
-        code: 1347,
-    });
     // The statement, with its `;`.
     let end = skip_string(&hir.text, directive as usize).map_or(0, |end| {
         let next = skip_trivia(&hir.text, end);
@@ -822,8 +815,34 @@ fn check_use_strict_with_simple_parameters(
         } else {
             end
         }
+    }) as u32;
+    for p in func.params.iter().filter(|&p| !is_simple(p)) {
+        c.note(hir[p].pos, c.end_of_param(file, p), 1346, vec![]);
+        c.relate(hir[p].pos, 1346, |_| {
+            vec![super::explain::Related {
+                at: Some((file, directive, end)),
+                code: 1349,
+                args: vec![],
+            }]
+        });
+    }
+    out.push(Diagnostic {
+        start: directive,
+        code: 1347,
     });
-    c.note(directive, end as u32, 1347, vec![]);
+    c.note(directive, end, 1347, vec![]);
+    c.relate(directive, 1347, |c| {
+        func.params
+            .iter()
+            .filter(|&p| !is_simple(p))
+            .enumerate()
+            .map(|(i, p)| super::explain::Related {
+                at: Some((file, hir[p].pos, c.end_of_param(file, p))),
+                code: if i == 0 { 1348 } else { 6204 },
+                args: vec![],
+            })
+            .collect()
+    });
     true
 }
 
@@ -1949,7 +1968,17 @@ impl Checker<'_> {
                     )
                 {
                     out.push(Diagnostic { start, code: 2637 });
-                    let end = self.end_of_type_param(file, tp);
+                    // A name that is missing takes no room, and is where the token before it ends.
+                    let is_nameless = (decl.name == known::empty || decl.name.is_none())
+                        && decl.constraint.is_none()
+                        && decl.default.is_none();
+                    let end = if !is_nameless {
+                        self.end_of_type_param(file, tp)
+                    } else if start == decl.pos {
+                        super::explain::NO_LENGTH
+                    } else {
+                        decl.pos
+                    };
                     self.explain_to(start, end, 2637, |_| vec![]);
                     continue;
                 }
@@ -1999,13 +2028,17 @@ impl Checker<'_> {
                 if is_wrong {
                     out.push(Diagnostic { start, code: 2636 });
                     let end = self.end_of_type_param(file, tp);
+                    // `c.varianceTypeParameter`: the markers go by its name for as long as this is put into words.
                     self.explain_to(start, end, 2636, |c| {
+                        c.set_variance_type_parameter(Some(own));
                         let (source, target) = c.type_names_for_error_display(source, target);
                         vec![source, target]
                     });
                     self.explain_chain(start, 2636, |c| {
                         let relation = super::relate::Relation::Assignable;
-                        c.relation_chain_under(source, target, relation, 2636)
+                        let lines = c.relation_chain_under(source, target, relation, 2636);
+                        c.set_variance_type_parameter(None);
+                        lines
                     });
                 }
             }
@@ -2125,7 +2158,12 @@ impl Checker<'_> {
                         // The list ends with its last parameter or the comma after that.
                         let end = skip_angle_brackets(text, less_than)
                             .map_or(0, |past| skip_trivia_back(text, past - 1));
-                        self.explain_to(start as u32, end as u32, 1092, |_| vec![]);
+                        let end = if end == start {
+                            super::explain::NO_LENGTH
+                        } else {
+                            end as u32
+                        };
+                        self.explain_to(start as u32, end, 1092, |_| vec![]);
                     } else if func.ret.is_some() {
                         let start = start_of_written_type(text, hir[func.ret].pos);
                         out.push(Diagnostic { start, code: 1093 });
@@ -2487,6 +2525,7 @@ impl Checker<'_> {
                 self.explain_chain(start, 2677, |c| {
                     c.assignability_lines(narrowed, declared, 1)
                 });
+                self.relate(start, 2677, |c| c.assignability_related(narrowed, declared));
             }
         }
     }

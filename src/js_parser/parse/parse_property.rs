@@ -682,7 +682,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             p.pop_scope();
 
                             p.fn_or_arrow_data_parse = old_fn_or_arrow_data_parse;
-                            p.lexer.expect(T::TCloseBrace)?;
+                            // `parseClassStaticBlockBody` is `parseBlock`.
+                            p.lexer.expect_closing(T::TCloseBrace, loc)?;
 
                             // Vec::from_slice copies the bump-backed StmtList into a heap-backed list.
                             // TODO(perf): route ClassStaticBlock.stmts through arena slice directly.

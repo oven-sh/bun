@@ -15,6 +15,8 @@ const USE_FULLY_QUALIFIED_TYPE: u32 = 1 << 1;
 const ALLOW_UNIQUE_ES_SYMBOL_TYPE: u32 = 1 << 2;
 const USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE: u32 = 1 << 3;
 const NO_TYPE_REDUCTION: u32 = 1 << 4;
+/// Not of `nodebuilder.Flags`: the type that is asked about has no `alias`. What it is made of goes by what it goes by.
+const WRITTEN_OUT: u32 = 1 << 16;
 
 const DEFAULT_MAXIMUM_TRUNCATION_LENGTH: usize = 160;
 const NO_TRUNCATION_MAXIMUM_TRUNCATION_LENGTH: usize = 1_000_000;
@@ -36,9 +38,9 @@ thread_local! {
     static VARIANCE_TYPE_PARAMETER: std::cell::Cell<Atom> = const { std::cell::Cell::new(Atom::NONE) };
 }
 
-/// `compilerOptions.noErrorTruncation`. `Options` does not have it yet: types are written out in full.
-fn no_error_truncation(_checker: &Checker<'_>) -> bool {
-    true
+/// `compilerOptions.noErrorTruncation`
+fn no_error_truncation(checker: &Checker<'_>) -> bool {
+    checker.files().options.no_error_truncation
 }
 
 impl Checker<'_> {
@@ -59,6 +61,15 @@ impl Checker<'_> {
     /// `typeToStringEx(t, nil, TypeFormatFlagsNoTypeReduction)`: an intersection nothing can be is written out, not as `never`.
     pub fn type_to_string_without_reduction(&mut self, ty: TypeId) -> String {
         type_to_string_with(self, ty, NO_TYPE_REDUCTION)
+    }
+
+    /// `typeToString` of a type that is made of what `ty` is made of and has no `alias`.
+    pub fn type_to_string_written_out(&mut self, ty: TypeId) -> String {
+        type_to_string_with(
+            self,
+            ty,
+            ALLOW_UNIQUE_ES_SYMBOL_TYPE | USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE | WRITTEN_OUT,
+        )
     }
 
     /// `getTypeNamesForErrorDisplay`: both, with qualified names if they would read the same.
@@ -591,7 +602,8 @@ impl<'p> Printer<'_, 'p> {
             }
             _ => {}
         }
-        if let Some((alias, arguments)) = self.alias_of_type(ty) {
+        let is_written_out = self.flags & WRITTEN_OUT != 0 && self.depth == 1;
+        if !is_written_out && let Some((alias, arguments)) = self.alias_of_type(ty) {
             let arguments = self.map_to_type_nodes(&arguments, false);
             return self.symbol_to_type_node(alias, false, arguments);
         }
@@ -940,14 +952,54 @@ impl<'p> Printer<'_, 'p> {
         name.is_some().then(|| self.text(name))
     }
 
-    /// The name of the variable `e` initializes, if it is all of the initializer.
+    /// `DeclarationNameToString(GetAssignedName(e))`: the name of what `e` is given to.
     fn name_of_initialized_variable(&self, file: FileId, e: ExprId) -> Option<String> {
-        let Parent::VarInit(declaration) = self.c.bound(file).expr_parent[e.idx()] else {
+        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
+        let parent = bound.expr_parent[e.idx()];
+        if let Parent::VarInit(declaration) = parent {
+            return match hir[hir[declaration].pat].kind {
+                PatKind::Ident(name) => Some(self.text(name)),
+                _ => None,
+            };
+        }
+        // What is in parentheses is given to nothing.
+        if self.c.is_written_in_parentheses(file, e) {
             return None;
+        }
+        let written = |pat: PatId| {
+            self.c
+                .source_text(file, hir[pat].pos, self.c.end_of_pat(file, pat))
         };
-        let hir = self.c.hir(file);
-        match hir[hir[declaration].pat].kind {
-            PatKind::Ident(name) => Some(self.text(name)),
+        match parent {
+            // Not the attribute of a JSX element.
+            Parent::Prop(p)
+                if hir[p].kind == PropKind::Init
+                    && matches!(hir[bound.prop_owner[p.idx()]].kind, ExprKind::Object(_)) =>
+            {
+                Some(self.property_key_text(file, hir[p].key, hir[p].pos))
+            }
+            Parent::PatPropDefault(p) => Some(written(hir[p].value)),
+            Parent::PatElemDefault(p) => Some(written(hir[p].pat)),
+            Parent::Expr(outer) if outer.is_some() => {
+                let left = match hir[outer].kind {
+                    ExprKind::Assign { target, value, .. } if value == e => target,
+                    ExprKind::Binary { left, right, .. } if right == e => left,
+                    _ => return None,
+                };
+                if self.c.is_written_in_parentheses(file, left) {
+                    return None;
+                }
+                match hir[left].kind {
+                    ExprKind::Ident(name) | ExprKind::Dot { name, .. } => Some(self.text(name)),
+                    ExprKind::Index { index, .. }
+                        if matches!(hir[index].kind, ExprKind::String(_) | ExprKind::Number(_)) =>
+                    {
+                        let end = self.c.end_inside_parentheses(file, index);
+                        Some(self.c.source_text(file, hir[index].pos, end))
+                    }
+                    _ => None,
+                }
+            }
             _ => None,
         }
     }
@@ -1121,6 +1173,9 @@ impl<'p> Printer<'_, 'p> {
                 mapper,
             } => (*file, *node, *mapper),
             TypeData::Cond { file, node, mapper } => (*file, *node, *mapper),
+            TypeData::IndexedAccess { obj, index, .. } => {
+                self.written_indexed_access(*obj, *index)?
+            }
             TypeData::Fns { decls, mapper } => {
                 let [(file, func)] = decls[..] else {
                     return None;
@@ -1161,6 +1216,36 @@ impl<'p> Printer<'_, 'p> {
             .map(|&parameter| self.c.p.types.map(mapper, parameter).unwrap_or(parameter))
             .collect();
         Some((alias, arguments))
+    }
+
+    /// Where `obj[index]` is written as the whole body of a type alias, and under which mapper: `obj` is a type literal or a mapped
+    /// type written there.
+    fn written_indexed_access(
+        &mut self,
+        obj: TypeId,
+        index: TypeId,
+    ) -> Option<(FileId, TypeNodeId, MapperId)> {
+        let TypeData::Anon {
+            origin: Origin::TypeLiteral(file, object) | Origin::Mapped(file, object),
+            mapper,
+        } = *self.c.data(obj)
+        else {
+            return None;
+        };
+        let hir = self.c.hir(file);
+        let (node, written) = hir.aliases.iter().find_map(|alias| {
+            if alias.ty.is_none() {
+                return None;
+            }
+            match hir[alias.ty].kind {
+                TypeNodeKind::IndexedAccess { obj, index } if obj == object => {
+                    Some((alias.ty, index))
+                }
+                _ => None,
+            }
+        })?;
+        let declared = self.c.type_from_node(file, written);
+        (self.c.instantiate(declared, mapper) == index).then_some((file, node, mapper))
     }
 
     /// The type node a type alias is declared to stand for.
@@ -1749,17 +1834,22 @@ impl<'p> Printer<'_, 'p> {
     /// `formatUnionTypes`, of the members of `ty` in the order TypeScript keeps them in.
     fn format_union_types(&mut self, ty: TypeId) -> Vec<TypeId> {
         let mut types = self.sorted_members(ty);
-        // `T | undefined`, of a `T` that is a union with a name (`UnionType.origin`).
-        let rest = self
-            .c
-            .filter(ty, |_, member| !member.is_undefined() && !member.is_null());
-        if rest != ty
-            && rest != TypeId::BOOLEAN
-            && self.c.is_union(rest)
-            && self.alias_of_type(rest).is_some()
-        {
-            types.retain(|member| member.is_undefined() || member.is_null());
-            types.insert(0, rest);
+        // `T | undefined`, of a `T` that is a union with a name (`UnionType.origin`). One of `null` and `undefined` may be part of what
+        // has the name.
+        for (without_undefined, without_null) in [(false, true), (true, false), (true, true)] {
+            let is_apart = |member: TypeId| {
+                without_undefined && member.is_undefined() || without_null && member.is_null()
+            };
+            let rest = self.c.filter(ty, |_, member| !is_apart(member));
+            if rest != ty
+                && rest != TypeId::BOOLEAN
+                && self.c.is_union(rest)
+                && self.alias_of_type(rest).is_some()
+            {
+                types.retain(|&member| is_apart(member));
+                types.insert(0, rest);
+                break;
+            }
         }
         let mut result = Vec::with_capacity(types.len());
         let (mut has_null, mut has_undefined) = (false, false);
@@ -2137,7 +2227,9 @@ impl<'p> Printer<'_, 'p> {
 
     /// `createTypeNodeFromObjectType`
     fn object_type_to_node(&mut self, ty: TypeId) -> Node {
-        if self.c.mapped_origin(ty).is_some() && self.c.is_generic(ty) {
+        if self.c.mapped_origin(ty).is_some()
+            && (self.c.is_generic(ty) || self.c.p.mapped_types_with_errors.get(&ty).is_some())
+        {
             return self.mapped_type_to_node(ty);
         }
         let Some(members) = self.c.members(ty) else {
@@ -2321,12 +2413,19 @@ impl<'p> Printer<'_, 'p> {
     // ───────────────────────────── properties ─────────────────────────────
 
     /// `syntheticOrigin`: the property of the type a mapped type takes its modifiers from that the property `name` of `of` has its
-    /// declarations from. With an `as` clause it has none.
+    /// declarations from. With an `as` clause that renames it has none.
     fn origin_of_mapped_property(&mut self, of: TypeId, name: Atom) -> Option<Prop> {
         let (file, node, mapper) = self.c.mapped_origin(of)?;
         let mapped = self.c.mapped_decl(file, node);
-        if mapped.name_ty.is_some() || self.c.hir(file)[mapped.param].constraint.is_none() {
+        if self.c.hir(file)[mapped.param].constraint.is_none() {
             return None;
+        }
+        // `MappedTypeNameTypeKindRemapping`
+        if let Some(renamed) = self.c.mapped_name_type(of) {
+            let key = self.c.mapped_type_param(of);
+            if !self.c.is_assignable(renamed, key) {
+                return None;
+            }
         }
         let (declared, _) = self.c.mapped_modifiers_source(file, node)?;
         let modifiers = self.c.instantiate(declared, mapper);
@@ -3293,6 +3392,18 @@ impl<'p> Printer<'_, 'p> {
             None => String::new(),
         };
         let template = self.c.mapped_template(ty);
+        // The circle may go through a type alias, which is `any` then. That has no alias.
+        let template = match self.c.data(template) {
+            TypeData::LazyAlias { .. } if self.c.p.mapped_types_with_errors.get(&ty).is_some() => {
+                let forced = self.c.force(template);
+                if matches!(self.c.data(forced), TypeData::Intrinsic(_)) {
+                    forced
+                } else {
+                    template
+                }
+            }
+            _ => template,
+        };
         let template = self
             .c
             .remove_missing_type(template, mapped.optional == MappedModifier::Add);

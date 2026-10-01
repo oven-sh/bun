@@ -480,7 +480,8 @@ pub fn check_project(
         .filter(|&i| {
             let module = &program.files.modules[i];
             match module.hir.kind {
-                FileKind::Json => false,
+                // Only what the parser objects to is said of JSON, and only then is its text kept.
+                FileKind::Json => !module.hir.text.is_empty(),
                 _ if module.is_lib => !skip_lib_check && !skip_default_lib_check,
                 FileKind::Declaration => !skip_lib_check,
                 FileKind::Ts | FileKind::Tsx => true,

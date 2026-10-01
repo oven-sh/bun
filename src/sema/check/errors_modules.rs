@@ -411,7 +411,8 @@ impl Checker<'_> {
                     start: prop.pos,
                     code,
                 });
-                if matches!(prop.key, PropKey::Computed(_)) {
+                // `[1]` and `["a"]` are kept as plain names.
+                if matches!(prop.key, PropKey::Computed(_)) || code != 2300 {
                     let end = self.end_of_prop_name(file, p);
                     let args = if code == 2300 {
                         vec![self.source_text(file, prop.pos, end)]

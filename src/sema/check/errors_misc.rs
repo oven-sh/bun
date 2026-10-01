@@ -654,7 +654,9 @@ impl Checker<'_> {
         };
         // A missing node is empty.
         let end = match hir[operand].kind {
-            ExprKind::Missing if !self.is_written_in_parentheses(file, operand) => start,
+            ExprKind::Missing if !self.is_written_in_parentheses(file, operand) => {
+                super::explain::NO_LENGTH
+            }
             _ => self.error_end_inside_parentheses(file, operand),
         };
         let (obj, name) = match hir[operand].kind {

@@ -1087,6 +1087,78 @@ impl<'a> Lexer<'a> {
         self.next()
     }
 
+    /// `parseExpectedMatchingBrackets`: `expect`, of the bracket that closes the one at `open`.
+    #[inline]
+    pub(crate) fn expect_closing(&mut self, token: T, open: Loc) -> Result<(), Error> {
+        if self.token != token && self.tolerant {
+            let at = self.prev_error_loc;
+            self.expected_closing(token, open)?;
+            return self.put_up_with(at);
+        }
+        self.expect(token)
+    }
+
+    /// `expected`, of the bracket that closes the one at `open`. If it is said, and not left out for being at the place of the last
+    /// error, it is said with where the opening bracket is, unless that was missed too. Tolerant mode only.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn expected_closing(&mut self, token: T, open: Loc) -> Result<(), Error> {
+        let said_before = self.log().msgs.len();
+        self.expected(token)?;
+        let opening = match token {
+            T::TCloseParen => b'(',
+            T::TCloseBracket => b'[',
+            _ => b'{',
+        };
+        if self.log().msgs.len() > said_before
+            && self.contents.get(open.to_usize()) == Some(&opening)
+        {
+            self.note_opening_bracket(said_before, opening, open);
+        }
+        Ok(())
+    }
+
+    /// `parseImportAttributes`, `parseImportType`: `expect`, of the "}" of what opens at `open`. If it is missed, the last error of the
+    /// parser is told where that is, whichever it is, provided it is one about a token that was expected.
+    pub(crate) fn expect_close_brace_of_attributes(&mut self, open: Loc) -> Result<(), Error> {
+        if self.token == T::TCloseBrace || !self.tolerant {
+            return self.expect(T::TCloseBrace);
+        }
+        let at = self.prev_error_loc;
+        self.expected(T::TCloseBrace)?;
+        // Not what `ts_grammar_error` and `ts_checker_error` log: those are the checker's.
+        let last = self.log().msgs.iter().rposition(|msg| {
+            msg.kind == bun_ast::Kind::Err
+                && !msg.data.text.starts_with(b"TG")
+                && !msg.data.text.starts_with(b"TC")
+        });
+        if let Some(last) = last
+            && matches!(
+                crate::sema::early_error(&self.log().msgs[last].data.text, b""),
+                Some((1005, _))
+            )
+        {
+            self.note_opening_bracket(last, b'{', open);
+        }
+        self.put_up_with(at)
+    }
+
+    /// Adds where the bracket `opening` is to message `index` of the log, for `hir::File::opening_brackets`.
+    #[cold]
+    #[inline(never)]
+    fn note_opening_bracket(&mut self, index: usize, opening: u8, open: Loc) {
+        let text: &'static [u8; 8] = match opening {
+            b'(' => b"TS1007 (",
+            b'[' => b"TS1007 [",
+            _ => b"TS1007 {",
+        };
+        let note = bun_ast::range_data(Some(self.source), Range { loc: open, len: 0 }, text);
+        let msg = &mut self.log().msgs[index];
+        let mut notes = core::mem::take(&mut msg.notes).into_vec();
+        notes.push(note);
+        msg.notes = notes.into_boxed_slice();
+    }
+
     /// Notes an error by the code TypeScript has for it. Only in tolerant mode: nobody but the type checker reads it.
     /// Like any other error it is dropped if the last one was at the same place, which is TypeScript's own rule.
     #[cold]
@@ -2433,6 +2505,10 @@ impl<'a> Lexer<'a> {
                         break;
                     }
 
+                    if self.tolerant && self.rest_is_no_text() {
+                        return Ok(());
+                    }
+
                     // TypeScript's `IsWhiteSpaceSingleLine` has two more than ECMAScript's WhiteSpace.
                     if self.tolerant && matches!(self.code_point, 0x85 | 0x200B) {
                         self.step_with(contents);
@@ -2465,6 +2541,31 @@ impl<'a> Lexer<'a> {
             return Ok(());
         }
         Ok(())
+    }
+
+    /// `Scan`: whether the token being scanned starts with U+FFFD, or with what is no character at all (`utf8.RuneError`). The file is
+    /// taken for a binary one then, which is said of its start, and the rest of it is one token (`KindNonTextFileMarkerTrivia`).
+    #[cold]
+    #[inline(never)]
+    fn rest_is_no_text(&mut self) -> bool {
+        // A byte that can start no character is given as the code point of its value.
+        let starts_no_character = matches!(
+            self.contents.get(self.start),
+            Some(0x80..=0xBF | 0xF8..=0xFF)
+        );
+        if self.code_point != 0xFFFD && !starts_no_character {
+            return false;
+        }
+        self.ts_error(
+            Range {
+                loc: bun_ast::usize2loc(0),
+                len: 0,
+            },
+            1490,
+        );
+        self.move_to(self.contents.len());
+        self.token = T::TSyntaxError;
+        true
     }
 
     /// `scanConflictMarkerTrivia`, if a conflict marker starts where the token being scanned does (`isConflictMarkerTrivia`).

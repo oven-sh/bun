@@ -385,9 +385,8 @@ fn jsx_name_end(text: &[u8], at: usize) -> usize {
     if text.get(colon) == Some(&b':') {
         let name = skip_trivia(text, colon + 1);
         let name_end = part(name);
-        if name_end > name {
-            return name_end;
-        }
+        // The name after the `:` may be missing.
+        return if name_end > name { name_end } else { colon + 1 };
     }
     end
 }
@@ -800,6 +799,15 @@ impl<'a> Spans<'a> {
         close_from(self.text, at, closer, jsx_depth)
     }
 
+    /// `close`, of the array or object literal that opens at `open`, unless the parser missed its closer.
+    fn close_literal(self, open: usize, at: usize, closer: u8) -> usize {
+        let unclosed = &self.hir.unclosed_literals;
+        match unclosed.binary_search_by_key(&(open as u32), |literal| literal.0) {
+            Ok(found) => unclosed[found].1 as usize,
+            Err(_) => self.close(at, closer),
+        }
+    }
+
     /// Past what the bracket at `open` opens.
     fn bracket(self, open: usize) -> usize {
         match self.byte(open) {
@@ -1033,11 +1041,11 @@ impl<'a> Spans<'a> {
                         })
                     )
                 });
-                self.close(last.map_or(pos + 1, |last| self.expr(last)), b']')
+                self.close_literal(pos, last.map_or(pos + 1, |last| self.expr(last)), b']')
             }
             ExprKind::Object(props) => {
                 let last = props.iter().next_back();
-                self.close(last.map_or(pos + 1, |last| self.prop(last)), b'}')
+                self.close_literal(pos, last.map_or(pos + 1, |last| self.prop(last)), b'}')
             }
             ExprKind::Fn(f) => self.func(f),
             ExprKind::Class(c) => self.class(c),
@@ -1190,8 +1198,20 @@ impl<'a> Spans<'a> {
         }
     }
 
+    /// Where the opening or closing tag whose `<` is at `less_than` ends, if the parser objected to something in it.
+    fn jsx_tag_end(self, less_than: usize) -> Option<usize> {
+        let ends = &self.hir.jsx_tag_ends;
+        let found = ends
+            .binary_search_by_key(&(less_than as u32), |tag| tag.0)
+            .ok()?;
+        Some(ends[found].1 as usize)
+    }
+
     /// `<tag attrs>`, `<>`, or all of `<tag attrs />`. The `<` is at `pos`.
     fn jsx_opening(self, pos: usize, jsx: JsxId) -> usize {
+        if let Some(end) = self.jsx_tag_end(pos) {
+            return end;
+        }
         let Some(element) = self.hir.jsx.get(jsx.idx()) else {
             return self.token(pos);
         };
@@ -1212,6 +1232,9 @@ impl<'a> Spans<'a> {
         };
         if element.close_pos == u32::MAX {
             return 0;
+        }
+        if let Some(end) = self.jsx_tag_end(element.close_pos as usize) {
+            return end;
         }
         let slash_end = self.eat(self.eat(element.close_pos as usize, b"<"), b"/");
         let name = self.skip_trivia(slash_end);

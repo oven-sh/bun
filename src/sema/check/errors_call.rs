@@ -418,6 +418,68 @@ impl Checker<'_> {
         let start = self.start_of(file, data.callee);
         out.push(Diagnostic { start, code });
         self.note(start, self.end_of_expr(file, data.callee), code, Vec::new());
+        if code == 2775 {
+            self.relate(start, code, |checker| {
+                checker
+                    .name_in_need_of_a_type_annotation(file, data.callee)
+                    .into_iter()
+                    .collect()
+            });
+        }
+    }
+
+    /// `getTypeOfDottedName`, given the diagnostic: the first name of `e` that `getExplicitTypeOfSymbol` cannot tell the type of because
+    /// it is a variable or a property whose declaration does not say it. 2782
+    fn name_in_need_of_a_type_annotation(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+    ) -> Option<super::explain::Related> {
+        if self.explicit_type(file, e).is_some() {
+            return None;
+        }
+        let (at, name) = match self.hir(file)[e].kind {
+            ExprKind::Ident(name) => {
+                let sym = self.symbol_of_identifier(file, e, name)?;
+                self.variable_in_need_of_a_type_annotation(sym)?
+            }
+            ExprKind::Dot { obj, name, .. } => {
+                let Some(object) = self.explicit_type(file, obj) else {
+                    return self.name_in_need_of_a_type_annotation(file, obj);
+                };
+                let object = self.apparent_type(object);
+                let (prop, _) = self.prop_ref(object, name)?;
+                match &prop.source {
+                    PropSource::Symbol(sym) => self.variable_in_need_of_a_type_annotation(*sym)?,
+                    // Neither is `SymbolFlagsProperty`.
+                    _ if prop
+                        .flags
+                        .intersects(PropFlags::ACCESSOR | PropFlags::METHOD) =>
+                    {
+                        return None;
+                    }
+                    _ => (self.place_of_prop(prop)?, self.prop_to_string(prop)),
+                }
+            }
+            _ => return None,
+        };
+        Some(super::explain::Related {
+            at: Some(at),
+            code: 2782,
+            args: vec![name],
+        })
+    }
+
+    /// The same of what a name or an export of a namespace stands for: where it is declared, and `symbolToString`.
+    fn variable_in_need_of_a_type_annotation(
+        &mut self,
+        sym: Sym,
+    ) -> Option<((FileId, u32, u32), String)> {
+        let sym = self.files().resolve_alias_if_needed(sym)?;
+        if !self.files().flags(sym).intersects(SymFlags::VARIABLE) {
+            return None;
+        }
+        Some((self.place_of_symbol(sym)?, self.symbol_to_string(sym)))
     }
 
     /// `getEffectsSignature`, of a call that is a statement and resolves to a signature that asserts: whether there is one.

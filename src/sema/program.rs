@@ -1307,8 +1307,8 @@ impl Files {
         } else {
             host.parse(path, &text, atoms, options)
         };
-        // The default library is not looked into for how it is written.
-        if hir.kind != FileKind::Json && !is_lib {
+        // The default library is not looked into for how it is written, nor is JSON the parser has nothing against.
+        if (hir.kind != FileKind::Json || hir.has_parse_diagnostics) && !is_lib {
             hir.text = text;
         }
         // `getExternalModuleIndicator`: what else makes a module of a file that neither imports nor exports.

@@ -6,7 +6,7 @@
 //! under way count as they do there. A comparison without reports that can only end in an early "yes" is left out: the pair at hand
 //! is known not to be related. Nothing found out here goes into the cache of relations.
 
-use super::explain::Line;
+use super::explain::{Line, Related};
 use super::relate::{
     ALLOWS_STRUCTURAL_FALLBACK, BIVARIANT, BIVARIANT_CALLBACK, CALLBACK, COMPLEXITY_OVERFLOW,
     CONTRAVARIANT, COVARIANT, FAILED, INDEPENDENT, INVARIANT, REC_BOTH, REC_SOURCE, REC_TARGET,
@@ -31,11 +31,34 @@ struct Reporter {
     r: Relater,
     /// `errorChain`
     chain: Chain,
+    /// `relatedInfo`
+    related: Vec<Related>,
     /// How many more comparisons are gone into.
     budget: u32,
 }
 
+/// `errorState`
+struct ErrorState {
+    chain: Chain,
+    /// How much `relatedInfo` there is.
+    related: usize,
+}
+
 impl Reporter {
+    /// `getErrorState`
+    fn error_state(&self) -> ErrorState {
+        ErrorState {
+            chain: self.chain.clone(),
+            related: self.related.len(),
+        }
+    }
+
+    /// `restoreErrorState`
+    fn restore_error_state(&mut self, saved: &ErrorState) {
+        self.chain = saved.chain.clone();
+        self.related.truncate(saved.related);
+    }
+
     /// `chain` without its first `count` lines.
     fn after(&self, count: usize) -> Chain {
         let mut at = self.chain.clone();
@@ -304,6 +327,12 @@ impl<'p> Checker<'p> {
         lines.into_iter().skip(1).collect()
     }
 
+    /// The `relatedInfo` of the error `checkTypeAssignableTo(source, target, node, head)` reports, whatever the `head`.
+    pub(super) fn assignability_related(&mut self, source: TypeId, target: TypeId) -> Vec<Related> {
+        self.relation_lines_with_related(source, target, Relation::Assignable, None, 0)
+            .1
+    }
+
     /// The lines under the first line of `checkTypeRelatedToEx(source, target, relation, node, head)`, from level 1. `head`, the code
     /// of `headMessage`, decides whether a line about missing properties takes the place of the first line or goes under it.
     pub(super) fn relation_chain_under(
@@ -338,9 +367,23 @@ impl<'p> Checker<'p> {
         head: Option<u32>,
         level: u32,
     ) -> Vec<Line> {
+        self.relation_lines_with_related(source, target, relation, head, level)
+            .0
+    }
+
+    /// The same, and the `relatedInfo` that error is given.
+    pub(super) fn relation_lines_with_related(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        relation: Relation,
+        head: Option<u32>,
+        level: u32,
+    ) -> (Vec<Line>, Vec<Related>) {
         let mut x = Reporter {
             r: Relater::new(relation, self.cycles),
             chain: None,
+            related: Vec::new(),
             budget: 2000,
         };
         // These two are never a `headMessage`: they are what `reportRelationError` says for lack of one.
@@ -354,9 +397,9 @@ impl<'p> Checker<'p> {
         self.relation_too_complex = too_complex;
         self.reliability = reliability;
         if x.r.overflow {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         }
-        lines_of(&x.chain, level)
+        (lines_of(&x.chain, level), x.related)
     }
 
     /// The lines `compareSignaturesRelated` reports for two call signatures under the assignable relation, from level 1.
@@ -364,6 +407,7 @@ impl<'p> Checker<'p> {
         let mut x = Reporter {
             r: Relater::new(Relation::Assignable, self.cycles),
             chain: None,
+            related: Vec::new(),
             budget: 2000,
         };
         let gave_up = self.relation_gave_up;
@@ -760,6 +804,79 @@ impl<'p> Checker<'p> {
             x.report(code, vec![intersection, name]);
         }
         self.report_relation_error(x, head, source, target);
+        if let TypeData::TypeParam(file, tp, _) = *self.data(source)
+            && self.constraint_of(source).is_none()
+            && self.copy_may_extend(source, (file, tp), target)
+        {
+            let constraint = self.type_to_string(target);
+            let at = self.place_of_type_parameter_declaration(file, tp);
+            x.related.push(Related {
+                at: Some(at),
+                code: 2208,
+                args: vec![constraint],
+            });
+        }
+    }
+
+    /// `hasNonCircularBaseConstraint` of the `syntheticParam` of `reportErrorResults`: a copy of the type parameter `source`, which
+    /// is declared as `declared`, that extends `target` with the copy for `source` in it.
+    fn copy_may_extend(
+        &mut self,
+        source: TypeId,
+        declared: (FileId, TypeParamId),
+        target: TypeId,
+    ) -> bool {
+        // `cloneTypeParameter`. What is found out about a copy is kept, so each target has a copy of its own.
+        let around = self.mapper_from(&[source], &[target]);
+        let copy = self.cloned_type_param(declared.0, declared.1, around);
+        let to_copy = self.mapper_from(&[source], &[copy]);
+        // A circle the copy is in says nothing about what is being worked out around.
+        let cycles = self.cycles;
+        // `getIntersectionTypeEx` asks what the copy in `T & {}` extends, which is nothing yet. That answer is kept, there as here.
+        let constraint = self.instantiate(target, to_copy);
+        self.p.type_param_constraints.insert(copy, Some(constraint));
+        self.base_constraint(copy);
+        self.cycles = cycles;
+        self.p.circular_constraints.get(&copy).is_none()
+    }
+
+    /// `getErrorRangeForNode` of `symbol.Declarations[0]` of the type parameter `tp` of `file`: all of the declaration, from `const`,
+    /// `in` or `out` on.
+    fn place_of_type_parameter_declaration(
+        &self,
+        file: FileId,
+        tp: TypeParamId,
+    ) -> (FileId, u32, u32) {
+        const MODIFIERS: [&[u8]; 3] = [b"const", b"in", b"out"];
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        // `infer U` written twice is one parameter.
+        let symbol = bound.type_param_symbol[tp.idx()];
+        let first = if symbol.is_some() {
+            bound.symbols[symbol.idx()]
+                .decls
+                .iter()
+                .find_map(|&decl| match decl {
+                    crate::bind::Decl::TypeParam(first) => Some(first),
+                    _ => None,
+                })
+        } else {
+            None
+        };
+        let tp = first.unwrap_or(tp);
+        let mut start = hir[tp].pos as usize;
+        if hir[tp]
+            .flags
+            .intersects(Flags::CONST | Flags::IN | Flags::OUT)
+        {
+            while let Some(before) = hir.text.get(..start).map(|text| text.trim_ascii_end())
+                && let Some(modifier) = MODIFIERS
+                    .into_iter()
+                    .find(|modifier| before.ends_with(modifier))
+            {
+                start = before.len() - modifier.len();
+            }
+        }
+        (file, start as u32, self.end_of_type_param(file, tp))
     }
 
     /// The property that makes the intersection `ty` one that nothing can be, and which of 18031 and 18032 says so.
@@ -1450,7 +1567,7 @@ impl<'p> Checker<'p> {
         target: TypeId,
         state: u8,
     ) -> Ternary {
-        let saved = x.chain.clone();
+        let saved = x.error_state();
         let mut result = self.structured_type_related_to_worker_reporting(x, source, target, state);
         if !result.holds()
             && x.r.relation != Relation::Restrictive
@@ -1497,7 +1614,7 @@ impl<'p> Checker<'p> {
             result &= self.properties_related_to_reporting(x, source, target, true, true, state);
         }
         if result.holds() {
-            x.chain = saved;
+            x.restore_error_state(&saved);
         }
         result
     }
@@ -1512,7 +1629,7 @@ impl<'p> Checker<'p> {
         targets: &[TypeId],
         variances: &[u8],
         state: u8,
-        saved: &Chain,
+        saved: &ErrorState,
         original: &mut Chain,
         variance_check_failed: &mut bool,
     ) -> Option<Ternary> {
@@ -1527,7 +1644,7 @@ impl<'p> Checker<'p> {
         {
             // What the type arguments had to say may not help: the type parameter was taken to be the same on both sides.
             *original = None;
-            x.chain = saved.clone();
+            x.restore_error_state(saved);
             return None;
         }
         let allow_structural_fallback = self.has_covariant_void_argument(targets, variances);
@@ -1538,7 +1655,7 @@ impl<'p> Checker<'p> {
                 return Some(Ternary::FALSE);
             }
             *original = x.chain.clone();
-            x.chain = saved.clone();
+            x.restore_error_state(saved);
         }
         None
     }
@@ -1554,7 +1671,7 @@ impl<'p> Checker<'p> {
         let relation = x.r.relation;
         let mut variance_check_failed = false;
         let mut original_chain: Chain = None;
-        let saved = x.chain.clone();
+        let saved = x.error_state();
         if self.is_union_or_intersection(source) || self.is_union_or_intersection(target) {
             let result = self.union_or_intersection_related_to_reporting(x, source, target, state);
             if result.holds() {
@@ -1663,7 +1780,7 @@ impl<'p> Checker<'p> {
                         )
                     {
                         if original_chain.is_some() {
-                            x.chain = saved.clone();
+                            x.restore_error_state(&saved);
                         }
                         let result = self.is_related_to_ex_reporting(
                             x, source, constraint, REC_TARGET, None, state,
@@ -1795,7 +1912,7 @@ impl<'p> Checker<'p> {
                         }
                     }
                     original_chain = x.chain.clone();
-                    x.chain = saved.clone();
+                    x.restore_error_state(&saved);
                 }
             }
             _ => {}
@@ -1911,7 +2028,7 @@ impl<'p> Checker<'p> {
                     && relation != Relation::Restrictive
                     && let Some(distributive) = self.constraint_of_distributive_conditional(source)
                 {
-                    x.chain = saved.clone();
+                    x.restore_error_state(&saved);
                     let result = self.is_related_to_reporting(x, distributive, target, REC_SOURCE);
                     if result.holds() {
                         return result;
@@ -1968,7 +2085,7 @@ impl<'p> Checker<'p> {
         source: TypeId,
         target: TypeId,
         state: u8,
-        saved: &Chain,
+        saved: &ErrorState,
         original_chain: &mut Chain,
         variance_check_failed: &mut bool,
     ) -> Ternary {
@@ -2053,7 +2170,7 @@ impl<'p> Checker<'p> {
             && self.is_object_type(target)
         {
             // Only if nothing has been said yet.
-            let report = is_same_chain(&x.chain, saved) && !source_is_primitive;
+            let report = is_same_chain(&x.chain, &saved.chain) && !source_is_primitive;
             let mut result =
                 self.properties_related_to_reporting(x, source, target, report, false, state);
             if result.holds() {
@@ -2104,7 +2221,7 @@ impl<'p> Checker<'p> {
                 if original_chain.is_some() {
                     x.chain = original_chain.clone();
                 } else if x.chain.is_none() {
-                    x.chain = saved.clone();
+                    x.chain = saved.chain.clone();
                 }
             }
         }
@@ -2499,7 +2616,10 @@ impl<'p> Checker<'p> {
         if let [only] = unmatched {
             let (source_type, target_type) = self.type_names_for_error_display(source, target);
             let name = self.prop_to_string(only);
-            x.report(2741, vec![name, source_type, target_type]);
+            x.report(2741, vec![name.clone(), source_type, target_type]);
+            if let Some(place) = self.place_of_first_prop_declaration(only) {
+                x.related.push(self.declared_here(place, name));
+            }
         } else if self.try_elaborate_array_like_errors(x, source, target, false) {
             let (source_type, target_type) = self.type_names_for_error_display(source, target);
             let listed = if unmatched.len() > 5 {
@@ -2728,7 +2848,7 @@ impl<'p> Checker<'p> {
             );
         } else {
             'targets: for &t in &target_sigs {
-                let saved = x.chain.clone();
+                let saved = x.error_state();
                 // Only what is wrong with the first is said.
                 let mut should_elaborate = true;
                 for &s in &source_sigs {
@@ -2739,7 +2859,7 @@ impl<'p> Checker<'p> {
                     };
                     if related.holds() {
                         result &= related;
-                        x.chain = saved.clone();
+                        x.restore_error_state(&saved);
                         continue 'targets;
                     }
                     should_elaborate = false;

@@ -1094,7 +1094,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.lexer.list_contexts = saved_contexts;
         let close_bracket_loc = p.lexer.loc();
-        p.lexer.expect(T::TCloseBracket)?;
+        p.note_literal_if_unclosed(T::TCloseBracket, loc);
+        p.lexer.expect_closing(T::TCloseBracket, loc)?;
         p.allow_in = old_allow_in;
 
         // Is this a binding pattern?
@@ -1192,7 +1193,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.lexer.list_contexts = saved_contexts;
         let close_brace_loc = p.lexer.loc();
-        p.lexer.expect(T::TCloseBrace)?;
+        p.note_literal_if_unclosed(T::TCloseBrace, loc);
+        p.lexer.expect_closing(T::TCloseBrace, loc)?;
         p.allow_in = old_allow_in;
 
         if p.will_need_binding_pattern() {

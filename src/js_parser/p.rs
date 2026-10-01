@@ -399,6 +399,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) jsx_parent_tag: Option<&'a [u8]>,
     /// Tolerant mode only. In `<div><span></div>`, the closing tag that the child read and its parent takes.
     pub(crate) jsx_adopted_close: Option<crate::parser::JSXTag<'a>>,
+    /// Tolerant mode only. The children of a JSX element went on to the end of the file (`parseJsxChild`). The text among them is no
+    /// trivia, so what ends there ends with the file.
+    pub(crate) jsx_children_met_end_of_file: bool,
 
     pub(crate) reported_stack_overflow: core::cell::Cell<bool>,
 
@@ -9847,6 +9850,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             type_syntax: None,
             jsx_parent_tag: None,
             jsx_adopted_close: None,
+            jsx_children_met_end_of_file: false,
             reported_stack_overflow: core::cell::Cell::new(false),
             ts_infer_constraint_backtracks: Vec::new(),
             ts_conditional_arrow_attempts: Vec::new(),

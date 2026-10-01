@@ -4425,3 +4425,25 @@ test.skipIf(!isWindows)("a redirect to nul, however it is reached, goes to the d
   );
   expect((readdirSync(String(dir), { recursive: true }) as string[]).sort()).toEqual(["sub", join("sub", "keep.txt")]);
 });
+
+// Win32 knows the device in any case, and with a space or a colon behind it.
+test.skipIf(!isWindows).each(["Nul", "nUl", "nul ", "nul:", "sub/Nul", "./Nul", "sub\\NUL "])(
+  "a redirect to %j goes to the device",
+  async name => {
+    using dir = tempDir("shell-redirect-nul-spelled", { "sub/keep.txt": "" });
+    const { exitCode, stderr } = await $`echo a > ${name}; echo b >> ${name}`.cwd(String(dir)).nothrow().quiet();
+    expect({
+      stderr: stderr.toString(),
+      exitCode,
+      files: (readdirSync(String(dir), { recursive: true }) as string[]).sort(),
+    }).toEqual({ stderr: "", exitCode: 0, files: ["sub", join("sub", "keep.txt")] });
+  },
+);
+
+// Names that only look like a device's are files.
+test.skipIf(!isWindows)("a redirect to a name that begins like a device's makes a file", async () => {
+  using dir = tempDir("shell-redirect-not-a-device", {});
+  const names = ["nulx", "console", "com", "com10", "lpt", "auxiliary", "null"];
+  for (const name of names) await $`echo a > ${name}`.cwd(String(dir));
+  expect(readdirSync(String(dir)).sort()).toEqual(names.toSorted());
+});

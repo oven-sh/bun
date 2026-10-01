@@ -83,54 +83,74 @@ impl Checker<'_> {
             return syntactic;
         }
         self.checking = Some(file);
-        self.check_declare_modifiers(file, &mut out);
-        self.check_empty_declaration_lists(file, &mut out);
-        self.check_modules(file, &mut out);
-        self.check_names(file, &mut out);
-        self.check_type_argument_counts(file, &mut out);
-        self.check_assigned_before_use(file, &mut out);
-        self.check_properties_initialized(file, &mut out);
-        self.check_operators(file, &mut out);
-        self.check_writes(file, &mut out);
-        self.check_property_accesses(file, &mut out);
-        self.check_calls(file, &mut out);
-        self.check_unused(file, &mut out);
-        self.check_grammar(file, &mut out);
-        self.check_duplicates(file, &mut out);
-        self.check_heritage(file, &mut out);
-        self.check_jsx(file, &mut out);
-        self.check_implicit_any(file, &mut out);
-        self.check_overloads(file, &mut out);
-        self.check_use_before_declaration(file, &mut out);
-        self.check_miscellaneous(file, &mut out);
-        self.check_iteration(file, &mut out);
-        self.check_names_and_exports(file, &mut out);
-        self.check_control_flow(file, &mut out);
-        self.check_declarations(file, &mut out);
-        self.check_small_things(file, &mut out);
-        self.check_circularities(file, &mut out);
-        self.check_assignments(file, &mut out);
-        self.check_x_aliases(file, &mut out);
+        // `BUN_SEMA_TRACE_PASSES=1`: which pass added or removed each error.
+        let trace_passes = std::env::var_os("BUN_SEMA_TRACE_PASSES").is_some();
+        macro_rules! pass {
+            ($name:ident) => {{
+                let before = if trace_passes {
+                    out.clone()
+                } else {
+                    Vec::new()
+                };
+                self.$name(file, &mut out);
+                if trace_passes {
+                    trace_pass(
+                        &self.files().modules[file.idx()].path,
+                        stringify!($name),
+                        &before,
+                        &out,
+                    );
+                }
+            }};
+        }
+        pass!(check_declare_modifiers);
+        pass!(check_empty_declaration_lists);
+        pass!(check_modules);
+        pass!(check_names);
+        pass!(check_type_argument_counts);
+        pass!(check_assigned_before_use);
+        pass!(check_properties_initialized);
+        pass!(check_operators);
+        pass!(check_writes);
+        pass!(check_property_accesses);
+        pass!(check_calls);
+        pass!(check_unused);
+        pass!(check_grammar);
+        pass!(check_duplicates);
+        pass!(check_heritage);
+        pass!(check_jsx);
+        pass!(check_implicit_any);
+        pass!(check_overloads);
+        pass!(check_use_before_declaration);
+        pass!(check_miscellaneous);
+        pass!(check_iteration);
+        pass!(check_names_and_exports);
+        pass!(check_control_flow);
+        pass!(check_declarations);
+        pass!(check_small_things);
+        pass!(check_circularities);
+        pass!(check_assignments);
+        pass!(check_x_aliases);
         // It takes back what has been said of specifiers that are never resolved.
-        self.check_x_modules(file, &mut out);
-        self.check_x_classes(file, &mut out);
-        self.check_x_identifiers(file, &mut out);
-        self.check_x_properties_jsx(file, &mut out);
+        pass!(check_x_modules);
+        pass!(check_x_classes);
+        pass!(check_x_identifiers);
+        pass!(check_x_properties_jsx);
         // `checkGrammarRegularExpressionLiteral`
         if !has_parse_diagnostics {
-            self.check_x_regexp_scanner(file, &mut out);
+            pass!(check_x_regexp_scanner);
         }
-        self.check_x_typenodes(file, &mut out);
+        pass!(check_x_typenodes);
         // These three put other words in the place of what has been said: of declarations that are not one symbol after all, of what is
         // assigned, of names that are not found.
-        self.check_x_signatures(file, &mut out);
-        self.check_x_operators(file, &mut out);
-        self.check_x_enums_names(file, &mut out);
+        pass!(check_x_signatures);
+        pass!(check_x_operators);
+        pass!(check_x_enums_names);
         // It takes back what has been said of decorators that are out of place.
-        self.check_decorators(file, &mut out);
+        pass!(check_decorators);
         // `checkWithStatement`, `checkReturnStatement`, `checkExportAssignment`: what they never look at is taken back, whoever said it.
-        self.check_x_statements(file, &mut out);
-        self.take_back_export_assignments_in_namespaces(file, &mut out);
+        pass!(check_x_statements);
+        pass!(take_back_export_assignments_in_namespaces);
         if has_parse_diagnostics {
             out.retain(|d| !is_grammar_error(d.code));
         }
@@ -2524,6 +2544,15 @@ impl Checker<'_> {
             .globals
             .iter()
             .any(|(&candidate, &sym)| is_close(text, files.atoms.bytes(candidate)) && fits(sym))
+    }
+}
+
+fn trace_pass(path: &str, pass: &str, before: &[Diagnostic], after: &[Diagnostic]) {
+    for d in after.iter().filter(|d| !before.contains(d)) {
+        eprintln!("PASS\t{path}\t{}\t{}\tadded by\t{pass}", d.start, d.code);
+    }
+    for d in before.iter().filter(|d| !after.contains(d)) {
+        eprintln!("PASS\t{path}\t{}\t{}\tREMOVED by\t{pass}", d.start, d.code);
     }
 }
 

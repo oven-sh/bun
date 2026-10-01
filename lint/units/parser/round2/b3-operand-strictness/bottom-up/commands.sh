@@ -20,13 +20,12 @@ $HEAD_BUN corpus-bun.mjs /workspace/wt/parser corpus.jsonl
 # 6. the table of the test: table.txt -> rust-rows.txt (rows of typescript-go), must-parse.rs.txt (what both take)
 node gen-rust-rows.cjs table.txt > rust-rows.txt
 node gen-must-parse.cjs rows.be1ebe5295.txt > must-parse.rs.txt
-# 7. the prototype, in a scratch copy of src/js_parser (prototype/operand_checks.rs, prototype/apply.py; the patch is prototype/prototype.be1ebe5295.patch)
-/workspace/tools/lk sh prototype/build-scratch.sh /workspace/wt/parser /tmp/b3/plain plain        # the head with the probe alone
-/workspace/tools/lk sh prototype/build-scratch.sh /workspace/wt/parser /tmp/b3/scratch prototype  # the head with the prototype and the probe
-/tmp/b3/scratch/out/bun_js_parser                                                                 # 71 passed: the 70 tests of the crate and the probe
-/workspace/tools/lk node prototype/compare.cjs /tmp/b3/scratch/out/bun_js_parser table.txt > prototype/table.compare.txt                                   # same 229, DIFF 8, EXTRA 11
-/workspace/tools/lk node prototype/compare.cjs /tmp/b3/scratch/out/bun_js_parser in1.txt in2.txt in3.txt in4.txt in5.txt in6.txt > prototype/rows.compare.txt  # same 375, ok 137, DIFF 22, EXTRA 17, MISSED 0
-OLD=/workspace/notes/lint/units/parser/round2/expression-operand-rejections/bottom-up/inputs.txt
-/workspace/tools/lk node prototype/compare.cjs /tmp/b3/plain/out/bun_js_parser $OLD > prototype/prior.compare.head.txt    # same 11, MISSED 139
-/workspace/tools/lk node prototype/compare.cjs /tmp/b3/scratch/out/bun_js_parser $OLD > prototype/prior.compare.txt       # same 109, MISSED 41 (all of unit b4)
-/workspace/tools/lk node prototype/corpus-lint.cjs /workspace/wt/parser /tmp/b3/plain/out/bun_js_parser /tmp/b3/scratch/out/bun_js_parser > prototype/corpus-lint.txt   # {"files":10608,"okA":9914,"okB":9914,"differ":0}
+# 7. the prototype, in a scratch copy of src/js_parser (prototype/operand_checks.rs, prototype/apply.py; the patch is prototype/prototype.be1ebe5295.patch,
+#    which also holds the line of lib.rs for the probe): one run under the lock builds it and makes every comparison
+/workspace/tools/lk sh prototype/run-all.sh
+#    crate tests of the scratch binary: 71 passed (the 70 of the crate and the probe)
+#    prototype/table.compare.txt   248 sources: same 230, EXTRA 11, DIFF 7
+#    prototype/rows.compare.txt    551 sources: same 376, ok 137, DIFF 21, EXTRA 17, MISSED 0
+#    prototype/prior.compare.txt   277 sources of the older list: same 109 (the head: 11, prototype/prior.compare.head.txt), MISSED 41, all of unit b4
+#    prototype/fuzz.{ts,js,tsx}.txt  77,826 snippets (prototype/fuzz.cjs): no MISSED but TS1209, TS1477, TS17007 (unit b4) and "<" after a JSX element
+#    prototype/corpus-lint.txt     10,608 files of test/ and src/js: the lint parse of the head and of the prototype agree on every file

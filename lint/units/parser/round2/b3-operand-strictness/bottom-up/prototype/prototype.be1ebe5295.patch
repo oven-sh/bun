@@ -1,5 +1,5 @@
 --- /workspace/wt/parser/src/js_parser/lib.rs	2026-10-01 04:32:05.490642165 +0000
-+++ scratch/src/js_parser/lib.rs	2026-10-01 15:32:36.506939416 +0000
++++ scratch/src/js_parser/lib.rs	2026-10-01 18:14:36.083383111 +0000
 @@ -775,3 +775,6 @@
      // The remaining renamer types are only consumed by the printer and bundler
      // — they live in `bun_js_printer`.
@@ -8,7 +8,7 @@
 +#[cfg(test)]
 +mod zz_probe;
 --- /workspace/wt/parser/src/js_parser/parse/mod.rs	2026-10-01 04:32:05.505642271 +0000
-+++ scratch/src/js_parser/parse/mod.rs	2026-10-01 15:32:36.400454146 +0000
++++ scratch/src/js_parser/parse/mod.rs	2026-10-01 18:14:35.702524414 +0000
 @@ -6,6 +6,7 @@
  #[cfg(test)]
  mod erased_tests;
@@ -18,8 +18,8 @@
  pub(crate) mod parse_fn;
  pub(crate) mod parse_import_export;
 --- /workspace/wt/parser/src/js_parser/parse/operand_checks.rs	1970-01-01 00:00:00.000000000 +0000
-+++ scratch/src/js_parser/parse/operand_checks.rs	2026-10-01 15:32:36.232303241 +0000
-@@ -0,0 +1,1227 @@
++++ scratch/src/js_parser/parse/operand_checks.rs	2026-10-01 18:14:35.615379388 +0000
+@@ -0,0 +1,1255 @@
 +//! PROTOTYPE (research of B3, never part of the worktree): what typescript-go reads another way than Bun's parse pass, found in the finished tree of a lint parse.
 +//! The walk reports the one place that stands first in the source. It runs after a lint parse that logged nothing.
 +
@@ -442,14 +442,36 @@
 +        }
 +    }
 +
++    /// Whether the last token of `expr` is the "}" of the body of a function expression.
++    fn ends_in_function_block(&mut self, expr: &Expr) -> bool {
++        let mut node = *expr;
++        let mut steps = 0u32;
++        loop {
++            steps += 1;
++            if steps > 1_000_000 || self.outer(&node).is_some() {
++                return false;
++            }
++            node = match &node.data {
++                ExprData::EFunction(_) => return true,
++                ExprData::EUnary(e) if !is_postfix(e.op) => e.value,
++                ExprData::EAwait(e) => e.value,
++                ExprData::ESpread(e) => e.value,
++                ExprData::EBinary(e) => e.right,
++                ExprData::EIf(e) => e.no,
++                ExprData::EYield(e) => match e.value {
++                    Some(value) => value,
++                    None => return false,
++                },
++                _ => return false,
++            };
++        }
++    }
++
 +    /// parseAssignmentExpressionOrHigher reads an assignment after a left-hand side expression only.
 +    fn assignment(&mut self, node: &E::Binary, loc: Loc) {
 +        let left = node.left;
 +        let id = id_of_binary(node, loc);
-+        let report = if node.op == OpCode::BinAssign
-+            && matches!(left.data, ExprData::EFunction(_))
-+            && self.outer(&left).is_none()
-+        {
++        let report = if node.op == OpCode::BinAssign && self.ends_in_function_block(&left) {
 +            // parseBlock: "=" after the block of a function expression
 +            Report::AfterBlock
 +        } else if !self.is_left_hand_side(&left) {
@@ -528,40 +550,51 @@
 +            });
 +            return;
 +        }
-+        if !self.ends_the_chain(&value) {
++        // "++a++", "++a++.b": the reference reads "++a" and ends before the first postfix operator on the left spine of the operand.
++        let mut node = value;
++        let mut innermost: Option<Expr> = None;
++        let mut steps = 0u32;
++        loop {
++            steps += 1;
++            if steps > 1_000_000 || self.is_made_left_hand_side(&node) {
++                break;
++            }
++            node = match &node.data {
++                ExprData::EUnary(e) if is_postfix(e.op) => {
++                    innermost = Some(e.value);
++                    e.value
++                }
++                ExprData::EDot(e) => e.target,
++                ExprData::EIndex(e) => e.target,
++                ExprData::ECall(e) => e.target,
++                ExprData::ETemplate(e) => match e.tag {
++                    Some(tag) => tag,
++                    None => break,
++                },
++                _ => break,
++            };
++        }
++        // The leaf of the left spine is the first token of the operand: one that starts no left-hand side expression is reported there.
++        let is_postfix_leaf = matches!(&node.data, ExprData::EUnary(e) if is_postfix(e.op));
++        if !is_postfix_leaf && self.ends_the_chain(&node) {
++            match offset(node.loc).and_then(|at| self.token_at(at)) {
++                Some(mut token) => {
++                    if matches!(node.data, ExprData::EJsxElement(_)) {
++                        token.end = token.start + 1;
++                    }
++                    self.keep(Self::at_token(&token, Report::ExpressionExpected, id));
++                }
++                None => self.keep(Self::at_node(id, Report::ExpressionExpected)),
++            }
 +            return;
 +        }
-+        // "++a++": the reference reads "++a" and ends before the postfix operator that follows the innermost operand.
-+        if let ExprData::EUnary(inner) = &value.data
-+            && is_postfix(inner.op)
-+        {
-+            let mut operand = inner.value;
-+            loop {
-+                let ExprData::EUnary(deeper) = &operand.data else {
-+                    break;
-+                };
-+                if !is_postfix(deeper.op) || self.is_made_left_hand_side(&operand) {
-+                    break;
-+                }
-+                operand = deeper.value;
-+            }
++        if let Some(operand) = innermost {
 +            match self.token_after(&operand) {
 +                Some(token) if matches!(token.token, T::TPlusPlus | T::TMinusMinus) => {
 +                    self.keep(Self::at_token(&token, Report::Ends, id));
 +                }
 +                _ => self.keep(Self::at_node(id, Report::Ends)),
 +            }
-+            return;
-+        }
-+        // The operand starts with a token that starts no left-hand side expression.
-+        match offset(value.loc).and_then(|at| self.token_at(at)) {
-+            Some(mut token) => {
-+                if matches!(value.data, ExprData::EJsxElement(_)) {
-+                    token.end = token.start + 1;
-+                }
-+                self.keep(Self::at_token(&token, Report::ExpressionExpected, id));
-+            }
-+            None => self.keep(Self::at_node(id, Report::ExpressionExpected)),
 +        }
 +    }
 +
@@ -1110,29 +1143,24 @@
 +}
 +
 +impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-+    /// A postfix update or a JSX element that neither parentheses nor "!" hold: the reference ends its member chain there.
++    /// Whether the reference ends its member chain at `expr`, which the parser just read: it is no left-hand side expression. `after_assertion`: so is what `as`, `satisfies` or `<T>` was read around.
 +    #[cold]
 +    #[inline(never)]
-+    pub(crate) fn is_bare_chain_end(&self, expr: &Expr) -> bool {
-+        let is_kind = match &expr.data {
-+            ExprData::EUnary(unary) => is_postfix(unary.op),
-+            ExprData::EJsxElement(_) => true,
-+            _ => false,
-+        };
-+        if !is_kind {
-+            return false;
-+        }
++    pub(crate) fn ends_member_chain(&self, expr: &Expr, after_assertion: bool) -> bool {
 +        let last = self
 +            .starts_for_parse_only
 +            .as_deref()
-+            .and_then(|starts| starts.wrappers.records.last());
-+        !last.is_some_and(|record| {
-+            record.wraps(expr)
-+                && matches!(
-+                    record.data,
-+                    WrapperData::Parenthesized | WrapperData::NonNull
-+                )
-+        })
++            .and_then(|starts| starts.wrappers.records.last())
++            .filter(|record| record.wraps(expr));
++        match last.map(|record| record.data) {
++            Some(WrapperData::Parenthesized | WrapperData::NonNull) => false,
++            Some(
++                WrapperData::As(_) | WrapperData::Satisfies(_) | WrapperData::TypeAssertion(_),
++            ) => after_assertion,
++            None => {
++                is_no_left_hand_side_kind(expr) || matches!(expr.data, ExprData::EJsxElement(_))
++            }
++        }
 +    }
 +
 +    /// After a lint parse that logged nothing: fails where the reference reads the tree another way, with its first diagnostic.
@@ -1248,7 +1276,7 @@
 +    }
 +}
 --- /workspace/wt/parser/src/js_parser/parse/parse_entry.rs	2026-10-01 04:32:05.515914443 +0000
-+++ scratch/src/js_parser/parse/parse_entry.rs	2026-10-01 15:32:36.401173940 +0000
++++ scratch/src/js_parser/parse/parse_entry.rs	2026-10-01 18:14:35.703115294 +0000
 @@ -584,7 +584,10 @@
              match p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts) {
                  // An error that the parser only logs fails the parse all the same.
@@ -1261,21 +1289,8 @@
                  Err(crate::Error::StackOverflow) => {
                      p.log().add_error(
                          Some(p.source),
---- /workspace/wt/parser/src/js_parser/parse/parse_prefix.rs	2026-10-01 04:32:05.515914443 +0000
-+++ scratch/src/js_parser/parse/parse_prefix.rs	2026-10-01 15:32:36.477395888 +0000
-@@ -1161,6 +1161,10 @@
-                 .wrappers
-                 .type_assertion(value, loc, greater_than, type_node);
-         }
-+        // parseAssignmentExpressionOrHigher: a type assertion is no left-hand side expression.
-+        if p.lexer.token.is_assign() {
-+            p.forbid_suffix_after_as_loc = p.lexer.loc();
-+        }
-         Ok(value)
-     }
- 
 --- /workspace/wt/parser/src/js_parser/parse/parse_suffix.rs	2026-10-01 04:32:05.527642427 +0000
-+++ scratch/src/js_parser/parse/parse_suffix.rs	2026-10-01 15:32:36.495787822 +0000
++++ scratch/src/js_parser/parse/parse_suffix.rs	2026-10-01 18:14:35.714536210 +0000
 @@ -523,8 +523,8 @@
              return Err(crate::Error::SyntaxError);
          }
@@ -1295,7 +1310,7 @@
 +    #[cold]
 +    #[inline(never)]
 +    fn sfx_non_null_for_lint(p: &mut Self, left: &Expr) -> bool {
-+        if p.is_bare_chain_end(left) {
++        if p.ends_member_chain(left, false) {
 +            return true;
 +        }
 +        if let Some(starts) = &mut p.starts_for_parse_only {
@@ -1312,12 +1327,12 @@
      fn sfx_type_arguments(p: &mut Self, left: &Expr) -> bool {
          if p.starts_for_parse_only.is_some() {
 -            return p.lint_type_arguments_in_expression(*left);
-+            return !p.is_bare_chain_end(left) && p.lint_type_arguments_in_expression(*left);
++            return !p.ends_member_chain(left, true) && p.lint_type_arguments_in_expression(*left);
          }
          p.try_skip_type_script_type_arguments_with_backtracking()
      }
 --- /workspace/wt/parser/src/js_parser/parse/syntax_errors.rs	2026-10-01 04:32:05.527642427 +0000
-+++ scratch/src/js_parser/parse/syntax_errors.rs	2026-10-01 15:32:36.476997386 +0000
++++ scratch/src/js_parser/parse/syntax_errors.rs	2026-10-01 18:14:35.710614612 +0000
 @@ -19,6 +19,10 @@
  }
  

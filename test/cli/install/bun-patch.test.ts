@@ -1,7 +1,7 @@
 import { $, ShellOutput } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { cpSync, lstatSync, readdirSync, readFileSync, rmSync } from "fs";
-import { bunEnv, bunExe, isASAN, tempDir, VerdaccioRegistry } from "harness";
+import { chmodSync, cpSync, lstatSync, readdirSync, readFileSync, rmSync } from "fs";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir, VerdaccioRegistry } from "harness";
 import { isAbsolute, join, sep } from "path";
 
 const expectNoError = (o: ShellOutput) => expect(o.stderr.toString()).not.toContain("error");
@@ -1275,7 +1275,7 @@ describe.concurrent("bun patch --commit on an already patched package", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stderr, exitCode };
   }
 
@@ -1333,42 +1333,61 @@ describe.concurrent("bun patch --commit on an already patched package", () => {
     await runBun(packageDir, "patch", "basic-1");
     await Bun.write(join(pkgDir, "added.js"), "module.exports = 1;\n");
     await Bun.write(join(pkgDir, "empty.js"), "");
+    // `lib/node_modules/basic-1/` holds `b/node_modules/basic-1/` as a substring
+    await Bun.write(join(pkgDir, "lib", "node_modules", "basic-1", "deep.js"), "module.exports = 2;\n");
     rmSync(join(pkgDir, "index.js"));
     await runBun(packageDir, "patch", "--commit", "node_modules/basic-1");
 
     const patch = await Bun.file(join(packageDir, "patches", "basic-1@1.0.0.patch")).text();
-    expect(patch).not.toContain("node_modules/");
     expect(patch).not.toContain(".bun-cache");
     expect(patch).toContain("diff --git a/added.js b/added.js\nnew file mode 100644\n");
     expect(patch).toContain("diff --git a/empty.js b/empty.js\nnew file mode 100644\n");
     expect(patch).toContain("diff --git a/index.js b/index.js\ndeleted file mode 100644\n");
+    expect(patch).toContain(
+      "diff --git a/lib/node_modules/basic-1/deep.js b/lib/node_modules/basic-1/deep.js\nnew file mode 100644\n",
+    );
+    expect(patch).toContain("--- /dev/null\n+++ b/lib/node_modules/basic-1/deep.js\n");
+    // two in the header line of deep.js, one in its +++ line, none from the folder prefixes
+    expect(patch.match(/node_modules\//g)).toHaveLength(3);
     expect(
       readdirSync(pkgDir)
         .filter(name => !name.startsWith(".bun-tag-"))
         .sort(),
-    ).toEqual(["added.js", "empty.js", "package.json"]);
+    ).toEqual(["added.js", "empty.js", "lib", "package.json"]);
+    expect(await Bun.file(join(pkgDir, "lib", "node_modules", "basic-1", "deep.js")).text()).toBe(
+      "module.exports = 2;\n",
+    );
   });
 
-  test("a commit that fails keeps the marker in node_modules", async () => {
+  // The stub git is a shell script, so this runs on POSIX only.
+  test.skipIf(isWindows)("a commit whose git diff fails puts the folder back", async () => {
     const packageDir = await createProject("hoisted");
     const pkgDir = join(packageDir, "node_modules", "basic-1");
 
     await commitEdit(packageDir, "// edit1");
     await runBun(packageDir, "patch", "basic-1");
-    const markers = readdirSync(pkgDir).filter(name => name.startsWith(".bun-tag-"));
-    expect(markers).toHaveLength(1);
+    await Bun.write(join(pkgDir, "node_modules", "nested.js"), "module.exports = 3;\n");
+    const before = readdirSync(pkgDir).sort();
+    expect(before.filter(name => name.startsWith(".bun-tag-"))).toHaveLength(1);
+
+    const stubDir = join(packageDir, "stub-git");
+    await Bun.write(join(stubDir, "git"), "#!/bin/sh\necho 'stub git refuses' >&2\nexit 1\n");
+    chmodSync(join(stubDir, "git"), 0o755);
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "patch", "--commit", "node_modules/basic-1"],
       cwd: packageDir,
-      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"), PATH: join(packageDir, "no-git") },
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"), PATH: stubDir },
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("git must be installed");
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("stub git refuses");
+    expect(stdout).not.toContain("installed");
     expect(exitCode).toBe(1);
-    expect(readdirSync(pkgDir).filter(name => name.startsWith(".bun-tag-"))).toEqual(markers);
+    expect(readdirSync(pkgDir).sort()).toEqual(before);
+    expect(readdirSync(join(pkgDir, "node_modules"))).toEqual(["nested.js"]);
+    expect(readdirSync(join(packageDir, "node_modules")).filter(name => name.includes("node_modules_tmp"))).toEqual([]);
   });
 
   // https://github.com/oven-sh/bun/issues/19327

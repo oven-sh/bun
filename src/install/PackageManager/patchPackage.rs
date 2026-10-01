@@ -404,12 +404,15 @@ pub fn do_patch_commit(
         )
         .is_ok();
 
+        let mut marker_left_behind = false;
         for name_z in &bun_patch_tags {
             if let Err(e) = sys::unlinkat(new_folder_handle.fd, ZStr::from_slice_with_nul(name_z)) {
-                bun_core::warn!(
-                    "failed removing the bun patch tag, this may cause issues: {}",
-                    e
+                Output::err(
+                    e,
+                    "failed to remove {f} from the package folder",
+                    (bun_fmt::quote(&name_z[..name_z.len() - 1]),),
                 );
+                marker_left_behind = true;
             }
         }
         scopeguard::defer! {
@@ -430,6 +433,9 @@ pub fn do_patch_commit(
                     bun_core::warn!("failed restoring the bun patch tag, this may cause issues: {}", e);
                 }
             }
+        }
+        if marker_left_behind {
+            break 'brk None;
         }
 
         let paths = bun_patch::git_diff_preprocess_paths(old_folder, new_folder);

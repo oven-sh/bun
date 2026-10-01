@@ -1891,27 +1891,107 @@ fn git_diff_postprocess(
     let old_folder_trimmed = strings::trim(old_folder, b"/");
     let new_folder_trimmed = strings::trim(new_folder, b"/");
 
-    // An added or deleted file's header names the same folder on both sides,
-    // so each needle is tried with `a/` and with `b/`.
-    let mut old_buf: Vec<u8> = Vec::with_capacity(old_folder_trimmed.len() + 3);
-    old_buf.extend_from_slice(b"a/");
-    old_buf.extend_from_slice(old_folder_trimmed);
-    old_buf.push(b'/');
-
-    let mut new_buf: Vec<u8> = Vec::with_capacity(new_folder_trimmed.len() + 3);
-    new_buf.extend_from_slice(b"a/");
-    new_buf.extend_from_slice(new_folder_trimmed);
-    new_buf.push(b'/');
-
-    /// Returns the index of `$folder/` in `line` after an `a/` or `b/` prefix.
-    fn find_prefixed_folder(line: &[u8], needle: &mut [u8]) -> Option<usize> {
-        needle[0] = b'a';
-        if let Some(idx) = strings::index_of(line, needle) {
-            return Some(idx + 2);
+    /// The folder that follows an `a/` or `b/` prefix at `pos` in `line`:
+    /// its length and whether it is the old folder.
+    fn folder_after_prefix(
+        line: &[u8],
+        pos: usize,
+        old_folder: &[u8],
+        new_folder: &[u8],
+    ) -> Option<(usize, bool)> {
+        let rest = line.get(pos..)?;
+        if rest.len() < 2 || !matches!(rest[0], b'a' | b'b') || rest[1] != b'/' {
+            return None;
         }
-        needle[0] = b'b';
-        strings::index_of(line, needle).map(|idx| idx + 2)
+        let rest = &rest[2..];
+        for (folder, is_old) in [(old_folder, true), (new_folder, false)] {
+            if rest.len() > folder.len()
+                && strings::has_prefix(rest, folder)
+                && rest[folder.len()] == b'/'
+            {
+                return Some((folder.len(), is_old));
+            }
+        }
+        None
     }
+
+    /// The leftmost `<prefix>/$old_folder/` or `<prefix>/$new_folder/` in
+    /// `line`: the index of the folder, its length and whether it is the old
+    /// folder.
+    fn leftmost_prefixed_folder(
+        line: &[u8],
+        prefix: u8,
+        old_folder: &[u8],
+        new_folder: &[u8],
+    ) -> Option<(usize, usize, bool)> {
+        let mut found: Option<(usize, usize, bool)> = None;
+        let mut pos = 0;
+        while pos + 2 < line.len() {
+            let Some(idx) = strings::index_of_char_usize(&line[pos..], prefix) else {
+                break;
+            };
+            let at = pos + idx;
+            if let Some((len, is_old)) = folder_after_prefix(line, at, old_folder, new_folder) {
+                found = Some((at + 2, len, is_old));
+                break;
+            }
+            pos = at + 1;
+        }
+        found
+    }
+
+    /// The prefixed folders on one header line, at most one per side. An
+    /// added or deleted file names the same folder on both sides, and a file
+    /// path can hold `b/$new_folder/` as a substring, so the two known header
+    /// shapes are anchored: `--- ` and `+++ ` at column 4, `diff --git` at
+    /// column 11 with the `b/` operand found by its equal relative path.
+    fn prefixed_folder_spans(
+        line: &[u8],
+        old_folder: &[u8],
+        new_folder: &[u8],
+    ) -> [Option<(usize, usize, bool)>; 2] {
+        let mut spans: [Option<(usize, usize, bool)>; 2] = [None, None];
+        if strings::has_prefix(line, b"--- ") || strings::has_prefix(line, b"+++ ") {
+            if let Some((len, is_old)) = folder_after_prefix(line, 4, old_folder, new_folder) {
+                spans[0] = Some((6, len, is_old));
+            }
+            return spans;
+        }
+        if strings::has_prefix(line, b"diff --git ") {
+            if let Some((len_a, is_old_a)) = folder_after_prefix(line, 11, old_folder, new_folder) {
+                spans[0] = Some((13, len_a, is_old_a));
+                let rel_start = 13 + len_a + 1;
+                let mut p = rel_start;
+                while p < line.len() {
+                    if line[p] == b' ' {
+                        if let Some((len_b, is_old_b)) =
+                            folder_after_prefix(line, p + 1, old_folder, new_folder)
+                        {
+                            let b_rel_start = p + 1 + 2 + len_b + 1;
+                            if line[rel_start..p] == line[b_rel_start..] {
+                                spans[1] = Some((p + 3, len_b, is_old_b));
+                                break;
+                            }
+                        }
+                    }
+                    p += 1;
+                }
+                // A rename names two paths, so the `b/` operand is the first
+                // one after the `a/` operand starts.
+                if spans[1].is_none() {
+                    spans[1] =
+                        leftmost_prefixed_folder(&line[rel_start..], b'b', old_folder, new_folder)
+                            .map(|(start, len, is_old)| (rel_start + start, len, is_old));
+                }
+                return spans;
+            }
+        }
+        spans[0] = leftmost_prefixed_folder(line, b'a', old_folder, new_folder);
+        spans[1] = leftmost_prefixed_folder(line, b'b', old_folder, new_folder);
+        spans
+    }
+
+    let mut prefixed_line: Option<usize> = None;
 
     // these vars are here to disambguate `a/$OLD_FOLDER` when $OLD_FOLDER itself contains "a/"
     // basically if $OLD_FOLDER contains "a/" then the code will replace it
@@ -1945,31 +2025,37 @@ fn git_diff_postprocess(
         };
 
         if !skip {
-            // a/$old_folder/ or b/$old_folder/
-            if let Some(old_folder_slash_start) =
-                find_prefixed_folder(&stdout[line_start..line_end], &mut old_buf)
-            {
-                stdout.drain(
-                    line_start + old_folder_slash_start
-                        ..line_start + old_folder_slash_start + old_folder_trimmed.len() + 1,
+            if prefixed_line != Some(line_idx as usize) {
+                prefixed_line = Some(line_idx as usize);
+                let mut spans = prefixed_folder_spans(
+                    &stdout[line_start..line_end],
+                    old_folder_trimmed,
+                    new_folder_trimmed,
                 );
-                // Re-examine this same line.
-                cursor = line_start;
-                saw_a_folder = Some(line_idx as usize);
-                continue;
-            }
-            // a/$new_folder/ or b/$new_folder/
-            if let Some(new_folder_slash_start) =
-                find_prefixed_folder(&stdout[line_start..line_end], &mut new_buf)
-            {
-                stdout.drain(
-                    line_start + new_folder_slash_start
-                        ..line_start + new_folder_slash_start + new_folder_trimmed.len() + 1,
-                );
-                // Re-examine this same line.
-                cursor = line_start;
-                saw_b_folder = Some(line_idx as usize);
-                continue;
+                // Drain from the right so the left span's index stays valid.
+                if let (Some(a), Some(b)) = (spans[0], spans[1]) {
+                    if a.0 > b.0 {
+                        spans.swap(0, 1);
+                    }
+                }
+                let mut drained = false;
+                for span in spans.into_iter().rev().flatten() {
+                    let (folder_start, folder_len, is_old) = span;
+                    stdout.drain(
+                        line_start + folder_start..line_start + folder_start + folder_len + 1,
+                    );
+                    if is_old {
+                        saw_a_folder = Some(line_idx as usize);
+                    } else {
+                        saw_b_folder = Some(line_idx as usize);
+                    }
+                    drained = true;
+                }
+                if drained {
+                    // Re-examine this same line.
+                    cursor = line_start;
+                    continue;
+                }
             }
             if saw_a_folder.is_none() || saw_a_folder.unwrap() != line_idx as usize {
                 if let Some(idx) = strings::index_of(&stdout[line_start..line_end], old_folder) {
@@ -1998,6 +2084,7 @@ fn git_diff_postprocess(
         line_idx += 1;
         saw_a_folder = None;
         saw_b_folder = None;
+        prefixed_line = None;
         if exhausted {
             break;
         }

@@ -2282,18 +2282,15 @@ fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
             Output::print_errorln("IPC message is too long.");
             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
         }
-        // Undecodable input is reported as the receiving process's uncaught
-        // exception, like a throwing listener, and closes the channel. `Js`:
-        // materializing the message (structured-clone deserialize, buffer
-        // restore) threw; the pending exception is consumed before anything
-        // else runs. `InvalidFormat`: the bytes are not a message in this
-        // channel's format at all (a peer that speaks another serialization,
-        // or garbage); nothing is pending, so the channel is closed first and
-        // a handler already sees it disconnected.
+        // Materializing the message (structured-clone deserialize, buffer
+        // restore) threw: that is this message's delivery failing, folded like
+        // a throwing listener, and the channel is closed as for any undecodable
+        // input.
         DecodeStep::Fail(IPCDecodeError::Js(err)) => {
             crate::dispatch::fold(Err(*err));
             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
         }
+        // Closed first, so an `uncaughtException` handler sees the channel disconnected.
         DecodeStep::Fail(IPCDecodeError::InvalidFormat) => {
             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
             report_undecodable_message(send_queue);

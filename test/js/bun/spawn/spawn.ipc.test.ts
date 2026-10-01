@@ -14,6 +14,7 @@ const undecodableMessageError = {
     `The parent process sent an IPC message that is not in Bun's "advanced" serialization format, so Bun closed the IPC channel. ` +
     `"advanced" serialization only works between two Bun processes. For IPC between Bun and Node.js, use serialization: "json".`,
   jsonFromSubprocess: `The subprocess (pid <pid>) sent an IPC message that is not valid JSON, so Bun closed the IPC channel.`,
+  jsonFromParent: `The parent process sent an IPC message that is not valid JSON, so Bun closed the IPC channel.`,
 };
 
 // What a Node.js process whose channel uses serialization: "advanced" writes for
@@ -21,6 +22,34 @@ const undecodableMessageError = {
 // payload (0xff 0x0f is the v8 wire-format version header). See writeChannelMessage in
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process/serialization.js#L109-L124
 const nodeAdvancedFrame = Buffer.from("00000017ff0f6f220568656c6c6f220966726f6d206e6f64657b01", "hex");
+
+// Plays the parent of a Bun child: holds the other end of the child's
+// NODE_CHANNEL_FD and writes `bytes` into it. POSIX only (see the raw-frame note
+// in "ipc mode advanced").
+async function childOfParentThatWrites(mode: "advanced" | "json", bytes: Uint8Array | string) {
+  await using child = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        process.on("uncaughtException", err => console.log("UNCAUGHT", process.connected, err.message));
+        process.on("disconnect", () => process.exit(42));
+        process.on("message", msg => console.log("UNEXPECTED_IPC_MESSAGE", msg));
+      `,
+    ],
+    env: { ...bunEnv, NODE_CHANNEL_FD: "3", NODE_CHANNEL_SERIALIZATION_MODE: mode },
+    stdio: ["ignore", "pipe", "pipe", "pipe"],
+  });
+  // Reading .stdio[3] hands the descriptor to us; we close it.
+  const fd = child.stdio[3] as number;
+  try {
+    writeSync(fd, bytes);
+    const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+    return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+  } finally {
+    closeSync(fd);
+  }
+}
 
 describe.each(["advanced", "json"])("ipc mode %s", mode => {
   it("the subprocess should be defined and the child should send", done => {
@@ -181,6 +210,14 @@ describe("ipc mode json", () => {
     ]);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(isWindows)("a child reports a parent that sends a line that is not JSON", async () => {
+    expect(await childOfParentThatWrites("json", "{not json\n")).toEqual({
+      stdout: [`UNCAUGHT false ${undecodableMessageError.jsonFromParent}`],
+      stderr: "",
+      exitCode: 42,
+    });
   });
 });
 
@@ -410,32 +447,12 @@ describe("ipc mode advanced", () => {
 
   it.skipIf(isWindows)("a child reports a parent that does not speak the advanced format", async () => {
     // The reverse pairing: a Node.js parent that spawned Bun with
-    // serialization: "advanced". The test plays the parent by holding the other
-    // end of the child's NODE_CHANNEL_FD and writing Node's bytes into it.
-    await using child = spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-          process.on("uncaughtException", err => console.log("UNCAUGHT", process.connected, err.message));
-          process.on("disconnect", () => process.exit(42));
-          process.on("message", msg => console.log("UNEXPECTED_IPC_MESSAGE", msg));
-        `,
-      ],
-      env: { ...bunEnv, NODE_CHANNEL_FD: "3", NODE_CHANNEL_SERIALIZATION_MODE: "advanced" },
-      stdio: ["ignore", "pipe", "pipe", "pipe"],
+    // serialization: "advanced".
+    expect(await childOfParentThatWrites("advanced", nodeAdvancedFrame)).toEqual({
+      stdout: [`UNCAUGHT false ${undecodableMessageError.advancedFromParent}`],
+      stderr: "",
+      exitCode: 42,
     });
-    // Reading .stdio[3] hands the descriptor to us; we close it.
-    const fd = child.stdio[3] as number;
-    try {
-      writeSync(fd, nodeAdvancedFrame);
-      const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-      expect(stdout.trim().split("\n")).toEqual([`UNCAUGHT false ${undecodableMessageError.advancedFromParent}`]);
-      expect(stderr).toBe("");
-      expect(exitCode).toBe(42);
-    } finally {
-      closeSync(fd);
-    }
   });
 });
 

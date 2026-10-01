@@ -111,5 +111,6 @@
 	{"code":"for (([]) of x) {}","ext":"ts"},
 	{"code":"for (({}) in x) {}","ext":"ts"},
 	{"code":"for ([] of x) {}","ext":"ts"},
-	{"code":"for ([,] of x) {}","ext":"ts"}
+	{"code":"for ([,] of x) {}","ext":"ts"},
+	{"code":"declare global { var q: any; }\nexport {};\nq = q;","ext":"ts"}
 ]

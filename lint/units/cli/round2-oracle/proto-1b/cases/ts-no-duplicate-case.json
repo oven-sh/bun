@@ -74,5 +74,7 @@
 	{"code":"switch (a) { case x as T: case x as T: }","ext":"tsx"},
 	{"code":"switch (a) { case <T,>(x: T) => x: case <T,>(x: T) => x: }","ext":"tsx"},
 	{"code":"switch (a) { case 1: case 1: }","ext":"mts"},
-	{"code":"switch (a) { case 1: case 1: }","ext":"cts"}
+	{"code":"switch (a) { case 1: case 1: }","ext":"cts"},
+	{"code":"switch (a) { case @d class {}: case @d class {}: }","ext":"ts"},
+	{"code":"switch (a) { case @d class {}: case class {}: }","ext":"ts"}
 ]

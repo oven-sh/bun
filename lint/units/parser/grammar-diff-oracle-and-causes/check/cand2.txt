@@ -1,0 +1,22 @@
+import type A from "x" with { type: "json" };
+export * from "x" with { type: "json" };
+export * from "x"⏎with { type: "json" };
+type X = { a: A = 1 };
+interface I { a: A = 1 }
+type X = { a() {} };
+type X = A<>;
+function f<>() {}
+let x: ?A;
+let x: A?;
+let x: A.<B>;
+let x: asserts a;
+let x: import(x);
+enum E { [a] = 1 }
+enum E { 1 = 1 }
+let x: [a: A, B];
+let x: [a?: A?];
+let x: [...A, ...B];
+let x: [A?, B];
+type X = (a?: A = 1) => void;
+class C { readonly accessor a: A }
+class C { declare [k: string]: A }

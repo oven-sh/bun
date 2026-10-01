@@ -33,5 +33,6 @@
 	{"code":"for (const k in !a in b) {}","ext":"ts"},
 	{"code":"const e = <div a={!a in b} />;","ext":"tsx"},
 	{"code":"!a in b","ext":"mts"},
-	{"code":"!a in b","ext":"cts"}
+	{"code":"!a in b","ext":"cts"},
+	{"code":"declare namespace N { let z = !a in b; }","ext":"ts"}
 ]

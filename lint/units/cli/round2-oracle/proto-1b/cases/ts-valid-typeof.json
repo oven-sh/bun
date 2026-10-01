@@ -50,5 +50,8 @@
 	{"code":"typeof x === (typeof y as string)","ext":"ts"},
 	{"code":"const e = <div a={typeof x === 'strnig'} />;","ext":"tsx"},
 	{"code":"typeof x === 'strnig'","ext":"mts"},
-	{"code":"typeof x === 'strnig'","ext":"cts"}
+	{"code":"typeof x === 'strnig'","ext":"cts"},
+	{"code":"declare namespace N { const y = typeof x === 'strnig'; }","ext":"ts"},
+	{"code":"class A { declare p = typeof x === 'strnig'; }","ext":"ts"},
+	{"code":"type T = { [typeof x === 'strnig' ? 'a' : 'b']: number };","ext":"ts"}
 ]

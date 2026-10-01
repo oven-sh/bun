@@ -1,5 +1,6 @@
 #!/bin/sh
 # usage: run.sh <tag> <tree> <codegen dir> <out dir>
+# SIZEPROBE_REV names the revision when <tree> is a copy of the sources without git.
 # Writes <out dir>/sizes.<tag>.dev.txt (debug assertions on) and sizes.<tag>.release.txt, plus the raw cargo output.
 # Heavy (two cargo check of the closure of bun_js_parser): call it through /workspace/tools/lk.
 set -u
@@ -17,7 +18,7 @@ for profile in dev release; do
      --target-dir "$work/target" --message-format=json) > "$out/sizes.$tag.$profile.json" 2> "$out/sizes.$tag.$profile.stderr.txt"
   echo "cargo check $profile exit=$?" >> "$out/sizes.$tag.$profile.stderr.txt"
   {
-    echo "# tree=$tree rev=$(git -C "$tree" rev-parse --short=10 HEAD) profile=$profile codegen=$codegen"
+    echo "# tree=$tree rev=${SIZEPROBE_REV:-$(git -C "$tree" rev-parse --short=10 HEAD 2>/dev/null)} profile=$profile codegen=$codegen"
     echo "# $(cd "$tree" && rustc --version)"
     python3 "$here/parse.py" "$here/probes.rs" "$out/sizes.$tag.$profile.json"
   } > "$out/sizes.$tag.$profile.txt" || rc=1
@@ -39,7 +40,7 @@ for profile in dev release; do
      --target-dir "$work/target") > "$work/ts/$profile.stdout" 2> "$out/typesizes.$tag.$profile.stderr.txt"
   echo "cargo check $profile exit=$?" >> "$out/typesizes.$tag.$profile.stderr.txt"
   {
-    echo "# tree=$tree rev=$(git -C "$tree" rev-parse --short=10 HEAD) profile=$profile: layouts rustc computed while checking bun_js_parser"
+    echo "# tree=$tree rev=${SIZEPROBE_REV:-$(git -C "$tree" rev-parse --short=10 HEAD 2>/dev/null)} profile=$profile: layouts rustc computed while checking bun_js_parser"
     grep -a '^print-type-size type: ' "$work/ts/$profile.stdout" | grep -aE 'ParserSnapshot|SidecarMark|LexerSnapshot|lexer::Lexer<|`p::P<|StartsForParseOnly|FnOrArrowDataParse|ErasedMark|AttachedMark|parse_entry::Options|ParsedForLint' | sort -u
     echo "# lines in all: $(grep -ac '^print-type-size type: ' "$work/ts/$profile.stdout")"
   } > "$out/typesizes.$tag.$profile.txt"

@@ -21,7 +21,8 @@ oracle/parsecheck.js bun parsecheck.js   which of ESLint's own cases the install
 
 cases/upstream-<rule>.json   ESLint's own cases of the rule: ../rule-support-unification-bottomup/oracle/extract.cjs <rule>.
                              None of the twelve rules has an option, and each test file has one run, with ESLint's parser.
-cases/edge-<rule>.json       JavaScript cases written for this research: the places where Bun's tree differs from ESTree.
+cases/edge-<rule>.json       JavaScript cases written for this research: the places where Bun's tree differs from ESTree
+                             (edge2-no-unused-private-class-members.json: a second list, the head of a `for` among them).
 cases/ts-<rule>.json         TypeScript cases: a wrapper (as, !, <T>, satisfies) where ESLint asks for a node type, and
                              declarations that leave no node.
 answers/upstream-<rule>.jsonl, answers/edge-<rule>.jsonl   oracle.cjs over those lists.

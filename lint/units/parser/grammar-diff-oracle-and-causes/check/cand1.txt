@@ -1,0 +1,18 @@
+const a: typeof #a = 1;
+type X = typeof #a;
+let x: typeof #a.b;
+class C { #a = 1; m(): typeof #a { return 1 } }
+let x = y as typeof #a;
+function f(a: typeof #a) {}
+let x: A<typeof #a>;
+let x: #a;
+let x: A.#b;
+let x: typeof a.#b;
+let x: { #a: A };
+interface I { #a: A }
+interface I { #a(): void }
+enum E { #a = 1 }
+let x: keyof #a;
+let x: #a[];
+let x: #a | B;
+let x: import("x").#a;

@@ -121,5 +121,8 @@
 	{"code":"const e = <div>{x === NaN}</div>","ext":"tsx"},
 	{"code":"x === NaN","ext":"cts"},
 	{"code":"const NaN = require('x'); x === NaN","ext":"cts"},
-	{"code":"x === NaN","ext":"mts"}
+	{"code":"x === NaN","ext":"mts"},
+	{"code":"x = @d class {}.y === NaN;","ext":"ts"},
+	{"code":"x = ((a) as T)! === NaN","ext":"ts"},
+	{"code":"declare const y: number = x === NaN ? 1 : 2;","ext":"ts"}
 ]

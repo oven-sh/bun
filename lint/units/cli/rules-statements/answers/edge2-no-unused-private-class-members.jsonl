@@ -1,0 +1,50 @@
+{"code":"class A { #x = 1; m() { for (this.#x++;;) {} } }","type":"script","reports":[]}
+{"code":"class A { #x = 1; m() { for (this.#x = 0;;) {} } }","type":"script","reports":["1:11-1:13 '#x' is defined but never used."]}
+{"code":"class A { #x = 1; m() { for (this.#x += 1;;) {} } }","type":"script","reports":[]}
+{"code":"class A { #x = 1; m() { for (;; this.#x++) {} } }","type":"script","reports":[]}
+{"code":"class A { #x = 1; m() { for (;this.#x++;) {} } }","type":"script","reports":[]}
+{"code":"class A { #x = 1; m() { if (a) this.#x++; } }","type":"script","reports":["1:11-1:13 '#x' is defined but never used."]}
+{"code":"class A { #x = 1; m() { if (a) this.#x++; else this.#x--; } }","type":"script","reports":["1:11-1:13 '#x' is defined but never used."]}
+{"code":"class A { #x = 1; m() { a: this.#x++; } }","type":"script","reports":["1:11-1:13 '#x' is defined but never used."]}
+{"code":"class A { #x = 1; m() { while (a) this.#x += 1; } }","type":"script","reports":["1:11-1:13 '#x' is defined but never used."]}
+{"code":"class A { #x = 1; m() { switch (a) { case 1: this.#x++; } } }","type":"script","reports":["1:11-1:13 '#x' is defined but never used."]}
+{"code":"class A { #x = 1; m = () => { this.#x++ } }","type":"script","reports":["1:11-1:13 '#x' is defined but never used."]}
+{"code":"class A { #x = 1; m() { return this.#x++; } }","type":"script","reports":[]}
+{"code":"class A { #x = 1; m() { throw this.#x++; } }","type":"script","reports":[]}
+{"code":"class A { #x = 1; m() { (this.#x++); } }","type":"script","reports":["1:11-1:13 '#x' is defined but never used."]}
+{"code":"class A { #x = 1; m() { ((this.#x += 1)); } }","type":"script","reports":["1:11-1:13 '#x' is defined but never used."]}
+{"code":"class A { #x = 1; m() { this.#x++\nthis.#x-- } }","type":"script","reports":["1:11-1:13 '#x' is defined but never used."]}
+{"code":"class A { #x = 1; m() { !this.#x++; } }","type":"script","reports":[]}
+{"code":"class A { #x = 1; m() { this.#x = this.#x + 1; } }","type":"script","reports":[]}
+{"code":"class A { #x = 1; m() { this.#x = 1, 2; } }","type":"script","reports":["1:11-1:13 '#x' is defined but never used."]}
+{"code":"class A { #x = 1; m() { a = this.#x = 1; } }","type":"script","reports":["1:11-1:13 '#x' is defined but never used."]}
+{"code":"class A { #x = 1; m() { [a = this.#x] = o; } }","type":"script","reports":[]}
+{"code":"class A { #x = 1; m() { [this.#x = this.#x] = o; } }","type":"script","reports":[]}
+{"code":"class A { #x = 1; m() { ({ [this.#x]: this.#x } = o); } }","type":"script","reports":[]}
+{"code":"class A { #x = 1; m() { ({ a: { b: this.#x } } = o); } }","type":"script","reports":["1:11-1:13 '#x' is defined but never used."]}
+{"code":"class A { #x = 1; m() { ({ a: [...this.#x] } = o); } }","type":"script","reports":["1:11-1:13 '#x' is defined but never used."]}
+{"code":"class A { #x = 1; m() { [a, ...[this.#x]] = o; } }","type":"script","reports":["1:11-1:13 '#x' is defined but never used."]}
+{"code":"class A { #x = 1; m() { for (const k in this.#x = o) {} } }","type":"script","reports":["1:11-1:13 '#x' is defined but never used."]}
+{"code":"class A { #x = 1; m() { for ([this.#x = 1] of o) {} } }","type":"script","reports":["1:11-1:13 '#x' is defined but never used."]}
+{"code":"class A { #x = 1; m() { for ({ ...this.#x } of o) {} } }","type":"script","reports":["1:11-1:13 '#x' is defined but never used."]}
+{"code":"class A { #x = 1; m() { for (this.#x.y of o) {} } }","type":"script","reports":[]}
+{"code":"class A { #x = 1; m() { [this.#x] } }","type":"script","reports":[]}
+{"code":"class A { #x = 1; m() { ({ a: this.#x }) } }","type":"script","reports":[]}
+{"code":"class A { #x = 1; m() { f(...this.#x) } }","type":"script","reports":[]}
+{"code":"class A { #x = 1; m() { [...this.#x] } }","type":"script","reports":[]}
+{"code":"class A { #x = 1; m() { ({ ...this.#x }) } }","type":"script","reports":[]}
+{"code":"class A { #a; #b; m() { [this.#a, this.#b] = [this.#b, this.#a]; } }","type":"script","reports":[]}
+{"code":"class A { static #x; static m() { A.#x = 1; return A.#x; } }","type":"script","reports":[]}
+{"code":"class A { #x; } class B { m(o) { return o.#x } }","type":"script","fatal":"Parsing error: Private field '#x' must be declared in an enclosing class","reports":[]}
+{"code":"class A { #x; m() { class B { #y; n(o) { return o.#x + o.#y; } } } }","type":"script","reports":[]}
+{"code":"class A { #x; m() { class B { #x; n(o) { o.#x = 1; } } return this.#x; } }","type":"script","reports":["1:31-1:33 '#x' is defined but never used."]}
+{"code":"class A { #x; static { class B { static { A.#x; } } } }","type":"script","reports":[]}
+{"code":"class A { #x; [class { #x; m() { return this.#x } }] = 1; }","type":"script","reports":["1:11-1:13 '#x' is defined but never used."]}
+{"code":"class A { #x; m() { function f(o) { return o.#x } } }","type":"script","reports":[]}
+{"code":"class A { 'a' = 1; #a = 2; ['#a'] = 3; m() { return this['#a']; } }","type":"script","reports":["1:20-1:22 '#a' is defined but never used."]}
+{"code":"class A { #\\u0061 = 1; m() { return this.#a; } }","type":"script","reports":[]}
+{"code":"class A { get #x() { return 1 } }","type":"script","reports":["1:15-1:17 '#x' is defined but never used."]}
+{"code":"class A { get #x() { return 1 } set #x(v) {} m() { this.#x++; } }","type":"script","reports":[]}
+{"code":"class A { static get #x() { return 1 } static m() { A.#x = 2; } }","type":"script","reports":[]}
+{"code":"class A { #m() {} n() { this.#m; } }","type":"script","reports":[]}
+{"code":"class A { async #m() {} *#g() {} async *#ag() {} }","type":"script","reports":["1:17-1:19 '#m' is defined but never used.","1:26-1:28 '#g' is defined but never used.","1:41-1:44 '#ag' is defined but never used."]}

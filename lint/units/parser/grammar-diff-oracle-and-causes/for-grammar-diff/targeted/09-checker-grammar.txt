@@ -1,0 +1,1548 @@
+# tsc parses, its checker reports a grammar error, the base rejects: a parse without lint keeps rejecting
+const a: typeof #a = 1;
+type X = typeof #a;
+let x: typeof #a.b;
+let x = y as typeof #a;
+function f(a: typeof #a) {}
+let x: A<typeof #a>;
+class C { #a = 1; m(): typeof #a { return 1 } }
+let x: keyof #a;
+let x: #a[];
+let x: #a | B;
+interface I { #a: A }
+interface I { #a(): void }
+function f(x: A<B,>) {}
+function f(x: any): A<B,> { return null as any }
+let f = (x: A<B,>) => x;
+function f<U extends A<B,>, V = A<B,>>() {}
+class K { @d p: A<B,>; }
+class K { @d m(x: A<B,>) {} }
+class K { @d m(x: any): A<B,> { return null as any } }
+function f(x: A<>) {}
+function f(x: any): A<> { return null as any }
+let f = (x: A<>) => x;
+function f<U extends A<>, V = A<>>() {}
+class K { @d p: A<>; }
+class K { @d m(x: A<>) {} }
+class K { @d m(x: any): A<> { return null as any } }
+f<import("m", { with: {} }, 1)>(x);
+function f(x: !A) {}
+function f(x: any): !A { return null as any }
+let f = (x: !A) => x;
+let f = (x: any): !A => x;
+function f<U extends !A, V = !A>() {}
+class K { @d p: !A; }
+class K { @d m(x: !A) {} }
+class K { @d m(x: any): !A { return null as any } }
+type X = !A[];
+let x: !A[];
+function f(x: !A[]) {}
+function f(x: any): !A[] { return null as any }
+let f = (x: !A[]) => x;
+let f = (x: any): !A[] => x;
+let v = x as !A[];
+let v = x satisfies !A[];
+let v = <!A[]>x;
+f<!A[]>(x);
+function f<U extends !A[], V = !A[]>() {}
+class K { @d p: !A[]; }
+class K { @d m(x: !A[]) {} }
+class K { @d m(x: any): !A[] { return null as any } }
+function f(x: A?) {}
+let f = (x: A?) => x;
+let f = (x: any): A? => x;
+function f<U extends A?, V = A?>() {}
+class K { @d p: A?; }
+class K { @d m(x: A?) {} }
+function f(x: ?A) {}
+function f(x: any): ?A { return null as any }
+let f = (x: ?A) => x;
+let f = (x: any): ?A => x;
+function f<U extends ?A, V = ?A>() {}
+class K { @d p: ?A; }
+class K { @d m(x: ?A) {} }
+class K { @d m(x: any): ?A { return null as any } }
+function f(x: ?A[]) {}
+function f(x: any): ?A[] { return null as any }
+let f = (x: ?A[]) => x;
+let f = (x: any): ?A[] => x;
+function f<U extends ?A[], V = ?A[]>() {}
+class K { @d p: ?A[]; }
+class K { @d m(x: ?A[]) {} }
+class K { @d m(x: any): ?A[] { return null as any } }
+type X = A[]?;
+let x: A[]?;
+function f(x: A[]?) {}
+let f = (x: A[]?) => x;
+let f = (x: any): A[]? => x;
+let v = x as A[]?;
+let v = x satisfies A[]?;
+let v = <A[]?>x;
+f<A[]?>(x);
+function f<U extends A[]?, V = A[]?>() {}
+class K { @d p: A[]?; }
+class K { @d m(x: A[]?) {} }
+type X = ??A;
+let x: ??A;
+function f(x: ??A) {}
+function f(x: any): ??A { return null as any }
+let f = (x: ??A) => x;
+let f = (x: any): ??A => x;
+let v = x as ??A;
+let v = x satisfies ??A;
+let v = <??A>x;
+class K { @d p: ??A; }
+class K { @d m(x: ??A) {} }
+class K { @d m(x: any): ??A { return null as any } }
+type X = A | B?;
+let x: A | B?;
+function f(x: A | B?) {}
+let f = (x: A | B?) => x;
+let f = (x: any): A | B? => x;
+let v = x as A | B?;
+let v = x satisfies A | B?;
+let v = <A | B?>x;
+f<A | B?>(x);
+function f<U extends A | B?, V = A | B?>() {}
+class K { @d p: A | B?; }
+class K { @d m(x: A | B?) {} }
+function f(x: ?) {}
+let f = (x: ?) => x;
+function f<U extends ?, V = ?>() {}
+class K { @d m(x: ?) {} }
+function f(x: *) {}
+function f(x: any): * { return null as any }
+let f = (x: *) => x;
+let f = (x: any): * => x;
+function f<U extends *, V = *>() {}
+class K { @d p: *; }
+class K { @d m(x: *) {} }
+class K { @d m(x: any): * { return null as any } }
+type X = *[];
+let x: *[];
+function f(x: *[]) {}
+function f(x: any): *[] { return null as any }
+let f = (x: *[]) => x;
+let f = (x: any): *[] => x;
+let v = x as *[];
+let v = x satisfies *[];
+let v = <*[]>x;
+f<*[]>(x);
+function f<U extends *[], V = *[]>() {}
+class K { @d p: *[]; }
+class K { @d m(x: *[]) {} }
+class K { @d m(x: any): *[] { return null as any } }
+type X = * | A;
+let x: * | A;
+function f(x: * | A) {}
+function f(x: any): * | A { return null as any }
+let f = (x: * | A) => x;
+let f = (x: any): * | A => x;
+let v = x as * | A;
+let v = x satisfies * | A;
+let v = <* | A>x;
+f<* | A>(x);
+function f<U extends * | A, V = * | A>() {}
+class K { @d p: * | A; }
+class K { @d m(x: * | A) {} }
+class K { @d m(x: any): * | A { return null as any } }
+type X = A<?B>;
+let x: A<?B>;
+function f(x: A<?B>) {}
+function f(x: any): A<?B> { return null as any }
+let f = (x: A<?B>) => x;
+let f = (x: any): A<?B> => x;
+let v = x as A<?B>;
+let v = x satisfies A<?B>;
+let v = <A<?B>>x;
+f<A<?B>>(x);
+function f<U extends A<?B>, V = A<?B>>() {}
+class K { @d p: A<?B>; }
+class K { @d m(x: A<?B>) {} }
+class K { @d m(x: any): A<?B> { return null as any } }
+type X = A<B?>;
+let x: A<B?>;
+function f(x: A<B?>) {}
+function f(x: any): A<B?> { return null as any }
+let f = (x: A<B?>) => x;
+let f = (x: any): A<B?> => x;
+let v = x as A<B?>;
+let v = x satisfies A<B?>;
+let v = <A<B?>>x;
+f<A<B?>>(x);
+function f<U extends A<B?>, V = A<B?>>() {}
+class K { @d p: A<B?>; }
+class K { @d m(x: A<B?>) {} }
+class K { @d m(x: any): A<B?> { return null as any } }
+type X = (?A);
+let x: (?A);
+function f(x: (?A)) {}
+function f(x: any): (?A) { return null as any }
+let f = (x: (?A)) => x;
+let f = (x: any): (?A) => x;
+let v = x as (?A);
+let v = x satisfies (?A);
+let v = <(?A)>x;
+f<(?A)>(x);
+function f<U extends (?A), V = (?A)>() {}
+class K { @d p: (?A); }
+class K { @d m(x: (?A)) {} }
+class K { @d m(x: any): (?A) { return null as any } }
+type X = () => ?A;
+let x: () => ?A;
+function f(x: () => ?A) {}
+function f(x: any): () => ?A { return null as any }
+let f = (x: () => ?A) => x;
+let f = (x: any): () => ?A => x;
+let v = x as () => ?A;
+let v = x satisfies () => ?A;
+let v = <() => ?A>x;
+f<() => ?A>(x);
+function f<U extends () => ?A, V = () => ?A>() {}
+class K { @d p: () => ?A; }
+class K { @d m(x: () => ?A) {} }
+class K { @d m(x: any): () => ?A { return null as any } }
+type X = () => A?;
+let x: () => A?;
+function f(x: () => A?) {}
+let f = (x: () => A?) => x;
+let f = (x: any): () => A? => x;
+let v = x as () => A?;
+let v = x satisfies () => A?;
+let v = <() => A?>x;
+f<() => A?>(x);
+function f<U extends () => A?, V = () => A?>() {}
+class K { @d p: () => A?; }
+class K { @d m(x: () => A?) {} }
+type X = keyof ?A;
+let x: keyof ?A;
+function f(x: keyof ?A) {}
+function f(x: any): keyof ?A { return null as any }
+let f = (x: keyof ?A) => x;
+let f = (x: any): keyof ?A => x;
+let v = x as keyof ?A;
+let v = x satisfies keyof ?A;
+let v = <keyof ?A>x;
+f<keyof ?A>(x);
+function f<U extends keyof ?A, V = keyof ?A>() {}
+class K { @d p: keyof ?A; }
+class K { @d m(x: keyof ?A) {} }
+class K { @d m(x: any): keyof ?A { return null as any } }
+type X = keyof A?;
+let x: keyof A?;
+function f(x: keyof A?) {}
+let f = (x: keyof A?) => x;
+let f = (x: any): keyof A? => x;
+let v = x as keyof A?;
+let v = x satisfies keyof A?;
+let v = <keyof A?>x;
+f<keyof A?>(x);
+function f<U extends keyof A?, V = keyof A?>() {}
+class K { @d p: keyof A?; }
+class K { @d m(x: keyof A?) {} }
+type X = function(A): B;
+let x: function(A): B;
+function f(x: function(A): B) {}
+function f(x: any): function(A): B { return null as any }
+let f = (x: function(A): B) => x;
+let f = (x: any): function(A): B => x;
+let v = x as function(A): B;
+let v = x satisfies function(A): B;
+let v = <function(A): B>x;
+f<function(A): B>(x);
+function f<U extends function(A): B, V = function(A): B>() {}
+class K { @d p: function(A): B; }
+class K { @d m(x: function(A): B) {} }
+class K { @d m(x: any): function(A): B { return null as any } }
+type X = function(new: A): B;
+let x: function(new: A): B;
+function f(x: function(new: A): B) {}
+function f(x: any): function(new: A): B { return null as any }
+let f = (x: function(new: A): B) => x;
+let f = (x: any): function(new: A): B => x;
+let v = x as function(new: A): B;
+let v = x satisfies function(new: A): B;
+let v = <function(new: A): B>x;
+f<function(new: A): B>(x);
+function f<U extends function(new: A): B, V = function(new: A): B>() {}
+class K { @d p: function(new: A): B; }
+class K { @d m(x: function(new: A): B) {} }
+class K { @d m(x: any): function(new: A): B { return null as any } }
+function f(x: A.<B>) {}
+function f(x: any): A.<B> { return null as any }
+let f = (x: A.<B>) => x;
+let f = (x: any): A.<B> => x;
+function f<U extends A.<B>, V = A.<B>>() {}
+class K { @d p: A.<B>; }
+class K { @d m(x: A.<B>) {} }
+class K { @d m(x: any): A.<B> { return null as any } }
+function f(x: Array.<A>) {}
+function f(x: any): Array.<A> { return null as any }
+let f = (x: Array.<A>) => x;
+let f = (x: any): Array.<A> => x;
+function f<U extends Array.<A>, V = Array.<A>>() {}
+class K { @d p: Array.<A>; }
+class K { @d m(x: Array.<A>) {} }
+class K { @d m(x: any): Array.<A> { return null as any } }
+function f(x: unique A) {}
+function f(x: any): unique A { return null as any }
+let f = (x: unique A) => x;
+let f = (x: any): unique A => x;
+function f<U extends unique A, V = unique A>() {}
+class K { @d p: unique A; }
+class K { @d m(x: unique A) {} }
+class K { @d m(x: any): unique A { return null as any } }
+type X = unique string;
+let x: unique string;
+function f(x: unique string) {}
+function f(x: any): unique string { return null as any }
+let f = (x: unique string) => x;
+let f = (x: any): unique string => x;
+let v = x as unique string;
+let v = x satisfies unique string;
+let v = <unique string>x;
+f<unique string>(x);
+function f<U extends unique string, V = unique string>() {}
+class K { @d p: unique string; }
+class K { @d m(x: unique string) {} }
+class K { @d m(x: any): unique string { return null as any } }
+function f(x: unique unique symbol) {}
+function f(x: any): unique unique symbol { return null as any }
+let f = (x: unique unique symbol) => x;
+let f = (x: any): unique unique symbol => x;
+function f<U extends unique unique symbol, V = unique unique symbol>() {}
+class K { @d p: unique unique symbol; }
+class K { @d m(x: unique unique symbol) {} }
+class K { @d m(x: any): unique unique symbol { return null as any } }
+type X = unique keyof A;
+let x: unique keyof A;
+function f(x: unique keyof A) {}
+function f(x: any): unique keyof A { return null as any }
+let f = (x: unique keyof A) => x;
+let f = (x: any): unique keyof A => x;
+let v = x as unique keyof A;
+let v = x satisfies unique keyof A;
+let v = <unique keyof A>x;
+f<unique keyof A>(x);
+function f<U extends unique keyof A, V = unique keyof A>() {}
+class K { @d p: unique keyof A; }
+class K { @d m(x: unique keyof A) {} }
+class K { @d m(x: any): unique keyof A { return null as any } }
+type X = unique (symbol);
+let x: unique (symbol);
+function f(x: unique (symbol)) {}
+function f(x: any): unique (symbol) { return null as any }
+let f = (x: unique (symbol)) => x;
+let f = (x: any): unique (symbol) => x;
+let v = x as unique (symbol);
+let v = x satisfies unique (symbol);
+let v = <unique (symbol)>x;
+function f<U extends unique (symbol), V = unique (symbol)>() {}
+class K { @d p: unique (symbol); }
+class K { @d m(x: unique (symbol)) {} }
+class K { @d m(x: any): unique (symbol) { return null as any } }
+type X = A extends B? ? C : D;
+let x: A extends B? ? C : D;
+function f(x: A extends B? ? C : D) {}
+function f(x: any): A extends B? ? C : D { return null as any }
+let f = (x: A extends B? ? C : D) => x;
+let f = (x: any): A extends B? ? C : D => x;
+let v = x as A extends B? ? C : D;
+let v = x satisfies A extends B? ? C : D;
+let v = <A extends B? ? C : D>x;
+f<A extends B? ? C : D>(x);
+function f<U extends A extends B? ? C : D, V = A extends B? ? C : D>() {}
+class K { @d p: A extends B? ? C : D; }
+class K { @d m(x: A extends B? ? C : D) {} }
+class K { @d m(x: any): A extends B? ? C : D { return null as any } }
+type X = A extends B ? C? : D;
+let x: A extends B ? C? : D;
+function f(x: A extends B ? C? : D) {}
+function f(x: any): A extends B ? C? : D { return null as any }
+let f = (x: A extends B ? C? : D) => x;
+let f = (x: any): A extends B ? C? : D => x;
+let v = x as A extends B ? C? : D;
+let v = x satisfies A extends B ? C? : D;
+let v = <A extends B ? C? : D>x;
+f<A extends B ? C? : D>(x);
+function f<U extends A extends B ? C? : D, V = A extends B ? C? : D>() {}
+class K { @d p: A extends B ? C? : D; }
+class K { @d m(x: A extends B ? C? : D) {} }
+class K { @d m(x: any): A extends B ? C? : D { return null as any } }
+type X = A extends [infer H extends string?] ? H : never;
+let x: A extends [infer H extends string?] ? H : never;
+function f(x: A extends [infer H extends string?] ? H : never) {}
+function f(x: any): A extends [infer H extends string?] ? H : never { return null as any }
+let f = (x: A extends [infer H extends string?] ? H : never) => x;
+let f = (x: any): A extends [infer H extends string?] ? H : never => x;
+let v = x as A extends [infer H extends string?] ? H : never;
+let v = x satisfies A extends [infer H extends string?] ? H : never;
+let v = <A extends [infer H extends string?] ? H : never>x;
+f<A extends [infer H extends string?] ? H : never>(x);
+function f<U extends A extends [infer H extends string?] ? H : never, V = A extends [infer H extends string?] ? H : never>() {}
+class K { @d p: A extends [infer H extends string?] ? H : never; }
+class K { @d m(x: A extends [infer H extends string?] ? H : never) {} }
+class K { @d m(x: any): A extends [infer H extends string?] ? H : never { return null as any } }
+function f<U extends #a, V = #a>() {}
+function f(x: any): class {} { return null as any }
+function f(x: any): function () {} { return null as any }
+function f<U extends super.A, V = super.A>() {}
+class K { @d p: { a: A = 1 }; }
+type X = { a?: A = 1 };
+class K { @d p: { a?: A = 1 }; }
+class K { @d p: { 1n: A }; }
+class K { @d p: { #a: A }; }
+type X = { ["a" + "b"]: A };
+class K { @d p: { ["a" + "b"]: A }; }
+type X = { [a, b]: A };
+class K { @d p: { [a, b]: A }; }
+class K { @d p: { []: A }; }
+class K { @d p: { [a as B]: A }; }
+class K { @d p: { [k?: string]: A }; }
+class K { @d p: { [...k: string[]]: A }; }
+class K { @d p: { [k: string, l: number]: A }; }
+class K { @d p: { [k: string,]: A }; }
+type X = { [k, l]: A };
+class K { @d p: { [k, l]: A }; }
+type X = { [k?]: A };
+class K { @d p: { [k?]: A }; }
+class K { @d p: { [public k: string]: A }; }
+class K { @d p: { [k = 1]: A }; }
+type X = { get a(): A {} };
+class K { @d p: { get a(): A {} }; }
+interface I<public T> {}
+interface I implements A extends B {}
+interface I extends A, B extends C {}
+async interface I {}
+static interface I {}
+public interface I {}
+interface I extends extends {}
+interface I extends A<B> extends C<D> {}
+type X<const T> = T;
+type X<public T> = T;
+type X<in in T> = T;
+type X<out out T> = T;
+type X<out in T> = T;
+type X<in const T> = T;
+abstract type X = A;
+async type X = A;
+@d type X = A;
+static type X = A;
+type X = (a?: A?) => R;
+class K { @d p: (a?: A?) => R; }
+type X = (...a = []) => R;
+class K { @d p: (...a = []) => R; }
+type X = (...a: A[] = []) => R;
+class K { @d p: (...a: A[] = []) => R; }
+type X = (a?: A = 1) => R;
+class K { @d p: (a?: A = 1) => R; }
+type X = (a? = 1) => R;
+class K { @d p: (a? = 1) => R; }
+type X = ({ ...a = 1 }) => R;
+class K { @d p: ({ ...a = 1 }) => R; }
+type X = (...[a] = []) => R;
+class K { @d p: (...[a] = []) => R; }
+type X = (static a: A) => R;
+class K { @d p: (static a: A) => R; }
+type X = (declare a: A) => R;
+class K { @d p: (declare a: A) => R; }
+type X = (abstract a: A) => R;
+class K { @d p: (abstract a: A) => R; }
+type X = (async a: A) => R;
+class K { @d p: (async a: A) => R; }
+type X = (accessor a: A) => R;
+class K { @d p: (accessor a: A) => R; }
+type X = (export a: A) => R;
+class K { @d p: (export a: A) => R; }
+type X = (in a: A) => R;
+class K { @d p: (in a: A) => R; }
+type X = (out a: A) => R;
+class K { @d p: (out a: A) => R; }
+type X = (readonly public a: A) => R;
+class K { @d p: (readonly public a: A) => R; }
+type X = (public private a: A) => R;
+class K { @d p: (public private a: A) => R; }
+type X = (public public a: A) => R;
+class K { @d p: (public public a: A) => R; }
+type X = (readonly readonly a: A) => R;
+class K { @d p: (readonly readonly a: A) => R; }
+type X = (override public a: A) => R;
+class K { @d p: (override public a: A) => R; }
+type X = (public { a }: A) => R;
+class K { @d p: (public { a }: A) => R; }
+type X = (public [a]: A) => R;
+class K { @d p: (public [a]: A) => R; }
+type X = (public static a) => R;
+class K { @d p: (public static a) => R; }
+type X = (readonly async a) => R;
+class K { @d p: (readonly async a) => R; }
+type X = (a: any) => A?;
+class K { @d p: (a: any) => A?; }
+type X = (a: any) => ?A;
+class K { @d p: (a: any) => ?A; }
+type X = new (a: any) => A?;
+class K { @d p: new (a: any) => A?; }
+type X = new (a: any) => ?A;
+class K { @d p: new (a: any) => ?A; }
+class K { @d p: <in T>() => T; }
+class K { @d p: <out T>() => T; }
+class K { @d p: <in out T>() => T; }
+type X = <const in T>() => T;
+class K { @d p: <const in T>() => T; }
+type X = <public T>() => T;
+class K { @d p: <public T>() => T; }
+type X = <>() => A;
+class K { @d p: <>() => A; }
+type X = new <>() => A;
+class K { @d p: new <>() => A; }
+function f(x: <in T>() => T) {}
+function f(x: any): <in T>() => T { return null as any }
+let f = (x: <in T>() => T) => x;
+let f = (x: any): <in T>() => T => x;
+function f<U extends <in T>() => T, V = <in T>() => T>() {}
+class K { @d m(x: <in T>() => T) {} }
+class K { @d m(x: any): <in T>() => T { return null as any } }
+type X = (a?: A = 1) => B;
+let x: (a?: A = 1) => B;
+function f(x: (a?: A = 1) => B) {}
+function f(x: any): (a?: A = 1) => B { return null as any }
+let f = (x: (a?: A = 1) => B) => x;
+let f = (x: any): (a?: A = 1) => B => x;
+let v = x as (a?: A = 1) => B;
+let v = x satisfies (a?: A = 1) => B;
+let v = <(a?: A = 1) => B>x;
+f<(a?: A = 1) => B>(x);
+function f<U extends (a?: A = 1) => B, V = (a?: A = 1) => B>() {}
+class K { @d p: (a?: A = 1) => B; }
+class K { @d m(x: (a?: A = 1) => B) {} }
+class K { @d m(x: any): (a?: A = 1) => B { return null as any } }
+function f(a?: A?) {}
+function f(...a, b) {}
+function f(...a,) {}
+function f(...a: A[],) {}
+function f(...a = []) {}
+function f(...a: A[] = []) {}
+function f(a = await b) {}
+function f({ ...a = 1 }) {}
+function f([...a,]: A) {}
+function f(...[a] = []) {}
+function f(@d a) {}
+function f(@d a: A) {}
+function f(@d() a: A) {}
+function f(@d @e a: A) {}
+function f(@d.e a) {}
+function f(@(d) a) {}
+function f(@d ...a) {}
+function f(@d { a }) {}
+function f(@d public a: A) {}
+function f(static a: A) {}
+function f(declare a: A) {}
+function f(abstract a: A) {}
+function f(async a: A) {}
+function f(accessor a: A) {}
+function f(export a: A) {}
+function f(in a: A) {}
+function f(out a: A) {}
+function f(readonly public a: A) {}
+function f(public private a: A) {}
+function f(public public a: A) {}
+function f(readonly readonly a: A) {}
+function f(override public a: A) {}
+function f(public ...a: A[]) {}
+function f(public { a }: A) {}
+function f(public [a]: A) {}
+function f(public static a) {}
+function f(readonly async a) {}
+function f(a: any): ?A {}
+class C { m(a?: A?) {} }
+class C { m(...a, b) {} }
+class C { m(...a,) {} }
+class C { m(...a: A[],) {} }
+class C { m(...a = []) {} }
+class C { m(...a: A[] = []) {} }
+class C { m(a = await b) {} }
+class C { m({ ...a = 1 }) {} }
+class C { m([...a,]: A) {} }
+class C { m(...[a] = []) {} }
+class C { constructor(a?: A?) {} }
+class C { constructor(...a, b) {} }
+class C { constructor(...a,) {} }
+class C { constructor(...a: A[],) {} }
+class C { constructor(...a = []) {} }
+class C { constructor(...a: A[] = []) {} }
+class C { constructor(a = await b) {} }
+class C { constructor({ ...a = 1 }) {} }
+class C { constructor([...a,]: A) {} }
+class C { constructor(...[a] = []) {} }
+var v = { m(a?: A?) {} };
+var v = { m(...a, b) {} };
+var v = { m(...a,) {} };
+var v = { m(...a: A[],) {} };
+var v = { m(...a = []) {} };
+var v = { m(...a: A[] = []) {} };
+var v = { m(a = await b) {} };
+var v = { m({ ...a = 1 }) {} };
+var v = { m([...a,]: A) {} };
+var v = { m(...[a] = []) {} };
+var v = function (a?: A?) {};
+var v = function (...a, b) {};
+var v = function (...a,) {};
+var v = function (...a: A[],) {};
+var v = function (...a = []) {};
+var v = function (...a: A[] = []) {};
+var v = function (a = await b) {};
+var v = function ({ ...a = 1 }) {};
+var v = function ([...a,]: A) {};
+var v = function (...[a] = []) {};
+function f<>() {}
+function f<T extends !a>() {}
+function f<in T>() {}
+function f<out T>() {}
+function f<in out T>() {}
+function f<out in T>() {}
+function f<in in T>() {}
+function f<out out T>() {}
+function f<in out in T>() {}
+function f<in out>() {}
+function f<out out>() {}
+function f<in T, out U>() {}
+function f<in out T, U>() {}
+function f<const in T>() {}
+function f<in const T>() {}
+function f<const out T>() {}
+function f<const in out T>() {}
+function f<public T>() {}
+function f<private T>() {}
+function f<protected T>() {}
+function f<readonly T>() {}
+function f<static T>() {}
+function f<abstract T>() {}
+function f<declare T>() {}
+function f<override T>() {}
+function f<async T>() {}
+function f<accessor T>() {}
+var v = function <>() {};
+var v = function <T extends !a>() {};
+var v = function <in T>() {};
+var v = function <out T>() {};
+var v = function <in out T>() {};
+var v = function <out in T>() {};
+var v = function <in in T>() {};
+var v = function <out out T>() {};
+var v = function <in out in T>() {};
+var v = function <in out>() {};
+var v = function <out out>() {};
+var v = function <in T, out U>() {};
+var v = function <in out T, U>() {};
+var v = function <const in T>() {};
+var v = function <in const T>() {};
+var v = function <const out T>() {};
+var v = function <const in out T>() {};
+var v = function <public T>() {};
+var v = function <private T>() {};
+var v = function <protected T>() {};
+var v = function <readonly T>() {};
+var v = function <static T>() {};
+var v = function <abstract T>() {};
+var v = function <declare T>() {};
+var v = function <override T>() {};
+var v = function <async T>() {};
+var v = function <accessor T>() {};
+function* f<>() {}
+function* f<T extends !a>() {}
+function* f<in T>() {}
+function* f<out T>() {}
+function* f<in out T>() {}
+function* f<out in T>() {}
+function* f<in in T>() {}
+function* f<out out T>() {}
+function* f<in out in T>() {}
+function* f<in out>() {}
+function* f<out out>() {}
+function* f<in T, out U>() {}
+function* f<in out T, U>() {}
+function* f<const in T>() {}
+function* f<in const T>() {}
+function* f<const out T>() {}
+function* f<const in out T>() {}
+function* f<public T>() {}
+function* f<private T>() {}
+function* f<protected T>() {}
+function* f<readonly T>() {}
+function* f<static T>() {}
+function* f<abstract T>() {}
+function* f<declare T>() {}
+function* f<override T>() {}
+function* f<async T>() {}
+function* f<accessor T>() {}
+async function f<>() {}
+async function f<T extends !a>() {}
+async function f<in T>() {}
+async function f<out T>() {}
+async function f<in out T>() {}
+async function f<out in T>() {}
+async function f<in in T>() {}
+async function f<out out T>() {}
+async function f<in out in T>() {}
+async function f<in out>() {}
+async function f<out out>() {}
+async function f<in T, out U>() {}
+async function f<in out T, U>() {}
+async function f<const in T>() {}
+async function f<in const T>() {}
+async function f<const out T>() {}
+async function f<const in out T>() {}
+async function f<public T>() {}
+async function f<private T>() {}
+async function f<protected T>() {}
+async function f<readonly T>() {}
+async function f<static T>() {}
+async function f<abstract T>() {}
+async function f<declare T>() {}
+async function f<override T>() {}
+async function f<async T>() {}
+async function f<accessor T>() {}
+var v = <T extends !a>() => 1;
+var v = <out T>() => 1;
+var v = <out in T>() => 1;
+var v = <out out T>() => 1;
+var v = <out out>() => 1;
+var v = <const in T>() => 1;
+var v = <const out T>() => 1;
+var v = <const in out T>() => 1;
+var v = <public T>() => 1;
+var v = <private T>() => 1;
+var v = <protected T>() => 1;
+var v = <static T>() => 1;
+var v = <abstract T>() => 1;
+var v = <declare T>() => 1;
+var v = <override T>() => 1;
+var v = <async T>() => 1;
+var v = <accessor T>() => 1;
+var v = async <T extends !a>() => 1;
+var v = async <out T>() => 1;
+var v = async <out in T>() => 1;
+var v = async <out out T>() => 1;
+var v = async <out out>() => 1;
+var v = async <const in T>() => 1;
+var v = async <const out T>() => 1;
+var v = async <const in out T>() => 1;
+var v = async <public T>() => 1;
+var v = async <private T>() => 1;
+var v = async <protected T>() => 1;
+var v = async <readonly T>() => 1;
+var v = async <static T>() => 1;
+var v = async <abstract T>() => 1;
+var v = async <declare T>() => 1;
+var v = async <override T>() => 1;
+var v = async <async T>() => 1;
+var v = async <accessor T>() => 1;
+class C { m<>() {} }
+class C { m<T extends !a>() {} }
+class C { m<in T>() {} }
+class C { m<out T>() {} }
+class C { m<in out T>() {} }
+class C { m<out in T>() {} }
+class C { m<in in T>() {} }
+class C { m<out out T>() {} }
+class C { m<in out in T>() {} }
+class C { m<in out>() {} }
+class C { m<out out>() {} }
+class C { m<in T, out U>() {} }
+class C { m<in out T, U>() {} }
+class C { m<const in T>() {} }
+class C { m<in const T>() {} }
+class C { m<const out T>() {} }
+class C { m<const in out T>() {} }
+class C { m<public T>() {} }
+class C { m<private T>() {} }
+class C { m<protected T>() {} }
+class C { m<readonly T>() {} }
+class C { m<static T>() {} }
+class C { m<abstract T>() {} }
+class C { m<declare T>() {} }
+class C { m<override T>() {} }
+class C { m<async T>() {} }
+class C { m<accessor T>() {} }
+class C { static m<>() {} }
+class C { static m<T extends !a>() {} }
+class C { static m<in T>() {} }
+class C { static m<out T>() {} }
+class C { static m<in out T>() {} }
+class C { static m<out in T>() {} }
+class C { static m<in in T>() {} }
+class C { static m<out out T>() {} }
+class C { static m<in out in T>() {} }
+class C { static m<in out>() {} }
+class C { static m<out out>() {} }
+class C { static m<in T, out U>() {} }
+class C { static m<in out T, U>() {} }
+class C { static m<const in T>() {} }
+class C { static m<in const T>() {} }
+class C { static m<const out T>() {} }
+class C { static m<const in out T>() {} }
+class C { static m<public T>() {} }
+class C { static m<private T>() {} }
+class C { static m<protected T>() {} }
+class C { static m<readonly T>() {} }
+class C { static m<static T>() {} }
+class C { static m<abstract T>() {} }
+class C { static m<declare T>() {} }
+class C { static m<override T>() {} }
+class C { static m<async T>() {} }
+class C { static m<accessor T>() {} }
+var v = { m<>() {} };
+var v = { m<T extends !a>() {} };
+var v = { m<in T>() {} };
+var v = { m<out T>() {} };
+var v = { m<in out T>() {} };
+var v = { m<out in T>() {} };
+var v = { m<in in T>() {} };
+var v = { m<out out T>() {} };
+var v = { m<in out in T>() {} };
+var v = { m<in out>() {} };
+var v = { m<out out>() {} };
+var v = { m<in T, out U>() {} };
+var v = { m<in out T, U>() {} };
+var v = { m<const in T>() {} };
+var v = { m<in const T>() {} };
+var v = { m<const out T>() {} };
+var v = { m<const in out T>() {} };
+var v = { m<public T>() {} };
+var v = { m<private T>() {} };
+var v = { m<protected T>() {} };
+var v = { m<readonly T>() {} };
+var v = { m<static T>() {} };
+var v = { m<abstract T>() {} };
+var v = { m<declare T>() {} };
+var v = { m<override T>() {} };
+var v = { m<async T>() {} };
+var v = { m<accessor T>() {} };
+class C<T extends !a> {}
+class C<out in T> {}
+class C<in in T> {}
+class C<out out T> {}
+class C<in out in T> {}
+class C<public T> {}
+class C<private T> {}
+class C<protected T> {}
+class C<readonly T> {}
+class C<static T> {}
+class C<abstract T> {}
+class C<declare T> {}
+class C<override T> {}
+class C<async T> {}
+class C<accessor T> {}
+var v = class <> {};
+var v = class <T extends !a> {};
+var v = class <out in T> {};
+var v = class <in in T> {};
+var v = class <out out T> {};
+var v = class <in out in T> {};
+var v = class <public T> {};
+var v = class <private T> {};
+var v = class <protected T> {};
+var v = class <readonly T> {};
+var v = class <static T> {};
+var v = class <abstract T> {};
+var v = class <declare T> {};
+var v = class <override T> {};
+var v = class <async T> {};
+var v = class <accessor T> {};
+var v = class C<> {};
+var v = class C<T extends !a> {};
+var v = class C<out in T> {};
+var v = class C<in in T> {};
+var v = class C<out out T> {};
+var v = class C<in out in T> {};
+var v = class C<public T> {};
+var v = class C<private T> {};
+var v = class C<protected T> {};
+var v = class C<readonly T> {};
+var v = class C<static T> {};
+var v = class C<abstract T> {};
+var v = class C<declare T> {};
+var v = class C<override T> {};
+var v = class C<async T> {};
+var v = class C<accessor T> {};
+interface I<T extends !a> {}
+interface I<const T extends A> {}
+interface I<const T = A> {}
+interface I<const T, const U> {}
+interface I<const const T> {}
+interface I<out in T> {}
+interface I<in in T> {}
+interface I<out out T> {}
+interface I<in out in T> {}
+interface I<const in T> {}
+interface I<in const T> {}
+interface I<const out T> {}
+interface I<const in out T> {}
+interface I<private T> {}
+interface I<protected T> {}
+interface I<readonly T> {}
+interface I<static T> {}
+interface I<abstract T> {}
+interface I<declare T> {}
+interface I<override T> {}
+interface I<async T> {}
+interface I<accessor T> {}
+type X<T extends !a> = 1;
+type X<const T> = 1;
+type X<const T extends A> = 1;
+type X<const T = A> = 1;
+type X<const T, const U> = 1;
+type X<const const T> = 1;
+type X<out in T> = 1;
+type X<in in T> = 1;
+type X<out out T> = 1;
+type X<in out in T> = 1;
+type X<const in T> = 1;
+type X<in const T> = 1;
+type X<const out T> = 1;
+type X<const in out T> = 1;
+type X<public T> = 1;
+type X<private T> = 1;
+type X<protected T> = 1;
+type X<readonly T> = 1;
+type X<static T> = 1;
+type X<abstract T> = 1;
+type X<declare T> = 1;
+type X<override T> = 1;
+type X<async T> = 1;
+type X<accessor T> = 1;
+type X = <T extends !a>() => void;
+type X = <in T>() => void;
+type X = <out T>() => void;
+type X = <in out T>() => void;
+type X = <out in T>() => void;
+type X = <in in T>() => void;
+type X = <out out T>() => void;
+type X = <in out in T>() => void;
+type X = <in out>() => void;
+type X = <out out>() => void;
+type X = <in T, out U>() => void;
+type X = <in out T, U>() => void;
+type X = <const in T>() => void;
+type X = <in const T>() => void;
+type X = <const out T>() => void;
+type X = <const in out T>() => void;
+type X = <public T>() => void;
+type X = <private T>() => void;
+type X = <protected T>() => void;
+type X = <readonly T>() => void;
+type X = <static T>() => void;
+type X = <abstract T>() => void;
+type X = <declare T>() => void;
+type X = <override T>() => void;
+type X = <async T>() => void;
+type X = <accessor T>() => void;
+type X = new <T extends !a>() => A;
+type X = new <in T>() => A;
+type X = new <out T>() => A;
+type X = new <in out T>() => A;
+type X = new <out in T>() => A;
+type X = new <in in T>() => A;
+type X = new <out out T>() => A;
+type X = new <in out in T>() => A;
+type X = new <in out>() => A;
+type X = new <out out>() => A;
+type X = new <in T, out U>() => A;
+type X = new <in out T, U>() => A;
+type X = new <const in T>() => A;
+type X = new <in const T>() => A;
+type X = new <const out T>() => A;
+type X = new <const in out T>() => A;
+type X = new <public T>() => A;
+type X = new <private T>() => A;
+type X = new <protected T>() => A;
+type X = new <readonly T>() => A;
+type X = new <static T>() => A;
+type X = new <abstract T>() => A;
+type X = new <declare T>() => A;
+type X = new <override T>() => A;
+type X = new <async T>() => A;
+type X = new <accessor T>() => A;
+type X = { <>(): void };
+type X = { <T extends !a>(): void };
+type X = { <in T>(): void };
+type X = { <out T>(): void };
+type X = { <in out T>(): void };
+type X = { <out in T>(): void };
+type X = { <in in T>(): void };
+type X = { <out out T>(): void };
+type X = { <in out in T>(): void };
+type X = { <in out>(): void };
+type X = { <out out>(): void };
+type X = { <in T, out U>(): void };
+type X = { <in out T, U>(): void };
+type X = { <const in T>(): void };
+type X = { <in const T>(): void };
+type X = { <const out T>(): void };
+type X = { <const in out T>(): void };
+type X = { <public T>(): void };
+type X = { <private T>(): void };
+type X = { <protected T>(): void };
+type X = { <readonly T>(): void };
+type X = { <static T>(): void };
+type X = { <abstract T>(): void };
+type X = { <declare T>(): void };
+type X = { <override T>(): void };
+type X = { <async T>(): void };
+type X = { <accessor T>(): void };
+type X = { new <>(): A };
+type X = { new <T extends !a>(): A };
+type X = { new <in T>(): A };
+type X = { new <out T>(): A };
+type X = { new <in out T>(): A };
+type X = { new <out in T>(): A };
+type X = { new <in in T>(): A };
+type X = { new <out out T>(): A };
+type X = { new <in out in T>(): A };
+type X = { new <in out>(): A };
+type X = { new <out out>(): A };
+type X = { new <in T, out U>(): A };
+type X = { new <in out T, U>(): A };
+type X = { new <const in T>(): A };
+type X = { new <in const T>(): A };
+type X = { new <const out T>(): A };
+type X = { new <const in out T>(): A };
+type X = { new <public T>(): A };
+type X = { new <private T>(): A };
+type X = { new <protected T>(): A };
+type X = { new <readonly T>(): A };
+type X = { new <static T>(): A };
+type X = { new <abstract T>(): A };
+type X = { new <declare T>(): A };
+type X = { new <override T>(): A };
+type X = { new <async T>(): A };
+type X = { new <accessor T>(): A };
+type X = { m<>(): void };
+type X = { m<T extends !a>(): void };
+type X = { m<in T>(): void };
+type X = { m<out T>(): void };
+type X = { m<in out T>(): void };
+type X = { m<out in T>(): void };
+type X = { m<in in T>(): void };
+type X = { m<out out T>(): void };
+type X = { m<in out in T>(): void };
+type X = { m<in out>(): void };
+type X = { m<out out>(): void };
+type X = { m<in T, out U>(): void };
+type X = { m<in out T, U>(): void };
+type X = { m<const in T>(): void };
+type X = { m<in const T>(): void };
+type X = { m<const out T>(): void };
+type X = { m<const in out T>(): void };
+type X = { m<public T>(): void };
+type X = { m<private T>(): void };
+type X = { m<protected T>(): void };
+type X = { m<readonly T>(): void };
+type X = { m<static T>(): void };
+type X = { m<abstract T>(): void };
+type X = { m<declare T>(): void };
+type X = { m<override T>(): void };
+type X = { m<async T>(): void };
+type X = { m<accessor T>(): void };
+declare function f<>(): void;
+declare function f<T extends !a>(): void;
+declare function f<in T>(): void;
+declare function f<out T>(): void;
+declare function f<in out T>(): void;
+declare function f<out in T>(): void;
+declare function f<in in T>(): void;
+declare function f<out out T>(): void;
+declare function f<in out in T>(): void;
+declare function f<in out>(): void;
+declare function f<out out>(): void;
+declare function f<in T, out U>(): void;
+declare function f<in out T, U>(): void;
+declare function f<const in T>(): void;
+declare function f<in const T>(): void;
+declare function f<const out T>(): void;
+declare function f<const in out T>(): void;
+declare function f<public T>(): void;
+declare function f<private T>(): void;
+declare function f<protected T>(): void;
+declare function f<readonly T>(): void;
+declare function f<static T>(): void;
+declare function f<abstract T>(): void;
+declare function f<declare T>(): void;
+declare function f<override T>(): void;
+declare function f<async T>(): void;
+declare function f<accessor T>(): void;
+declare class C<> {}
+declare class C<T extends !a> {}
+declare class C<out in T> {}
+declare class C<in in T> {}
+declare class C<out out T> {}
+declare class C<in out in T> {}
+declare class C<public T> {}
+declare class C<private T> {}
+declare class C<protected T> {}
+declare class C<readonly T> {}
+declare class C<static T> {}
+declare class C<abstract T> {}
+declare class C<declare T> {}
+declare class C<override T> {}
+declare class C<async T> {}
+declare class C<accessor T> {}
+f<A?>();
+f<?A>();
+f<*>();
+f<!a>();
+new C<A?>(x);
+new C<?A>(x);
+new C<*>(x);
+new C<A?>;
+new C<?A>;
+new C<*>;
+new C<!a>;
+f<A?>`t`;
+f<?A>`t`;
+f<*>`t`;
+f<A?>`t${x}u`;
+f<?A>`t${x}u`;
+f<*>`t${x}u`;
+a.b<A?>(x);
+a.b<?A>(x);
+a.b<*>(x);
+a?.b<A?>(x);
+a?.b<?A>(x);
+a?.b<*>(x);
+a?.<A,>(x);
+a?.<>(x);
+a?.<A?>(x);
+a?.<?A>(x);
+a?.<*>(x);
+a?.<!a>(x);
+a[b]<A?>(x);
+a[b]<?A>(x);
+a[b]<*>(x);
+f(x)<A?>(y);
+f(x)<?A>(y);
+f(x)<*>(y);
+class C extends D<A,> {}
+class C extends D<> {}
+class C extends D<A?> {}
+class C extends D<?A> {}
+class C extends D<*> {}
+class C extends D<!a> {}
+class C extends D.E<A,> {}
+class C extends D.E<> {}
+class C extends D.E<A?> {}
+class C extends D.E<?A> {}
+class C extends D.E<*> {}
+class C extends D.E<!a> {}
+class C implements I<A,> {}
+class C implements I<> {}
+class C implements I<A?> {}
+class C implements I<?A> {}
+class C implements I<*> {}
+class C implements I<!a> {}
+interface I extends J<A,> {}
+interface I extends J<> {}
+interface I extends J<A?> {}
+interface I extends J<?A> {}
+interface I extends J<*> {}
+interface I extends J<!a> {}
+let v: A<A,>;
+let v: A<>;
+let v: A<A?>;
+let v: A<?A>;
+let v: A<*>;
+let v: A<!a>;
+let v: A.B<A,>;
+let v: A.B<>;
+let v: A.B<A?>;
+let v: A.B<?A>;
+let v: A.B<*>;
+let v: A.B<!a>;
+let v: typeof a<A,>;
+let v: typeof a<>;
+let v: typeof a<A?>;
+let v: typeof a<?A>;
+let v: typeof a<*>;
+let v: typeof a<!a>;
+var v = f<A?>;
+var v = f<?A>;
+var v = f<*>;
+var v = f<!a>;
+@d<A,>() class C {}
+@d<>() class C {}
+@d<A?>() class C {}
+@d<?A>() class C {}
+@d<*>() class C {}
+@d<!a>() class C {}
+x as ?A
+x as A?
+x as *
+try {} catch (e = 1) {}
+let a: A?;
+let a: ?A;
+const a;
+var v = <A?>x;
+var v = <?A>x;
+var v = <*>x;
+var v = <out T>(a: T) => a;
+var v = <const in T>(a: T) => a;
+var v = <public T>(a: T) => a;
+var v = <static T>(a: T) => a;
+var v = <abstract T>(a: T) => a;
+var v = <async T>(a: T) => a;
+<A?>x
+<?A>x
+<*>x
+<out T>(a: T) => a
+<const in T>(a: T) => a
+<public T>(a: T) => a
+<static T>(a: T) => a
+<abstract T>(a: T) => a
+<async T>(a: T) => a
+var v = (a?: A?) => 1;
+var v = (...a, b) => 1;
+var v = (...a,) => 1;
+var v = (...a: A[],) => 1;
+var v = (...a = []) => 1;
+var v = (...a: A[] = []) => 1;
+var v = (a? = 1) => 1;
+var v = ([...a,]: A) => 1;
+var v = (...[a] = []) => 1;
+var v = (static a: A) => 1;
+var v = (declare a: A) => 1;
+var v = (abstract a: A) => 1;
+var v = (accessor a: A) => 1;
+var v = (export a: A) => 1;
+var v = (in a: A) => 1;
+var v = (out a: A) => 1;
+var v = (readonly public a: A) => 1;
+var v = (public private a: A) => 1;
+var v = (public public a: A) => 1;
+var v = (readonly readonly a: A) => 1;
+var v = (override public a: A) => 1;
+var v = (public static a) => 1;
+var v = (readonly async a) => 1;
+var v = async (a?: A?) => 1;
+var v = async (...a, b) => 1;
+var v = async (...a,) => 1;
+var v = async (...a: A[],) => 1;
+var v = async (...a = []) => 1;
+var v = async (...a: A[] = []) => 1;
+var v = async (a? = 1) => 1;
+var v = async ([...a,]: A) => 1;
+var v = async (...[a] = []) => 1;
+var v = (a: any): A? => a;
+var v = (a: any): ?A => a;
+var v = (a): A? => a;
+var v = (a): ?A => a;
+var v = (): A? => 1;
+var v = (): ?A => 1;
+var v = async (a: any): A? => a;
+var v = async (a: any): ?A => a;
+var v = (a: any): A? => { return a };
+var v = (a: any): ?A => { return a };
+var v = c ? (a): A? => a : d;
+var v = c ? (a): ?A => a : d;
+var v = c ? (a: any): A? => a : d;
+var v = c ? (a: any): ?A => a : d;
+a?.<b>`t`
+a < b > #c in d
+import<A>('m')
+class C extends A<B>, C<D> {}
+class C extends A, {}
+class C extends  {}
+class C extends A<> {}
+class C extends A<B,> {}
+var v = class extends A, B {};
+var v = class extends A<B>, C<D> {};
+var v = class extends A, {};
+var v = class extends  {};
+var v = class extends A<> {};
+var v = class extends A<B,> {};
+class C extends D implements A, {}
+class C extends D implements  {}
+class C extends D implements A<> {}
+class C extends D implements A<B,> {}
+class C implements I extends D {}
+class C extends D extends E {}
+class C implements I implements J {}
+class C extends D implements I extends E {}
+class C extends D, E {}
+class C extends {}
+class C extends implements I {}
+class C implements extends D {}
+class implements I {}
+class extends D {}
+abstract var a;
+abstract namespace N {}
+abstract type X = 1;
+async class C {}
+static class C {}
+public class C {}
+private class C {}
+readonly class C {}
+accessor class C {}
+export public class C {}
+export static class C {}
+var v = { m(): void };
+var v = { m(); };
+import type A, { B } from "m";
+import type A, * as B from "m";
+import defer a from "m";
+import defer { a } from "m";
+import defer from from "m";
+import<A>("m");
+declare export = A;
+@d export = A;
+{ export = A }
+function f() { export = A }
+if (a) export = A;
+@d export as namespace A;
+declare export default class {}
+declare export { a };
+declare export * from 'm';
+export using a: A = b;
+export export const a = 1;
+export import a from 'm';
+export import 'm';
+export import * as a from 'm';
+export import { a } from 'm';
+declare using a = b;
+declare var
+declare var;
+declare const
+declare let
+declare function f(...a, b): void;
+declare function f(@d a: A): void;
+declare class {}
+declare namespace N { return }
+module "m" {}
+module "m";
+module "m"
+export module "m" {}
+declare import a from 'm';
+declare import 'm';
+declare public class C {}
+declare static const a: A;
+namespace N { export default a }
+namespace N { return }
+namespace N { await a }
+namespace N { break }
+namespace N { export using a = b }
+namespace N { export export const a = 1 }
+namespace N { export default class {} }
+async namespace N {}
+static namespace N {}
+public namespace N {}
+readonly namespace N {}
+for (;;) namespace N {}
+function f() { module M {} }
+{ module M {} }
+namespace N { { namespace M {} } }
+namespace N { function f() { namespace M {} } }
+enum E { A = await 1 }
+async enum E {}
+static enum E {}
+public enum E {}
+readonly enum E {}
+@d export @e class C {}
+@d export default @e class C {}
+export @d default class C {}
+var v = @d abstract class {};
+@d async function f() {}
+@d var a = 1;
+@d let a = 1;
+@d const a = 1;
+@d const enum E {}
+@d module M {}
+@d declare const a: A;
+@d import a from 'm';
+@d import 'm';
+@d export { a };
+@d export * from 'm';
+@d export default a;
+@d export default function f() {}
+@d export const a = 1;
+@d export function f() {}
+@d export = a;
+class C { @d constructor() {} }
+var v = function (@d a) {};
+var v = { m(@d a) {} };
+type X = { m(@d a: A): void };
+interface I { m(@d a: A): void }
+@d().e class C {}
+@d()() class C {}
+@d`t` class C {}
+@d.e`t` class C {}
+@d<A>`t` class C {}
+@(d.e)() class C {}
+@(d as any)() class C {}
+@(d)() class C {}
+@(d).e class C {}
+@(d)<A>() class C {}
+@(yield d) class C {}
+@d?.() class C {}
+@d?.[e] class C {}
+@d.e?.f class C {}
+@d()?.e class C {}
+@new D() class C {}
+@new D class C {}
+@new D.E() class C {}
+@new (D)() class C {}
+@class {} class C {}
+@function () {} class C {}
+@this class C {}
+@this.d class C {}
+@this.d() class C {}
+@super.d class C {}
+@super.d() class C {}
+@d.#e class C {}
+@d.#e() class C {}
+@#d class C {}
+@1 class C {}
+@"s" class C {}
+@`t` class C {}
+@[d] class C {}
+@{} class C {}
+@{ d } class C {}
+@import.meta.d class C {}
+@import.meta class C {}
+@import('m') class C {}
+@new.target class C {}
+@null class C {}
+@true class C {}
+@d().e().f() class C {}
+@d<A>().e<B>() class C {}
+class C { @d().e m() {} }
+class C { @d()() m() {} }
+class C { @d`t` m() {} }
+class C { @d.e`t` m() {} }
+class C { @d<A>`t` m() {} }
+class C { @(d.e)() m() {} }
+class C { @(d as any)() m() {} }
+class C { @(d)() m() {} }
+class C { @(d).e m() {} }
+class C { @(d)<A>() m() {} }
+class C { @(yield d) m() {} }
+class C { @d?.e m() {} }
+class C { @d?.() m() {} }
+class C { @d?.[e] m() {} }
+class C { @d.e?.f m() {} }
+class C { @d()?.e m() {} }
+class C { @new D() m() {} }
+class C { @new D m() {} }
+class C { @new D.E() m() {} }
+class C { @new (D)() m() {} }
+class C { @class {} m() {} }
+class C { @function () {} m() {} }
+class C { @this m() {} }
+class C { @this.d m() {} }
+class C { @this.d() m() {} }
+class C { @super.d m() {} }
+class C { @super.d() m() {} }
+class C { @#d m() {} }
+class C { @1 m() {} }
+class C { @"s" m() {} }
+class C { @`t` m() {} }
+class C { @[d] m() {} }
+class C { @{} m() {} }
+class C { @{ d } m() {} }
+class C { @import.meta.d m() {} }
+class C { @import.meta m() {} }
+class C { @import('m') m() {} }
+class C { @new.target m() {} }
+class C { @null m() {} }
+class C { @true m() {} }
+class C { @d().e().f() m() {} }
+class C { @d<A>().e<B>() m() {} }
+class C { @d().e a }
+class C { @d()() a }
+class C { @d`t` a }
+class C { @d.e`t` a }
+class C { @d<A>`t` a }
+class C { @(d.e)() a }
+class C { @(d as any)() a }
+class C { @(d)() a }
+class C { @(d).e a }
+class C { @(d)<A>() a }
+class C { @(yield d) a }
+class C { @d?.e a }
+class C { @d?.() a }
+class C { @d?.[e] a }
+class C { @d.e?.f a }
+class C { @d()?.e a }
+class C { @new D() a }
+class C { @new D a }
+class C { @new D.E() a }
+class C { @new (D)() a }
+class C { @class {} a }
+class C { @function () {} a }
+class C { @this a }
+class C { @this.d a }
+class C { @this.d() a }
+class C { @super.d a }
+class C { @super.d() a }
+class C { @#d a }
+class C { @1 a }
+class C { @"s" a }
+class C { @`t` a }
+class C { @[d] a }
+class C { @{} a }
+class C { @{ d } a }
+class C { @import.meta.d a }
+class C { @import.meta a }
+class C { @import('m') a }
+class C { @new.target a }
+class C { @null a }
+class C { @true a }
+class C { @d().e().f() a }
+class C { @d<A>().e<B>() a }
+class C { m(@d().e a) {} }
+class C { m(@d()() a) {} }
+class C { m(@d`t` a) {} }
+class C { m(@d.e`t` a) {} }
+class C { m(@d<A>`t` a) {} }
+class C { m(@(d.e)() a) {} }
+class C { m(@(d as any)() a) {} }
+class C { m(@(d)() a) {} }
+class C { m(@(d).e a) {} }
+class C { m(@(d)<A>() a) {} }
+class C { m(@(await d) a) {} }
+class C { m(@(yield d) a) {} }
+class C { m(@d?.e a) {} }
+class C { m(@d?.() a) {} }
+class C { m(@d?.[e] a) {} }
+class C { m(@d.e?.f a) {} }
+class C { m(@d()?.e a) {} }
+class C { m(@new D() a) {} }
+class C { m(@new D a) {} }
+class C { m(@new D.E() a) {} }
+class C { m(@new (D)() a) {} }
+class C { m(@class {} a) {} }
+class C { m(@function () {} a) {} }
+class C { m(@this a) {} }
+class C { m(@this.d a) {} }
+class C { m(@this.d() a) {} }
+class C { m(@super.d a) {} }
+class C { m(@super.d() a) {} }
+class C { m(@yield a) {} }
+class C { m(@d.#e a) {} }
+class C { m(@d.#e() a) {} }
+class C { m(@#d a) {} }
+class C { m(@1 a) {} }
+class C { m(@"s" a) {} }
+class C { m(@`t` a) {} }
+class C { m(@[d] a) {} }
+class C { m(@{} a) {} }
+class C { m(@{ d } a) {} }
+class C { m(@import.meta.d a) {} }
+class C { m(@import.meta a) {} }
+class C { m(@import('m') a) {} }
+class C { m(@new.target a) {} }
+class C { m(@static a) {} }
+class C { m(@let a) {} }
+class C { m(@yield() a) {} }
+class C { m(@null a) {} }
+class C { m(@true a) {} }
+class C { m(@d().e().f() a) {} }
+class C { m(@d<A>().e<B>() a) {} }

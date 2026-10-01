@@ -1,0 +1,29 @@
+grammar-diff-oracle-and-causes, lens "start from the goal". Round 2, part A1 (preparation). Nothing here is committed to the worktree.
+Binaries used: base = saved runs of e3566be889 (measure/base/grammar-diff) and the installed release 367d939d9 (no accept/reject
+difference to e3566be889 on both corpora); head = build/debug/bun-debug of be1ebe5295, one worker process at a time.
+typescript 6.0.2. The scratch directory was /tmp/gdo: the helper scripts under check/ name paths there.
+
+for-grammar-diff/          copy these over ../grammar-diff/ (they import ./harness.mjs and ../probes/metadata.mjs)
+  oracle.mjs               + chk (grammar errors of the checker per dialect and decorator mode) and oth (other codes); exports check, parseAs, recordOf, GRAMMAR_CODES
+  causes.mjs               the cause list: ruling / forbidden / metadata / R>R / named R>A entries
+  diff.mjs                 match() may return a string; marks !! (forbidden) and ?? (ruling); exit 1 / 3 / 0
+  harvest.mjs              <base bun> harvest.mjs > targeted/09-checker-grammar.txt
+  targeted/09-checker-grammar.txt   1,547 lines made with the installed release: tsc parses, checker grammar error, base rejects
+
+runs/                      what the head does, measured
+  installed.targeted.jsonl.gz, head-debug.targeted.jsonl.gz, oracle.targeted.jsonl.gz      targeted corpus with file 09 (3,952 sources)
+  corpus.small-sub.json, base.small-sub.jsonl.gz, head-debug.small-sub.jsonl.gz, oracle.small-sub.jsonl.gz
+                           7,089 sources of corpus.small: every source the base rejects and tsc parses, every source whose base
+                           metadata differs from tsc, and a sample of 1,723 accepted and 588 rejected others (check/subcorpus.mjs)
+  corpus.testrows.json, base.testrows.jsonl.gz, head-debug.testrows.jsonl.gz, oracle.testrows.jsonl.gz, testrows.base.json
+                           the 301 sources of the 366 rows of the four typescript-grammar*.test.ts files
+  diff.head-debug.*.txt    the tables of diff.mjs for the three pairs
+
+check/                     how the pieces were made and checked
+  codeset.py, codeset3.py, final-codes.json    the code list from typescript-go (grammarchecks.go; grammarError* and checkGrammar* calls elsewhere)
+  tsgrammar.mjs, batch.mjs, validate-list.mjs  typescript.js with its five grammarError* functions instrumented, against the code list (118,292 programs)
+  testrows.mjs, testrows-base.mjs, rowsim.mjs, fake-next.mjs   the test rows as records of diff.mjs
+  sim.mjs, meta-pred.mjs   what the cause list would own if the head accepted everything tsc parses (upper bounds from the base run)
+  subcorpus.mjs, chunks.sh, assemble.mjs       the subset of corpus.small and the one-process runs of the debug binary
+  jscheck.mjs, jscmp.mjs   the same sources under the js and jsx loaders, base against head
+  verify-lines.mjs, chk-lib.mjs, cand1.txt, cand2.txt, unit.mjs, lib.mjs   single-line checks and cases of the helpers of causes.mjs

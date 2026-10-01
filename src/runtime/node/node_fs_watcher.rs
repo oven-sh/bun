@@ -334,7 +334,7 @@ pub(crate) type EventPathString = Box<[u8]>;
 /// The kind of change a watcher backend reports for a path, before it becomes a JS event.
 /// Every backend (inotify, kqueue, FSEvents, Windows) produces exactly these two.
 #[derive(Copy, Clone, Default, Eq, PartialEq, strum::IntoStaticStr)]
-pub enum WatchEventKind {
+pub(crate) enum WatchEventKind {
     #[strum(serialize = "rename")]
     Rename,
     #[strum(serialize = "change")]
@@ -368,7 +368,7 @@ pub(crate) enum Event {
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, core::marker::ConstParamTy, strum::IntoStaticStr)]
-pub enum EventType {
+pub(crate) enum EventType {
     Rename = 0,
     Change = 1,
     Error = 2,
@@ -376,7 +376,7 @@ pub enum EventType {
 }
 
 impl EventType {
-    pub fn to_js(self, global_object: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_js(self, global_object: &JSGlobalObject) -> JSValue {
         Bun__domEventNameToJS(global_object, self)
     }
 }

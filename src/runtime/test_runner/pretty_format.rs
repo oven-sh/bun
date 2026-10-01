@@ -49,7 +49,7 @@ mod expect_js {
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
-pub enum EventType {
+pub(crate) enum EventType {
     Event,
     MessageEvent,
     CloseEvent,
@@ -303,7 +303,7 @@ pub(crate) mod visited {
     // list, capped at 16 nodes. `object_pool!` wires the per-monomorphization
     // storage; without it `ObjectPool<Map, true, 16>` defaults to
     // `UnwiredStorage` which panics on first `get_node()`.
-    bun_collections::object_pool!(pub Pool: Map, threadsafe, 16);
+    bun_collections::object_pool!(pub(crate) Pool: Map, threadsafe, 16);
     pub(crate) type PoolNode = bun_collections::pool::Node<Map>;
 }
 

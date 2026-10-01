@@ -786,7 +786,7 @@ impl TemplateFile {
 
 #[derive(Clone, Copy, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
-pub enum Reason {
+pub(crate) enum Reason {
     Shadcn,
     Bun,
     Css,

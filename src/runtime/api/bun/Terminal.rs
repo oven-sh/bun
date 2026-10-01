@@ -163,7 +163,7 @@ pub(crate) struct Terminal {
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Default)]
-    pub struct Flags: u8 {
+    pub(crate) struct Flags: u8 {
         const CLOSED         = 1 << 0;
         const FINALIZED      = 1 << 1;
         const RAW_MODE       = 1 << 2;
@@ -302,7 +302,7 @@ pub(crate) struct CreateResult {
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum InitError {
+pub(crate) enum InitError {
     #[error("OpenPtyFailed")]
     OpenPtyFailed,
     #[error("DupFailed")]
@@ -792,7 +792,7 @@ pub(crate) struct PtyResult {
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum CreatePtyError {
+pub(crate) enum CreatePtyError {
     #[error("OpenPtyFailed")]
     OpenPtyFailed,
     #[error("DupFailed")]

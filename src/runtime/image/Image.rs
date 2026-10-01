@@ -142,7 +142,7 @@ unsafe extern "C" {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::EnumString)]
-pub enum Fit {
+pub(crate) enum Fit {
     Fill,
     Inside,
 }

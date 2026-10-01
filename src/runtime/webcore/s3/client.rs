@@ -1306,7 +1306,7 @@ fn download_stream(
     task_ptr
 }
 
-pub struct S3DownloadStreamWrapper {
+pub(crate) struct S3DownloadStreamWrapper {
     stream: crate::webcore::byte_stream::ProducerHold,
     pub path: Box<[u8]>,
     pub global: GlobalRef, // JSC_BORROW

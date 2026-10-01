@@ -30,7 +30,7 @@ pub(crate) struct Cmd {
 }
 
 #[derive(Default, strum::IntoStaticStr)]
-pub enum CmdState {
+pub(crate) enum CmdState {
     #[default]
     Idle,
     ExpandingAssigns,

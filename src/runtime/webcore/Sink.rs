@@ -950,7 +950,7 @@ pub(crate) extern "C" fn Bun__NativeTransformSink__writeBytes(
 
 bun_opaque::opaque_ffi! {
     /// Used only as a `TaggedPointerUnion` type-tag.
-    pub struct Detached;
+    pub(crate) struct Detached;
 }
 
 // `bun_ptr::impl_tagged_ptr_union!` would impl the foreign

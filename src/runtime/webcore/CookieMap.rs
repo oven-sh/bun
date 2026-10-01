@@ -6,7 +6,7 @@ use bun_uws::ResponseKind;
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle. Always used behind a pointer (`*mut CookieMap`).
-    pub struct CookieMap;
+    pub(crate) struct CookieMap;
 }
 
 unsafe extern "C" {

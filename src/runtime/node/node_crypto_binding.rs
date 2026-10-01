@@ -84,7 +84,7 @@ macro_rules! extern_crypto_job {
             use super::*;
 
             // `Ctx` is `opaque {}` — Nomicon FFI opaque-handle pattern.
-            bun_opaque::opaque_ffi! { pub struct Ctx; }
+            bun_opaque::opaque_ffi! { pub(crate) struct Ctx; }
 
             // `Ctx` is an `opaque_ffi!` ZST handle, so `&Ctx` is ABI-identical
             // to a non-null pointer and discharges the validity proof at the

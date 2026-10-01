@@ -600,7 +600,7 @@ impl StringOrBuffer<'static> {
 /// must match src/jsc/bindings/BufferEncodingType.h
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Hash, strum::IntoStaticStr)]
-pub enum Encoding {
+pub(crate) enum Encoding {
     Utf8,
     Ucs2,
     Utf16le,
@@ -696,7 +696,7 @@ impl Encoding {
 }
 
 impl Encoding {
-    pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<Encoding>> {
+    pub(crate) fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<Encoding>> {
         // `from_bun_string` narrows into a stack buffer — no `to_utf8()`
         // allocation needed for a short ASCII key.
         let str = bun_core::String::from_js(value, global)?;
@@ -769,7 +769,7 @@ impl Encoding {
         }
     }
 
-    pub fn to_js(self, global_object: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_js(self, global_object: &JSGlobalObject) -> JSValue {
         // `Encoding` is `#[repr(u8)]` matching BufferEncodingType.h.
         WebCore_BufferEncodingType_toJS(global_object, self)
     }

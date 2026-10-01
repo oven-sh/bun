@@ -115,7 +115,7 @@ const SCHEDULED_PRERESERVE_MAX: usize = 256 * 1024 * 1024;
 use http::signals::BodyReceiveMode;
 
 #[derive(bun_ptr::ThreadSafeRefCounted)]
-pub struct FetchTasklet {
+pub(crate) struct FetchTasklet {
     // Heap-allocated `FetchRequestBodySink` (a `JSSink`). FetchTasklet owns the
     // allocation from `start_request_stream` until `clear_sink`; the JS
     // controller holds only a detachable back-pointer into it.

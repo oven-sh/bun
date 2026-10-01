@@ -3,6 +3,10 @@
 // hard errors. Opaque-pointer round-trips (C++ stores `void*`, never derefs)
 // are individually `#[allow]`ed at the extern block with a justification.
 #![deny(improper_ctypes, improper_ctypes_definitions)]
+// This crate exports nothing, so `pub(crate)` is its widest visibility. `unreachable_pub`
+// skips a `pub` type named by an impl of a foreign trait for a foreign type (`impl From<T>
+// for &'static str` from `strum::IntoStaticStr`), and `dead_code` skips all it reaches.
+#![deny(unnameable_types)]
 #![feature(thread_local)]
 #![feature(adt_const_params)]
 // For `__rust_no_alloc_shim_is_unstable_v2` in bin_entry.

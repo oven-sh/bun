@@ -364,7 +364,7 @@ where
 // =============================================================================
 
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
-pub enum Error {
+pub(crate) enum Error {
     #[error("DiffTooLarge")]
     DiffTooLarge,
     #[error("InputsTooLarge")]

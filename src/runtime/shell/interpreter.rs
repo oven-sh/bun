@@ -73,7 +73,7 @@ pub(crate) use shell_log as log;
 /// Index into `Interpreter::nodes`.
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct NodeId(pub(crate) u32);
+pub(crate) struct NodeId(pub(crate) u32);
 
 impl NodeId {
     /// Sentinel: "the parent is the Interpreter itself". The root `Script`
@@ -230,7 +230,7 @@ pub(crate) type Pipe = [Fd; 2];
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
-pub enum StateKind {
+pub(crate) enum StateKind {
     Free,
     Script,
     Stmt,
@@ -345,7 +345,7 @@ impl InterpreterFlags {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
-pub enum CleanupState {
+pub(crate) enum CleanupState {
     NeedsFullCleanup,
     RuntimeCleaned,
 }

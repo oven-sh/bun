@@ -429,7 +429,7 @@ impl SocketAddress {
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-pub enum AddressError {
+pub(crate) enum AddressError {
     /// Too long or short to be an IPv4 or IPv6 address.
     #[error("InvalidLength")]
     InvalidLength,

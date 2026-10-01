@@ -183,7 +183,7 @@ impl CmdHandle {
     }
 }
 
-pub struct ShellSubprocess {
+pub(crate) struct ShellSubprocess {
     pub(crate) cmd_parent: CmdHandle,
 
     /// `None` once closed.
@@ -971,12 +971,12 @@ impl ShellSubprocess {
 // ───────────────────────────────────────────────────────────────────────────
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum WritableInitError {
+pub(crate) enum WritableInitError {
     #[error("UnexpectedCreatingStdin")]
     UnexpectedCreatingStdin,
 }
 
-pub enum Writable {
+pub(crate) enum Writable {
     Pipe(RefPtr<FileSink>),
     Fd(Fd),
     Buffer(RefPtr<StaticPipeWriter>),
@@ -989,7 +989,7 @@ pub enum Writable {
 impl Writable {
     // When the stream has closed we need to be notified to prevent a use-after-free
     // We can test for this use-after-free by enabling hot module reloading on a file and then saving it twice
-    pub fn on_close(&mut self, _: Option<bun_sys::Error>) {
+    pub(crate) fn on_close(&mut self, _: Option<bun_sys::Error>) {
         match self {
             Writable::Buffer(_) | Writable::Pipe(_) => {
                 // Dropping the Arc on reassignment below derefs.
@@ -1142,7 +1142,7 @@ impl Writable {
     // Note: there is intentionally no `Writable::toJS` here — the shell never
     // exposes its stdin Writable to JS.
 
-    pub fn finalize(&mut self) {
+    pub(crate) fn finalize(&mut self) {
         match self {
             Writable::Pipe(_) => {
                 // deref via drop-on-reassign
@@ -1491,7 +1491,7 @@ impl<'a> SpawnArgs<'a> {
 
 pub(crate) type IOReader = BufferedReader;
 
-pub enum PipeReaderState {
+pub(crate) enum PipeReaderState {
     Pending,
     Done(Box<[u8]>),
     Err(Option<Box<SystemError>>),

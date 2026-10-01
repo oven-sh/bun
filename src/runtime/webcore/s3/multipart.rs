@@ -122,7 +122,7 @@ use bun_collections::index_sort;
 declare_scope!(S3MultiPartUpload, hidden);
 
 #[derive(bun_ptr::CellRefCounted)]
-pub struct MultiPartUpload {
+pub(crate) struct MultiPartUpload {
     pub(crate) root: Cell<Option<core::ptr::NonNull<MultiPartUpload>>>,
     pub(crate) queue: JsCell<Option<Box<[UploadPart]>>>,
     pub(crate) available: Cell<IntegerBitSet<{ Self::MAX_QUEUE_SIZE }>>,

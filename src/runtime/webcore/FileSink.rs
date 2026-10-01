@@ -29,7 +29,7 @@ bun_core::declare_scope!(FileSink, visible);
 // canonical `*mut FileSink` instead of any receiver — see the `borrow = ptr`
 // note on the `impl_streaming_writer_parent!` invocation below.
 #[derive(bun_ptr::CellRefCounted)]
-pub struct FileSink {
+pub(crate) struct FileSink {
     ref_count: Cell<u32>,
     pub(crate) writer: JsCell<IOWriter>,
     pub(crate) event_loop_handle: EventLoopHandle,
@@ -160,7 +160,7 @@ bun_io::impl_streaming_writer_parent! {
     deref      = |this| FileSink::deref(this),
 }
 
-pub struct Options {
+pub(crate) struct Options {
     pub(crate) input_path: PathOrFileDescriptor,
     pub(crate) mode: bun_sys::Mode,
     /// `Bun.write(path, stream)`: replace the file's contents.
@@ -490,7 +490,7 @@ impl FileSink {
     /// # Safety
     /// `this` must be the canonical live `*mut FileSink` (see
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)).
-    pub unsafe fn on_ready(this: *mut FileSink) {
+    pub(crate) unsafe fn on_ready(this: *mut FileSink) {
         bun_core::scoped_log!(FileSink, "onReady()");
         // SAFETY: caller contract — `this` is live; only `source` is reborrowed.
         unsafe {
@@ -522,7 +522,7 @@ impl FileSink {
     /// # Safety
     /// `this` must be the canonical live `*mut FileSink` (see
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)). May free `this`.
-    pub unsafe fn on_close(this: *mut FileSink) {
+    pub(crate) unsafe fn on_close(this: *mut FileSink) {
         bun_core::scoped_log!(FileSink, "onClose()");
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
@@ -999,7 +999,7 @@ impl FileSink {
         }
     }
 
-    pub fn flush(&self) -> sys::Result<()> {
+    pub(crate) fn flush(&self) -> sys::Result<()> {
         sys::Result::Ok(())
     }
 
@@ -1163,7 +1163,7 @@ impl FileSink {
         )
     }
 
-    pub fn write(&self, data: &streams::Result) -> streams::Writable {
+    pub(crate) fn write(&self, data: &streams::Result) -> streams::Writable {
         if self.done.get() {
             return streams::Writable::Done;
         }
@@ -1327,7 +1327,7 @@ impl FileSink {
         }
     }
 
-    pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
         // Wrapper's +1; balanced by `finalize` → `deref()`.
         self.ref_();
         JSSink::create_object(global_this, self, 0)
@@ -1802,7 +1802,7 @@ fn on_reject_stream(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
 
 impl FileSink {
     /// `Bun.write(file, stream)`: the byte-count promise `on_close` settles, or an `Error` value.
-    pub fn pipe_stream(
+    pub(crate) fn pipe_stream(
         &mut self,
         stream: &mut ReadableStream,
         global_this: &JSGlobalObject,
@@ -1862,7 +1862,7 @@ impl FileSink {
         }
     }
 
-    pub fn assign_to_stream(
+    pub(crate) fn assign_to_stream(
         &mut self,
         stream: &mut ReadableStream,
         global_this: &JSGlobalObject,

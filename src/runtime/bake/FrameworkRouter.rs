@@ -105,7 +105,7 @@ impl Route {
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, strum::IntoStaticStr)]
 #[repr(u8)]
-pub enum FileKind {
+pub(crate) enum FileKind {
     #[strum(serialize = "page")]
     Page,
     #[strum(serialize = "layout")]
@@ -595,7 +595,7 @@ pub(crate) struct ParsedPattern<'a> {
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
-pub enum ParsedPatternKind {
+pub(crate) enum ParsedPatternKind {
     /// Can be navigated to. Pages can have children, which allows having
     /// nested routes exactly how Remix allows them.
     #[strum(serialize = "page")]
@@ -991,7 +991,7 @@ impl Style {
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum InsertError {
+pub(crate) enum InsertError {
     #[error("RouteCollision")]
     RouteCollision,
     #[error("OutOfMemory")]
@@ -1271,7 +1271,7 @@ impl FrameworkRouter {
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum PatternParseError {
+pub(crate) enum PatternParseError {
     #[error("InvalidRoutePattern")]
     InvalidRoutePattern,
 }

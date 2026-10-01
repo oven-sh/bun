@@ -211,7 +211,7 @@ impl Body {
 // PendingValue
 // ────────────────────────────────────────────────────────────────────────────
 
-pub struct PendingValue {
+pub(crate) struct PendingValue {
     pub(crate) promise: Option<JSValue>,
     pub(crate) readable: webcore::readable_stream::Strong,
     // writable: webcore::Sink
@@ -509,12 +509,10 @@ pub(crate) trait BodyOwnerJs {
 // ────────────────────────────────────────────────────────────────────────────
 
 /// This is a duplex stream!
-#[derive(bun_core::EnumTag)]
-#[enum_tag(existing = Tag)]
 // Pooled inline in `HiveRef` slots; boxing `Blob` would change
 // construction/match sites across many files and defeat the pool.
 #[allow(clippy::large_enum_variant)]
-pub enum Value {
+pub(crate) enum Value {
     Blob(Blob),
 
     /// This is the String type from WebKit
@@ -585,19 +583,7 @@ pub(crate) fn hive_alloc(value: Value) -> BodyHiveHandle {
     unsafe { BodyHiveHandle::new(value, pool) }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
-pub enum Tag {
-    Blob,
-    WTFStringImpl,
-    InternalBlob,
-    Locked,
-    Used,
-    Empty,
-    Error,
-    Null,
-}
-
-pub enum ValueError {
+pub(crate) enum ValueError {
     AbortReason(CommonAbortReason),
     SystemError(SystemError),
     /// `SystemError` surfaced as a JS `TypeError` (fetch network errors).
@@ -613,7 +599,7 @@ pub enum ValueError {
 impl ValueError {
     // Not a clean Drop — resets self to safe-empty in place. Renamed from `deinit`
     // per PORTING.md (never expose `pub fn deinit(&mut self)`).
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         *self = ValueError::JSValue(jsc::strong::Optional::empty());
     }
 }
@@ -632,7 +618,7 @@ impl ValueError {
         }
     }
 
-    pub fn to_js(&mut self, global_object: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_js(&mut self, global_object: &JSGlobalObject) -> JSValue {
         let js_value = match self {
             ValueError::AbortReason(reason) => reason.to_js(global_object),
             // `to_error_instance` consumes the error's string refs, and `to_js`
@@ -947,7 +933,7 @@ impl Value {
         Ok(stream_value)
     }
 
-    pub fn from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Value> {
+    pub(crate) fn from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Value> {
         value.ensure_still_alive();
 
         if value.is_empty_or_undefined_or_null() {
@@ -1397,7 +1383,7 @@ impl Value {
     // delegates the actual resource release to `Drop` (below) via assignment, so a later
     // `HiveArray::put()` → `drop_in_place` on the resulting `Null` is a guaranteed no-op
     // (idempotent — no double-free).
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         if let Value::Locked(locked) = self {
             // Locked stays Locked (callers may still inspect the variant after
             // reset()); flip the `deinit` latch so Drop is a no-op afterwards.

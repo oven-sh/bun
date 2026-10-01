@@ -288,7 +288,7 @@ pub(crate) type FileList = MultiArrayList<File>;
 pub(crate) type FileId = u32;
 
 bun_collections::multi_array_columns! {
-    pub trait FileColumns for File {
+    pub(crate) trait FileColumns for File {
         source: bun_ast::Source,
     }
 }

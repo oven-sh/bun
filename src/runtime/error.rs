@@ -1,5 +1,5 @@
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
+pub(crate) enum Error {
     #[error("SnapshotFailed")]
     SnapshotFailed,
     #[error("FailedToMakeSnapshotDirectory")]
@@ -342,7 +342,7 @@ impl From<Error> for bun_uws_sys::Error {
 }
 
 impl Error {
-    pub fn name(&self) -> &'static str {
+    pub(crate) fn name(&self) -> &'static str {
         match self {
             Self::SnapshotFailed => "SnapshotFailed",
             Self::FailedToMakeSnapshotDirectory => "FailedToMakeSnapshotDirectory",

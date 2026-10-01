@@ -4162,7 +4162,7 @@ pub(crate) struct StoredVerifyError {
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq)]
-    pub struct Flags: u16 {
+    pub(crate) struct Flags: u16 {
         const IS_ACTIVE            = 1 << 0;
         /// Prevent onClose from calling into JavaScript while we are finalizing
         const FINALIZING           = 1 << 1;
@@ -4247,7 +4247,7 @@ impl Default for Flags {
 
 /// Unified socket mode replacing the old is_server bool + TLSMode pair.
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
-pub enum SocketMode {
+pub(crate) enum SocketMode {
     /// Default — TLS client or non-TLS socket
     Client,
     /// Listener-owned server. TLS (if any) configured at the listener level.

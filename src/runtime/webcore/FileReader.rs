@@ -28,7 +28,7 @@ bun_core::declare_scope!(FileReader, visible);
 // auto-derefs to `&T` so the impls below compile against either. `Cell<T>` and
 // `JsCell<T>` are both `#[repr(transparent)]`, so the embedded layout (offset
 // 0 of `NewSource<FileReader>`) is unchanged.
-pub struct FileReader {
+pub(crate) struct FileReader {
     /// Wrapped in `UnsafeCell` so that the back-ref `*mut FileReader` (vtable
     /// `parent`) and the reader's own `&mut self` both derive from a
     /// SharedReadWrite root — see `BufferedReaderParent` aliasing contract
@@ -1095,7 +1095,7 @@ impl Drop for SourcePin {
 // (`increment_count`/`decrement_count`) and `global_this` are plain `Source`
 // fields; callers deref in a tight `unsafe { (*ptr).method() }` scope and never
 // hold `&mut Source` across other `self.*` accesses.
-bun_core::impl_field_parent! { FileReader => Source.context; pub fn raw parent; pub fn shared parent_const; }
+bun_core::impl_field_parent! { FileReader => Source.context; pub(crate) fn raw parent; pub(crate) fn shared parent_const; }
 
 impl readable_stream::SourceContext for FileReader {
     const NAME: &'static str = "File";

@@ -164,7 +164,7 @@ pub(crate) mod prompt {
 
     /// Error set for the read-until-delimiter helpers below.
     #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-    pub enum ReadError {
+    pub(crate) enum ReadError {
         #[error("StreamTooLong")]
         StreamTooLong,
         #[error("Io")]

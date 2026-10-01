@@ -75,7 +75,7 @@ macro_rules! shell_builtins {
     ) => {
         #[repr(u8)]
         #[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
-        pub enum Kind { $( $UV, )* $( $IV, )* $( $BV, )* }
+        pub(crate) enum Kind { $( $UV, )* $( $IV, )* $( $BV, )* }
 
         /// Per-builtin state.
         pub(crate) enum Impl {
@@ -88,10 +88,10 @@ macro_rules! shell_builtins {
         impl Kind {
             /// Builtins disabled on POSIX (delegate to the system binary) unless
             /// the experimental feature flag is set.
-            pub const DISABLED_ON_POSIX: &'static [Kind] = &[ $( Kind::$PD ),* ];
+            pub(crate) const DISABLED_ON_POSIX: &'static [Kind] = &[ $( Kind::$PD ),* ];
 
             /// Lowercase tag for error prefixes (`"{kind}: ..."`).
-            pub fn as_str(self) -> &'static str {
+            pub(crate) fn as_str(self) -> &'static str {
                 match self {
                     $( Kind::$UV => $u_name, )*
                     $( Kind::$IV => $i_name, )*
@@ -99,7 +99,7 @@ macro_rules! shell_builtins {
                 }
             }
 
-            pub fn usage_string(self) -> &'static [u8] {
+            pub(crate) fn usage_string(self) -> &'static [u8] {
                 match self {
                     $( Kind::$UV => $u_usage, )*
                     $( Kind::$IV => $i_usage, )*

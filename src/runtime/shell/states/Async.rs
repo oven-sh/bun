@@ -23,7 +23,7 @@ pub(crate) struct Async {
 }
 
 #[derive(Default, strum::IntoStaticStr)]
-pub enum AsyncState {
+pub(crate) enum AsyncState {
     #[default]
     Idle,
     Exec {

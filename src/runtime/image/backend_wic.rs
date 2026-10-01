@@ -46,7 +46,7 @@ use bun_sys::windows;
 /// are inlined here and `split()`
 /// below maps them back onto `codecs::Error` for the caller.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, thiserror::Error, strum::IntoStaticStr)]
-pub enum BackendError {
+pub(crate) enum BackendError {
     #[error("BackendUnavailable")]
     BackendUnavailable,
     #[error("DecodeFailed")]

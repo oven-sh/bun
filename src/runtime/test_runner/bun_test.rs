@@ -119,7 +119,7 @@ pub(crate) mod js_fns {
     // was a const-generic param (`adt_const_params` is unstable);
     // reshaped to runtime dispatch with per-tag thin host_fn wrappers below.
     #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
-    pub enum GenericHookTag {
+    pub(crate) enum GenericHookTag {
         #[strum(serialize = "beforeAll")]
         BeforeAll,
         #[strum(serialize = "beforeEach")]
@@ -608,7 +608,7 @@ pub(crate) struct FirstLast {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
-pub enum Phase {
+pub(crate) enum Phase {
     #[strum(serialize = "collection")]
     Collection,
     #[strum(serialize = "execution")]
@@ -1376,7 +1376,7 @@ impl Drop for BunTest {
 // `RELEASE_ASSERT_NOT_REACHED` at the bottom of `promiseHandlerID`.
 bun_jsc::jsc_host_abi! {
     #[unsafe(no_mangle)]
-    pub unsafe fn Bun__TestScope__Describe2__bunTestThen(
+    pub(crate) unsafe fn Bun__TestScope__Describe2__bunTestThen(
         global: *mut JSGlobalObject,
         frame: *mut CallFrame,
     ) -> JSValue {
@@ -1387,7 +1387,7 @@ bun_jsc::jsc_host_abi! {
 }
 bun_jsc::jsc_host_abi! {
     #[unsafe(no_mangle)]
-    pub unsafe fn Bun__TestScope__Describe2__bunTestCatch(
+    pub(crate) unsafe fn Bun__TestScope__Describe2__bunTestCatch(
         global: *mut JSGlobalObject,
         frame: *mut CallFrame,
     ) -> JSValue {
@@ -1549,7 +1549,7 @@ impl bun_event_loop::Taskable for RunTestsTask {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
-pub enum HandleUncaughtExceptionResult {
+pub(crate) enum HandleUncaughtExceptionResult {
     #[strum(serialize = "hide_error")]
     HideError,
     #[strum(serialize = "show_handled_error")]

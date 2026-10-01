@@ -1685,7 +1685,7 @@ impl Default for Example {
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
-pub enum ExampleTag {
+pub(crate) enum ExampleTag {
     GithubRepository,
     Official,
     LocalFolder,

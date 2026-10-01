@@ -20,7 +20,7 @@ bun_output::declare_scope!(ByteStream, visible);
 /// The `SourceContext` trait still spells its callbacks `&mut self` (shared
 /// across `ByteBlobLoader` / `FileReader`); the trait impl below auto-derefs
 /// to the `&self` inherent bodies.
-pub struct ByteStream {
+pub(crate) struct ByteStream {
     pub(crate) buffer: JsCell<Vec<u8>>,
     pub(crate) has_received_last_chunk: Cell<bool>,
     pub(crate) pending: JsCell<streams::Pending>,
@@ -243,7 +243,7 @@ impl readable_stream::SourceContext for ByteStream {
 // SAFETY: `ByteStream` is always the `context` field of a `Source`
 // (ReadableStream.NewSource); never constructed standalone. Everything it
 // touches on the `Source` is a `Cell`, so the `&Source` arm suffices.
-bun_core::impl_field_parent! { ByteStream => Source.context; pub fn shared parent_const; }
+bun_core::impl_field_parent! { ByteStream => Source.context; pub(crate) fn shared parent_const; }
 
 impl ByteStream {
     #[inline]
@@ -332,12 +332,12 @@ impl ByteStream {
 
     /// Bytes delivered that no consumer has taken yet.
     #[inline]
-    pub fn buffered_len(&self) -> usize {
+    pub(crate) fn buffered_len(&self) -> usize {
         self.buffer.get().len() - self.offset.get()
     }
 
     /// Sink's drain ack: unpause, push buffered bytes, end if last chunk already arrived.
-    pub fn resume(&self) {
+    pub(crate) fn resume(&self) {
         if !self.sink_paused.get() {
             return;
         }
@@ -393,7 +393,7 @@ impl ByteStream {
     }
 
     /// Sink closed early: detach and drive the NewSource cancel path.
-    pub fn cancel_from_sink(&self, _err: Option<SysError>) {
+    pub(crate) fn cancel_from_sink(&self, _err: Option<SysError>) {
         self.detach_sink(None);
         if self.done.get() {
             return;
@@ -424,7 +424,7 @@ impl ByteStream {
 
     /// Called by native fast-paths after wiring `self.sink`: a consumer now
     /// waits for bytes, so a parked producer resumes.
-    pub fn signal_consumer_attached(&self) {
+    pub(crate) fn signal_consumer_attached(&self) {
         self.parent_const().producer.get().start();
     }
 
@@ -909,7 +909,7 @@ impl ByteStream {
     }
 
     /// Take a pre-attach `StreamResult::Err` stashed by [`Self::append`].
-    pub fn take_pending_error(&self) -> Option<streams::StreamError> {
+    pub(crate) fn take_pending_error(&self) -> Option<streams::StreamError> {
         self.pending.with_mut(|p| {
             if matches!(p.result, streams::Result::Err(_)) {
                 match core::mem::replace(&mut p.result, streams::Result::Done) {

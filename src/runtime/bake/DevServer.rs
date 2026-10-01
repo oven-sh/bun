@@ -5603,7 +5603,7 @@ pub(super) use crate::bake::dev_server::{HmrTopic, MessageId};
 bitflags::bitflags! {
     // bitflags! requires explicit power-of-two values; field names match enum variants.
     #[derive(Default, Copy, Clone)]
-    pub struct HmrTopicBits: u8 {
+    pub(crate) struct HmrTopicBits: u8 {
         const HOT_UPDATE = 1 << 0;
         const ERRORS = 1 << 1;
         const BROWSER_ERROR = 1 << 2;
@@ -6099,7 +6099,7 @@ pub(crate) mod entry_point_list {
     bitflags::bitflags! {
         #[derive(Default, Copy, Clone)]
         #[repr(transparent)]
-        pub struct Flags: u8 {
+        pub(crate) struct Flags: u8 {
             const CLIENT = 1 << 0;
             const SERVER = 1 << 1;
             const SSR = 1 << 2;
@@ -6520,7 +6520,7 @@ impl<'a> EnsureRouteCtx for PromiseEnsureRouteBundledCtx<'a> {
 // C++ side declares `extern "C" SYSV_ABI` (BakeAdditionsToGlobalObject.cpp).
 bun_jsc::jsc_host_abi! {
     #[unsafe(no_mangle)]
-    pub unsafe fn Bake__bundleNewRouteJSFunctionImpl(
+    pub(crate) unsafe fn Bake__bundleNewRouteJSFunctionImpl(
         global: &JSGlobalObject,
         request_ptr: *mut c_void,
         url: &BunString,

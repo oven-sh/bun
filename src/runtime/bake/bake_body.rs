@@ -1250,7 +1250,7 @@ pub(crate) struct FileSystemRouterType {
 }
 
 #[derive(Clone, Copy)]
-pub enum BuiltInModule {
+pub(crate) enum BuiltInModule {
     Import(&'static [u8]),
     Code(&'static [u8]),
 }

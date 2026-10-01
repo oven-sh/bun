@@ -442,7 +442,7 @@ impl Default for SourceMapStore {
 // is the `source_maps` field of a live, heap-allocated `DevServer` (always
 // true for production use; the `Default::default()` instance must never call
 // this).
-bun_core::impl_field_parent! { SourceMapStore => DevServer.source_maps; pub fn mut owner; }
+bun_core::impl_field_parent! { SourceMapStore => DevServer.source_maps; pub(crate) fn mut owner; }
 
 impl SourceMapStore {
     /// ArrayHashMap/LinearFifo have no `const fn` ctors; callers use

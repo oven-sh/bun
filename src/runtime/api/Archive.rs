@@ -706,7 +706,7 @@ impl<C: TaskContext> AsyncTask<C> {
 // ============================================================================
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-pub enum ExtractError {
+pub(crate) enum ExtractError {
     #[error("ReadError")]
     ReadError,
 }

@@ -308,7 +308,7 @@ impl PackCommand {
 // ───────────────────────────────────────────────────────────────────────────
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PackError<const FOR_PUBLISH: bool> {
+pub(crate) enum PackError<const FOR_PUBLISH: bool> {
     #[error("OutOfMemory")]
     OutOfMemory,
     #[error("MissingPackageName")]
@@ -3539,7 +3539,7 @@ pub(crate) struct Pattern {
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq)]
-    pub struct PatternFlags: u8 {
+    pub(crate) struct PatternFlags: u8 {
         /// beginning or middle slash (leading slash was trimmed)
         const REL_PATH = 1 << 0;
         /// can only match directories (had an ending slash, also trimmed)

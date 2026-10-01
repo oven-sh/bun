@@ -3094,8 +3094,7 @@ impl<'a> Parser<'a> {
             // every `ImportRecord` produced by this parse; the lifetime
             // is erased to 'static (see PORTING.md §Lifetimes).
             let url_static: &'static [u8] = unsafe { src_str(url) };
-            // The source span of the token, as for a JS import record. The
-            // unescaped `url` can be longer than its source (NUL -> U+FFFD).
+            // Source span, not `url.len()`: the unescaped url can be longer than its source.
             let end_position = self.position();
             import_records.push(ImportRecord {
                 path: ast::fs::path_init(url_static),

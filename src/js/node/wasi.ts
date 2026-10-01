@@ -862,8 +862,9 @@ class WASI {
       }),
       fd_close: wrap(fd => {
         const stats = CHECK_FD(fd, BigInt(0));
-        fs.closeSync(stats.real);
+        // close(2) releases the descriptor even when it reports an error, so the entry goes first. uvwasi keeps it: https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/uvwasi.c#L813-L816
         this.FD_MAP.delete(fd);
+        fs.closeSync(stats.real);
         return WASI_ESUCCESS;
       }),
       fd_datasync: wrap(fd => {
@@ -1167,9 +1168,9 @@ class WASI {
       fd_renumber: wrap((from, to) => {
         const fromEntry = CHECK_FD(from, BigInt(0));
         const toEntry = CHECK_FD(to, BigInt(0));
-        fs.closeSync(fromEntry.real);
         this.FD_MAP.set(from, toEntry);
         this.FD_MAP.delete(to);
+        fs.closeSync(fromEntry.real);
         return WASI_ESUCCESS;
       }),
       fd_seek: wrap((fd, offset, whence, newOffsetPtr) => {

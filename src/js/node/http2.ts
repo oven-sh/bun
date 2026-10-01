@@ -2995,9 +2995,10 @@ function withStreamFrame(handler) {
     return runInFrame(frame, handler, undefined, self, stream, a, b, c);
   };
 }
+// Node asserts on this close. The fd was only read: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L475-L479
 function tryClose(fd) {
   try {
-    fs.close(fd);
+    fs.close(fd, () => {});
   } catch {}
 }
 
@@ -3139,7 +3140,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
   // stream itself goes away (peer reset, session destroy), stop reading the file. Like node's
   // onFileUnpipe, only an fd the stream opened itself (respondWithFile) is closed here; an fd
   // handed to respondWithFD stays the caller's to close.
-  fileStream.on("error", onFileStreamError.bind(this));
+  fileStream.on("error", onFileStreamError.bind(this, fileStream));
   this.once("close", () => {
     fileStream.unpipe(sink);
     if (ownsFd) fileStream.destroy();
@@ -3147,7 +3148,9 @@ function doSendFileFD(options, fd, headers, err, stat) {
   });
   fileStream.pipe(sink);
 }
-function onFileStreamError(this: Http2Stream) {
+function onFileStreamError(this: Http2Stream, fileStream) {
+  // After "end" only the close can fail, and the fd was only read. Node destroys the stream: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2685-L2691
+  if (fileStream.readableEnded) return;
   if (!this.destroyed && !this.closed) this.close(NGHTTP2_INTERNAL_ERROR);
 }
 const kFileResponseFinal = Symbol("fileResponseFinal");

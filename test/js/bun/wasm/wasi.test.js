@@ -252,3 +252,63 @@ it("fd_pread counts each byte once and reads the next iov from where the last on
     second: memory.toString("latin1", secondBuf, secondBuf + 4),
   }).toEqual({ nread: 8, first: "2345", second: "6789" });
 });
+
+// A file system can report a write error first at close(2). The descriptor is
+// released all the same, so the guest's entry for it must go.
+function bindingsWithFailingClose(closed = []) {
+  return {
+    hrtime: () => process.hrtime.bigint(),
+    exit: () => {},
+    kill: () => {},
+    randomFillSync: array => crypto.getRandomValues(array),
+    isTTY: () => false,
+    path,
+    fs: {
+      ...fs,
+      closeSync(fd) {
+        fs.closeSync(fd);
+        closed.push(fd);
+        throw Object.assign(new Error("ENOSPC: no space left on device, close"), { code: "ENOSPC" });
+      },
+    },
+  };
+}
+
+it("fd_close forgets the descriptor when the close reports an error", () => {
+  using dir = tempDir("wasi-fd-close-error", {});
+  const wasi = new WASI({ preopens: { "/": String(dir) }, bindings: bindingsWithFailingClose() });
+
+  const WASI_EBADF = 8;
+  const WASI_ENOSPC = 51;
+  const preopenFd = 3;
+
+  expect(wasi.wasiImport.fd_close(preopenFd)).toBe(WASI_ENOSPC);
+  expect(wasi.FD_MAP.has(preopenFd)).toBe(false);
+  // A second fd_close must not close the number again: another file can have it by now.
+  expect(wasi.wasiImport.fd_close(preopenFd)).toBe(WASI_EBADF);
+});
+
+it("fd_renumber forgets the descriptor that it closed when the close reports an error", () => {
+  using first = tempDir("wasi-fd-renumber-error-1", {});
+  using second = tempDir("wasi-fd-renumber-error-2", {});
+  const closed = [];
+  const wasi = new WASI({
+    preopens: { "/first": String(first), "/second": String(second) },
+    bindings: bindingsWithFailingClose(closed),
+  });
+
+  const WASI_ENOSPC = 51;
+  const preopened = [wasi.FD_MAP.get(3).real, wasi.FD_MAP.get(4).real];
+
+  try {
+    expect(wasi.wasiImport.fd_renumber(3, 4)).toBe(WASI_ENOSPC);
+    // The call closed one of the two. No number of the guest may still name it.
+    const mapped = [...wasi.FD_MAP.values()].map(entry => entry.real);
+    expect({ closed: closed.length, closedAndMapped: mapped.filter(real => closed.includes(real)) }).toEqual({
+      closed: 1,
+      closedAndMapped: [],
+    });
+  } finally {
+    for (const real of preopened) if (!closed.includes(real)) fs.closeSync(real);
+  }
+});

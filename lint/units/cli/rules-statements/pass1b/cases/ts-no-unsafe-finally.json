@@ -1,0 +1,15 @@
+[
+ "function f(): number { try { return 1; } finally { return 2 as number; } }",
+ "function f(): void { try {} finally { throw new Error() as never; } }",
+ "function f() { try {} finally { const g = (): number => { return 1; }; } }",
+ "function f() { try {} finally { class A { m(): void { return; } } } }",
+ "function f() { try {} finally { abstract class A { m() { return 1 } } } }",
+ "a: for (const x of xs as number[]) { try {} finally { break a; } }",
+ "function f() { try {} finally { enum E { A = 1 } return; } }",
+ "function f() { try {} finally { type T = 1; } }",
+ "function f() { try {} finally { function g(): void; function g() { return; } } }",
+ "class A { static { try {} finally { foo: { break foo; } } } }",
+ "class A { static { while (x) { try {} finally { break; } } } }",
+ "function f() { try {} finally { ({ m(): number { return 1 } }); } }",
+ "function f() { try {} finally { ({ get a(): number { return 1 } }); } }"
+]

@@ -1,0 +1,17 @@
+"delete x" => 1:1-1:9 Variables should not be deleted.  
+"delete (x as any)" => (none)  
+"delete x!" => (none)  
+"delete <any>x" => (none)  
+"delete (x)" => 1:1-1:11 Variables should not be deleted.  
+"delete ((x))" => 1:1-1:13 Variables should not be deleted.  
+"delete x.y" => (none)  
+"delete (x satisfies any)" => (none)  
+"delete x!.y" => (none)  
+"delete (x as any).y" => (none)  
+"delete (<any>x)" => (none)  
+"delete (x!)" => (none)  
+"delete /* c */ x" => 1:1-1:17 Variables should not be deleted.  
+"void delete x" => 1:6-1:14 Variables should not be deleted.  
+"delete delete x" => 1:8-1:16 Variables should not be deleted.  
+"class A { m() { delete this } }" => (none)  
+"delete x?.y" => (none)  

@@ -1,0 +1,13 @@
+"A: for (const x of y as number[]) { break A; }" => (none)  
+"A: { const x: number = 1 }" => 1:1-1:2 'A:' is defined but never used.  
+"A: type T = 1" => 1:1-1:2 'A:' is defined but never used.  
+"A: interface I {}" => 1:1-1:2 'A:' is defined but never used.  
+"A: enum E {}" => 1:1-1:2 'A:' is defined but never used.  
+"A: declare const x: number;" => 1:1-1:2 'A:' is defined but never used.  
+"A: function f(): void {}" => 1:1-1:2 'A:' is defined but never used.  
+"A: while (x as boolean) { continue A; }" => (none)  
+"A: B: for (;;) { break B; }" => 1:1-1:2 'A:' is defined but never used.  
+"function f<T>(x: T) { A: return x; }" => 1:23-1:24 'A:' is defined but never used.  
+"A: var x: number = 1;" => 1:1-1:2 'A:' is defined but never used.  
+"type: for (;;) { break type; }" => (none)  
+"namespace: for (;;) {}" => 1:1-1:10 'namespace:' is defined but never used.  

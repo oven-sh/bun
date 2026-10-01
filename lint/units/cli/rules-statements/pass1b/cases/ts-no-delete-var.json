@@ -1,0 +1,19 @@
+[
+ "delete x",
+ "delete (x as any)",
+ "delete x!",
+ "delete <any>x",
+ "delete (x)",
+ "delete ((x))",
+ "delete x.y",
+ "delete (x satisfies any)",
+ "delete x!.y",
+ "delete (x as any).y",
+ "delete (<any>x)",
+ "delete (x!)",
+ "delete /* c */ x",
+ "void delete x",
+ "delete delete x",
+ "class A { m() { delete this } }",
+ "delete x?.y"
+]

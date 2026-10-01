@@ -1,0 +1,8 @@
+"with (a) { b }" => 1:1-1:5 Unexpected use of 'with' statement.  
+"with (a as any) { b }" => 1:1-1:5 Unexpected use of 'with' statement.  
+"with (a) { b }\nexport {};" => 1:1-1:5 Unexpected use of 'with' statement.  
+"function f(): void { with (a) b; }" => 1:22-1:26 Unexpected use of 'with' statement.  
+"class A { m() { with (this) { x } } }" => 1:17-1:21 Unexpected use of 'with' statement.  
+"namespace N { with (a) { b } }" => 1:15-1:19 Unexpected use of 'with' statement.  
+"a.with(b)" => (none)  
+"declare function f(): void; with (f) {}" => 1:29-1:33 Unexpected use of 'with' statement.  

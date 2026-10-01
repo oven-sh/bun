@@ -1,0 +1,12 @@
+cases of for-direction: no-empty[d3] 86, no-undef[d4] 43
+cases of no-async-promise-executor: no-unused-vars[d4] 9, no-undef[d4] 2, no-redeclare[d4] 1
+cases of no-case-declarations: no-undef[d4] 18, no-unused-vars[d4] 17, no-empty[d3] 2, no-fallthrough[d3] 2
+cases of no-delete-var: no-undef[d4] 2
+cases of no-prototype-builtins: no-undef[d4] 46, no-unused-vars[d4] 2, no-unsafe-optional-chaining[d3] 2
+cases of no-setter-return: no-unused-vars[d4] 117, no-undef[d4] 76, no-unreachable[d4] 7, no-empty[d3] 6, no-redeclare[d4] 1, no-unsafe-optional-chaining[d3] 1
+cases of no-unsafe-finally: no-unused-vars[d4] 30, no-unreachable[d4] 15, no-empty[d3] 11, no-undef[d4] 4, no-constant-condition[d3] 2, no-unused-labels[mine] 1
+cases of no-unused-labels: no-undef[d4] 21, no-unreachable[d4] 2, no-unused-vars[d4] 2
+cases of no-useless-catch: no-undef[d4] 15, no-unused-vars[d4] 3, no-empty[d3] 1
+cases of no-with: no-undef[d4] 2
+cases of require-yield: no-unused-vars[d4] 12
+cases of no-unused-private-class-members: no-unused-vars[d4] 61, no-undef[d4] 19, no-empty[d3] 4

@@ -1,0 +1,18 @@
+[
+ "try { foo(); } catch (e: unknown) { throw e; }",
+ "try { foo(); } catch (e: any) { throw e as Error; }",
+ "try { foo(); } catch (e) { throw e!; }",
+ "try { foo(); } catch (e) { throw <Error>e; }",
+ "try { foo(); } catch (e) { throw (e); }",
+ "try { foo(); } catch (e) { throw (e satisfies unknown); }",
+ "try { foo(); } catch (e) { type T = 1; throw e; }",
+ "try { foo(); } catch (e) { ; throw e; }",
+ "try { foo(); } catch (e) { 'use strict'; throw e; }",
+ "try { foo(); } catch (e) { /*! legal */ throw e; }",
+ "try { foo(); } catch (e) { interface I {} throw e; }",
+ "try { foo(); } catch (e) { declare const x: number; throw e; }",
+ "try { foo(); } catch (e: unknown) { throw e; } finally { bar(); }",
+ "async function f(): Promise<void> { try { await foo(); } catch (e) { throw e; } }",
+ "try { foo(); } catch (e) { throw e; type T = 1; }",
+ "try { foo(); } catch (e) { function g(): void; throw e; }"
+]

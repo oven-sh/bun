@@ -1,0 +1,16 @@
+"try { foo(); } catch (e: unknown) { throw e; }" => 1:1-1:47 Unnecessary try/catch wrapper.  
+"try { foo(); } catch (e: any) { throw e as Error; }" => (none)  
+"try { foo(); } catch (e) { throw e!; }" => (none)  
+"try { foo(); } catch (e) { throw <Error>e; }" => (none)  
+"try { foo(); } catch (e) { throw (e); }" => 1:1-1:40 Unnecessary try/catch wrapper.  
+"try { foo(); } catch (e) { throw (e satisfies unknown); }" => (none)  
+"try { foo(); } catch (e) { type T = 1; throw e; }" => (none)  
+"try { foo(); } catch (e) { ; throw e; }" => (none)  
+"try { foo(); } catch (e) { 'use strict'; throw e; }" => (none)  
+"try { foo(); } catch (e) { /*! legal */ throw e; }" => 1:1-1:51 Unnecessary try/catch wrapper.  
+"try { foo(); } catch (e) { interface I {} throw e; }" => (none)  
+"try { foo(); } catch (e) { declare const x: number; throw e; }" => (none)  
+"try { foo(); } catch (e: unknown) { throw e; } finally { bar(); }" => 1:16-1:47 Unnecessary catch clause.  
+"async function f(): Promise<void> { try { await foo(); } catch (e) { throw e; } }" => 1:37-1:80 Unnecessary try/catch wrapper.  
+"try { foo(); } catch (e) { throw e; type T = 1; }" => 1:1-1:50 Unnecessary try/catch wrapper.  
+"try { foo(); } catch (e) { function g(): void; throw e; }" => (none)  

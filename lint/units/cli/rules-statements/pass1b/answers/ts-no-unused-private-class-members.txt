@@ -1,0 +1,42 @@
+"class A { #x: number = 1; }" => 1:11-1:13 '#x' is defined but never used.  
+"class A { private x = 1; }" => (none)  
+"class A { #x?: number; }" => 1:11-1:13 '#x' is defined but never used.  
+"class A { readonly #x = 1; }" => 1:20-1:22 '#x' is defined but never used.  
+"class A { static #x = 1; }" => 1:18-1:20 '#x' is defined but never used.  
+"class A { declare #x: number; }" => 1:19-1:21 '#x' is defined but never used.  
+"class A { accessor #x = 1; }" => (none)  
+"class A { static accessor #x = 1; m() { return A.#x; } }" => (none)  
+"class A { #x = 1; m() { (this.#x as number) = 2; } }" => (none)  
+"class A { #x = 1; m() { this.#x!++; } }" => (none)  
+"class A { #x = 1; m() { this.#x++; } }" => 1:11-1:13 '#x' is defined but never used.  
+"class A { #x = 1; m() { this.#x! = 1; } }" => (none)  
+"class A { #x = 1; m() { [this.#x!] = arr; } }" => (none)  
+"class A { #x = 1; m() { (<number>this.#x) = 1; } }" => (none)  
+"class A { #x = 1; m() { (this.#x) = 1; } }" => 1:11-1:13 '#x' is defined but never used.  
+"class A { #x = 1; m() { ((this.#x)) += 1; } }" => 1:11-1:13 '#x' is defined but never used.  
+"class A { #x = 1; m() { x = (this.#x += 1); } }" => (none)  
+"class A { #m(): void {} }" => 1:11-1:13 '#m' is defined but never used.  
+"class A { #m(): void; #m(x?: any) {} }" => 1:23-1:25 '#m' is defined but never used.  
+"class A { #m(): void; #m(x?: any) {} n() { this.#m(); } }" => (none)  
+"class A { static #x = 1; static { A.#x; } }" => (none)  
+"class A { #x = 1; m(o: A) { return #x in o; } }" => (none)  
+"class A { @dec #x = 1 }" => 1:16-1:18 '#x' is defined but never used.  
+"class A { #x = 1; m() { return this!.#x; } }" => (none)  
+"class A { #x = 1; m() { return (this as A).#x; } }" => (none)  
+"class A { #x = 1; m() { this.#x satisfies number; } }" => (none)  
+"class A<T> { #x!: T; }" => 1:14-1:16 '#x' is defined but never used.  
+"class A { #x = 1; m() { const { #x: y } = this; } }" => (none)  BUN:1:31 syntax This constant must be initialized|1:33 syntax Expected identifier but found "#x"|1:37 syntax Expected "}" but found "y"|1:41 syntax Expected identifier but found "="|1:51 syntax Unexpected } 
+"class A { #x = 1; constructor(private y: number) { this.#x = y; } }" => 1:11-1:13 '#x' is defined but never used.  
+"class A { #x = 1; m() { for (this.#x! of []) {} } }" => (none)  
+"class A { #x = 1; m() { ({ a: this.#x! } = o); } }" => (none)  
+"class A { #x = 1; m() { [...this.#x!] = o; } }" => (none)  
+"class A { get #x(): number { return 1; } }" => 1:15-1:17 '#x' is defined but never used.  
+"class A { set #x(v: number) {} m() { this.#x = 1; } }" => (none)  
+"abstract class A { #x = 1; abstract m(): void; }" => 1:20-1:22 '#x' is defined but never used.  
+"class A extends (class { #x = 1; }) { #x = 2; }" => 1:26-1:28 '#x' is defined but never used. | 1:39-1:41 '#x' is defined but never used.  
+"class A { #x = 1; m() { return class B extends (this.#x as any) { #x = 2; }; } }" => 1:67-1:69 '#x' is defined but never used.  
+"class A { #x = 1; m() { return class B extends this.#x { #x = 2; n() { return this.#x; } }; } }" => (none)  
+"class A { #x = 1; static m(a: A) { a.#x &&= 2; } }" => 1:11-1:13 '#x' is defined but never used.  
+"class A { #x = 1; static m(a: A) { a.#x ??= 2; } }" => 1:11-1:13 '#x' is defined but never used.  
+"class A { #x = 1; static m(a: A) { return a.#x ||= 2; } }" => (none)  
+"class A { #x = 1; static m(a: A) { delete a.#y; } }" => 1:11-1:13 '#x' is defined but never used.  BUN:1:43 syntax Deleting the private name "#y" is forbidden 

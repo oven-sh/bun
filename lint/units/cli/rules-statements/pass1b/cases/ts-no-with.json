@@ -1,0 +1,10 @@
+[
+ "with (a) { b }",
+ "with (a as any) { b }",
+ "with (a) { b }\nexport {};",
+ "function f(): void { with (a) b; }",
+ "class A { m() { with (this) { x } } }",
+ "namespace N { with (a) { b } }",
+ "a.with(b)",
+ "declare function f(): void; with (f) {}"
+]

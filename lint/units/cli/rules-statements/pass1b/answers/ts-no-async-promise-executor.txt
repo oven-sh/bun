@@ -1,0 +1,26 @@
+"new Promise<void>(async (resolve) => {})" => 1:19-1:24 Promise executor functions should not be async.  
+"new Promise(async (resolve): Promise<void> => {})" => 1:13-1:18 Promise executor functions should not be async.  
+"new Promise((async () => {}) as any)" => (none)  
+"new Promise(<any>(async () => {}))" => (none)  
+"new Promise(<any>async () => {})" => FATAL 1:26 Parsing error: ',' expected.  
+"new (Promise as any)(async () => {})" => (none)  
+"new Promise!(async () => {})" => (none)  
+"new Promise(async function <T>(resolve: T) {})" => 1:13-1:18 Promise executor functions should not be async.  
+"new Promise(async <T,>(resolve: T) => {})" => 1:13-1:18 Promise executor functions should not be async.  
+"new Promise((async () => {})!)" => (none)  
+"new Promise((async () => {}) satisfies unknown)" => (none)  
+"declare const Promise: any; new Promise(async () => {})" => (none)  
+"import type { Promise } from 'x'; new Promise(async () => {})" => (none)  
+"import { type Promise } from 'x'; new Promise(async () => {})" => (none)  
+"interface Promise {} new Promise(async () => {})" => (none)  
+"type Promise = any; new Promise(async () => {})" => (none)  
+"namespace Promise {} new Promise(async () => {})" => (none)  
+"namespace Promise { export const a = 1 } new Promise(async () => {})" => (none)  
+"enum Promise {} new Promise(async () => {})" => (none)  
+"class A<Promise> { m() { new Promise(async () => {}) } }" => 1:38-1:43 Promise executor functions should not be async.  
+"function f<Promise>() { new Promise(async () => {}) }" => 1:37-1:42 Promise executor functions should not be async.  
+"declare global { var Promise: any } new Promise(async () => {})" => 1:49-1:54 Promise executor functions should not be async.  
+"declare module 'x' { const Promise: any } new Promise(async () => {})" => 1:55-1:60 Promise executor functions should not be async.  
+"new Promise(async (resolve: (v: number) => void, reject: () => void) => {})" => 1:13-1:18 Promise executor functions should not be async.  
+"new globalThis.Promise(async () => {})" => (none)  
+"new Promise(async () => {}, 1)" => 1:13-1:18 Promise executor functions should not be async.  

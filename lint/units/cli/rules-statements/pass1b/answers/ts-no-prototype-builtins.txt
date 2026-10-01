@@ -1,0 +1,26 @@
+"foo.hasOwnProperty('bar')" => 1:5-1:19 Do not access Object.prototype method 'hasOwnProperty' from target object.  
+"foo!.hasOwnProperty('bar')" => 1:6-1:20 Do not access Object.prototype method 'hasOwnProperty' from target object.  
+"(foo as any).hasOwnProperty('bar')" => 1:14-1:28 Do not access Object.prototype method 'hasOwnProperty' from target object.  
+"(<any>foo).isPrototypeOf(bar)" => 1:12-1:25 Do not access Object.prototype method 'isPrototypeOf' from target object.  
+"foo.hasOwnProperty!('bar')" => (none)  
+"(foo.hasOwnProperty as any)('bar')" => (none)  
+"(<any>foo.hasOwnProperty)('bar')" => (none)  
+"(foo.hasOwnProperty satisfies any)('bar')" => (none)  
+"foo.hasOwnProperty<string>('bar')" => 1:5-1:19 Do not access Object.prototype method 'hasOwnProperty' from target object.  
+"foo['hasOwnProperty']!('bar')" => (none)  
+"foo?.hasOwnProperty!('bar')" => (none)  
+"foo[('hasOwnProperty' as string)]('bar')" => (none)  
+"foo['hasOwnProperty' as const]('bar')" => (none)  
+"foo[<string>'hasOwnProperty']('bar')" => (none)  
+"foo['hasOwnProperty'!]('bar')" => (none)  
+"foo[('hasOwnProperty')]('bar')" => 1:6-1:22 Do not access Object.prototype method 'hasOwnProperty' from target object.  
+"(foo.hasOwnProperty)('bar')" => 1:6-1:20 Do not access Object.prototype method 'hasOwnProperty' from target object.  
+"((foo).propertyIsEnumerable)('bar')" => 1:8-1:28 Do not access Object.prototype method 'propertyIsEnumerable' from target object.  
+"const x: boolean = foo.hasOwnProperty('bar') as boolean" => 1:24-1:38 Do not access Object.prototype method 'hasOwnProperty' from target object.  
+"foo.hasOwnProperty('bar')!" => 1:5-1:19 Do not access Object.prototype method 'hasOwnProperty' from target object.  
+"class A { m(this: A) { return this.hasOwnProperty('x'); } }" => 1:36-1:50 Do not access Object.prototype method 'hasOwnProperty' from target object.  
+"new foo.hasOwnProperty('bar')" => (none)  
+"foo.hasOwnProperty`bar`" => (none)  
+"foo.hasOwnProperty" => (none)  
+"foo!.bar!.hasOwnProperty!('baz')" => (none)  
+"foo!.bar!.hasOwnProperty('baz')" => 1:11-1:25 Do not access Object.prototype method 'hasOwnProperty' from target object.  

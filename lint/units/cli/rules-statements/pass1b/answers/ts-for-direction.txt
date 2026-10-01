@@ -1,0 +1,26 @@
+"for (let i: number = 0; i < 10; i--) {}" => 1:1-1:37 The update clause in this loop moves the variable in the wrong direction.  
+"for (let i = 0; (i as number) < 10; i--) {}" => (none)  
+"for (let i = 0; i! < 10; i--) {}" => (none)  
+"for (let i = 0; <number>i < 10; i--) {}" => (none)  
+"for (let i = 0; (i satisfies number) < 10; i--) {}" => (none)  
+"for (let i = 0; i < 10; i!--) {}" => (none)  
+"for (let i = 0; i < 10; (i as number)--) {}" => (none)  
+"for (let i = 0; i < 10; i -= 1 as number) {}" => 1:1-1:42 The update clause in this loop moves the variable in the wrong direction.  
+"for (let i = 0; i < 10; i -= <number>1) {}" => 1:1-1:40 The update clause in this loop moves the variable in the wrong direction.  
+"for (let i = 0; i < 10; i -= 1!) {}" => 1:1-1:33 The update clause in this loop moves the variable in the wrong direction.  
+"for (let i = 0; i < 10; i -= (1 satisfies number)) {}" => 1:1-1:51 The update clause in this loop moves the variable in the wrong direction.  
+"for (let i = 0; (i < 10) as boolean; i--) {}" => (none)  
+"for (let i = 0; i < (10 as number); i--) {}" => 1:1-1:41 The update clause in this loop moves the variable in the wrong direction.  
+"for (let i = 0; i < 10; (i--) as number) {}" => (none)  
+"for (let i = 0; i < 10; (i satisfies number, i--)) {}" => 1:1-1:51 The update clause in this loop moves the variable in the wrong direction.  
+"for (let i = 0; i < 10; (i! -= 1)) {}" => (none)  
+"for (let i = 0; i < 10; i += -1 as const) {}" => 1:1-1:42 The update clause in this loop moves the variable in the wrong direction.  
+"for (let i = 0; (i) < 10; (i)--) {}" => 1:1-1:33 The update clause in this loop moves the variable in the wrong direction.  
+"for (let i = 0; i < arr.length!; i--) {}" => 1:1-1:38 The update clause in this loop moves the variable in the wrong direction.  
+"for (let i = 10; i >= 0; i++) { const x: number = i; }" => 1:1-1:30 The update clause in this loop moves the variable in the wrong direction.  
+"enum E { A = -1 } for (let i = 0; i < 10; i += E.A) {}" => (none)  
+"const n = -1; for (let i = 0; i < 10; i += n) {}" => 1:15-1:46 The update clause in this loop moves the variable in the wrong direction.  
+"const n: number = -1; for (let i = 0; i < 10; i += n) {}" => 1:23-1:54 The update clause in this loop moves the variable in the wrong direction.  
+"for (let i = 0; i < 10; i += -1n as any) {}" => 1:1-1:41 The update clause in this loop moves the variable in the wrong direction.  
+"for (let i = 0; i < 10; i--, j++) {}" => 1:1-1:34 The update clause in this loop moves the variable in the wrong direction.  
+"for (let i = 0; i < j; i--, j++) {}" => 1:1-1:33 The update clause in this loop moves the variable in the wrong direction. | 1:1-1:33 The update clause in this loop moves the variable in the wrong direction.  

@@ -1,0 +1,39 @@
+"class A { set a(val: number) { return val; } }" => 1:32-1:43 Setter cannot return a value.  
+"({ set a(val: number) { return val; } })" => 1:25-1:36 Setter cannot return a value.  
+"class A { private set a(val) { return 1; } }" => 1:32-1:41 Setter cannot return a value.  
+"class A { public static set a(val) { return 1; } }" => 1:38-1:47 Setter cannot return a value.  
+"class A { override set a(val) { return 1; } }" => 1:33-1:42 Setter cannot return a value.  
+"abstract class A { abstract set a(val: number); }" => (none)  
+"declare class A { set a(val: number); }" => (none)  
+"interface I { set a(val: number); }" => (none)  
+"Object.defineProperty(foo, 'bar', { set(val: number) { return 1; } } as PropertyDescriptor)" => (none)  
+"Object.defineProperty(foo, 'bar', <PropertyDescriptor>{ set(val) { return 1; } })" => (none)  
+"Object.defineProperty(foo, 'bar', { set(val) { return 1; } } satisfies PropertyDescriptor)" => (none)  
+"Object.defineProperty(foo, 'bar', { set(val) { return 1; } }!)" => (none)  
+"Object.defineProperty(foo, 'bar', ({ set(val) { return 1; } }))" => 1:49-1:58 Setter cannot return a value.  
+"Object.defineProperty(foo, 'bar', { set: function (val): number { return 1; } })" => 1:67-1:76 Setter cannot return a value.  
+"Object.defineProperty(foo, 'bar', { set: ((val) => val) as any })" => (none)  
+"Object.defineProperty(foo, 'bar', { set: (function (val) { return 1; }) as any })" => (none)  
+"Object.defineProperty(foo, 'bar', { set: (val) => val as number })" => 1:51-1:64 Setter cannot return a value.  
+"Object.defineProperty(foo, 'bar', { set: (val) => <number>val })" => 1:51-1:62 Setter cannot return a value.  
+"Object.defineProperty(foo, 'bar', { set: (val) => val! })" => 1:51-1:55 Setter cannot return a value.  
+"Object.defineProperty(foo, 'bar', { set: (val) => (val) })" => 1:52-1:55 Setter cannot return a value.  
+"Object.defineProperty(foo, 'bar', { set: (val) => (val).x })" => 1:51-1:58 Setter cannot return a value.  
+"Object.defineProperty(foo, 'bar', { set: (val) => (val as any).x })" => 1:51-1:65 Setter cannot return a value.  
+"Object.defineProperty!(foo, 'bar', { set(val) { return 1; } })" => (none)  
+"(Object as any).defineProperty(foo, 'bar', { set(val) { return 1; } })" => (none)  
+"Object!.defineProperty(foo, 'bar', { set(val) { return 1; } })" => (none)  
+"Object.defineProperty<any>(foo, 'bar', { set(val) { return 1; } })" => 1:53-1:62 Setter cannot return a value.  
+"(Object.defineProperty as any)(foo, 'bar', { set(val) { return 1; } })" => (none)  
+"class A { set a(val) { return val as any; } }" => 1:24-1:42 Setter cannot return a value.  
+"class A { set a(val) { return; } }" => (none)  
+"class A { set a(val: number) { function f(): number { return 1; } } }" => (none)  
+"class A { set ['a'](val: number) { return 1; } }" => 1:36-1:45 Setter cannot return a value.  
+"class A { static accessor a = 1; set b(v) { return v } }" => 1:45-1:53 Setter cannot return a value.  
+"Object.defineProperties(foo, { bar: { set(val) { return 1; } } as PropertyDescriptor })" => (none)  
+"Object.defineProperties(foo, { bar: { set(val) { return 1; } } } as PropertyDescriptorMap)" => (none)  
+"Object.create(null, { bar: { set(val) { return 1; } }! })" => (none)  
+"declare const Object: any; Object.defineProperty(foo, 'bar', { set(val) { return 1; } })" => (none)  
+"Object.defineProperty(foo, 'bar', { set(this: Foo, val: number) { return 1; } })" => 1:67-1:76 Setter cannot return a value.  
+"Object.defineProperty(foo, 'bar', { ['set' as string](val) { return 1; } })" => (none)  
+"Object.defineProperty(foo, 'bar', { set: <T,>(val: T) => val })" => 1:58-1:61 Setter cannot return a value.  

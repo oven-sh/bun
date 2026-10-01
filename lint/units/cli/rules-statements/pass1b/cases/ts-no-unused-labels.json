@@ -1,0 +1,15 @@
+[
+ "A: for (const x of y as number[]) { break A; }",
+ "A: { const x: number = 1 }",
+ "A: type T = 1",
+ "A: interface I {}",
+ "A: enum E {}",
+ "A: declare const x: number;",
+ "A: function f(): void {}",
+ "A: while (x as boolean) { continue A; }",
+ "A: B: for (;;) { break B; }",
+ "function f<T>(x: T) { A: return x; }",
+ "A: var x: number = 1;",
+ "type: for (;;) { break type; }",
+ "namespace: for (;;) {}"
+]

@@ -6,6 +6,8 @@ import { join } from "node:path";
 
 const [caseDir, scratch, mode] = process.argv.slice(2);
 process.chdir(scratch);
+// DIFF_UMASK (octal) sets the umask of the extraction. Mode drift hides under 022.
+if (process.env.DIFF_UMASK) process.umask(parseInt(process.env.DIFF_UMASK, 8));
 
 let result;
 try {

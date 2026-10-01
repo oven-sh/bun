@@ -124,4 +124,50 @@ case("XPRE-dir-entry-over-dangling-symlink", [D("d/"), F("ok")], "mkdir -p out &
 case("XPRE-dir-entry-no-slash-over-dangling-symlink", [D("d"), F("ok")], "mkdir -p out && ln -s ../outside out/d")
 case("XPRE-symlink-entry-over-symlink", [L("l", "new"), F("ok")], "mkdir -p out && ln -s old out/l")
 case("XPRE-hardlink-through-symlink", [F("a/orig", b"orig"), H("d/hard", "a/orig")], "mkdir -p out victim && ln -s ../victim out/d")
+# --- directory entries whose parent has no entry (mode comes from the fallback path)
+case("dir-noslash-missing-parent", [D("a/b", 0o700), F("a/b/f")])
+case("dir-slash-missing-parent-700", [D("a/b/", 0o700), F("a/b/f")])
+case("dir-slash-missing-parent-deep", [D("p/q/r/s/", 0o750), F("p/q/r/s/f"), D("p/q/", 0o700)])
+case("dir-noslash-missing-parent-deep", [D("p/q/r/s", 0o750), F("p/q/r/s/f")])
+case("dir-slash-parent-exists-700", [D("a/", 0o755), D("a/b/", 0o700), F("a/b/f")])
+case("file-modes-missing-parent", [F("m/x", b"x", 0o600), F("m/y", b"y", 0o755), F("m/z", b"z", 0o000)])
+# --- raw ustar headers: names that tarfile would rewrite
+def raw_header(name, typeflag, mode, size, linkname=""):
+    h = bytearray(512)
+    h[0:len(name)] = name.encode()
+    h[100:108] = b"%07o\0" % mode
+    h[108:116] = b"0000000\0"
+    h[116:124] = b"0000000\0"
+    h[124:136] = b"%011o\0" % size
+    h[136:148] = b"00000000000\0"
+    h[148:156] = b"        "
+    h[156:157] = typeflag.encode()
+    h[157:157 + len(linkname)] = linkname.encode()
+    h[257:263] = b"ustar\0"
+    h[263:265] = b"00"
+    h[148:156] = b"%06o\0 " % sum(h)
+    return bytes(h)
+
+def raw_case(name, items, setup=None):
+    d = os.path.join(ROOT, name)
+    os.makedirs(d, exist_ok=True)
+    out = b""
+    for item in items:
+        n, typeflag, mode = item[0], item[1], item[2]
+        data = item[3] if len(item) > 3 else b""
+        linkname = item[4] if len(item) > 4 else ""
+        out += raw_header(n, typeflag, mode, len(data), linkname) + data + b"\0" * ((512 - len(data) % 512) % 512)
+    out += b"\0" * 1024
+    open(os.path.join(d, "a.tar"), "wb").write(out)
+    if setup:
+        open(os.path.join(d, "setup.sh"), "w").write(setup + "\n")
+
+raw_case("raw-dir-noslash-missing-parent", [("a/b", "5", 0o700), ("a/b/f", "0", 0o644, b"data")])
+raw_case("raw-dir-noslash-parent-exists", [("a", "5", 0o755), ("a/b", "5", 0o700), ("a/b/f", "0", 0o644, b"data")])
+raw_case("raw-dir-slash-missing-parent", [("a/b/", "5", 0o700), ("a/b/f", "0", 0o644, b"data")])
+raw_case("raw-symlink-trailing-slash", [("l/", "2", 0o777, b"", "t"), ("t", "0", 0o644, b"data")])
+raw_case("raw-symlink-nested-trailing-slash", [("x/y/l/", "2", 0o777, b"", "t"), ("ok", "0", 0o644, b"data")])
+raw_case("raw-file-trailing-slash", [("f/", "0", 0o644, b"data"), ("ok", "0", 0o644, b"data")])
+raw_case("XPRE-raw-dir-noslash-over-dangling-symlink", [("d", "5", 0o755), ("ok", "0", 0o644, b"data")], "mkdir -p out && ln -s ../outside out/d")
+raw_case("XPRE-raw-symlink-slash-over-symlink", [("l/", "2", 0o777, b"", "t"), ("ok", "0", 0o644, b"data")], "mkdir -p out victim && ln -s ../victim out/l")
 print("cases:", len(os.listdir(ROOT)))

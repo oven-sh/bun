@@ -6,7 +6,7 @@ const rules = ["no-loss-of-precision", "no-octal", "no-nonoctal-decimal-escape",
 const BUN = "/workspace/wt/cli/build/debug/bun-debug";
 for (const rule of rules) {
   const all = JSON.parse(execFileSync("node", ["/workspace/notes/lint/units/cli/round2-oracle/proto-1a/extract.cjs", rule, "--all"], { encoding: "utf8", maxBuffer: 1 << 28 }));
-  const dir = fs.mkdtempSync(path.join("/tmp/rst/parsecheck/", rule + "-"));
+  const dir = fs.mkdtempSync(path.join(require("os").tmpdir(), rule + "-"));
   const names = all.map((c, i) => `c${String(i).padStart(4, "0")}.${c.ext || "js"}`);
   all.forEach((c, i) => fs.writeFileSync(path.join(dir, names[i]), c.code));
   const js = names.filter(n => n.endsWith(".js"));

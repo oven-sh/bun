@@ -72,7 +72,7 @@ function planned(rawWithSep, value) {
   const st = toPrecisionParts(value, coefficient.length);
   return st.magnitude !== magnitude || st.coefficient !== coefficient;
 }
-let FAST = 0; let seed = 777; const rnd = n => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+let FAST = 0; const rnd = require("./rng.cjs")(777);
 const pick = s => s[rnd(s.length)];
 function gen() {
   const kind = rnd(12);

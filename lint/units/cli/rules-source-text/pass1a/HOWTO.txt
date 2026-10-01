@@ -11,3 +11,7 @@ proto/lop-proto.cjs, lop-proto2.cjs                         no-loss-of-precision
 proto/tp.rs + gen.cjs                                       the planned to_precision in Rust against toPrecision of the engine: node gen.cjs > cases.txt; rustc -O tp.rs; ./tp < cases.txt (250097 pairs, 0 differences)
 proto/iw-proto.cjs                                          no-irregular-whitespace candidates and positions as planned against ESLint: 3441 codes, 0 differences
 proto/nde-proto.cjs                                         the scan of no-nonoctal-decimal-escape as planned against ESLint: 0 differences
+proto/um-proto.cjs <dir>... [--mutate N]                    the text-only paths planned for no-unexpected-multiline (call, member, tagged template, division), node by node
+                                                            against ESLint's own token logic: ESLint's lib with 25 mutants a file (89380 calls, 19823 members, 581 reports) and
+                                                            24000 generated statements (node gen2.cjs writes gen2/ and gen3/): 0 wrong answers; "slow" is where the tokens are needed
+proto/rng.cjs                                               the generator of the random cases (the first runs used a poor one and were repeated with this)

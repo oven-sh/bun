@@ -1,0 +1,134 @@
+{"code":"a\n(b)","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"a\n()","type":"script","reports":[]}
+{"code":"a\n(...b)","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"a(\nb)","type":"script","reports":[]}
+{"code":"a\n((b))","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"a(\n(b))","type":"script","reports":[]}
+{"code":"a\n(\n(b))","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"(a)\n(b)","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"(a\n)(b)","type":"script","reports":[]}
+{"code":"((a)\n)(b)","type":"script","reports":[]}
+{"code":"a /* c */\n(b)","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"a\n/* c */ (b)","type":"script","reports":["2:9-2:10 Unexpected newline between function and ( of function call."]}
+{"code":"a /*\n*/ (b)","type":"script","reports":["2:4-2:5 Unexpected newline between function and ( of function call."]}
+{"code":"a // c\n(b)","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"a /* c */ (b)","type":"script","reports":[]}
+{"code":"a( // (\n b)","type":"script","reports":[]}
+{"code":"a( /* ( */ b)","type":"script","reports":[]}
+{"code":"a(\n// (\nb)","type":"script","reports":[]}
+{"code":"a\n[b]","type":"script","reports":["2:1-2:2 Unexpected newline between object and [ of property access."]}
+{"code":"a[\nb]","type":"script","reports":[]}
+{"code":"a\n[(b)]","type":"script","reports":["2:1-2:2 Unexpected newline between object and [ of property access."]}
+{"code":"a[\n(b)]","type":"script","reports":[]}
+{"code":"(a)\n[b]","type":"script","reports":["2:1-2:2 Unexpected newline between object and [ of property access."]}
+{"code":"a /* c */ [b]","type":"script","reports":[]}
+{"code":"a /*\n*/ [b]","type":"script","reports":["2:4-2:5 Unexpected newline between object and [ of property access."]}
+{"code":"a // [\n[b]","type":"script","reports":["2:1-2:2 Unexpected newline between object and [ of property access."]}
+{"code":"a[ // [\n b]","type":"script","reports":[]}
+{"code":"a[ /* [ */ b]","type":"script","reports":[]}
+{"code":"a\n[b][c]","type":"script","reports":["2:1-2:2 Unexpected newline between object and [ of property access."]}
+{"code":"a[b]\n[c]","type":"script","reports":["2:1-2:2 Unexpected newline between object and [ of property access."]}
+{"code":"a[b][c]","type":"script","reports":[]}
+{"code":"a\n[b]\n[c]","type":"script","reports":["2:1-2:2 Unexpected newline between object and [ of property access.","3:1-3:2 Unexpected newline between object and [ of property access."]}
+{"code":"a\n`b`","type":"script","reports":["2:1-2:2 Unexpected newline between template tag and template literal."]}
+{"code":"a`b`","type":"script","reports":[]}
+{"code":"a`b`\n`c`","type":"script","reports":["2:1-2:2 Unexpected newline between template tag and template literal."]}
+{"code":"a\n`b``c`","type":"script","reports":["2:1-2:2 Unexpected newline between template tag and template literal."]}
+{"code":"a\n`b${c}d`","type":"script","reports":["2:1-2:2 Unexpected newline between template tag and template literal."]}
+{"code":"a`b${c}d`","type":"script","reports":[]}
+{"code":"a /*\n*/ `b`","type":"script","reports":["2:4-2:5 Unexpected newline between template tag and template literal."]}
+{"code":"a // c\n`b`","type":"script","reports":["2:1-2:2 Unexpected newline between template tag and template literal."]}
+{"code":"(a)\n`b`","type":"script","reports":["2:1-2:2 Unexpected newline between template tag and template literal."]}
+{"code":"(a\n)`b`","type":"script","reports":[]}
+{"code":"a.b\n`c`","type":"script","reports":["2:1-2:2 Unexpected newline between template tag and template literal."]}
+{"code":"a\n.b`c`","type":"script","reports":[]}
+{"code":"a()\n`c`","type":"script","reports":["2:1-2:2 Unexpected newline between template tag and template literal."]}
+{"code":"a[0]\n`c`","type":"script","reports":["2:1-2:2 Unexpected newline between template tag and template literal."]}
+{"code":"`x`\n`y`","type":"script","reports":["2:1-2:2 Unexpected newline between template tag and template literal."]}
+{"code":"a`x`.b\n`y`","type":"script","reports":["2:1-2:2 Unexpected newline between template tag and template literal."]}
+{"code":"new a\n`b`","type":"script","reports":["2:1-2:2 Unexpected newline between template tag and template literal."]}
+{"code":"a\n`b\nc`","type":"script","reports":["2:1-2:2 Unexpected newline between template tag and template literal."]}
+{"code":"a\r\n`b`","type":"script","reports":["2:1-2:2 Unexpected newline between template tag and template literal."]}
+{"code":"a\r\n`b\r\nc`","type":"script","reports":["2:1-2:2 Unexpected newline between template tag and template literal."]}
+{"code":"a`b\r\nc`","type":"script","reports":[]}
+{"code":"a`\r\n`\r\n`\r\n`","type":"script","reports":["3:1-3:2 Unexpected newline between template tag and template literal."]}
+{"code":"a?.\n(b)","type":"script","reports":[]}
+{"code":"a\n?.(b)","type":"script","reports":[]}
+{"code":"a?.b\n(c)","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"a?.b\n[c]","type":"script","reports":["2:1-2:2 Unexpected newline between object and [ of property access."]}
+{"code":"a\n?.[b]","type":"script","reports":[]}
+{"code":"a?.[b]\n[c]","type":"script","reports":["2:1-2:2 Unexpected newline between object and [ of property access."]}
+{"code":"a?.(b)\n(c)","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"new a\n(b)","type":"script","reports":[]}
+{"code":"new a(b)\n(c)","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"new (a\n(b))","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"import\n(a)","type":"script","reports":[]}
+{"code":"import(a)\n(b)","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"class A extends B { constructor() { super\n(a) } }","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"class A extends B { m() { super.m\n(a) } }","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"class A { #a; m() { this.#a\n(b) } }","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"class A { #a; m() { this.#a\n[b] } }","type":"script","reports":["2:1-2:2 Unexpected newline between object and [ of property access."]}
+{"code":"class A { #a; m() { this\n.#a[b] } }","type":"script","reports":[]}
+{"code":"a\n(b)\n(c)","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call.","3:1-3:2 Unexpected newline between function and ( of function call."]}
+{"code":"a(b)(c)","type":"script","reports":[]}
+{"code":"a\n(b)(c)","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"a(b)\n(c)","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"a\n/b/g","type":"script","reports":["2:1-2:2 Unexpected newline between numerator and division operator."]}
+{"code":"a\n/b/g.c","type":"script","reports":["2:1-2:2 Unexpected newline between numerator and division operator."]}
+{"code":"a\n/b/gim","type":"script","reports":["2:1-2:2 Unexpected newline between numerator and division operator."]}
+{"code":"a\n/b/x","type":"script","reports":[]}
+{"code":"a\n/b/ g","type":"script","reports":[]}
+{"code":"a\n/ b/g","type":"script","reports":["2:1-2:2 Unexpected newline between numerator and division operator."]}
+{"code":"a/b\n/g","type":"script","reports":[]}
+{"code":"a/\nb/g","type":"script","reports":[]}
+{"code":"(a\n/b)/g","type":"script","reports":["2:1-2:2 Unexpected newline between numerator and division operator."]}
+{"code":"a\n/b/(g)","type":"script","reports":[]}
+{"code":"a\n/b/g/h","type":"script","reports":["2:1-2:2 Unexpected newline between numerator and division operator."]}
+{"code":"a/b/c\n/d/g","type":"script","reports":["2:1-2:2 Unexpected newline between numerator and division operator."]}
+{"code":"a\n/b/g(c)","type":"script","reports":["2:1-2:2 Unexpected newline between numerator and division operator."]}
+{"code":"a\n/b/\\u0067","type":"script","reports":["2:1-2:2 Unexpected newline between numerator and division operator."]}
+{"code":"a\n/b/*c*/g","type":"script","fatal":"2:8 Parsing error: Unexpected token g","reports":[]}
+{"code":"a\n/b/d","type":"script","reports":["2:1-2:2 Unexpected newline between numerator and division operator."]}
+{"code":"a /* c\n*/ /b/g","type":"script","reports":["2:4-2:5 Unexpected newline between numerator and division operator."]}
+{"code":"a\n/b/y.z","type":"script","reports":["2:1-2:2 Unexpected newline between numerator and division operator."]}
+{"code":"a\n/(b)/g","type":"script","reports":["2:1-2:2 Unexpected newline between numerator and division operator."]}
+{"code":"a * b\n/c/g","type":"script","reports":["2:1-2:2 Unexpected newline between numerator and division operator."]}
+{"code":"a\n/b/g ** 2","type":"script","reports":["2:1-2:2 Unexpected newline between numerator and division operator."]}
+{"code":"async function f() { await a\n(b) }","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"function* g() { yield a\n(b) }","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"a = function () {}\n(b)","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"a = () => {}\n(b)","type":"script","reports":[]}
+{"code":"a = class {}\n(b)","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"a = {}\n(b)","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"a = []\n[b]","type":"script","reports":["2:1-2:2 Unexpected newline between object and [ of property access."]}
+{"code":"a = 'x'\n[b]","type":"script","reports":["2:1-2:2 Unexpected newline between object and [ of property access."]}
+{"code":"a = 1\n[b]","type":"script","reports":["2:1-2:2 Unexpected newline between object and [ of property access."]}
+{"code":"a = /x/\n[b]","type":"script","reports":["2:1-2:2 Unexpected newline between object and [ of property access."]}
+{"code":"a = b++\n(c)","type":"script","reports":[]}
+{"code":"a = b\n++c","type":"script","reports":[]}
+{"code":"a\n<b/>","type":"script","jsx":true,"fatal":"2:4 Parsing error: Unexpected token >","reports":[]}
+{"code":"x = a\n(<b/>)","type":"script","jsx":true,"reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"f(\n<b/>)","type":"script","jsx":true,"reports":[]}
+{"code":"f\n(<b/>)","type":"script","jsx":true,"reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"a[\n<b/>]","type":"script","jsx":true,"reports":[]}
+{"code":"a\n[<b/>]","type":"script","jsx":true,"reports":["2:1-2:2 Unexpected newline between object and [ of property access."]}
+{"code":"@a\n(b) class C {}","type":"script","fatal":"1:1 Parsing error: Unexpected character '@'","reports":[]}
+{"code":"(@a\n(b) class {})","type":"script","fatal":"1:2 Parsing error: Unexpected character '@'","reports":[]}
+{"code":"var a = b\n,c = d\n(e)","type":"script","reports":["3:1-3:2 Unexpected newline between function and ( of function call."]}
+{"code":"if (a) b\n(c)","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"for (;;) a\n(b)","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"a: b\n(c)","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"x = a ? b\n(c) : d","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"x = a\n? b : c\n(d)","type":"script","reports":["3:1-3:2 Unexpected newline between function and ( of function call."]}
+{"code":"f(a, b\n(c))","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"f(a\n, b\n)(c)","type":"script","reports":[]}
+{"code":"[a\n(b)]","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"({ a: b\n(c) })","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"`${a\n(b)}`","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"a  (b)","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"a \n(b)","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"a\n (b)","type":"script","reports":["2:2-2:3 Unexpected newline between function and ( of function call."]}
+{"code":"a\r(b)","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"a\r\n(b)","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"a   [b]","type":"script","reports":["2:2-2:3 Unexpected newline between object and [ of property access."]}
+{"code":"a `b`","type":"script","reports":["2:1-2:2 Unexpected newline between template tag and template literal."]}

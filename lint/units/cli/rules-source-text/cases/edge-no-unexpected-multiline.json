@@ -1,0 +1,538 @@
+[
+	{
+		"code": "a\n(b)",
+		"jsx": false
+	},
+	{
+		"code": "a\n()",
+		"jsx": false
+	},
+	{
+		"code": "a\n(...b)",
+		"jsx": false
+	},
+	{
+		"code": "a(\nb)",
+		"jsx": false
+	},
+	{
+		"code": "a\n((b))",
+		"jsx": false
+	},
+	{
+		"code": "a(\n(b))",
+		"jsx": false
+	},
+	{
+		"code": "a\n(\n(b))",
+		"jsx": false
+	},
+	{
+		"code": "(a)\n(b)",
+		"jsx": false
+	},
+	{
+		"code": "(a\n)(b)",
+		"jsx": false
+	},
+	{
+		"code": "((a)\n)(b)",
+		"jsx": false
+	},
+	{
+		"code": "a /* c */\n(b)",
+		"jsx": false
+	},
+	{
+		"code": "a\n/* c */ (b)",
+		"jsx": false
+	},
+	{
+		"code": "a /*\n*/ (b)",
+		"jsx": false
+	},
+	{
+		"code": "a // c\n(b)",
+		"jsx": false
+	},
+	{
+		"code": "a /* c */ (b)",
+		"jsx": false
+	},
+	{
+		"code": "a( // (\n b)",
+		"jsx": false
+	},
+	{
+		"code": "a( /* ( */ b)",
+		"jsx": false
+	},
+	{
+		"code": "a(\n// (\nb)",
+		"jsx": false
+	},
+	{
+		"code": "a\n[b]",
+		"jsx": false
+	},
+	{
+		"code": "a[\nb]",
+		"jsx": false
+	},
+	{
+		"code": "a\n[(b)]",
+		"jsx": false
+	},
+	{
+		"code": "a[\n(b)]",
+		"jsx": false
+	},
+	{
+		"code": "(a)\n[b]",
+		"jsx": false
+	},
+	{
+		"code": "a /* c */ [b]",
+		"jsx": false
+	},
+	{
+		"code": "a /*\n*/ [b]",
+		"jsx": false
+	},
+	{
+		"code": "a // [\n[b]",
+		"jsx": false
+	},
+	{
+		"code": "a[ // [\n b]",
+		"jsx": false
+	},
+	{
+		"code": "a[ /* [ */ b]",
+		"jsx": false
+	},
+	{
+		"code": "a\n[b][c]",
+		"jsx": false
+	},
+	{
+		"code": "a[b]\n[c]",
+		"jsx": false
+	},
+	{
+		"code": "a[b][c]",
+		"jsx": false
+	},
+	{
+		"code": "a\n[b]\n[c]",
+		"jsx": false
+	},
+	{
+		"code": "a\n`b`",
+		"jsx": false
+	},
+	{
+		"code": "a`b`",
+		"jsx": false
+	},
+	{
+		"code": "a`b`\n`c`",
+		"jsx": false
+	},
+	{
+		"code": "a\n`b``c`",
+		"jsx": false
+	},
+	{
+		"code": "a\n`b${c}d`",
+		"jsx": false
+	},
+	{
+		"code": "a`b${c}d`",
+		"jsx": false
+	},
+	{
+		"code": "a /*\n*/ `b`",
+		"jsx": false
+	},
+	{
+		"code": "a // c\n`b`",
+		"jsx": false
+	},
+	{
+		"code": "(a)\n`b`",
+		"jsx": false
+	},
+	{
+		"code": "(a\n)`b`",
+		"jsx": false
+	},
+	{
+		"code": "a.b\n`c`",
+		"jsx": false
+	},
+	{
+		"code": "a\n.b`c`",
+		"jsx": false
+	},
+	{
+		"code": "a()\n`c`",
+		"jsx": false
+	},
+	{
+		"code": "a[0]\n`c`",
+		"jsx": false
+	},
+	{
+		"code": "`x`\n`y`",
+		"jsx": false
+	},
+	{
+		"code": "a`x`.b\n`y`",
+		"jsx": false
+	},
+	{
+		"code": "new a\n`b`",
+		"jsx": false
+	},
+	{
+		"code": "a\n`b\nc`",
+		"jsx": false
+	},
+	{
+		"code": "a\r\n`b`",
+		"jsx": false
+	},
+	{
+		"code": "a\r\n`b\r\nc`",
+		"jsx": false
+	},
+	{
+		"code": "a`b\r\nc`",
+		"jsx": false
+	},
+	{
+		"code": "a`\r\n`\r\n`\r\n`",
+		"jsx": false
+	},
+	{
+		"code": "a?.\n(b)",
+		"jsx": false
+	},
+	{
+		"code": "a\n?.(b)",
+		"jsx": false
+	},
+	{
+		"code": "a?.b\n(c)",
+		"jsx": false
+	},
+	{
+		"code": "a?.b\n[c]",
+		"jsx": false
+	},
+	{
+		"code": "a\n?.[b]",
+		"jsx": false
+	},
+	{
+		"code": "a?.[b]\n[c]",
+		"jsx": false
+	},
+	{
+		"code": "a?.(b)\n(c)",
+		"jsx": false
+	},
+	{
+		"code": "new a\n(b)",
+		"jsx": false
+	},
+	{
+		"code": "new a(b)\n(c)",
+		"jsx": false
+	},
+	{
+		"code": "new (a\n(b))",
+		"jsx": false
+	},
+	{
+		"code": "import\n(a)",
+		"jsx": false
+	},
+	{
+		"code": "import(a)\n(b)",
+		"jsx": false
+	},
+	{
+		"code": "class A extends B { constructor() { super\n(a) } }",
+		"jsx": false
+	},
+	{
+		"code": "class A extends B { m() { super.m\n(a) } }",
+		"jsx": false
+	},
+	{
+		"code": "class A { #a; m() { this.#a\n(b) } }",
+		"jsx": false
+	},
+	{
+		"code": "class A { #a; m() { this.#a\n[b] } }",
+		"jsx": false
+	},
+	{
+		"code": "class A { #a; m() { this\n.#a[b] } }",
+		"jsx": false
+	},
+	{
+		"code": "a\n(b)\n(c)",
+		"jsx": false
+	},
+	{
+		"code": "a(b)(c)",
+		"jsx": false
+	},
+	{
+		"code": "a\n(b)(c)",
+		"jsx": false
+	},
+	{
+		"code": "a(b)\n(c)",
+		"jsx": false
+	},
+	{
+		"code": "a\n/b/g",
+		"jsx": false
+	},
+	{
+		"code": "a\n/b/g.c",
+		"jsx": false
+	},
+	{
+		"code": "a\n/b/gim",
+		"jsx": false
+	},
+	{
+		"code": "a\n/b/x",
+		"jsx": false
+	},
+	{
+		"code": "a\n/b/ g",
+		"jsx": false
+	},
+	{
+		"code": "a\n/ b/g",
+		"jsx": false
+	},
+	{
+		"code": "a/b\n/g",
+		"jsx": false
+	},
+	{
+		"code": "a/\nb/g",
+		"jsx": false
+	},
+	{
+		"code": "(a\n/b)/g",
+		"jsx": false
+	},
+	{
+		"code": "a\n/b/(g)",
+		"jsx": false
+	},
+	{
+		"code": "a\n/b/g/h",
+		"jsx": false
+	},
+	{
+		"code": "a/b/c\n/d/g",
+		"jsx": false
+	},
+	{
+		"code": "a\n/b/g(c)",
+		"jsx": false
+	},
+	{
+		"code": "a\n/b/\\u0067",
+		"jsx": false
+	},
+	{
+		"code": "a\n/b/*c*/g",
+		"jsx": false
+	},
+	{
+		"code": "a\n/b/d",
+		"jsx": false
+	},
+	{
+		"code": "a /* c\n*/ /b/g",
+		"jsx": false
+	},
+	{
+		"code": "a\n/b/y.z",
+		"jsx": false
+	},
+	{
+		"code": "a\n/(b)/g",
+		"jsx": false
+	},
+	{
+		"code": "a * b\n/c/g",
+		"jsx": false
+	},
+	{
+		"code": "a\n/b/g ** 2",
+		"jsx": false
+	},
+	{
+		"code": "async function f() { await a\n(b) }",
+		"jsx": false
+	},
+	{
+		"code": "function* g() { yield a\n(b) }",
+		"jsx": false
+	},
+	{
+		"code": "a = function () {}\n(b)",
+		"jsx": false
+	},
+	{
+		"code": "a = () => {}\n(b)",
+		"jsx": false
+	},
+	{
+		"code": "a = class {}\n(b)",
+		"jsx": false
+	},
+	{
+		"code": "a = {}\n(b)",
+		"jsx": false
+	},
+	{
+		"code": "a = []\n[b]",
+		"jsx": false
+	},
+	{
+		"code": "a = 'x'\n[b]",
+		"jsx": false
+	},
+	{
+		"code": "a = 1\n[b]",
+		"jsx": false
+	},
+	{
+		"code": "a = /x/\n[b]",
+		"jsx": false
+	},
+	{
+		"code": "a = b++\n(c)",
+		"jsx": false
+	},
+	{
+		"code": "a = b\n++c",
+		"jsx": false
+	},
+	{
+		"code": "a\n<b/>",
+		"jsx": true
+	},
+	{
+		"code": "x = a\n(<b/>)",
+		"jsx": true
+	},
+	{
+		"code": "f(\n<b/>)",
+		"jsx": true
+	},
+	{
+		"code": "f\n(<b/>)",
+		"jsx": true
+	},
+	{
+		"code": "a[\n<b/>]",
+		"jsx": true
+	},
+	{
+		"code": "a\n[<b/>]",
+		"jsx": true
+	},
+	{
+		"code": "@a\n(b) class C {}",
+		"jsx": false
+	},
+	{
+		"code": "(@a\n(b) class {})",
+		"jsx": false
+	},
+	{
+		"code": "var a = b\n,c = d\n(e)",
+		"jsx": false
+	},
+	{
+		"code": "if (a) b\n(c)",
+		"jsx": false
+	},
+	{
+		"code": "for (;;) a\n(b)",
+		"jsx": false
+	},
+	{
+		"code": "a: b\n(c)",
+		"jsx": false
+	},
+	{
+		"code": "x = a ? b\n(c) : d",
+		"jsx": false
+	},
+	{
+		"code": "x = a\n? b : c\n(d)",
+		"jsx": false
+	},
+	{
+		"code": "f(a, b\n(c))",
+		"jsx": false
+	},
+	{
+		"code": "f(a\n, b\n)(c)",
+		"jsx": false
+	},
+	{
+		"code": "[a\n(b)]",
+		"jsx": false
+	},
+	{
+		"code": "({ a: b\n(c) })",
+		"jsx": false
+	},
+	{
+		"code": "`${a\n(b)}`",
+		"jsx": false
+	},
+	{
+		"code": "a  (b)",
+		"jsx": false
+	},
+	{
+		"code": "a \n(b)",
+		"jsx": false
+	},
+	{
+		"code": "a\n (b)",
+		"jsx": false
+	},
+	{
+		"code": "a\r(b)",
+		"jsx": false
+	},
+	{
+		"code": "a\r\n(b)",
+		"jsx": false
+	},
+	{
+		"code": "a   [b]",
+		"jsx": false
+	},
+	{
+		"code": "a `b`",
+		"jsx": false
+	}
+]

@@ -1,7 +1,7 @@
 // Checks the derivation that test/cli/lint/regexpp.test.ts is to make from literal.txt against ESLint at the pin:
 // every case of ecmaVersion 2025, not strict, whose literal splits into a pattern and valid flags becomes one line
 // `new RegExp("<pattern>", "<flags>");`, and the expectation of the line is derived from the baseline alone.
-// usage: node check-rule-from-literal.cjs <literal.txt>
+// usage: node check-rule-from-literal.cjs <literal.txt> [test262.txt ...]
 "use strict";
 const fs = require("fs");
 const { Linter } = require("/workspace/ref/eslint");
@@ -36,7 +36,7 @@ function extract(source) {
   return { pattern: pattern.join(""), flags };
 }
 const program = [], expected = []; let skipped = 0;
-for (const line of fs.readFileSync(process.argv[2], "utf8").split("\n")) {
+for (const line of process.argv.slice(2).flatMap(f => fs.readFileSync(f, "utf8").split("\n"))) {
   if (!line || line.startsWith("#")) continue;
   const [kind, ecma, strict, source, a, b] = line.split("\t");
   if (ecma !== "2025" || strict !== "0") continue;

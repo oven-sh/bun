@@ -6,7 +6,7 @@ use bun_core::strings;
 use bun_glob as glob;
 use bun_paths as path;
 use bun_paths::resolve_path;
-use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP_STR};
+use bun_paths::{MAX_PATH_BYTES, SEP_STR};
 
 use crate::lockfile_real::{Lockfile, StringBuilder, pruned_workspaces};
 use crate::package_manager::workspace_package_json_cache::{
@@ -29,8 +29,8 @@ pub struct Entry {
     /// `"installConfig": { "hoistingLimits": "workspaces" }` — this workspace's
     /// node_modules must be self-contained (see `Lockfile::self_contained_workspaces`).
     pub(crate) hoisting_limits: bool,
-    /// An `installConfig.hoistingLimits` value other than "workspaces", kept so the
-    /// caller can warn about it (outside `process_names_array`'s log window).
+    /// An `installConfig.hoistingLimits` value other than "workspaces" or "none", kept so
+    /// the caller can warn about it (outside `process_names_array`'s log window).
     pub(crate) unsupported_hoisting_limits: Option<Box<[u8]>>,
 }
 
@@ -201,7 +201,8 @@ fn process_workspace_name(
         name_loc: name_expr.loc,
         hoisting_limits: hoisting_limits.as_deref() == Some(b"workspaces".as_slice()),
         unsupported_hoisting_limits: match hoisting_limits {
-            Some(v) if &*v != b"workspaces" => Some(v),
+            // "none" is yarn's default: no limit, which is how every workspace hoists
+            Some(v) if !matches!(&*v, b"workspaces" | b"none") => Some(v),
             _ => None,
         },
         version: 'brk: {
@@ -265,8 +266,7 @@ impl WorkspaceMap {
         let orig_msgs_len = log.msgs.len();
 
         let mut workspace_globs: Vec<Box<[u8]>> = Vec::new();
-        let mut filepath_buf_os: Box<PathBuffer> = Box::new(PathBuffer::uninit());
-        // Boxed to avoid a large stack frame.
+        let mut filepath_buf_os = path::path_buffer_pool::get();
         let filepath_buf: &mut [u8] = &mut filepath_buf_os.0[..];
         let mut rel_path_buf = path::path_buffer_pool::get();
         let root_dir: &[u8] = source.path.name().dir;
@@ -453,7 +453,7 @@ impl WorkspaceMap {
                             loc,
                             "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
                             BStr::new(user_pattern),
-                            <&'static str>::from(e.get_errno()),
+                            BStr::new(e.name()),
                         );
                         return Err(crate::Error::GlobError);
                     }
@@ -469,7 +469,7 @@ impl WorkspaceMap {
                         loc,
                         "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
                         BStr::new(user_pattern),
-                        <&'static str>::from(e.get_errno()),
+                        BStr::new(e.name()),
                     );
                     return Err(crate::Error::GlobError);
                 }
@@ -485,7 +485,7 @@ impl WorkspaceMap {
                                 loc,
                                 "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
                                 BStr::new(user_pattern),
-                                <&'static str>::from(e.get_errno()),
+                                BStr::new(e.name()),
                             );
                             return Err(crate::Error::GlobError);
                         }

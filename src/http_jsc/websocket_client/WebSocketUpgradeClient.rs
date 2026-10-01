@@ -26,9 +26,9 @@ use std::io::Write as _;
 
 use bun_boringssl as boringssl;
 use bun_collections::StringSet;
+use bun_core::ZBox;
 use bun_core::fmt::HostFormatter;
 use bun_core::strings;
-use bun_core::{FeatureFlags, ZBox};
 use bun_core::{String as BunString, Utf8Bytes};
 use bun_http::{HeaderValueIterator, Headers};
 use bun_io::KeepAlive;
@@ -297,7 +297,7 @@ where
             subprotocols
         };
 
-        let display_host_: &[u8] = if using_proxy {
+        let display_host: &[u8] = if using_proxy {
             proxy_host_slice.as_ref().unwrap().slice()
         } else {
             host_slice.slice()
@@ -306,12 +306,6 @@ where
 
         let mut poll_ref = KeepAlive::init();
         poll_ref.r#ref(vm.loop_ctx());
-        let display_host: &[u8] =
-            if FeatureFlags::HARDCODE_LOCALHOST_TO_127_0_0_1 && display_host_ == b"localhost" {
-                b"127.0.0.1"
-            } else {
-                display_host_
-            };
 
         log!(
             "connect: ssl={}, has_ssl_config={}, using_proxy={}",
@@ -324,7 +318,7 @@ where
         let group = global
             .bun_vm()
             .as_mut()
-            .rare_data()
+            .client_socket_groups_in(websocket.context())
             .ws_upgrade_group::<SSL>(loop_);
         let kind: SocketKind = if SSL {
             SocketKind::WsClientUpgradeTls
@@ -422,7 +416,10 @@ where
                 // in the URL (wss+unix://name/path) to verify against
                 // a specific certificate name.
                 if !host_slice.slice().is_empty() {
-                    this.hostname.set(ZBox::from_bytes(host_slice.slice()));
+                    this.hostname
+                        .set(ZBox::from_bytes(bun_http::strip_ipv6_brackets(
+                            host_slice.slice(),
+                        )));
                 }
             }
 
@@ -453,8 +450,11 @@ where
             // SNI for the outer TLS socket must use the host we actually
             // dialed. For HTTPS proxy connections, that's the proxy host,
             // not the wss:// target.
-            if !display_host_.is_empty() {
-                this.hostname.set(ZBox::from_bytes(display_host_));
+            if !display_host.is_empty() {
+                this.hostname
+                    .set(ZBox::from_bytes(bun_http::strip_ipv6_brackets(
+                        display_host,
+                    )));
             }
         }
 
@@ -627,17 +627,9 @@ where
                     Self::fail(this, ErrorCode::TlsHandshakeFailed);
                     return;
                 };
-                let identity_ok = {
-                    let own_hostname = this.hostname.get();
-                    let sni: Vec<u8>;
-                    let hostname: &[u8] = if !own_hostname.is_empty() {
-                        own_hostname.as_bytes()
-                    } else {
-                        sni = ssl.servername().map(<[u8]>::to_vec).unwrap_or_default();
-                        &sni
-                    };
-                    !hostname.is_empty() && boringssl::check_server_identity(ssl, hostname)
-                };
+                let hostname = this.identity_hostname(ssl);
+                let identity_ok =
+                    !hostname.is_empty() && uws::check_server_identity(ssl, &hostname);
                 if !identity_ok {
                     Self::fail(this, ErrorCode::TlsHandshakeFailed);
                 }
@@ -646,6 +638,28 @@ where
             // if we are here is because server rejected us, and the error_no is the cause of this
             // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS
             Self::fail(this, ErrorCode::TlsHandshakeFailed);
+        }
+    }
+
+    /// `handle_handshake`'s name check, asked inside the handshake.
+    pub fn server_identity(&self, ssl: &mut boringssl::c::SSL) -> boringssl::ServerIdentity {
+        let rejects = self
+            .cpp_websocket()
+            .is_some_and(|ws| ws.reject_unauthorized());
+        let hostname = rejects.then(|| self.identity_hostname(ssl));
+        boringssl::server_identity(ssl, hostname.as_deref())
+    }
+
+    /// The name to match: the dialed host, else the SNI.
+    fn identity_hostname(&self, ssl: &boringssl::c::SSL) -> std::borrow::Cow<'_, [u8]> {
+        let own_hostname = self.hostname.get();
+        if !own_hostname.is_empty() {
+            own_hostname.as_bytes().into()
+        } else {
+            ssl.servername()
+                .map(<[u8]>::to_vec)
+                .unwrap_or_default()
+                .into()
         }
     }
 
@@ -675,6 +689,12 @@ where
                         bun_http::AlpnOffer::H1,
                     );
                 }
+            }
+            if this
+                .cpp_websocket()
+                .is_some_and(|ws| ws.reject_unauthorized())
+            {
+                socket.set_inline_reject();
             }
         }
 
@@ -1241,11 +1261,6 @@ where
             }
         }
 
-        // if (!visited_version) {
-        //     this.terminate(ErrorCode.invalid_websocket_version);
-        //     return;
-        // }
-
         if upgrade_header
             .name()
             .len()
@@ -1357,6 +1372,8 @@ where
         let mut saved_secure = this.secure.replace(None); // prevent clear_data from freeing it
         // Any arm below that doesn't hand `saved_secure` to did_connect must
         // release the ref it took out of `self` (SSL_CTX_free at fn end).
+        // The connected client checks a TLS renegotiation against this name.
+        let verified_hostname = this.hostname.take();
         this.clear_data();
         bun_jsc::mark_binding!();
         let tcp = this.tcp.get();
@@ -1381,6 +1398,7 @@ where
                     },
                     // Ownership transferred to the connected client.
                     saved_secure.take(),
+                    verified_hostname.as_bytes(),
                 );
             } else {
                 Self::terminate(this, ErrorCode::FailedToConnect);

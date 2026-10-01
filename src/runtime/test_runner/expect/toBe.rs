@@ -80,7 +80,7 @@ impl Expect {
         }
 
         if right.is_string() && left.is_string() {
-            let diff_format = DiffFormatter { expected: Some(right), received: Some(left), expected_string: None, received_string: None, global_this: Some(global_this), not };
+            let diff_format = DiffFormatter::new(global_this, left, right, not)?;
             return throw!(this, global_this, signature, "\n\n{}\n", diff_format);
         }
 

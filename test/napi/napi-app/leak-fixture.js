@@ -1,10 +1,7 @@
 // UNUSED as of #14501
 const nativeTests = require("./build/Debug/napitests.node");
 
-const rss =
-  process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? Bun.unsafe.memoryFootprint
-    : process.memoryUsage.rss;
+const rss = process.memoryUsage.rss;
 
 function usage() {
   return rss();

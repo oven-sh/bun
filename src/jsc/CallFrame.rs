@@ -228,17 +228,11 @@ pub struct CallerSrcLoc {
 /// Node.fs, `will_be_async` is set to true which allows string/path APIs to
 /// know if they have to do threadsafe clones.
 pub struct ArgumentsSlice<'a> {
-    /// Backing storage for the remaining-args view. Both [`Self::init`] and
-    /// [`Self::init_async`] borrow — `all: &'a [JSValue]` already ties this
-    /// struct's lifetime to the source slice, so a heap-owned dupe
-    /// buys nothing here (it could not outlive `'a`). Kept as
-    /// `Cow` so a future caller that does own its args can pass `Owned`
-    /// without changing the type.
+    /// Backing storage for `remaining()`; `Cow` so an owning caller can pass `Owned`.
     remaining_buf: Cow<'a, [JSValue]>,
     /// Cursor into `remaining_buf`; advances on `eat()`.
     remaining_start: usize,
     pub vm: &'a VirtualMachine,
-    pub all: &'a [JSValue],
     pub will_be_async: bool,
     /// An errno a converter met under `will_be_async`; the binding rejects its promise with it.
     pub deferred_error: Option<Box<bun_sys::SystemError>>,
@@ -256,7 +250,6 @@ impl<'a> ArgumentsSlice<'a> {
             remaining_buf: Cow::Borrowed(slice),
             remaining_start: 0,
             vm,
-            all: slice,
             will_be_async: false,
             deferred_error: None,
         }

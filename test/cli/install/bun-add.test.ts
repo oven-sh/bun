@@ -1,9 +1,10 @@
 import type { BunLockFile } from "bun";
-import { file, spawn } from "bun";
+import { $, file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
 import { join, relative, resolve } from "path";
+import { pathToFileURL } from "url";
 import {
   check_npm_auth_type,
   dummyAfterAll,
@@ -2661,6 +2662,68 @@ it("should not add duplicate package.json entries when installing the same tarba
     version: "0.0.1",
     dependencies: {
       baz: tarball_url,
+    },
+  });
+});
+
+it("should not add duplicate package.json entries when installing a different commit of the same git dependency (#40799)", async () => {
+  setHandler(dummyRegistry([]));
+  const gitEnv = {
+    ...env,
+    // Set on the asan lanes, where it makes `bun install` kill its own git clones (#33982).
+    BUN_FEATURE_FLAG_NO_ORPHANS: undefined,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_AUTHOR_NAME: "Test",
+    GIT_AUTHOR_EMAIL: "test@example.com",
+    GIT_COMMITTER_NAME: "Test",
+    GIT_COMMITTER_EMAIL: "test@example.com",
+  };
+
+  // Two commits in a local repo stand in for two github hashes.
+  await writeFile(join(add_dir, "package.json"), JSON.stringify({ name: "mydep", version: "1.0.0" }));
+  await $`git init -q && git add -A && git commit -q -m one --no-gpg-sign`.cwd(add_dir).env(gitEnv).quiet();
+  const sha1 = (await $`git rev-parse HEAD`.cwd(add_dir).env(gitEnv).text()).trim();
+  await writeFile(join(add_dir, "package.json"), JSON.stringify({ name: "mydep", version: "1.0.1" }));
+  await $`git add -A && git commit -q -m two --no-gpg-sign`.cwd(add_dir).env(gitEnv).quiet();
+  const sha2 = (await $`git rev-parse HEAD`.cwd(add_dir).env(gitEnv).text()).trim();
+
+  const repo_url = `git+${pathToFileURL(add_dir).href}`;
+
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "host",
+      version: "0.0.1",
+    }),
+  );
+
+  // Install each commit in turn. The second install must overwrite the
+  // existing "mydep" entry, not append a second "mydep" key.
+  for (const sha of [sha1, sha2]) {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "add", `${repo_url}#${sha}`],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env: gitEnv,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    const out = await stdout.text();
+    expect(out).toContain("installed mydep@");
+    expect(await exited).toBe(0);
+  }
+
+  // `JSON.parse` collapses duplicate keys, so inspect the raw text to prove the key was reused.
+  const raw2 = await file(join(package_dir, "package.json")).text();
+  expect(raw2.match(/"mydep"\s*:/g) ?? []).toHaveLength(1);
+  expect(JSON.parse(raw2)).toStrictEqual({
+    name: "host",
+    version: "0.0.1",
+    dependencies: {
+      mydep: `${repo_url}#${sha2}`,
     },
   });
 });

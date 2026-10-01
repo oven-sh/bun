@@ -3,6 +3,7 @@ use core::mem::{align_of, size_of};
 use bun_alloc::AllocError;
 
 use crate::helpers;
+use crate::links::{ParsedDest, scan_link_destination};
 use crate::parser::{BlockHeader, Parser};
 use crate::types::{self, VerbatimLine};
 use crate::unicode;
@@ -21,11 +22,6 @@ pub(crate) struct ParsedRefDef<'a> {
     pub(crate) label: &'a [u8],
     pub(crate) dest: &'a [u8],
     pub(crate) title: &'a [u8],
-}
-
-pub(crate) struct ParsedDest<'a> {
-    pub(crate) dest: &'a [u8],
-    pub(crate) end_pos: usize,
 }
 
 pub(crate) struct ParsedTitle<'a> {
@@ -250,55 +246,12 @@ impl Parser<'_> {
         text: &'a [u8],
         start: usize,
     ) -> Option<ParsedDest<'a>> {
-        let mut p = start;
-        if p >= text.len() {
+        let parsed = scan_link_destination(text, start)?;
+        // A reference definition needs a destination: only `<>` may be empty.
+        if parsed.end_pos == start {
             return None;
         }
-
-        if text[p] == b'<' {
-            // Angle-bracket destination
-            p += 1;
-            let dest_start = p;
-            while p < text.len() && text[p] != b'>' && text[p] != b'\n' {
-                if text[p] == b'\\' && p + 1 < text.len() {
-                    p += 2;
-                } else {
-                    p += 1;
-                }
-            }
-            if p >= text.len() || text[p] != b'>' {
-                return None;
-            }
-            let dest = &text[dest_start..p];
-            p += 1; // skip >
-            Some(ParsedDest { dest, end_pos: p })
-        } else {
-            // Bare destination — balance parentheses
-            let dest_start = p;
-            let mut paren_depth: u32 = 0;
-            while p < text.len() && !helpers::is_whitespace(text[p]) {
-                if text[p] == b'(' {
-                    paren_depth += 1;
-                } else if text[p] == b')' {
-                    if paren_depth == 0 {
-                        break;
-                    }
-                    paren_depth -= 1;
-                }
-                if text[p] == b'\\' && p + 1 < text.len() {
-                    p += 2;
-                } else {
-                    p += 1;
-                }
-            }
-            if p == dest_start {
-                return None; // empty dest not allowed for bare
-            }
-            Some(ParsedDest {
-                dest: &text[dest_start..p],
-                end_pos: p,
-            })
-        }
+        Some(parsed)
     }
 
     pub(crate) fn parse_ref_def_title<'a>(

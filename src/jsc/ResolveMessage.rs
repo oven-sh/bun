@@ -4,6 +4,7 @@ use std::io::Write as _;
 use bun_ast::ImportKind;
 use bun_core::strings;
 
+use crate::build_message::LogKindJsc as _;
 use crate::bun_string_jsc;
 use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _};
 
@@ -429,7 +430,7 @@ impl ResolveMessage {
 
     #[crate::host_fn(getter)]
     pub fn get_level(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_core::String::static_(this.msg.kind.string()).to_js(global)
+        this.msg.kind.to_js(global)
     }
 
     #[crate::host_fn(getter)]
@@ -462,10 +463,5 @@ impl ResolveMessage {
         } else {
             JSValue::NULL
         })
-    }
-
-    pub fn finalize(self: Box<Self>) {
-        // Dropping the Box drops `msg` and the owned `referrer` buffer.
-        drop(self);
     }
 }

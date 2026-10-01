@@ -1,13 +1,13 @@
 /**
- * scripts/runner.node.mjs runs the bucket of parallel-safe test files as a single
+ * scripts/runner.node.ts runs the bucket of parallel-safe test files as a single
  * `bun test --parallel` and reads the junit report it writes to decide which files
  * failed (to re-run them alone), what to print per file and what to put in the flaky
- * annotation. parseJunitFileSuites() in scripts/utils.mjs is that parsing step.
+ * annotation. parseJunitFileSuites() in scripts/buildkite.ts is that parsing step.
  */
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
-import { parseJunitFileSuites } from "../../scripts/utils.mjs";
+import { parseJunitFileSuites } from "../../scripts/buildkite.ts";
 
 const parse = (xml: string) => Object.fromEntries(parseJunitFileSuites(xml));
 
@@ -73,17 +73,23 @@ describe("parseJunitFileSuites", () => {
   });
 
   test("reports the suite bun test --parallel writes for a file whose worker crashed", () => {
-    // Written by the coordinator instead of the worker's reporter; its testcase has no
-    // file attribute, so the file counts as failed without a case to show.
+    // The coordinator records a synthetic failing case for the file, after any
+    // cases the worker reported before it died.
     const xml = `<testsuites name="bun test" tests="1" assertions="0" failures="1" skipped="0" time="0.3">
-  <testsuite name="test/crash.test.ts" file="test/crash.test.ts" tests="1" assertions="0" failures="1" skipped="0" time="0">
-    <testcase name="(worker crashed)" classname="test/crash.test.ts">
-      <failure message="worker process crashed before reporting results"></failure>
+  <testsuite name="test/crash.test.ts" file="test/crash.test.ts" tests="1" assertions="0" failures="1" skipped="0" time="0.12" hostname="h">
+    <testcase name="(worker crashed)" classname="" time="0" file="test/crash.test.ts" assertions="0">
+      <failure type="Error" message="worker process crashed before reporting results" />
     </testcase>
   </testsuite>
 </testsuites>
 `;
-    expect(parse(xml)).toEqual({ "test/crash.test.ts": { failures: 1, seconds: 0, cases: [] } });
+    expect(parse(xml)).toEqual({
+      "test/crash.test.ts": {
+        failures: 1,
+        seconds: 0.12,
+        cases: [{ name: "(worker crashed)", message: "worker process crashed before reporting results" }],
+      },
+    });
   });
 
   test("reports nothing for a report without file suites", () => {
@@ -142,7 +148,11 @@ test("parseJunitFileSuites reads the report bun test --parallel --reporter=junit
       ],
     },
     "test/plain.test.ts": { failures: 0, seconds: expect.any(Number), cases: [] },
-    "test/crash.test.ts": { failures: 1, seconds: 0, cases: [] },
+    "test/crash.test.ts": {
+      failures: 1,
+      seconds: expect.any(Number),
+      cases: [{ name: "(worker crashed)", message: "worker process crashed before reporting results" }],
+    },
   });
   expect(exitCode).toBe(1);
 });

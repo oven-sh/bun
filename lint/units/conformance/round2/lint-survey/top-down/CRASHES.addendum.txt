@@ -19,9 +19,10 @@ AddressSanitizer ends a debug build when `abort_on_error` is not set):
 | `--units`, release build | the same through `/workspace/wt/parser/build/release/bun` (`1.4.3-canary.1+be1ebe529`; `git diff be1ebe5295 3110ce85cf -- src` is empty) | 163 | 0 |
 | `--cases` | the 12,444 case files as they lie in the corpus: directive lines, all units in one text, 846 with a byte order mark, 7 in UTF-16 | 125 | 0 |
 
-The slowest process of 100 files took 7.7 s; the limit was 120 s. Every pass printed the same 3,447 errors and 27
-warnings of Bun's parser and 6 reports of rules (no-self-assign 3, no-empty-pattern 2, no-debugger 1) over the unit
-files. The command did not die on any file of the corpus, in any of these ways of running it.
+The slowest process of 100 files took 7.7 s; the limit was 120 s. Every `--units` pass printed the same 3,447
+errors of Bun's parser and 6 reports of rules (no-self-assign 3, no-empty-pattern 2, no-debugger 1), and the same 27
+warnings where they were counted (the plain terminal pass did not count them); the case files gave 6,505 errors and
+26 warnings. The command did not die on any file of the corpus, in any of these ways of running it.
 
 Seen on the way, no crash, for the owner of the command:
 - A file in UTF-16 big endian is not decoded: `bun --lint corpus/cases/compiler/bom-utf16be.ts` prints syntax errors

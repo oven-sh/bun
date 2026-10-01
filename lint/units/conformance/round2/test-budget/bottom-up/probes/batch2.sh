@@ -46,8 +46,12 @@ python3 $B/probes/evict.py $B/repo/$H/corpus
 d=$(mktemp -d /tmp/buntmp-XXXXXX); one knobs K-ci-rel-cold env CI=true $(runner_env $d) $RELLINT test --timeout=90000 $T; rm -rf $d
 echo "### $(date -u +%FT%TZ) debug build as bun bd test runs it"
 one knobs K-dbg-plain env BUN_DEBUG_QUIET_LOGS=1 $DBG test $T
-echo "### $(date -u +%FT%TZ) debug build, the leak check of CI"
+echo "### $(date -u +%FT%TZ) debug build, the leak check of CI; the memory of the cgroup and the number of bun-debug processes are read twice a second"
+( while :; do echo "$(( $(cat /sys/fs/cgroup/memory.current) / 1048576 )) $(ps -eo comm | grep -c '^bun-debug$')"; sleep 0.5; done ) > $out/K-dbg-leak.mem &
+sampler=$!
 one knobs K-dbg-leak env BUN_DEBUG_QUIET_LOGS=1 $leak $(lsan knobs) $DBG test $T
+kill $sampler 2> /dev/null; wait $sampler 2> /dev/null
+echo "K-dbg-leak memory of the cgroup, MB: least $(sort -n $out/K-dbg-leak.mem | head -1 | cut -d' ' -f1), most $(sort -n $out/K-dbg-leak.mem | tail -1 | cut -d' ' -f1); bun-debug processes at one time, most: $(cut -d' ' -f2 $out/K-dbg-leak.mem | sort -n | tail -1)"
 echo "### $(date -u +%FT%TZ) debug build, the leak check and the exception checks"
 one knobs K-dbg-leak-validate env BUN_DEBUG_QUIET_LOGS=1 $validate $leak $(lsan knobs) $DBG test $T
 echo "### $(date -u +%FT%TZ) debug build with the whole environment of scripts/runner.node.ts for a run by hand (not CI): --timeout=90000"

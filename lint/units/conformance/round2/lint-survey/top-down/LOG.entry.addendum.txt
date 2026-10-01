@@ -1,0 +1,21 @@
+E4, what the top-down pass adds to ../bottom-up/LOG.entry.txt (2026-10-01, debug build 1.4.3-debug+3110ce85c)
+
+1. A second count of the nine reports (top-down/tally.ts, from /tmp/ls1a/reports and again from
+   bottom-up/observed/instances.tsv): the same numbers as bottom-up/merge.ts.
+   run 12,797 = not laid out 186 + reached a result 12,611; died 0; timeout 0; nothing else.
+   reached a result 12,611 = C silent 5,649 + C with a diagnostic of Bun 28 + E silent 5,626 + E with a diagnostic
+   of Bun 1,308 + E pass 0.
+   By the code of the first line that has a name for a code: E syntax 1,299; C syntax 27; E unsupported-extension 7;
+   C no-empty-pattern 1; E no-debugger 1; E no-self-assign 1.
+   The table by top directory: top-down/observed/tally.txt (tally-markdown.txt for LOG.md).
+   The nine chunks select 14,914 of the 14,915 instances: SystemModuleForStatementNoInitializer.ts (skipped by the
+   reference: unsupported module kind System) starts with a letter that no selector of the driver has.
+2. The files that the sweep never hands to the command (top-down/direct.ts; observed/direct-units.txt):
+   the 186 instances that are not laid out, every unit of every case (16,205 files with a loader of 12,444 cases),
+   the same with the leak check of CI, with a terminal (code frames, plain and with colours), with the release
+   build of the same src/, and the 12,444 case files as they lie in the corpus. 1,136 processes, none died or hung.
+3. Class C where Bun prints and TypeScript does not: 28 instances of 27 cases in the sweep (bottom-up), and 3 more
+   that the sweep does not lay out (jsxJsxsCjsTransformKeyProp with jsx=react-jsx and jsx=react-jsxdev: a warning
+   of the JSX parser; jsDeclarationsReactComponents(target=es2015): the rule no-empty-pattern).
+4. expectations.json: no name enters (E 0 of 7,027 pass; the 5,649 class C passes are refused: quota 5,647,
+   platform-limited 2: moduleResolutionWithSymlinks_notInNodeModules.ts, moduleResolutionWithSymlinks_referenceTypes.ts).

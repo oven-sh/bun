@@ -1160,11 +1160,16 @@ fn run_one(
     }
     project.files = files.clone();
     project.options.files = files;
+    // `NewProgram` gets options and file names: there is no `ConfigFile` to explain a root file with.
+    project.options.file_specs.clear();
+    project.options.include_specs.clear();
+    project.options.is_default_include_spec = false;
     project.options.captures_suggestions = settings
         .get("capturesuggestions")
         .is_some_and(|v| v.eq_ignore_ascii_case("true"));
 
     let request = Request {
+        compiler_options: &[],
         cwd: &cwd,
         project: None,
         paths: &[],

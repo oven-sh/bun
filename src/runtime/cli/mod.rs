@@ -2193,6 +2193,7 @@ Execute a shell script directly from Bun.
       <cyan>--threads<r> <d>\\<n\\><r>      Number of threads <d>(default: one per CPU core)<r>
       <cyan>--timing<r>           Print load and check times
       <cyan>--cwd<r> <d>\\<path\\><r>       Set the working directory
+      <cyan>--strict<r>, <cyan>--target<r> <d>\\<v\\><r>, ...  Any compiler option, as for <b>tsc<r>. Overrides tsconfig.json
   <cyan>-h<r>, <cyan>--help<r>             Print this help menu
 
 <b>Examples:<r>
@@ -2204,6 +2205,9 @@ Execute a shell script directly from Bun.
 
   <d>Check another project<r>
   <b><green>bun check<r> <cyan>-p<r> <blue>packages/server<r>
+
+  <d>Try a stricter option without editing tsconfig.json<r>
+  <b><green>bun check<r> <cyan>--noUncheckedIndexedAccess<r>
 
   <d>Check a file, then run it<r>
   <b><green>bun<r> <cyan>--check<r> <blue>src/index.ts<r>

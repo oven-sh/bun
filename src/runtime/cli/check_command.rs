@@ -4,7 +4,7 @@ use bstr::BStr;
 
 use bun_core::{Global, Output, ZStr, env_var};
 use bun_sema_driver::format::{self, Layout, Style};
-use bun_sema_driver::{Progress, Report, Request};
+use bun_sema_driver::{CompilerOption, FlagError, Progress, Report, Request};
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
 
@@ -19,6 +19,10 @@ struct Options {
     pretty: Option<bool>,
     /// `--all`: never group identical errors.
     all: bool,
+    /// `--strict`, `--target es2022` and so on.
+    compiler_options: Vec<CompilerOption>,
+    /// `-b`, `--build`: what is named is a project, as for `tsc -b`.
+    build: bool,
     timing: bool,
 }
 
@@ -104,12 +108,61 @@ fn parse(args: &[&ZStr]) -> Options {
         } else if arg == b"--timing" {
             options.timing = true;
         } else if arg == b"--noEmit" || arg == b"--no-emit" {
-            // What `tsc --noEmit` is written for is all this does.
+            // Nothing is ever emitted.
+        } else if arg == b"-b" || arg == b"--build" {
+            options.build = true;
+        } else if let Some(flag) = arg.strip_prefix(b"--") {
+            options
+                .compiler_options
+                .push(compiler_option(&text(flag), &mut rest));
         } else {
             usage_error(format_args!("Unknown flag \"{}\"", BStr::new(arg)));
         }
     }
+    if options.build {
+        match (options.project.is_some(), options.paths.len()) {
+            (_, 0) => {}
+            (false, 1) => options.project = options.paths.pop(),
+            _ => usage_error(format_args!("--build takes one project")),
+        }
+    }
     options
+}
+
+/// `flag` is what follows `--`: `strict`, `target` with the value in the next argument, or `target=es2022`.
+fn compiler_option(flag: &str, rest: &mut core::slice::Iter<'_, &ZStr>) -> CompilerOption {
+    let (name, mut value) = match bun_core::strings::index_of_char_usize(flag.as_bytes(), b'=') {
+        Some(at) => (&flag[..at], Some(flag[at + 1..].to_owned())),
+        None => (flag, None),
+    };
+    if value.is_none() {
+        let next = rest.as_slice().first().map(|next| text(next.as_bytes()));
+        let takes_next = match &next {
+            // `--strict false`, but not `--strict src/index.ts`.
+            Some(next) if bun_sema_driver::is_boolean_compiler_option(name) => {
+                next.eq_ignore_ascii_case("true") || next.eq_ignore_ascii_case("false")
+            }
+            Some(next) => !next.starts_with('-'),
+            None => false,
+        };
+        if takes_next {
+            rest.next();
+            value = next;
+        }
+    }
+    match bun_sema_driver::compiler_option_from_flag(name, value.as_deref()) {
+        Ok(option) => option,
+        Err(FlagError::Unknown) => usage_error(format_args!("Unknown flag \"--{name}\"")),
+        Err(FlagError::NeedsValue) => usage_error(format_args!("--{name} needs a value")),
+        Err(FlagError::BadValue([])) => usage_error(format_args!(
+            "--{name} does not take \"{}\"",
+            value.unwrap_or_default()
+        )),
+        Err(FlagError::BadValue(allowed)) => usage_error(format_args!(
+            "--{name} must be one of: {}",
+            allowed.join(", ")
+        )),
+    }
 }
 
 fn working_directory() -> String {
@@ -162,12 +215,21 @@ fn run(
     cwd: &str,
     project: Option<&str>,
     paths: &[String],
+    compiler_options: &[CompilerOption],
     threads: usize,
     ends_the_process: bool,
 ) -> Report {
     // For a person who is watching.
     if !Output::is_stderr_tty() || Output::is_ai_agent() {
-        return run_quietly(cwd, project, paths, threads, ends_the_process, None);
+        return run_quietly(
+            cwd,
+            project,
+            paths,
+            compiler_options,
+            threads,
+            ends_the_process,
+            None,
+        );
     }
     let (progress, is_done) = (Progress::default(), AtomicBool::new(false));
     let style = style_for(
@@ -184,6 +246,7 @@ fn run(
             cwd,
             project,
             paths,
+            compiler_options,
             threads,
             ends_the_process,
             Some(&progress),
@@ -198,6 +261,7 @@ fn run_quietly(
     cwd: &str,
     project: Option<&str>,
     paths: &[String],
+    compiler_options: &[CompilerOption],
     threads: usize,
     ends_the_process: bool,
     progress: Option<&Progress>,
@@ -207,6 +271,7 @@ fn run_quietly(
         cwd,
         project,
         paths,
+        compiler_options,
         threads,
         lib_dir: None,
         global_node_modules: global.as_deref(),
@@ -263,6 +328,7 @@ impl CheckCommand {
             &cwd,
             options.project.as_deref(),
             &options.paths,
+            &options.compiler_options,
             options.threads,
             true,
         );
@@ -332,7 +398,7 @@ pub(crate) fn check_before(entry_points: &[&[u8]]) -> bool {
         return true;
     }
     let cwd = working_directory();
-    let report = run(&cwd, None, &paths, 0, false);
+    let report = run(&cwd, None, &paths, &[], 0, false);
     if report.diagnostics.is_empty() && report.gave_up.is_empty() && report.incomplete.is_empty() {
         return true;
     }

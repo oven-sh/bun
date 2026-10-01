@@ -64,6 +64,64 @@ pub struct Progress {
     pub errors: AtomicUsize,
 }
 
+/// A compiler option and its value, from [`compiler_option_from_flag`].
+#[derive(Clone)]
+pub struct CompilerOption(String, Json);
+
+pub enum FlagError {
+    /// No compiler option has this name.
+    Unknown,
+    /// The option takes a value and none was given, or it cannot be given on a command line.
+    NeedsValue,
+    /// The value is not one the option takes. The allowed values, if there is a fixed set.
+    BadValue(&'static [&'static str]),
+}
+
+/// Whether the compiler option `name`, in any case, is a boolean, so that its value may be left out.
+pub fn is_boolean_compiler_option(name: &str) -> bool {
+    bun_sema::config_options::choices(name) == Some(&["true", "false"][..])
+}
+
+/// `--name value` as `tsc` reads it. `name` is matched case-insensitively. A boolean without a value is `true`.
+pub fn compiler_option_from_flag(
+    name: &str,
+    value: Option<&str>,
+) -> Result<CompilerOption, FlagError> {
+    use bun_sema::config_options::{choices, from_text};
+    let allowed = choices(name);
+    let value = match value {
+        Some(value) => value,
+        None if is_boolean_compiler_option(name) => "true",
+        // `from_text` with any text tells an unknown option from one that needs a value.
+        None if allowed.is_some() || from_text(name, "0").is_some() => {
+            return Err(FlagError::NeedsValue);
+        }
+        None => return Err(FlagError::Unknown),
+    };
+    if let Some(allowed) = allowed
+        && !allowed.iter().any(|a| a.eq_ignore_ascii_case(value))
+    {
+        return Err(FlagError::BadValue(allowed));
+    }
+    match from_text(name, value) {
+        Some((name, value)) => Ok(CompilerOption(name.to_owned(), value)),
+        None if allowed.is_some() || from_text(name, "0").is_some() => {
+            Err(FlagError::BadValue(&[]))
+        }
+        None => Err(FlagError::Unknown),
+    }
+}
+
+/// `noEmit`, since nothing is ever written, after what the command line says.
+fn overriding_options(request: &Request) -> Vec<(String, Json)> {
+    request
+        .compiler_options
+        .iter()
+        .map(|option| (option.0.clone(), option.1.clone()))
+        .chain([("noEmit".to_owned(), Json::Bool(true))])
+        .collect()
+}
+
 #[derive(Clone, Copy)]
 pub struct Request<'a> {
     /// The working directory, as the operating system names it.
@@ -72,6 +130,8 @@ pub struct Request<'a> {
     pub project: Option<&'a str>,
     /// Files and directories to check instead of all the project names. The options are still the project's.
     pub paths: &'a [String],
+    /// Compiler options given on the command line. They override the configuration file, also of referenced projects.
+    pub compiler_options: &'a [CompilerOption],
     /// `0`: as many as there are cores.
     pub threads: usize,
     /// Where TypeScript's `lib.*.d.ts` are, if that is not to be found out.
@@ -353,10 +413,17 @@ pub fn check(request: &Request) -> Report {
     let mut project = match &config_path {
         // Nothing is written, whatever the project says: this is `tsc --noEmit`. What is only wrong with where output would go is not
         // looked into.
-        Some(path) => {
-            config::load_overriding(&disk, path, vec![("noEmit".to_owned(), Json::Bool(true))])
+        Some(path) => config::load_overriding(&disk, path, overriding_options(request)),
+        None => {
+            let mut options = default_compiler_options();
+            if let Json::Object(options) = &mut options {
+                for option in request.compiler_options {
+                    options.retain(|(name, _)| *name != option.0);
+                    options.push((option.0.clone(), option.1.clone()));
+                }
+            }
+            config::without_config(&disk, &cwd, options, Vec::new())
         }
-        None => config::without_config(&disk, &cwd, default_compiler_options(), Vec::new()),
     };
     report.config_path = project.config_path.clone();
     let mut named = None;
@@ -408,6 +475,7 @@ struct ReferencedProject {
 fn collect_referenced_projects(
     host: &dyn Host,
     project: config::Project,
+    overrides: &[(String, Json)],
     projects: &mut Vec<ReferencedProject>,
     index_of: &mut std::collections::HashMap<String, Option<usize>>,
     diagnostics: &mut Vec<Diagnostic>,
@@ -430,14 +498,11 @@ fn collect_referenced_projects(
             }
             None if !host.is_file(&path) => diagnostics.push(global(6053, &[path])),
             None => {
-                let referenced = config::load_overriding(
-                    host,
-                    &path,
-                    vec![("noEmit".to_owned(), Json::Bool(true))],
-                );
+                let referenced = config::load_overriding(host, &path, overrides.to_vec());
                 references.extend(collect_referenced_projects(
                     host,
                     referenced,
+                    overrides,
                     projects,
                     index_of,
                     diagnostics,
@@ -467,6 +532,7 @@ fn check_with_references(
     collect_referenced_projects(
         host,
         root,
+        &overriding_options(request),
         &mut projects,
         &mut std::collections::HashMap::new(),
         &mut report.diagnostics,
@@ -620,6 +686,7 @@ fn check_what_is_named(
     );
 
     project.options.drops_what_nothing_refers_to = !request.keeps_everything;
+    project.options.has_project_references = !project.references.is_empty();
     let files = Files::load(host, project.options, &project.files);
     let program = Program::new(files);
     report.files_loaded = program.files.modules.len();

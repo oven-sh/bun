@@ -580,6 +580,7 @@ fn main() {
             }
             let report =
                 bun_sema_driver::check(&bun_sema_driver::Request {
+                    compiler_options: &[],
                     cwd: &cwd,
                     project: project.as_deref(),
                     paths: &paths,

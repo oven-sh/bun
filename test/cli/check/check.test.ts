@@ -843,6 +843,71 @@ export {};
     });
   });
 
+  describe("compiler options as flags", () => {
+    const files = {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: false, noEmit: true, target: "esnext", lib: ["esnext"], types: [] } }),
+      "a.ts": `export function f(x) {\n  return x;\n}\nexport const first = [1][0].toFixed();\n`,
+    };
+
+    test("override tsconfig.json", async () => {
+      using dir = project(files);
+      const [plain, strict, off, indexed] = await Promise.all([
+        check(dir),
+        check(dir, ["--strict"]),
+        check(dir, ["--strict", "--noImplicitAny", "false"]),
+        // Any case, and `=`.
+        check(dir, ["--STRICT=true", "--nouncheckedindexedaccess", "--noImplicitAny=false"]),
+      ]);
+      expect(plain.stdout).toBe("");
+      expect(strict.stdout).toMatchInlineSnapshot(`"a.ts(1,19): error TS7006: Parameter 'x' implicitly has an 'any' type."`);
+      expect(off.stdout).toBe("");
+      expect(indexed.stdout).toMatchInlineSnapshot(`"a.ts(4,22): error TS2532: Object is possibly 'undefined'."`);
+    });
+
+    test("a boolean flag does not swallow a file name", async () => {
+      using dir = project(files);
+      const { stdout } = await check(dir, ["--strict", "a.ts"]);
+      expect(stdout).toMatchInlineSnapshot(`"a.ts(1,19): error TS7006: Parameter 'x' implicitly has an 'any' type."`);
+    });
+
+    test("lists, and values that are not allowed", async () => {
+      using dir = project({ ...files, "a.ts": `export const p = new Promise<void>(r => r());\n` });
+      const [es5, bad, missing, unknown] = await Promise.all([
+        check(dir, ["--lib", "es5"]),
+        check(dir, ["--target", "es3000"]),
+        check(dir, ["--target"]),
+        check(dir, ["--nonsense"]),
+      ]);
+      expect(es5.stdout).toMatchInlineSnapshot(`"a.ts(1,22): error TS2585: 'Promise' only refers to a type, but is being used as a value here. Do you need to change your target library? Try changing the 'lib' compiler option to es2015 or later."`);
+      expect(bad.stderr).toMatchInlineSnapshot(`
+        "error: --target must be one of: es6, es2015, es2016, es2017, es2018, es2019, es2020, es2021, es2022, es2023, es2024, es2025, esnext
+        note: run 'bun check --help' for more information"
+      `);
+      expect(missing.stderr).toMatchInlineSnapshot(`
+        "error: --target needs a value
+        note: run 'bun check --help' for more information"
+      `);
+      expect(unknown.stderr).toMatchInlineSnapshot(`
+        "error: Unknown flag "--nonsense"
+        note: run 'bun check --help' for more information"
+      `);
+      expect([bad.exitCode, missing.exitCode, unknown.exitCode]).toEqual([1, 1, 1]);
+    });
+
+    test("reach referenced projects, and -b names a project", async () => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "lib" }] }),
+        "console.d.ts": "",
+        "lib/tsconfig.json": JSON.stringify({ compilerOptions: { composite: true, strict: false, lib: ["esnext"], types: [] }, include: ["*.ts"] }),
+        "lib/a.ts": `export function f(x) {\n  return x;\n}\n`,
+      });
+      const [loose, strict, build] = await Promise.all([check(dir), check(dir, ["--strict"]), check(dir, ["-b", "lib", "--strict"])]);
+      expect(loose.stdout).toBe("");
+      expect(strict.stdout).toMatchInlineSnapshot(`"lib/a.ts(1,19): error TS7006: Parameter 'x' implicitly has an 'any' type."`);
+      expect(build.stdout).toBe(strict.stdout);
+    });
+  });
+
   describe("when it cannot start", () => {
     test("TypeScript's lib files are nowhere to be found", async () => {
       using dir = project({ "a.ts": `export const a = 1;\n` }, { withTypeScript: false });

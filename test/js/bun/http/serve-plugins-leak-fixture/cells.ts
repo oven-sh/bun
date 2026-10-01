@@ -2,7 +2,7 @@
 // BundlerPlugin objects the `[serve.static]` plugins (or a Bun.build()'s
 // plugins) are loaded into; their owner protects them from GC while in use.
 import type { HTMLBundle, Server } from "bun";
-import { heapStats } from "bun:jsc";
+import { generateHeapSnapshotForDebugging, heapStats } from "bun:jsc";
 
 export const MARKER = "text-from-plugin";
 
@@ -39,9 +39,77 @@ export async function collectCells(phase: string) {
   const remaining = liveCells();
   if (remaining > 0) {
     const trace = survivors.map(({ what, rounds }) => `${what} x${rounds}`).join("\n");
-    console.error(`${phase}: still alive after each collection round:\n${trace}`);
+    console.error(
+      `${phase}: still alive after each collection round (${protectedCells()} protected):\n${trace}\n` +
+        `what reaches them:\n${retainersOfCells().join("\n")}`,
+    );
   }
   return remaining;
+}
+
+// For every live BundlerPlugin cell, the shortest path from a GC root to it
+// (or "no root reaches" when the snapshot has none). Protected cells show up
+// as their own root.
+function retainersOfCells() {
+  const { nodes, nodeClassNames, edges, edgeTypes, edgeNames, roots, labels } = generateHeapSnapshotForDebugging();
+  const classOf = new Map<number, string>();
+  const labelOf = new Map<number, string>();
+  const outgoing = new Map<number, [number, string][]>();
+  const rootsOf = new Map<number, string>();
+  for (let i = 0; i < nodes.length; i += 7) {
+    classOf.set(nodes[i], nodeClassNames[nodes[i + 2]]);
+    labelOf.set(nodes[i], labels?.[nodes[i + 4]] ?? "");
+  }
+  for (let i = 0; i < (roots?.length ?? 0); i += 3) {
+    rootsOf.set(roots[i], [labels?.[roots[i + 1]], labels?.[roots[i + 2]]].filter(Boolean).join("/") || "root");
+  }
+  for (let e = 0; e < edges.length; e += 4) {
+    const type = edgeTypes[edges[e + 2]];
+    const via =
+      type === "Property" || type === "Variable"
+        ? "." + edgeNames[edges[e + 3]]
+        : type === "Index"
+          ? "[" + edges[e + 3] + "]"
+          : type === "Internal"
+            ? "(internal)"
+            : "";
+    let list = outgoing.get(edges[e]);
+    if (!list) outgoing.set(edges[e], (list = []));
+    list.push([edges[e + 1], via]);
+  }
+  const name = (id: number) =>
+    classOf.get(id) +
+    (labelOf.get(id) ? ` "${String(labelOf.get(id)).slice(0, 40)}"` : "") +
+    (rootsOf.has(id) ? ` {root: ${rootsOf.get(id)}}` : "");
+  // One breadth-first search from every root at once.
+  const from = new Map<number, [number, string] | null>();
+  const queue: number[] = [];
+  for (const id of rootsOf.keys()) {
+    from.set(id, null);
+    queue.push(id);
+  }
+  for (let at = 0; at < queue.length; at++) {
+    for (const [to, via] of outgoing.get(queue[at]) ?? []) {
+      if (!from.has(to)) {
+        from.set(to, [queue[at], via]);
+        queue.push(to);
+      }
+    }
+  }
+  const cells = [...classOf].filter(([, kind]) => kind === "BundlerPlugin").map(([id]) => id);
+  return cells.map(id => {
+    if (!from.has(id)) {
+      const incoming = [...outgoing].flatMap(([src, list]) =>
+        list.filter(([to]) => to === id).map(([, via]) => via + " " + name(src)),
+      );
+      return `${name(id)}: no root reaches it; incoming: ${incoming.join(", ") || "none"}`;
+    }
+    const hops: string[] = [];
+    for (let at: number | null = id; at !== null; at = from.get(at)?.[0] ?? null) {
+      hops.unshift((from.get(at)?.[1] ?? "") + " " + name(at));
+    }
+    return hops.slice(0, 20).join(" ->").trim();
+  });
 }
 
 export function serveHtml(html: HTMLBundle, development: boolean) {

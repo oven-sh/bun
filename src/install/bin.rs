@@ -16,7 +16,7 @@ use bun_paths::{self as path, AbsPath, SEP};
 use bun_semver::{ExternalString, String};
 #[cfg(not(windows))]
 use bun_sys::Mode;
-use bun_sys::{self as sys, Fd, FdExt as _};
+use bun_sys::{self as sys, Fd};
 
 use crate::bun_json::{Expr, ExprData};
 use crate::dependency::{Dependency, DependencyExt as _};
@@ -590,57 +590,13 @@ pub enum Tag {
 pub(crate) struct NamesIterator<'a> {
     pub(crate) bin: Bin,
     pub(crate) i: usize,
-    pub(crate) done: bool,
-    pub(crate) dir_iterator: Option<sys::dir_iterator::WrappedIterator>,
     pub(crate) package_name: String,
-    /// Borrowed view of the destination `node_modules` directory fd; the
-    /// caller owns the underlying `Dir`. Default is `Fd::INVALID`, which
-    /// `next_in_dir()` never reaches.
-    pub(crate) destination_node_modules: Fd,
     pub(crate) buf: bun_paths::path_buffer_pool::Guard,
     pub(crate) string_buffer: &'a [u8],
     pub(crate) extern_string_buf: &'a [ExternalString],
 }
 
 impl<'a> NamesIterator<'a> {
-    fn next_in_dir(&mut self) -> Result<Option<&[u8]>, Error> {
-        if self.done {
-            return Ok(None);
-        }
-        if self.dir_iterator.is_none() {
-            let dir_str = *self.bin.dir();
-            let mut target = dir_str.slice(self.string_buffer);
-            if strings::has_prefix(target, b"./") || strings::has_prefix(target, b".\\") {
-                target = &target[2..];
-            }
-            let parts: [&[u8]; 2] = [self.package_name.slice(self.string_buffer), target];
-
-            let dir = self.destination_node_modules;
-
-            let joined = resolve_path::join_string_buf::<PlatformAuto>(&mut self.buf[..], &parts);
-            let joined_len = joined.len();
-            self.buf[joined_len] = 0;
-            let joined_ = ZStr::from_buf_mut(&mut self.buf, joined_len);
-            let child_dir = sys::Dir::borrow(&dir)
-                .open_at(joined_)
-                .map_err(Error::from)?
-                .into_raw();
-            self.dir_iterator = Some(sys::iterate_dir(child_dir));
-        }
-
-        let iter = self.dir_iterator.as_mut().unwrap();
-        if let Some(entry) = iter.next().unwrap_or(None) {
-            self.i += 1;
-            let name = entry.name.slice_u8();
-            Ok(Some(strings::copy(&mut self.buf[..], name)))
-        } else {
-            self.done = true;
-            let dir = self.dir_iterator.take().unwrap().dir();
-            dir.close();
-            Ok(None)
-        }
-    }
-
     /// next filename, e.g. "babel" instead of "cli.js"
     pub(crate) fn next(&mut self) -> Result<Option<&[u8]>, Error> {
         match self.bin.tag {
@@ -649,7 +605,6 @@ impl<'a> NamesIterator<'a> {
                     return Ok(None);
                 }
                 self.i += 1;
-                self.done = true;
                 let base = path::basename(self.package_name.slice(self.string_buffer));
                 if strings::has_prefix(base, b"./") || strings::has_prefix(base, b".\\") {
                     return Ok(Some(strings::copy(&mut self.buf[..], &base[2..])));
@@ -662,7 +617,6 @@ impl<'a> NamesIterator<'a> {
                     return Ok(None);
                 }
                 self.i += 1;
-                self.done = true;
                 let named = *self.bin.named_file();
                 let base = path::basename(named[0].slice(self.string_buffer));
                 if strings::has_prefix(base, b"./") || strings::has_prefix(base, b".\\") {
@@ -671,7 +625,6 @@ impl<'a> NamesIterator<'a> {
                 Ok(Some(strings::copy(&mut self.buf[..], base)))
             }
 
-            Tag::Dir => self.next_in_dir(),
             Tag::Map => {
                 let map = *self.bin.map();
                 if self.i >= map.len as usize {
@@ -679,7 +632,6 @@ impl<'a> NamesIterator<'a> {
                 }
                 let index = self.i;
                 self.i += 2;
-                self.done = self.i >= map.len as usize;
                 let current_string = map.get(self.extern_string_buf)[index];
 
                 let base = path::basename(current_string.slice(self.string_buffer));

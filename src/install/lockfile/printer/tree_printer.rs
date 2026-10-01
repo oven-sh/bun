@@ -10,7 +10,6 @@ use bun_install::{
     self as install, Bin, Dependency, DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager,
     PackageNameHash, Resolution, Subcommand, bin, resolution,
 };
-use bun_sys::Fd;
 
 type Bitset = DynamicBitSet;
 
@@ -773,11 +772,7 @@ where
                 let mut iterator = bin::NamesIterator {
                     bin,
                     i: 0,
-                    done: false,
-                    dir_iterator: None,
                     package_name: dependency.name,
-                    // Never read on the .map/.file/.named_file paths this arm covers.
-                    destination_node_modules: Fd::INVALID,
                     buf: bun_paths::path_buffer_pool::get(),
                     string_buffer: string_buf,
                     extern_string_buf: this.lockfile.buffers.extern_strings.as_slice(),

@@ -370,7 +370,15 @@ function failWith(session: http2.Http2Session) {
 }
 
 function tablesOf(session: http2.Http2Session) {
-  return http2StreamTables((session as any)[Symbol.for("::bunhttp2native::")]);
+  const { streams, contexts, engine } = http2StreamTables((session as any)[Symbol.for("::bunhttp2native::")]);
+  const sizes = (table: typeof streams) => ({ len: table.len, walkPositions: table.walkPositions });
+  return { streams: sizes(streams), contexts: sizes(contexts), engine: sizes(engine) };
+}
+
+/** The ids of each table in the order its entries opened. */
+function openOrderOf(session: http2.Http2Session) {
+  const { streams, contexts, engine } = http2StreamTables((session as any)[Symbol.for("::bunhttp2native::")]);
+  return { streams: streams.ids, contexts: contexts.ids, engine: engine.ids };
 }
 
 function dense(len: number) {
@@ -533,6 +541,74 @@ test("a client session's stream tables stay dense after a flood of pushed stream
 // The walks that send queued data and that end a session visit the streams in the order they
 // opened, as node does. A table in hash order, or one that moves its newest entry into the
 // position of a removed one, serves a newer stream before an older one.
+
+test("the stream tables keep the open order while streams close in any order", async () => {
+  const peer = new Peer(0);
+  const session = http2.performServerHandshake(peer.socket);
+  const orFail = failWith(session);
+  try {
+    const closed = new Set<number>();
+    let onClose = () => {};
+    session.on("stream", stream => {
+      stream.on("error", () => {});
+      stream.respond({ ":status": 200 });
+      stream.resume();
+      stream.on("end", () => stream.end());
+      stream.on("close", () => {
+        closed.add(stream.id);
+        onClose();
+      });
+    });
+    const untilClosed = (ids: number[]) => {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      onClose = () => {
+        if (ids.every(id => closed.has(id))) resolve();
+      };
+      onClose();
+      return promise;
+    };
+    // xorshift32 with a fixed seed: the same opens and closes in every run.
+    let seed = 0x2545f491;
+    const random = (below: number) => {
+      seed ^= seed << 13;
+      seed ^= seed >>> 17;
+      seed ^= seed << 5;
+      return (seed >>> 0) % below;
+    };
+
+    peer.send(PREFACE, frame(FRAME.SETTINGS, 0, 0));
+    const open: number[] = [];
+    let nextId = 1;
+    let removals = 0;
+    for (let round = 0; round < 16; round++) {
+      // One read opens up to 8 streams and ends the request of any number of the open ones.
+      const frames: Buffer[] = [];
+      for (let opening = 1 + random(8); opening > 0; opening--, nextId += 2) {
+        frames.push(frame(FRAME.HEADERS, FLAG.END_HEADERS, nextId, GET_BLOCK));
+        open.push(nextId);
+      }
+      const closing: number[] = [];
+      for (let count = random(open.length + 1); count > 0; count--) {
+        const [id] = open.splice(random(open.length), 1);
+        closing.push(id);
+        frames.push(frame(FRAME.DATA, FLAG.END_STREAM, id));
+      }
+      removals += closing.length;
+      peer.send(...frames);
+      await orFail(untilClosed(closing));
+      // A read releases the table entries of the streams that closed before it.
+      let tables;
+      do {
+        await orFail(peer.roundTrip());
+        tables = tablesOf(session);
+      } while (Math.max(tables.streams.len, tables.contexts.len, tables.engine.len) > open.length);
+      expect(openOrderOf(session)).toEqual({ streams: open, contexts: open, engine: open });
+    }
+    expect(removals).toBeGreaterThan(32);
+  } finally {
+    session.destroy();
+  }
+});
 
 test("a session whose connection window is the limit finishes its responses in request order", async () => {
   const OPEN = 8;

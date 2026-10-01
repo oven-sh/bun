@@ -856,33 +856,42 @@ pub(crate) fn stream_tables_for_testing(
     let Ok(engine) = parser.engine.try_borrow() else {
         return Err(global.throw(format_args!("The session is in a frame dispatch")));
     };
-    let table = |len: usize, walk_positions: usize| {
-        let entry = JSValue::create_empty_object(global, 2);
+    let table = |len: usize, walk_positions: usize, ids: Vec<u32>| -> JsResult<JSValue> {
+        let entry = JSValue::create_empty_object(global, 3);
         entry.put(global, b"len", JSValue::js_number(len as f64));
         entry.put(
             global,
             b"walkPositions",
             JSValue::js_number(walk_positions as f64),
         );
-        entry
+        let open_order = JSValue::create_empty_array(global, ids.len())?;
+        for (i, id) in ids.iter().enumerate() {
+            open_order.put_index(global, i as u32, JSValue::js_number(*id as f64))?;
+        }
+        entry.put(global, b"ids", open_order);
+        Ok(entry)
     };
     let streams = parser.streams.get();
     let contexts = parser.sctx.get();
-    let (engine_len, engine_walk) = engine
-        .as_ref()
-        .map_or((0, 0), |c| (c.streams.len(), c.streams.walk_positions()));
+    let (engine_len, engine_walk, engine_ids) = engine.as_ref().map_or((0, 0, Vec::new()), |c| {
+        (c.streams.len(), c.streams.walk_positions(), c.streams.ids())
+    });
     let result = JSValue::create_empty_object(global, 3);
     result.put(
         global,
         b"streams",
-        table(streams.len(), streams.walk_positions()),
+        table(streams.len(), streams.walk_positions(), streams.ids())?,
     );
     result.put(
         global,
         b"contexts",
-        table(contexts.len(), contexts.walk_positions()),
+        table(contexts.len(), contexts.walk_positions(), contexts.ids())?,
     );
-    result.put(global, b"engine", table(engine_len, engine_walk));
+    result.put(
+        global,
+        b"engine",
+        table(engine_len, engine_walk, engine_ids)?,
+    );
     Ok(result)
 }
 

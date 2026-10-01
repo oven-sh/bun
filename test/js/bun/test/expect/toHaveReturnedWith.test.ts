@@ -273,13 +273,16 @@ describe("toHaveReturnedWith Examples", () => {
         cmd: [bunExe(), "-e", script],
         env: bunEnv,
         stdout: "pipe",
-        stderr: "inherit",
+        stderr: "pipe",
       });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       const tags = Array.from(stdout.matchAll(/tag: "(ret-\d+)"/g), match => match[1]);
-      expect(tags).toEqual(Array.from({ length: 45 }, (_, i) => `ret-${i}`));
-      expect(exitCode).toBe(0);
+      expect({ tags, stderr, exitCode }).toEqual({
+        tags: Array.from({ length: 45 }, (_, i) => `ret-${i}`),
+        stderr: "",
+        exitCode: 0,
+      });
     });
   });
 

@@ -995,6 +995,14 @@ await sql.close({ timeout: 0 }); // close all connections from the pool immediat
 
 `timeout` is in seconds. With `timeout: 0`, or when the timeout expires, queries that are still in flight reject with the adapter's `ERR_*_CONNECTION_CLOSED` error.
 
+`sql.close()` waits for the queries of the pool that started before the call. A query starts in the call of `.then()`, `.catch()`, `.finally()` or `.execute()`. `await query` and `Promise.all([query])` call `.then()` in a later microtask. When `close()` follows them in the same tick, it comes before the start, and the query rejects with the adapter's `ERR_*_CONNECTION_CLOSED` error. The same applies to a library that awaits the query in an async function of its own.
+
+```ts
+sql`INSERT INTO users ${sql(alice)}`.catch(report); // started, close() waits for it
+const inserted = (async () => await sql`INSERT INTO users ${sql(bob)}`)(); // not started yet
+await sql.close(); // `inserted` rejects
+```
+
 ---
 
 ## Reserved Connections

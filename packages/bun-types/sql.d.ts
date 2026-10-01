@@ -689,6 +689,12 @@ declare module "bun" {
      * Closes the database connection. With `timeout: 0` it closes
      * immediately; with no timeout it waits for all queries to finish first.
      *
+     * It waits for the queries of the pool that started before the call. A
+     * query starts in the call of `.then()`, `.catch()`, `.finally()` or
+     * `.execute()`. `await query` calls `.then()` in a later microtask, so
+     * a `close()` that follows it in the same tick comes before the start,
+     * and the query rejects.
+     *
      * @param options Optional `timeout` in seconds
      *
      * @example

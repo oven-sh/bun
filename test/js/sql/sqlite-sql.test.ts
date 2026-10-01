@@ -1,7 +1,7 @@
 import { randomUUIDv7, SQL } from "bun";
 import { Database } from "bun:sqlite";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { isDebug, tempDir } from "harness";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -2080,6 +2080,168 @@ describe("Connection management", () => {
     }
   });
 
+  // https://github.com/oven-sh/bun/issues/43887
+  describe("close() and the queries that started before it", () => {
+    const settle = (promise: Promise<unknown>) =>
+      promise.then(
+        rows => ({ rows }),
+        e => ({ code: e.code }),
+      );
+
+    function rowsIn(filename: string) {
+      const db = new Database(filename, { readonly: true });
+      try {
+        return db.query("SELECT x FROM t ORDER BY rowid").values().flat();
+      } finally {
+        db.close();
+      }
+    }
+
+    async function openTable(dir: { toString(): string }) {
+      const filename = join(String(dir), "t.db");
+      const sql = new SQL({ adapter: "sqlite", filename });
+      await sql`CREATE TABLE t (x INTEGER)`;
+      return { sql, filename };
+    }
+
+    const starts = {
+      "then()": query => query.then(rows => rows),
+      "catch()": query => query.catch(e => Promise.reject(e)),
+      "finally()": query => query.finally(() => {}),
+      "run()": query => query.run(),
+      "execute()": query => query.execute(),
+    };
+    const closes = {
+      "close({ timeout: 5 })": sql => sql.close({ timeout: 5 }),
+      "end()": sql => sql.end(),
+      "[Symbol.asyncDispose]()": sql => sql[Symbol.asyncDispose](),
+    };
+    const statements = {
+      "with a parameter": { rows: [1], start: sql => sql`INSERT INTO t VALUES (${1})` },
+      "that returns rows": { rows: [1], start: sql => sql`INSERT INTO t VALUES (1) RETURNING x` },
+      "in a string of two statements": {
+        rows: [1, 2],
+        start: sql => sql.unsafe("INSERT INTO t VALUES (1); INSERT INTO t VALUES (2)"),
+      },
+    };
+
+    for (const [name, start] of Object.entries(starts)) {
+      test(`a query that ${name} started runs when close() follows in the same tick`, async () => {
+        using dir = tempDir("sqlite-close", {});
+        const { sql, filename } = await openTable(dir);
+        const inserted = settle(start(sql`INSERT INTO t VALUES (1)`).then(() => "done"));
+        await sql.close();
+        expect({ query: await inserted, rows: rowsIn(filename) }).toEqual({ query: { rows: "done" }, rows: [1] });
+      });
+    }
+
+    for (const [name, close] of Object.entries(closes)) {
+      test(`a query that started runs when ${name} follows in the same tick`, async () => {
+        using dir = tempDir("sqlite-close", {});
+        const { sql, filename } = await openTable(dir);
+        const inserted = settle(sql`INSERT INTO t VALUES (1)`.then(() => "done"));
+        await close(sql);
+        expect({ query: await inserted, rows: rowsIn(filename) }).toEqual({ query: { rows: "done" }, rows: [1] });
+      });
+    }
+
+    for (const [name, { rows, start }] of Object.entries(statements)) {
+      test(`a statement ${name} runs when close() follows in the same tick`, async () => {
+        using dir = tempDir("sqlite-close", {});
+        const { sql, filename } = await openTable(dir);
+        const inserted = settle(start(sql).then(() => "done"));
+        await sql.close();
+        expect({ query: await inserted, rows: rowsIn(filename) }).toEqual({ query: { rows: "done" }, rows });
+      });
+    }
+
+    test("an `await using` block runs the 20 inserts that it did not await", async () => {
+      using dir = tempDir("sqlite-close", {});
+      const filename = join(String(dir), "t.db");
+      const errors: unknown[] = [];
+      {
+        await using db = new SQL({ adapter: "sqlite", filename });
+        await db`CREATE TABLE IF NOT EXISTS t (x)`;
+        for (let i = 0; i < 20; i++) db`INSERT INTO t VALUES (${i})`.catch(e => errors.push(e.code));
+      }
+      expect({ errors, rows: rowsIn(filename) }).toEqual({ errors: [], rows: Array.from({ length: 20 }, (_, i) => i) });
+    });
+
+    for (const exit of ["return", "throw"] as const) {
+      test(`an \`await using\` block left by ${exit} runs the queries that started in it`, async () => {
+        using dir = tempDir("sqlite-close", {});
+        const filename = join(String(dir), "t.db");
+        const inserted: Promise<unknown>[] = [];
+        async function block() {
+          await using sql = new SQL({ adapter: "sqlite", filename });
+          await sql`CREATE TABLE t (x INTEGER)`;
+          for (let x = 0; x < 3; x++) inserted.push(settle(sql`INSERT INTO t VALUES (${x})`.then(() => x)));
+          if (exit === "return") return;
+          throw new Error("leave the block");
+        }
+        await block().catch(() => {});
+        expect({ queries: await Promise.all(inserted), rows: rowsIn(filename) }).toEqual({
+          queries: [{ rows: 0 }, { rows: 1 }, { rows: 2 }],
+          rows: [0, 1, 2],
+        });
+      });
+    }
+
+    test("two close() calls in the same tick leave a started query to run once", async () => {
+      using dir = tempDir("sqlite-close", {});
+      const { sql, filename } = await openTable(dir);
+      const inserted = settle(sql`INSERT INTO t VALUES (1)`.then(() => "done"));
+      await Promise.all([sql.close(), sql.close()]);
+      expect({ query: await inserted, rows: rowsIn(filename) }).toEqual({ query: { rows: "done" }, rows: [1] });
+    });
+
+    test("the COMMIT of a transaction that the caller made with BEGIN runs when close() follows", async () => {
+      using dir = tempDir("sqlite-close", {});
+      const { sql, filename } = await openTable(dir);
+      await sql`BEGIN`;
+      await sql`INSERT INTO t VALUES (1)`;
+      const committed = settle(sql`COMMIT`.then(() => "done"));
+      await sql.close();
+      expect({ commit: await committed, rows: rowsIn(filename) }).toEqual({ commit: { rows: "done" }, rows: [1] });
+    });
+
+    test("a query that starts after close() is rejected and does not run", async () => {
+      using dir = tempDir("sqlite-close", {});
+      const { sql, filename } = await openTable(dir);
+      const early = settle(sql`INSERT INTO t VALUES (1)`.then(() => "done"));
+      const closed = sql.close();
+      const late = [
+        settle(sql`INSERT INTO t VALUES (2)`.execute()),
+        settle(sql`INSERT INTO t VALUES (3)`.then(rows => rows)),
+      ];
+      await closed;
+      expect({ early: await early, late: await Promise.all(late), rows: rowsIn(filename) }).toEqual({
+        early: { rows: "done" },
+        late: [{ code: "ERR_SQLITE_CONNECTION_CLOSED" }, { code: "ERR_SQLITE_CONNECTION_CLOSED" }],
+        rows: [1],
+      });
+    });
+
+    // `await`, Promise.all() and Promise.resolve() call then() from a later promise job, so a close() in the same
+    // tick comes before the start.
+    for (const [name, start] of Object.entries({
+      "`await` in a function that nobody awaits": query => (async () => await query)(),
+      "Promise.all()": query => Promise.all([query]),
+      "Promise.resolve()": query => Promise.resolve(query),
+    })) {
+      test(`a query that only ${name} started is rejected`, async () => {
+        using dir = tempDir("sqlite-close", {});
+        const { sql, filename } = await openTable(dir);
+        const inserted = settle(start(sql`INSERT INTO t VALUES (1)`));
+        await sql.close();
+        expect({ query: await inserted, rows: rowsIn(filename) }).toEqual({
+          query: { code: "ERR_SQLITE_CONNECTION_CLOSED" },
+          rows: [],
+        });
+      });
+    }
+  });
+
   test("reserve throws for SQLite", async () => {
     const sql = new SQL("sqlite://:memory:");
 
@@ -2116,6 +2278,138 @@ describe("Connection management", () => {
     );
 
     await sql.close();
+  });
+});
+
+// then(), catch(), finally() and run() start a query as execute() does: the query reaches the database in the call.
+describe("Query start", () => {
+  const starts = {
+    "then()": query => query.then(rows => rows),
+    "catch()": query => query.catch(e => Promise.reject(e)),
+    "finally()": query => query.finally(() => {}),
+    "run()": query => query.run(),
+    "execute()": query => query.execute(),
+  };
+
+  for (const [name, start] of Object.entries(starts)) {
+    test(`${name} gives the query to the database in the call`, async () => {
+      const sql = new SQL("sqlite://:memory:");
+      const order: string[] = [];
+      const prepare = Database.prototype.prepare;
+      const spy = spyOn(Database.prototype, "prepare").mockImplementation(function (this: Database, ...args: any) {
+        order.push("database");
+        return prepare.apply(this, args);
+      } as typeof prepare);
+      try {
+        const started = start(sql`SELECT 1 AS x`);
+        order.push("the call returned");
+        await started;
+        expect(order).toEqual(["database", "the call returned"]);
+      } finally {
+        spy.mockRestore();
+        await sql.close();
+      }
+    });
+  }
+
+  test("queries reach the database in the order of their starts", async () => {
+    const sql = new SQL("sqlite://:memory:");
+    try {
+      await sql`CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT, x INTEGER)`;
+      const expected = Array.from({ length: 200 }, (_, x) => x);
+      const names = Object.keys(starts);
+      await Promise.all(expected.map(x => starts[names[x % names.length]](sql`INSERT INTO t (x) VALUES (${x})`)));
+      expect((await sql`SELECT x FROM t ORDER BY id`).map(row => row.x)).toEqual(expected);
+    } finally {
+      await sql.close();
+    }
+  });
+
+  // What cancel() does to a query that started is not in this test. The way that the query started must not change it.
+  for (const [name, start] of Object.entries(starts)) {
+    if (name === "execute()") continue;
+    test(`cancel() in the tick of ${name} does what it does in the tick of execute()`, async () => {
+      async function cancelAfter(start: (query: any) => Promise<unknown>) {
+        const sql = new SQL("sqlite://:memory:");
+        try {
+          await sql`CREATE TABLE t (x INTEGER)`;
+          const query = sql`INSERT INTO t VALUES (1)`;
+          const settled = start(query).then(
+            () => "resolved",
+            e => e.code,
+          );
+          query.cancel();
+          return { query: await settled, rows: (await sql`SELECT x FROM t`).length };
+        } finally {
+          await sql.close();
+        }
+      }
+      expect(await cancelAfter(start)).toEqual(await cancelAfter(starts["execute()"]));
+    });
+  }
+
+  // Runs in a child process: bun:test turns an unhandled rejection into a test failure.
+  test("a query that fails is reported as unhandled only when the caller gave it no rejection handler", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const reported = [];
+          process.on("unhandledRejection", err => reported.push(err.code));
+          const starts = {
+            "then(f)": query => query.then(() => {}),
+            "then(f, g)": query => query.then(() => {}, () => {}),
+            "then()": query => query.then(),
+            "catch(g)": query => query.catch(() => {}),
+            "catch()": query => query.catch(),
+            "finally(f)": query => query.finally(() => {}),
+            "run()": query => query.run(),
+            "execute()": query => query.execute(),
+            "await": query => void (async () => await query)(),
+          };
+          const failures = {
+            "the statement fails": sql => sql\`SELECT * FROM missing\`,
+            "the pool is closed": sql => (sql.close(), sql\`SELECT 1\`),
+          };
+          const events = {};
+          for (const [failure, fail] of Object.entries(failures)) {
+            events[failure] = {};
+            for (const [name, start] of Object.entries(starts)) {
+              const sql = new Bun.SQL("sqlite://:memory:");
+              reported.length = 0;
+              start(fail(sql));
+              // Unhandled rejections are reported after the promise jobs of the turn that made them.
+              await new Promise(resolve => setImmediate(resolve));
+              events[failure][name] = [...reported];
+              await sql.close();
+            }
+          }
+          console.log(JSON.stringify(events));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const eventsFor = (code: string) => ({
+      "then(f)": [code],
+      "then(f, g)": [],
+      "then()": [code],
+      "catch(g)": [],
+      "catch()": [],
+      "finally(f)": [],
+      "run()": [code],
+      "execute()": [code],
+      "await": [code],
+    });
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "the statement fails": eventsFor("SQLITE_ERROR"),
+      "the pool is closed": eventsFor("ERR_SQLITE_CONNECTION_CLOSED"),
+    });
+    expect(exitCode).toBe(0);
   });
 });
 

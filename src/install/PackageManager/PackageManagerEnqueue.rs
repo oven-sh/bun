@@ -2280,10 +2280,7 @@ fn local_package_dir(lockfile: &Lockfile::Lockfile, package_id: PackageID) -> Op
     Some(lockfile.str(dir))
 }
 
-/// Like npm, a local tarball's own `file:` tarballs are read next to it. The path
-/// stored for such an edge is the file's location from the top-level dir, so that the
-/// package identity, the read task and a later install all name the same file.
-/// `None` leaves the declared path as it is.
+/// A local tarball's own `file:` tarballs are next to it, like npm. Returns that location from the top-level dir.
 fn locate_next_to_declaring_tarball(
     this: &mut PackageManager,
     dependency_id: DependencyID,
@@ -2299,8 +2296,7 @@ fn locate_next_to_declaring_tarball(
     if bun_paths::is_absolute(declared_path) {
         return None;
     }
-    // The declaring tarball's own path is relative to the workspace or folder that
-    // declared it, or to the top-level dir (a root declaration, or a location stored here).
+    // The declaring tarball's path is relative to the workspace or folder that declared it.
     let declarer_tarball = lockfile.str(declarer_res.local_tarball());
     let declarer_base_dir = lockfile
         .first_dependency_resolving_to(declarer)

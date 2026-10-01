@@ -714,6 +714,17 @@ it("serialize(name) rejects a db closed during name toString()", async () => {
   });
 });
 
+it("Database.deserialize accepts an ArrayBuffer", () => {
+  const db = Database.open(":memory:");
+  db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
+  db.exec('INSERT INTO test (name) VALUES ("Hello")');
+  const serialized = db.serialize();
+  const arrayBuffer = serialized.buffer.slice(serialized.byteOffset, serialized.byteOffset + serialized.byteLength);
+
+  const db2 = Database.deserialize(arrayBuffer);
+  expect(db2.prepare("SELECT * FROM test").all()).toEqual([{ id: 1, name: "Hello" }]);
+});
+
 it("Database.deserialize should support strict mode", () => {
   const db1 = new Database(":memory:");
   db1.run("CREATE TABLE test (name TEXT)");
@@ -1320,6 +1331,71 @@ it("empty blob", () => {
       blob: new Uint8Array(),
     },
   ]);
+});
+
+it("binds a detached TypedArray as a zero-length blob, not NULL", () => {
+  // A detached view has no backing store. It must bind the same way a live
+  // zero-length view does (and the same way node:sqlite binds it), not as NULL.
+  const db = new Database(":memory:");
+  db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY, blob BLOB NOT NULL)");
+
+  const u8 = new Uint8Array([1, 2, 3]);
+  u8.buffer.transfer();
+  expect(u8.byteLength).toBe(0);
+  const view = new DataView(new ArrayBuffer(8));
+  structuredClone(view.buffer, { transfer: [view.buffer] });
+  expect(view.buffer.detached).toBe(true);
+
+  expect(db.query("SELECT typeof(?) AS type").get(u8)).toEqual({ type: "blob" });
+
+  const insert = db.prepare("INSERT INTO foo (id, blob) VALUES ($id, $blob)");
+  insert.run({ $id: 1, $blob: new Uint8Array(0) });
+  insert.run({ $id: 2, $blob: u8 });
+  db.run("INSERT INTO foo (id, blob) VALUES (?, ?)", [3, view]);
+
+  expect(db.query("SELECT id, typeof(blob) AS type, length(blob) AS length FROM foo ORDER BY id").all()).toEqual([
+    { id: 1, type: "blob", length: 0 },
+    { id: 2, type: "blob", length: 0 },
+    { id: 3, type: "blob", length: 0 },
+  ]);
+  expect(db.query("SELECT blob FROM foo WHERE id = 2").get()).toEqual({ blob: new Uint8Array(0) });
+  db.close();
+});
+
+it("rejects a 2 GiB blob parameter instead of truncating it", async () => {
+  // A 2^31 byte length overflowed sqlite3_bind_blob()'s int length and bound
+  // an empty TEXT value. The subprocess keeps the 2 GiB reservation out of the
+  // test runner. The buffer is never written, so RSS stays small.
+  const script = `
+    import { Database } from "bun:sqlite";
+    let big;
+    try {
+      big = new Uint8Array(2 ** 31);
+    } catch {
+      console.log(JSON.stringify("SKIP"));
+      process.exit(0);
+    }
+    const db = new Database(":memory:");
+    let result;
+    try {
+      result = db.query("SELECT typeof(?1) AS type, length(?1) AS length").get(big);
+    } catch (e) {
+      result = e.message;
+    }
+    console.log(JSON.stringify(result));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: {
+      ...bunEnv,
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1"].filter(Boolean).join(":"),
+    },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(["SKIP", "string or blob too big"]).toContainEqual(JSON.parse(stdout.trim() || '"NO_OUTPUT"'));
+  expect(exitCode).toBe(0);
 });
 
 it("multiple statements with a schema change", () => {
@@ -2772,3 +2848,44 @@ it("exec/run with an embedded NUL byte in the SQL string does not hang", async (
     exitCode: 0,
   });
 });
+
+// Bun's bundled SQLite allows 250000 parameters. A system libsqlite3 (macOS) can stop at 32766.
+const sqliteAllowsMoreThan65535Parameters = (() => {
+  using db = new Database(":memory:");
+  try {
+    db.prepare("SELECT ?65537").finalize();
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+it.skipIf(!sqliteAllowsMoreThan65535Parameters)(
+  "binds statements with more than 65535 parameters without truncating the count",
+  () => {
+    using db = new Database(":memory:");
+    db.exec("CREATE TABLE t(a)");
+
+    // ?65537 gives a statement 65537 parameters with a short SQL text. A uint16_t
+    // count wraps that to 1: one value was accepted, which left ?65537 NULL, and
+    // 65537 values were rejected.
+    const N = 65537;
+    const values = Array(N).fill(null);
+    values[N - 1] = 7;
+
+    const select = db.prepare(`SELECT ?${N} AS v`);
+    expect(select.paramsCount).toBe(N);
+    expect(() => select.get([7])).toThrow(`SQLite query expected ${N} values, received 1`);
+    expect(select.get(values)).toEqual({ v: 7 });
+
+    // Object bindings walk the same count, so names past the wrapped count stayed NULL.
+    const named = db.prepare(`SELECT ?${N} AS v, $name AS n`);
+    expect(named.get({ [`?${N}`]: 7, $name: "x" })).toEqual({ v: 7, n: "x" });
+
+    // Database#run(sql, values) builds its own bindings map from the same count.
+    const insert = `INSERT INTO t(a) VALUES (?${N})`;
+    expect(() => db.run(insert, [7])).toThrow(`SQLite query expected ${N} values, received 1`);
+    expect(db.run(insert, values).changes).toBe(1);
+    expect(db.query("SELECT a FROM t").all()).toEqual([{ a: 7 }]);
+  },
+);

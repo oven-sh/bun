@@ -1,8 +1,8 @@
 use core::ffi::{c_char, c_int, c_void};
 
-use bun_core::Fd;
+use bun_boringssl_sys::OwnedSslCtx;
 
-use crate::{LIBUS_SOCKET_DESCRIPTOR, SocketGroup, SslCtx, us_socket_t};
+use crate::{SocketGroup, SslCtx, us_socket_t};
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for a uSockets listen socket.
@@ -42,20 +42,6 @@ impl ListenSocket {
         unsafe { &mut *us_listen_socket_group(self) }
     }
 
-    pub fn fd(&mut self) -> Fd {
-        let raw = us_listen_socket_get_fd(self);
-        // SOCKET → kind=system (mask bit 63); `from_native` would store the
-        // raw bits verbatim and mis-tag `INVALID_SOCKET` (~0) as kind=uv.
-        #[cfg(windows)]
-        {
-            Fd::from_system(raw as *mut core::ffi::c_void)
-        }
-        #[cfg(not(windows))]
-        {
-            Fd::from_native(raw)
-        }
-    }
-
     /// `ssl_ctx` is `SSL_CTX_up_ref`'d for the SNI node; the listener drops
     /// that ref on close / `remove_server_name`. `user` is the per-domain handle
     /// `find_server_name_userdata` recovers (uWS uses an `HttpRouter*`; Bun.listen
@@ -86,6 +72,12 @@ impl ListenSocket {
         unsafe { us_listen_socket_remove_server_name(self, hostname.as_ptr()) }
     }
 
+    /// Makes `ctx` the default `SSL_CTX` for sockets accepted from now on.
+    pub fn set_default_ssl_ctx(&mut self, ctx: &OwnedSslCtx) {
+        // SAFETY: `ctx` owns a live SSL_CTX, which C up-refs before it stores the pointer.
+        unsafe { us_listen_socket_set_default_ssl_ctx(self, ctx.as_ptr()) }
+    }
+
     pub fn on_server_name(
         &mut self,
         cb: extern "C" fn(*mut ListenSocket, *const c_char, *mut c_int, *mut c_void) -> *mut c_void,
@@ -101,7 +93,6 @@ impl ListenSocket {
 unsafe extern "C" {
     safe fn us_listen_socket_close(ls: &mut ListenSocket);
     safe fn us_listen_socket_group(ls: &mut ListenSocket) -> *mut SocketGroup;
-    safe fn us_listen_socket_get_fd(ls: &mut ListenSocket) -> LIBUS_SOCKET_DESCRIPTOR;
     fn us_listen_socket_add_server_name(
         ls: *mut ListenSocket,
         hostname: *const c_char,
@@ -109,6 +100,7 @@ unsafe extern "C" {
         user: *mut c_void,
     ) -> c_int;
     fn us_listen_socket_remove_server_name(ls: *mut ListenSocket, hostname: *const c_char);
+    fn us_listen_socket_set_default_ssl_ctx(ls: *mut ListenSocket, ctx: *mut SslCtx);
     safe fn us_listen_socket_on_server_name(
         ls: &mut ListenSocket,
         cb: extern "C" fn(*mut ListenSocket, *const c_char, *mut c_int, *mut c_void) -> *mut c_void,

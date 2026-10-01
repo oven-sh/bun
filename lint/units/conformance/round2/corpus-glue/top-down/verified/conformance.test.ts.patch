@@ -1,0 +1,53 @@
+--- a/test/cli/lint/conformance.test.ts
++++ b/test/cli/lint/conformance.test.ts
+@@ -1129,6 +1129,50 @@
+   });
+ });
+ 
++describe("corpus", () => {
++  test("an instance that the reference fails is told from one that it skips, and neither runs", async () => {
++    const both = "compiler/both.errors.txt.diff\n";
++    using dir = tempDir("lint-conformance-corpus", {
++      "cases/compiler/bad.ts": "// @target: nosuch,es2015\nvar a = 1;\n",
++      "cases/compiler/both.ts": "var b = 1;\n",
++      "cases/compiler/clean.ts": "var c = 1;\n",
++      "cases/compiler/skipped.ts": "// @target: es5\nvar d = 1;\n",
++      "cases/conformance": {},
++      "baselines/typescript": {},
++      "baselines/typescript-go/NO_ERRORS.txt": "",
++      "submoduleAccepted.txt": both,
++      "submoduleTriaged.txt": both,
++    });
++    const corpus = runner.openCorpus(String(dir));
++    const instances = corpus.enumerateInstances();
++    const unknown = "Unknown value 'nosuch' for option 'target'";
++    const inBoth =
++      "diff file compiler/both.errors.txt.diff is in both submoduleAccepted and submoduleTriaged; it should only be in one";
++    expect(instances.map(i => [i.name, i.status, i.skipReason, i.invalidReason])).toEqual([
++      ["bad.ts", "invalid", undefined, unknown],
++      ["both.ts", "invalid", undefined, inBoth],
++      ["clean.ts", "run", undefined, undefined],
++      ["skipped.ts", "skip", "unsupported target ES5", undefined],
++    ]);
++    expect(instances.map(i => corpus.facts(i)).map(f => [f.status, f.reason, f.kind])).toEqual([
++      ["invalid", unknown, undefined],
++      ["invalid", inBoth, undefined],
++      ["run", "", "C"],
++      ["skipped", "unsupported target ES5", undefined],
++    ]);
++    expect(corpus.enumerateCase("compiler/both.ts")).toEqual([instances[1]]);
++    // A run calls its check for the instance that runs and for no other, and passes no other.
++    const checked: string[] = [];
++    const check: Check = async input => {
++      checked.push(input.instance.name);
++      return { diagnostics: [] };
++    };
++    const results = await runInstances(instances, check, { input: corpus.input, oracle: corpus.oracle });
++    expect(checked).toEqual(["clean.ts"]);
++    expect(results.filter(r => r.outcome === "pass").map(r => r.instance.name)).toEqual(["clean.ts"]);
++  });
++});
++
+ describe("expectations.json", () => {
+   const { formatExpectations, parseExpectations, sampleListed } = runner;
+   const text = readFileSync(join(home, "expectations.json"), "utf8");

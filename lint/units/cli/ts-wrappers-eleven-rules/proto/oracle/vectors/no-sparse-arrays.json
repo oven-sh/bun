@@ -1,0 +1,3902 @@
+[
+	{
+		"code": "var a = [ 1, 2, ]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "var a = [,];",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "var a = [ 1,, 2];",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 13,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "[\r\n\t/* comment */,\n// comment\n ,];",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 2,
+				"column": 15,
+				"endLine": 2,
+				"endColumn": 16,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 4,
+				"column": 2,
+				"endLine": 4,
+				"endColumn": 3,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 2,
+				"column": 15,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 4,
+				"column": 2,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "[(( [a,] )),,,];",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 13,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 14,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "[,(( [a,] )),,];",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 2,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 14,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "[,]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 2,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[,,]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 3,
+				"endLine": 1,
+				"endColumn": 4,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 2,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[a,,b]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 4,
+				"endLine": 1,
+				"endColumn": 5,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 4,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[a,,]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 4,
+				"endLine": 1,
+				"endColumn": 5,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 4,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[,a]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 2,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[a,]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[a, b]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[[,]]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 3,
+				"endLine": 1,
+				"endColumn": 4,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[ , ]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 3,
+				"endLine": 1,
+				"endColumn": 4,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[/* c */,]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[a, /* hole */, b]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[a,\n,\nb]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 2,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 2,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 2,
+				"column": 1,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[...a,,b]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[,] = a",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[a,,b] = c",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "var [,a] = b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "for ([,a] of b);",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "for ([,a] in b);",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "([,a]) => 1",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "function f([,a]) {}",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[a = [,]] = b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[[,] = x] = y",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({a: [,]} = b)",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({a: [,]})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "({a = [,]} = b)",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[a[[,]]] = b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 6,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 5,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[...[,]] = a",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "f(...[,])",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "new Array(...[,,])",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 16,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "\"😀\"; [,]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "`${[,]}`",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 6,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 5,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[...a, , b]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "([a,,b] = [c,,d]) => 1",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "async ([,a]) => 1",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x = ([,a])",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[,] = [,]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "var a = [1,,2], b = [3,,4]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 24,
+				"endLine": 1,
+				"endColumn": 25,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 24,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[,,,] = [,,,]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 11,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 12,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "for (var [,a] = [,b];;);",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 18,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 18,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "for (x of [,]);",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[a, [b,,c], d]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[a, [b,,c], d] = e",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({a: [b,,c]} = d)",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({[[,]]: a} = b)",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 6,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 5,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "({a: b = [,]} = c)",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[x = [,], y = [,]] = z",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 16,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[[,] = [,]] = a",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "a = b ? [,] : [c,,d]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 18,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 18,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "function f(a = [,]) {}",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "class A { a = [,]; static b = [1,,2] }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 34,
+				"endLine": 1,
+				"endColumn": 35,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 16,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 34,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "label: [,]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[é,,é]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 4,
+				"endLine": 1,
+				"endColumn": 5,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 4,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[\"😀\",,1]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[,\n]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 2,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[1,,2,,3]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 4,
+				"endLine": 1,
+				"endColumn": 5,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 4,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 7,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[function () { return [,] },,]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 24,
+				"endLine": 1,
+				"endColumn": 25,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 29,
+				"endLine": 1,
+				"endColumn": 30,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 24,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 29,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[...[a,,b]] = c",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[...x.y[[,]]] = c",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "for ([a = [,]] of b);",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "for ({a: [,]} of b);",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "for ({a = [,]} of b);",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[a,,b] = [c,,d] = [e,,f]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 22,
+				"endLine": 1,
+				"endColumn": 23,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 22,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "x = [a,,b] = [c,,d]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "({...[,]})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "try {} catch ([,a]) {}",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "<a>{[,]}</a>",
+		"jsx": true,
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 6,
+				"endLine": 1,
+				"endColumn": 7,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 6,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[<a/>,,<b/>]",
+		"jsx": true,
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "export default [,]",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "export var [,a] = [,b]",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "var [a,,b] = c",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "for ([a,,b] in c);",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "([a,,b] = c)",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[[a,,b]] = c",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[a = [1,2]] = b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "function f([a,,b]) {}",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "([a,,b]) => a",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "let [,] = a",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[a, b,]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[ ]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "f([1, 2], [3])",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[[1], [2]]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x = [/* , */ 1]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x = [\"a,,b\"]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x = [1, // ,\n 2]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[a,,b] = [1,2,3]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x = [,] = y",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[[,]] = a",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[a, ...[,]] = b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x = [a,,b] = c",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "for ([,] = x;;);",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "for (var [,] = x;;);",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "try {} catch ([,]) {}",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({a: [,] = 1} = b)",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[[,] = 1] = b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "for ([[,]] of a);",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[{a: [,]}] = b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({a: {b: [,]}} = c)",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[a,,b] = [c,,d]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 13,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "x = [,,]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 6,
+				"endLine": 1,
+				"endColumn": 7,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 6,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 7,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "x = [1,,,2]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 9,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "x = [,1]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 6,
+				"endLine": 1,
+				"endColumn": 7,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 6,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "x = [1,,]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "x = [[,]]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "x = [[1,,2],,3]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 13,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "f([,])",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 4,
+				"endLine": 1,
+				"endColumn": 5,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 4,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "x = [...a,,b]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "([a = [,]]) => a",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "var [a = [,]] = b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[,] == a",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 2,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "x = ([,])",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[,].length",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 2,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[,][0] = 1",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 2,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[[,], x = [,]] = a",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[...[,]]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 6,
+				"endLine": 1,
+				"endColumn": 7,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 6,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[,].a = 1",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 2,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[,][[,]] = 1",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 6,
+				"endLine": 1,
+				"endColumn": 7,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 2,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 6,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "({a: [,].b} = c)",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[[,].a] = b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 3,
+				"endLine": 1,
+				"endColumn": 4,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[...[,].a] = b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 6,
+				"endLine": 1,
+				"endColumn": 7,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 6,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "for ([,].a of b);",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "for ([,][0] in b);",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "x = [,] ? 1 : 2",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 6,
+				"endLine": 1,
+				"endColumn": 7,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 6,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[a, [,]] = [b, [,]]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "x = y = [,]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "x = [,], y",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 6,
+				"endLine": 1,
+				"endColumn": 7,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 6,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "([,]), x",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 3,
+				"endLine": 1,
+				"endColumn": 4,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "x = [ ,\n ,\n ]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 2,
+				"column": 2,
+				"endLine": 2,
+				"endColumn": 3,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 2,
+				"column": 2,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "x = [ // c\n , 1]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 2,
+				"column": 2,
+				"endLine": 2,
+				"endColumn": 3,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 2,
+				"column": 2,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "é = [,]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 6,
+				"endLine": 1,
+				"endColumn": 7,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 6,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "\"😀\"; x = [,]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "x = [\"😀\",,1]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "x = <a b={[,]} />",
+		"jsx": true,
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "x = <a>{[1,,2]}</a>",
+		"jsx": true,
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[x = <a b={[,]} />] = y",
+		"jsx": true,
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 13,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "switch (a) { case [,]: break; case [ , ]: break; }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 38,
+				"endLine": 1,
+				"endColumn": 39,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 38,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "switch (a) { case [,,]: break; case [,]: break; }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 21,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 38,
+				"endLine": 1,
+				"endColumn": 39,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 21,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 38,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "switch (a) { case [,a]: break; case [,a]: break; }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 38,
+				"endLine": 1,
+				"endColumn": 39,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 38,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "switch (a) { case [,a]: break; case [a]: break; }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[a,, b] = [, b, a]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[a, b] = [, b]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[a, , b] = [a, , b]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 16,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[, a] = [, a]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "const a = [,];",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "const a = [1,,2] as const;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "const a = <T>[,];",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "const a = [,]!;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "const a = [1,,] satisfies T;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "let [, a] = b as T;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[, a] = b;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "f<T>([,])",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "const a = [1, (2 as number), , 3];",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 30,
+				"endLine": 1,
+				"endColumn": 31,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 30,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "const a = [(1), , <T>x,];",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "const a = [x!, , y!];",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 16,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "enum E { A = [,].length }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "declare enum E { A = [,].length }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 24,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 23,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "class A { x: number[] = [,] }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 26,
+				"endLine": 1,
+				"endColumn": 27,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 26,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "const a = [ , ] as [undefined?];",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 13,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "function f(a = [,]): void {}",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "declare const a: number[]; const b = [...a, , 1]",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 45,
+				"endLine": 1,
+				"endColumn": 46,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 45,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "declare const a = [,];",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "declare function f(x = [,]): void",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 25,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 25,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "abstract class A { abstract m(x = [,]): void }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 36,
+				"endLine": 1,
+				"endColumn": 37,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 36,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "class A { m(x = [,]): void; m(x = [,]) {} }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 18,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 36,
+				"endLine": 1,
+				"endColumn": 37,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 18,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 36,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "class A { constructor(private x = [,]) {} }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 36,
+				"endLine": 1,
+				"endColumn": 37,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 36,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "function f(x?: number, y = [,]) {}",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 29,
+				"endLine": 1,
+				"endColumn": 30,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 29,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "([a, [,] as T] = x)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "namespace N { export const a = [,] }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 33,
+				"endLine": 1,
+				"endColumn": 34,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 33,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "declare namespace N { const a = [,] }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 34,
+				"endLine": 1,
+				"endColumn": 35,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 34,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "type T = [a, b?]; const a: T = [1, , ];",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 36,
+				"endLine": 1,
+				"endColumn": 37,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 36,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "const e = <div a={[,]} />;",
+		"ext": "tsx",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "export const a = [,];",
+		"ext": "mts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 19,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 19,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "exports.a = [,];",
+		"ext": "cts",
+		"sourceType": "commonjs",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[([,])] = x",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 4,
+				"endLine": 1,
+				"endColumn": 5,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 4,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[[,] as any] = x",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 3,
+				"endLine": 1,
+				"endColumn": 4,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "([,] as any) = x",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 3,
+				"endLine": 1,
+				"endColumn": 4,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "([,]) = x",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 3,
+				"endLine": 1,
+				"endColumn": 4,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[a = [,] as any] = x",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[a = ([,])] = x",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[[] = [,]] = x",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[...[,] as any] = x",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 6,
+				"endLine": 1,
+				"endColumn": 7,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 6,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "[...[,]] = x",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[[,]] = x",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({ a: [,] } = x)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({ a: ([,]) } = x)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "({ a: [,]! } = x)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "({ a = [,] } = x)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "for ([,] of x as any) {}",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "for ([,] as any of x) {}",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": null,
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"differs": "eslint-rejects"
+	},
+	{
+		"code": "x = [,] as any, y = <any>[,], z = [,]!, w = ([,])",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 6,
+				"endLine": 1,
+				"endColumn": 7,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 27,
+				"endLine": 1,
+				"endColumn": 28,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 36,
+				"endLine": 1,
+				"endColumn": 37,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 47,
+				"endLine": 1,
+				"endColumn": 48,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 6,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 27,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 36,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 47,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "x = [(a), , (b as any), , <any>c, , d!, ,]",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 25,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 35,
+				"endLine": 1,
+				"endColumn": 36,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 41,
+				"endLine": 1,
+				"endColumn": 42,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 25,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 35,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 41,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "function f(a = [,], b: T = [,] as T): void; function f() {}",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 29,
+				"endLine": 1,
+				"endColumn": 30,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 29,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "abstract class A { abstract m(a = [,]): void; x = [,]; declare y = [,]; }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 36,
+				"endLine": 1,
+				"endColumn": 37,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 52,
+				"endLine": 1,
+				"endColumn": 53,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 69,
+				"endLine": 1,
+				"endColumn": 70,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 36,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 52,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 69,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "declare class A { m(a = [,]): void; x = [,]; }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 26,
+				"endLine": 1,
+				"endColumn": 27,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 42,
+				"endLine": 1,
+				"endColumn": 43,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 26,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 42,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "declare const a = [,], b: T = [,];",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": null,
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 32,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"differs": "eslint-rejects"
+	},
+	{
+		"code": "declare module \"m\" { const a = [,]; function f(a = [,]): void; }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 33,
+				"endLine": 1,
+				"endColumn": 34,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 53,
+				"endLine": 1,
+				"endColumn": 54,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 33,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 53,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "namespace N { declare const a = [,]; export declare function f(a = [,]): void; }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 34,
+				"endLine": 1,
+				"endColumn": 35,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 69,
+				"endLine": 1,
+				"endColumn": 70,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 34,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 69,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "enum E { A = [,].length, B = ([,] as any).length }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 32,
+				"endLine": 1,
+				"endColumn": 33,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 32,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "type T = typeof x[0]; const a: T = [,];",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 37,
+				"endLine": 1,
+				"endColumn": 38,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 37,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "const e = <div a={[,] as any}>{[,]}</div>;",
+		"ext": "tsx",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 33,
+				"endLine": 1,
+				"endColumn": 34,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 33,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	},
+	{
+		"code": "const f = <T,>(a: T = [,] as any) => [,];",
+		"ext": "tsx",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 24,
+				"endLine": 1,
+				"endColumn": 25,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 39,
+				"endLine": 1,
+				"endColumn": 40,
+				"message": "Unexpected comma in middle of array."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 24,
+				"message": "Unexpected comma in middle of array."
+			},
+			{
+				"line": 1,
+				"column": 39,
+				"message": "Unexpected comma in middle of array."
+			}
+		]
+	}
+]

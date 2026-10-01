@@ -1,0 +1,10 @@
+no-self-assign: 734 cases: same 728, merged 3, missing 2, eslint-rejects 1
+missing: "a[\"\\ud800\"] = a[\"\\ud800\"]" [js] [script]
+    eslint: 1:15 'a["\ud800"]' is assigned to itself.
+    bun:    (none)
+missing: "({\"\\ud800\": a} = {\"\\ud800\": a})" [js] [script]
+    eslint: 1:29 'a' is assigned to itself.
+    bun:    (none)
+eslint-rejects: "a.b = a<T>.b" [ts] [module]
+    eslint: FATAL Parsing error: An instantiation expression cannot be followed by a property access.
+    bun:    (none)

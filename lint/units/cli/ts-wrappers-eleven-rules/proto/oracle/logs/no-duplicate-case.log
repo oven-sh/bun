@@ -1,0 +1,10 @@
+no-duplicate-case: 520 cases: same 516, missing 3, both-reject 1
+missing: "switch (a) { case <a/>: case <a/>: case <a />: }" [jsx] [script]
+    eslint: 1:25 Duplicate case label. | 1:36 Duplicate case label.
+    bun:    1:25 Duplicate case label.
+missing: "switch (x) { case <a/>: break; case <a />: break; }" [jsx] [script]
+    eslint: 1:32 Duplicate case label.
+    bun:    (none)
+missing: "switch (x) { case <a/>: break; case <a/>: break; case <a />: break; }" [tsx] [module]
+    eslint: 1:32 Duplicate case label. | 1:50 Duplicate case label.
+    bun:    1:32 Duplicate case label.

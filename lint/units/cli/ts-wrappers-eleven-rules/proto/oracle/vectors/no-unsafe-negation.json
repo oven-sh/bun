@@ -1,0 +1,2399 @@
+[
+	{
+		"code": "a in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "a in b === false",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "!(a in b)",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "(!a) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "a instanceof b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "a instanceof b === false",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "!(a instanceof b)",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "(!a) instanceof b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "if (! a < b) {}",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "while (! a > b) {}",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "foo = ! a <= b;",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "foo = ! a >= b;",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "! a <= b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "!a in b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "(!a in b)",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 4,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 2,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "!(a) in b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 5,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "!a instanceof b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected negating the left operand of 'instanceof' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'instanceof' operator."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "(!a instanceof b)",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 4,
+				"message": "Unexpected negating the left operand of 'instanceof' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 2,
+				"message": "Unexpected negating the left operand of 'instanceof' operator."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "!(a) instanceof b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 5,
+				"message": "Unexpected negating the left operand of 'instanceof' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'instanceof' operator."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "if (!a in b) {}",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 7,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 5,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "if (! a   in b) {}",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 5,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "if (!a.b.c in d) {}",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 5,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "if (!f(x) instanceof C) {}",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "Unexpected negating the left operand of 'instanceof' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 5,
+				"message": "Unexpected negating the left operand of 'instanceof' operator."
+			}
+		]
+	},
+	{
+		"code": "!a in b in c",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "x = !a in b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 7,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 5,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "foo(!a in b)",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 7,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 5,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "foo(!(a) in b)",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 5,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "[!a in b]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 4,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 2,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "!!a in b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 4,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "!(!a) in b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 6,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "((!a)) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "( !a ) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(/* c */!a) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(!a /* c */) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "( // c\n!a\n// d\n) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(!(a)) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(!f(x)) instanceof C",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(!a)\nin b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!a < b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!a > b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!a <= b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!a >= b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!a == b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!a + b in c",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a in !b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a instanceof !b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(!a, c) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(c, !a) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!a in (b)",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "!a in (b in c)",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "!a.in in b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 6,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "!a[\"in\"] in b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "!\")\" in b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 5,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "(!\")\") in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!\"(\" in b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 5,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "(!\"(\") in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!/\\)/ in b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 6,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "(!/\\)/) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!/[(]/ in b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 7,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "(!/[(]/) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!`)` in b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 5,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "(!`)`) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!`(${ c })(` in b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "(!`(${ c })(`) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!`${ \")\" }` in b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "(!`${ \"(\" }`) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!f(/* ) */) in b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "(!f(/* ( */)) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!f(// )\n) in b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 2,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "(!f(// (\n)) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!a /* ) */ in b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "(!a /* ( */ ) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!a in /* ( */ b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "!x/2/(1) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(!x/2/(1)) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!function(){ return /\\(/ }() in b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 29,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "(!function(){ return \")\" }) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!class { static x = \")\" } in b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "(!class { m() { return \"(\" } }) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(!a++) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!a++ in b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 5,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "!a?.b in c",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 6,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "(!a?.b) in c",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!new C in b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 7,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "(!new C()) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!<div>)</div> in b",
+		"jsx": true,
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "(!<div>(</div>) in b",
+		"jsx": true,
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!<a b=\")\" /> in c",
+		"jsx": true,
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "(!<a b=\"(\" c='\"' />) in c",
+		"jsx": true,
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(!<a>{\"(\"}</a>) in c",
+		"jsx": true,
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!a in<b/>",
+		"jsx": true,
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "for (var k = (!a in b);;) {}",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "é = !a in b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 7,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 5,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "\"😀\" + (!a in b)",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "!a\nin b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "!\na in b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 2,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "x == NaN != NaN",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "-a in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "~a in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "void a in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "+a in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!a // (  in b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "(!a // c ) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(!a /*   */) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!f(\"\\\n)\") in b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 4,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "(!f(\"\\\r\n(\")) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!f(`\n)`) in b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 4,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "!a in b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "(!a ) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!a\\u{62} in b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "(!\\u{61}) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "if ((!a) in b) {}",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x = // (\n !a /* ) */ in b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 2,
+				"column": 2,
+				"endLine": 2,
+				"endColumn": 4,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 2,
+				"column": 2,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "foo(!f(\")\") in b)",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 5,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "foo(!f(/[)]/) in b)",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 5,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "foo((!a) in b)",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!a\n--> ) comment\nin b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "(!a\n--> ( comment\n) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(!a\n/* c */ --> ( comment\n) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x = (!a\n--> (\n) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!f(\n--> )\n) in b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 3,
+				"endColumn": 2,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "!a in b",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "(!a) in b",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!(a in b)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!a! in b",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 4,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "(!a)! in b",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!a as any in b",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(!a as any) in b",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "<any>!a in b",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!<any>a in b",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "!a satisfies any in b",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!a instanceof B",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected negating the left operand of 'instanceof' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'instanceof' operator."
+			}
+		]
+	},
+	{
+		"code": "!a! instanceof B",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 4,
+				"message": "Unexpected negating the left operand of 'instanceof' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'instanceof' operator."
+			}
+		]
+	},
+	{
+		"code": "(!a)! instanceof B",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!(a as any) in b",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "!a in (b as any)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "!a in b!",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "((!a)) in b",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(!a satisfies any) instanceof B",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!a instanceof B<T>",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected negating the left operand of 'instanceof' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'instanceof' operator."
+			}
+		]
+	},
+	{
+		"code": "!a in b as any",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "(!a in b) as any",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 4,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 2,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "<any>(!a in b)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "! a! in b",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 5,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "!a.b! in c",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 6,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "!(a)! in b",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 6,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "(\n!a) in b",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "( /* c */ !a) in b",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(!a /* ) */) in b",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { #p = 1; static m(o: object) { return !#p in o } }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 48,
+				"endLine": 1,
+				"endColumn": 51,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": null,
+		"differs": "bun-rejects"
+	},
+	{
+		"code": "enum E { A = !a in b ? 1 : 2 }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "let x: boolean = !a in b;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 18,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 18,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "const e = <div a={!a in b} />;",
+		"ext": "tsx",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 19,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 19,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "!a as any in b",
+		"ext": "tsx",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!a in b",
+		"ext": "mts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "!a in b",
+		"ext": "cts",
+		"sourceType": "commonjs",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "(!a satisfies any) in b",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!a<T> in b",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 6,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "(!a)<T> in b",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!(a<T>) in b",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "!a!<T> in b",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 7,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "(<any>!a) in b",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(!a in b)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 4,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 2,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "((!a) as any) in b",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!a in b instanceof C",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "(!a in b)! instanceof C",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 4,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 2,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "!(a in b)! instanceof C",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "Unexpected negating the left operand of 'instanceof' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'instanceof' operator."
+			}
+		]
+	},
+	{
+		"code": "!!a in b",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 4,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "(!!a) in b",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!(!a) in b",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 6,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "!a\nin b",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "!a /* c */ in /* d */ b",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "!a in b as any in c",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 3,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "x = !a instanceof (B as any)",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 7,
+				"message": "Unexpected negating the left operand of 'instanceof' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 5,
+				"message": "Unexpected negating the left operand of 'instanceof' operator."
+			}
+		]
+	},
+	{
+		"code": "const e = <div>{!a in b}</div>;",
+		"ext": "tsx",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"message": "Unexpected negating the left operand of 'in' operator."
+			}
+		]
+	},
+	{
+		"code": "const e = <div>{(!a) in b}</div>;",
+		"ext": "tsx",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	}
+]

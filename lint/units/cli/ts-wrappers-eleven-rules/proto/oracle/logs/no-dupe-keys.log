@@ -1,0 +1,13 @@
+no-dupe-keys: 557 cases: same 553, missing 2, bun-rejects 2
+missing: "({\"\\ud800\": 1, \"\\ud800\": 2})" [js] [script]
+    eslint: 1:16 Duplicate key '�'.
+    bun:    (none)
+missing: "var x = { '\\uD800': 1, '\\uD800': 2 };" [js] [script]
+    eslint: 1:24 Duplicate key '�'.
+    bun:    (none)
+bun-rejects: "enum E { A, A }" [ts] [module]
+    eslint: (none)
+    bun:    REJECTS syntax "A" has already been declared
+bun-rejects: "enum E { A = 1, \"A\" = 2 }" [ts] [module]
+    eslint: (none)
+    bun:    REJECTS syntax "A" has already been declared

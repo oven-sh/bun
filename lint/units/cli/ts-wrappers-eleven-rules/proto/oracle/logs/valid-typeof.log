@@ -1,0 +1,88 @@
+valid-typeof: 547 cases: same 518, missing 29
+missing: "function f(undefined) {} typeof x === undefined" [js] [script]
+    eslint: 1:39 Invalid typeof comparison value.
+    bun:    (none)
+missing: "{ let undefined = 1; } typeof x === undefined" [js] [script]
+    eslint: 1:37 Invalid typeof comparison value.
+    bun:    (none)
+missing: "function f() { var undefined; } typeof x === undefined" [js] [script]
+    eslint: 1:46 Invalid typeof comparison value.
+    bun:    (none)
+missing: "try {} catch (undefined) {} typeof x === undefined" [js] [script]
+    eslint: 1:42 Invalid typeof comparison value.
+    bun:    (none)
+missing: "(function undefined() {}); typeof x === undefined" [js] [script]
+    eslint: 1:41 Invalid typeof comparison value.
+    bun:    (none)
+missing: "function f(a = typeof x === undefined) { var undefined; }" [js] [script]
+    eslint: 1:29 Invalid typeof comparison value.
+    bun:    (none)
+missing: "{ class undefined {} } typeof x === undefined" [js] [script]
+    eslint: 1:37 Invalid typeof comparison value.
+    bun:    (none)
+missing: "{ function undefined() {} } typeof x === undefined" [js] [script]
+    eslint: 1:42 Invalid typeof comparison value.
+    bun:    (none)
+missing: "{ const undefined = 1; } typeof x === undefined" [js] [script]
+    eslint: 1:39 Invalid typeof comparison value.
+    bun:    (none)
+missing: "{ using undefined = o; } typeof x === undefined" [js] [script]
+    eslint: 1:39 Invalid typeof comparison value.
+    bun:    (none)
+missing: "(undefined) => {}; typeof x === undefined" [js] [script]
+    eslint: 1:33 Invalid typeof comparison value.
+    bun:    (none)
+missing: "({ m(undefined) {} }); typeof x === undefined" [js] [script]
+    eslint: 1:37 Invalid typeof comparison value.
+    bun:    (none)
+missing: "class C { m(undefined) {} } typeof x === undefined" [js] [script]
+    eslint: 1:42 Invalid typeof comparison value.
+    bun:    (none)
+missing: "class C { m(undefined) {} p = typeof x === undefined }" [js] [script]
+    eslint: 1:44 Invalid typeof comparison value.
+    bun:    (none)
+missing: "class C { static { var undefined; } } typeof x === undefined" [js] [script]
+    eslint: 1:52 Invalid typeof comparison value.
+    bun:    (none)
+missing: "class C { static { let undefined; } m() { return typeof x === undefined } }" [js] [script]
+    eslint: 1:63 Invalid typeof comparison value.
+    bun:    (none)
+missing: "(class undefined {}); typeof x === undefined" [js] [script]
+    eslint: 1:36 Invalid typeof comparison value.
+    bun:    (none)
+missing: "for (let undefined of o) {} typeof x === undefined" [js] [script]
+    eslint: 1:42 Invalid typeof comparison value.
+    bun:    (none)
+missing: "for (let undefined = 0; ; ) {} typeof x === undefined" [js] [script]
+    eslint: 1:45 Invalid typeof comparison value.
+    bun:    (none)
+missing: "switch (a) { case 1: let undefined; } typeof x === undefined" [js] [script]
+    eslint: 1:52 Invalid typeof comparison value.
+    bun:    (none)
+missing: "try {} catch ({ undefined }) {} typeof x === undefined" [js] [script]
+    eslint: 1:46 Invalid typeof comparison value.
+    bun:    (none)
+missing: "typeof x === undefined; function f() { var undefined; }" [js] [script]
+    eslint: 1:14 Invalid typeof comparison value.
+    bun:    (none)
+missing: "(function (undefined) {})(); typeof x === undefined" [js] [script]
+    eslint: 1:43 Invalid typeof comparison value.
+    bun:    (none)
+missing: "function f() { function undefined() {} } typeof x === undefined" [js] [script]
+    eslint: 1:55 Invalid typeof comparison value.
+    bun:    (none)
+missing: "function f() { let undefined; } function g() { return typeof x === undefined }" [js] [script]
+    eslint: 1:68 Invalid typeof comparison value.
+    bun:    (none)
+missing: "function f() { { let undefined; } return typeof x === undefined }" [js] [script]
+    eslint: 1:55 Invalid typeof comparison value.
+    bun:    (none)
+missing: "function f(undefined) { return typeof x === \"strnig\" } typeof x === undefined" [js] [script]
+    eslint: 1:45 Invalid typeof comparison value. | 1:69 Invalid typeof comparison value.
+    bun:    1:45 Invalid typeof comparison value.
+missing: "function f(undefined) {} typeof x === undefined; typeof y === undefined" [js] [script]
+    eslint: 1:39 Invalid typeof comparison value. | 1:63 Invalid typeof comparison value.
+    bun:    (none)
+missing: "enum E { undefined } typeof x === undefined" [ts] [module]
+    eslint: 1:35 Invalid typeof comparison value.
+    bun:    (none)

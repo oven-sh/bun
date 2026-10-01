@@ -125,6 +125,32 @@ new = (
 assert text.count(old) == 1, "<T>x before **"
 text = text.replace(old, new)
 
+old = "                    let _ = p.lint_type_arguments_in_expression(target);\n"
+new = "                    let _ = p.lint_type_arguments_in_expression(target, true);\n"
+assert text.count(old) == 1, "type arguments of new"
+text = text.replace(old, new)
+
+old = (
+    "                AwaitOrYield::AllowIdent => {\n"
+    "                    p.lexer.prev_token_was_await_keyword = true;\n"
+    "                    p.lexer.fn_or_arrow_start_loc = p.fn_or_arrow_data_parse.needs_async_loc;\n"
+    "                }\n"
+)
+new = (
+    "                AwaitOrYield::AllowIdent => {\n"
+    "                    p.lexer.prev_token_was_await_keyword = true;\n"
+    "                    p.lexer.fn_or_arrow_start_loc = p.fn_or_arrow_data_parse.needs_async_loc;\n"
+    "                    // parseUnaryExpressionOrHigher takes `await` for the operator of a unary expression where it is a name too.\n"
+    "                    if p.lexer.token == T::TAsteriskAsterisk && p.is_lint_parse() {\n"
+    "                        p.unary_before_exponent(loc, b\"await\")?;\n"
+    "                        return Err(crate::Error::SyntaxError);\n"
+    "                    }\n"
+    "                }\n"
+)
+if os.environ.get("PROTO_AWAIT_NAME", "1") != "0":
+    assert text.count(old) == 1, "await as a name"
+    text = text.replace(old, new)
+
 old = "                p.unexpected_as(crate::parse::syntax_errors::EXPRESSION_EXPECTED)?;\n"
 new = "                p.expression_expected(level)?;\n"
 assert text.count(old) == 1, "last arm of parse_prefix"
@@ -196,6 +222,12 @@ edit(
             1,
         ),
         (
+            "    fn sfx_type_arguments(p: &mut Self, left: &Expr) -> bool {\n        if p.starts_for_parse_only.is_some() {\n            return p.lint_type_arguments_in_expression(*left);\n",
+            "    fn sfx_type_arguments(p: &mut Self, level: Level, left: &Expr) -> bool {\n        if p.starts_for_parse_only.is_some() {\n            // Only `new` reads its target at this level.\n            return p.lint_type_arguments_in_expression(*left, level == Level::Member);\n",
+            1,
+        ),
+        ("Self::sfx_type_arguments(p, left)", "Self::sfx_type_arguments(p, level, left)", 2),
+        (
             "                if level.gte(Level::Call) {\n                    return Ok(Continuation::Done);\n                }\n",
             "                if level.gte(Level::Call) {\n                    p.lint_optional_call_from_new(left);\n                    return Ok(Continuation::Done);\n                }\n",
             2,
@@ -209,7 +241,12 @@ edit(
     [
         (
             "                TypeArgumentsOf::Expression,\n            );\n        }\n        true\n    }\n",
-            "                TypeArgumentsOf::Expression,\n            );\n        }\n        self.lint_property_access_after_instantiation(less_than, end);\n        true\n    }\n",
+            "                TypeArgumentsOf::Expression,\n            );\n        }\n        self.lint_property_access_after_instantiation(less_than, end, is_target_of_new);\n        true\n    }\n",
+            1,
+        ),
+        (
+            "    pub(crate) fn lint_type_arguments_in_expression(&mut self, operand: Expr) -> bool {\n",
+            "    pub(crate) fn lint_type_arguments_in_expression(\n        &mut self,\n        operand: Expr,\n        is_target_of_new: bool,\n    ) -> bool {\n",
             1,
         ),
     ],
@@ -231,6 +268,18 @@ edit(
             "                        Ok(stmts)\n"
             "                    }\n"
             "                }\n",
+            1,
+        ),
+    ],
+)
+
+# Stand-in for B1: the lexer of a lint parse keeps its comments (here from the second token on).
+edit(
+    "parse/parse_entry.rs",
+    [
+        (
+            "        p.starts_for_parse_only = Some(crate::p::StartsForParseOnly::for_lint());\n",
+            "        p.starts_for_parse_only = Some(crate::p::StartsForParseOnly::for_lint());\n        p.lexer.track_comments = true;\n",
             1,
         ),
     ],

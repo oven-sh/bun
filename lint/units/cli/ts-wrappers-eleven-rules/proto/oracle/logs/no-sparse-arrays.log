@@ -1,0 +1,7 @@
+no-sparse-arrays: 207 cases: same 205, eslint-rejects 2
+eslint-rejects: "for ([,] as any of x) {}" [ts] [module]
+    eslint: FATAL Parsing error: The left-hand side of a 'for...of' statement must be a variable or a property access.
+    bun:    1:7 Unexpected comma in middle of array.
+eslint-rejects: "declare const a = [,], b: T = [,];" [ts] [module]
+    eslint: FATAL Parsing error: Initializers are not permitted in ambient contexts.
+    bun:    1:20 Unexpected comma in middle of array. | 1:32 Unexpected comma in middle of array.

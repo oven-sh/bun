@@ -1,0 +1,11 @@
+bun test v1.4.3 (3110ce85c)
+
+test/cli/lint/zz-corpus.test.ts:
+(pass) corpus > an instance that the reference fails is told from one that it skips, and neither runs [613.39ms]
+
+ 1 pass
+ 0 fail
+ 5 expect() calls
+Ran 1 test across 1 file. [4.17s]
+TIME real 4.849 user 3.408 sys 0.311
+exit 0

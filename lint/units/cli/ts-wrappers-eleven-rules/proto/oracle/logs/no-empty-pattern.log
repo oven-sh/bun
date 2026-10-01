@@ -1,0 +1,55 @@
+no-empty-pattern: 288 cases: same 270, missing 18
+missing: "type F = ({}: T) => void;" [ts] [module]
+    eslint: 1:11 Unexpected empty object pattern.
+    bun:    (none)
+missing: "type F = ([]: T) => void;" [ts] [module]
+    eslint: 1:11 Unexpected empty array pattern.
+    bun:    (none)
+missing: "type F = new ({}: T) => X;" [ts] [module]
+    eslint: 1:15 Unexpected empty object pattern.
+    bun:    (none)
+missing: "interface I { m({}: T): void }" [ts] [module]
+    eslint: 1:17 Unexpected empty object pattern.
+    bun:    (none)
+missing: "interface I { ({}: T): void }" [ts] [module]
+    eslint: 1:16 Unexpected empty object pattern.
+    bun:    (none)
+missing: "interface I { new ({}: T): X }" [ts] [module]
+    eslint: 1:20 Unexpected empty object pattern.
+    bun:    (none)
+missing: "let f: ({}: T) => void;" [ts] [module]
+    eslint: 1:9 Unexpected empty object pattern.
+    bun:    (none)
+missing: "let x: { m({}: T): void };" [ts] [module]
+    eslint: 1:12 Unexpected empty object pattern.
+    bun:    (none)
+missing: "type G = { new ({}: T): X; ({}: T): void; m({}: T): void }" [ts] [module]
+    eslint: 1:17 Unexpected empty object pattern. | 1:29 Unexpected empty object pattern. | 1:45 Unexpected empty object pattern.
+    bun:    (none)
+missing: "function f<T extends ({}: U) => void>() {}" [ts] [module]
+    eslint: 1:23 Unexpected empty object pattern.
+    bun:    (none)
+missing: "let x = y as ({}: T) => void" [ts] [module]
+    eslint: 1:15 Unexpected empty object pattern.
+    bun:    (none)
+missing: "let x = <({}: T) => void>y" [ts] [module]
+    eslint: 1:11 Unexpected empty object pattern.
+    bun:    (none)
+missing: "function f(a: ({}: T) => void) {}" [ts] [module]
+    eslint: 1:16 Unexpected empty object pattern.
+    bun:    (none)
+missing: "type F = typeof f<({}: T) => void>;" [ts] [module]
+    eslint: 1:20 Unexpected empty object pattern.
+    bun:    (none)
+missing: "let a: Array<({}: T) => void> = [];" [ts] [module]
+    eslint: 1:15 Unexpected empty object pattern.
+    bun:    (none)
+missing: "class A { m(a: ({}: T) => void) {} x: ([]: U) => void; }" [ts] [module]
+    eslint: 1:17 Unexpected empty object pattern. | 1:40 Unexpected empty array pattern.
+    bun:    (none)
+missing: "function f(): ({}: T) => void { return null! }" [ts] [module]
+    eslint: 1:16 Unexpected empty object pattern.
+    bun:    (none)
+missing: "x as unknown as ([]: T) => void;" [ts] [module]
+    eslint: 1:18 Unexpected empty array pattern.
+    bun:    (none)

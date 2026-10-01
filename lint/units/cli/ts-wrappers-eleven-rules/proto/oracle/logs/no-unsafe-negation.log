@@ -1,0 +1,4 @@
+no-unsafe-negation: 177 cases: same 176, bun-rejects 1
+bun-rejects: "class A { #p = 1; static m(o: object) { return !#p in o } }" [ts] [module]
+    eslint: 1:48 Unexpected negating the left operand of 'in' operator.
+    bun:    REJECTS syntax Unexpected #p

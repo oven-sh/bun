@@ -1,0 +1,13 @@
+no-dupe-class-members: 502 cases: same 498, missing 3, bun-rejects 1
+missing: "class A { '\\ud800'() {} '\\ud800'() {} }" [js] [script]
+    eslint: 1:25 Duplicate name '�'.
+    bun:    (none)
+missing: "class A { '\\udc00\\ud800'; '\\udc00\\ud800'; }" [js] [script]
+    eslint: 1:27 Duplicate name '��'.
+    bun:    (none)
+missing: "class A { 'a\\ud800'; 'a\\ud800'; a; a; }" [js] [script]
+    eslint: 1:22 Duplicate name 'a�'. | 1:36 Duplicate name 'a'.
+    bun:    1:36 Duplicate name 'a'.
+bun-rejects: "class A { #x = 1; #x = 2 }" [ts] [module]
+    eslint: (none)
+    bun:    REJECTS syntax "#x" has already been declared

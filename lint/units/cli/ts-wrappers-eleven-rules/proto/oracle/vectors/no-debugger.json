@@ -1,0 +1,2471 @@
+[
+	{
+		"code": "var test = { debugger: 1 }; test.debugger;",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "if (foo) debugger",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "debugger",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "debugger;",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "if (a) debugger",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "debugger\n;",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 2,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "function f() { debugger; }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 25,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 16,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "x: debugger;",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 4,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 4,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "debugger; debugger;",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "Unexpected 'debugger' statement."
+			},
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected 'debugger' statement."
+			},
+			{
+				"line": 1,
+				"column": 11,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "/* c */ debugger // c",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "\"😀\"; debugger",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "a.debugger",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({debugger: 1})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "\"debugger\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "`debugger`",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "`${(() => { debugger })()}`",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 13,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "class A { m() { debugger } static { debugger } }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 25,
+				"message": "Unexpected 'debugger' statement."
+			},
+			{
+				"line": 1,
+				"column": 37,
+				"endLine": 1,
+				"endColumn": 45,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"message": "Unexpected 'debugger' statement."
+			},
+			{
+				"line": 1,
+				"column": 37,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "() => { debugger }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "switch (a) { case 1: debugger; default: debugger }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 22,
+				"endLine": 1,
+				"endColumn": 31,
+				"message": "Unexpected 'debugger' statement."
+			},
+			{
+				"line": 1,
+				"column": 41,
+				"endLine": 1,
+				"endColumn": 49,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 22,
+				"message": "Unexpected 'debugger' statement."
+			},
+			{
+				"line": 1,
+				"column": 41,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "function f() { return; debugger }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 24,
+				"endLine": 1,
+				"endColumn": 32,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 24,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "for (;;) debugger;",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "do debugger; while (0)",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 4,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 4,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "with (a) debugger",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "#!/usr/bin/env node\ndebugger",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 2,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 9,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 2,
+				"column": 1,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "a;\r\ndebugger;\r\n",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 2,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 10,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 2,
+				"column": 1,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "\" \"; debugger",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 2,
+				"column": 4,
+				"endLine": 2,
+				"endColumn": 12,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 2,
+				"column": 4,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "é; debugger",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 4,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 4,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "// debugger\n/* debugger */",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "label: { debugger }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "try { debugger } catch { debugger } finally { debugger }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "Unexpected 'debugger' statement."
+			},
+			{
+				"line": 1,
+				"column": 26,
+				"endLine": 1,
+				"endColumn": 34,
+				"message": "Unexpected 'debugger' statement."
+			},
+			{
+				"line": 1,
+				"column": 47,
+				"endLine": 1,
+				"endColumn": 55,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"message": "Unexpected 'debugger' statement."
+			},
+			{
+				"line": 1,
+				"column": 26,
+				"message": "Unexpected 'debugger' statement."
+			},
+			{
+				"line": 1,
+				"column": 47,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "if (a) { } else debugger",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 25,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "async function f() { await 0; debugger }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 31,
+				"endLine": 1,
+				"endColumn": 39,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 31,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "export function f() { debugger }",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 31,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 23,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "var debugger_ = 1",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a debugger",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 2,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 9,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 2,
+				"column": 1,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "<a b={() => { debugger }}>debugger</a>",
+		"jsx": true,
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 23,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "({debugger(){}})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { debugger() {} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "\"debugger\";",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "// debugger\nx",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "/* debugger */ x",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x = /debugger/",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x = a.debugger ? 1 : 2",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "if (a) debugger; else debugger;",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "Unexpected 'debugger' statement."
+			},
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 32,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"message": "Unexpected 'debugger' statement."
+			},
+			{
+				"line": 1,
+				"column": 23,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "function f(){ debugger }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 23,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "x = function(){ debugger; }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "class A { m(){ debugger } static { debugger; } }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 24,
+				"message": "Unexpected 'debugger' statement."
+			},
+			{
+				"line": 1,
+				"column": 36,
+				"endLine": 1,
+				"endColumn": 45,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 16,
+				"message": "Unexpected 'debugger' statement."
+			},
+			{
+				"line": 1,
+				"column": 36,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "label: debugger;",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "for (;;) debugger",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "while (a) { debugger }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 13,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "do debugger; while (a)",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 4,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 4,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "try { debugger } catch (e) { debugger } finally { debugger }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "Unexpected 'debugger' statement."
+			},
+			{
+				"line": 1,
+				"column": 30,
+				"endLine": 1,
+				"endColumn": 38,
+				"message": "Unexpected 'debugger' statement."
+			},
+			{
+				"line": 1,
+				"column": 51,
+				"endLine": 1,
+				"endColumn": 59,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"message": "Unexpected 'debugger' statement."
+			},
+			{
+				"line": 1,
+				"column": 30,
+				"message": "Unexpected 'debugger' statement."
+			},
+			{
+				"line": 1,
+				"column": 51,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "{ debugger }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 3,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "debugger\ndebugger",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Unexpected 'debugger' statement."
+			},
+			{
+				"line": 2,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 9,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected 'debugger' statement."
+			},
+			{
+				"line": 2,
+				"column": 1,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "debugger;debugger",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "Unexpected 'debugger' statement."
+			},
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected 'debugger' statement."
+			},
+			{
+				"line": 1,
+				"column": 10,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "\t debugger",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 3,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "\r\ndebugger",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 2,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 9,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 2,
+				"column": 1,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "async function f(){ await x; debugger }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 30,
+				"endLine": 1,
+				"endColumn": 38,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 30,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "x = { m() { debugger }, get g() { debugger; return 1 } }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "Unexpected 'debugger' statement."
+			},
+			{
+				"line": 1,
+				"column": 35,
+				"endLine": 1,
+				"endColumn": 44,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 13,
+				"message": "Unexpected 'debugger' statement."
+			},
+			{
+				"line": 1,
+				"column": 35,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "(function(){ debugger })()",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "x = `${ (() => { debugger })() }`",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 18,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 18,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "debugger /* c */ ;",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "debugger // c\n;",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 2,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "/* a */ debugger",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "export function f(){ debugger }",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 22,
+				"endLine": 1,
+				"endColumn": 30,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 22,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "export default function(){ debugger }",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 28,
+				"endLine": 1,
+				"endColumn": 36,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 28,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "import a from \"a\"; debugger",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 28,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "x = <a b={() => { debugger }} />",
+		"jsx": true,
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 19,
+				"endLine": 1,
+				"endColumn": 27,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 19,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "x = <a>debugger</a>",
+		"jsx": true,
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x = <a>{(() => { debugger })()}</a>; debugger",
+		"jsx": true,
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 18,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "Unexpected 'debugger' statement."
+			},
+			{
+				"line": 1,
+				"column": 38,
+				"endLine": 1,
+				"endColumn": 46,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 18,
+				"message": "Unexpected 'debugger' statement."
+			},
+			{
+				"line": 1,
+				"column": 38,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "debugger;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "let x: number = 1; debugger",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 28,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "namespace N { debugger }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 23,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "namespace A.B { debugger }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 25,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "namespace N { namespace M { debugger } }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 29,
+				"endLine": 1,
+				"endColumn": 37,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 29,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "module M { debugger }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "export namespace N { export function f() { debugger } }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 44,
+				"endLine": 1,
+				"endColumn": 52,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 44,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "declare namespace N { debugger }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 31,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 23,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "declare module \"m\" { debugger }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 22,
+				"endLine": 1,
+				"endColumn": 30,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 22,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "declare global { debugger }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 18,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 18,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "declare namespace N { function f(): void; }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "abstract class A { m() { debugger } }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 26,
+				"endLine": 1,
+				"endColumn": 34,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 26,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "export default abstract class { m() { debugger } }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 39,
+				"endLine": 1,
+				"endColumn": 47,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 39,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "class A { static { debugger } }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 28,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "class A { declare x: number; m() { debugger } }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 36,
+				"endLine": 1,
+				"endColumn": 44,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 36,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "function f(a: number): void; function f(a: any) { debugger }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 51,
+				"endLine": 1,
+				"endColumn": 59,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 51,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "const f = <T,>(x: T): T => { debugger; return x }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 30,
+				"endLine": 1,
+				"endColumn": 39,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 30,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "declare function f(): void; debugger",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 29,
+				"endLine": 1,
+				"endColumn": 37,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 29,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "declare const x: number; debugger",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 26,
+				"endLine": 1,
+				"endColumn": 34,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 26,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "enum E { A = 1 } debugger;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 18,
+				"endLine": 1,
+				"endColumn": 27,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 18,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "interface I {} debugger",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 24,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 16,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "type T = 1; debugger",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 13,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "if (x) debugger; else debugger",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "Unexpected 'debugger' statement."
+			},
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 31,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"message": "Unexpected 'debugger' statement."
+			},
+			{
+				"line": 1,
+				"column": 23,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "label: debugger",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "function f(this: Window) { debugger }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 28,
+				"endLine": 1,
+				"endColumn": 36,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 28,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "export = { f() { debugger } }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 18,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 18,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "import x = require(\"x\"); debugger",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 26,
+				"endLine": 1,
+				"endColumn": 34,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 26,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "@d class A { @d m() { debugger } }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 31,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 23,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "type T = { debugger: 1 }; let debuggers: T;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "debugger as any;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": null,
+		"expect": null,
+		"differs": "both-reject"
+	},
+	{
+		"code": "const a = <div onClick={() => { debugger }}/>;",
+		"ext": "tsx",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 33,
+				"endLine": 1,
+				"endColumn": 41,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 33,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "debugger; const x = <T,>(y: T) => y;",
+		"ext": "tsx",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "debugger;",
+		"ext": "mts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "debugger;",
+		"ext": "cts",
+		"sourceType": "commonjs",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "debugger;",
+		"ext": "mjs",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "debugger;",
+		"ext": "cjs",
+		"sourceType": "commonjs",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "namespace N { declare namespace M { debugger } }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 37,
+				"endLine": 1,
+				"endColumn": 45,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 37,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "declare namespace A.B.C { debugger }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 27,
+				"endLine": 1,
+				"endColumn": 35,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 27,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "declare module \"m\" { namespace N { debugger } }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 36,
+				"endLine": 1,
+				"endColumn": 44,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 36,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "class A { m(): void; m() { debugger } }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 28,
+				"endLine": 1,
+				"endColumn": 36,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 28,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "abstract class A { abstract m(): void; n() { debugger } }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 46,
+				"endLine": 1,
+				"endColumn": 54,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 46,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "declare class A { m(): void }; debugger",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 32,
+				"endLine": 1,
+				"endColumn": 40,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 32,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "class A { x = (() => { debugger })(); declare y: number }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 24,
+				"endLine": 1,
+				"endColumn": 32,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 24,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "function f(): void; function f() { debugger }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 36,
+				"endLine": 1,
+				"endColumn": 44,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 36,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "switch (x) { case 1: type T = 1; debugger; case 2: interface I {} debugger }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 34,
+				"endLine": 1,
+				"endColumn": 43,
+				"message": "Unexpected 'debugger' statement."
+			},
+			{
+				"line": 1,
+				"column": 67,
+				"endLine": 1,
+				"endColumn": 75,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 34,
+				"message": "Unexpected 'debugger' statement."
+			},
+			{
+				"line": 1,
+				"column": 67,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "if (x) { type T = 1; } else debugger;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 29,
+				"endLine": 1,
+				"endColumn": 38,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 29,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "for (const a of b as any) debugger;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 27,
+				"endLine": 1,
+				"endColumn": 36,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 27,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "label: { enum E { A } debugger }",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 31,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 23,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "export declare const x: number; debugger;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 33,
+				"endLine": 1,
+				"endColumn": 42,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 33,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "const x = <T,>(y: T) => { debugger };",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 27,
+				"endLine": 1,
+				"endColumn": 35,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 27,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "const o = { m<T>(this: T) { debugger } } satisfies O;",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 29,
+				"endLine": 1,
+				"endColumn": 37,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 29,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "(function () { debugger } as any)();",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 24,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 16,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "(<any>function () { debugger })();",
+		"ext": "ts",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 21,
+				"endLine": 1,
+				"endColumn": 29,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 21,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	},
+	{
+		"code": "const e = <div>{(() => { debugger })()}</div>;",
+		"ext": "tsx",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 26,
+				"endLine": 1,
+				"endColumn": 34,
+				"message": "Unexpected 'debugger' statement."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 26,
+				"message": "Unexpected 'debugger' statement."
+			}
+		]
+	}
+]

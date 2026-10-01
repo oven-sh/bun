@@ -208,16 +208,23 @@
         }
     }
 
-    /// parsePropertyAccessExpressionRest: the type arguments from `less_than` to `end` were read as an instantiation expression, and the lexer is on what follows them. A name after "." or "?." is an error.
+    /// parsePropertyAccessExpressionRest: the type arguments from `less_than` to `end` were read as an instantiation expression, and the lexer is on what follows them. A name after "." or "?." is an error. `is_target_of_new`: `new` reads the expression.
     #[cold]
     #[inline(never)]
-    pub(crate) fn lint_property_access_after_instantiation(&mut self, less_than: Loc, end: u32) {
+    pub(crate) fn lint_property_access_after_instantiation(
+        &mut self,
+        less_than: Loc,
+        end: u32,
+        is_target_of_new: bool,
+    ) {
         let is_property_access = match self.lexer.token {
             T::TDot => self.next_token_matches(|p| {
                 p.lexer.is_identifier_or_keyword() || p.lexer.token == T::TPrivateIdentifier
             }),
-            // A private name after "?." is the first error of the reference there.
-            T::TQuestionDot => self.next_token_matches(|p| p.lexer.is_identifier_or_keyword()),
+            // A private name after "?." is the first error of the reference there, and `new` reads no "?." at all.
+            T::TQuestionDot if !is_target_of_new => {
+                self.next_token_matches(|p| p.lexer.is_identifier_or_keyword())
+            }
             _ => false,
         };
         if is_property_access {

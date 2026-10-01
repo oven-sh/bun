@@ -115,20 +115,27 @@ describe("bun test", () => {
   });
 
   test.each([
-    ["arrays and objects", "1", "i % 2 ? [value] : { a: value }"],
-    ["instances of a class", "1", "new (class A { a = value; })()"],
-    ["JSX children", "1", `{ $$typeof: Symbol.for("react.element"), type: "div", props: { children: value } }`],
-    ["JSX props", "1", `{ $$typeof: Symbol.for("react.element"), type: "div", props: { a: value } }`],
-    ["the data of events", "1", `new MessageEvent("message", { data: value })`],
-    ["asymmetric matchers", "1", "expect.objectContaining({ a: value })"],
-  ])("%s nested too deeply to print are a RangeError", (_, innermost, wrap) => {
+    ["arrays and objects", "i % 2 ? [value] : { a: value }"],
+    ["instances of a class", "new (class A { a = value; })()"],
+    ["JSX children", `{ $$typeof: Symbol.for("react.element"), type: "div", props: { children: value } }`],
+    ["JSX props", `{ $$typeof: Symbol.for("react.element"), type: "div", props: { a: value } }`],
+    ["the data of events", `new MessageEvent("message", { data: value })`],
+    ["asymmetric matchers", "expect.objectContaining({ a: value })"],
+  ])("%s nested too deeply to print are a RangeError", (_, wrap) => {
     const stderr = runTest({
       input: `
         import { test, expect } from "bun:test";
+        function thrownFor(depth) {
+          let value = 1;
+          for (let i = 0; i < depth; i++) value = ${wrap};
+          try {
+            expect(value).toMatchInlineSnapshot('"x"');
+          } catch (error) {
+            return error.constructor.name;
+          }
+        }
         test("deep", () => {
-          let value = ${innermost};
-          for (let i = 0; i < 100_000; i++) value = ${wrap};
-          expect(() => expect(value).toMatchInlineSnapshot('"x"')).toThrow(RangeError);
+          expect([thrownFor(10), thrownFor(100_000)]).toEqual(["Error", "RangeError"]);
         });
       `,
       expectExitCode: 0,

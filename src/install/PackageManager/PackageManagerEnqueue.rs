@@ -2296,26 +2296,43 @@ fn locate_next_to_declaring_tarball(
     if bun_paths::is_absolute(declared_path) {
         return None;
     }
-    // The declaring tarball's path is relative to the workspace or folder that declared it.
+    // The declaring tarball is read from the same place as `enqueue_local_tarball` read it.
     let declarer_tarball = lockfile.str(declarer_res.local_tarball());
-    let declarer_base_dir = lockfile
-        .first_dependency_resolving_to(declarer)
-        .and_then(|edge| lockfile.get_parent_pkg_of_dependency(edge))
-        .and_then(|declarer_of_declarer| local_package_dir(lockfile, declarer_of_declarer));
-    let mut buf = bun_paths::path_buffer_pool::get();
-    let declarer_location = match declarer_base_dir {
-        Some(base_dir) => Path::resolve_path::join_string_buf::<Path::platform::Auto>(
-            &mut *buf,
-            &[base_dir, declarer_tarball],
-        ),
-        None => declarer_tarball,
+    let mut declarer_buf = bun_paths::path_buffer_pool::get();
+    let declarer_location = if bun_paths::is_absolute(declarer_tarball) {
+        declarer_tarball
+    } else {
+        match lockfile
+            .first_dependency_resolving_to(declarer)
+            .and_then(|edge| local_tarball_base_dir(lockfile, edge, declarer_tarball))
+        {
+            Some(base_dir) => Path::resolve_path::join_string_buf::<Path::platform::Posix>(
+                &mut *declarer_buf,
+                &[base_dir, declarer_tarball],
+            ),
+            None => declarer_tarball,
+        }
     };
     let declarer_dir = bun_paths::dirname(declarer_location).unwrap_or(b"");
-    let location = Path::resolve_path::join::<Path::platform::Auto>(&[declarer_dir, declared_path]);
+    let mut location_buf = bun_paths::path_buffer_pool::get();
+    let joined = Path::resolve_path::join_string_buf::<Path::platform::Posix>(
+        &mut *location_buf,
+        &[declarer_dir, declared_path],
+    );
+    // Posix separators and a `./` prefix: the lockfile is shared between platforms, and
+    // `Resolution::from_text_lockfile` reads a bare `x.tgz` as an npm version.
+    let location: Vec<u8> = if bun_paths::is_absolute(joined)
+        || joined.starts_with(b"./")
+        || joined.starts_with(b"../")
+    {
+        joined.to_vec()
+    } else {
+        [b"./".as_slice(), joined].concat()
+    };
     let mut builder = this.lockfile.string_builder();
-    builder.count(location);
+    builder.count(&location);
     builder.allocate().unwrap_or_oom();
-    let located = builder.append::<SemverString>(location);
+    let located = builder.append::<SemverString>(&location);
     builder.clamp();
     Some(located)
 }

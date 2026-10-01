@@ -1,0 +1,146 @@
+{"code":"var o = { get a() {} }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected to return a value in getter 'a'."}]}
+{"code":"var o = { get\n a() {} }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected to return a value in getter 'a'."}]}
+{"code":"var o = { get // c\n a() {} }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected to return a value in getter 'a'."}]}
+{"code":"var o = { get /* c */ a() {} }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected to return a value in getter 'a'."}]}
+{"code":"var o = { /* c */ get a() {} }","ext":"js","eslint":[{"line":1,"column":19,"message":"Expected to return a value in getter 'a'."}]}
+{"code":"var o = { get [b]() {} }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected to return a value in getter."}]}
+{"code":"var o = { get [ (b) ]() {} }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected to return a value in getter."}]}
+{"code":"var o = { get 'c d'() {} }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected to return a value in getter 'c d'."}]}
+{"code":"var o = { get 1e3() {} }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected to return a value in getter '1000'."}]}
+{"code":"var o = { get 0x10() {} }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected to return a value in getter '16'."}]}
+{"code":"var o = { get 1n() {} }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected to return a value in getter '1'."}]}
+{"code":"var o = { get get() {} }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected to return a value in getter 'get'."}]}
+{"code":"var o = { get set() {}, set get(v) {} }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected to return a value in getter 'set'."}]}
+{"code":"class A { get a() {} }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected to return a value in getter 'a'."}]}
+{"code":"class A { static get a() {} }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected to return a value in static getter 'a'."}]}
+{"code":"class A { static\n get\n a() {} }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected to return a value in static getter 'a'."}]}
+{"code":"class A { get #p() {} static get #q() {} static get [x]() {} }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected to return a value in private getter #p."},{"line":1,"column":23,"message":"Expected to return a value in static private getter #q."},{"line":1,"column":42,"message":"Expected to return a value in static getter."}]}
+{"code":"class A { static get 'a'() {} get 1() {} }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected to return a value in static getter 'a'."},{"line":1,"column":31,"message":"Expected to return a value in getter '1'."}]}
+{"code":"class A { static { } get x() { return } }","ext":"js","eslint":[{"line":1,"column":32,"message":"Expected to return a value in getter 'x'."}]}
+{"code":"(class { get a() {} })","ext":"js","eslint":[{"line":1,"column":10,"message":"Expected to return a value in getter 'a'."}]}
+{"code":"class A { get; get get() {} }","ext":"js","eslint":[{"line":1,"column":16,"message":"Expected to return a value in getter 'get'."}]}
+{"code":"Object.defineProperty(a, 'b', { get: function () {} })","ext":"js","eslint":[{"line":1,"column":33,"message":"Expected to return a value in method 'get'."}]}
+{"code":"Object.defineProperty(a, 'b', { get: function () { return; } })","ext":"js","eslint":[{"line":1,"column":52,"message":"Expected to return a value in method 'get'."}]}
+{"code":"Object.defineProperty(a, 'b', { get() {} })","ext":"js","eslint":[{"line":1,"column":33,"message":"Expected to return a value in method 'get'."}]}
+{"code":"Object.defineProperty(a, 'b', { get: () => {} })","ext":"js","eslint":[{"line":1,"column":33,"message":"Expected to return a value in method 'get'."}]}
+{"code":"Object.defineProperty(a, 'b', { get: () => 1 })","ext":"js","eslint":[]}
+{"code":"Object.defineProperty(a, 'b', { get: async () => {} })","ext":"js","eslint":[{"line":1,"column":33,"message":"Expected to return a value in async method 'get'."}]}
+{"code":"Object.defineProperty(a, 'b', { async get() {} })","ext":"js","eslint":[{"line":1,"column":33,"message":"Expected to return a value in async method 'get'."}]}
+{"code":"Object.defineProperty(a, 'b', { *get() {} })","ext":"js","eslint":[{"line":1,"column":33,"message":"Expected to return a value in generator method 'get'."}]}
+{"code":"Object.defineProperty(a, 'b', { async *get() {} })","ext":"js","eslint":[{"line":1,"column":33,"message":"Expected to return a value in async generator method 'get'."}]}
+{"code":"Object.defineProperty(a, 'b', { get: async function* () {} })","ext":"js","eslint":[{"line":1,"column":33,"message":"Expected to return a value in async generator method 'get'."}]}
+{"code":"Object.defineProperty(a, 'b', { ['get']: function foo() {} })","ext":"js","eslint":[{"line":1,"column":33,"message":"Expected to return a value in method 'get'."}]}
+{"code":"Object.defineProperty(a, 'b', { [ ('get') ]() {} })","ext":"js","eslint":[{"line":1,"column":33,"message":"Expected to return a value in method 'get'."}]}
+{"code":"Object.defineProperty(a, 'b', { [`get`]: function () {} })","ext":"js","eslint":[{"line":1,"column":33,"message":"Expected to return a value in method 'get'."}]}
+{"code":"Object.defineProperty(a, 'b', { [`g${e}t`]: function () {} })","ext":"js","eslint":[]}
+{"code":"Object.defineProperty(a, 'b', { 'get': function () {} })","ext":"js","eslint":[{"line":1,"column":33,"message":"Expected to return a value in method 'get'."}]}
+{"code":"Object.defineProperty(a, 'b', { get get() {} })","ext":"js","eslint":[{"line":1,"column":33,"message":"Expected to return a value in getter 'get'."}]}
+{"code":"Object.defineProperty(a, 'b', { set get(v) {} })","ext":"js","eslint":[{"line":1,"column":33,"message":"Expected to return a value in setter 'get'."}]}
+{"code":"Object.defineProperty(a, 'b', { get })","ext":"js","eslint":[]}
+{"code":"Object.defineProperty(a, 'b', { get: function () {}, ...x })","ext":"js","eslint":[{"line":1,"column":33,"message":"Expected to return a value in method 'get'."}]}
+{"code":"Object.defineProperty(a, 'b', { ...x, get: function () {} })","ext":"js","eslint":[{"line":1,"column":39,"message":"Expected to return a value in method 'get'."}]}
+{"code":"Object.defineProperty(a, 'b', ({ get: function () {} }))","ext":"js","eslint":[{"line":1,"column":34,"message":"Expected to return a value in method 'get'."}]}
+{"code":"Object.defineProperty(a, 'b', { get: (function () {}) })","ext":"js","eslint":[{"line":1,"column":33,"message":"Expected to return a value in method 'get'."}]}
+{"code":"Object.defineProperty(a, 'b', { get: (() => {}) })","ext":"js","eslint":[{"line":1,"column":33,"message":"Expected to return a value in method 'get'."}]}
+{"code":"Object.defineProperty(a, 'b', { getter: function () {} })","ext":"js","eslint":[]}
+{"code":"Object.defineProperty(a, 'b', { get: foo ? function () {} : function () {} })","ext":"js","eslint":[]}
+{"code":"Object.defineProperty(a, 'b', { get: function () {} }, extra)","ext":"js","eslint":[{"line":1,"column":33,"message":"Expected to return a value in method 'get'."}]}
+{"code":"Object.defineProperty(a, { get: function () {} })","ext":"js","eslint":[]}
+{"code":"Object.defineProperty({ get: function () {} })","ext":"js","eslint":[]}
+{"code":"Object.defineProperty(...a, { get() {} })","ext":"js","eslint":[]}
+{"code":"Object.defineProperty(a, ...b, { get() {} })","ext":"js","eslint":[{"line":1,"column":34,"message":"Expected to return a value in method 'get'."}]}
+{"code":"Object['defineProperty'](a, 'b', { get() {} })","ext":"js","eslint":[{"line":1,"column":36,"message":"Expected to return a value in method 'get'."}]}
+{"code":"Object[`defineProperty`](a, 'b', { get() {} })","ext":"js","eslint":[{"line":1,"column":36,"message":"Expected to return a value in method 'get'."}]}
+{"code":"Object[defineProperty](a, 'b', { get() {} })","ext":"js","eslint":[]}
+{"code":"Object.defineProperty?.(a, 'b', { get() {} })","ext":"js","eslint":[{"line":1,"column":35,"message":"Expected to return a value in method 'get'."}]}
+{"code":"Object?.defineProperty?.(a, 'b', { get() {} })","ext":"js","eslint":[{"line":1,"column":36,"message":"Expected to return a value in method 'get'."}]}
+{"code":"(Object).defineProperty(a, 'b', { get() {} })","ext":"js","eslint":[{"line":1,"column":35,"message":"Expected to return a value in method 'get'."}]}
+{"code":"(Object.defineProperty)(a, 'b', { get() {} })","ext":"js","eslint":[{"line":1,"column":35,"message":"Expected to return a value in method 'get'."}]}
+{"code":"new Object.defineProperty(a, 'b', { get() {} })","ext":"js","eslint":[]}
+{"code":"Object.defineProperty`x`","ext":"js","eslint":[]}
+{"code":"window.Object.defineProperty(a, 'b', { get() {} })","ext":"js","eslint":[]}
+{"code":"Object.prototype.defineProperty(a, 'b', { get() {} })","ext":"js","eslint":[]}
+{"code":"Reflect.defineProperty(a, 'b', { get() {} })","ext":"js","eslint":[{"line":1,"column":34,"message":"Expected to return a value in method 'get'."}]}
+{"code":"Reflect['defineProperty'](a, 'b', { get: () => {} })","ext":"js","eslint":[{"line":1,"column":37,"message":"Expected to return a value in method 'get'."}]}
+{"code":"Reflect.defineProperties(a, { b: { get() {} } })","ext":"js","eslint":[]}
+{"code":"Reflect.create(a, { b: { get() {} } })","ext":"js","eslint":[]}
+{"code":"Object.defineProperties(a, { b: { get() {} }, ['c']: { get() {} }, d: ({ get() {} }), ...e, f() {}, get g() {} })","ext":"js","eslint":[{"line":1,"column":35,"message":"Expected to return a value in method 'get'."},{"line":1,"column":56,"message":"Expected to return a value in method 'get'."},{"line":1,"column":74,"message":"Expected to return a value in method 'get'."},{"line":1,"column":101,"message":"Expected to return a value in getter 'g'."}]}
+{"code":"Object.defineProperties(a, { b: { c: { get() {} } } })","ext":"js","eslint":[]}
+{"code":"Object.defineProperties({ b: { get() {} } }, { c: { value: 1 } })","ext":"js","eslint":[]}
+{"code":"Object.create(a, { b: { get: function () { if (x) return 1; } } })","ext":"js","eslint":[{"line":1,"column":25,"message":"Expected method 'get' to always return a value."}]}
+{"code":"Object.create({ b: { get() {} } })","ext":"js","eslint":[]}
+{"code":"Object.create(a, b, { c: { get() {} } })","ext":"js","eslint":[]}
+{"code":"Object.freeze({ get: function () {} })","ext":"js","eslint":[]}
+{"code":"var Object; Object.defineProperty(a, 'b', { get() {} })","ext":"js","eslint":[]}
+{"code":"function Object() {} Object.defineProperty(a, 'b', { get() {} })","ext":"js","eslint":[]}
+{"code":"class Object {} Object.defineProperty(a, 'b', { get() {} })","ext":"js","eslint":[]}
+{"code":"import Object from 'x'; Object.defineProperty(a, 'b', { get() {} })","ext":"js","eslint":[]}
+{"code":"import * as Reflect from 'x'; Reflect.defineProperty(a, 'b', { get() {} })","ext":"js","eslint":[]}
+{"code":"function f() { var Object; } Object.defineProperty(a, 'b', { get() {} })","ext":"js","eslint":[{"line":1,"column":62,"message":"Expected to return a value in method 'get'."}]}
+{"code":"function f(Reflect) {} Reflect.defineProperty(a, 'b', { get() {} })","ext":"js","eslint":[{"line":1,"column":57,"message":"Expected to return a value in method 'get'."}]}
+{"code":"try {} catch (Object) {} Object.defineProperty(a, 'b', { get() {} })","ext":"js","eslint":[{"line":1,"column":58,"message":"Expected to return a value in method 'get'."}]}
+{"code":"var Reflect; Object.defineProperty(a, 'b', { get() {} })","ext":"js","eslint":[{"line":1,"column":46,"message":"Expected to return a value in method 'get'."}]}
+{"code":"var Object; var o = { get a() {} }","ext":"js","eslint":[{"line":1,"column":23,"message":"Expected to return a value in getter 'a'."}]}
+{"code":"/* globals Object:off */ Object.defineProperty(a, 'b', { get() {} })","ext":"js","eslint":[{"line":1,"column":58,"message":"Expected to return a value in method 'get'."}]}
+{"code":"/* eslint-disable getter-return */ var o = { get a() {} }","ext":"js","eslint":[{"line":1,"column":46,"message":"Expected to return a value in getter 'a'."}]}
+{"code":"var o = { get a() { return; function f() { return 1; } } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Expected to return a value in getter 'a'."}]}
+{"code":"var o = { get a() { function f() { return 1; } } }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected to return a value in getter 'a'."}]}
+{"code":"var o = { get a() { return (() => { return; })(); } }","ext":"js","eslint":[]}
+{"code":"var o = { get a() { var f = () => 1; } }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected to return a value in getter 'a'."}]}
+{"code":"var o = { get a() { return x ? 1 : 2; } }","ext":"js","eslint":[]}
+{"code":"var o = { get a() { if (x) return 1; else return 2; } }","ext":"js","eslint":[]}
+{"code":"var o = { get a() { if (x) { return; } else { return 1; } } }","ext":"js","eslint":[{"line":1,"column":30,"message":"Expected to return a value in getter 'a'."}]}
+{"code":"var o = { get a() { if (x) return 1; } }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected getter 'a' to always return a value."}]}
+{"code":"var o = { get a() { x && y; return 1; } }","ext":"js","eslint":[]}
+{"code":"var o = { get a() { if (x && y || z) return 1; } }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected getter 'a' to always return a value."}]}
+{"code":"var o = { get a() { if (x ?? y) return 1; else return 2; } }","ext":"js","eslint":[]}
+{"code":"var o = { get a() { x ||= 1; x &&= 2; x ??= 3; } }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected to return a value in getter 'a'."}]}
+{"code":"var o = { get a() { while (true) {} } }","ext":"js","eslint":[]}
+{"code":"var o = { get a() { while (true) { if (x) break; } } }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected to return a value in getter 'a'."}]}
+{"code":"var o = { get a() { while (x) { return 1; } } }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected getter 'a' to always return a value."}]}
+{"code":"var o = { get a() { do { return 1; } while (x); } }","ext":"js","eslint":[]}
+{"code":"var o = { get a() { do { if (x) continue; return 1; } while (y); } }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected getter 'a' to always return a value."}]}
+{"code":"var o = { get a() { for (;;) {} } }","ext":"js","eslint":[]}
+{"code":"var o = { get a() { for (;;) { if (x) break; } } }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected to return a value in getter 'a'."}]}
+{"code":"var o = { get a() { for (var i = 0; i < n; i++) { return 1; } } }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected getter 'a' to always return a value."}]}
+{"code":"var o = { get a() { for (var k in x) { return 1; } } }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected getter 'a' to always return a value."}]}
+{"code":"var o = { get a() { for (var v of x) { return 1; } return 2; } }","ext":"js","eslint":[]}
+{"code":"var o = { get a() { L: for (;;) { for (;;) { break L; } } } }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected to return a value in getter 'a'."}]}
+{"code":"var o = { get a() { L: { if (x) break L; return 1; } } }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected getter 'a' to always return a value."}]}
+{"code":"var o = { get a() { throw new Error(); } }","ext":"js","eslint":[]}
+{"code":"var o = { get a() { if (x) throw 1; return 2; } }","ext":"js","eslint":[]}
+{"code":"var o = { get a() { switch (x) { case 1: return 1; default: return 2; } } }","ext":"js","eslint":[]}
+{"code":"var o = { get a() { switch (x) { case 1: return 1; } } }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected getter 'a' to always return a value."}]}
+{"code":"var o = { get a() { switch (x) { default: return 2; case 1: } } }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected getter 'a' to always return a value."}]}
+{"code":"var o = { get a() { switch (x) { case 1: case 2: return 1; default: throw 0; } } }","ext":"js","eslint":[]}
+{"code":"var o = { get a() { switch (x) { case 1: break; default: return 2; } } }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected getter 'a' to always return a value."}]}
+{"code":"var o = { get a() { try { return 1; } finally { } } }","ext":"js","eslint":[]}
+{"code":"var o = { get a() { try { return 1; } catch (e) { } } }","ext":"js","eslint":[]}
+{"code":"var o = { get a() { try { foo(); return 1; } catch (e) { } } }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected getter 'a' to always return a value."}]}
+{"code":"var o = { get a() { try { foo(); return 1; } catch (e) { return 2; } } }","ext":"js","eslint":[]}
+{"code":"var o = { get a() { try { foo(); } catch (e) { return 2; } finally { bar(); } } }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected getter 'a' to always return a value."}]}
+{"code":"var o = { get a() { try { foo(); } finally { return 1; } } }","ext":"js","eslint":[]}
+{"code":"var o = { get a() { try { return foo; } catch { } } }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected getter 'a' to always return a value."}]}
+{"code":"var o = { get a() { try { return a.b; } catch { return; } } }","ext":"js","eslint":[{"line":1,"column":49,"message":"Expected to return a value in getter 'a'."}]}
+{"code":"var o = { get a() { try { return new F; } catch { throw 1; } } }","ext":"js","eslint":[]}
+{"code":"var o = { get a() { try { var [x = 1] = y; return 1; } catch { } } }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected getter 'a' to always return a value."}]}
+{"code":"var o = { get a() { try { ({ x } = 1); return 1; } catch { } } }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected getter 'a' to always return a value."}]}
+{"code":"var o = { get a() { try { return 1; } catch { } } }","ext":"js","eslint":[]}
+{"code":"var o = { get a() { return a?.b; } }","ext":"js","eslint":[]}
+{"code":"var o = { get a() { a?.b(); } }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected to return a value in getter 'a'."}]}
+{"code":"var o = { get a() { return; } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Expected to return a value in getter 'a'."}]}
+{"code":"var o = { get a() { return void 0; } }","ext":"js","eslint":[]}
+{"code":"var o = { get a() { return\n1; } }","ext":"js","eslint":[{"line":1,"column":21,"message":"Expected to return a value in getter 'a'."}]}
+{"code":"var o = { get a() { { return 1; } } }","ext":"js","eslint":[]}
+{"code":"var o = { get a() { debugger; ; } }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected to return a value in getter 'a'."}]}
+{"code":"var o = { get a() { 'use strict'; } }","ext":"js","eslint":[{"line":1,"column":11,"message":"Expected to return a value in getter 'a'."}]}
+{"code":"var o = { get a() { with (x) { return 1; } } }","ext":"js","eslint":[]}
+{"code":"var o = { get a() { class B { get b() {} } return 1; } }","ext":"js","eslint":[{"line":1,"column":31,"message":"Expected to return a value in getter 'b'."}]}
+{"code":"var o = { get a() { return { get b() {} }; } }","ext":"js","eslint":[{"line":1,"column":30,"message":"Expected to return a value in getter 'b'."}]}
+{"code":"class A { x = function () {}; get = () => {}; static get = function () {}; }","ext":"js","eslint":[]}
+{"code":"class A { get = { get() {} }; }","ext":"js","eslint":[]}
+{"code":"class A { static { var o = { get a() {} }; } }","ext":"js","eslint":[{"line":1,"column":30,"message":"Expected to return a value in getter 'a'."}]}
+{"code":"class A { get a() { return class { static { return1; } }; } }","ext":"js","eslint":[]}
+{"code":"function* g() { var o = { get a() { return 1; } }; yield o; }","ext":"js","eslint":[]}
+{"code":"var o = { get a() { return 1; }, get b() {}, get c() { return; }, get d() { if (x) return 1; } }","ext":"js","eslint":[{"line":1,"column":34,"message":"Expected to return a value in getter 'b'."},{"line":1,"column":56,"message":"Expected to return a value in getter 'c'."},{"line":1,"column":67,"message":"Expected getter 'd' to always return a value."}]}
+{"code":"var o = { get a() { return <div>{x}</div>; } }","ext":"jsx","eslint":[]}

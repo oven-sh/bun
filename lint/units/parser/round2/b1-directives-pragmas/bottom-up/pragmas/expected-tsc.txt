@@ -1,0 +1,434 @@
+--- path "/// <reference path=\"a.ts\" />\nlet x;"
+  pragmas=[reference line 0..29 nl=true {path=21..25 "a.ts"}]
+  referencedFiles=[21..25 "a.ts"]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- types "/// <reference types=\"node\" />\nlet x;"
+  pragmas=[reference line 0..30 nl=true {types=22..26 "node"}]
+  referencedFiles=[]
+  typeReferenceDirectives=[22..26 "node"]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- lib-double-quotes "/// <reference lib=\"es2015\" />\nlet x;"
+  pragmas=[reference line 0..30 nl=true {lib=20..26 "es2015"}]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[20..26 "es2015"]
+  checkJsDirective=none
+  diagnostics=[]
+--- lib-single-quotes "/// <reference lib='dom' />\nlet x;"
+  pragmas=[reference line 0..27 nl=true {lib=20..23 "dom"}]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[20..23 "dom"]
+  checkJsDirective=none
+  diagnostics=[]
+--- resolution-mode-import "/// <reference types=\"pkg\" resolution-mode=\"import\" />\nlet x;"
+  pragmas=[reference line 0..54 nl=true {types=22..25 "pkg"; resolution-mode="import"}]
+  referencedFiles=[]
+  typeReferenceDirectives=[22..25 "pkg" mode=import]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- resolution-mode-require "/// <reference types=\"pkg\" resolution-mode=\"require\" />\nlet x;"
+  pragmas=[reference line 0..55 nl=true {types=22..25 "pkg"; resolution-mode="require"}]
+  referencedFiles=[]
+  typeReferenceDirectives=[22..25 "pkg" mode=require]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- resolution-mode-other-word "/// <reference types=\"pkg\" resolution-mode=\"esm\"/>\nfoo;"
+  pragmas=[reference line 0..50 nl=true {types=22..25 "pkg"; resolution-mode="esm"}]
+  referencedFiles=[]
+  typeReferenceDirectives=[22..25 "pkg"]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[TS1453 22..25]
+--- resolution-mode-before-types "/// <reference resolution-mode=\"import\" types=\"pkg\" />\nlet x;"
+  pragmas=[reference line 0..54 nl=true {types=47..50 "pkg"; resolution-mode="import"}]
+  referencedFiles=[]
+  typeReferenceDirectives=[47..50 "pkg" mode=import]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- resolution-mode-without-types "/// <reference path=\"a.ts\" resolution-mode=\"esm\" />\nlet x;"
+  pragmas=[reference line 0..51 nl=true {path=21..25 "a.ts"; resolution-mode="esm"}]
+  referencedFiles=[21..25 "a.ts"]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- preserve-types "/// <reference types=\"node\" preserve=\"true\" />\nlet x;"
+  pragmas=[reference line 0..46 nl=true {types=22..26 "node"; preserve="true"}]
+  referencedFiles=[]
+  typeReferenceDirectives=[22..26 "node" preserve]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- preserve-path "/// <reference path=\"a.ts\" preserve=\"true\" />\nlet x;"
+  pragmas=[reference line 0..45 nl=true {path=21..25 "a.ts"; preserve="true"}]
+  referencedFiles=[21..25 "a.ts" preserve]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- preserve-lib-false "/// <reference lib=\"dom\" preserve=\"false\" />\nlet x;"
+  pragmas=[reference line 0..44 nl=true {lib=20..23 "dom"; preserve="false"}]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[20..23 "dom"]
+  checkJsDirective=none
+  diagnostics=[]
+--- no-default-lib "/// <reference no-default-lib=\"true\"/>\nlet x;"
+  pragmas=[reference line 0..38 nl=true {no-default-lib="true"}]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- no-default-lib-false "/// <reference no-default-lib=\"false\"/>\nlet x;"
+  pragmas=[reference line 0..39 nl=true {no-default-lib="false"}]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[TS1084 0..39]
+--- no-default-lib-and-path "/// <reference no-default-lib=\"true\" path=\"a.ts\" />\nlet x;"
+  pragmas=[reference line 0..51 nl=true {path=43..47 "a.ts"; no-default-lib="true"}]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- reference-without-argument "/// <reference />\nlet x;"
+  pragmas=[reference line 0..17 nl=true {}]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[TS1084 0..17]
+--- reference-unknown-argument "/// <reference foo=\"bar\" />\nlet x;"
+  pragmas=[reference line 0..27 nl=true {}]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[TS1084 0..27]
+--- reference-missing-quote "/// <reference path=\"missingquote.ts />\nclass C {\n\n}"
+  pragmas=[reference line 0..39 nl=true {}]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[TS1084 0..39]
+--- reference-not-closed "/// <reference path=\"a.ts\"\nlet x;"
+  pragmas=[]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- reference-after-first-token "let x;\n/// <reference path=\"a.ts\" />\nlet y;"
+  pragmas=[]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- reference-after-empty-lines-and-comments "\n// a\n/* b */\n\n/// <reference path=\"a.ts\" />\nlet x;"
+  pragmas=[reference line 15..44 nl=true {path=36..40 "a.ts"}]
+  referencedFiles=[36..40 "a.ts"]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- two-slashes-is-no-reference "// <reference path=\"a.ts\" />\nlet x;"
+  pragmas=[]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- four-slashes-is-no-reference "//// <reference path=\"a.ts\" />\nlet x;"
+  pragmas=[]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- block-is-no-reference "/* /// <reference path=\"a.ts\" /> */\nlet x;"
+  pragmas=[]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- upper-case-tag-and-argument "/// <REFERENCE PATH=\"a.ts\" />\nlet x;"
+  pragmas=[reference line 0..29 nl=true {path=21..25 "a.ts"}]
+  referencedFiles=[21..25 "a.ts"]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- other-tag "/// <amd-module name=\"m\" />\nlet x;"
+  pragmas=[amd-module line 0..27 nl=true {name="m"}]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- types-lib-path-together "/// <reference path=\"a.ts\" lib=\"dom\" types=\"node\" />\nlet x;"
+  pragmas=[reference line 0..52 nl=true {types=44..48 "node"; lib=32..35 "dom"; path=21..25 "a.ts"}]
+  referencedFiles=[]
+  typeReferenceDirectives=[44..48 "node"]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- path-twice "/// <reference path=\"a.ts\" path=\"b.ts\" />\nlet x;"
+  pragmas=[reference line 0..41 nl=true {path=21..25 "a.ts"}]
+  referencedFiles=[21..25 "a.ts"]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- three-references "/// <reference path=\"a.ts\" />\n/// <reference types=\"node\" />\n/// <reference lib=\"dom\" />\nlet x;"
+  pragmas=[reference line 0..29 nl=true {path=21..25 "a.ts"} | reference line 30..60 nl=true {types=52..56 "node"} | reference line 61..88 nl=true {lib=81..84 "dom"}]
+  referencedFiles=[21..25 "a.ts"]
+  typeReferenceDirectives=[52..56 "node"]
+  libReferenceDirectives=[81..84 "dom"]
+  checkJsDirective=none
+  diagnostics=[]
+--- two-errors "/// <reference />\n/// <reference types=\"a\" resolution-mode=\"x\" />\n/// <reference bad=\"1\" />\nlet x;"
+  pragmas=[reference line 0..17 nl=true {} | reference line 18..65 nl=true {types=40..41 "a"; resolution-mode="x"} | reference line 66..91 nl=true {}]
+  referencedFiles=[]
+  typeReferenceDirectives=[40..41 "a"]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[TS1084 0..17, TS1453 40..41, TS1084 66..91]
+--- empty-path "/// <reference path=\"\" />\nlet x;"
+  pragmas=[reference line 0..25 nl=true {path=21..21 ""}]
+  referencedFiles=[21..21 ""]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- spaces-around-equals "///   <reference   path = \"a.ts\"   />\nlet x;"
+  pragmas=[reference line 0..37 nl=true {path=27..31 "a.ts"}]
+  referencedFiles=[27..31 "a.ts"]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- tab-before-tag "///\t<reference path=\"a.ts\"/>\nlet x;"
+  pragmas=[reference line 0..28 nl=true {path=21..25 "a.ts"}]
+  referencedFiles=[21..25 "a.ts"]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- non-ascii-path "/// <reference path=\"é.ts\" />\nlet x;"
+  pragmas=[reference line 0..29 nl=true {path=21..25 "é.ts"}]
+  referencedFiles=[21..25 "é.ts"]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- nocheck "// @ts-nocheck\nlet x;"
+  pragmas=[ts-nocheck line 0..14 nl=true {}]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=enabled:false 0..14
+  diagnostics=[]
+--- check "// @ts-check\nlet x;"
+  pragmas=[ts-check line 0..12 nl=true {}]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=enabled:true 0..12
+  diagnostics=[]
+--- nocheck-then-check "// @ts-nocheck\n// @ts-check\nlet x;"
+  pragmas=[ts-nocheck line 0..14 nl=true {} | ts-check line 15..27 nl=true {}]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=enabled:true 15..27
+  diagnostics=[]
+--- check-then-nocheck "// @ts-check\n// @ts-nocheck\nlet x;"
+  pragmas=[ts-check line 0..12 nl=true {} | ts-nocheck line 13..27 nl=true {}]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=enabled:false 13..27
+  diagnostics=[]
+--- nocheck-three-slashes "/// @ts-nocheck\nlet x;"
+  pragmas=[ts-nocheck line 0..15 nl=true {}]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=enabled:false 0..15
+  diagnostics=[]
+--- nocheck-no-space "//@ts-nocheck\nlet x;"
+  pragmas=[ts-nocheck line 0..13 nl=true {}]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=enabled:false 0..13
+  diagnostics=[]
+--- nocheck-upper-case "// @TS-NOCHECK\nlet x;"
+  pragmas=[ts-nocheck line 0..14 nl=true {}]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=enabled:false 0..14
+  diagnostics=[]
+--- nocheck-with-text "// @ts-nocheck because\nlet x;"
+  pragmas=[ts-nocheck line 0..22 nl=true {}]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=enabled:false 0..22
+  diagnostics=[]
+--- nocheck-longer-name "// @ts-nochecks\nlet x;"
+  pragmas=[]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- nocheck-colon "// @ts-nocheck: reason\nlet x;"
+  pragmas=[ts-nocheck line 0..22 nl=true {}]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=enabled:false 0..22
+  diagnostics=[]
+--- nocheck-in-block "/* @ts-nocheck */\nlet x;"
+  pragmas=[]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- nocheck-after-first-token "let x;\n// @ts-nocheck\nlet y;"
+  pragmas=[]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- nocheck-words-before "// a @ts-nocheck\nlet x;"
+  pragmas=[]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- crlf "/// <reference path=\"a.ts\" />\r\n// @ts-nocheck\r\n/// <reference types=\"node\" />\r\nlet x;\r\n"
+  pragmas=[reference line 0..29 nl=true {path=21..25 "a.ts"} | reference line 47..77 nl=true {types=69..73 "node"} | ts-nocheck line 31..45 nl=true {}]
+  referencedFiles=[21..25 "a.ts"]
+  typeReferenceDirectives=[69..73 "node"]
+  libReferenceDirectives=[]
+  checkJsDirective=enabled:false 31..45
+  diagnostics=[]
+--- after-hashbang "#!/usr/bin/env bun\n/// <reference path=\"a.ts\" />\n// @ts-check\nlet x;"
+  pragmas=[reference line 19..48 nl=true {path=40..44 "a.ts"} | ts-check line 49..61 nl=true {}]
+  referencedFiles=[40..44 "a.ts"]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=enabled:true 49..61
+  diagnostics=[]
+--- hashbang-only "#!/usr/bin/env bun"
+  pragmas=[]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- after-bom "﻿/// <reference path=\"a.ts\" />\nlet x;"
+  pragmas=[reference line 1..30 nl=true {path=22..26 "a.ts"}]
+  referencedFiles=[22..26 "a.ts"]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- jsx-block "/** @jsx h */\nlet x;"
+  pragmas=[jsx block 0..13 nl=true {factory="h"}]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- jsx-all-four "/**\n * @jsx h\n * @jsxFrag Fragment\n * @jsxImportSource preact\n * @jsxRuntime automatic\n */\nlet x;"
+  pragmas=[jsx block 0..90 nl=true {factory="h"} | jsxfrag block 0..90 nl=true {factory="Fragment"} | jsximportsource block 0..90 nl=true {factory="preact"} | jsxruntime block 0..90 nl=true {factory="automatic"}]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- jsx-line-is-no-pragma "// @jsx h\nlet x;"
+  pragmas=[]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- jsx-upper-case "/* @JSX h */\nlet x;"
+  pragmas=[jsx block 0..12 nl=true {factory="h"}]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- jsx-two-on-one-line "/* @jsx h @jsxFrag F */\nlet x;"
+  pragmas=[jsx block 0..23 nl=true {factory="h"}]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- jsx-after-first-token "let x;\n/** @jsx h */\nlet y;"
+  pragmas=[]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- jsx-without-argument "/** @jsx */\nlet x;"
+  pragmas=[jsx block 0..11 nl=true {factory="*/"}]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- jsx-argument-on-next-line "/** @jsx\n h */\nlet x;"
+  pragmas=[jsx block 0..14 nl=true {factory="h"}]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- empty ""
+  pragmas=[]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]
+--- only-comment-unterminated "/* @jsx h"
+  pragmas=[jsx block 0..9 nl=false {factory="h"}]
+  referencedFiles=[]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[TS1010 9..9]
+--- only-reference-eof "/// <reference path=\"a.ts\" />"
+  pragmas=[reference line 0..29 nl=false {path=21..25 "a.ts"}]
+  referencedFiles=[21..25 "a.ts"]
+  typeReferenceDirectives=[]
+  libReferenceDirectives=[]
+  checkJsDirective=none
+  diagnostics=[]

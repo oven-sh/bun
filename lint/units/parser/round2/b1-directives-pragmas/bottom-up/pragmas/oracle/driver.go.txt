@@ -1,0 +1,83 @@
+
+
+func mode(m ResolutionMode) string {
+	switch m {
+	case ModuleKindCommonJS:
+		return "require"
+	case ModuleKindESNext:
+		return "import"
+	}
+	return "none"
+}
+
+func refs(list []*FileReference, text string) string {
+	var out []string
+	for _, r := range list {
+		if r.FileName != text[r.Pos():r.End()] {
+			panic("file name is not the source at its range")
+		}
+		s := fmt.Sprintf("%d..%d %q", r.Pos(), r.End(), r.FileName)
+		if r.ResolutionMode != ModuleKindNone {
+			s += " mode=" + mode(r.ResolutionMode)
+		}
+		if r.Preserve {
+			s += " preserve"
+		}
+		out = append(out, s)
+	}
+	return strings.Join(out, ", ")
+}
+
+func main() {
+	data, _ := os.ReadFile(os.Args[1])
+	var inputs [][]string
+	if err := json.Unmarshal(data, &inputs); err != nil {
+		panic(err)
+	}
+	for _, in := range inputs {
+		text := in[1]
+		p := &Parser{}
+		file := &SourceFile{}
+		file.Pragmas = getCommentPragmas(&NodeFactory{}, text)
+		p.processPragmasIntoFields(file)
+		j, _ := json.Marshal(text)
+		fmt.Printf("--- %s %s\n", in[0], j)
+		var ps []string
+		for _, pragma := range file.Pragmas {
+			var keys []string
+			for k := range pragma.Args {
+				keys = append(keys, k)
+			}
+			sort.Slice(keys, func(a, b int) bool { return pragma.Args[keys[a]].Pos() < pragma.Args[keys[b]].Pos() })
+			var as []string
+			for _, k := range keys {
+				a := pragma.Args[k]
+				if a.Value != text[a.Pos():a.End()] {
+					panic("value is not the source at its range")
+				}
+				as = append(as, fmt.Sprintf("%s=%d..%d %q", k, a.Pos(), a.End(), a.Value))
+			}
+			kind := "line"
+			if pragma.Kind == KindMultiLineCommentTrivia {
+				kind = "block"
+			}
+			ps = append(ps, fmt.Sprintf("%s %s %d..%d nl=%v {%s}", pragma.Name, kind, pragma.Pos(), pragma.End(), pragma.HasTrailingNewLine, strings.Join(as, "; ")))
+		}
+		fmt.Printf("  pragmas=[%s]\n", strings.Join(ps, " | "))
+		fmt.Printf("  referencedFiles=[%s]\n", refs(file.ReferencedFiles, text))
+		fmt.Printf("  typeReferenceDirectives=[%s]\n", refs(file.TypeReferenceDirectives, text))
+		fmt.Printf("  libReferenceDirectives=[%s]\n", refs(file.LibReferenceDirectives, text))
+		if file.CheckJsDirective == nil {
+			fmt.Printf("  checkJsDirective=none\n")
+		} else {
+			fmt.Printf("  checkJsDirective=enabled:%v %d..%d\n", file.CheckJsDirective.Enabled, file.CheckJsDirective.Range.Pos(), file.CheckJsDirective.Range.End())
+		}
+		var ds []string
+		for _, d := range p.diagnostics {
+			ds = append(ds, fmt.Sprintf("TS%d %d..%d", d.code, d.loc.pos, d.loc.end))
+		}
+		fmt.Printf("  diagnostics=[%s]\n", strings.Join(ds, ", "))
+	}
+	_ = unicode.MaxASCII
+	_ = utf8.RuneError
+}

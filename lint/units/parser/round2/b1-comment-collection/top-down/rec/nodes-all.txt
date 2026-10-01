@@ -1,0 +1,395 @@
+== w1.ts  "y = x /*a*/ as /*b*/ T /*c*/ ; y = x satisfies T /*d*/ ;"
+     ExpressionStatement pos=0 start=0 end=30
+       BinaryExpression pos=0 start=0 end=22
+         AsExpression pos=3 start=4 end=22
+           TypeReference pos=14 start=21 end=22
+     ExpressionStatement pos=30 start=31 end=56
+       BinaryExpression pos=30 start=31 end=48
+         SatisfiesExpression pos=34 start=35 end=48
+           TypeReference pos=46 start=47 end=48
+== w2.ts  "y = x /*a*/ ! /*b*/ ; y = (x /*c*/) /*d*/ ; y = <T> /*e*/ x /*f*/ ;"
+     ExpressionStatement pos=0 start=0 end=21
+       BinaryExpression pos=0 start=0 end=13
+         NonNullExpression pos=3 start=4 end=13
+     ExpressionStatement pos=21 start=22 end=43
+       BinaryExpression pos=21 start=22 end=35
+         ParenthesizedExpression pos=25 start=26 end=35
+     ExpressionStatement pos=43 start=44 end=67
+       BinaryExpression pos=43 start=44 end=59
+         TypeAssertionExpression pos=47 start=48 end=59
+           TypeReference pos=49 start=49 end=50
+== w3.ts  "let v = ( /*1*/ a /*2*/ ) /*3*/ as /*4*/ T /*5*/ ; let w = b /*6*/ ! /*7*/ . c; let u = < /*8*/ T /*9*/ > /*10*/ d /*11*/ ; let s = e /*12*/ satisfies /*13*/ S /*14*/ ;"
+     FirstStatement pos=0 start=0 end=50
+       VariableDeclarationList pos=0 start=0 end=42
+         VariableDeclaration pos=3 start=4 end=42
+           AsExpression pos=7 start=8 end=42
+             ParenthesizedExpression pos=7 start=8 end=25
+             TypeReference pos=34 start=41 end=42
+     FirstStatement pos=50 start=51 end=79
+       VariableDeclarationList pos=50 start=51 end=78
+         VariableDeclaration pos=54 start=55 end=78
+           PropertyAccessExpression pos=58 start=59 end=78
+             NonNullExpression pos=58 start=59 end=68
+     FirstStatement pos=79 start=80 end=123
+       VariableDeclarationList pos=79 start=80 end=114
+         VariableDeclaration pos=83 start=84 end=114
+           TypeAssertionExpression pos=87 start=88 end=114
+             TypeReference pos=89 start=96 end=97
+     FirstStatement pos=123 start=124 end=168
+       VariableDeclarationList pos=123 start=124 end=159
+         VariableDeclaration pos=127 start=128 end=159
+           SatisfiesExpression pos=131 start=132 end=159
+             TypeReference pos=150 start=158 end=159
+== w4.ts  "let u = < /*1*/ T /*2*/ > /*3*/ ( /*4*/ d /*5*/ ) /*6*/ ; let f = < /*7*/ T /*8*/ >( /*9*/ x /*10*/ ) /*11*/ => x;"
+     FirstStatement pos=0 start=0 end=57
+       VariableDeclarationList pos=0 start=0 end=49
+         VariableDeclaration pos=3 start=4 end=49
+           TypeAssertionExpression pos=7 start=8 end=49
+             TypeReference pos=9 start=16 end=17
+             ParenthesizedExpression pos=25 start=32 end=49
+     FirstStatement pos=57 start=58 end=114
+       VariableDeclarationList pos=57 start=58 end=113
+         VariableDeclaration pos=61 start=62 end=113
+           ArrowFunction pos=65 start=66 end=113 typeParameters<67,75> parameters<84,92>
+             TypeParameter pos=67 start=74 end=75
+             Parameter pos=84 start=91 end=92
+== w5.tsx  "const e = <div /*1*/ >{( /*2*/ a /*3*/ ) /*4*/ as T}</div /*5*/ >;"
+     FirstStatement pos=0 start=0 end=66
+       VariableDeclarationList pos=0 start=0 end=65
+         VariableDeclaration pos=5 start=6 end=65
+           JsxElement pos=9 start=10 end=65
+             JsxOpeningElement pos=9 start=10 end=22
+               JsxAttributes pos=14 start=14 end=14
+             JsxExpression pos=22 start=22 end=52
+               AsExpression pos=23 start=23 end=51
+                 ParenthesizedExpression pos=23 start=23 end=40
+                 TypeReference pos=49 start=50 end=51
+             JsxClosingElement pos=52 start=52 end=65
+== g1.ts  "function f /*a*/ < /*b*/ T /*c*/ > /*d*/ () {} const g = < /*e*/ U /*f*/ > /*g*/ (x: U) => x;"
+     FunctionDeclaration pos=0 start=0 end=46 typeParameters<18,26> parameters<42,42>
+       TypeParameter pos=18 start=25 end=26
+       Block pos=43 start=44 end=46
+     FirstStatement pos=46 start=47 end=93
+       VariableDeclarationList pos=46 start=47 end=92
+         VariableDeclaration pos=52 start=53 end=92
+           ArrowFunction pos=56 start=57 end=92 typeParameters<58,66> parameters<82,86>
+             TypeParameter pos=58 start=65 end=66
+             Parameter pos=82 start=82 end=86
+               TypeReference pos=84 start=85 end=86
+== g2.ts  "class A extends B /*a*/ <T> /*b*/ implements I /*c*/ , J<K> /*d*/ {} class D implements a /*e*/ [ /*f*/ 0 /*g*/ ] /*h*/ {}"
+     ClassDeclaration pos=0 start=0 end=68 members<67,67>
+       HeritageClause pos=7 start=8 end=27 types<15,27>
+         ExpressionWithTypeArguments pos=15 start=16 end=27 typeArguments<25,26>
+           TypeReference pos=25 start=25 end=26
+       HeritageClause pos=27 start=34 end=59 types<44,59>
+         ExpressionWithTypeArguments pos=44 start=45 end=46
+         ExpressionWithTypeArguments pos=54 start=55 end=59 typeArguments<57,58>
+           TypeReference pos=57 start=57 end=58
+     ClassDeclaration pos=68 start=69 end=122 members<121,121>
+       HeritageClause pos=76 start=77 end=113 types<87,113>
+         ExpressionWithTypeArguments pos=87 start=88 end=113
+           ElementAccessExpression pos=87 start=88 end=113
+== g3.tsx  "const e = <Foo /*a*/ < /*b*/ T /*c*/ > /*d*/ a=\"1\" /*e*/ />;"
+     FirstStatement pos=0 start=0 end=60
+       VariableDeclarationList pos=0 start=0 end=59
+         VariableDeclaration pos=5 start=6 end=59
+           JsxSelfClosingElement pos=9 start=10 end=59 typeArguments<22,30>
+             TypeReference pos=22 start=29 end=30
+             JsxAttributes pos=38 start=45 end=50
+               JsxAttribute pos=38 start=45 end=50
+== g4.ts  "f /*a*/ < /*b*/ T /*c*/ > /*d*/ (x); new C /*e*/ <T> /*f*/ (); let i = f<T> /*g*/ ;"
+     ExpressionStatement pos=0 start=0 end=36
+       CallExpression pos=0 start=0 end=35 typeArguments<9,17>
+         TypeReference pos=9 start=16 end=17
+     ExpressionStatement pos=36 start=37 end=62
+       NewExpression pos=36 start=37 end=61 typeArguments<50,51>
+         TypeReference pos=50 start=50 end=51
+     FirstStatement pos=62 start=63 end=83
+       VariableDeclarationList pos=62 start=63 end=75
+         VariableDeclaration pos=66 start=67 end=75
+           ExpressionWithTypeArguments pos=70 start=71 end=75 typeArguments<73,74>
+             TypeReference pos=73 start=73 end=74
+== g5.ts  "/*a*/ interface I /*b*/ <T> /*c*/ { a: 1 } /*d*/ type A /*e*/ <T> /*f*/ = T;"
+     InterfaceDeclaration pos=0 start=6 end=42 typeParameters<25,26> members<35,40>
+       TypeParameter pos=25 start=25 end=26
+       PropertySignature pos=35 start=36 end=40
+         LiteralType pos=38 start=39 end=40
+     TypeAliasDeclaration pos=42 start=49 end=76 typeParameters<63,64>
+       TypeParameter pos=63 start=63 end=64
+       TypeReference pos=73 start=74 end=75
+== g6.ts  "class E extends f /*1*/ ( /*2*/ ) /*3*/ < /*4*/ T /*5*/ > /*6*/ {}"
+     ClassDeclaration pos=0 start=0 end=66 members<65,65>
+       HeritageClause pos=7 start=8 end=57 types<15,57>
+         ExpressionWithTypeArguments pos=15 start=16 end=57 typeArguments<41,49>
+           CallExpression pos=15 start=16 end=33
+           TypeReference pos=41 start=48 end=49
+== g7.ts  "class D implements a /*1*/ . b /*2*/ () /*3*/ < /*4*/ T> /*5*/ {}"
+     ClassDeclaration pos=0 start=0 end=65 members<64,64>
+       HeritageClause pos=7 start=8 end=56 types<18,56>
+         ExpressionWithTypeArguments pos=18 start=19 end=56 typeArguments<47,55>
+           CallExpression pos=18 start=19 end=39
+             PropertyAccessExpression pos=18 start=19 end=30
+           TypeReference pos=47 start=54 end=55
+== g8.ts  "class E extends f /*1*/ ( /*2*/ ) /*3*/ {} class F extends g /*4*/ {}"
+     ClassDeclaration pos=0 start=0 end=42 members<41,41>
+       HeritageClause pos=7 start=8 end=33 types<15,33>
+         ExpressionWithTypeArguments pos=15 start=16 end=33
+           CallExpression pos=15 start=16 end=33
+     ClassDeclaration pos=42 start=43 end=69 members<68,68>
+       HeritageClause pos=50 start=51 end=60 types<58,60>
+         ExpressionWithTypeArguments pos=58 start=59 end=60
+== e1.ts  "/*a*/ interface I /*b*/ <T> /*c*/ { a: 1 } /*d*/ x;"
+     InterfaceDeclaration pos=0 start=6 end=42 typeParameters<25,26> members<35,40>
+       TypeParameter pos=25 start=25 end=26
+       PropertySignature pos=35 start=36 end=40
+         LiteralType pos=38 start=39 end=40
+     ExpressionStatement pos=42 start=49 end=51
+== e2.ts  "type A /*a*/ <T> /*b*/ = T /*c*/ ; /*d*/ type B = 1 /*e*/\nx;"
+     TypeAliasDeclaration pos=0 start=0 end=34 typeParameters<14,15>
+       TypeParameter pos=14 start=14 end=15
+       TypeReference pos=24 start=25 end=26
+     TypeAliasDeclaration pos=34 start=41 end=51
+       LiteralType pos=49 start=50 end=51
+     ExpressionStatement pos=51 start=58 end=60
+== e3.ts  "declare /*a*/ const v: number /*b*/ ; declare function f(): void /*c*/\ny;"
+     FirstStatement pos=0 start=0 end=37 modifiers<0,7>
+       DeclareKeyword pos=0 start=0 end=7
+       VariableDeclarationList pos=7 start=14 end=29
+         VariableDeclaration pos=19 start=20 end=29
+           NumberKeyword pos=22 start=23 end=29
+     FunctionDeclaration pos=37 start=38 end=64 modifiers<37,45> parameters<57,57>
+       DeclareKeyword pos=37 start=38 end=45
+       VoidKeyword pos=59 start=60 end=64
+     ExpressionStatement pos=64 start=71 end=73
+== e4.ts  "abstract class C { /*a*/ abstract m(): void /*b*/ ; n(): void /*c*/\n n() {} [k: string]: any /*d*/ ; }"
+     ClassDeclaration pos=0 start=0 end=102 modifiers<0,8> members<18,100>
+       FirstContextualKeyword pos=0 start=0 end=8
+       MethodDeclaration pos=18 start=25 end=51 modifiers<18,33> parameters<36,36>
+         FirstContextualKeyword pos=18 start=25 end=33
+         VoidKeyword pos=38 start=39 end=43
+       MethodDeclaration pos=51 start=52 end=61 parameters<54,54>
+         VoidKeyword pos=56 start=57 end=61
+       MethodDeclaration pos=61 start=69 end=75 parameters<71,71>
+         Block pos=72 start=73 end=75
+       IndexSignature pos=75 start=76 end=100 parameters<77,86>
+         Parameter pos=77 start=77 end=86
+           StringKeyword pos=79 start=80 end=86
+         AnyKeyword pos=88 start=89 end=92
+== e5.ts  "/*1*/ export /*2*/ declare /*3*/ const /*4*/ a /*5*/ : /*6*/ number /*7*/ ; /*8*/ interface /*9*/ I /*10*/ { } /*11*/ type /*12*/ T /*13*/ = /*14*/ 1 /*15*/ ;"
+     FirstStatement pos=0 start=6 end=75 modifiers<0,26>
+       ExportKeyword pos=0 start=6 end=12
+       DeclareKeyword pos=12 start=19 end=26
+       VariableDeclarationList pos=26 start=33 end=67
+         VariableDeclaration pos=38 start=45 end=67
+           NumberKeyword pos=54 start=61 end=67
+     InterfaceDeclaration pos=75 start=82 end=110 members<108,108>
+     TypeAliasDeclaration pos=110 start=118 end=158
+       LiteralType pos=140 start=148 end=149
+== e6.ts  "export // export\ninterface I {}\n// export\ndeclare const x: number;"
+     InterfaceDeclaration pos=0 start=0 end=31 modifiers<0,6> members<30,30>
+       ExportKeyword pos=0 start=0 end=6
+     FirstStatement pos=31 start=42 end=66 modifiers<31,49>
+       DeclareKeyword pos=31 start=42 end=49
+       VariableDeclarationList pos=49 start=50 end=65
+         VariableDeclaration pos=55 start=56 end=65
+           NumberKeyword pos=58 start=59 end=65
+== e7.ts  "/*0*/ @ /*1*/ dec /*2*/ ( /*3*/ ) /*4*/ declare class C {} export /*5*/ @ /*6*/ ( /*7*/ dec /*8*/ ) /*9*/ declare class D {}"
+     ClassDeclaration pos=0 start=6 end=58 modifiers<0,47> members<57,57>
+       Decorator pos=0 start=6 end=33
+         CallExpression pos=7 start=14 end=33
+       DeclareKeyword pos=33 start=40 end=47
+     ClassDeclaration pos=58 start=59 end=124 modifiers<58,113> members<123,123>
+       ExportKeyword pos=58 start=59 end=65
+       Decorator pos=65 start=72 end=99
+         ParenthesizedExpression pos=73 start=80 end=99
+       DeclareKeyword pos=99 start=106 end=113
+== e8.ts  "declare /*1*/ module /*2*/ \"m\" /*3*/ { } /*4*/ declare /*5*/ global /*6*/ { } /*7*/ declare namespace A /*8*/ . /*9*/ B /*10*/ { } export {};"
+     ModuleDeclaration pos=0 start=0 end=40 modifiers<0,7>
+       DeclareKeyword pos=0 start=0 end=7
+       ModuleBlock pos=30 start=37 end=40
+     ModuleDeclaration pos=40 start=47 end=77 modifiers<40,54>
+       DeclareKeyword pos=40 start=47 end=54
+       ModuleBlock pos=67 start=74 end=77
+     ModuleDeclaration pos=77 start=84 end=130 modifiers<77,91>
+       DeclareKeyword pos=77 start=84 end=91
+       ModuleDeclaration pos=111 start=118 end=130
+         ModuleBlock pos=119 start=127 end=130
+     ExportDeclaration pos=130 start=131 end=141
+       NamedExports pos=137 start=138 end=140
+== e9.ts  "import /*6*/ type /*7*/ { C } /*8*/ from /*9*/ \"y\" /*10*/ ; export /*1*/ type /*2*/ { A /*3*/ } /*4*/ from /*5*/ \"./a\" /*6*/ ; export /*1*/ as /*2*/ namespace /*3*/ Foo /*4*/ ;"
+     ImportDeclaration pos=0 start=0 end=59
+       ImportClause pos=6 start=13 end=29
+         NamedImports pos=17 start=24 end=29
+           ImportSpecifier pos=25 start=26 end=27
+     ExportDeclaration pos=59 start=60 end=126
+       NamedExports pos=77 start=84 end=95
+         ExportSpecifier pos=85 start=86 end=87
+     NamespaceExportDeclaration pos=126 start=127 end=176
+== a1.ts  "let x /*a*/ : /*b*/ number /*c*/ = 1; function f(this /*d*/ : /*e*/ T /*f*/, p /*g*/ ? /*h*/ : string /*i*/) /*j*/ : /*k*/ void /*l*/ {}"
+     FirstStatement pos=0 start=0 end=37
+       VariableDeclarationList pos=0 start=0 end=36
+         VariableDeclaration pos=3 start=4 end=36
+           NumberKeyword pos=13 start=20 end=26
+     FunctionDeclaration pos=37 start=38 end=136 parameters<49,101>
+       Parameter pos=49 start=49 end=69
+         TypeReference pos=61 start=68 end=69
+       Parameter pos=76 start=77 end=101
+         QuestionToken start=85 end=86
+         StringKeyword pos=94 start=95 end=101
+       VoidKeyword pos=116 start=123 end=127
+       Block pos=127 start=134 end=136
+== a2.ts  "class C { public /*a*/ readonly /*b*/ x /*c*/ ! /*d*/ : number; declare /*e*/ y /*f*/ ? /*g*/ : string; }"
+     ClassDeclaration pos=0 start=0 end=105 members<9,103>
+       PropertyDeclaration pos=9 start=10 end=63 modifiers<9,31>
+         PublicKeyword pos=9 start=10 end=16
+         ReadonlyKeyword pos=16 start=23 end=31
+         ExclamationToken start=46 end=47
+         NumberKeyword pos=55 start=56 end=62
+       PropertyDeclaration pos=63 start=64 end=103 modifiers<63,71>
+         DeclareKeyword pos=63 start=64 end=71
+         QuestionToken start=86 end=87
+         StringKeyword pos=95 start=96 end=102
+== a3.ts  "let g = (a /*1*/ ): /*2*/ number /*3*/ => a; try {} catch ( /*4*/ e /*5*/ : /*6*/ unknown /*7*/ ) {}"
+     FirstStatement pos=0 start=0 end=44
+       VariableDeclarationList pos=0 start=0 end=43
+         VariableDeclaration pos=3 start=4 end=43
+           ArrowFunction pos=7 start=8 end=43 parameters<9,10>
+             Parameter pos=9 start=9 end=10
+             NumberKeyword pos=19 start=26 end=32
+     TryStatement pos=44 start=45 end=100
+       Block pos=48 start=49 end=51
+       CatchClause pos=51 start=52 end=100
+         VariableDeclaration pos=59 start=66 end=89
+           UnknownKeyword pos=75 start=82 end=89
+         Block pos=97 start=98 end=100
+== t1.ts  "let v: { [ /*1*/ a /*2*/ + /*3*/ b /*4*/ ] /*5*/ : 1 };"
+     FirstStatement pos=0 start=0 end=55
+       VariableDeclarationList pos=0 start=0 end=54
+         VariableDeclaration pos=3 start=4 end=54
+           TypeLiteral pos=6 start=7 end=54 members<8,52>
+             PropertySignature pos=8 start=9 end=52
+               ComputedPropertyName pos=8 start=9 end=42
+                 BinaryExpression pos=10 start=17 end=34
+               LiteralType pos=50 start=51 end=52
+== t2.ts  "let v: { [a + b /*2*/ ]: 1 };"
+     FirstStatement pos=0 start=0 end=29
+       VariableDeclarationList pos=0 start=0 end=28
+         VariableDeclaration pos=3 start=4 end=28
+           TypeLiteral pos=6 start=7 end=28 members<8,26>
+             PropertySignature pos=8 start=9 end=26
+               ComputedPropertyName pos=8 start=9 end=23
+                 BinaryExpression pos=10 start=10 end=15
+               LiteralType pos=24 start=25 end=26
+== t3.ts  "let v: (a /*1*/ = /*2*/ 1 /*3*/ + /*4*/ 2 /*5*/ , b: X /*6*/ ) /*7*/ => void;"
+     FirstStatement pos=0 start=0 end=77
+       VariableDeclarationList pos=0 start=0 end=76
+         VariableDeclaration pos=3 start=4 end=76
+           FunctionType pos=6 start=7 end=76 parameters<8,54>
+             Parameter pos=8 start=8 end=41
+               BinaryExpression pos=17 start=24 end=41
+             Parameter pos=49 start=50 end=54
+               TypeReference pos=52 start=53 end=54
+             VoidKeyword pos=71 start=72 end=76
+== t4.ts  "let v: (a = 1 /*1*/ ) => void;"
+     FirstStatement pos=0 start=0 end=30
+       VariableDeclarationList pos=0 start=0 end=29
+         VariableDeclaration pos=3 start=4 end=29
+           FunctionType pos=6 start=7 end=29 parameters<8,13>
+             Parameter pos=8 start=8 end=13
+             VoidKeyword pos=24 start=25 end=29
+== t5.ts  "let v: { a: number = /*1*/ 1 /*2*/ ; b /*3*/ : 2 };"
+     FirstStatement pos=0 start=0 end=51
+       VariableDeclarationList pos=0 start=0 end=50
+         VariableDeclaration pos=3 start=4 end=50
+           TypeLiteral pos=6 start=7 end=50 members<8,48>
+             PropertySignature pos=8 start=9 end=36
+               NumberKeyword pos=11 start=12 end=18
+             PropertySignature pos=36 start=37 end=48
+               LiteralType pos=46 start=47 end=48
+== t6.ts  "let v: { readonly [K in /*d*/ keyof A /*e*/ ] /*f*/ -? /*g*/ : 1 /*h*/ ; /*i*/ };"
+     FirstStatement pos=0 start=0 end=81
+       VariableDeclarationList pos=0 start=0 end=80
+         VariableDeclaration pos=3 start=4 end=80
+           MappedType pos=6 start=7 end=80 members<72,72>
+             ReadonlyKeyword pos=8 start=9 end=17
+             TypeParameter pos=19 start=19 end=37
+               TypeOperator pos=23 start=30 end=37
+                 TypeReference pos=35 start=36 end=37
+             LiteralType pos=62 start=63 end=64
+== t7.ts  "let v: { [K in keyof A] ? /*g*/ : 1 };"
+     FirstStatement pos=0 start=0 end=38
+       VariableDeclarationList pos=0 start=0 end=37
+         VariableDeclaration pos=3 start=4 end=37
+           MappedType pos=6 start=7 end=37 members<35,35>
+             TypeParameter pos=10 start=10 end=22
+               TypeOperator pos=14 start=15 end=22
+                 TypeReference pos=20 start=21 end=22
+             QuestionToken start=24 end=25
+             LiteralType pos=33 start=34 end=35
+== t8.ts  "let v: import(\"m\", { with: { /*1*/ type /*2*/ : /*3*/ \"json\" /*4*/ } }) /*5*/ ;"
+     FirstStatement pos=0 start=0 end=79
+       VariableDeclarationList pos=0 start=0 end=71
+         VariableDeclaration pos=3 start=4 end=71
+           LastTypeNode pos=6 start=7 end=71
+             LiteralType pos=14 start=14 end=17
+             AssertClause pos=26 start=27 end=68
+               AssertEntry pos=28 start=35 end=60
+== s1.ts  "f< /*2*/ >();"
+     ExpressionStatement pos=0 start=0 end=13
+       CallExpression pos=0 start=0 end=12 typeArguments<2,2>
+== s2.ts  "let x: A< /*1*/ >; let y: B<C, /*3*/ >;"
+     FirstStatement pos=0 start=0 end=18
+       VariableDeclarationList pos=0 start=0 end=17
+         VariableDeclaration pos=3 start=4 end=17
+           TypeReference pos=6 start=7 end=17 typeArguments<9,9>
+     FirstStatement pos=18 start=19 end=39
+       VariableDeclarationList pos=18 start=19 end=38
+         VariableDeclaration pos=22 start=23 end=38
+           TypeReference pos=25 start=26 end=38 typeArguments<28,30>
+             TypeReference pos=28 start=28 end=29
+== s3.ts  "let x: A | /*c*/ () => void;"
+   PARSE-DIAGS TS1385@10+17 Function type notation must be parenthesized when used in a union type.
+     FirstStatement pos=0 start=0 end=28
+       VariableDeclarationList pos=0 start=0 end=27
+         VariableDeclaration pos=3 start=4 end=27
+           UnionType pos=6 start=7 end=27 types<6,27>
+             TypeReference pos=6 start=7 end=8
+             FunctionType pos=10 start=17 end=27 parameters<18,18>
+               VoidKeyword pos=22 start=23 end=27
+== s4.ts  "let x: A |    () => void;"
+   PARSE-DIAGS TS1385@10+14 Function type notation must be parenthesized when used in a union type.
+     FirstStatement pos=0 start=0 end=25
+       VariableDeclarationList pos=0 start=0 end=24
+         VariableDeclaration pos=3 start=4 end=24
+           UnionType pos=6 start=7 end=24 types<6,24>
+             TypeReference pos=6 start=7 end=8
+             FunctionType pos=10 start=14 end=24 parameters<15,15>
+               VoidKeyword pos=19 start=20 end=24
+== s5.ts  "let x: A & /*c*/ new () => void;"
+   PARSE-DIAGS TS1388@10+21 Constructor type notation must be parenthesized when used in an intersection type.
+     FirstStatement pos=0 start=0 end=32
+       VariableDeclarationList pos=0 start=0 end=31
+         VariableDeclaration pos=3 start=4 end=31
+           IntersectionType pos=6 start=7 end=31 types<6,31>
+             TypeReference pos=6 start=7 end=8
+             ConstructorType pos=10 start=17 end=31 parameters<22,22>
+               VoidKeyword pos=26 start=27 end=31
+== s6.ts  "let f = (a): /*c*/ => a;"
+   PARSE-DIAGS TS1005@11+1 ',' expected. | TS1005@19+2 ';' expected.
+     FirstStatement pos=0 start=0 end=12
+       VariableDeclarationList pos=0 start=0 end=12
+         VariableDeclaration pos=3 start=4 end=11
+           ParenthesizedExpression pos=7 start=8 end=11
+     ExpressionStatement pos=21 start=22 end=24
+== s7.ts  "let f = (a): /*c*/ ;"
+   PARSE-DIAGS TS1005@11+1 ',' expected.
+     FirstStatement pos=0 start=0 end=20
+       VariableDeclarationList pos=0 start=0 end=12
+         VariableDeclaration pos=3 start=4 end=11
+           ParenthesizedExpression pos=7 start=8 end=11
+== s8.ts  "let x: /*c*/ ;"
+   PARSE-DIAGS TS1110@13+1 Type expected.
+     FirstStatement pos=0 start=0 end=14
+       VariableDeclarationList pos=0 start=0 end=6
+         VariableDeclaration pos=3 start=4 end=6
+           TypeReference pos=6 start=6 end=6

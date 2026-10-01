@@ -1,0 +1,53 @@
+{"code":"class A { get x(): number {} }","ext":"ts","eslint":[{"line":1,"column":11,"message":"Expected to return a value in getter 'x'."}]}
+{"code":"class A { @dec get x() {} }","ext":"ts","eslint":[{"line":1,"column":11,"message":"Expected to return a value in getter 'x'."}]}
+{"code":"class A { @dec\n  static get x() {} }","ext":"ts","eslint":[{"line":1,"column":11,"message":"Expected to return a value in static getter 'x'."}]}
+{"code":"class A { public static get x() {} }","ext":"ts","eslint":[{"line":1,"column":11,"message":"Expected to return a value in static getter 'x'."}]}
+{"code":"class A { private get x(): number {} }","ext":"ts","eslint":[{"line":1,"column":11,"message":"Expected to return a value in getter 'x'."}]}
+{"code":"class A { protected static override get x() {} }","ext":"ts","eslint":[{"line":1,"column":11,"message":"Expected to return a value in static getter 'x'."}]}
+{"code":"abstract class A { abstract get x(): number; get y() {} }","ext":"ts","eslint":[{"line":1,"column":46,"message":"Expected to return a value in getter 'y'."}]}
+{"code":"class A { get x(): number; get x() {} }","ext":"ts","eslint":[{"line":1,"column":28,"message":"Expected to return a value in getter 'x'."}]}
+{"code":"class A { get x<T>() {} }","ext":"ts","eslint":[{"line":1,"column":11,"message":"Expected to return a value in getter 'x'."}]}
+{"code":"class A { accessor x = 1; get y() { return; } }","ext":"ts","eslint":[{"line":1,"column":37,"message":"Expected to return a value in getter 'y'."}]}
+{"code":"class A { get x() { return <any>undefined; } get y() { return } }","ext":"ts","eslint":[{"line":1,"column":56,"message":"Expected to return a value in getter 'y'."}]}
+{"code":"class A { get x() { return y as number; } get z() { return y!; } }","ext":"ts","eslint":[]}
+{"code":"const o = { get x(): number {} }","ext":"ts","eslint":[{"line":1,"column":13,"message":"Expected to return a value in getter 'x'."}]}
+{"code":"const o = { get x(): number { return 1 as number; } }","ext":"ts","eslint":[]}
+{"code":"Object.defineProperty(a, 'b', { get: function () {} } as PropertyDescriptor)","ext":"ts","eslint":[]}
+{"code":"Object.defineProperty(a, 'b', { get: (function () {}) as any })","ext":"ts","eslint":[]}
+{"code":"Object.defineProperty(a, 'b', { get: function () {}! })","ext":"ts","eslint":[]}
+{"code":"Object.defineProperty(a, 'b', <PropertyDescriptor>{ get: function () {} })","ext":"ts","eslint":[]}
+{"code":"Object.defineProperty(a, 'b', { get: function () {} } satisfies PropertyDescriptor)","ext":"ts","eslint":[]}
+{"code":"Object.defineProperty(a, 'b', ({ get: function () {} }))","ext":"ts","eslint":[{"line":1,"column":34,"message":"Expected to return a value in method 'get'."}]}
+{"code":"(Object as any).defineProperty(a, 'b', { get: function () {} })","ext":"ts","eslint":[]}
+{"code":"Object!.defineProperty(a, 'b', { get: function () {} })","ext":"ts","eslint":[]}
+{"code":"Object.defineProperty!(a, 'b', { get: function () {} })","ext":"ts","eslint":[]}
+{"code":"Object.defineProperty<any>(a, 'b', { get: function () {} })","ext":"ts","eslint":[{"line":1,"column":38,"message":"Expected to return a value in method 'get'."}]}
+{"code":"Object.defineProperty(a, 'b', { get: function (): number {} })","ext":"ts","eslint":[{"line":1,"column":33,"message":"Expected to return a value in method 'get'."}]}
+{"code":"Object.defineProperty(a, 'b', { get: <T>() => {} })","ext":"ts","eslint":[{"line":1,"column":33,"message":"Expected to return a value in method 'get'."}]}
+{"code":"Object.defineProperty(a, 'b', { get(this: Foo) {} })","ext":"ts","eslint":[{"line":1,"column":33,"message":"Expected to return a value in method 'get'."}]}
+{"code":"Object.defineProperties(a, { b: { get() {} } as PropertyDescriptor, c: <any>{ get() {} }, d: { get() {} }! })","ext":"ts","eslint":[]}
+{"code":"Object.create(a, { b: { get() {} } } as PropertyDescriptorMap)","ext":"ts","eslint":[]}
+{"code":"declare const Object: any; Object.defineProperty(a, 'b', { get() {} })","ext":"ts","eslint":[]}
+{"code":"import type Object from 'x'; Object.defineProperty(a, 'b', { get() {} })","ext":"ts","eslint":[]}
+{"code":"import { type Object } from 'x'; Object.defineProperty(a, 'b', { get() {} })","ext":"ts","eslint":[]}
+{"code":"import Object = require('x'); Object.defineProperty(a, 'b', { get() {} })","ext":"ts","eslint":[]}
+{"code":"type Object = number; Object.defineProperty(a, 'b', { get() {} })","ext":"ts","eslint":[{"line":1,"column":55,"message":"Expected to return a value in method 'get'."}]}
+{"code":"interface Object { a: 1 } Object.defineProperty(a, 'b', { get() {} })","ext":"ts","eslint":[{"line":1,"column":59,"message":"Expected to return a value in method 'get'."}]}
+{"code":"namespace N { export const Object = 1 } Object.defineProperty(a, 'b', { get() {} })","ext":"ts","eslint":[{"line":1,"column":73,"message":"Expected to return a value in method 'get'."}]}
+{"code":"namespace Object { export const a = 1 } Object.defineProperty(a, 'b', { get() {} })","ext":"ts","eslint":[]}
+{"code":"enum Object { A } Object.defineProperty(a, 'b', { get() {} })","ext":"ts","eslint":[]}
+{"code":"declare enum Reflect { A } Reflect.defineProperty(a, 'b', { get() {} })","ext":"ts","eslint":[]}
+{"code":"declare function Object(): void; Object.defineProperty(a, 'b', { get() {} })","ext":"ts","eslint":[]}
+{"code":"declare class Object {} Object.defineProperty(a, 'b', { get() {} })","ext":"ts","eslint":[]}
+{"code":"function f<Object>() { Object.defineProperty(a, 'b', { get() {} }) }","ext":"ts","eslint":[{"line":1,"column":56,"message":"Expected to return a value in method 'get'."}]}
+{"code":"class A { get x() { try { let v: Foo = 1; return 1; } catch { } } }","ext":"ts","eslint":[{"line":1,"column":11,"message":"Expected getter 'x' to always return a value."}]}
+{"code":"class A { get x() { try { type T = number; return 1; } catch { } } }","ext":"ts","eslint":[{"line":1,"column":11,"message":"Expected getter 'x' to always return a value."}]}
+{"code":"class A { get x() { try { return 1 as Foo; } catch { } } }","ext":"ts","eslint":[{"line":1,"column":11,"message":"Expected getter 'x' to always return a value."}]}
+{"code":"class A { get x() { try { let v: number = 1; return 1; } catch { } } }","ext":"ts","eslint":[]}
+{"code":"class A { get x() { enum E { A } } }","ext":"ts","eslint":[{"line":1,"column":11,"message":"Expected to return a value in getter 'x'."}]}
+{"code":"class A { get x(): never { throw new Error(); } }","ext":"ts","eslint":[]}
+{"code":"class A { constructor(private y: number) {} get x() { return this.y; } }","ext":"ts","eslint":[]}
+{"code":"declare class A { get x(): number; }","ext":"ts","eslint":[]}
+{"code":"interface I { get x(): number; }","ext":"ts","eslint":[]}
+{"code":"type T = { get x(): number };","ext":"ts","eslint":[]}
+{"code":"class A { get x() { return <div<T>>{y}</div>; } get z() {} }","ext":"tsx","eslint":[{"line":1,"column":49,"message":"Expected to return a value in getter 'z'."}]}

@@ -1,0 +1,93 @@
+--- line-ignore "// @ts-ignore\nlet x: number = 'a';"
+  comments=[0..13] unterminated=false
+  directives=[Ignore 0..13]
+--- line-expect-error "// @ts-expect-error\nlet x: number = 'a';"
+  comments=[0..19] unterminated=false
+  directives=[ExpectError 0..19]
+--- three-slashes "/// @ts-ignore\nlet x;"
+  comments=[0..14] unterminated=false
+  directives=[Ignore 0..14]
+--- four-slashes "//// @ts-ignore\nlet x;"
+  comments=[0..15] unterminated=false
+  directives=[Ignore 0..15]
+--- no-space-with-reason "//@ts-expect-error: reason\nlet x;"
+  comments=[0..26] unterminated=false
+  directives=[ExpectError 0..26]
+--- tab-and-space "//\t @ts-ignore\nlet x;"
+  comments=[0..14] unterminated=false
+  directives=[Ignore 0..14]
+--- no-break-space "// @ts-ignore\nlet x;"
+  comments=[0..14] unterminated=false
+  directives=[]
+--- words-before "// x @ts-ignore\nlet x;"
+  comments=[0..15] unterminated=false
+  directives=[]
+--- space-after-at "// @ ts-ignore\nlet x;"
+  comments=[0..14] unterminated=false
+  directives=[]
+--- upper-case "// @TS-IGNORE\nlet x;"
+  comments=[0..13] unterminated=false
+  directives=[]
+--- longer-word "// @ts-ignored @ts-expect-errors\nlet x;"
+  comments=[0..32] unterminated=false
+  directives=[Ignore 0..32]
+--- nocheck-is-no-directive "// @ts-nocheck\nlet x;"
+  comments=[0..14] unterminated=false
+  directives=[]
+--- trailing-comment "let x; // @ts-ignore\nlet y;"
+  comments=[7..20] unterminated=false
+  directives=[Ignore 7..20]
+--- at-end-of-file "let x;\n// @ts-expect-error"
+  comments=[7..26] unterminated=false
+  directives=[ExpectError 7..26]
+--- block-one-line "/* @ts-ignore */\nlet x;"
+  comments=[0..16] unterminated=false
+  directives=[Ignore 0..16]
+--- block-jsdoc-one-line "/** @ts-expect-error */\nlet x;"
+  comments=[0..23] unterminated=false
+  directives=[ExpectError 0..23]
+--- block-last-line "/*\n * a\n * @ts-ignore */\nlet x;"
+  comments=[0..24] unterminated=false
+  directives=[Ignore 8..24]
+--- block-first-line-of-two "/* @ts-ignore\n */\nlet x;"
+  comments=[0..17] unterminated=false
+  directives=[]
+--- block-middle-line "/*\n * @ts-ignore\n * b\n */\nlet x;"
+  comments=[0..25] unterminated=false
+  directives=[]
+--- block-last-line-bare "/*\n@ts-expect-error*/\nlet x;"
+  comments=[0..21] unterminated=false
+  directives=[ExpectError 3..21]
+--- block-last-line-tab-stars "/*\n\t ** @ts-expect-error */\nlet x;"
+  comments=[0..27] unterminated=false
+  directives=[ExpectError 3..27]
+--- block-star-space-slash "/*\n\t * / ** @ts-ignore */\nlet x;"
+  comments=[0..25] unterminated=false
+  directives=[]
+--- block-no-break-space-on-last-line "/*\n @ts-ignore */"
+  comments=[0..18] unterminated=false
+  directives=[]
+--- block-line-separator "/* a\u2028 @ts-expect-error */\nlet x;"
+  comments=[0..27] unterminated=false
+  directives=[ExpectError 7..27]
+--- two-blocks-on-a-line "/* @ts-ignore */ /* @ts-expect-error */\nlet x;"
+  comments=[0..16 17..39] unterminated=false
+  directives=[Ignore 0..16, ExpectError 17..39]
+--- line-comment-holds-a-block "// /* @ts-ignore */\nlet x;"
+  comments=[0..19] unterminated=false
+  directives=[]
+--- crlf "// @ts-ignore\r\nlet x;\r\n/*\r\n * @ts-expect-error */\r\nlet y;\r\n"
+  comments=[0..13 23..49] unterminated=false
+  directives=[Ignore 0..13, ExpectError 27..49]
+--- carriage-return-only "/*\r * @ts-ignore */\rlet x;"
+  comments=[0..19] unterminated=false
+  directives=[Ignore 3..19]
+--- after-hashbang "#!/usr/bin/env bun\n// @ts-expect-error\nlet x: number = 'a';"
+  comments=[19..38] unterminated=false
+  directives=[ExpectError 19..38]
+--- non-ascii-before "/* é\n * é */ /*é\n@ts-ignore */\nlet x;"
+  comments=[0..14 15..33] unterminated=false
+  directives=[Ignore 20..33]
+--- mixed "// @ts-ignore\nlet a;\n/* @ts-expect-error */\nlet b;\n/*\n * a\n * @ts-ignore */\nlet c; // @ts-expect-error"
+  comments=[0..13 21..43 51..75 83..102] unterminated=false
+  directives=[Ignore 0..13, ExpectError 21..43, Ignore 59..75, ExpectError 83..102]

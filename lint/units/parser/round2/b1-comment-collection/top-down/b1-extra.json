@@ -1,0 +1,477 @@
+[
+ [
+  "lead-line-block-jsdoc",
+  "ts",
+  "// a\n/* b */ /** c */\nlet x = 1;"
+ ],
+ [
+  "lead-only-ws",
+  "ts",
+  "  \n\t let x;"
+ ],
+ [
+  "lead-none",
+  "ts",
+  "let x; // a"
+ ],
+ [
+  "lead-kinds",
+  "ts",
+  "/**/ /***/ /** d */ /* b */ // l\n/*! legal */ //! legal\n/// <reference path=\"a\" />\nlet x;"
+ ],
+ [
+  "lead-empty-file",
+  "ts",
+  ""
+ ],
+ [
+  "lead-only-comment-eof",
+  "ts",
+  "// only"
+ ],
+ [
+  "lead-only-block-eof",
+  "ts",
+  "/* only */"
+ ],
+ [
+  "lead-crlf-ls-ps",
+  "ts",
+  "// a\r\n// b // c /* d */ x; // e\r\n// f"
+ ],
+ [
+  "lead-bom",
+  "ts",
+  "﻿// a\nx;"
+ ],
+ [
+  "lead-js",
+  "js",
+  "// a\n/* b */ /** c */ x /* d */; // e"
+ ],
+ [
+  "lead-jsx",
+  "jsx",
+  "/** a */ // b\nlet e = <a/>; /* c */"
+ ],
+ [
+  "lead-dts",
+  "dts",
+  "/** a */ // b\nexport declare const x: number; /* c */"
+ ],
+ [
+  "hashbang-js",
+  "js",
+  "#!/usr/bin/env node\n// a\n/* b */ x; // c"
+ ],
+ [
+  "hashbang-ts-same-line-lookalike",
+  "ts",
+  "#!/usr/bin/env bun // not a comment /* nor */\n/* a */ x;"
+ ],
+ [
+  "hashbang-only",
+  "ts",
+  "#!/usr/bin/env bun"
+ ],
+ [
+  "hashbang-newline-only",
+  "ts",
+  "#!/usr/bin/env bun\n"
+ ],
+ [
+  "hashbang-comment-eof",
+  "ts",
+  "#!/x\n// a"
+ ],
+ [
+  "hashbang-tsx",
+  "tsx",
+  "#!/x\n/* a */ let e = <a /* b */ />; // c"
+ ],
+ [
+  "jsx-open",
+  "tsx",
+  "let e = < /*1*/ div /*2*/ a /*3*/ = /*4*/ \"b\" // 5\n  c={ /*6*/ d } /*7*/ {...e /*8*/ } /*9*/ > </div>;"
+ ],
+ [
+  "jsx-close",
+  "tsx",
+  "let e = <div></ /*1*/ div /*2*/ >; let f = <a.b></a /*3*/ . /*4*/ b // 5\n>;"
+ ],
+ [
+  "jsx-self-close",
+  "tsx",
+  "let e = <br /*1*/ / /*2*/ >; let f = <br // 3\n/>;"
+ ],
+ [
+  "jsx-fragment",
+  "tsx",
+  "let e = < /*1*/ >x</ /*2*/ >;"
+ ],
+ [
+  "jsx-member-ns",
+  "tsx",
+  "let e = <a /*1*/ . /*2*/ b /*3*/ />; let f = <n:m /*4*/ n:o /*5*/ =\"1\" />;"
+ ],
+ [
+  "jsx-text-lookalike",
+  "tsx",
+  "let e = <p>/* t */ // u {/*1*/} &amp; <b/> /* v */</p>; // 2"
+ ],
+ [
+  "jsx-attr-string-lookalike",
+  "tsx",
+  "let e = <p title=\"/* n */\" /*1*/ data-x='// n' // 2\n/>;"
+ ],
+ [
+  "jsx-nested-attr",
+  "tsx",
+  "let t = <a b={<c /*1*/ d={/*2*/ 1} /*3*/ />} /*4*/ ><e /*5*/ /></a>;"
+ ],
+ [
+  "jsx-type-args",
+  "tsx",
+  "let e = <Foo /*1*/ < /*2*/ number /*3*/ > /*4*/ a=\"1\" /*5*/ />;"
+ ],
+ [
+  "jsx-jsx-loader",
+  "jsx",
+  "let e = <div /*1*/ a=\"b\" // 2\n>{/*3*/}t /* n */</div /*4*/ >; /*5*/"
+ ],
+ [
+  "jsx-jsx-fragment",
+  "jsx",
+  "let e = < /*1*/ ><a /*2*/ /></ /*3*/ >;"
+ ],
+ [
+  "jsx-directive-in-tag",
+  "tsx",
+  "let e = <div\n  // @ts-expect-error\n  bad={1}\n  /* @ts-ignore */ worse\n/>;"
+ ],
+ [
+  "jsx-child-element-tags",
+  "tsx",
+  "let e = <a><b /*1*/ /><c /*2*/ ></c /*3*/ >{ /*4*/ x /*5*/ }</a /*6*/ >;"
+ ],
+ [
+  "targs-call",
+  "ts",
+  "f /*1*/ < /*2*/ T /*3*/ , /*4*/ U /*5*/ > /*6*/ (x);"
+ ],
+ [
+  "targs-type",
+  "ts",
+  "let x: A< /*1*/ B< /*2*/ C /*3*/ > /*4*/ > /*5*/ ;"
+ ],
+ [
+  "targs-split-shift",
+  "ts",
+  "let x: A<B<C /*1*/ >> /*2*/ = /*3*/ y; let z: A<B<C>>= /*4*/ w;"
+ ],
+ [
+  "targs-new-tagged",
+  "ts",
+  "new C /*1*/ < /*2*/ T> /*3*/ (); g /*4*/ <T /*5*/ > /*6*/ `t`;"
+ ],
+ [
+  "targs-empty",
+  "ts",
+  "let x: A< /*1*/ >; f< /*2*/ >(); let y: B<C, /*3*/ >;"
+ ],
+ [
+  "computed-alias",
+  "ts",
+  "type T = { [ /*1*/ a /*2*/ + /*3*/ b /*4*/ ] /*5*/ : 1 };"
+ ],
+ [
+  "computed-annotation",
+  "ts",
+  "let v: { [ /*1*/ a /*2*/ + /*3*/ b /*4*/ ] /*5*/ : 1 };"
+ ],
+ [
+  "computed-interface",
+  "ts",
+  "interface I { [ /*1*/ a /*2*/ + /*3*/ b /*4*/ ] /*5*/ : 1 }"
+ ],
+ [
+  "computed-class-index-type",
+  "ts",
+  "class C { [k: string]: { [ /*1*/ a /*2*/ + /*3*/ b /*4*/ ]: 1 } }"
+ ],
+ [
+  "init-fn-type-annotation",
+  "ts",
+  "let g: (a /*1*/ = /*2*/ 1 /*3*/ + /*4*/ 2 /*5*/ ) /*6*/ => void;"
+ ],
+ [
+  "init-fn-type-alias",
+  "ts",
+  "type G = (a /*1*/ = /*2*/ 1 /*3*/ + /*4*/ 2 /*5*/ ) /*6*/ => void;"
+ ],
+ [
+  "init-fn-type-interface",
+  "ts",
+  "interface I { m(a /*1*/ = /*2*/ 1 /*3*/ ): void; p: (b = /*4*/ 2 /*5*/ ) => void }"
+ ],
+ [
+  "init-ctor-type",
+  "ts",
+  "let g: new (a = /*1*/ 1 /*2*/ ) /*3*/ => X;"
+ ],
+ [
+  "init-prop-signature",
+  "ts",
+  "type U = { a: number = /*1*/ 1 /*2*/ ; b /*3*/ : 2 }; let u: { a: number = /*4*/ 1 /*5*/ };"
+ ],
+ [
+  "init-class-index",
+  "ts",
+  "class C { [k: string = /*1*/ 1 /*2*/ ]: any }"
+ ],
+ [
+  "accessor-body-annotation",
+  "ts",
+  "let o: { get x() /*1*/ { /*2*/ return 1 /*3*/ ; } /*4*/ };"
+ ],
+ [
+  "accessor-body-alias",
+  "ts",
+  "type O = { get x() /*1*/ { /*2*/ return 1 /*3*/ ; } /*4*/ set x(v) { /*5*/ } };"
+ ],
+ [
+  "accessor-body-interface",
+  "ts",
+  "interface O { get x() /*1*/ { /*2*/ return 1 /*3*/ ; } /*4*/ }"
+ ],
+ [
+  "lookalike-template",
+  "ts",
+  "x = `a ${ /*1*/ y } /* n */ // n`; t = `// n\n/* n */`; u = f`/* n */${ /*2*/ 1 }// n`;"
+ ],
+ [
+  "lookalike-template-type",
+  "ts",
+  "type S = `/* n */${ /*1*/ string /*2*/ }// n`;"
+ ],
+ [
+  "lookalike-regex",
+  "ts",
+  "r = /\\/\\* n *\\//; s = /[/*]/ /*1*/ ; t = /a/ /*2*/ / 2; u = a / b /*3*/ / c; v = /\\// /*4*/;"
+ ],
+ [
+  "lookalike-string",
+  "ts",
+  "s = '/* n */'; t = \"// n\"; u = '\\'/* n */'; /*1*/"
+ ],
+ [
+  "lookalike-js",
+  "js",
+  "r = /\\/\\* n *\\//; s = '// n'; t = `/* n */${ /*1*/ 1 }`; /*2*/"
+ ],
+ [
+  "lookalike-div-regex-after-paren",
+  "ts",
+  "if (a) /x/.test(b) /*1*/ ; c = (d) /*2*/ / e / f;"
+ ],
+ [
+  "bt-targs-fail",
+  "ts",
+  "a < /*1*/ b > /*2*/ c;"
+ ],
+ [
+  "bt-targs-kept",
+  "ts",
+  "a < /*1*/ b > /*2*/ (c);"
+ ],
+ [
+  "bt-arrow-ret-fail",
+  "ts",
+  "r = c ? (a) /*1*/ : /*2*/ b /*3*/ ;"
+ ],
+ [
+  "bt-arrow-ret-kept",
+  "ts",
+  "r = (a) /*1*/ : /*2*/ b /*3*/ => 1;"
+ ],
+ [
+  "bt-cond-arrow-kept",
+  "ts",
+  "r = c ? (a) /*1*/ : /*2*/ b /*3*/ => /*4*/ d /*5*/ : /*6*/ e;"
+ ],
+ [
+  "bt-cond-arrow-fail",
+  "ts",
+  "r = c ? (a) /*1*/ : /*2*/ b /*3*/ => /*4*/ d /*5*/ ;"
+ ],
+ [
+  "bt-fn-type-args-fail",
+  "ts",
+  "let y: ( /*1*/ a /*2*/ ) /*3*/ ;"
+ ],
+ [
+  "bt-fn-type-args-kept",
+  "ts",
+  "let y: ( /*1*/ a /*2*/ ) /*3*/ => 1;"
+ ],
+ [
+  "bt-tparams-fail",
+  "ts",
+  "k = < /*1*/ T /*2*/ > /*3*/ x;"
+ ],
+ [
+  "bt-tparams-kept",
+  "ts",
+  "k = < /*1*/ T /*2*/ > /*3*/ (x) => x;"
+ ],
+ [
+  "bt-infer-fail",
+  "ts",
+  "type A<T> = T extends [infer U extends /*1*/ string /*2*/ ? 1 : 2] ? 3 : 4;"
+ ],
+ [
+  "bt-infer-kept",
+  "ts",
+  "type A<T> = T extends [infer U extends /*1*/ string /*2*/ ] ? 3 : 4;"
+ ],
+ [
+  "bt-infer-fail-annotation",
+  "ts",
+  "let a: T extends [infer U extends /*1*/ string /*2*/ ? 1 : 2] ? 3 : 4;"
+ ],
+ [
+  "bt-infer-kept-annotation",
+  "ts",
+  "let a: T extends [infer U extends /*1*/ string /*2*/ ] ? 3 : 4;"
+ ],
+ [
+  "bt-async-call",
+  "ts",
+  "c = async /*1*/ < /*2*/ T /*3*/ >( /*4*/ x /*5*/ ) /*6*/ ;"
+ ],
+ [
+  "bt-async-arrow",
+  "ts",
+  "c = async /*1*/ < /*2*/ T /*3*/ >( /*4*/ x /*5*/ ) /*6*/ => x;"
+ ],
+ [
+  "bt-implements-expr",
+  "ts",
+  "class D implements a /*1*/ . /*2*/ b /*3*/ ( /*4*/ ) /*5*/ <T /*6*/ > /*7*/ {}"
+ ],
+ [
+  "bt-implements-type",
+  "ts",
+  "class D implements a /*1*/ . /*2*/ b /*3*/ <T /*6*/ > /*7*/ {}"
+ ],
+ [
+  "bt-iface-extends-expr",
+  "ts",
+  "interface J extends a /*1*/ . /*2*/ b /*3*/ ( /*4*/ ) /*5*/ {}"
+ ],
+ [
+  "bt-iface-extends-type",
+  "ts",
+  "interface J extends a /*1*/ . /*2*/ b /*3*/ {}"
+ ],
+ [
+  "bt-class-extends",
+  "ts",
+  "class A extends /*1*/ B /*2*/ . /*3*/ C /*4*/ < /*5*/ T /*6*/ > /*7*/ {}"
+ ],
+ [
+  "bt-paren-type-reread",
+  "ts",
+  "type G = ( /*1*/ a /*2*/ = /*3*/ 1 /*4*/ ) /*5*/ => void; type H = ( /*6*/ a /*7*/ ) /*8*/ ;"
+ ],
+ [
+  "bt-bracketed-reread",
+  "ts",
+  "type T = { [ /*1*/ k /*2*/ : /*3*/ string /*4*/ ] /*5*/ : 1; [ /*6*/ a /*7*/ . /*8*/ b /*9*/ ] /*10*/ : 2 };"
+ ],
+ [
+  "bt-import-attrs-reread",
+  "ts",
+  "type I = import(\"m\", { with: { /*1*/ type /*2*/ : /*3*/ \"json\" /*4*/ } }) /*5*/ ; let t: import(\"m\", { with: { /*6*/ a: /*7*/ \"b\" } }).Y;"
+ ],
+ [
+  "bt-tsx-generic-arrow",
+  "tsx",
+  "const f = <T /*1*/ , /*2*/ >(x: T) => x; const g = <T /*3*/ extends /*4*/ object>(x: T) => x;"
+ ],
+ [
+  "bt-tsx-element",
+  "tsx",
+  "const e = <T /*1*/ a=\"b\" /*2*/ />; const h = <T /*3*/ extends=\"x\" />;"
+ ],
+ [
+  "bt-class-index-lookahead",
+  "ts",
+  "class X { [ /*1*/ k /*2*/ : /*3*/ string /*4*/ ] /*5*/ : number; [ /*6*/ k /*7*/ ] /*8*/ = 1; }"
+ ],
+ [
+  "bt-type-as-decl",
+  "ts",
+  "type /*1*/ as /*2*/ = /*3*/ 1; interface /*4*/ as /*5*/ { } "
+ ],
+ [
+  "bt-abstract-lookahead",
+  "ts",
+  "abstract /*1*/ class C { abstract /*2*/ m(): void; } declare /*3*/ const d: number;"
+ ],
+ [
+  "bt-decorated-members",
+  "ts",
+  "class M { @d /*1*/ x /*2*/ : /*3*/ A /*4*/ | /*5*/ B /*6*/ ; @d /*7*/ m( /*8*/ @p /*9*/ a /*10*/ : C /*11*/ ) /*12*/ : /*13*/ D /*14*/ { } }"
+ ],
+ [
+  "bt-arrow-ret-lint",
+  "ts",
+  "let g = (a /*1*/ ): /*2*/ number /*3*/ => a; let h = async (b): /*4*/ Promise<void /*5*/ > /*6*/ => {};"
+ ],
+ [
+  "bt-cast-paren",
+  "ts",
+  "let u = < /*1*/ T /*2*/ > /*3*/ ( /*4*/ d /*5*/ ) /*6*/ ; let f = < /*7*/ T /*8*/ >( /*9*/ x /*10*/ ) /*11*/ => x;"
+ ],
+ [
+  "bt-is-predicate",
+  "ts",
+  "function f(keyof /*1*/ : any) /*2*/ : /*3*/ keyof /*4*/ is /*5*/ string /*6*/ { return true; }"
+ ],
+ [
+  "bt-typeof-targs",
+  "ts",
+  "let q: typeof a /*1*/ . /*2*/ b /*3*/ < /*4*/ T /*5*/ > /*6*/ ; let p = typeof c /*7*/ < /*8*/ d;"
+ ],
+ [
+  "bt-nested",
+  "ts",
+  "r = c ? (a) : b => f< /*1*/ T>( /*2*/ x) : e;"
+ ],
+ [
+  "bt-nested-tsx",
+  "tsx",
+  "r = c ? (a) : b => <i /*1*/ j={ /*2*/ k /*3*/ } /*4*/ >t /* n */ </i /*5*/ > : e;"
+ ],
+ [
+  "erased-export-declare",
+  "ts",
+  "/*1*/ export /*2*/ declare /*3*/ const /*4*/ a /*5*/ : /*6*/ number /*7*/ ; /*8*/ interface /*9*/ I /*10*/ { } /*11*/ type /*12*/ T /*13*/ = /*14*/ 1 /*15*/ ;"
+ ],
+ [
+  "erased-export-in-comment",
+  "ts",
+  "export // export\ninterface I {}\n// export\ndeclare const x: number;"
+ ],
+ [
+  "erased-decorator",
+  "ts",
+  "/*0*/ @ /*1*/ dec /*2*/ ( /*3*/ ) /*4*/ class C {} export /*5*/ @ /*6*/ ( /*7*/ dec /*8*/ ) /*9*/ class D {}"
+ ],
+ [
+  "erased-module",
+  "ts",
+  "declare /*1*/ module /*2*/ \"m\" /*3*/ { } /*4*/ declare /*5*/ global /*6*/ { } /*7*/ namespace A /*8*/ . /*9*/ B /*10*/ { } export {};"
+ ]
+]

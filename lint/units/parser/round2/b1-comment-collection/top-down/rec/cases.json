@@ -1,0 +1,166 @@
+[
+ [
+  "w1.ts",
+  "y = x /*a*/ as /*b*/ T /*c*/ ; y = x satisfies T /*d*/ ;"
+ ],
+ [
+  "w2.ts",
+  "y = x /*a*/ ! /*b*/ ; y = (x /*c*/) /*d*/ ; y = <T> /*e*/ x /*f*/ ;"
+ ],
+ [
+  "w3.ts",
+  "let v = ( /*1*/ a /*2*/ ) /*3*/ as /*4*/ T /*5*/ ; let w = b /*6*/ ! /*7*/ . c; let u = < /*8*/ T /*9*/ > /*10*/ d /*11*/ ; let s = e /*12*/ satisfies /*13*/ S /*14*/ ;"
+ ],
+ [
+  "w4.ts",
+  "let u = < /*1*/ T /*2*/ > /*3*/ ( /*4*/ d /*5*/ ) /*6*/ ; let f = < /*7*/ T /*8*/ >( /*9*/ x /*10*/ ) /*11*/ => x;"
+ ],
+ [
+  "w5.tsx",
+  "const e = <div /*1*/ >{( /*2*/ a /*3*/ ) /*4*/ as T}</div /*5*/ >;"
+ ],
+ [
+  "g1.ts",
+  "function f /*a*/ < /*b*/ T /*c*/ > /*d*/ () {} const g = < /*e*/ U /*f*/ > /*g*/ (x: U) => x;"
+ ],
+ [
+  "g2.ts",
+  "class A extends B /*a*/ <T> /*b*/ implements I /*c*/ , J<K> /*d*/ {} class D implements a /*e*/ [ /*f*/ 0 /*g*/ ] /*h*/ {}"
+ ],
+ [
+  "g3.tsx",
+  "const e = <Foo /*a*/ < /*b*/ T /*c*/ > /*d*/ a=\"1\" /*e*/ />;"
+ ],
+ [
+  "g4.ts",
+  "f /*a*/ < /*b*/ T /*c*/ > /*d*/ (x); new C /*e*/ <T> /*f*/ (); let i = f<T> /*g*/ ;"
+ ],
+ [
+  "g5.ts",
+  "/*a*/ interface I /*b*/ <T> /*c*/ { a: 1 } /*d*/ type A /*e*/ <T> /*f*/ = T;"
+ ],
+ [
+  "g6.ts",
+  "class E extends f /*1*/ ( /*2*/ ) /*3*/ < /*4*/ T /*5*/ > /*6*/ {}"
+ ],
+ [
+  "g7.ts",
+  "class D implements a /*1*/ . b /*2*/ () /*3*/ < /*4*/ T> /*5*/ {}"
+ ],
+ [
+  "g8.ts",
+  "class E extends f /*1*/ ( /*2*/ ) /*3*/ {} class F extends g /*4*/ {}"
+ ],
+ [
+  "e1.ts",
+  "/*a*/ interface I /*b*/ <T> /*c*/ { a: 1 } /*d*/ x;"
+ ],
+ [
+  "e2.ts",
+  "type A /*a*/ <T> /*b*/ = T /*c*/ ; /*d*/ type B = 1 /*e*/\nx;"
+ ],
+ [
+  "e3.ts",
+  "declare /*a*/ const v: number /*b*/ ; declare function f(): void /*c*/\ny;"
+ ],
+ [
+  "e4.ts",
+  "abstract class C { /*a*/ abstract m(): void /*b*/ ; n(): void /*c*/\n n() {} [k: string]: any /*d*/ ; }"
+ ],
+ [
+  "e5.ts",
+  "/*1*/ export /*2*/ declare /*3*/ const /*4*/ a /*5*/ : /*6*/ number /*7*/ ; /*8*/ interface /*9*/ I /*10*/ { } /*11*/ type /*12*/ T /*13*/ = /*14*/ 1 /*15*/ ;"
+ ],
+ [
+  "e6.ts",
+  "export // export\ninterface I {}\n// export\ndeclare const x: number;"
+ ],
+ [
+  "e7.ts",
+  "/*0*/ @ /*1*/ dec /*2*/ ( /*3*/ ) /*4*/ declare class C {} export /*5*/ @ /*6*/ ( /*7*/ dec /*8*/ ) /*9*/ declare class D {}"
+ ],
+ [
+  "e8.ts",
+  "declare /*1*/ module /*2*/ \"m\" /*3*/ { } /*4*/ declare /*5*/ global /*6*/ { } /*7*/ declare namespace A /*8*/ . /*9*/ B /*10*/ { } export {};"
+ ],
+ [
+  "e9.ts",
+  "import /*6*/ type /*7*/ { C } /*8*/ from /*9*/ \"y\" /*10*/ ; export /*1*/ type /*2*/ { A /*3*/ } /*4*/ from /*5*/ \"./a\" /*6*/ ; export /*1*/ as /*2*/ namespace /*3*/ Foo /*4*/ ;"
+ ],
+ [
+  "a1.ts",
+  "let x /*a*/ : /*b*/ number /*c*/ = 1; function f(this /*d*/ : /*e*/ T /*f*/, p /*g*/ ? /*h*/ : string /*i*/) /*j*/ : /*k*/ void /*l*/ {}"
+ ],
+ [
+  "a2.ts",
+  "class C { public /*a*/ readonly /*b*/ x /*c*/ ! /*d*/ : number; declare /*e*/ y /*f*/ ? /*g*/ : string; }"
+ ],
+ [
+  "a3.ts",
+  "let g = (a /*1*/ ): /*2*/ number /*3*/ => a; try {} catch ( /*4*/ e /*5*/ : /*6*/ unknown /*7*/ ) {}"
+ ],
+ [
+  "t1.ts",
+  "let v: { [ /*1*/ a /*2*/ + /*3*/ b /*4*/ ] /*5*/ : 1 };"
+ ],
+ [
+  "t2.ts",
+  "let v: { [a + b /*2*/ ]: 1 };"
+ ],
+ [
+  "t3.ts",
+  "let v: (a /*1*/ = /*2*/ 1 /*3*/ + /*4*/ 2 /*5*/ , b: X /*6*/ ) /*7*/ => void;"
+ ],
+ [
+  "t4.ts",
+  "let v: (a = 1 /*1*/ ) => void;"
+ ],
+ [
+  "t5.ts",
+  "let v: { a: number = /*1*/ 1 /*2*/ ; b /*3*/ : 2 };"
+ ],
+ [
+  "t6.ts",
+  "let v: { readonly [K in /*d*/ keyof A /*e*/ ] /*f*/ -? /*g*/ : 1 /*h*/ ; /*i*/ };"
+ ],
+ [
+  "t7.ts",
+  "let v: { [K in keyof A] ? /*g*/ : 1 };"
+ ],
+ [
+  "t8.ts",
+  "let v: import(\"m\", { with: { /*1*/ type /*2*/ : /*3*/ \"json\" /*4*/ } }) /*5*/ ;"
+ ],
+ [
+  "s1.ts",
+  "f< /*2*/ >();"
+ ],
+ [
+  "s2.ts",
+  "let x: A< /*1*/ >; let y: B<C, /*3*/ >;"
+ ],
+ [
+  "s3.ts",
+  "let x: A | /*c*/ () => void;"
+ ],
+ [
+  "s4.ts",
+  "let x: A |    () => void;"
+ ],
+ [
+  "s5.ts",
+  "let x: A & /*c*/ new () => void;"
+ ],
+ [
+  "s6.ts",
+  "let f = (a): /*c*/ => a;"
+ ],
+ [
+  "s7.ts",
+  "let f = (a): /*c*/ ;"
+ ],
+ [
+  "s8.ts",
+  "let x: /*c*/ ;"
+ ]
+]

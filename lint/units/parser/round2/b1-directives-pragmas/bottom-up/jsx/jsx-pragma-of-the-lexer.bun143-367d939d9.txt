@@ -1,0 +1,30 @@
+== block header
+"export const a = h(\"div\", null);\n"
+== block header newline after arg
+"export const a = h\n(\"div\", null);\n"
+== line header
+"export const a = h(\"div\", null);\n"
+== block after first token
+"export const b = 1;\nexport const a = h(\"div\", null);\n"
+== upper JSX
+"export const a = React.createElement(\"div\", null);\n"
+== lower jsxfrag
+"export const a = h(React.Fragment, null);\n"
+== exact jsxFrag
+"export const a = h(F, null);\n"
+== two on one line
+"export const a = h(F, null);\n"
+== hash
+"export const a = h(\"div\", null);\n"
+== email first
+"export const a = h(\"div\", null);\n"
+== last wins
+"export const a = g(\"div\", null);\n"
+== jsxImportSource
+"export const a = React.createElement(\"div\", null);\n"
+== jsxRuntime classic
+"export const a = React.createElement(\"div\", null);\n"
+== jsximportsource lower
+"export const a = React.createElement(\"div\", null);\n"
+== jsx no arg then newline
+"export const a = React.createElement(\"div\", null);\n"

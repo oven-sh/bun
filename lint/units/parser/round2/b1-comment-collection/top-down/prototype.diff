@@ -1,0 +1,476 @@
+diff -ruN /workspace/wt/parser/src/js_parser/lexer.rs js_parser/lexer.rs
+--- /workspace/wt/parser/src/js_parser/lexer.rs	2026-10-01 04:32:05.490642165 +0000
++++ js_parser/lexer.rs	2026-10-01 13:34:20.213836852 +0000
+@@ -124,6 +124,32 @@
+     pub(crate) contents: &'a [u8],
+ }
+ 
++/// Which comments `Lexer::all_comments` gets.
++#[repr(u8)]
++#[derive(Clone, Copy, PartialEq, Eq, Debug)]
++pub enum TrackComments {
++    /// None.
++    Off = 0,
++    /// Those that `next()` reads: what the character frequency of a minified build subtracts.
++    ForCharFreq = 1,
++    /// Every comment of the file, those inside a JSX tag too: a lint parse.
++    All = 2,
++}
++
++impl TrackComments {
++    #[inline]
++    pub(crate) const fn for_char_freq(minify_identifiers: bool) -> TrackComments {
++        if minify_identifiers {
++            TrackComments::ForCharFreq
++        } else {
++            TrackComments::Off
++        }
++    }
++}
++
++const _: () = assert!(core::mem::size_of::<Lexer<'static>>() == 336);
++const _: () = assert!(core::mem::size_of::<LexerSnapshot<'static>>() == 240);
++
+ /// POD snapshot of all backtrack-relevant lexer state.
+ ///
+ /// Backtracking can't snapshot the lexer with a full struct copy because
+@@ -166,7 +192,7 @@
+     pub(crate) string_literal_raw_content: &'a [u8],
+     pub(crate) string_literal_start: usize,
+     pub(crate) string_literal_raw_format: StringLiteralRawFormat,
+-    pub(crate) track_comments: bool,
++    pub(crate) track_comments: TrackComments,
+     pub(crate) track_react_suppressions: bool,
+     // Vec buffer lengths — restore() truncates back to these.
+     pub(crate) all_comments_len: usize,
+@@ -238,7 +264,7 @@
+     pub(crate) string_literal_start: usize,
+     pub(crate) string_literal_raw_format: StringLiteralRawFormat,
+     pub(crate) temp_buffer_u16: Vec<u16>,
+-    pub(crate) track_comments: bool,
++    pub(crate) track_comments: TrackComments,
+     pub(crate) track_react_suppressions: bool,
+     /// `@name`, an intrinsic in the source of one of JavaScriptCore's builtins, is a name like any other.
+     pub(crate) jsc_builtin_syntax: bool,
+@@ -405,6 +431,53 @@
+             .truncate(original.comments_to_preserve_before_len);
+     }
+ 
++    /// The comment that `next_inside_jsx_element` read goes to the list of a lint parse.
++    #[cold]
++    #[inline(never)]
++    fn push_comment_in_jsx_tag(&mut self) {
++        self.all_comments.push(self.range());
++    }
++
++    /// Every comment goes to `all_comments` from here on. `primed` is how the first token was read: where no comment was kept, the comments before it are read again.
++    #[cold]
++    #[inline(never)]
++    pub(crate) fn track_all_comments(&mut self, primed: TrackComments) {
++        self.track_comments = TrackComments::All;
++        if primed != TrackComments::Off || self.start == 0 {
++            return;
++        }
++        let mut log = Log::default();
++        let mut again = Lexer::init_without_reading(&mut log, self.source, self.arena);
++        again.track_comments = TrackComments::All;
++        again.jsc_builtin_syntax = self.jsc_builtin_syntax;
++        again.step();
++        let _ = again.next();
++        self.all_comments = core::mem::take(&mut again.all_comments);
++    }
++
++    /// The comments read since the list held `len`, for a caller that takes the lexer back and then moves it past them with `restore_past`. None unless every comment is tracked.
++    #[cold]
++    #[inline(never)]
++    pub(crate) fn comments_since(&self, len: usize) -> Vec<Range> {
++        if self.track_comments != TrackComments::All {
++            return Vec::new();
++        }
++        self.all_comments
++            .get(len..)
++            .map(<[Range]>::to_vec)
++            .unwrap_or_default()
++    }
++
++    /// Moves the lexer to `end`, a snapshot taken ahead of where it is: `passed` are the comments up to there, which stay.
++    #[cold]
++    #[inline(never)]
++    pub(crate) fn restore_past(&mut self, end: &mut LexerSnapshot<'a>, passed: Vec<Range>) {
++        self.all_comments.extend(passed);
++        end.all_comments_len = self.all_comments.len();
++        end.comments_to_preserve_before_len = self.comments_to_preserve_before.len();
++        self.restore(end);
++    }
++
+     /// Look ahead at the next n codepoints without advancing the iterator.
+     /// If fewer than n codepoints are available, then return the remainder of the string.
+     #[inline]
+@@ -1904,7 +1977,7 @@
+         let has_legal_annotation = text.len() > 2 && text[2] == b'!';
+         let is_multiline_comment = text.len() > 1 && text[1] == b'*';
+ 
+-        if self.track_comments {
++        if self.track_comments != TrackComments::Off {
+             // Save the original comment text so we can subtract comments from the
+             // character frequency analysis used by symbol minification
+             self.all_comments.push(self.range());
+@@ -2278,7 +2351,7 @@
+             string_literal_start: 0,
+             string_literal_raw_format: StringLiteralRawFormat::Ascii,
+             temp_buffer_u16: Vec::new(),
+-            track_comments: false,
++            track_comments: TrackComments::Off,
+             track_react_suppressions: false,
+             jsc_builtin_syntax: false,
+             all_comments: Vec::new(),
+@@ -2479,6 +2552,9 @@
+                                     _ => {}
+                                 }
+                             }
++                            if self.track_comments == TrackComments::All {
++                                self.push_comment_in_jsx_tag();
++                            }
+                             continue;
+                         }
+                         0x2A => {
+@@ -2510,6 +2586,9 @@
+                                     }
+                                 }
+                             }
++                            if self.track_comments == TrackComments::All {
++                                self.push_comment_in_jsx_tag();
++                            }
+                             continue;
+                         }
+                         _ => {
+diff -ruN /workspace/wt/parser/src/js_parser/p.rs js_parser/p.rs
+--- /workspace/wt/parser/src/js_parser/p.rs	2026-10-01 04:32:05.502642250 +0000
++++ js_parser/p.rs	2026-10-01 13:34:20.219422814 +0000
+@@ -231,6 +231,8 @@
+     pub generics: crate::parse::generics::Generics,
+     /// What the reference reports for the syntax errors of a lint parse, while the parse runs.
+     pub(crate) syntax_errors: crate::parse::syntax_errors::SyntaxErrors,
++    /// Every comment of a lint-parsed file, in source order.
++    pub comments: crate::parse::comments::Comments,
+     /// `Parser::parse_for_lint` made it: `Parser::parse_only` keeps no parentheses.
+     pub(crate) is_lint: bool,
+ }
+@@ -9784,7 +9786,8 @@
+         // ─── Hoisted post-init mutations (were `this.* = ...` after the
+         // literal in the by-value-return shape; now precomputed so the
+         // literal below is the *only* write to `*out`). ───
+-        lexer.track_comments = opts.features.minify_identifiers;
++        lexer.track_comments =
++            js_lexer::TrackComments::for_char_freq(opts.features.minify_identifiers);
+         let track_scope_uses = opts.bundle && !opts.features.minify_identifiers;
+         lexer.track_react_suppressions = opts.features.react_compiler.is_enabled();
+ 
+diff -ruN /workspace/wt/parser/src/js_parser/parse/comments.rs js_parser/parse/comments.rs
+--- /workspace/wt/parser/src/js_parser/parse/comments.rs	1970-01-01 00:00:00.000000000 +0000
++++ js_parser/parse/comments.rs	2026-10-01 13:34:20.235734485 +0000
+@@ -0,0 +1,74 @@
++//! The comments of a lint-parsed file: `Lexer::all_comments` with the kind of each, for the passes after the parse.
++
++use bun_ast::Range;
++
++/// What the scanner of the reference makes of a comment.
++#[repr(u8)]
++#[derive(Clone, Copy, PartialEq, Eq, Debug)]
++pub enum CommentKind {
++    /// `//` up to the line break.
++    Line,
++    /// `/*` up to `*/`.
++    Block,
++    /// A block comment that starts with `/**` and is not `/**/`.
++    JSDoc,
++}
++
++/// A comment: `start` is the offset of its first `/`, `end` the offset after its last character.
++#[derive(Clone, Copy, PartialEq, Eq, Debug)]
++pub struct Comment {
++    pub start: u32,
++    pub end: u32,
++    pub kind: CommentKind,
++}
++
++const _: () = assert!(core::mem::size_of::<Comment>() == 12);
++
++/// Every comment of a file in source order, each once. The `#!` line is none.
++#[derive(Default)]
++pub struct Comments {
++    pub list: Vec<Comment>,
++    /// How many of them stand before the first token of the file.
++    leading: u32,
++}
++
++impl Comments {
++    /// The table for `ranges`, the comments that the lexer read in `source`: `first_token` is the offset of the first token after the `#!` line.
++    #[cold]
++    #[inline(never)]
++    pub(crate) fn of(source: &[u8], ranges: &[Range], first_token: usize) -> Comments {
++        let mut list = Vec::with_capacity(ranges.len());
++        let mut leading = 0u32;
++        for range in ranges {
++            let (start, end) = (range.loc.i(), range.end_i());
++            let (Ok(start32), Ok(end32)) = (u32::try_from(start), u32::try_from(end)) else {
++                continue;
++            };
++            if end <= first_token {
++                leading += 1;
++            }
++            list.push(Comment {
++                start: start32,
++                end: end32,
++                kind: kind_at(source, start),
++            });
++        }
++        Comments { list, leading }
++    }
++
++    /// The comments before the first token of the file: what the reference reads pragmas from.
++    pub fn leading(&self) -> &[Comment] {
++        self.list.get(..self.leading as usize).unwrap_or(&[])
++    }
++}
++
++/// The kind of the comment that starts at `start`: the scanner of the reference tells JSDoc by the two characters after `/*`.
++fn kind_at(source: &[u8], start: usize) -> CommentKind {
++    if source.get(start + 1) == Some(&b'/') {
++        return CommentKind::Line;
++    }
++    if source.get(start + 2) == Some(&b'*') && source.get(start + 3) != Some(&b'/') {
++        return CommentKind::JSDoc;
++    }
++    CommentKind::Block
++}
+diff -ruN /workspace/wt/parser/src/js_parser/parse/generics.rs js_parser/parse/generics.rs
+--- /workspace/wt/parser/src/js_parser/parse/generics.rs	2026-10-01 04:32:05.504069077 +0000
++++ js_parser/parse/generics.rs	2026-10-01 13:34:20.223296608 +0000
+@@ -500,13 +500,7 @@
+             .skip(names_len)
+             .copied()
+             .collect();
+-        let comments: Vec<bun_ast::Range> = self
+-            .lexer
+-            .all_comments
+-            .iter()
+-            .skip(comments_len)
+-            .copied()
+-            .collect();
++        let passed = self.lexer.comments_since(comments_len);
+         let log = self.log();
+         let (errors_after, warnings_after) = (log.errors, log.warnings);
+         let logged: Vec<bun_ast::Msg> = if has_failed && log.msgs.len() > msgs_len {
+@@ -538,12 +532,9 @@
+             });
+         }
+ 
+-        self.lexer.all_comments.extend(comments);
+         end.is_log_disabled = is_log_disabled;
+         end.prev_error_loc = self.lexer.prev_error_loc;
+-        end.all_comments_len = self.lexer.all_comments.len();
+-        end.comments_to_preserve_before_len = self.lexer.comments_to_preserve_before.len();
+-        self.lexer.restore(&end);
++        self.lexer.restore_past(&mut end, passed);
+         let end = ts::full_start(
+             self.lexer.contents,
+             &self.lexer.all_comments,
+diff -ruN /workspace/wt/parser/src/js_parser/parse/mod.rs js_parser/parse/mod.rs
+--- /workspace/wt/parser/src/js_parser/parse/mod.rs	2026-10-01 04:32:05.505642271 +0000
++++ js_parser/parse/mod.rs	2026-10-01 13:34:20.221222006 +0000
+@@ -2,6 +2,7 @@
+ #[cfg(test)]
+ mod annotation_tests;
+ pub mod attached;
++pub mod comments;
+ pub mod erased;
+ #[cfg(test)]
+ mod erased_tests;
+@@ -449,6 +450,7 @@
+         let top_level_await_keyword = p.top_level_await_keyword;
+         // A name in what is dropped is no use of an import.
+         let parse_pass_symbol_uses = p.parse_pass_symbol_uses.take();
++        let comments_len = p.lexer.all_comments.len();
+         let snapshot = p.parser_snapshot();
+ 
+         // With the log off a missing operand goes unnoticed: the count of errors decides.
+@@ -461,6 +463,7 @@
+         let result = p.parse_expr(level);
+         let has_failed = result.is_err() || p.log().errors != errors;
+         let mut end = p.lexer.snapshot();
++        let passed = p.lexer.comments_since(comments_len);
+ 
+         // Scopes, symbols, import records and messages of what was read go away, and the lexer goes back.
+         p.restore_parser_snapshot(snapshot);
+@@ -478,12 +481,10 @@
+             });
+         }
+ 
+-        // Only the position moves: the comments inside what was read are dropped with it.
++        // Only the position moves, and a lint parse keeps the comments that were passed.
+         end.is_log_disabled = p.lexer.is_log_disabled;
+         end.prev_error_loc = p.lexer.prev_error_loc;
+-        end.all_comments_len = p.lexer.all_comments.len();
+-        end.comments_to_preserve_before_len = p.lexer.comments_to_preserve_before.len();
+-        p.lexer.restore(&end);
++        p.lexer.restore_past(&mut end, passed);
+         Ok(())
+     }
+ 
+diff -ruN /workspace/wt/parser/src/js_parser/parse/parse_entry.rs js_parser/parse/parse_entry.rs
+--- /workspace/wt/parser/src/js_parser/parse/parse_entry.rs	2026-10-01 04:32:05.515914443 +0000
++++ js_parser/parse/parse_entry.rs	2026-10-01 13:34:20.220305898 +0000
+@@ -430,7 +430,8 @@
+         let orig_error_count = log.errors;
+         let mut lexer = js_lexer::Lexer::init_without_reading(log, source, bump);
+         // Must be set before the priming `next()` so leading comments are seen.
+-        lexer.track_comments = options.features.minify_identifiers;
++        lexer.track_comments =
++            js_lexer::TrackComments::for_char_freq(options.features.minify_identifiers);
+         lexer.track_react_suppressions = options.features.react_compiler.is_enabled();
+         lexer.jsc_builtin_syntax = options.jsc_builtin_syntax;
+         lexer.step();
+@@ -561,18 +562,22 @@
+         let action_guard =
+             bun_crash_handler::scoped_action(bun_crash_handler::Action::Parse(source.path.text));
+         let is_declaration_file = TS && is_declaration_file_name(source.path.text);
++        let primed = lexer.track_comments;
+         let mut __p = init_p!(P<'_, TS, false>;
+             bump, log, source, define, lexer, options);
+         // SAFETY: `init_p!` only yields after `init` succeeded.
+         let p: &mut P<'_, TS, false> = unsafe { __p.assume_init_mut() };
+         p.starts_for_parse_only = Some(crate::p::StartsForParseOnly::for_lint());
+         p.start_syntax_errors(orig_error_count);
++        p.lexer.track_all_comments(primed);
++        let mut first_token = 0usize;
+         let parsed: Result<_, Error> = 'parse: {
+             if p.lexer.token == js_lexer::T::THashbang
+                 && let Err(err) = p.lexer.next()
+             {
+                 break 'parse Err(err.into());
+             }
++            first_token = p.lexer.start;
+             if p.log().errors > orig_error_count {
+                 break 'parse Err(crate::Error::SyntaxError);
+             }
+@@ -607,6 +612,11 @@
+         drop(action_guard);
+         let mut sidecar = p.starts_for_parse_only.take().unwrap_or_default();
+         sidecar.attached.sort();
++        sidecar.comments = crate::parse::comments::Comments::of(
++            &source.contents,
++            &p.lexer.all_comments,
++            first_token,
++        );
+         Ok(f(&ParsedForLint {
+             stmts: stmts.as_slice(),
+             scopes_in_order: p.scopes_in_order.as_slice(),
+diff -ruN /workspace/wt/parser/src/js_parser/parse/parse_skip_typescript.rs js_parser/parse/parse_skip_typescript.rs
+--- /workspace/wt/parser/src/js_parser/parse/parse_skip_typescript.rs	2026-10-01 04:32:05.521642385 +0000
++++ js_parser/parse/parse_skip_typescript.rs	2026-10-01 13:34:20.221995461 +0000
+@@ -110,6 +110,8 @@
+ /// What a reading that failed left: the lexer after it and what it logged.
+ struct FailedRead<'a> {
+     lexer: LexerSnapshot<'a>,
++    /// The comments that the reading passed, where every comment is tracked.
++    comments: Vec<bun_ast::Range>,
+     msgs: Vec<bun_ast::Msg>,
+     errors: u32,
+     warnings: u32,
+@@ -2727,10 +2729,12 @@
+     #[inline(never)]
+     fn set_aside_failed_read(&mut self, mark: &ReadMark<'a>) -> FailedRead<'a> {
+         let lexer = self.lexer.snapshot();
++        let comments = self.lexer.comments_since(mark.lexer.all_comments_len);
+         let log = self.log();
+         let first = mark.msgs_len.min(log.msgs.len());
+         let failed = FailedRead {
+             lexer,
++            comments,
+             msgs: log.msgs.split_off(first),
+             errors: log.errors,
+             warnings: log.warnings,
+@@ -2745,6 +2749,7 @@
+     fn restore_failed_read(&mut self, mark: &ReadMark<'a>, failed: FailedRead<'a>) {
+         let FailedRead {
+             mut lexer,
++            comments,
+             msgs,
+             errors,
+             warnings,
+@@ -2754,10 +2759,7 @@
+         log.msgs.extend(msgs);
+         log.errors = errors;
+         log.warnings = warnings;
+-        // The comments that the first reading passed are not collected again.
+-        lexer.all_comments_len = self.lexer.all_comments.len();
+-        lexer.comments_to_preserve_before_len = self.lexer.comments_to_preserve_before.len();
+-        self.lexer.restore(&lexer);
++        self.lexer.restore_past(&mut lexer, comments);
+     }
+ 
+     /// Reads an expression or a function block that sits inside a type and keeps the position after it, nothing else.
+@@ -2772,6 +2774,7 @@
+         let top_level_await_keyword = self.top_level_await_keyword;
+         // A name in what is dropped is no use of an import.
+         let parse_pass_symbol_uses = self.parse_pass_symbol_uses.take();
++        let comments_len = self.lexer.all_comments.len();
+         let snapshot = self.parser_snapshot();
+ 
+         // With the log off a missing operand goes unnoticed: the count of errors decides.
+@@ -2789,6 +2792,7 @@
+         };
+         let has_failed = result.is_err() || self.log().errors != errors;
+         let mut end = self.lexer.snapshot();
++        let passed = self.lexer.comments_since(comments_len);
+ 
+         // Scopes, symbols, import records and messages of what was read go away, and the lexer goes back.
+         self.restore_parser_snapshot(snapshot);
+@@ -2806,12 +2810,10 @@
+             });
+         }
+ 
+-        // Only the position moves: the comments inside what was read are dropped with it.
++        // Only the position moves, and a lint parse keeps the comments that were passed.
+         end.is_log_disabled = self.lexer.is_log_disabled;
+         end.prev_error_loc = self.lexer.prev_error_loc;
+-        end.all_comments_len = self.lexer.all_comments.len();
+-        end.comments_to_preserve_before_len = self.lexer.comments_to_preserve_before.len();
+-        self.lexer.restore(&end);
++        self.lexer.restore_past(&mut end, passed);
+         Ok(())
+     }
+ 
+diff -ruN /workspace/wt/parser/src/js_parser/parse/type_sink.rs js_parser/parse/type_sink.rs
+--- /workspace/wt/parser/src/js_parser/parse/type_sink.rs	2026-10-01 04:32:05.527642427 +0000
++++ js_parser/parse/type_sink.rs	2026-10-01 13:34:20.223166590 +0000
+@@ -1546,13 +1546,7 @@
+             .skip(names_len)
+             .copied()
+             .collect();
+-        let comments: Vec<bun_ast::Range> = self
+-            .lexer
+-            .all_comments
+-            .iter()
+-            .skip(comments_len)
+-            .copied()
+-            .collect();
++        let passed = self.lexer.comments_since(comments_len);
+         let log = self.log();
+         let (errors_after, warnings_after) = (log.errors, log.warnings);
+         let logged: Vec<bun_ast::Msg> = if has_failed && log.msgs.len() > msgs_len {
+@@ -1584,12 +1578,9 @@
+             });
+         }
+ 
+-        self.lexer.all_comments.extend(comments);
+         end.is_log_disabled = is_log_disabled;
+         end.prev_error_loc = self.lexer.prev_error_loc;
+-        end.all_comments_len = self.lexer.all_comments.len();
+-        end.comments_to_preserve_before_len = self.lexer.comments_to_preserve_before.len();
+-        self.lexer.restore(&end);
++        self.lexer.restore_past(&mut end, passed);
+         let end = ts::full_start(
+             self.lexer.contents,
+             &self.lexer.all_comments,

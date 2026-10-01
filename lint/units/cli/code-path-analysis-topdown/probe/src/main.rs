@@ -478,6 +478,10 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
             self.op("popChainContext");
             self.f();
         }
+        // `as`, `satisfies`, `!` and `<T>` are nodes of typescript-eslint around this one: their exit forwards.
+        if self.is_ts_wrapped(expr) {
+            self.f();
+        }
         if field_value {
             self.op("end");
         }

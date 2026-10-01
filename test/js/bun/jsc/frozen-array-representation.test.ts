@@ -66,11 +66,26 @@ describe("frozen arrays keep their elements in the vector", () => {
     });
 
     test("an empty array", () => {
+      "use strict";
       const a = lock(new Array()) as unknown[];
       expect(Object.isSealed(a)).toBe(name !== "non-writable length");
       expect(Object.isFrozen(a)).toBe(name === "Object.freeze");
       expect(() => a.push(1)).toThrow(TypeError);
+      expect(() => {
+        a[0] = 1;
+      }).toThrow(TypeError);
+      expect(Object.hasOwn(a, 0)).toBe(false);
       expect(a.length).toBe(0);
+      if (name === "Object.freeze" || name === "non-writable length") {
+        expect(() => {
+          a.length = 1;
+        }).toThrow(TypeError);
+        expect(a.length).toBe(0);
+      } else {
+        a.length = 1;
+        expect(a.length).toBe(1);
+        expect(Object.hasOwn(a, 0)).toBe(false);
+      }
     });
 
     test("an array that already owns a sparse map entry", () => {
@@ -293,16 +308,22 @@ describe("frozen arrays keep their elements in the vector", () => {
         "-e",
         `const { describe } = require("bun:jsc");
          Object.freeze(Array.prototype);
-         let threw = false;
-         try { Array.prototype.push.call(Array.prototype, 1); } catch (e) { threw = e instanceof TypeError; }
-         console.log(JSON.stringify({ threw, frozen: Object.isFrozen(Array.prototype), blank: describe(Array.prototype).includes("ArrayClass") }));`,
+         const threw = [];
+         for (const f of [
+           () => Array.prototype.push.call(Array.prototype, 1),
+           () => { "use strict"; Array.prototype[0] = 1; },
+           () => { "use strict"; Array.prototype.length = 1; },
+         ]) {
+           try { f(); threw.push(false); } catch (e) { threw.push(e instanceof TypeError); }
+         }
+         console.log(JSON.stringify({ threw, own: Object.hasOwn(Array.prototype, 0), length: Array.prototype.length, frozen: Object.isFrozen(Array.prototype), blank: describe(Array.prototype).includes("ArrayClass") }));`,
       ],
       env: bunEnv,
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ threw: true, frozen: true, blank: true });
+    expect(JSON.parse(stdout)).toEqual({ threw: [true, true, true], own: false, length: 0, frozen: true, blank: true });
     expect(exitCode).toBe(0);
   });
 });

@@ -592,10 +592,7 @@ impl JSMySQLConnection {
             | S::SessionSetup => {
                 this.fail(b"Connection closed", AnyMySQLErrorT::ConnectionClosed);
             }
-            S::Connected | S::Disconnected | S::Failed => {
-                let queries = this.get_queries_array();
-                this.connection_mut().clean_queue_and_close(None, queries);
-            }
+            S::Connected | S::Disconnected | S::Failed => this.clean_queue_and_close(None),
         }
         Ok(JSValue::UNDEFINED)
     }
@@ -658,6 +655,18 @@ impl JSMySQLConnection {
         self.fail_with_js_value(err);
     }
 
+    /// Rejecting a query runs JS and closing the socket raises its close event. Both reach back
+    /// into the connection, so neither runs under a `connection_mut()` borrow.
+    fn clean_queue_and_close(&self, js_reason: Option<JSValue>) {
+        self.connection
+            .get()
+            .queue
+            .clean(js_reason, self.get_queries_array());
+        let socket = self.connection.get().socket();
+        socket.close(uws::CloseKind::Normal);
+        self.connection_mut().discard_write_buffer();
+    }
+
     fn fail_with_js_value(&self, value: JSValue) {
         // Runs on every exit path. Re-enter through a raw pointer so no
         // reference is live across the potential free in `deref()`. LIFO drop
@@ -667,8 +676,7 @@ impl JSMySQLConnection {
         scopeguard::defer! {
             // `_guard` has not yet dropped, so `*p` is still live; `ParentRef`
             // yields a fresh `&Self` per access (R-2: every callee is `&self`).
-            let queries = p.get_queries_array();
-            p.connection_mut().clean_queue_and_close(Some(value), queries);
+            p.clean_queue_and_close(Some(value));
             p.update_reference_type();
         }
         self.stop_timers();

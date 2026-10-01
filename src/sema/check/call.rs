@@ -2123,6 +2123,36 @@ impl<'p> Checker<'p> {
         false
     }
 
+    /// What `inferTypeArguments` has inferred for `candidate` when it gets to argument `upto`: what the arguments before it say, but
+    /// for those that wait for the types of their parameters.
+    fn inference_from_arguments_before(
+        &mut self,
+        file: FileId,
+        candidate: SigId,
+        params: &[SigParam],
+        args: &[Arg],
+        upto: usize,
+    ) -> Inference {
+        let mut inference = Inference::new(self.sig_type_params(candidate), Some(candidate));
+        inference.any_default = self.hir(file).is_js;
+        for (j, &arg) in args[..upto].iter().enumerate() {
+            let Some(param) = self.param_type_at(params, j) else {
+                break;
+            };
+            let waits = match arg {
+                Arg::Expr(x) => self.is_context_sensitive(file, x),
+                Arg::Spread(..) => true,
+                Arg::Type(_) => false,
+            };
+            if waits || !self.has_type_variables(param) {
+                continue;
+            }
+            let ty = self.arg_type(file, arg);
+            self.infer(&mut inference, ty, param, 0);
+        }
+        inference
+    }
+
     /// The calls, and the functions that do not wait for the types of their parameters, inside the object literal `e`: like such an
     /// argument they are worked out once, for the first candidate, which expects `e` to be `context`.
     fn settle_nested_once(&mut self, file: FileId, e: ExprId, context: TypeId) {
@@ -2279,6 +2309,25 @@ impl<'p> Checker<'p> {
                             self.instantiate(t, said)
                         }
                         _ => t,
+                    };
+                    // `instantiateContextualType`: the contextual signature of a function goes by all that is inferred so far, which
+                    // is what the arguments before it say to the candidate that settles it.
+                    let t = if wanted.is_empty()
+                        && type_args.is_empty()
+                        && matches!(self.hir(file)[e].kind, ExprKind::Fn(_))
+                        && self.has_type_variables(t)
+                        && self.may_be_deferred(t)
+                    {
+                        let so_far = self.inference_from_arguments_before(
+                            file,
+                            candidates[k],
+                            list,
+                            args,
+                            i,
+                        );
+                        self.instantiate_instantiable_for_signature(&so_far, t)
+                    } else {
+                        t
                     };
                     if type_args.is_empty() && self.has_type_variables(t) {
                         let mapper = match from_result[k] {

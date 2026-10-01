@@ -1,0 +1,22 @@
+{
+  "_id": "script-path-carries-plants",
+  "name": "script-path-carries-plants",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "script-path-carries-plants",
+      "dependencies": {
+        "script-path-plants": "1.0.0"
+      },
+      "version": "1.0.0",
+      "_id": "script-path-carries-plants@1.0.0",
+      "dist": {
+        "integrity": "sha512-Kxa7ske+UjWCPpvO22dfRpaY3Hv1BVJe+8IOFbaYWgxaONq7e64xqNNd8No1pnbFyBUrQ/P8NfgTOO4bQ7rxhA==",
+        "shasum": "dad7c6f53eecd5d9386275eab8d27e05f95a22c3",
+        "tarball": "http://localhost:4873/script-path-carries-plants/-/script-path-carries-plants-1.0.0.tgz"
+      }
+    }
+  }
+}

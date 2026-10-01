@@ -1,0 +1,22 @@
+{
+  "_id": "script-path-tool",
+  "name": "script-path-tool",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "script-path-tool",
+      "bin": {
+        "script-path-tool": "tool.js"
+      },
+      "version": "1.0.0",
+      "_id": "script-path-tool@1.0.0",
+      "dist": {
+        "integrity": "sha512-os4PngtPEiKb4bW+SeaiIhs7kB4KLf3VN0JYa9c8yNqyu+e9p6v3P9pWaaEqwmMtbVQ7YCSIP2N9UCBRM3RhZQ==",
+        "shasum": "7b6454330e1cad3d594792cd56e88a0a9d23b659",
+        "tarball": "http://localhost:4873/script-path-tool/-/script-path-tool-1.0.0.tgz"
+      }
+    }
+  }
+}

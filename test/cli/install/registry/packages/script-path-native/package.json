@@ -1,0 +1,23 @@
+{
+  "_id": "script-path-native",
+  "name": "script-path-native",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "script-path-native",
+      "scripts": {
+        "preinstall": "node build.js preinstall",
+        "postinstall": "node build.js postinstall"
+      },
+      "version": "1.0.0",
+      "_id": "script-path-native@1.0.0",
+      "dist": {
+        "integrity": "sha512-nNBE7vFXCajrhhl11mKLKuCFuZ7v8YdXAvn8MCAxzZp//ONLO4Rs7P6Fto9G/9EE+GrHj7vlh9qF0io60unKWg==",
+        "shasum": "b289d59dfa490f6a7c7c41dad4acafa53b0356f5",
+        "tarball": "http://localhost:4873/script-path-native/-/script-path-native-1.0.0.tgz"
+      }
+    }
+  }
+}

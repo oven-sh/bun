@@ -1,0 +1,19 @@
+{
+  "_id": "script-path-gyp",
+  "name": "script-path-gyp",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "script-path-gyp",
+      "version": "1.0.0",
+      "_id": "script-path-gyp@1.0.0",
+      "dist": {
+        "integrity": "sha512-zjkQ7j49OqNouzZOln8wVCdpcVaS9peEaPmmHOd7q1rGIvWPLHEsCk0+RQOY4FN10SxRy2AFnGM4lSnPs/nVdg==",
+        "shasum": "ad9521ba540d1021fee4c8f87e6edf15ba3727d0",
+        "tarball": "http://localhost:4873/script-path-gyp/-/script-path-gyp-1.0.0.tgz"
+      }
+    }
+  }
+}

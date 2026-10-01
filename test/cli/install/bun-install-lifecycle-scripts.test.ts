@@ -1,6 +1,6 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { exists, mkdir, rm, writeFile } from "fs/promises";
+import { exists, mkdir, rm, stat, symlink, writeFile } from "fs/promises";
 import {
   VerdaccioRegistry,
   assertManifestsPopulated,
@@ -12,7 +12,7 @@ import {
   runBunInstall,
 } from "harness";
 import { constants as osConstants } from "os";
-import { join, sep } from "path";
+import { delimiter, join, sep } from "path";
 
 var verdaccio = new VerdaccioRegistry();
 
@@ -61,11 +61,11 @@ type TestCtx = {
   [Symbol.dispose](): void;
 };
 
-async function setupTest(): Promise<TestCtx> {
+async function setupTest(linker: "hoisted" | "isolated" = "hoisted"): Promise<TestCtx> {
   await acquireSlot();
   let released = false;
   try {
-    const { packageDir, packageJson } = await verdaccio.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+    const { packageDir, packageJson } = await verdaccio.createTestDir({ bunfigOpts: { linker } });
     const env: Record<string, string> = {
       ...baseEnv,
       BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
@@ -298,6 +298,235 @@ test.concurrent("node-gyp shim directory added to lifecycle script PATH gets a r
   const nowNs = BigInt(Date.now()) * 1_000_000n;
   const distance = derived > nowNs ? derived - nowNs : nowNs - derived;
   expect(distance > 21_600_000_000_000n).toBe(true);
+});
+
+// The `script-path-*` packages come from registry/packages/create-script-path-packages.ts.
+// script-path-plants has no lifecycle script. Its `bin` map claims `node`, `bash` and
+// `script-path-tool`, and each of them appends its own name to `planted.txt`.
+describe.concurrent("lifecycle script PATH", () => {
+  const built = { "built.txt": "preinstall\npostinstall\n" };
+  const tool = { "tool.txt": "script-path-tool@1.0.0\n" };
+
+  async function bun({ packageDir, env }: TestCtx, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out, err, exitCode };
+  }
+
+  // The `.txt` files that the scripts wrote into the package `name`, or into the project.
+  async function written({ packageDir }: TestCtx, name?: string) {
+    const dir = name ? join(packageDir, "node_modules", name) : packageDir;
+    const files: Record<string, string> = {};
+    for (const entry of await readdirSorted(dir)) {
+      if (entry.endsWith(".txt")) files[entry] = await file(join(dir, entry)).text();
+    }
+    return files;
+  }
+
+  test.each([
+    ["transitive", "script-path-carries-plants"],
+    ["direct", "script-path-plants"],
+  ])("a dependency's scripts do not run a `node` bin from a %s dependency of the project", async (_, plants) => {
+    using ctx = await setupTest();
+    await writeFile(
+      ctx.packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "script-path-native": "1.0.0", [plants]: "1.0.0" },
+        trustedDependencies: ["script-path-native"],
+      }),
+    );
+
+    const { err, exitCode } = await bun(ctx, "install");
+    expect(await written(ctx, "script-path-native")).toEqual(built);
+    // The bin is still linked. The scripts of script-path-native do not look there first.
+    expect(await readdirSorted(join(ctx.packageDir, "node_modules", ".bin"))).toContain(
+      isWindows ? "node.exe" : "node",
+    );
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(["hoisted", "isolated"] as const)(
+    "a dependency added after a `node` bin is in node_modules/.bin (%s linker)",
+    async linker => {
+      using ctx = await setupTest(linker);
+      const dependencies = { "script-path-plants": "1.0.0" };
+      await writeFile(ctx.packageJson, JSON.stringify({ name: "foo", dependencies }));
+      expect(await bun(ctx, "install")).toMatchObject({ exitCode: 0 });
+
+      await writeFile(
+        ctx.packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: { ...dependencies, "script-path-native": "1.0.0" },
+          trustedDependencies: ["script-path-native"],
+        }),
+      );
+      const { err, exitCode } = await bun(ctx, "install");
+      expect(await written(ctx, "script-path-native")).toEqual(built);
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test("a dependency's script runs the bin of its own dependency, not another with the same name", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    // script-path-plants sorts before script-path-tool, so its `script-path-tool` bin is
+    // the one in the project's node_modules/.bin.
+    await writeFile(
+      ctx.packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "script-path-uses-tool": "1.0.0", "script-path-plants": "1.0.0" },
+        trustedDependencies: ["script-path-uses-tool"],
+      }),
+    );
+    if (!isWindows) {
+      const userBin = join(packageDir, "user-bin");
+      await mkdir(userBin);
+      await writeFile(join(userBin, "script-path-tool"), "#!/bin/sh\necho user > user.txt\n", { mode: 0o755 });
+      env.PATH = userBin + delimiter + env.PATH;
+    }
+
+    const { err, exitCode } = await bun(ctx, "install");
+    expect(await written(ctx, "script-path-uses-tool")).toEqual(tool);
+    if (!isWindows) {
+      // The tarball has tool.js at 0644. Only the link in the `.bin` of script-path-uses-tool
+      // points at it, and that link makes it executable within the umask.
+      const { mode } = await stat(join(packageDir, "node_modules", "script-path-tool", "tool.js"));
+      expect(mode & 0o777).toBe(0o777 & ~process.umask());
+    }
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(["hoisted", "isolated"] as const)("`bun pm trust` (%s linker)", async linker => {
+    using ctx = await setupTest(linker);
+    await writeFile(
+      ctx.packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "script-path-native": "1.0.0",
+          "script-path-uses-tool": "1.0.0",
+          "script-path-plants": "1.0.0",
+        },
+      }),
+    );
+    expect(await bun(ctx, "install")).toMatchObject({ exitCode: 0 });
+    expect(await written(ctx, "script-path-native")).toEqual({});
+
+    const { err, exitCode } = await bun(ctx, "pm", "trust", "script-path-native", "script-path-uses-tool");
+    expect({
+      native: await written(ctx, "script-path-native"),
+      usesTool: await written(ctx, "script-path-uses-tool"),
+    }).toEqual({ native: built, usesTool: tool });
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  });
+
+  test("`bun pm trust` finds the bin of a store entry's own dependency (isolated linker)", async () => {
+    using ctx = await setupTest("isolated");
+    await writeFile(
+      ctx.packageJson,
+      JSON.stringify({ name: "foo", dependencies: { "script-path-uses-tool": "1.0.0" } }),
+    );
+    expect(await bun(ctx, "install")).toMatchObject({ exitCode: 0 });
+
+    const { err, exitCode } = await bun(ctx, "pm", "trust", "script-path-uses-tool");
+    expect(await written(ctx, "script-path-uses-tool")).toEqual(tool);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  });
+
+  test("an install that `bun run` starts", async () => {
+    using ctx = await setupTest();
+    await writeFile(
+      ctx.packageJson,
+      JSON.stringify({
+        name: "foo",
+        scripts: { setup: `${bunExe()} install` },
+        dependencies: { "script-path-native": "1.0.0", "script-path-plants": "1.0.0" },
+        trustedDependencies: ["script-path-native"],
+      }),
+    );
+    expect(await bun(ctx, "install")).toMatchObject({ exitCode: 0 });
+
+    // `bun run` puts node_modules/.bin, with the `node` and `bash` bins in it, at the
+    // front of the PATH that the install inherits.
+    await rm(join(ctx.packageDir, "node_modules", "script-path-native"), { recursive: true, force: true });
+    const { err, exitCode } = await bun(ctx, "run", "setup");
+    expect(await written(ctx, "script-path-native")).toEqual(built);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  });
+
+  // The shim runs `bun x node-gyp`, so `bun` on PATH has to be the bun under test.
+  test.skipIf(isWindows)("`node-gyp rebuild` through bun's node-gyp shim", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    const userBin = join(packageDir, "user-bin");
+    await mkdir(userBin);
+    await symlink(bunExe(), join(userBin, "bun"));
+    env.PATH = userBin + delimiter + env.PATH;
+    env.BUN_CONFIG_REGISTRY = verdaccio.registryUrl();
+    await writeFile(
+      ctx.packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "script-path-gyp": "1.0.0", "script-path-carries-plants": "1.0.0" },
+        trustedDependencies: ["script-path-gyp"],
+      }),
+    );
+
+    const { err, exitCode } = await bun(ctx, "install");
+    expect(await written(ctx, "script-path-gyp")).toEqual({});
+    expect(await exists(join(packageDir, "node_modules", "script-path-gyp", "build.node"))).toBeTrue();
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("the project's scripts and a node_modules/.bin above the project", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    const outerBin = join(packageDir, "node_modules", ".bin");
+    await mkdir(outerBin, { recursive: true });
+    await Promise.all([
+      writeFile(join(outerBin, "node"), "#!/bin/sh\necho node >> planted.txt\n", { mode: 0o755 }),
+      writeFile(join(outerBin, "outer-tool"), "#!/bin/sh\necho outer-tool > outer.txt\n", { mode: 0o755 }),
+    ]);
+
+    const project = { ...ctx, packageDir: join(packageDir, "project") };
+    await mkdir(project.packageDir);
+    await Promise.all([
+      verdaccio.writeBunfig(project.packageDir, { linker: "hoisted" }),
+      writeFile(
+        join(project.packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          scripts: {
+            postinstall: `node -e "require('fs').writeFileSync('built.txt', 'postinstall')" && outer-tool`,
+          },
+        }),
+      ),
+    ]);
+
+    const { err, exitCode } = await bun(project, "install");
+    // `node` is on the user's PATH, which comes first. `outer-tool` is only in the
+    // directory above, which stays on PATH behind it.
+    expect(await written(project)).toEqual({ "built.txt": "postinstall", "outer.txt": "outer-tool\n" });
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  });
 });
 
 test.concurrent("default trusted dependencies require the canonical registry tarball URL", async () => {

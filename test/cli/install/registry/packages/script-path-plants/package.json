@@ -1,0 +1,24 @@
+{
+  "_id": "script-path-plants",
+  "name": "script-path-plants",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "script-path-plants",
+      "bin": {
+        "node": "plant.sh",
+        "bash": "plant.sh",
+        "script-path-tool": "plant.sh"
+      },
+      "version": "1.0.0",
+      "_id": "script-path-plants@1.0.0",
+      "dist": {
+        "integrity": "sha512-5hdkY3wpWnSADCWu6NkVicW3RTb6+znBlY1B+WA2BgoOEhF5Ya4VfbJyaGj4aQQ+rO6JmtWM90p6Hu2Bq9Yneg==",
+        "shasum": "261d0eca7fcbc46180e40319ddcdcdf983172043",
+        "tarball": "http://localhost:4873/script-path-plants/-/script-path-plants-1.0.0.tgz"
+      }
+    }
+  }
+}

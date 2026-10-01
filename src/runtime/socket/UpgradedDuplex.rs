@@ -740,7 +740,7 @@ fn on_end(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let this = unsafe { &*self_ptr.cast::<UpgradedDuplex>() };
 
         this.transport_eof.set(true);
-        // Node's JSStreamSocket reports the EOF inside the transport's 'end' too.
+        // Like node's JSStreamSocket. Ahead of staged bytes too: no handshake can complete after it.
         (this.handlers.on_end)(this.handlers.ctx);
     }
     Ok(JSValue::UNDEFINED)

@@ -1,0 +1,462 @@
+## a start of a heritage entry or of a decorator: isStartOfLeftHandSideExpression
+A  "class C extends +a {}"  || go: TS1109@16+1 TS1005@19+1 "Expression expected."  || tsc: TS1109@16+1 TS1005@19+1  || lint: parses  || plain: parses
+A  "class C extends ~a {}"  || go: TS1109@16+1 TS1005@19+1 "Expression expected."  || tsc: TS1109@16+1 TS1005@19+1  || lint: parses  || plain: parses
+A  "class C extends --a {}"  || go: TS1109@16+2 TS1005@20+1 "Expression expected."  || tsc: TS1109@16+2 TS1005@20+1  || lint: parses  || plain: parses
+!  "class C extends await a {}"  || go: TS1005@22+1 "',' expected."  || tsc: TS1005@22+1  || lint: nocode [@22+1 "await" can only be used inside an "async" function] (3 msgs)  || plain: parses
+ok "class C extends yield {}"  || go: parses  || tsc: parses; checker TS1213@16+5 "Identifier expected. 'yield' is a reserved word in strict mode. Class "  || lint: parses  || plain: parses
+!  "class C extends <T,>(a) => a {}"  || go: TS1109@16+1 TS1005@29+1 "Expression expected."  || tsc: TS1109@16+1 TS1005@29+1  || lint: nocode [@24+2 Unexpected =>]  || plain: rejects [@24+2 Unexpected =>]
+ok "class C extends new.target {}"  || go: parses  || tsc: parses; checker TS17013@16+10 "Meta-property 'new.target' is only allowed in the body of a function d"  || lint: parses  || plain: parses
+ok "class C extends async function() {} {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C extends async {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+!  "class C extends import {}"  || go: TS1109@16+6 TS1005@25+0 "Expression expected."  || tsc: TS1109@16+6 TS1005@25+0  || lint: TS1005@23+1 [@23+1 Expected "(" but found "{"] (2 msgs)  || plain: rejects [@23+1 Expected "(" but found "{"]
+ok "class C extends import.meta.x {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C extends function* () {} {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C extends /=/ {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C extends let {}"  || go: parses  || tsc: parses; checker TS1213@16+3 "Identifier expected. 'let' is a reserved word in strict mode. Class de"  || lint: parses  || plain: parses
+ok "class C extends static {}"  || go: parses  || tsc: parses; checker TS1213@16+6 "Identifier expected. 'static' is a reserved word in strict mode. Class"  || lint: parses  || plain: parses
+ok "class C extends interface {}"  || go: parses  || tsc: parses; checker TS1213@16+9 "Identifier expected. 'interface' is a reserved word in strict mode. Cl"  || lint: parses  || plain: parses
+ok "class C extends of {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C extends type {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C extends abstract {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+=  "class C extends in {}"  || go: TS1109@16+2 "Expression expected."  || tsc: TS1109@16+2  || lint: TS1109@16+2 [@16+2 Unexpected in]  || plain: rejects [@16+2 Unexpected in]
+=  "class C extends instanceof {}"  || go: TS1109@16+10 "Expression expected."  || tsc: TS1109@16+10  || lint: TS1109@16+10 [@16+10 Unexpected instanceof]  || plain: rejects [@16+10 Unexpected instanceof]
+=  "class C extends var {}"  || go: TS1109@16+3 "Expression expected."  || tsc: TS1109@16+3  || lint: TS1109@16+3 [@16+3 Unexpected var]  || plain: rejects [@16+3 Unexpected var]
+=  "class C extends if {}"  || go: TS1109@16+2 TS1005@19+1 TS1005@21+0 "Expression expected."  || tsc: TS1109@16+2 TS1005@19+1  || lint: TS1109@16+2 [@16+2 Unexpected if]  || plain: rejects [@16+2 Unexpected if]
+=  "class C extends ) {}"  || go: TS1109@16+1 "Expression expected."  || tsc: TS1109@16+1  || lint: TS1109@16+1 [@16+1 Unexpected )]  || plain: rejects [@16+1 Unexpected )]
+=  "class C extends ; {}"  || go: TS1109@16+1 "Expression expected."  || tsc: TS1109@16+1  || lint: TS1109@16+1 [@16+1 Unexpected ;]  || plain: rejects [@16+1 Unexpected ;]
+=  "class C extends = {}"  || go: TS1109@16+1 "Expression expected."  || tsc: TS1109@16+1  || lint: TS1109@16+1 [@16+1 Unexpected =]  || plain: rejects [@16+1 Unexpected =]
+=  "class C extends => {}"  || go: TS1109@16+2 "Expression expected."  || tsc: TS1109@16+2  || lint: TS1109@16+2 [@16+2 Unexpected =>]  || plain: rejects [@16+2 Unexpected =>]
+=  "class C extends ... {}"  || go: TS1109@16+3 "Expression expected."  || tsc: TS1109@16+3  || lint: TS1109@16+3 [@16+3 Unexpected ...]  || plain: rejects [@16+3 Unexpected ...]
+=  "class C extends ?.a {}"  || go: TS1109@16+2 "Expression expected."  || tsc: TS1109@16+2  || lint: TS1109@16+2 [@16+2 Unexpected ?.]  || plain: rejects [@16+2 Unexpected ?.]
+=  "class C extends . {}"  || go: TS1109@16+1 "Expression expected."  || tsc: TS1109@16+1  || lint: TS1109@16+1 [@16+1 Unexpected .]  || plain: rejects [@16+1 Unexpected .]
+=  "class C extends * {}"  || go: TS1109@16+1 "Expression expected."  || tsc: TS1109@16+1  || lint: TS1109@16+1 [@16+1 Unexpected *]  || plain: rejects [@16+1 Unexpected *]
+!  "class C extends + {}"  || go: TS1109@16+1 "Expression expected."  || tsc: TS1109@16+1  || lint: TS1005@20+0 [@20+0 Expected "{" but found end of file]  || plain: rejects [@20+0 Expected "{" but found end of file]
+ok "class C extends true {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C extends false {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C extends 1n {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C extends {a: 1} {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+D  "class C extends {}, B {}"  || go: parses  || tsc: parses; checker TS1174@20+1 "Classes can only extend a single class."  || lint: TS1005@18+1 [@18+1 Expected "{" but found ","] (2 msgs)  || plain: rejects [@18+1 Expected "{" but found ","]
+ok "class C extends {} implements I {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+A  "class C extends {}.x {}"  || go: TS1128@18+1 TS1434@19+1 "Declaration or statement expected."  || tsc: TS1128@18+1 TS1434@19+1  || lint: parses  || plain: parses
+D  "class C extends {} extends B {}"  || go: parses  || tsc: parses; checker TS1172@19+7 "'extends' clause already seen."  || lint: TS1005@19+7 [@19+7 Expected "{" but found "extends"] (2 msgs)  || plain: rejects [@19+7 Expected "{" but found "extends"]
+ok "class C extends {}\n{}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+!  "class C extends {"  || go: TS1005@17+0 "'}' expected."  || tsc: TS1005@17+0  || lint: TS1003@17+0 [@17+0 Expected identifier but found end of file]  || plain: rejects [@17+0 Expected identifier but found end of file]
+D  "class C extends { }"  || go: parses  || tsc: parses; checker TS1097@15+0 "'extends' list cannot be empty."  || lint: TS1005@19+0 [@19+0 Expected "{" but found end of file]  || plain: rejects [@19+0 Expected "{" but found end of file]
+ok "class C extends {a} {}"  || go: parses  || tsc: parses; checker TS18004@17+1 "No value exists in scope for the shorthand property 'a'. Either declar"  || lint: parses  || plain: parses
+=  "class C extends {a}"  || go: TS1005@19+0 "'{' expected."  || tsc: TS1005@19+0  || lint: TS1005@19+0 [@19+0 Expected "{" but found end of file]  || plain: rejects [@19+0 Expected "{" but found end of file]
+ok "class C implements {} {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C implements {}, A {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+D  "class C implements {} extends B {}"  || go: parses  || tsc: parses; checker TS1173@22+7 "'extends' clause must precede 'implements' clause."  || lint: TS1005@22+7 [@22+7 Expected "{" but found "extends"] (2 msgs)  || plain: rejects [@32+1 Expected "?" but found "{"]
+ok "class C implements {a: string} {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C implements A, {} {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+A  "class C implements +a {}"  || go: TS1109@19+1 TS1005@22+1 "Expression expected."  || tsc: TS1109@19+1 TS1005@22+1  || lint: parses  || plain: parses
+A  "class C implements !a {}"  || go: TS1109@19+1 TS1005@22+1 "Expression expected."  || tsc: TS1109@19+1 TS1005@22+1  || lint: parses  || plain: parses
+!  "class C implements await a {}"  || go: TS1005@25+1 "',' expected."  || tsc: TS1005@25+1  || lint: nocode [@25+1 "await" can only be used inside an "async" function] (3 msgs)  || plain: parses
+A  "class C implements <T>a {}"  || go: TS1109@19+1 TS1005@24+1 "Expression expected."  || tsc: TS1109@19+1 TS1005@24+1  || lint: parses  || plain: parses
+A  "class C implements #a {}"  || go: TS1109@19+2 TS1005@22+1 "Expression expected."  || tsc: TS1109@19+2 TS1005@22+1  || lint: parses  || plain: rejects [@22+1 Unexpected {]
+A  "class C implements super {}"  || go: TS1034@25+1 "'super' must be followed by an argument list or member access."  || tsc: TS1034@25+1  || lint: parses  || plain: rejects [@25+1 Unexpected {]
+ok "class C implements new A {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C implements function() {} {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C implements class {} {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C implements a`b` {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C implements a!.b {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C implements A.B {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C implements A.B.C<D, E> {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C implements A<B<C>> {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+=  "class C implements A<B>>{}"  || go: TS1005@23+1 "',' expected."  || tsc: TS1005@23+1  || lint: TS1005@23+1 [@23+1 Expected "{" but found ">"] (3 msgs)  || plain: rejects [@23+1 Expected "{" but found ">"]
+ok "class C implements a.b?.c {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C implements a[b] {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+A  "class C implements typeof a.b {}"  || go: TS1109@19+6 TS1005@30+1 "Expression expected."  || tsc: TS1109@19+6 TS1005@30+1  || lint: parses  || plain: parses
+ok "class C implements yield {}"  || go: parses  || tsc: parses; checker TS1213@19+5 "Identifier expected. 'yield' is a reserved word in strict mode. Class "  || lint: parses  || plain: parses
+A  "function* g() { class C implements yield {} }"  || go: TS1109@35+5 "Expression expected."  || tsc: TS1109@35+5  || lint: parses  || plain: parses
+A  "async function f() { class C implements await {} }"  || go: TS1109@40+5 "Expression expected."  || tsc: TS1109@40+5  || lint: parses  || plain: parses
+ok "class C implements async {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+!  "class C implements import {}"  || go: TS1109@19+6 TS1005@28+0 "Expression expected."  || tsc: TS1109@19+6 TS1005@28+0  || lint: TS1005@26+1 [@26+1 Expected "(" but found "{"] (2 msgs)  || plain: rejects [@26+1 Expected "(" but found "{"]
+ok "class C implements of, type, abstract {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C implements extends {}"  || go: parses  || tsc: parses; checker TS1097@18+0 "'implements' list cannot be empty." TS1173@19+7 "'extends' clause must precede 'implements' clause."  || lint: parses  || plain: rejects [@19+7 Unexpected extends]
+ok "class C implements implements {}"  || go: parses  || tsc: parses; checker TS1097@18+0 "'implements' list cannot be empty." TS1175@19+10 "'implements' clause already seen."  || lint: parses  || plain: parses
+D  "class C implements A extends {}"  || go: parses  || tsc: parses; checker TS1173@21+7 "'extends' clause must precede 'implements' clause."  || lint: TS1005@21+7 [@21+7 Expected "{" but found "extends"] (3 msgs)  || plain: rejects [@31+0 Expected "?" but found end of file]
+D  "class C extends A implements B extends C {}"  || go: parses  || tsc: parses; checker TS1172@31+7 "'extends' clause already seen."  || lint: TS1005@31+7 [@31+7 Expected "{" but found "extends"] (2 msgs)  || plain: rejects [@41+1 Expected "?" but found "{"]
+D  "class C extends A extends B extends C {}"  || go: parses  || tsc: parses; checker TS1172@18+7 "'extends' clause already seen."  || lint: TS1005@18+7 [@18+7 Expected "{" but found "extends"] (3 msgs)  || plain: rejects [@18+7 Expected "{" but found "extends"]
+A  "@+a class C {}"  || go: TS1109@1+1 TS1005@4+5 "Expression expected."  || tsc: TS1109@1+1 TS1005@4+5  || lint: parses  || plain: parses
+A  "@!a class C {}"  || go: TS1109@1+1 TS1146@2+0 "Expression expected."  || tsc: TS1109@1+1 TS1146@2+0  || lint: parses  || plain: parses
+A  "@typeof a class C {}"  || go: TS1109@1+6 TS1005@10+5 "Expression expected."  || tsc: TS1109@1+6 TS1005@10+5  || lint: parses  || plain: parses
+A  "@<T>a class C {}"  || go: TS1109@1+1 TS1005@6+5 "Expression expected."  || tsc: TS1109@1+1 TS1005@6+5  || lint: parses  || plain: parses
+D  "@#a class C {}"  || go: parses  || tsc: parses; checker TS1451@1+2 "Private identifiers are only allowed in class bodies and may only be u" TS1497@1+2 "Expression must be enclosed in parentheses to be used as a decorator."  || lint: nocode [@1+2 Unexpected #a]  || plain: rejects [@1+2 Unexpected #a]
+A  "class C { @-a m() {} }"  || go: TS1109@11+1 TS1005@14+1 TS1005@18+1 "Expression expected."  || tsc: TS1109@11+1 TS1005@14+1  || lint: parses  || plain: parses
+A  "class C { m(@-a x) {} }"  || go: TS1109@13+1 TS1005@16+1 TS1128@17+1 "Expression expected."  || tsc: TS1109@13+1 TS1005@16+1  || lint: parses  || plain: parses
+!  "function* g() { @yield class C {} }"  || go: TS1109@17+5 "Expression expected."  || tsc: TS1109@17+5  || lint: nocode [@17+5 Cannot use a "yield" here without parentheses] (2 msgs)  || plain: rejects [@17+5 Cannot use a "yield" here without parentheses]
+!  "@async () => {} class C {}"  || go: TS1146@9+0 TS1128@10+2 "Declaration expected."  || tsc: TS1146@9+0 TS1128@10+2  || lint: nocode [@10+2 Unexpected =>]  || plain: rejects [@10+2 Unexpected =>]
+ok "@a.b?.c class C {}"  || go: parses  || tsc: parses; checker TS1497@1+6 "Expression must be enclosed in parentheses to be used as a decorator."  || lint: parses  || plain: parses
+ok "@(a, b) class C {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "@a() class C {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+A  "@++a class C {}"  || go: TS1109@1+2 TS1005@5+5 "Expression expected."  || tsc: TS1109@1+2 TS1005@5+5  || lint: parses  || plain: parses
+A  "@void 0 class C {}"  || go: TS1109@1+4 TS1005@8+5 "Expression expected."  || tsc: TS1109@1+4 TS1005@8+5  || lint: parses  || plain: parses
+A  "@delete a.b class C {}"  || go: TS1109@1+6 TS1005@12+5 "Expression expected."  || tsc: TS1109@1+6 TS1005@12+5  || lint: parses  || plain: parses
+ok "@new A class C {}"  || go: parses  || tsc: parses; checker TS1497@1+5 "Expression must be enclosed in parentheses to be used as a decorator."  || lint: parses  || plain: parses
+ok "@a`b` class C {}"  || go: parses  || tsc: parses; checker TS1497@1+4 "Expression must be enclosed in parentheses to be used as a decorator."  || lint: parses  || plain: parses
+ok "@a! class C {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "@a!.b class C {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "@a<T>() class C {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "@import('x') class C {}"  || go: parses  || tsc: parses; checker TS1497@1+11 "Expression must be enclosed in parentheses to be used as a decorator."  || lint: parses  || plain: parses
+ok "@{} class C {}"  || go: parses  || tsc: parses; checker TS1497@1+2 "Expression must be enclosed in parentheses to be used as a decorator."  || lint: parses  || plain: parses
+!  "@[a][0] class C {}"  || go: TS1146@4+0 TS1005@8+5 "Declaration expected."  || tsc: TS1146@4+0 TS1005@8+5  || lint: TS1005@4+1 [@4+1 Expected "class" but found "["] (4 msgs)  || plain: rejects [@4+1 Expected "class" but found "["]
+ok "@/a/ class C {}"  || go: parses  || tsc: parses; checker TS1497@1+3 "Expression must be enclosed in parentheses to be used as a decorator."  || lint: parses  || plain: parses
+ok "@'a' class C {}"  || go: parses  || tsc: parses; checker TS1497@1+3 "Expression must be enclosed in parentheses to be used as a decorator."  || lint: parses  || plain: parses
+ok "@1 class C {}"  || go: parses  || tsc: parses; checker TS1497@1+1 "Expression must be enclosed in parentheses to be used as a decorator."  || lint: parses  || plain: parses
+ok "@null class C {}"  || go: parses  || tsc: parses; checker TS1497@1+4 "Expression must be enclosed in parentheses to be used as a decorator."  || lint: parses  || plain: parses
+ok "@this class C {}"  || go: parses  || tsc: parses; checker TS1497@1+4 "Expression must be enclosed in parentheses to be used as a decorator."  || lint: parses  || plain: parses
+ok "@function f() {} class C {}"  || go: parses  || tsc: parses; checker TS1329@0+16 "'function f() {}' accepts too few arguments to be used as a decorator " TS1497@10+1 "Expression must be enclosed in parentheses to be used as a decorator."  || lint: parses  || plain: parses
+ok "@class {} class C {}"  || go: parses  || tsc: parses; checker TS1238@1+5 "Unable to resolve signature of class decorator when called as an expre" TS1497@1+5 "Expression must be enclosed in parentheses to be used as a decorator."  || lint: parses  || plain: parses
+!  "@@a class C {}"  || go: TS1146@14+0 "Declaration expected."  || tsc: TS1146@14+0  || lint: TS1005@14+0 [@14+0 Expected "class" but found end of file]  || plain: rejects [@14+0 Expected "class" but found end of file]
+A  "@a @-b class C {}"  || go: TS1109@4+1 TS1005@7+5 "Expression expected."  || tsc: TS1109@4+1 TS1005@7+5  || lint: parses  || plain: parses
+A  "interface I extends +a {}"  || go: TS1109@20+1 TS1005@23+1 "Expression expected."  || tsc: TS1109@20+1 TS1005@23+1  || lint: parses  || plain: parses
+A  "interface I extends !a {}"  || go: TS1109@20+1 TS1005@23+1 "Expression expected."  || tsc: TS1109@20+1 TS1005@23+1  || lint: parses  || plain: parses
+A  "interface I extends <T>a {}"  || go: TS1109@20+1 TS1005@25+1 "Expression expected."  || tsc: TS1109@20+1 TS1005@25+1  || lint: parses  || plain: parses
+!  "interface I extends #a {}"  || go: TS1109@20+2 TS1005@23+1 "Expression expected."  || tsc: TS1109@20+2 TS1005@23+1  || lint: nocode [@20+2 Unexpected #a] (2 msgs)  || plain: rejects [@20+2 Unexpected #a]
+ok "interface I extends {} {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "interface I extends {}, A {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+=  "interface I extends {a: 1}"  || go: TS1005@26+0 "'{' expected."  || tsc: TS1005@26+0  || lint: TS1005@26+0 [@26+0 Expected "{" but found end of file]  || plain: rejects [@26+0 Expected "{" but found end of file]
+A  "interface I extends readonly A[] {}"  || go: TS1005@29+1 TS1011@31+0 "',' expected."  || tsc: TS1005@29+1 TS1011@31+0  || lint: parses  || plain: parses
+A  "interface I extends unique symbol {}"  || go: TS1005@27+6 "',' expected."  || tsc: TS1005@27+6  || lint: parses  || plain: parses
+A  "interface I extends infer A {}"  || go: TS1005@26+1 "',' expected."  || tsc: TS1005@26+1  || lint: parses  || plain: parses
+=  "interface I extends asserts x {}"  || go: TS1005@28+1 "',' expected."  || tsc: TS1005@28+1  || lint: TS1005@28+1 [@28+1 Expected "{" but found "x"] (2 msgs)  || plain: rejects [@28+1 Expected "{" but found "x"]
+A  "interface I extends x is A {}"  || go: TS1005@22+2 TS1005@25+1 "',' expected."  || tsc: TS1005@22+2 TS1005@25+1  || lint: parses  || plain: parses
+A  "interface I extends new () => A {}"  || go: TS1109@25+1 TS1005@27+2 "Expression expected."  || tsc: TS1109@25+1 TS1005@27+2  || lint: parses  || plain: parses
+ok "interface I extends A.B.C<D> {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "interface I extends A<B<C>> {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "interface I extends a`b` {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+!  "interface I extends super {}"  || go: TS1034@26+1 "'super' must be followed by an argument list or member access."  || tsc: TS1034@26+1  || lint: nocode [@20+5 Unexpected super] (2 msgs)  || plain: rejects [@20+5 Unexpected super]
+ok "interface I extends yield {}"  || go: parses  || tsc: parses; checker TS1212@20+5 "Identifier expected. 'yield' is a reserved word in strict mode."  || lint: parses  || plain: parses
+ok "interface I extends await {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "interface I extends any {}"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "interface I extends A extends {}"  || go: parses  || tsc: parses; checker TS1172@22+7 "'extends' clause already seen."  || lint: parses  || plain: parses
+## a start of a heritage entry: JavaScript and TSX
+A  [js] "class C extends -a {}"  || go: TS1109@16+1 TS1005@19+1 "Expression expected."  || tsc: TS1109@16+1 TS1005@19+1  || lint: parses  || plain: parses
+A  [js] "class C extends typeof a {}"  || go: TS1109@16+6 TS1005@25+1 "Expression expected."  || tsc: TS1109@16+6 TS1005@25+1  || lint: parses  || plain: parses
+!  [js] "class C extends await a {}"  || go: TS1005@22+1 "',' expected."  || tsc: TS1005@22+1  || lint: nocode [@22+1 "await" can only be used inside an "async" function] (3 msgs)  || plain: parses
+!  [js] "@-a class C {}"  || go: TS1109@1+1 TS1005@4+5 "Expression expected."  || tsc: TS1109@1+1 TS1005@4+5  || lint: nocode [@0+1 Unexpected @]  || plain: rejects [@0+1 Unexpected @]
+A  [tsx] "class C extends <div/> {}"  || go: TS1109@16+1 TS1005@23+1 "Expression expected."  || tsc: TS1109@16+1 TS1005@23+1  || lint: parses  || plain: parses
+!  [tsx] "class C extends <T,>(a) => a {}"  || go: TS1109@16+1 TS1005@29+1 "Expression expected."  || tsc: TS1109@16+1 TS1005@29+1  || lint: nocode [@24+2 Unexpected =>]  || plain: rejects [@24+2 Unexpected =>]
+A  [tsx] "class C implements <div/> {}"  || go: TS1109@19+1 TS1005@26+1 "Expression expected."  || tsc: TS1109@19+1 TS1005@26+1  || lint: parses  || plain: parses
+A  [tsx] "class C extends -a {}"  || go: TS1109@16+1 TS1005@19+1 "Expression expected."  || tsc: TS1109@16+1 TS1005@19+1  || lint: parses  || plain: parses
+## d the token after the name of a member: ? and !
+=  "class C { get x!() { return 1 } }"  || go: TS1005@15+1 TS1109@17+1 TS1005@19+1 "'(' expected."  || tsc: TS1005@15+1 TS1109@17+1  || lint: TS1005@15+1 [@15+1 Expected "(" but found "!"] (3 msgs)  || plain: rejects [@15+1 Expected "(" but found "!"]
+A  "class C { set x?(v) {} }"  || go: TS1005@15+1 TS1068@16+1 TS1005@20+1 "'(' expected."  || tsc: TS1005@15+1 TS1068@16+1  || lint: parses  || plain: parses
+A  "class C { static get x?() { return 1 } }"  || go: TS1005@22+1 TS1068@23+1 TS1005@26+1 "'(' expected."  || tsc: TS1005@22+1 TS1068@23+1  || lint: parses  || plain: parses
+!  "class C { async m!() {} }"  || go: TS1441@18+1 TS1068@19+1 TS1068@21+1 "Cannot start a function call in a type annotation."  || tsc: TS1441@18+1 TS1068@19+1  || lint: TS1005@17+1 [@17+1 Expected "(" but found "!"] (2 msgs)  || plain: rejects [@17+1 Expected "(" but found "!"]
+=  "class C { *m!() {} }"  || go: TS1005@12+1 TS1109@14+1 TS1005@16+1 "'(' expected."  || tsc: TS1005@12+1 TS1109@14+1  || lint: TS1005@12+1 [@12+1 Expected "(" but found "!"] (2 msgs)  || plain: rejects [@12+1 Expected "(" but found "!"]
+ok "class C { *m?() {} }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C { async m?() {} }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C { 'constructor'?() {} }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+A  "class C { 'constructor'!() {} }"  || go: TS1441@24+1 TS1068@25+1 TS1068@27+1 "Cannot start a function call in a type annotation."  || tsc: TS1441@24+1 TS1068@25+1  || lint: parses  || plain: parses
+A  "class C { static constructor?() {} }"  || go: TS1005@28+1 TS1068@29+1 TS1005@32+1 "'(' expected."  || tsc: TS1005@28+1 TS1068@29+1  || lint: parses  || plain: parses
+!  "class C { constructor?: number }"  || go: TS1005@21+1 TS1068@22+1 "'(' expected."  || tsc: TS1005@21+1 TS1068@22+1  || lint: nocode [@10+11 Invalid field name]  || plain: rejects [@10+11 Invalid field name]
+!  "class C { constructor! : number }"  || go: TS1005@21+1 TS1109@23+1 TS1128@32+1 "'(' expected."  || tsc: TS1005@21+1 TS1109@23+1  || lint: nocode [@10+11 Invalid field name]  || plain: rejects [@10+11 Invalid field name]
+!  "class C { x!<T>() {} }"  || go: TS1434@10+1 TS1068@12+1 TS1005@18+1 "Unexpected keyword or identifier."  || tsc: TS1434@10+1 TS1068@12+1  || lint: TS1005@12+1 [@12+1 Expected ";" but found "<"] (5 msgs)  || plain: rejects [@12+1 Expected ";" but found "<"]
+!  "class C { x?!() {} }"  || go: TS1434@10+1 TS1068@12+1 TS1109@14+1 "Unexpected keyword or identifier."  || tsc: TS1434@10+1 TS1068@12+1  || lint: TS1005@12+1 [@12+1 Expected ";" but found "!"] (4 msgs)  || plain: rejects [@12+1 Expected ";" but found "!"]
+!  "class C { accessor x!() {} }"  || go: TS1441@21+1 TS1068@22+1 TS1068@24+1 "Cannot start a function call in a type annotation."  || tsc: TS1441@21+1 TS1068@22+1  || lint: nocode [@19+1 auto-accessor properties cannot have a method body]  || plain: rejects [@19+1 auto-accessor properties cannot have a method body]
+A  "class C { declare x!() }"  || go: TS1441@20+1 TS1068@21+1 "Cannot start a function call in a type annotation."  || tsc: TS1441@20+1 TS1068@21+1  || lint: parses  || plain: parses
+A  "class C { x!(): void }"  || go: TS1441@12+1 TS1068@13+1 TS1068@14+1 "Cannot start a function call in a type annotation."  || tsc: TS1441@12+1 TS1068@13+1  || lint: parses  || plain: parses
+A  "class C { x!\n() {} }"  || go: TS1441@13+1 TS1068@14+1 TS1068@16+1 "Cannot start a function call in a type annotation."  || tsc: TS1441@13+1 TS1068@14+1  || lint: parses  || plain: parses
+!  "class C { x!;\n() {} }"  || go: TS1068@14+1 TS1005@17+1 TS1128@20+1 "Unexpected token. A constructor, method, accessor, or property was expected."  || tsc: TS1068@14+1 TS1005@17+1  || lint: TS1003@14+1 [@14+1 Expected identifier but found "("] (3 msgs)  || plain: rejects [@14+1 Expected identifier but found "("]
+A  "class C { [k]!() {} }"  || go: TS1441@14+1 TS1068@15+1 TS1068@17+1 "Cannot start a function call in a type annotation."  || tsc: TS1441@14+1 TS1068@15+1  || lint: parses  || plain: parses
+A  "class C { 1!() {} }"  || go: TS1441@12+1 TS1068@13+1 TS1068@15+1 "Cannot start a function call in a type annotation."  || tsc: TS1441@12+1 TS1068@13+1  || lint: parses  || plain: parses
+A  "class C { #x!() {} }"  || go: TS1441@13+1 TS1068@14+1 TS1068@16+1 "Cannot start a function call in a type annotation."  || tsc: TS1441@13+1 TS1068@14+1  || lint: parses  || plain: parses
+A  "class C { static x!() {} }"  || go: TS1441@19+1 TS1068@20+1 TS1068@22+1 "Cannot start a function call in a type annotation."  || tsc: TS1441@19+1 TS1068@20+1  || lint: parses  || plain: parses
+A  "abstract class C { abstract x!(): void }"  || go: TS1441@30+1 TS1068@31+1 TS1068@32+1 "Cannot start a function call in a type annotation."  || tsc: TS1441@30+1 TS1068@31+1  || lint: parses  || plain: parses
+D  "({ x!() {} })"  || go: parses  || tsc: parses; checker TS1255@4+1 "A definite assignment assertion '!' is not permitted in this context."  || lint: TS1005@4+1 [@4+1 Expected "}" but found "!"] (3 msgs)  || plain: rejects [@4+1 Expected "}" but found "!"]
+D  "({ x?() {} })"  || go: parses  || tsc: parses; checker TS1162@4+1 "An object member cannot be declared optional."  || lint: TS1005@4+1 [@4+1 Expected "}" but found "?"] (3 msgs)  || plain: rejects [@4+1 Expected "}" but found "?"]
+ok "class C { x?() {} }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C { x?<T>() {} }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C { x?: number }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C { x!: number }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C { x? = 1 }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C { x! }"  || go: parses  || tsc: parses; checker TS1264@11+1 "Declarations with definite assignment assertions must also have type a"  || lint: parses  || plain: parses
+ok "class C { x!; }"  || go: parses  || tsc: parses; checker TS1264@11+1 "Declarations with definite assignment assertions must also have type a"  || lint: parses  || plain: parses
+ok "class C { x? }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C { x?\n y }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C { x!\n y }"  || go: parses  || tsc: parses; checker TS1264@11+1 "Declarations with definite assignment assertions must also have type a"  || lint: parses  || plain: parses
+ok "class C { x ! : number }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C { 'x'!: number }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C { [k]?: number }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+~  "class C { get x?: number }"  || go: TS1005@15+1 TS1068@16+1 "'(' expected."  || tsc: TS1005@15+1 TS1068@16+1  || lint: TS1005@16+1 [@16+1 Expected "(" but found ":"] (3 msgs)  || plain: rejects [@16+1 Expected "(" but found ":"]
+~  "class C { get x? }"  || go: TS1005@15+1 "'(' expected."  || tsc: TS1005@15+1  || lint: TS1005@17+1 [@17+1 Expected "(" but found "}"] (2 msgs)  || plain: rejects [@17+1 Expected "(" but found "}"]
+=  "class C { set x! }"  || go: TS1005@15+1 TS1109@17+1 "'(' expected."  || tsc: TS1005@15+1 TS1109@17+1  || lint: TS1005@15+1 [@15+1 Expected "(" but found "!"] (3 msgs)  || plain: rejects [@15+1 Expected "(" but found "!"]
+=  "class C { get x!: number }"  || go: TS1005@15+1 TS1109@16+1 TS1128@25+1 "'(' expected."  || tsc: TS1005@15+1 TS1109@16+1  || lint: TS1005@15+1 [@15+1 Expected "(" but found "!"] (3 msgs)  || plain: rejects [@15+1 Expected "(" but found "!"]
+ok "class C { static x?() {} }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C { static?() {} }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C { get?() {} }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+A  "class C { get!() {} }"  || go: TS1441@14+1 TS1068@15+1 TS1068@17+1 "Cannot start a function call in a type annotation."  || tsc: TS1441@14+1 TS1068@15+1  || lint: parses  || plain: parses
+ok "class C { get?: number }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C { set!: number }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C { async?() {} }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C { async!: number }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+A  "class C { constructor?(): void }"  || go: TS1005@21+1 TS1068@22+1 TS1005@31+1 "'(' expected."  || tsc: TS1005@21+1 TS1068@22+1  || lint: parses  || plain: parses
+A  "declare class C { constructor?() }"  || go: TS1005@29+1 TS1068@30+1 TS1109@31+1 "'(' expected."  || tsc: TS1005@29+1 TS1068@30+1  || lint: parses  || plain: parses
+A  "class C { public constructor?() {} }"  || go: TS1005@28+1 TS1068@29+1 TS1005@32+1 "'(' expected."  || tsc: TS1005@28+1 TS1068@29+1  || lint: parses  || plain: parses
+=  "class C { constructor<T>?() {} }"  || go: TS1005@24+1 TS1068@25+1 TS1005@28+1 "'(' expected."  || tsc: TS1005@24+1 TS1068@25+1  || lint: TS1005@24+1 [@24+1 Expected "(" but found "?"] (2 msgs)  || plain: rejects [@24+1 Expected "(" but found "?"]
+ok "class C { accessor x?: number }"  || go: parses  || tsc: parses; checker TS1276@20+1 "An 'accessor' property cannot be declared optional."  || lint: parses  || plain: parses
+ok "class C { accessor x!: number }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C { readonly x?() {} }"  || go: parses  || tsc: parses; checker TS1024@10+8 "'readonly' modifier can only appear on a property declaration or index"  || lint: parses  || plain: parses
+## e a modifier of a parameter and what follows it
+A  "class C { constructor(readonly\n x) {} }"  || go: TS1005@32+1 "',' expected."  || tsc: TS1005@32+1  || lint: parses  || plain: parses
+A  "class C { constructor(public readonly\n x) {} }"  || go: TS1005@39+1 "',' expected."  || tsc: TS1005@39+1  || lint: parses  || plain: parses
+A  "class C { constructor(public\n readonly x) {} }"  || go: TS1005@30+8 "',' expected."  || tsc: TS1005@30+8  || lint: parses  || plain: parses
+!  "class C { constructor(private\n[x]) {} }"  || go: TS1005@30+1 "',' expected."  || tsc: TS1005@30+1  || lint: TS1003@30+1 [@30+1 Expected identifier but found "["] (4 msgs)  || plain: rejects [@30+1 Expected identifier but found "["]
+D  "class C { constructor(static\n x) {} }"  || go: parses  || tsc: parses; checker TS1090@22+6 "'static' modifier cannot appear on a parameter."  || lint: TS1005@30+1 [@30+1 Expected ")" but found "x"] (3 msgs)  || plain: rejects [@30+1 Expected ")" but found "x"]
+=  "function f(public\n x) {}"  || go: TS1005@19+1 "',' expected."  || tsc: TS1005@19+1  || lint: TS1005@19+1 [@19+1 Expected ")" but found "x"] (2 msgs)  || plain: rejects [@19+1 Expected ")" but found "x"]
+ok "class C { constructor(public/*c*/x) {} }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+A  "class C { constructor(public // c\n x) {} }"  || go: TS1005@35+1 "',' expected."  || tsc: TS1005@35+1  || lint: parses  || plain: parses
+!  "class C { constructor(public 'a') {} }"  || go: TS1003@29+3 "Identifier expected."  || tsc: TS1003@29+3  || lint: TS1005@29+3 [@29+3 Expected ")" but found "'a'"] (3 msgs)  || plain: rejects [@29+3 Expected ")" but found "'a'"]
+!  "class C { constructor(public 1) {} }"  || go: TS1003@29+1 "Identifier expected."  || tsc: TS1003@29+1  || lint: TS1005@29+1 [@29+1 Expected ")" but found "1"] (3 msgs)  || plain: rejects [@29+1 Expected ")" but found "1"]
+!  "class C { constructor(public *) {} }"  || go: TS1003@29+1 "Identifier expected."  || tsc: TS1003@29+1  || lint: TS1005@29+1 [@29+1 Expected ")" but found "*"] (3 msgs)  || plain: rejects [@29+1 Expected ")" but found "*"]
+ok "class C { constructor(public = 1, y) {} }"  || go: parses  || tsc: parses; checker TS1213@22+6 "Identifier expected. 'public' is a reserved word in strict mode. Class"  || lint: parses  || plain: parses
+ok "class C { constructor(public x, private y, protected z, readonly w, override v) {} }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+A  "class C { constructor(override\n x) {} }"  || go: TS1005@32+1 "',' expected."  || tsc: TS1005@32+1  || lint: parses  || plain: parses
+ok "class C { constructor(public,\n x) {} }"  || go: parses  || tsc: parses; checker TS1213@22+6 "Identifier expected. 'public' is a reserved word in strict mode. Class"  || lint: parses  || plain: parses
+ok "class C { constructor(public\n, x) {} }"  || go: parses  || tsc: parses; checker TS1213@22+6 "Identifier expected. 'public' is a reserved word in strict mode. Class"  || lint: parses  || plain: parses
+ok "class C { constructor(public\n) {} }"  || go: parses  || tsc: parses; checker TS1213@22+6 "Identifier expected. 'public' is a reserved word in strict mode. Class"  || lint: parses  || plain: parses
+ok "class C { constructor(public\n: number) {} }"  || go: parses  || tsc: parses; checker TS1213@22+6 "Identifier expected. 'public' is a reserved word in strict mode. Class"  || lint: parses  || plain: parses
+ok "class C { constructor(public\n = 1) {} }"  || go: parses  || tsc: parses; checker TS1213@22+6 "Identifier expected. 'public' is a reserved word in strict mode. Class"  || lint: parses  || plain: parses
+ok "class C { constructor(public\n?) {} }"  || go: parses  || tsc: parses; checker TS1213@22+6 "Identifier expected. 'public' is a reserved word in strict mode. Class"  || lint: parses  || plain: parses
+=  "class C { m(public\n x) {} }"  || go: TS1005@20+1 "',' expected."  || tsc: TS1005@20+1  || lint: TS1005@20+1 [@20+1 Expected ")" but found "x"] (3 msgs)  || plain: rejects [@20+1 Expected ")" but found "x"]
+=  "(public\n x) => 1"  || go: TS1005@9+1 "',' expected."  || tsc: TS1005@9+1  || lint: TS1005@9+1 [@9+1 Expected ")" but found "x"] (3 msgs)  || plain: rejects [@9+1 Expected ")" but found "x"]
+A  "class C { constructor(protected\n x: number) {} }"  || go: TS1005@33+1 "',' expected."  || tsc: TS1005@33+1  || lint: parses  || plain: parses
+A  "class C { constructor(private\n private x) {} }"  || go: TS1005@31+7 "',' expected."  || tsc: TS1005@31+7  || lint: parses  || plain: parses
+ok "class C { constructor(public readonly x) {} }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C { constructor(readonly public x) {} }"  || go: parses  || tsc: parses; checker TS1029@31+6 "'public' modifier must precede 'readonly' modifier."  || lint: parses  || plain: parses
+ok "class C { constructor(public public x) {} }"  || go: parses  || tsc: parses; checker TS1028@29+6 "Accessibility modifier already seen."  || lint: parses  || plain: parses
+D  "class C { constructor(public {x}) {} }"  || go: parses  || tsc: parses; checker TS1187@22+10 "A parameter property may not be declared using a binding pattern."  || lint: TS1003@29+1 [@29+1 Expected identifier but found "{"] (4 msgs)  || plain: rejects [@29+1 Expected identifier but found "{"]
+D  "class C { constructor(public [x]) {} }"  || go: parses  || tsc: parses; checker TS1187@22+10 "A parameter property may not be declared using a binding pattern."  || lint: TS1003@29+1 [@29+1 Expected identifier but found "["] (4 msgs)  || plain: rejects [@29+1 Expected identifier but found "["]
+D  "class C { constructor(public ...x) {} }"  || go: parses  || tsc: parses; checker TS1317@22+11 "A parameter property cannot be declared using a rest parameter."  || lint: TS1005@29+3 [@29+3 Expected ")" but found "..."] (4 msgs)  || plain: rejects [@29+3 Expected ")" but found "..."]
+ok "class C { constructor(...public) {} }"  || go: parses  || tsc: parses; checker TS1213@25+6 "Identifier expected. 'public' is a reserved word in strict mode. Class"  || lint: parses  || plain: parses
+A  "class C { constructor(...public x) {} }"  || go: TS1005@32+1 "',' expected."  || tsc: TS1005@32+1  || lint: parses  || plain: parses
+!  "class C { constructor(public this) {} }"  || go: TS1433@22+6 "Neither decorators nor modifiers may be applied to 'this' parameters."  || tsc: TS1433@22+6  || lint: TS1005@29+4 [@29+4 Expected ")" but found "this"] (3 msgs)  || plain: rejects [@29+4 Expected ")" but found "this"]
+ok "class C { constructor(public async) {} }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C { constructor(public public) {} }"  || go: parses  || tsc: parses; checker TS1213@29+6 "Identifier expected. 'public' is a reserved word in strict mode. Class"  || lint: parses  || plain: parses
+ok "class C { constructor(public readonly) {} }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C { constructor(readonly public) {} }"  || go: parses  || tsc: parses; checker TS1213@31+6 "Identifier expected. 'public' is a reserved word in strict mode. Class"  || lint: parses  || plain: parses
+ok "class C { constructor(public static) {} }"  || go: parses  || tsc: parses; checker TS1213@29+6 "Identifier expected. 'static' is a reserved word in strict mode. Class"  || lint: parses  || plain: parses
+=  "class C { constructor(public x y) {} }"  || go: TS1005@31+1 "',' expected."  || tsc: TS1005@31+1  || lint: TS1005@31+1 [@31+1 Expected ")" but found "y"] (3 msgs)  || plain: rejects [@31+1 Expected ")" but found "y"]
+ok "class C { constructor(public x = 1, y) {} }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+## f an index signature after get, set or *, and [modifier name
+A  "class C { set [k: string]: any }"  || go: TS1005@16+1 TS1005@24+1 TS1068@25+1 "']' expected."  || tsc: TS1005@16+1 TS1005@24+1  || lint: parses  || plain: parses
+A  "class C { static get [k: string]: any }"  || go: TS1005@23+1 TS1005@31+1 TS1068@32+1 "']' expected."  || tsc: TS1005@23+1 TS1005@31+1  || lint: parses  || plain: parses
+ok "class C { async [k: string]: any }"  || go: parses  || tsc: parses; checker TS1071@10+5 "'async' modifier cannot appear on an index signature."  || lint: parses  || plain: parses
+A  "class C { async *[k: string]: any }"  || go: TS1005@19+1 TS1144@27+1 TS1068@28+1 "']' expected."  || tsc: TS1005@19+1 TS1144@27+1  || lint: parses  || plain: parses
+ok "class C { accessor [k: string]: any }"  || go: parses  || tsc: parses; checker TS1071@10+8 "'accessor' modifier cannot appear on an index signature."  || lint: parses  || plain: parses
+ok "class C { declare [k: string]: any }"  || go: parses  || tsc: parses; checker TS1071@10+7 "'declare' modifier cannot appear on an index signature."  || lint: parses  || plain: parses
+ok "abstract class C { abstract [k: string]: any }"  || go: parses  || tsc: parses; checker TS1071@19+8 "'abstract' modifier cannot appear on an index signature."  || lint: parses  || plain: parses
+=  "class C { get [k]: any }"  || go: TS1005@17+1 "'(' expected."  || tsc: TS1005@17+1  || lint: TS1005@17+1 [@17+1 Expected "(" but found ":"] (3 msgs)  || plain: rejects [@17+1 Expected "(" but found ":"]
+A  "class C { get [k: string] }"  || go: TS1005@16+1 TS1005@24+1 "']' expected."  || tsc: TS1005@16+1 TS1005@24+1  || lint: parses  || plain: parses
+~  "class C { get [k: string]() { return 1 } }"  || go: TS1005@16+1 TS1005@24+1 TS1068@25+1 "']' expected."  || tsc: TS1005@16+1 TS1005@24+1  || lint: TS1005@25+1 [@25+1 Expected ";" but found "("] (4 msgs)  || plain: rejects [@25+1 Expected ";" but found "("]
+ok "class C { get [k]() { return 1 } }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C { *[k]() {} }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+~  "class C { *[k: string]() {} }"  || go: TS1005@13+1 TS1144@21+1 TS1068@22+1 "']' expected."  || tsc: TS1005@13+1 TS1144@21+1  || lint: TS1005@22+1 [@22+1 Expected ";" but found "("] (3 msgs)  || plain: rejects [@22+1 Expected ";" but found "("]
+A  "class C { get [...k]: any }"  || go: TS1109@15+3 TS1434@18+1 TS1068@19+1 "Expression expected."  || tsc: TS1109@15+3 TS1434@18+1  || lint: parses  || plain: parses
+A  "class C { get []: any }"  || go: TS1109@15+1 TS1005@16+1 "Expression expected."  || tsc: TS1109@15+1 TS1005@16+1  || lint: parses  || plain: parses
+A  "class C { *[] }"  || go: TS1109@12+1 TS1005@14+1 "Expression expected."  || tsc: TS1109@12+1 TS1005@14+1  || lint: parses  || plain: parses
+A  "class C { get [k?]: any }"  || go: TS1109@17+1 TS1005@18+1 "Expression expected."  || tsc: TS1109@17+1 TS1005@18+1  || lint: parses  || plain: parses
+A  "class C { get [k, j]: any }"  || go: TS1005@20+1 "'(' expected."  || tsc: TS1005@20+1  || lint: parses  || plain: parses
+!  "class C { get [k?]() { return 1 } }"  || go: TS1109@17+1 "Expression expected."  || tsc: TS1109@17+1  || lint: TS1005@18+1 [@18+1 Expected ";" but found "("] (4 msgs)  || plain: rejects [@18+1 Expected ";" but found "("]
+D  "class C { set [k, j](v) {} }"  || go: parses  || tsc: parses; checker TS1171@15+4 "A comma expression is not allowed in a computed property name."  || lint: TS1005@20+1 [@20+1 Expected ";" but found "("] (3 msgs)  || plain: rejects [@20+1 Expected ";" but found "("]
+A  "class C { static *[k: string]: any }"  || go: TS1005@20+1 TS1144@28+1 TS1068@29+1 "']' expected."  || tsc: TS1005@20+1 TS1144@28+1  || lint: parses  || plain: parses
+A  "class C { readonly get [k: string]: any }"  || go: TS1005@25+1 TS1005@33+1 TS1068@34+1 "']' expected."  || tsc: TS1005@25+1 TS1005@33+1  || lint: parses  || plain: parses
+D  "class C { [async x]: any }"  || go: parses  || tsc: parses; checker TS1090@11+5 "'async' modifier cannot appear on a parameter." TS1018@17+1 "An index signature parameter cannot have an accessibility modifier."  || lint: TS1005@17+1 [@17+1 Expected "]" but found "x"] (3 msgs)  || plain: rejects [@17+1 Expected "]" but found "x"]
+A  "class C { [async x => x] = 1 }"  || go: TS1005@19+2 TS1005@25+1 "',' expected."  || tsc: TS1005@19+2 TS1005@25+1  || lint: parses  || plain: parses
+A  "class C { [async x => x]() {} }"  || go: TS1005@19+2 TS1005@24+1 TS1005@27+1 "',' expected."  || tsc: TS1005@19+2 TS1005@24+1  || lint: parses  || plain: parses
+D  "class C { [static k]: any }"  || go: parses  || tsc: parses; checker TS1090@11+6 "'static' modifier cannot appear on a parameter." TS1018@18+1 "An index signature parameter cannot have an accessibility modifier."  || lint: TS1005@18+1 [@18+1 Expected "]" but found "k"] (3 msgs)  || plain: rejects [@18+1 Expected "]" but found "k"]
+D  "class C { [abstract k]: any }"  || go: parses  || tsc: parses; checker TS1242@11+8 "'abstract' modifier can only appear on a class, method, or property de" TS1018@20+1 "An index signature parameter cannot have an accessibility modifier."  || lint: TS1005@20+1 [@20+1 Expected "]" but found "k"] (3 msgs)  || plain: rejects [@20+1 Expected "]" but found "k"]
+D  "class C { [in k]: any }"  || go: parses  || tsc: parses; checker TS1274@11+2 "'in' modifier can only appear on a type parameter of a class, interfac" TS1018@14+1 "An index signature parameter cannot have an accessibility modifier."  || lint: TS1109@11+2 [@11+2 Unexpected in]  || plain: rejects [@11+2 Unexpected in]
+D  "class C { [out k]: any }"  || go: parses  || tsc: parses; checker TS1274@11+3 "'out' modifier can only appear on a type parameter of a class, interfa" TS1018@15+1 "An index signature parameter cannot have an accessibility modifier."  || lint: TS1005@15+1 [@15+1 Expected "]" but found "k"] (3 msgs)  || plain: rejects [@15+1 Expected "]" but found "k"]
+!  "class C { [const k]: any }"  || go: TS1359@11+5 TS1005@17+1 "Identifier expected. 'const' is a reserved word that cannot be used here."  || tsc: TS1359@11+5 TS1005@17+1  || lint: TS1109@11+5 [@11+5 Unexpected const]  || plain: rejects [@11+5 Unexpected const]
+D  "class C { [export k]: any }"  || go: parses  || tsc: parses; checker TS1090@11+6 "'export' modifier cannot appear on a parameter." TS1018@18+1 "An index signature parameter cannot have an accessibility modifier."  || lint: TS1109@11+6 [@11+6 Unexpected export]  || plain: rejects [@11+6 Unexpected export]
+!  "class C { [default k]: any }"  || go: TS1359@11+7 TS1005@19+1 "Identifier expected. 'default' is a reserved word that cannot be used here."  || tsc: TS1359@11+7 TS1005@19+1  || lint: TS1109@11+7 [@11+7 Unexpected default]  || plain: rejects [@11+7 Unexpected default]
+D  "class C { [declare k]: any }"  || go: parses  || tsc: parses; checker TS1090@11+7 "'declare' modifier cannot appear on a parameter." TS1018@19+1 "An index signature parameter cannot have an accessibility modifier."  || lint: TS1005@19+1 [@19+1 Expected "]" but found "k"] (3 msgs)  || plain: rejects [@19+1 Expected "]" but found "k"]
+D  "class C { [accessor k]: any }"  || go: parses  || tsc: parses; checker TS1275@11+8 "'accessor' modifier can only appear on a property declaration." TS1018@20+1 "An index signature parameter cannot have an accessibility modifier."  || lint: TS1005@20+1 [@20+1 Expected "]" but found "k"] (3 msgs)  || plain: rejects [@20+1 Expected "]" but found "k"]
+D  "class C { [override k]: any }"  || go: parses  || tsc: parses; checker TS2369@11+10 "A parameter property is only allowed in a constructor implementation." TS1018@20+1 "An index signature parameter cannot have an accessibility modifier."  || lint: TS1005@20+1 [@20+1 Expected "]" but found "k"] (3 msgs)  || plain: rejects [@20+1 Expected "]" but found "k"]
+D  "class C { [readonly k]: any }"  || go: parses  || tsc: parses; checker TS2369@11+10 "A parameter property is only allowed in a constructor implementation." TS1018@20+1 "An index signature parameter cannot have an accessibility modifier."  || lint: TS1005@20+1 [@20+1 Expected "]" but found "k"] (3 msgs)  || plain: rejects [@20+1 Expected "]" but found "k"]
+D  "class C { [private k]: any }"  || go: parses  || tsc: parses; checker TS2369@11+9 "A parameter property is only allowed in a constructor implementation." TS1018@19+1 "An index signature parameter cannot have an accessibility modifier."  || lint: TS1005@19+1 [@19+1 Expected "]" but found "k"] (3 msgs)  || plain: rejects [@19+1 Expected "]" but found "k"]
+D  "class C { [protected k: string]: any }"  || go: parses  || tsc: parses; checker TS2369@11+19 "A parameter property is only allowed in a constructor implementation." TS1018@21+1 "An index signature parameter cannot have an accessibility modifier."  || lint: TS1005@21+1 [@21+1 Expected "]" but found "k"] (3 msgs)  || plain: rejects [@21+1 Expected "]" but found "k"]
+D  "class C { [public k, j]: any }"  || go: parses  || tsc: parses; checker TS2369@11+8 "A parameter property is only allowed in a constructor implementation." TS1096@18+1 "An index signature must have exactly one parameter."  || lint: TS1005@18+1 [@18+1 Expected "]" but found "k"] (4 msgs)  || plain: rejects [@18+1 Expected "]" but found "k"]
+D  "class C { [public k?]: any }"  || go: parses  || tsc: parses; checker TS2369@11+9 "A parameter property is only allowed in a constructor implementation." TS1018@18+1 "An index signature parameter cannot have an accessibility modifier."  || lint: TS1005@18+1 [@18+1 Expected "]" but found "k"] (3 msgs)  || plain: rejects [@18+1 Expected "]" but found "k"]
+ok "class C { [public]: any }"  || go: parses  || tsc: parses; checker TS1213@11+6 "Identifier expected. 'public' is a reserved word in strict mode. Class"  || lint: parses  || plain: parses
+ok "class C { [public] = 1 }"  || go: parses  || tsc: parses; checker TS1213@11+6 "Identifier expected. 'public' is a reserved word in strict mode. Class"  || lint: parses  || plain: parses
+~  "class C { [public k] = 1 }"  || go: TS1005@21+1 "';' expected."  || tsc: TS1005@21+1  || lint: TS1005@18+1 [@18+1 Expected "]" but found "k"] (3 msgs)  || plain: rejects [@18+1 Expected "]" but found "k"]
+ok "class C { [async () => {}]: any }"  || go: parses  || tsc: parses; checker TS1166@10+16 "A computed property name in a class property declaration must have a s"  || lint: parses  || plain: parses
+D  "class C { [await x]: any }"  || go: parses  || tsc: parses; checker TS1166@10+9 "A computed property name in a class property declaration must have a s" TS1375@11+5 "'await' expressions are only allowed at the top level of a file when t"  || lint: nocode [@17+1 "await" can only be used inside an "async" function] (3 msgs)  || plain: parses
+D  "class C { [yield x]: any }"  || go: parses  || tsc: parses; checker TS1166@10+9 "A computed property name in a class property declaration must have a s" TS1163@11+5 "A 'yield' expression is only allowed in a generator body."  || lint: nocode [@11+5 Cannot use "yield" outside a generator function] (4 msgs)  || plain: rejects [@11+5 Cannot use "yield" outside a generator function]
+ok "class C { [abstract]: any }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C { [async]: any }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C { [async, b]: any }"  || go: parses  || tsc: parses; checker TS1096@11+5 "An index signature must have exactly one parameter."  || lint: parses  || plain: parses
+ok "class C { [async?]: any }"  || go: parses  || tsc: parses; checker TS1019@16+1 "An index signature parameter cannot have a question mark."  || lint: parses  || plain: parses
+ok "class C { [async: string]: any }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C { [static]() {} }"  || go: parses  || tsc: parses; checker TS1213@11+6 "Identifier expected. 'static' is a reserved word in strict mode. Class"  || lint: parses  || plain: parses
+=  "class C { [x y]: any }"  || go: TS1005@13+1 TS1068@14+1 TS1068@15+1 "']' expected."  || tsc: TS1005@13+1 TS1068@14+1  || lint: TS1005@13+1 [@13+1 Expected "]" but found "y"] (3 msgs)  || plain: rejects [@13+1 Expected "]" but found "y"]
+=  "class C { [type x]: any }"  || go: TS1005@16+1 TS1068@17+1 TS1068@18+1 "']' expected."  || tsc: TS1005@16+1 TS1068@17+1  || lint: TS1005@16+1 [@16+1 Expected "]" but found "x"] (3 msgs)  || plain: rejects [@16+1 Expected "]" but found "x"]
+=  "class C { [of x]: any }"  || go: TS1005@14+1 TS1068@15+1 TS1068@16+1 "']' expected."  || tsc: TS1005@14+1 TS1068@15+1  || lint: TS1005@14+1 [@14+1 Expected "]" but found "x"] (3 msgs)  || plain: rejects [@14+1 Expected "]" but found "x"]
+=  "class C { [let x]: any }"  || go: TS1005@15+1 TS1068@16+1 TS1068@17+1 "']' expected."  || tsc: TS1005@15+1 TS1068@16+1  || lint: TS1005@15+1 [@15+1 Expected "]" but found "x"] (3 msgs)  || plain: rejects [@15+1 Expected "]" but found "x"]
+=  "class C { [get x]: any }"  || go: TS1005@15+1 TS1068@16+1 TS1068@17+1 "']' expected."  || tsc: TS1005@15+1 TS1068@16+1  || lint: TS1005@15+1 [@15+1 Expected "]" but found "x"] (3 msgs)  || plain: rejects [@15+1 Expected "]" but found "x"]
+## f [async x => x] in JavaScript
+A  [js] "class C { [async x => x] = 1 }"  || go: TS1005@19+2 TS1005@25+1 "',' expected."  || tsc: TS1005@19+2 TS1005@25+1  || lint: parses  || plain: parses
+A  [js] "class C { [async x => x]() {} }"  || go: TS1005@19+2 TS1005@24+1 TS1005@27+1 "',' expected."  || tsc: TS1005@19+2 TS1005@24+1  || lint: parses  || plain: parses
+ok [js] "class C { [public] = 1 }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+## g a binding property that is one reserved word
+A  "var {class} = x"  || go: TS1005@10+1 "':' expected."  || tsc: TS1005@10+1  || lint: parses  || plain: parses
+A  "let {if} = x"  || go: TS1005@7+1 "':' expected."  || tsc: TS1005@7+1  || lint: parses  || plain: parses
+A  "const {this} = x"  || go: TS1005@11+1 "':' expected."  || tsc: TS1005@11+1  || lint: parses  || plain: parses
+A  "var {true} = x"  || go: TS1005@9+1 "':' expected."  || tsc: TS1005@9+1  || lint: parses  || plain: parses
+A  "var {null} = x"  || go: TS1005@9+1 "':' expected."  || tsc: TS1005@9+1  || lint: parses  || plain: parses
+A  "var {typeof} = x"  || go: TS1005@11+1 "':' expected."  || tsc: TS1005@11+1  || lint: parses  || plain: parses
+A  "var {in} = x"  || go: TS1005@7+1 "':' expected."  || tsc: TS1005@7+1  || lint: parses  || plain: parses
+A  "var {new} = x"  || go: TS1005@8+1 "':' expected."  || tsc: TS1005@8+1  || lint: parses  || plain: parses
+A  "var {function} = x"  || go: TS1005@13+1 "':' expected."  || tsc: TS1005@13+1  || lint: parses  || plain: parses
+A  "var {enum} = x"  || go: TS1005@9+1 "':' expected."  || tsc: TS1005@9+1  || lint: parses  || plain: parses
+ok "var {yield} = x"  || go: parses  || tsc: parses; checker TS1212@5+5 "Identifier expected. 'yield' is a reserved word in strict mode."  || lint: parses  || plain: parses
+ok "var {await} = x"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "var {let} = x"  || go: parses  || tsc: parses; checker TS1212@5+3 "Identifier expected. 'let' is a reserved word in strict mode."  || lint: parses  || plain: parses
+ok "var {static} = x"  || go: parses  || tsc: parses; checker TS1212@5+6 "Identifier expected. 'static' is a reserved word in strict mode."  || lint: parses  || plain: parses
+A  "var {class = 1} = x"  || go: TS1005@11+1 "':' expected."  || tsc: TS1005@11+1  || lint: parses  || plain: parses
+ok "var {class: a} = x"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+A  "function f({if}) {}"  || go: TS1005@14+1 "':' expected."  || tsc: TS1005@14+1  || lint: parses  || plain: parses
+A  "try {} catch ({class}) {}"  || go: TS1005@20+1 "':' expected."  || tsc: TS1005@20+1  || lint: parses  || plain: parses
+A  "for (var {class} of x) {}"  || go: TS1005@15+1 "':' expected."  || tsc: TS1005@15+1  || lint: parses  || plain: parses
+A  "var [{class}] = x"  || go: TS1005@11+1 "':' expected."  || tsc: TS1005@11+1  || lint: parses  || plain: parses
+A  "var {a: {class}} = x"  || go: TS1005@14+1 "':' expected."  || tsc: TS1005@14+1  || lint: parses  || plain: parses
+!  "var {...class} = x"  || go: TS1005@13+1 "':' expected."  || tsc: TS1005@13+1  || lint: TS1359@8+5 [@8+5 Expected identifier but found "class"]  || plain: rejects [@8+5 Expected identifier but found "class"]
+!  "var {...this} = x"  || go: TS1005@12+1 "':' expected."  || tsc: TS1005@12+1  || lint: TS1359@8+4 [@8+4 Expected identifier but found "this"]  || plain: rejects [@8+4 Expected identifier but found "this"]
+=  "({class}) => 1"  || go: TS1005@7+1 "':' expected."  || tsc: TS1005@7+1  || lint: TS1005@7+1 [@7+1 Expected ":" but found "}"] (2 msgs)  || plain: rejects [@7+1 Expected ":" but found "}"]
+=  "({class} = x)"  || go: TS1005@7+1 "':' expected."  || tsc: TS1005@7+1  || lint: TS1005@7+1 [@7+1 Expected ":" but found "}"] (2 msgs)  || plain: rejects [@7+1 Expected ":" but found "}"]
+A  "var {class,} = x"  || go: TS1005@10+1 "':' expected."  || tsc: TS1005@10+1  || lint: parses  || plain: parses
+A  "var {class}"  || go: TS1005@10+1 "':' expected."  || tsc: TS1005@10+1  || lint: parses  || plain: parses
+ok "var {implements} = x"  || go: parses  || tsc: parses; checker TS1212@5+10 "Identifier expected. 'implements' is a reserved word in strict mode."  || lint: parses  || plain: parses
+ok "var {interface} = x"  || go: parses  || tsc: parses; checker TS1212@5+9 "Identifier expected. 'interface' is a reserved word in strict mode."  || lint: parses  || plain: parses
+ok "var {package} = x"  || go: parses  || tsc: parses; checker TS1212@5+7 "Identifier expected. 'package' is a reserved word in strict mode."  || lint: parses  || plain: parses
+ok "var {private} = x"  || go: parses  || tsc: parses; checker TS1212@5+7 "Identifier expected. 'private' is a reserved word in strict mode."  || lint: parses  || plain: parses
+ok "var {arguments} = x"  || go: parses  || tsc: parses; checker TS1100@5+9 "Invalid use of 'arguments' in strict mode."  || lint: parses  || plain: parses
+ok "var {eval} = x"  || go: parses  || tsc: parses; checker TS1100@5+4 "Invalid use of 'eval' in strict mode."  || lint: parses  || plain: parses
+ok "var {of} = x"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "var {async} = x"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "var {type} = x"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+A  "var {super} = x"  || go: TS1005@10+1 "':' expected."  || tsc: TS1005@10+1  || lint: parses  || plain: parses
+A  "var {import} = x"  || go: TS1005@11+1 "':' expected."  || tsc: TS1005@11+1  || lint: parses  || plain: parses
+A  "var {export} = x"  || go: TS1005@11+1 "':' expected."  || tsc: TS1005@11+1  || lint: parses  || plain: parses
+A  "var {default} = x"  || go: TS1005@12+1 "':' expected."  || tsc: TS1005@12+1  || lint: parses  || plain: parses
+A  "var {void} = x"  || go: TS1005@9+1 "':' expected."  || tsc: TS1005@9+1  || lint: parses  || plain: parses
+A  "var {delete} = x"  || go: TS1005@11+1 "':' expected."  || tsc: TS1005@11+1  || lint: parses  || plain: parses
+A  "var {const} = x"  || go: TS1005@10+1 "':' expected."  || tsc: TS1005@10+1  || lint: parses  || plain: parses
+A  "var {var} = x"  || go: TS1005@8+1 "':' expected."  || tsc: TS1005@8+1  || lint: parses  || plain: parses
+A  "var {with} = x"  || go: TS1005@9+1 "':' expected."  || tsc: TS1005@9+1  || lint: parses  || plain: parses
+A  "var {false} = x"  || go: TS1005@10+1 "':' expected."  || tsc: TS1005@10+1  || lint: parses  || plain: parses
+=  "var {class()} = x"  || go: TS1005@10+1 TS1109@11+1 TS1128@12+1 "':' expected."  || tsc: TS1005@10+1 TS1109@11+1  || lint: TS1005@10+1 [@10+1 Expected ":" but found "("] (2 msgs)  || plain: rejects [@10+1 Expected ":" but found "("]
+=  "var {class(){}} = x"  || go: TS1005@10+1 TS1005@12+1 TS1128@14+1 "':' expected."  || tsc: TS1005@10+1 TS1005@12+1  || lint: TS1005@10+1 [@10+1 Expected ":" but found "("] (4 msgs)  || plain: rejects [@10+1 Expected ":" but found "("]
+=  "var {a()} = x"  || go: TS1005@6+1 TS1109@7+1 TS1128@8+1 "',' expected."  || tsc: TS1005@6+1 TS1109@7+1  || lint: TS1005@6+1 [@6+1 Expected ":" but found "("] (2 msgs)  || plain: rejects [@6+1 Expected ":" but found "("]
+=  "var {get a(){}} = x"  || go: TS1005@9+1 TS1005@10+1 TS1005@12+1 "',' expected."  || tsc: TS1005@9+1 TS1005@10+1  || lint: TS1005@9+1 [@9+1 Expected "}" but found "a"] (3 msgs)  || plain: rejects [@9+1 Expected "}" but found "a"]
+=  "var {a b} = x"  || go: TS1005@7+1 "',' expected."  || tsc: TS1005@7+1  || lint: TS1005@7+1 [@7+1 Expected "}" but found "b"] (2 msgs)  || plain: rejects [@7+1 Expected "}" but found "b"]
+!  "var {a,, b} = x"  || go: TS1180@7+1 "Property destructuring pattern expected."  || tsc: TS1180@7+1  || lint: TS1003@7+1 [@7+1 Expected identifier but found ","]  || plain: rejects [@7+1 Expected identifier but found ","]
+=  "var {'a'} = x"  || go: TS1005@8+1 "':' expected."  || tsc: TS1005@8+1  || lint: TS1005@8+1 [@8+1 Expected ":" but found "}"] (3 msgs)  || plain: rejects [@8+1 Expected ":" but found "}"]
+=  "var {1} = x"  || go: TS1005@6+1 "':' expected."  || tsc: TS1005@6+1  || lint: TS1005@6+1 [@6+1 Expected ":" but found "}"] (3 msgs)  || plain: rejects [@6+1 Expected ":" but found "}"]
+=  "var {[a]} = x"  || go: TS1005@8+1 "':' expected."  || tsc: TS1005@8+1  || lint: TS1005@8+1 [@8+1 Expected ":" but found "}"] (3 msgs)  || plain: rejects [@8+1 Expected ":" but found "}"]
+!  "var {#a} = x"  || go: TS1005@7+1 "':' expected."  || tsc: TS1005@7+1  || lint: TS1003@5+2 [@5+2 Expected identifier but found "#a"] (2 msgs)  || plain: rejects [@5+2 Expected identifier but found "#a"]
+ok "function* g() { var {yield} = x }"  || go: parses  || tsc: parses; checker TS1212@21+5 "Identifier expected. 'yield' is a reserved word in strict mode."  || lint: parses  || plain: parses
+ok "async function f() { var {await} = x }"  || go: parses  || tsc: parses; checker TS1359@26+5 "Identifier expected. 'await' is a reserved word that cannot be used he"  || lint: parses  || plain: parses
+## g a binding property that is one reserved word: JavaScript
+A  [js] "var {class} = x"  || go: TS1005@10+1 "':' expected."  || tsc: TS1005@10+1  || lint: parses  || plain: parses
+A  [js] "function f({this}) {}"  || go: TS1005@16+1 "':' expected."  || tsc: TS1005@16+1  || lint: parses  || plain: parses
+A  [js] "var {enum} = x"  || go: TS1005@9+1 "':' expected."  || tsc: TS1005@9+1  || lint: parses  || plain: parses
+## h an arrow parameter that is more than a binding
+A  "(a!) => 1"  || go: TS1005@5+2 "';' expected."  || tsc: TS1005@5+2  || lint: parses  || plain: parses
+A  "(a as T) => 1"  || go: TS1005@9+2 "';' expected."  || tsc: TS1005@9+2  || lint: parses  || plain: parses
+A  "(<T>a) => 1"  || go: TS1005@7+2 "';' expected."  || tsc: TS1005@7+2  || lint: parses  || plain: parses
+A  "((a)) => 1"  || go: TS1005@6+2 "';' expected."  || tsc: TS1005@6+2  || lint: parses  || plain: parses
+A  "(a satisfies T) => 1"  || go: TS1005@16+2 "';' expected."  || tsc: TS1005@16+2  || lint: parses  || plain: parses
+A  "(a!, b) => 1"  || go: TS1005@8+2 "';' expected."  || tsc: TS1005@8+2  || lint: parses  || plain: parses
+A  "async (a!) => 1"  || go: TS1005@11+2 "';' expected."  || tsc: TS1005@11+2  || lint: parses  || plain: parses
+A  "([a!]) => 1"  || go: TS1005@7+2 "';' expected."  || tsc: TS1005@7+2  || lint: parses  || plain: parses
+A  "({a: b!}) => 1"  || go: TS1005@10+2 "';' expected."  || tsc: TS1005@10+2  || lint: parses  || plain: parses
+A  "(a! = 1) => 1"  || go: TS1005@9+2 "';' expected."  || tsc: TS1005@9+2  || lint: parses  || plain: parses
+A  "((a), b) => 1"  || go: TS1005@9+2 "';' expected."  || tsc: TS1005@9+2  || lint: parses  || plain: parses
+A  "((a) = 1) => 1"  || go: TS1005@10+2 "';' expected."  || tsc: TS1005@10+2  || lint: parses  || plain: parses
+A  "([(a)]) => 1"  || go: TS1005@8+2 "';' expected."  || tsc: TS1005@8+2  || lint: parses  || plain: parses
+A  "({a: (b)}) => 1"  || go: TS1005@11+2 "';' expected."  || tsc: TS1005@11+2  || lint: parses  || plain: parses
+A  "(a as any as T) => 1"  || go: TS1005@16+2 "';' expected."  || tsc: TS1005@16+2  || lint: parses  || plain: parses
+A  "(a!: T) => 1"  || go: TS1005@3+1 TS1434@5+1 TS1128@6+1 "')' expected."  || tsc: TS1005@3+1 TS1434@5+1  || lint: parses  || plain: parses
+A  "<T>(a!) => 1"  || go: TS1005@8+2 "';' expected."  || tsc: TS1005@8+2  || lint: parses  || plain: parses
+A  "((a!)) => 1"  || go: TS1005@7+2 "';' expected."  || tsc: TS1005@7+2  || lint: parses  || plain: parses
+A  "(...a!) => 1"  || go: TS1005@5+1 "',' expected."  || tsc: TS1005@5+1  || lint: parses  || plain: parses
+A  "(...(a)) => 1"  || go: TS1003@4+1 TS1005@7+1 TS1128@9+2 "Identifier expected."  || tsc: TS1003@4+1 TS1005@7+1  || lint: parses  || plain: parses
+A  "([...a!]) => 1"  || go: TS1005@10+2 "';' expected."  || tsc: TS1005@10+2  || lint: parses  || plain: parses
+A  "({...a!}) => 1"  || go: TS1005@10+2 "';' expected."  || tsc: TS1005@10+2  || lint: parses  || plain: parses
+A  "([a as T]) => 1"  || go: TS1005@4+2 TS1005@7+1 "',' expected."  || tsc: TS1005@4+2 TS1005@7+1  || lint: parses  || plain: parses
+A  "({a: b as T}) => 1"  || go: TS1005@7+2 TS1005@10+1 "',' expected."  || tsc: TS1005@7+2 TS1005@10+1  || lint: parses  || plain: parses
+ok "({a = 1!}) => 1"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "(a = b!) => 1"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "(a = (b)) => 1"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "(a = b as T) => 1"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "([a = b!]) => 1"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "({a: b = c!}) => 1"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+A  "(a!!) => 1"  || go: TS1005@6+2 "';' expected."  || tsc: TS1005@6+2  || lint: parses  || plain: parses
+A  "((a) as T) => 1"  || go: TS1005@11+2 "';' expected."  || tsc: TS1005@11+2  || lint: parses  || plain: parses
+A  "(a! as T) => 1"  || go: TS1005@10+2 "';' expected."  || tsc: TS1005@10+2  || lint: parses  || plain: parses
+A  "async ((a)) => 1"  || go: TS1005@12+2 "';' expected."  || tsc: TS1005@12+2  || lint: parses  || plain: parses
+A  "async (a as T) => 1"  || go: TS1005@15+2 "';' expected."  || tsc: TS1005@15+2  || lint: parses  || plain: parses
+A  "async (<T>a) => 1"  || go: TS1005@13+2 "';' expected."  || tsc: TS1005@13+2  || lint: parses  || plain: parses
+!  "((a, b)) => 1"  || go: TS1005@9+2 "';' expected."  || tsc: TS1005@9+2  || lint: nocode [@2+0 Invalid binding pattern]  || plain: rejects [@2+0 Invalid binding pattern]
+A  "(a, (b)) => 1"  || go: TS1005@9+2 "';' expected."  || tsc: TS1005@9+2  || lint: parses  || plain: parses
+A  "([a], (b)) => 1"  || go: TS1005@11+2 "';' expected."  || tsc: TS1005@11+2  || lint: parses  || plain: parses
+A  "(((a))) => 1"  || go: TS1005@8+2 "';' expected."  || tsc: TS1005@8+2  || lint: parses  || plain: parses
+=  "(a)! => 1"  || go: TS1005@5+2 "';' expected."  || tsc: TS1005@5+2  || lint: TS1005@5+2 [@5+2 Expected ";" but found "=>"]  || plain: rejects [@5+2 Expected ";" but found "=>"]
+=  "(a) as T => 1"  || go: TS1005@9+2 "';' expected."  || tsc: TS1005@9+2  || lint: TS1005@9+2 [@9+2 Expected ";" but found "=>"]  || plain: rejects [@9+2 Expected ";" but found "=>"]
+A  "((a)): void => 1"  || go: TS1005@5+1 TS1109@12+2 "';' expected."  || tsc: TS1005@5+1 TS1109@12+2  || lint: parses  || plain: parses
+A  "(a!): void => 1"  || go: TS1005@4+1 TS1109@11+2 "';' expected."  || tsc: TS1005@4+1 TS1109@11+2  || lint: parses  || plain: parses
+A  "((a)?: T) => 1"  || go: TS1109@5+1 TS1005@10+2 "Expression expected."  || tsc: TS1109@5+1 TS1005@10+2  || lint: parses  || plain: parses
+=  "(a?!) => 1"  || go: TS1109@4+1 TS1005@6+2 "Expression expected."  || tsc: TS1109@4+1 TS1005@6+2  || lint: TS1109@4+1 [@4+1 Unexpected )]  || plain: rejects [@4+1 Unexpected )]
+A  "(a!?) => 1"  || go: TS1109@4+1 TS1005@6+2 "Expression expected."  || tsc: TS1109@4+1 TS1005@6+2  || lint: parses  || plain: parses
+## i other members that Bun reads in its own way
+=  "class C { get x() x }"  || go: TS1005@18+1 "'{' expected."  || tsc: TS1005@18+1  || lint: TS1005@18+1 [@18+1 Expected ";" but found "x"]  || plain: rejects [@18+1 Expected ";" but found "x"]
+=  "class C { get x(): number x }"  || go: TS1005@26+1 "'{' expected."  || tsc: TS1005@26+1  || lint: TS1005@26+1 [@26+1 Expected ";" but found "x"]  || plain: rejects [@26+1 Expected ";" but found "x"]
+=  "class C { set x(v) x }"  || go: TS1005@19+1 "'{' expected."  || tsc: TS1005@19+1  || lint: TS1005@19+1 [@19+1 Expected ";" but found "x"]  || plain: rejects [@19+1 Expected ";" but found "x"]
+=  "({ get x() x })"  || go: TS1005@11+1 "'{' expected."  || tsc: TS1005@11+1  || lint: TS1005@11+1 [@11+1 Expected "{" but found "x"] (3 msgs)  || plain: rejects [@11+1 Expected "{" but found "x"]
+=  "class C { get x() => 1 }"  || go: TS1005@18+2 "'{' expected."  || tsc: TS1005@18+2  || lint: TS1005@18+2 [@18+2 Expected ";" but found "=>"]  || plain: rejects [@18+2 Expected ";" but found "=>"]
+D  "class C { 'constructor': number }"  || go: parses  || tsc: parses; checker TS18006@10+13 "Classes may not have a field named 'constructor'."  || lint: nocode [@10+13 Invalid field name]  || plain: rejects [@10+13 Invalid field name]
+D  "class C { \"constructor\" }"  || go: parses  || tsc: parses; checker TS18006@10+13 "Classes may not have a field named 'constructor'."  || lint: nocode [@10+13 Invalid field name]  || plain: rejects [@10+13 Invalid field name]
+ok "class C { constructor\n() {} }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C { constructor\n(): void }"  || go: parses  || tsc: parses; checker TS1093@26+4 "Type annotation cannot appear on a constructor declaration."  || lint: parses  || plain: parses
+ok "class C { static\nconstructor() {} }"  || go: parses  || tsc: parses; checker TS1089@10+6 "'static' modifier cannot appear on a constructor declaration."  || lint: parses  || plain: parses
+!  "class C { constructor }"  || go: TS1005@22+1 "'(' expected."  || tsc: TS1005@22+1  || lint: nocode [@10+11 Invalid field name]  || plain: rejects [@10+11 Invalid field name]
+!  "class C { constructor\n x }"  || go: TS1005@23+1 "'(' expected."  || tsc: TS1005@23+1  || lint: nocode [@10+11 Invalid field name]  || plain: rejects [@10+11 Invalid field name]
+!  "class C { get constructor }"  || go: TS1005@26+1 "'(' expected."  || tsc: TS1005@26+1  || lint: nocode [@14+11 Class constructor cannot be a getter] (3 msgs)  || plain: rejects [@14+11 Class constructor cannot be a getter]
+!  "class C { async constructor }"  || go: TS1005@28+1 "'(' expected."  || tsc: TS1005@28+1  || lint: nocode [@16+11 Class constructor cannot be an async function] (3 msgs)  || plain: rejects [@16+11 Class constructor cannot be an async function]
+=  "class C { constructor<T> }"  || go: TS1005@25+1 "'(' expected."  || tsc: TS1005@25+1  || lint: TS1005@25+1 [@25+1 Expected "(" but found "}"] (2 msgs)  || plain: rejects [@25+1 Expected "(" but found "}"]
+ok "class C { public\nconstructor() {} }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+D  "class C { get\nconstructor() {} }"  || go: parses  || tsc: parses; checker TS1341@14+11 "Class constructor may not be an accessor."  || lint: nocode [@14+11 Class constructor cannot be a getter]  || plain: rejects [@14+11 Class constructor cannot be a getter]
+ok "class C { static *constructor() {} }"  || go: parses  || tsc: parses; checker TS1368@18+11 "Class constructor may not be a generator."  || lint: parses  || plain: parses
+ok "class C { static get constructor() { return 1 } }"  || go: parses  || tsc: parses; checker TS1341@21+11 "Class constructor may not be an accessor."  || lint: parses  || plain: parses
+ok "class C { static async constructor() {} }"  || go: parses  || tsc: parses; checker TS1089@10+6 "'static' modifier cannot appear on a constructor declaration."  || lint: parses  || plain: parses
+ok "class C { constructor() {} 'constructor'() {} }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C { ['constructor']: number }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+!  "class C { static constructor: number }"  || go: TS1005@28+1 "'(' expected."  || tsc: TS1005@28+1  || lint: nocode [@17+11 Invalid field name]  || plain: rejects [@17+11 Invalid field name]
+D  "class C { static 1n = 1 }"  || go: parses  || tsc: parses; checker TS1539@17+2 "A 'bigint' literal cannot be used as a property name."  || lint: TS1005@17+2 [@17+2 Expected ";" but found "1n"] (2 msgs)  || plain: rejects [@17+2 Expected ";" but found "1n"]
+D  "class C { static 1n() {} }"  || go: parses  || tsc: parses  || lint: TS1005@17+2 [@17+2 Expected ";" but found "1n"] (4 msgs)  || plain: rejects [@17+2 Expected ";" but found "1n"]
+D  "class C { public 1n = 1 }"  || go: parses  || tsc: parses; checker TS1539@17+2 "A 'bigint' literal cannot be used as a property name."  || lint: TS1005@17+2 [@17+2 Expected ";" but found "1n"] (2 msgs)  || plain: rejects [@17+2 Expected ";" but found "1n"]
+D  "class C { readonly 1n = 1 }"  || go: parses  || tsc: parses; checker TS1539@19+2 "A 'bigint' literal cannot be used as a property name."  || lint: TS1005@19+2 [@19+2 Expected ";" but found "1n"] (2 msgs)  || plain: rejects [@19+2 Expected ";" but found "1n"]
+D  "class C { async 1n() {} }"  || go: parses  || tsc: parses  || lint: TS1005@16+2 [@16+2 Expected ";" but found "1n"] (4 msgs)  || plain: rejects [@16+2 Expected ";" but found "1n"]
+D  "class C { set 1n(v) {} }"  || go: parses  || tsc: parses  || lint: TS1005@14+2 [@14+2 Expected ";" but found "1n"] (4 msgs)  || plain: rejects [@14+2 Expected ";" but found "1n"]
+D  "class C { accessor 1n = 1 }"  || go: parses  || tsc: parses; checker TS1539@19+2 "A 'bigint' literal cannot be used as a property name."  || lint: TS1005@19+2 [@19+2 Expected ";" but found "1n"] (2 msgs)  || plain: rejects [@19+2 Expected ";" but found "1n"]
+D  "class C { declare 1n: number }"  || go: parses  || tsc: parses; checker TS1539@18+2 "A 'bigint' literal cannot be used as a property name."  || lint: TS1005@18+2 [@18+2 Expected ";" but found "1n"] (2 msgs)  || plain: rejects [@18+2 Expected ";" but found "1n"]
+ok "class C { *1n() {} }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+D  "({ get 1n() { return 1 } })"  || go: parses  || tsc: parses  || lint: TS1005@7+2 [@7+2 Expected "}" but found "1n"] (4 msgs)  || plain: rejects [@7+2 Expected "}" but found "1n"]
+D  "({ async 1n() {} })"  || go: parses  || tsc: parses  || lint: TS1005@9+2 [@9+2 Expected "}" but found "1n"] (3 msgs)  || plain: rejects [@9+2 Expected "}" but found "1n"]
+ok "({ 1n: 1 })"  || go: parses  || tsc: parses; checker TS1539@3+2 "A 'bigint' literal cannot be used as a property name."  || lint: parses  || plain: parses
+ok "class C { 1n = 1 }"  || go: parses  || tsc: parses; checker TS1539@10+2 "A 'bigint' literal cannot be used as a property name."  || lint: parses  || plain: parses
+ok "class C { 1n() {} }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C { get 1() { return 1 } }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+ok "class C { static 'a' = 1 }"  || go: parses  || tsc: parses  || lint: parses  || plain: parses
+D  "class C { get 0x1n() { return 1 } }"  || go: parses  || tsc: parses  || lint: TS1005@14+4 [@14+4 Expected ";" but found "0x1n"] (5 msgs)  || plain: rejects [@14+4 Expected ";" but found "0x1n"]
+## i members named by a bigint: JavaScript
+D  [js] "class C { get 1n() { return 1 } }"  || go: parses  || tsc: parses  || lint: TS1005@14+2 [@14+2 Expected ";" but found "1n"] (5 msgs)  || plain: rejects [@14+2 Expected ";" but found "1n"]
+D  [js] "class C { static 1n() {} }"  || go: parses  || tsc: parses  || lint: TS1005@17+2 [@17+2 Expected ";" but found "1n"] (4 msgs)  || plain: rejects [@17+2 Expected ";" but found "1n"]
+D  [js] "({ get 1n() { return 1 } })"  || go: parses  || tsc: parses  || lint: TS1005@7+2 [@7+2 Expected "}" but found "1n"] (4 msgs)  || plain: rejects [@7+2 Expected "}" but found "1n"]
+D  [js] "({ async 1n() {} })"  || go: parses  || tsc: parses  || lint: TS1005@9+2 [@9+2 Expected "}" but found "1n"] (3 msgs)  || plain: rejects [@9+2 Expected "}" but found "1n"]
+# counts {"A":142,"!":41,"ok":163,"=":50,"D":49,"~":5}

@@ -1,0 +1,196 @@
+PROPOSED TEXT for /workspace/notes/lint/units/cli/API.md, from the research unit "ts-wrappers-eleven-rules" (pass 1b).
+It describes the planned code of proto/src-lint (HOWTO.txt). Where a sentence needs the commit that lands the code, it says <commit>.
+Three parts: (A) replaces the section "The rule framework ..." up to "### Where they will attach"; (B) replaces the
+differences 4 and 11 of "Rules and ESLint"; (C) is a new subsection "### TypeScript files" after "### Differences of some rules".
+Also: in "### Where they will attach" nothing changes. In "How the differences were found" add the paragraph (D).
+
+=== (A) ===
+
+## The rule framework, and where a configuration file and suppression comments will attach
+
+`src/lint/rule.rs`, `context.rs`, `linter.rs`, `tokens.rs`, `ast_utils.rs` and `rules/`. All of it is private to
+`bun_lint`: the way in is `bun_lint::lint(file, parsed, source, typescript)`, with the `ParsedForLint` of
+`Parser::parse_for_lint` and whether the loader of the file is TypeScript.
+
+- A rule is a module `rules/<name>.rs`, named as ESLint names the file of the rule, with `_` for `-`. It has a
+  private `static RULE: Rule` and handler functions that are `pub(crate)`. There is no trait, no registry and no
+  macro: the walk names each handler.
+- `Rule { name: &'static str, category: RuleCategory }`. `name` is ESLint's name of the rule when ESLint has the
+  rule, and it is the code of the diagnostics of the rule (`Code::Name(rule.name)`). `RuleCategory` has one
+  variant, `Correctness`: code that is wrong or does nothing. The default level comes from the category:
+  `Rule::default_level(&self) -> Option<Category>` is `Some(Category::Error)` for `Correctness`, and `None` would
+  be a rule that is off. So the eleven rules are on, as errors.
+- One walk of a file. `linter::run(context, parsed)` makes one `Linter`, which implements `bun_ast::walk::Visitor`
+  (`src/ast/walk.rs`). It walks `ParsedForLint::stmts`, the tree as written, before the visit pass, and then what the
+  parse pass leaves out of the statements and keeps in the side table (`sidecar.erased`): the statement of each
+  `ErasedData::Declaration` (an overload, and what follows `declare`: a function, class, variable statement or enum),
+  the statements that each `ErasedData::Module` keeps (the body of a namespace or module that leaves no statement),
+  and the decorators, the key, the value and the initializer of each `ErasedMemberData::Property` (an overload, an
+  abstract member, a field with `declare`). ESLint has nodes for all of them. A `visit_*` method calls the handlers
+  of every rule that reads that node, and walks on. The walk is not in the order of the source: the diagnostics are
+  sorted afterwards ("Order and deduplication").
+- A handler gets `&mut Context`, the node and, where it needs it, the `Loc` of the node. It reports with
+  `Context::report(rule, at: Loc, text)`: a diagnostic of that rule in the file of the run, at the token that
+  starts at `at`. A rule gives a place and never a length: the length is that of the token, read from the text.
+- `Context::report_if_global(rule, at, text, names)` is a report that holds only where a name is the global one
+  (`Globals::NAN`, `NUMBER`, `UNDEFINED`). The walk calls `Context::declare` or `declare_name` for every binding, for
+  the name of every function, class, enum and namespace, for every member of an enum, for every import that is in
+  the tree, for the names of an `import type` statement and of an `import x = ...` that leave no statement, and for
+  the name of a namespace that leaves none; `Context::finish` drops a held report when the file declares every name
+  that it depends on. The walk reads no scopes: a declaration anywhere in the file counts ("Rules and ESLint",
+  difference 10). A type alias, an interface and a type parameter declare no name for this, as for ESLint.
+- Depth. `visit_stmt`, `visit_expr` and `visit_binding` ask `bun_core::StackCheck` before they go one level
+  deeper. A node that is too deep is not entered, the walk goes on beside it, and the file gets ONE diagnostic,
+  `error internal-error: This file is nested too deeply to check all of it.`, at the first such node, with the
+  length 0.
+- What stands around a node and leaves no node. The tree holds the operand where the source has `x as T`,
+  `x satisfies T`, `x!`, `<T>x`, `(x)` or the instantiation expression `x<T>`; ESLint with typescript-eslint's parser
+  has a TypeScript node there, and no node for parentheses. `Context::new` builds one index per file: the wrapper
+  records of the parse (`sidecar.wrappers.records`) by the identity of their operand (`ExprId::of`: where it starts,
+  its kind, the address of its payload), those of one operand in their order, an inner one first, and the type
+  arguments after an expression (`sidecar.generics.type_arguments`) in the same way. A file without such syntax has
+  two empty lists and every question below is answered without a search. The questions, each about "the place of
+  `expr`", that is about the child of a node as the tree holds it:
+  - `ts_wrapper(expr) -> Option<TsWrapper>`: the TypeScript node that ESLint has in the place, the outermost of
+    `As`, `Satisfies`, `NonNull`, `TypeAssertion` and `Instantiation`. `None`: ESLint has the node of `expr` itself.
+    Type arguments before the arguments of a call or before a template are those of the call and no node (the token
+    after their `>` is read).
+  - `paren_count(expr) -> u32`: the pairs of parentheses directly around what ESLint has in the place: those outside
+    the outermost TypeScript node.
+  - `is_wrapped(expr) -> bool`: parentheses or a TypeScript node stand around `expr`.
+  - `node_start(expr) -> Loc`: where ESLint's node of the place starts. The `loc` of a node of the tree is its first
+    own token; ESLint's node starts at the `(` or the `<` of its first operand (`(a).b`, `<T>a === b`), a class
+    expression at the `@` of its first decorator, a TypeScript node at the `(` or `<` that it holds. Parentheses
+    around the node itself are no part of it. Exact: it is read from the records, not from the text.
+    `binary_start(node, loc)` is the same for a binary expression that a handler has without its `Expr`. The way down
+    a chain of first operands is kept by the first token of the chain, so that a chain of n comparisons is gone down
+    once and not n times.
+  - `node_end(expr) -> Option<u32>`: after the last token of ESLint's node of the place: the end of the last
+    operand, or the token that closes the node (`close_paren_loc` of a call, `close_bracket_loc`, `close_brace_loc`,
+    the `]` after an index, the backtick of a template, the `}` of a function body, the `>` of a JSX element), then
+    the end of the outermost TypeScript node. `None`: the tree and the text do not say it (a function without a
+    body, a node of the visit pass, a tree that is too deep).
+  - `tokens_of(expr) -> Option<Vec<u8>>`: what ESLint's `astUtils.equalTokens` compares of the node of the place,
+    as bytes: the tokens from `node_start` to `node_end`. Two nodes are equal for ESLint when these are equal.
+  - `case_start(switch, index) -> Loc`: where a clause starts, its `case`.
+  - `declared_fields(class)`: the fields with `declare` of a class, which leave no node, each with its place among
+    `G::Class::properties`; `is_typescript()`.
+  A rule asks `ts_wrapper` for every operand that it descends into: where it is `Some`, ESLint has no identifier, no
+  literal, no unary expression and no member there, and the rule does what ESLint's text does for an unknown node.
+  `ast_utils::is_same_reference`, `get_static_property_name` and `get_static_key_name` do so for each node they
+  descend into. These services are what a new rule uses; `around`, which lists the single pieces, is private until a
+  rule needs them one by one.
+- Assignment targets. Bun's tree writes the pattern on the left of an assignment as the array or object literal
+  that it looks like. The walk marks such a node before it reaches it (the left of `=`, the items and the property
+  values of a marked literal, the head of a `for`-`in` and of a `for`-`of`, the `=` of a default), and
+  `visit_e_array`, `visit_e_object` and `visit_e_binary` take the mark. A marked literal is a pattern for
+  `no-empty-pattern` and no literal for `no-sparse-arrays` and `no-dupe-keys`; a marked `=` is no assignment for
+  `no-self-assign`. In a TypeScript file a literal with a TypeScript node or parentheses around it is not marked:
+  typescript-eslint has an expression there (`[[,] as any] = x` has a sparse array, `([]) = x` has no empty
+  pattern). ESLint's own parser rejects such parentheses; a JavaScript file keeps the mark, as before.
+- Reading the text again (`tokens.rs`). `Tokens` is Bun's own lexer seated at an offset of the tree; a regular
+  expression and a JSX element are one token each, taken from the tree under the node that is read. It is used for:
+  the length of the token of a report; the one token after an operand (`]`, `++`, `)`, a template); the `}` that
+  closes a function body; the tokens of a node between `node_start` and `node_end` (`key_until`); and the token
+  before the test of a clause (`last_before`), read forward from the last statement of the clause before it, as long
+  as the parser leaves `Case::loc` empty (`NEEDS.md` X6). No service looks backwards in the text. They use
+  `ParsedForLint::stmts`, `name_of`, `arena` and `sidecar`, and of `bun_js_parser::lexer::Lexer` the seven items
+  `init_without_reading`, `current`, `step`, `next`, `loc`, `end` and `token`, which have to stay public.
+- Tests. `test/cli/lint/rules.test.ts` has one test for each file `test/cli/lint/rules/<rule>.json`: one run of
+  `bun --lint` over one file per case, and the lines of that rule compared with the `expect` of each case. A case is
+  `{ code, jsx?, ext?, expect, differs?, eslint?, eslintTest? }`: `ext` is the extension of its file when that is not
+  `.js` or `.jsx` (`ts`, `tsx`, `mts`, `cts`, `mjs`, `cjs`). A new rule is a module, its calls in `linter.rs`, and a
+  file of cases.
+
+=== (B) ===
+
+4. TypeScript files, and what the walk does not reach in them. The rules run on `.ts`, `.tsx`, `.mts` and `.cts`
+   files. What Bun is held to there is ESLint at the pin with the parser of typescript-eslint (8.58.2, TypeScript
+   6.0.3), and for `no-dupe-class-members` the rule of that name of typescript-eslint, which does not look at a
+   member with a computed key. The walk reaches the statements of the tree and, through the side table, the erased
+   declarations, the bodies of the namespaces that leave no statement and the erased class members ("The rule
+   framework"). It does not reach what stands inside a type: the parameters of a function type, of a constructor
+   type and of a call, construct or method signature are patterns for ESLint, and `no-empty-pattern` reports
+   `type F = ({}: T) => void` (1:11), `interface I { m({}: T): void }` (1:17), `let x = y as ({}: T) => void` (1:15)
+   and the like, which Bun does not (18 cases of its fixture). An interface and a type alias hold nothing else that
+   one of the eleven rules reads. Section "TypeScript files" has the other differences of a TypeScript file.
+11. The start of a node and the `case` of a clause: no difference is left. ESLint's node starts at the `(` of its
+    first operand and its clause starts at `case`; the tree has neither place. Until <commit> both were looked for
+    backwards over spaces and tabs, and after a comment or a line break the report was at the first token of the
+    operand or of the test (33 cases at another place, 3 with another text). Now the `(` is read from the wrapper
+    records of the parse (`Context::node_start`), and the `case` is the token before the test, read forward from the
+    clause before it (`Context::case_start`); the 36 cases have ESLint's answer. Where the text between two clauses
+    does not read as the tree says (a regular expression in a declaration that leaves no node), the report of a
+    clause is at the first token of its test. When the parser fills `Case::loc` (`NEEDS.md` X6), the forward read goes.
+
+=== (C) ===
+
+### TypeScript files
+
+The fixtures have 1,071 cases with a TypeScript extension (1,001 `.ts`, 42 `.tsx`, 14 `.mts`, 14 `.cts`) that both
+parsers take: 1,041 with the answer of ESLint, 28 where Bun reports less, 2 where Bun reports and ESLint does not.
+
+16. Inside a type: `no-empty-pattern`, 18 cases (difference 4).
+17. Scopes in TypeScript: `use-isnan` (8 cases), `valid-typeof` (1 case). Difference 10 holds as it is: a declaration
+    of the name anywhere in the file drops the report. What declares a name there: the name of an enum and each of its
+    members, each part of the name of a namespace, and everything that follows `declare`. So `enum E { NaN } x === NaN`,
+    `namespace A.NaN {} x === NaN`, `namespace N { const NaN = 1 } x === NaN` and
+    `declare global { const NaN: number } x === NaN` are not reported, and ESLint reports each. A type alias, an
+    interface and a type parameter named `NaN` declare nothing, for Bun as for ESLint.
+18. A name with `type` in the braces of an import: `use-isnan`, `valid-typeof`. `import { type NaN } from "m"` and
+    `import { type NaN, b } from "m"` declare `NaN` for ESLint. The parse pass keeps no record of such a name
+    (`Attached::type_only_specifier` has no caller, `NEEDS.md` X8), so `x === NaN` after it is reported (2 cases,
+    `extra`). `import type { NaN } from "m"`, `import type NaN from "m"`, `import type * as NaN from "m"` and
+    `import type NaN = require("m")` are read from the side table and declare the name.
+19. JSX text in the test of a `case` in a `.tsx` file: difference 13 (1 case).
+20. `new A<T>` without an argument list. The type arguments after an expression are those of a call when a `(` or a
+    template follows them, else an instantiation expression, which is a TypeScript node for ESLint (`x = x<T>` is no
+    self-assignment). The target of a `new` without arguments is read as one too, and ESLint has the type arguments
+    on the `new`. None of the eleven rules looks at the target of a `new`; it ends with `NEEDS.md` X7.
+21. The two parsers, in TypeScript. Bun's parser rejects `enum E { A, A }`, `class A { #x = 1; #x = 2 }` and
+    `!#p in o`, which typescript-eslint's parser takes (4 cases, in no fixture). typescript-eslint's parser rejects
+    `a<T>.b`, `for ([,] as any of x) {}` and an initializer after `declare` (`declare const a = [,]`), which Bun's lint
+    parse takes and lints as it reads (4 cases, in no fixture).
+22. A word with an escape in the test of a `case`. ESLint's own parser has the word as what it spells, and
+    `case \u0061:` repeats `case a:` in a JavaScript file. typescript-eslint has the text of the word, and in a
+    TypeScript file the two are different tests. Bun follows each (`Context::tokens_of`).
+23. `>>` and `<<` in the test of a `case`. typescript-eslint has the `>>` that closes two lists of type arguments as
+    two tokens, so `x as A<B<C>>` repeats `x as A<B<C> >`; Bun compares each `>` and `=` of a token that starts with
+    `>` alone. It has no token for the first `<` of `f<<T>() => void>(a)`, so that test does not repeat
+    `f< <T>() => void >(a)`; Bun compares `<<` as one token and says the same.
+24. JavaScript with decorators. ESLint's own parser rejects a decorator. A class expression with decorators as the
+    test of a `case` was not compared; it is compared now, and a comparison that starts with such a class is reported
+    at the `@`, as typescript-eslint does for the same text in a TypeScript file.
+
+Rule by rule, in a TypeScript file:
+
+- `no-debugger`: 51 cases, all the same. `declare namespace N { debugger }` is reported, as by ESLint.
+- `no-compare-neg-zero`: 80 cases, all the same. `x === (-0 as number)`, `x === -0!`, `x === -<number>0` and
+  `x === -0<T>` are not reported; `x === (-0)` and `(x as number) === -0` are, the second at the `(`.
+- `use-isnan`: 148 cases, 138 the same, 8 missing (17), 2 extra (18). `x === NaN!`, `x === (NaN as number)`,
+  `x === Number!.NaN`, `x === Number["NaN" as string]`, `x === (a, NaN as number)` and `switch (NaN as number) {}` are
+  not reported; `x === (NaN)`, `x === (Number).NaN` and `case (NaN):` are.
+- `valid-typeof`: 70 cases, 69 the same, 1 missing (17). `typeof x === ("strnig" as string)`,
+  `(typeof x as string) === "strnig"` and `typeof x === undefined!` are not reported; `(typeof x) === "strnig"` is.
+- `no-unsafe-negation`: 54 cases, all the same. `(!a as any) in b`, `<any>!a in b` and `(!a)! in b` are not
+  reported; `!a! in b` and `!<any>a in b` are.
+- `no-self-assign`: 161 cases, all the same. `a = a!`, `a = <any>a`, `(a as any) = a`, `a.b = a!.b`, `a!.b = a!.b`,
+  `a[b as T] = a[b as T]` and `x = x<T>` are not reported; `a = (a)` and `a.b = (a).b` are. `([a]) = [a]` is not
+  reported in a TypeScript file (the left side is an expression) and is in a JavaScript file.
+- `no-dupe-keys`: 78 cases, all the same. A computed key with a TypeScript node has no static name
+  (`{ ["a" as string]: 1, a: 2 }`); `{ [("a")]: 1, a: 2 }` is reported.
+- `no-dupe-class-members`: 99 cases, all the same as the rule of typescript-eslint. A member with a computed key is
+  not looked at (`class A { ["a"] = 1; a = 1 }` is reported in a JavaScript file and not in a TypeScript file). An
+  overload and an abstract member are no members; a field with `declare` is one, at its place among the others
+  (`class A { declare x: number; x = 1 }` is reported at the second `x`).
+- `no-duplicate-case`: 171 cases, 170 the same, 1 missing (19).
+- `no-empty-pattern`: 102 cases, 84 the same, 18 missing (16).
+- `no-sparse-arrays`: 57 cases, all the same.
+
+=== (D) ===
+
+- Round 2 (TypeScript). The planned text of the rules was compiled with a probe against the rlibs of the debug build
+  of be1ebe5295 and compared with ESLint at the pin and typescript-eslint 8.58.2
+  (`ts-wrappers-eleven-rules/topdown/HOWTO.txt`): the 3,341 cases of the fixtures (3,305 keep their answer, the 36
+  of difference 11 have ESLint's now), 1,081 TypeScript cases (1,071 that both parsers take), and the start and end
+  of 522,847 expressions of real files against the nodes of the two parsers.

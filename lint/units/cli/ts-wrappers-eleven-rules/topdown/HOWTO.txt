@@ -26,6 +26,7 @@ proto/cases/<rule>.ts.json    the TypeScript lists of ../round2-oracle/proto-1a 
 proto/cases/<rule>.ts2.json   written here (make-ts2-lists.cjs, 499 cases): instantiation expressions, nested wrappers, where a
                          node starts and ends, targets in parentheses, members that leave no node, `case` after anything.
 proto/cases/use-isnan.ts4.json, no-sparse-arrays.ts3.json   25 forms that declare a name; 1 case that cross-add.cjs found.
+api-sections.txt, needs.txt   proposed text for API.md (the rule framework, differences 4 and 11, TypeScript files) and for NEEDS.md (X6, X7, X8).
 proto/oracle/vectors/, logs/   diff.cjs over the fixture of the tree and the lists, per rule.
 fixtures/<rule>.json     the planned fixtures (make-fixtures.cjs): the cases of the tree and 1,071 cases with a TypeScript extension.
 test-cli-lint/rules.test.ts, rules.test.patch   the test with `ext`; the patch applies in the worktree.
@@ -33,7 +34,7 @@ test-cli-lint/rules.test.ts, rules.test.patch   the test with `ext`; the patch a
 Results (prototype binary, 2026-10-01):
 - The 3,341 cases of the fixtures of the tree: 3,305 keep their answer, 36 have ESLint's answer now (the 33 `moved` and the 3
   `other-text` of difference 11), 0 other. (no-duplicate-case.json of the tree has one case twice, at 286 and 334.)
-- 1,071 TypeScript cases that both parsers take: 1,041 ESLint's answer, 28 missing (18 patterns inside a type, 9 names
+- 1,081 TypeScript cases, 1,071 that both parsers take: 1,041 ESLint's answer, 28 missing (18 patterns inside a type, 9 names
   declared in another scope, 1 JSX text), 2 extra (a name with `type` in an import clause that the parser does not record).
 - The planned fixtures, 4,413 cases: every case gets its `expect`; cross-add.cjs adds nothing.
 - ranges.cjs: TypeScript compiler sources (scanner, utilities, parser, binder, core, path, checker, 39 files of services):

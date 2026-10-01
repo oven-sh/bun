@@ -70,6 +70,9 @@ pub struct TypeAliasDeclaration {
     pub type_node: ts::Type,
 }
 
+const _: () = assert!(core::mem::size_of::<InterfaceDeclaration>() == 52);
+const _: () = assert!(core::mem::size_of::<TypeAliasDeclaration>() == 40);
+
 /// A string literal: the range holds the quotes, `value` is what it says.
 #[derive(Clone, Copy)]
 pub struct StringLiteral {""")

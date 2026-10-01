@@ -249,6 +249,73 @@ codes are in both files): 2,206 messages, in the order of their codes. `generate
 - `src/typecheck/UPSTREAM_PORTED` does not exist. The table names both upstream commits in its first line and the
   generator in `pinned`.
 
+## Node table: the wiring of `ast`
+
+Commits `0aa0a67449` and `2caaa157eb` (`core/golang.rs`), `a8b48548a6` (the two dependencies, `ast/diagnostic.rs`) and
+`887629cf2c` (`pub mod ast;`). The 28 files of `ast/` are those of round 1, unchanged but for two lines of `ast/mod.rs`.
+This section says what the crate got so that cargo compiles them; the rows are in PORT_STATUS.md, "Node table".
+
+### How a caller writes the calls
+
+- `crate::core::List<'a, T>` is a Go `[]T` that is stored or passed: `Copy`, 16 bytes, nil-able. `List::NIL` and
+  `List::default()` are the nil slice; `List::from_slice(&[T])` is a slice that is not nil, also when it is empty;
+  `is_nil()` tells them apart. The methods need `T: Copy + Default`: `as_slice() -> &'a [T]`, `len() -> isize` (Go's
+  `int`), `at(index) -> T` (the zero value of `T` where Go panics: an index below 0 or not below `len`), `iter()` (the
+  elements by value), `same(other)` (`core.Same`: the same backing array and the same length; two empty lists are the
+  same, nil or not), `sub(lo, hi)` (`s[lo:hi]`: both bounds are clamped to the list and `lo` to `hi` where Go panics;
+  a part of the nil list is the nil list, and a part of another list is never nil).
+- An index is `impl GoIndex`: `usize`, `isize` or `i32`. An integer literal is an `i32`.
+- `crate::ast::Arg<'a>` is one `any` of upstream's `args ...any`: `Arg::Str(&'a [u8])`, `Arg::Int(i64)`,
+  `Arg::Bool(bool)`; a callee takes `&[Arg<'_>]`. `Arg::default()` is `Arg::Str(b"")`, so a `List<'a, Arg<'a>>` has its
+  methods. `From` is implemented for `&[u8]`, `&[u8; N]`, `&str`, `i32`, `isize`, `usize` (a value above `i64::MAX` is
+  `i64::MAX`) and `bool`. The other files of the tree write the variants (`Arg::Str` 416 times, `Arg::Int` 34,
+  `Arg::Bool` 3) and `Arg::from` nowhere.
+- `src/typecheck/Cargo.toml` has `bun_collections` and `bun_core`, both as `workspace = true`. The first module of a
+  later layer that names another crate adds its line when it is declared (the lowering: `bun_ast`, and
+  `bun_js_parser` and `bun_alloc` for its tests).
+
+### Differences from the contract
+
+- `core/golang.rs` is lines 7 to 81 of the contract's `tscore/golang.rs` with another body of `List::sub`: the
+  contract's gives an empty list that is not nil for a part of the nil list, Go gives nil ("If the sliced operand of a
+  valid slice expression is a nil slice, the result is a nil slice"), and `sub_list` of `checker/types.rs` keeps the nil
+  list nil as well. No file of the tree calls `List::sub`; `LiveList::sub` of the contract has the same body as the
+  contract's `List::sub`.
+- The rest of that file is not in the tree: `Text`, `SliceBuf`, `LiveList`, `Map`, `Memo`, `compare_strings`,
+  `compare_f64`. The files that name them are of later layers (`binder`: `Text`; `checker`: `Text`, `Map`, `LiveList`,
+  `Memo`). `Map` is written on `bun_collections::HashMap`, which is a dependency now. Its `OrderedMap`, `Set`,
+  `OrderedSet` and `Tristate` have the names of types that `collections/` and `core/tristate.rs` hold in another form:
+  which form the files of the checker expect was not looked at.
+- `ast/diagnostic.rs` is lines 18 to 66 of the contract's `ast_diagnostic.rs` and not the rest (the diagnostic, its
+  store, the collection, the comparison): that port names `crate::tscore::{ids, records, slices, text}`, and the tree
+  has no module of those paths.
+
+### Verified
+
+- Not run with these commits: `cargo check`, `cargo clippy`, `cargo test`. The survey that follows them is the first
+  cargo compile of `ast/` and of `core/golang.rs` in the real crate.
+- The look-ahead of the round-4 survey, before the commits: `rustc` alone from a scratch root in `/tmp`, the 28 files
+  of `ast/` and the two of `scanner/` read in place beside layers 1 and 2, against the real `bun_core` and
+  `bun_collections`, the rust lints of the workspace denied, with the contract's `List` and the bare enum `Arg`: exit
+  0, no warning.
+- `core/golang.rs` and `ast/diagnostic.rs` as committed, alone (both name `std` only): `rustc` with the rust lints of
+  the workspace denied, as a library and with `--test`: exit 0, no warning; the test `list_is_a_go_slice` passes, and
+  fails at the nil list when the body of `sub` is the contract's.
+- `rustfmt --check --edition 2024 src/typecheck/lib.rs` (it follows every `mod` line): exit 0.
+  `python3 /workspace/notes/lint/tools/undeclared.py src/typecheck`: 76 of 179 files are reached, none of `ast/` or
+  `scanner/` is outside.
+- Not looked at: clippy on the new body of `sub` and on the test; `ast/tests.rs` (`#[cfg(test)]`, which `cargo check`
+  does not compile: it imports `crate::core::{List, new_text_range}`); any body of `ast/` against upstream.
+
+### What waits
+
+- `crate::core::{Text, Map, LiveList, Memo}` and `crate::ast::{DiagnosticId, DiagnosticStore, Diagnostics,
+  DiagnosticsCollection, RepopulateDiagnosticInfo, RepopulateDiagnosticKind, deep_clone_node}`: files of the layers
+  after this one name them and no file defines them (the probe of the round-4 survey). The contract's
+  `tscore/golang.rs` and `ast_diagnostic.rs` hold all but `deep_clone_node`.
+- `lowering::ParseDiagnostic` and `importer::javascript::ParseDiagnostic` stay two types until `ast/diagnostic.rs` has
+  the diagnostic itself.
+
 ## Checker: signatures, instantiation, types of symbols, widening (K3 steps 18 to 21)
 
 Commits `1cb4b9c183` and `314fac8c09`. The 176 functions of the layers T-SIGDECL, T-SIGSHAPE, T-SIGINST, T-INSTANTIATE,

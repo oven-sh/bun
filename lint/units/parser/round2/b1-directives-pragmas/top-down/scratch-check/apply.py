@@ -118,9 +118,17 @@ edit("parse/parse_entry.rs", """                Ok(_) if p.log().errors > orig_e
                     Err(crate::Error::SyntaxError)
                 }
 """)
-edit("parse/parse_entry.rs", """        sidecar.attached.sort();
+edit("parse/parse_entry.rs", """        drop(action_guard);
+        let mut sidecar = p.starts_for_parse_only.take().unwrap_or_default();
+        sidecar.attached.sort();
         Ok(f(&ParsedForLint {
-""", """        sidecar.attached.sort();
+""", """        drop(action_guard);
+        if p.log().errors > orig_error_count {
+            // A pragma logged them: the caller gets their entries as it does when the parse fails.
+            p.finish_syntax_errors(errors);
+        }
+        let mut sidecar = p.starts_for_parse_only.take().unwrap_or_default();
+        sidecar.attached.sort();
         sidecar.comment_directives = crate::parse::comment_directives::get_comment_directives(
             p.lexer.contents,
             &p.lexer.all_comments,

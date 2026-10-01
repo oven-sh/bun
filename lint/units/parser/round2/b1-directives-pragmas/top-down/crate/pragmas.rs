@@ -932,7 +932,7 @@ mod tests {
         assert_eq!((references, diagnostics), (vec![], vec![(TS1084, 0, 21)]));
     }
 
-    /// A message of the log as the number of its diagnostic, its offset, its length, its text, and the start and end that the table of a failed parse has for it.
+    /// A message of the log as the number of its diagnostic, its offset, its length, its text, and the start and end that the table of the parse has for it.
     type Logged = (Option<u32>, usize, usize, Vec<u8>, Option<(u32, u32)>);
 
     /// What `read` makes of the lint parse of `text`, `None` where the parse fails, and the messages that it left. The lexer keeps its comments as it does for a build that minifies names.
@@ -1046,7 +1046,14 @@ mod tests {
             let expected: Vec<Logged> = expected
                 .iter()
                 .map(|&(code, offset, length, said)| {
-                    (Some(code), offset, length, said.as_bytes().to_vec(), None)
+                    let marked = (offset as u32, (offset + length) as u32);
+                    (
+                        Some(code),
+                        offset,
+                        length,
+                        said.as_bytes().to_vec(),
+                        Some(marked),
+                    )
                 })
                 .collect();
             let (names, logged) = lint_parse(text, |parsed| {

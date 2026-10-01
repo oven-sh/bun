@@ -1,0 +1,68 @@
+PROPOSED TEXT for /workspace/notes/lint/units/cli/NEEDS.md, from the research unit "ts-wrappers-eleven-rules" (pass 1b).
+X6 is the number the brief gives. X7 and X8 are the next free ones when this was written: renumber if they are taken.
+All three are for the parser unit (`src/js_parser/`). None blocks D2: the lint side works around each, as written below.
+
+## `Case::loc`: where a clause of a `switch` starts (X6)
+
+For the parser unit. File `src/js_parser/parse/parse_stmt.rs`, `fn t_switch` (lines 334 to 405 at be1ebe5295).
+
+The text: at the top of the loop `while p.lexer.token != T::TCloseBrace {` (line 349), before
+`if p.lexer.token == T::TDefault {`, the line `let case_loc = p.lexer.loc();`, and in `cases.push(js_ast::Case { .. })`
+(line 387) `loc: case_loc,` in place of `loc: bun_ast::Loc::EMPTY,`. The clause then has the place of its `case` or
+`default`.
+
+Why: ESLint reports `no-duplicate-case` and the `case NaN` of `use-isnan` at the clause, which starts at its `case`.
+The tree has the test of a clause and not the keyword: `Case::loc` is `Loc::EMPTY` for every clause of a parse.
+
+What it costs a parse without `--lint`: one copy of a `Loc` per clause. No branch, no allocation, and the size of
+`Case` does not change (the field exists). Nothing reads it today: the printer writes a clause without it
+(`src/js_printer/lib.rs`, lines 6032 to 6065), and the one other place that makes a `Case`,
+`src/react_compiler/codegen.rs` line 1002, already fills it.
+
+Until then: `Context::case_start` (`src/lint/context.rs`) reads the token before the test of the clause with Bun's
+lexer, forward from the last statement of the clause before it (from its test when it has no statement, from the `{`
+of the `switch` for the first clause), and takes it when it is `case`. That is ESLint's place in every case of the
+fixtures (21 JavaScript cases that were at another place, and the TypeScript ones). Where the text between does not
+read as the tree says, the report is at the first token of the test. `case_start` returns `case.loc` as soon as it is
+set (`case.loc.start >= 0`): with this change the forward read (`tokens::last_before`, the loop over the clauses
+before) is deleted.
+
+## Type arguments that are an instantiation expression (X7)
+
+For the parser unit. File `src/js_parser/parse/generics.rs`, `TypeArgumentsOf` and the sites that call
+`Generics::type_argument_list`.
+
+The text: a third variant, `TypeArgumentsOf::Instantiation`, for type arguments after an expression that no call,
+no `new` and no template takes (`const f = g<string>;`, `x = (y<T>)`); `Expression` stays for the ones before the
+arguments of a call, before a template, and after the target of a `new`.
+
+Why: ESLint with typescript-eslint's parser has a node `TSInstantiationExpression` for the first kind and none for
+the second (the type arguments are a field of the call). A rule that asks what stands in a place has to tell them
+apart: `x = x<T>` is no self-assignment, `x === NaN<T>` no comparison with NaN, and `f<T>(x)` is a call of `f`. The
+record does not say which it is.
+
+Until then: `Context::around` (`src/lint/context.rs`) reads the token after the `>` of the record: a `(` or a template
+makes them the type arguments of a call. That is the rule of the grammar, and right for every case of the lists but
+one form: `new A<T>` without an argument list, where the target `A` is taken for an instantiation expression and
+ESLint has the type arguments on the `new`. None of the eleven rules looks at the target of a `new`; a rule that
+does (`no-obj-calls`, `no-new-native-nonconstructor`) misses `new Math<T>` then.
+
+## The names with `type` in the braces of an import or export (X8)
+
+For the parser unit. Files `src/js_parser/parse/attached.rs` (`Attached::type_only_specifier`, line 430, and
+`specifiers_belong_to`, line 440) and the sites that read the clause of an import or an export
+(`src/js_parser/parse/parse_import_export.rs`, `parse_stmt.rs` lines 1528 to 1545 and 1713 to 1731).
+
+The text: the two functions are called where a clause is read. At be1ebe5295 only a test calls
+`type_only_specifier` (`parse_skip_typescript.rs` line 3805), and `sidecar.attached.specifiers` is empty after every
+parse: `import { type NaN, b } from "m"` leaves an `S::Import` with the item `b`, and `import { type NaN } from "m"`
+an erased import with `ImportClause::Named` of no item.
+
+Why: a name with `type` is a declaration for ESLint (typescript-eslint's scope manager defines it). `x === NaN` after
+`import { type NaN } from "m"` is not reported by ESLint, and `bun --lint` reports it, because nothing says that the
+file declares `NaN` (2 cases of the fixture of `use-isnan`, `extra`). The rules that resolve names (D4) need the same
+records.
+
+Until then: nothing. The lint side asks already: `Context::declare_type_only_names(statement)` reads
+`attached.specifiers_of(statement)` for every `S::Import` and for every erased import, and declares the names of the
+records it finds.

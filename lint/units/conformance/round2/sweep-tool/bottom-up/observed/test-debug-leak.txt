@@ -1,0 +1,12 @@
+
+test/cli/lint/conformance.test.ts:
+(pass) sweep.ts > a command line that is wrong is the exit code 2 [7869.63ms]
+(pass) sweep.ts > --each: a line for each instance in the order of the names, and the exit code 0 when every instance that runs passes [21277.91ms]
+(pass) sweep.ts > --each: the first line that differs or the reason, and the exit code 1 when an instance that runs does not pass [21457.85ms]
+(pass) sweep.ts > --shard and --resume: a second run keeps the outcomes of the first, and counts every outcome by directory and by code [31391.90ms]
+
+ 4 pass
+ 105 filtered out
+ 0 fail
+ 18 expect() calls
+Ran 4 tests across 1 file. [43.33s]

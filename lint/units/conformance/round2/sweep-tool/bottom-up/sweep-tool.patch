@@ -1,0 +1,794 @@
+diff -ruN a/test/cli/lint/conformance/fixtures/empty-check-fixture.ts b/test/cli/lint/conformance/fixtures/empty-check-fixture.ts
+--- a/test/cli/lint/conformance/fixtures/empty-check-fixture.ts
++++ b/test/cli/lint/conformance/fixtures/empty-check-fixture.ts
+@@ -0,0 +1,2 @@
++// A check for --check of sweep.ts: it reports nothing, so an instance passes when its oracle has no error.
++export { emptyCheck as default } from "../runner";
+diff -ruN a/test/cli/lint/conformance/fixtures/replay-check-fixture.ts b/test/cli/lint/conformance/fixtures/replay-check-fixture.ts
+--- a/test/cli/lint/conformance/fixtures/replay-check-fixture.ts
++++ b/test/cli/lint/conformance/fixtures/replay-check-fixture.ts
+@@ -0,0 +1,5 @@
++// A check for --check of sweep.ts: it reports the diagnostics that the oracle of its instance holds, so every instance passes.
++import { replayCheck } from "../runner";
++import { type Oracle, readOracle } from "../runner/oracle";
++
++export default replayCheck(instance => readOracle(instance.oracle as Oracle));
+diff -ruN a/test/cli/lint/conformance/fixtures/wrong-check-fixture.ts b/test/cli/lint/conformance/fixtures/wrong-check-fixture.ts
+--- a/test/cli/lint/conformance/fixtures/wrong-check-fixture.ts
++++ b/test/cli/lint/conformance/fixtures/wrong-check-fixture.ts
+@@ -0,0 +1,18 @@
++// A check for --check of sweep.ts that replays the oracle and is wrong for three instances, each in another way.
++import type { Check, Diagnostic } from "../runner";
++import replay from "./replay-check-fixture";
++
++const wrong: Record<string, (diagnostics: Diagnostic[]) => Diagnostic[]> = {
++  // Another text for the first diagnostic: line 1 of the baseline is not the oracle's.
++  "castingTuple.ts": ([first, ...rest]) => [{ ...first, messageText: "Changed." }, ...rest],
++  // Nothing where the oracle has errors.
++  "ArrowFunctionExpression1.ts": () => [],
++  // A diagnostic where the oracle has none.
++  "2dArrays.ts": () => [{ category: "error", code: 1, messageText: "Made up." }],
++};
++
++const check: Check = async (input, signal) => {
++  const { diagnostics } = await replay(input, signal);
++  return { diagnostics: wrong[input.instance.name]?.(diagnostics) ?? diagnostics };
++};
++export default check;
+diff -ruN a/test/cli/lint/conformance/runner/expectations.ts b/test/cli/lint/conformance/runner/expectations.ts
+--- a/test/cli/lint/conformance/runner/expectations.ts
++++ b/test/cli/lint/conformance/runner/expectations.ts
+@@ -296,6 +296,8 @@
+   "--check",
+   "--jobs",
+   "--timeout",
++  "--shard",
++  "--resume",
+   "--kind",
+   "--tag",
+   "--report",
+diff -ruN a/test/cli/lint/conformance/sweep.ts b/test/cli/lint/conformance/sweep.ts
+--- a/test/cli/lint/conformance/sweep.ts
++++ b/test/cli/lint/conformance/sweep.ts
+@@ -1,4 +1,5 @@
+-// The sweep: the instances of the corpus through a check, the pass counts by directory and by diagnostic code, the lists of expectations.json and a report file.
++// The sweep: the instances of the corpus through a check, their outcomes by directory and by diagnostic code, the lists of expectations.json and a report file; or one line for each instance.
++import { appendFileSync, statSync } from "node:fs";
+ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+ import { availableParallelism, tmpdir } from "node:os";
+ import { basename, dirname, join, resolve } from "node:path";
+@@ -45,18 +46,33 @@
+ const usage = `usage: bun test/cli/lint/conformance/sweep.ts [options] [selector ...]
+ 
+ An instance is swept when one selector takes it. Without a selector every instance is swept.
+-  compiler/   conformance/types/tuple/    a directory of the cases with everything below it; it ends in "/"
++  compiler   conformance/types/tuple/     a directory of the cases with everything below it, with or without "/" at its end
+   conformance/types/tuple/castingTuple.ts the instances of the case at that path
+   castingTuple.ts                         the instances of the case with that file name, and the instance of that name
+   "abstractProperty(target=es2015).ts"    the instance of that name
+   "abstract*"                             the instances whose name matches; "*" stands for any characters
+ 
++  --each                 print on stdout one line for each instance of the selection, in the order of the names, and
++                         nothing else; the counts go to stderr:
++                           pass <name>
++                           fail <name> line <n>: - <line of the oracle> + <line of the check>
++                           <outcome> <name> <reason>
++                         The second form is the first line at which the baseline of the check parts from the oracle,
++                         each line as a JSON string; a side is left out where it has no such line. The third form is
++                         every other outcome, and "skip" with the reason for an instance that the reference does not
++                         run. No instance is held against a list, and a report is written only where --report names it
+   --bin <path>           binary under test of the default check, which runs it with --lint and the files of an
+                          instance (default: the binary that runs this script)
+   --check <module>       module whose default export is a check; it replaces the default check
+   --no-files             write no instance to disk; with --check, for a check that reads the units of its input
+-  --jobs <n>             instances in flight (default: the number of processors)
++  --jobs <n>             instances in flight (default: 4, or the number of processors where that is less)
+   --timeout <ms>         limit of one instance (default: 60000)
++  --shard <k>/<n>        only every n-th instance of the selection in the order of the names, from the k-th on: the
++                         n shards of a selection hold each of its instances once
++  --resume <file>        keep the outcomes that the file holds and run only the other instances; every outcome of
++                         this run is added to the file as it is known, and the file is made where it is not there.
++                         The file is of one check and one corpus: with the shards of a sweep it makes one sweep of
++                         several runs, and the run after the last shard prints the counts of all of them
+   --listed               only the instances that expectations.json lists
+   --kind <E|C>           only the instances whose oracle has errors (E) or has none (C)
+   --tag <tag>            only the instances with that tag: accepted, triaged
+@@ -71,20 +87,24 @@
+   --corpus <directory>   the corpus (default: corpus beside this script)
+   -h, --help
+ 
+-Exit code 0: every listed instance of the selection passes and no name left a list that may hold it; with --round-trip,
+-every error baseline is written back with its bytes. 1: not so. 2: the command line is wrong, or the corpus, the lists,
+-the module of the check or the file of the report cannot be used.`;
++Exit code 0: every listed instance of the selection passes and no name left a list that may hold it; with --each,
++every instance of the selection that the reference runs passes; with --round-trip, every error baseline is written
++back with its bytes. 1: not so. 2: the command line is wrong, or the corpus, the lists, the module of the check, the
++file of --resume or the file of the report cannot be used.`;
+ 
+ const tags = ["accepted", "triaged"] as const;
+ type Tag = (typeof tags)[number];
+ 
+ interface Options {
+   selectors: string[];
++  each: boolean;
+   bin: string | undefined;
+   check: string | undefined;
+   files: boolean;
+   jobs: number | undefined;
+   timeoutMs: number;
++  shard: { part: number; of: number } | undefined;
++  resume: string | undefined;
+   listed: boolean;
+   kind: Kind | undefined;
+   tag: Tag | undefined;
+@@ -108,6 +128,8 @@
+   "--check",
+   "--jobs",
+   "--timeout",
++  "--shard",
++  "--resume",
+   "--kind",
+   "--tag",
+   "--report",
+@@ -116,16 +138,32 @@
+   "--corpus",
+ ]);
+ // The options that say how instances are run and what becomes of their outcomes.
+-const ofARun = ["--bin", "--check", "--no-files", "--jobs", "--timeout", "--update", "--report"];
++const ofARun = [
++  "--each",
++  "--bin",
++  "--check",
++  "--no-files",
++  "--jobs",
++  "--timeout",
++  "--shard",
++  "--resume",
++  "--update",
++  "--report",
++];
++// The instances in flight where --jobs names no number: a check that starts a command keeps no more of them alive.
++const defaultJobs = 4;
+ 
+ function parseArgs(argv: readonly string[]): Options {
+   const o: Options = {
+     selectors: [],
++    each: false,
+     bin: undefined,
+     check: undefined,
+     files: true,
+     jobs: undefined,
+     timeoutMs: 60_000,
++    shard: undefined,
++    resume: undefined,
+     listed: false,
+     kind: undefined,
+     tag: undefined,
+@@ -171,6 +209,9 @@
+       return n;
+     };
+     switch (name) {
++      case "--each":
++        o.each = true;
++        break;
+       case "--bin":
+         o.bin = value;
+         break;
+@@ -186,6 +227,18 @@
+       case "--timeout":
+         o.timeoutMs = count();
+         break;
++      case "--shard": {
++        const m = /^([0-9]+)\/([0-9]+)$/.exec(value!);
++        const [part, of] = m === null ? [0, 0] : [Number(m[1]), Number(m[2])];
++        if (part < 1 || part > of || !Number.isSafeInteger(of)) {
++          throw new UsageError(`--shard ${value}: <k>/<n> with k from 1 to n`);
++        }
++        o.shard = { part, of };
++        break;
++      }
++      case "--resume":
++        o.resume = value;
++        break;
+       case "--listed":
+         o.listed = true;
+         break;
+@@ -242,6 +295,10 @@
+   }
+   const useless = o.run ? [] : ofARun.filter(name => seen.has(name));
+   if (useless.length > 0) throw new UsageError(`--no-run runs no instance: ${useless.join(", ")} cannot go with it`);
++  const ofTheLists = o.each ? ["--update", "--since"].filter(name => seen.has(name)) : [];
++  if (ofTheLists.length > 0) {
++    throw new UsageError(`--each holds no instance against a list: ${ofTheLists.join(", ")} cannot go with it`);
++  }
+   return o;
+ }
+ 
+@@ -431,12 +488,16 @@
+   return new Map([...out].sort((a, b) => (a[0] < b[0] ? -1 : 1)));
+ }
+ 
++type Outcome = RunResult["outcome"];
++
+ interface CodeCount {
+   // Instances whose oracle has the code, and those of them that pass.
+   instances: number;
+   pass: number;
+   // Diagnostics with the code in the oracles of those instances.
+   diagnostics: number;
++  // How many of those instances had each outcome.
++  outcomes: Partial<Record<Outcome, number>>;
+ }
+ 
+ function countBy<T>(all: Iterable<T>, key: (x: T) => string): Map<string, number> {
+@@ -450,6 +511,162 @@
+   return [...counts].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+ }
+ 
++// How many instances had each outcome, of those whose oracle has errors and of those whose oracle has none.
++type OutcomeCounts = Record<Kind, Partial<Record<Outcome, number>>>;
++
++// The instances that ran by a key of theirs: the outcomes of each class, in the order of the keys.
++function outcomesBy(
++  ran: readonly Fact[],
++  outcomeOf: (fact: Fact) => Outcome,
++  key: (fact: Fact) => string,
++): Map<string, OutcomeCounts> {
++  const out = new Map<string, OutcomeCounts>();
++  for (const fact of ran) {
++    let counts = out.get(key(fact));
++    if (counts === undefined) out.set(key(fact), (counts = { E: {}, C: {} }));
++    const ofKind = counts[fact.kind!];
++    const outcome = outcomeOf(fact);
++    ofKind[outcome] = (ofKind[outcome] ?? 0) + 1;
++  }
++  return new Map([...out].sort((a, b) => (a[0] < b[0] ? -1 : 1)));
++}
++
++// The counts of several rows in one.
++function sumOf(rows: Iterable<OutcomeCounts>): OutcomeCounts {
++  const total: OutcomeCounts = { E: {}, C: {} };
++  for (const row of rows) {
++    for (const kind of ["E", "C"] as const) {
++      for (const outcome of outcomes) {
++        const n = row[kind][outcome];
++        if (n !== undefined) total[kind][outcome] = (total[kind][outcome] ?? 0) + n;
++      }
++    }
++  }
++  return total;
++}
++
++// The lines of a table of outcomes: for each class a column "run" with the instances that ran and a column for each outcome that an instance of a row had, under a line with the names of the columns.
++function outcomeTable(rows: readonly (readonly [string, OutcomeCounts])[], kinds: readonly Kind[]): string[] {
++  const all = sumOf(rows.map(([, counts]) => counts));
++  const columns = kinds.flatMap(kind => {
++    const ran = (counts: OutcomeCounts) => outcomes.reduce((sum, outcome) => sum + (counts[kind][outcome] ?? 0), 0);
++    const had = outcomes.filter(outcome => all[kind][outcome] !== undefined);
++    return [
++      { head: `${kind} run`, cell: ran },
++      ...had.map(outcome => ({ head: outcome as string, cell: (counts: OutcomeCounts) => counts[kind][outcome] ?? 0 })),
++    ];
++  });
++  const width = Math.max(...rows.map(([key]) => key.length));
++  const widths = columns.map(c => Math.max(c.head.length, ...rows.map(([, counts]) => String(c.cell(counts)).length)));
++  const line = (key: string, cells: readonly (string | number)[]) =>
++    `  ${key.padEnd(width)}  ${cells.map((cell, k) => String(cell).padStart(widths[k])).join("  ")}`;
++  const cellsOf = (counts: OutcomeCounts) => columns.map(c => c.cell(counts));
++  const heads = columns.map(c => c.head);
++  return [line("", heads), ...rows.map(([key, counts]) => line(key, cellsOf(counts)))];
++}
++
++// A character that would break a line of output or hide in it, as an escape.
++function escaped(c: string): string {
++  return "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0");
++}
++
++// The most that a line of output shows of a line of a baseline: display of run.ts cuts the lines of a diff there.
++const shownLength = 500;
++
++// A line of a baseline as display of run.ts shows a line of a diff: an escape and a line break as text, and the start of a long line.
++function displayed(line: string): string {
++  const text = line.replaceAll("\x1b", "\\x1b").replaceAll("\r", "\\r").replaceAll("\n", "\\n");
++  return text.length > shownLength ? text.slice(0, shownLength) + "..." : text;
++}
++
++// A displayed line as a JSON string: every space of it shows, and it ends where the string ends. "..." follows the string of a line that was cut.
++function quoted(line: string): string {
++  const cut = line.length > shownLength;
++  const text = JSON.stringify(cut ? line.slice(0, shownLength) : line).replace(/[\x7f-\x9f\u2028\u2029]/g, escaped);
++  return cut ? `${text}...` : text;
++}
++
++// The reason of run.ts for an instance with errors whose check reported nothing: line 1 of the oracle is what differs first.
++const nothingReported = "no diagnostic where the oracle has a baseline";
++
++// "line 3: - <line of the oracle> + <line of the check>" from the diff of a result: the first line of each side. Undefined: the diff is in no form that this reads.
++function firstDifference(diff: string): string | undefined {
++  const [head, ...lines] = diff.split("\n");
++  const at = /^@@ line ([0-9]+) @@$/.exec(head);
++  const side = (mark: string) => {
++    const line = lines.find(l => l.startsWith(`${mark} `));
++    return line === undefined ? "" : ` ${mark} ${quoted(line.slice(2))}`;
++  };
++  const sides = side("-") + side("+");
++  return at === null || sides === "" ? undefined : `line ${at[1]}:${sides}`;
++}
++
++// The one line of --each for an instance: its outcome, its name, and for what is no pass the first line that differs or the reason. An instance that the reference does not run has no result: it is a skip with the reason.
++function lineOf(fact: Fact, result: RunResult | undefined, firstOfOracle: () => string | undefined): string {
++  let detail: string | undefined;
++  if (result === undefined) {
++    detail = fact.status === "invalid" ? `the reference fails the instance: ${fact.reason}` : fact.reason;
++  } else if (result.outcome !== "pass") {
++    if (result.diff !== undefined) detail = firstDifference(result.diff);
++    if (detail === undefined && result.reason === nothingReported) {
++      const first = firstOfOracle();
++      if (first !== undefined) detail = `line 1: - ${quoted(displayed(first))}`;
++    }
++    detail ??= result.reason;
++  }
++  const head = `${result?.outcome ?? "skip"} ${fact.name}`;
++  const line = detail === undefined || detail === "" ? head : `${head} ${detail}`;
++  return line.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]/g, escaped);
++}
++
++// What a file of --resume holds of a result: every field but the instance and the bytes of the baseline.
++type Kept = Omit<RunResult, "instance" | "actual"> & { name: string };
++
++// The first line of a file of --resume: the outcomes below it are of this check and this corpus.
++interface ResumeHead {
++  check: string;
++  // The size and the time of the last change of the binary or of the module of the check.
++  stamp: string;
++  corpus: string;
++}
++
++// The outcomes that a file of --resume holds, by the name of their instance; the file is made with its first line where it is not there. Every outcome is a line that ends in a line feed: what follows the last one is of a run that was ended, and is cut off.
++function openResume(path: string, head: ResumeHead): Map<string, Kept> {
++  const kept = new Map<string, Kept>();
++  let lines: string[];
++  try {
++    lines = (existsSync(path) ? readFileSync(path, "utf8") : "").split("\n");
++    const cut = lines.pop() !== "";
++    if (lines.length === 0) writeFileSync(path, JSON.stringify(head) + "\n");
++    else if (cut) writeFileSync(path, lines.join("\n") + "\n");
++  } catch (error) {
++    throw new FileError(`--resume ${path}: ${messageOf(error)}`);
++  }
++  for (const [k, line] of lines.entries()) {
++    let value: unknown;
++    try {
++      value = JSON.parse(line);
++    } catch {
++      throw new FileError(`--resume ${path}: line ${k + 1} is no JSON`);
++    }
++    if (k === 0) {
++      const was = value as Partial<ResumeHead> | null;
++      for (const key of ["check", "stamp", "corpus"] as const) {
++        if (was?.[key] === head[key]) continue;
++        const other = `its ${key} is ${JSON.stringify(was?.[key])} and that of this run is ${JSON.stringify(head[key])}`;
++        throw new FileError(`--resume ${path}: the outcomes are of another sweep: ${other}`);
++      }
++      continue;
++    }
++    const { name, outcome, reason } = (value ?? {}) as Partial<Kept>;
++    if (typeof name !== "string" || typeof reason !== "string" || !outcomes.includes(outcome as Outcome)) {
++      throw new FileError(`--resume ${path}: line ${k + 1} is no outcome of an instance`);
++    }
++    kept.set(name, value as Kept);
++  }
++  return kept;
++}
++
+ // Every error baseline of the corpus read and written again from what was read: the whole of what the test file samples.
+ function roundTripCorpus(corpusRoot: string): number {
+   const paths = corpusPaths(corpusRoot);
+@@ -530,14 +747,30 @@
+     return (old?.[list] ?? []).filter(name => !now.has(name));
+   });
+   const reportPath = resolve(o.report ?? join(tmpdir(), "lint-conformance-report.json"));
++  // With --each a report is written only where --report names it.
++  const reports = !o.each || o.report !== undefined;
+   let checked: NamedCheck | undefined;
++  const resumePath = o.resume === undefined ? undefined : resolve(o.resume);
++  let kept = new Map<string, Kept>();
+   if (o.run) {
+     checked = await checkOf(o);
+     try {
+-      mkdirSync(dirname(reportPath), { recursive: true });
++      if (reports) mkdirSync(dirname(reportPath), { recursive: true });
+     } catch (error) {
+       throw new FileError(`--report ${reportPath}: ${messageOf(error)}`);
+     }
++    if (resumePath !== undefined) {
++      // The outcomes of a binary or of a module that was written again are not those of the one before.
++      const file = checked.binary ?? checked.name;
++      let stamp: string;
++      try {
++        const { size, mtimeMs } = statSync(file);
++        stamp = `${size} bytes, changed ${new Date(mtimeMs).toISOString()}`;
++      } catch (error) {
++        throw new FileError(`--resume: ${file}: ${messageOf(error)}`);
++      }
++      kept = openResume(resumePath, { check: checked.name, stamp, corpus: corpusRoot });
++    }
+   }
+   const paths = corpusPaths(corpusRoot);
+   let cases: string[];
+@@ -557,6 +790,16 @@
+     byBaseName.set(base, path);
+   }
+   const caseOf = (name: string) => byBaseName.get(name) ?? byBaseName.get(caseBaseName(name));
++  // A selector that is a directory of the cases takes everything below it, with or without "/" at its end.
++  const directoriesOfCases = new Set<string>();
++  for (const path of cases) {
++    let at = path.lastIndexOf("/");
++    while (at > 0 && !directoriesOfCases.has(path.slice(0, at))) {
++      directoriesOfCases.add(path.slice(0, at));
++      at = path.lastIndexOf("/", at - 1);
++    }
++  }
++  o.selectors = o.selectors.map(selector => (directoriesOfCases.has(selector) ? `${selector}/` : selector));
+ 
+   // Only the cases that a selector can take an instance of are read; a pattern is for the names of instances, which no case has before it is read.
+   const whole = o.selectors.length === 0;
+@@ -577,12 +820,11 @@
+     }
+   }
+   const selection = select(facts.values(), o, listed);
+-  if (selection.empty.length > 0) {
+-    const isDirectory = (selector: string) => cases.some(path => path.startsWith(`${selector}/`));
+-    const said = selection.empty.map(s => (isDirectory(s) ? `${s} (a directory ends in "/")` : s));
+-    throw new UsageError(`no instance for ${said.join(", ")}`);
+-  }
+-  const selected = selection.taken;
++  if (selection.empty.length > 0) throw new UsageError(`no instance for ${selection.empty.join(", ")}`);
++  // The order of the names, which is that of the lists, whatever the order of the selectors: a shard is every n-th instance of it.
++  const inOrder = selection.taken.sort((a, b) => (a.name < b.name ? -1 : 1));
++  const shard = o.shard;
++  const selected = shard === undefined ? inOrder : inOrder.filter((_, k) => k % shard.of === shard.part - 1);
+   const ran = selected.filter(fact => fact.status === "run");
+   const ranE = ran.filter(fact => fact.kind === "E");
+   const ranC = ran.filter(fact => fact.kind === "C");
+@@ -591,7 +833,7 @@
+   // console.log has written its line when it returns; what process.stdout still holds for a pipe is lost at process.exit.
+   const say = (line = "") => {
+     text.push(line);
+-    console.log(line);
++    if (!o.each) console.log(line);
+   };
+   const notRun = countBy(
+     selected.filter(fact => fact.status !== "run"),
+@@ -635,26 +877,75 @@
+   for (const loss of losses) say(`  FAIL since ${o.since}: ${loss}`);
+   if (checked === undefined) return notInstances.length > 0 || losses.length > 0 ? 1 : 0;
+ 
+-  say(`check ${checked.name}`);
+-  const directory = o.files && ran.length > 0 ? makeTemporaryDirectory("bun-lint-sweep-") : undefined;
+-  let results: RunResult[];
++  // What a run says besides its outcomes: with --each it goes to stderr, and stdout has the lines of the instances alone.
++  const note = (line: string) => {
++    say(line);
++    if (o.each) console.error(line);
++  };
++  note(`check ${checked.name}`);
++  const resultOf = new Map<string, RunResult>();
++  for (const fact of ran) {
++    const was = kept.get(fact.name);
++    if (was === undefined) continue;
++    const { name: _name, ...rest } = was;
++    resultOf.set(fact.name, { instance: fact.run!, ...rest });
++  }
++  const toRun = ran.filter(fact => !resultOf.has(fact.name));
++  if (resumePath !== undefined) {
++    note(`resume ${resumePath}: ${resultOf.size} outcomes kept, ${toRun.length} instances to run`);
++  }
++  const directory = o.files && toRun.length > 0 ? makeTemporaryDirectory("bun-lint-sweep-") : undefined;
++  // A reason may name a file below the directory of an instance, which is another in every run: what is left is the name that the instance has for the file.
++  const written =
++    directory === undefined
++      ? undefined
++      : new RegExp(`${directory.replace(/[.*+?^\${}()|[\]\\]/g, "\\$&")}[\\\\/][0-9a-z]+`, "g");
++  // --each: the line of an instance is printed when the lines of all the instances before it are.
++  const place = new Map(selected.map((fact, k) => [fact.name, k]));
++  const lines = new Array<string | undefined>(o.each ? selected.length : 0);
++  let flushed = 0;
++  const decoder = new TextDecoder();
++  const settle = (fact: Fact) => {
++    if (!o.each) return;
++    lines[place.get(fact.name)!] = lineOf(fact, resultOf.get(fact.name), () => {
++      try {
++        return decoder.decode(readOracle(fact.run!.oracle)).split("\r\n", 1)[0];
++      } catch {
++        return undefined;
++      }
++    });
++    while (flushed < lines.length && lines[flushed] !== undefined) console.log(lines[flushed++]);
++  };
++  for (const fact of selected) if (fact.status !== "run" || resultOf.has(fact.name)) settle(fact);
+   try {
+     let done = 0;
+-    results = await runInstances(
+-      ran.map(fact => fact.run!),
++    // The lines of --each on a terminal are the progress.
++    const counts = !o.each || !process.stdout.isTTY;
++    await runInstances(
++      toRun.map(fact => fact.run!),
+       checked.check,
+       {
+         input: (instance, root) => inputOf(paths, instance as RunInstance, root),
+         oracle: instance => readOracle((instance as RunInstance).oracle),
+         directory,
+-        concurrency: o.jobs ?? availableParallelism(),
++        concurrency: o.jobs ?? Math.min(defaultJobs, availableParallelism()),
+         timeoutMs: o.timeoutMs,
+-        onResult() {
++        onResult(result) {
++          if (written !== undefined) result.reason = result.reason.replace(written, "");
++          const { instance, actual: _actual, ...rest } = result;
++          resultOf.set(instance.name, result);
++          const outcome = JSON.stringify({ name: instance.name, ...rest }) + "\n";
++          try {
++            if (resumePath !== undefined) appendFileSync(resumePath, outcome);
++          } catch (error) {
++            throw new FileError(`--resume ${resumePath}: ${messageOf(error)}`);
++          }
++          settle(facts.get(instance.name)!);
+           done++;
+           if (!process.stderr.isTTY) {
+-            if (done % 2000 === 0) console.error(`${done} of ${ran.length}`);
+-          } else if (done % 50 === 0 || done === ran.length) {
+-            process.stderr.write(`\r${done} of ${ran.length}${done === ran.length ? "\n" : ""}`);
++            if (done % 2000 === 0) console.error(`${done} of ${toRun.length}`);
++          } else if (counts && (done % 50 === 0 || done === toRun.length)) {
++            process.stderr.write(`\r${done} of ${toRun.length}${done === toRun.length ? "\n" : ""}`);
+           }
+         },
+       },
+@@ -662,8 +953,13 @@
+   } finally {
+     if (directory !== undefined) rmSync(directory, { recursive: true, force: true });
+   }
++  const results = ran.map(fact => resultOf.get(fact.name)!);
++  if (o.each) {
++    const words = countBy(lines, line => line!.slice(0, line!.indexOf(" ")));
++    const counted = [...outcomes].filter(word => words.has(word)).map(word => `${word} ${words.get(word)}`);
++    console.error(`instances ${lines.length}${counted.length === 0 ? "" : `: ${counted.join(", ")}`}`);
++  }
+ 
+-  const resultOf = new Map(results.map(r => [r.instance.name, r]));
+   const passes = (fact: Fact) => resultOf.get(fact.name)!.outcome === "pass";
+   const cellOf = (all: readonly Fact[]): Cell => [all.filter(passes).length, all.length];
+   const ratio = ([pass, all]: Cell) => `${pass} of ${all}`;
+@@ -704,19 +1000,20 @@
+     if (standIns.size > 10) say(`  and ${standIns.size - 10} more in the report`);
+   }
+ 
++  const outcomeOf = (fact: Fact) => resultOf.get(fact.name)!.outcome;
+   const directories = rowsBy(ran, passes, fact => fact.directory);
++  const directoryOutcomes = outcomesBy(ran, outcomeOf, fact => fact.directory);
++  // A class without an instance is no part of a table.
++  const kinds = (["E", "C"] as const).filter(kind => (kind === "E" ? ranE : ranC).length > 0);
+   if (directories.size > 0) {
+     const cut = cutOf([...directories.keys()]);
+-    const groups = rowsBy(ran, passes, fact => cut(fact.directory));
+-    const width = Math.max(...[...groups.keys()].map(group => group.length));
+-    const padded = ([pass, all]: Cell) => `${String(pass).padStart(5)} of ${String(all).padEnd(5)}`;
++    const groups = [...outcomesBy(ran, outcomeOf, fact => cut(fact.directory))];
++    const total = ["total", sumOf(groups.map(([, counts]) => counts))] as const;
+     say();
+     say(
+-      "by directory: instances that pass, of those whose oracle has errors (E) and of those whose oracle has none (C)",
++      "by directory: the instances that ran and how many of them had each outcome, of those whose oracle has errors (E) and of those whose oracle has none (C)",
+     );
+-    for (const [group, row] of groups) {
+-      say(`  ${group.padEnd(width)}  E ${padded(row.E)}  C ${padded(row.C)}`.trimEnd());
+-    }
++    for (const line of outcomeTable([...groups, total], kinds)) say(line);
+   }
+ 
+   // The codes of the first section of each oracle: an instance counts once for each code that it has.
+@@ -733,19 +1030,21 @@
+     }
+     for (const code of new Set(all)) {
+       let count = codes.get(code);
+-      if (count === undefined) codes.set(code, (count = { instances: 0, pass: 0, diagnostics: 0 }));
++      if (count === undefined) codes.set(code, (count = { instances: 0, pass: 0, diagnostics: 0, outcomes: {} }));
+       count.instances++;
+       if (passes(fact)) count.pass++;
+       count.diagnostics += all.filter(other => other === code).length;
++      count.outcomes[outcomeOf(fact)] = (count.outcomes[outcomeOf(fact)] ?? 0) + 1;
+     }
+   }
+   const byCode = [...codes].sort((a, b) => b[1].instances - a[1].instances || a[0] - b[0]);
+   if (byCode.length > 0) {
+     say();
+-    say(`by diagnostic code: ${byCode.length} codes; instances that pass, of those whose oracle has the code`);
+-    for (const [code, count] of byCode.slice(0, 25)) {
+-      say(`  ${`TS${code}`.padEnd(8)} ${String(count.pass).padStart(5)} of ${count.instances}`);
+-    }
++    say(
++      `by diagnostic code: ${byCode.length} codes; the instances whose oracle has the code and how many of them had each outcome`,
++    );
++    const most = byCode.slice(0, 25).map(([code, count]) => [`TS${code}`, { E: count.outcomes, C: {} }] as const);
++    for (const line of outcomeTable(most, ["E"])) say(line);
+     if (byCode.length > 25) say(`  and ${byCode.length - 25} more codes in the report`);
+   }
+   if (codesUnread.length > 0) say(`${codesUnread.length} oracles were not read for their codes: the report names them`);
+@@ -790,7 +1089,8 @@
+     check: checked.name,
+     corpus: corpusRoot,
+     selectors: o.selectors,
+-    only: { listed: o.listed, kind: o.kind, tag: o.tag },
++    only: { listed: o.listed, kind: o.kind, tag: o.tag, shard: o.shard },
++    resumed: resumePath === undefined ? undefined : { file: resumePath, kept: ran.length - toRun.length },
+     seconds: Math.round((performance.now() - started) / 100) / 10,
+     totals: {
+       selected: selected.length,
+@@ -803,6 +1103,7 @@
+       headerOnly,
+     },
+     directories: Object.fromEntries(directories),
++    directoryOutcomes: Object.fromEntries(directoryOutcomes),
+     codes: Object.fromEntries(byCode.map(([code, count]) => [`TS${code}`, count])),
+     codesUnread,
+     standIns: Object.fromEntries(mostFirst(standIns)),
+@@ -829,10 +1130,15 @@
+     text,
+   };
+   try {
+-    writeFileSync(reportPath, JSON.stringify(report, null, 1) + "\n");
++    if (reports) writeFileSync(reportPath, JSON.stringify(report, null, 1) + "\n");
+   } catch (error) {
+     throw new FileError(`--report ${reportPath}: ${messageOf(error)}`);
+   }
++  if (o.each) {
++    if (reports) console.error(`report ${reportPath}`);
++    // An instance that the reference does not run has no outcome to hold against an oracle: it is a line and no failure.
++    return ran.every(passes) ? 0 : 1;
++  }
+   console.log(`report ${reportPath}`);
+   return notInstances.length > 0 || losses.length > 0 || notPassing.length > 0 ? 1 : 0;
+ }
+diff -ruN a/test/cli/lint/conformance.test.ts b/test/cli/lint/conformance.test.ts
+--- a/test/cli/lint/conformance.test.ts
++++ b/test/cli/lint/conformance.test.ts
+@@ -1153,3 +1153,137 @@
+     small ? 120_000 : 30_000,
+   );
+ });
++
++describe("sweep.ts", () => {
++  // The script with a check of the fixtures, which reads the units of its input: no file of an instance is written and no other command is started. The lists are empty, whatever expectations.json holds.
++  const sweep = async (directory: string, fixture: string, ...args: string[]) => {
++    const lists = join(directory, "lists.json");
++    writeFileSync(lists, runner.formatExpectations({ level: "baseline", E: [], C: [] }));
++    const check = ["--check", join(fixtures, fixture), "--no-files", "--expectations", lists];
++    await using proc = Bun.spawn({
++      cmd: [bunExe(), join(home, "sweep.ts"), ...check, ...args],
++      env: bunEnv,
++      stdout: "pipe",
++      stderr: "pipe",
++    });
++    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
++    return { stdout, stderr, exitCode };
++  };
++  const skipped = "skip abstractPropertyNegative(target=es5).ts unsupported target ES5";
++  // A directory without "/" at its end, the name of an instance, the file name of a case with two instances of which the reference skips one, and the path of a case.
++  const nine = [
++    "conformance/types/tuple/named",
++    "castingTuple.ts",
++    "abstractPropertyNegative.ts",
++    "compiler/2dArrays.ts",
++  ];
++
++  test.concurrent(
++    "--each: a line for each instance in the order of the names, and the exit code 0 when every instance that runs passes",
++    async () => {
++      using dir = tempDir("lint-conformance-sweep", {});
++      const ran = await sweep(String(dir), "replay-check-fixture.ts", "--each", "ArrowFunctionExpression1.ts", ...nine);
++      expect(ran.stdout.split("\n")).toEqual([
++        "pass 2dArrays.ts",
++        "pass ArrowFunctionExpression1.ts",
++        "pass abstractPropertyNegative(target=es2015).ts",
++        skipped,
++        "pass castingTuple.ts",
++        "pass namedTupleMembers.ts",
++        "pass namedTupleMembersErrors.ts",
++        "pass partiallyNamedTuples.ts",
++        "pass partiallyNamedTuples2.ts",
++        "pass partiallyNamedTuples3.ts",
++        "",
++      ]);
++      expect(ran.stderr).toContain("instances 10: pass 9, skip 1\n");
++      expect(ran.exitCode).toBe(0);
++    },
++    spawnTimeout,
++  );
++
++  test.concurrent(
++    "--each: the first line that differs or the reason, and the exit code 1 when an instance that runs does not pass",
++    async () => {
++      using dir = tempDir("lint-conformance-sweep", {});
++      const names = ["ArrowFunctionExpression1.ts", "ClassDeclaration10.ts", "abstractPropertyNegative(target=es5).ts"];
++      const ran = await sweep(
++        String(dir),
++        "wrong-check-fixture.ts",
++        "--each",
++        "castingTuple.ts",
++        "2dArrays.ts",
++        ...names,
++      );
++      const casting = `"castingTuple.ts(3,24): error TS7008: Member 'c' implicitly has an 'any' type."`;
++      expect(ran.stdout.split("\n")).toEqual([
++        "fail 2dArrays.ts 1 diagnostics where the oracle has none, the first is TS1: Made up.",
++        'fail ArrowFunctionExpression1.ts line 1: - "ArrowFunctionExpression1.ts(1,10): error TS2369: A parameter property is only allowed in a constructor implementation."',
++        "pass ClassDeclaration10.ts",
++        skipped,
++        `fail castingTuple.ts line 1: - ${casting} + "castingTuple.ts(3,24): error TS7008: Changed."`,
++        "",
++      ]);
++      expect(ran.stderr).toContain("instances 5: pass 1, fail 3, skip 1\n");
++      expect(ran.exitCode).toBe(1);
++    },
++    spawnTimeout,
++  );
++
++  test.concurrent(
++    "--shard and --resume: a second run keeps the outcomes of the first, and counts every outcome by directory and by code",
++    async () => {
++      using dir = tempDir("lint-conformance-sweep", {});
++      const resume = ["--resume", join(String(dir), "outcomes.jsonl")];
++      const half = await sweep(String(dir), "empty-check-fixture.ts", "--each", "--shard", "1/2", ...resume, ...nine);
++      expect(half.stdout.split("\n")).toEqual([
++        "pass 2dArrays.ts",
++        skipped,
++        "pass namedTupleMembers.ts",
++        "pass partiallyNamedTuples.ts",
++        "pass partiallyNamedTuples3.ts",
++        "",
++      ]);
++      expect(half.exitCode).toBe(0);
++
++      const report = join(String(dir), "report.json");
++      const whole = await sweep(String(dir), "empty-check-fixture.ts", ...resume, "--report", report, ...nine);
++      expect(whole.stdout).toContain(": 4 outcomes kept, 4 instances to run\n");
++      expect(whole.stdout).toContain(
++        [
++          "                                 E run  fail  C run  pass",
++          "  compiler                           1     1      1     1",
++          "  conformance/types/tuple            1     1      0     0",
++          "  conformance/types/tuple/named      1     1      4     4",
++          "  total                              3     3      5     5",
++          "",
++        ].join("\n"),
++      );
++      expect(whole.stdout).toContain("           E run  fail\n  TS1005       1     1\n");
++      const { totals, directoryOutcomes, codes, resumed } = JSON.parse(readFileSync(report, "utf8"));
++      expect({ outcomes: totals.outcomes, named: directoryOutcomes["conformance/types/tuple/named"] }).toEqual({
++        outcomes: { E: { fail: 3 }, C: { pass: 5 } },
++        named: { E: { fail: 1 }, C: { pass: 4 } },
++      });
++      expect(codes.TS7008).toEqual({ instances: 1, pass: 0, diagnostics: 4, outcomes: { fail: 1 } });
++      expect(resumed.kept).toBe(4);
++      // Without --each the exit code speaks of the lists, and they are empty.
++      expect(whole.exitCode).toBe(0);
++    },
++    small ? 120_000 : undefined,
++  );
++
++  test.concurrent(
++    "a command line that is wrong is the exit code 2",
++    async () => {
++      using dir = tempDir("lint-conformance-sweep", {});
++      const ran = await sweep(String(dir), "empty-check-fixture.ts", "--each", "--update");
++      expect(ran.stdout).toBe("");
++      expect(ran.stderr).toContain(
++        "sweep: --each holds no instance against a list: --update cannot go with it\n\nusage: ",
++      );
++      expect(ran.exitCode).toBe(2);
++    },
++    spawnTimeout,
++  );
++});

@@ -1,0 +1,68 @@
+Research of the default check, second pass of round 2 (default-check-contract, bottom-up). Nothing here is in the worktree.
+It takes ../../default-check-classification (bottom-up/default-check.patch, top-down/amend-bottom-up.patch) as its base and
+changes four things: the strict guard (silent, exitCode, named), the level (RunOptions.level, RunResult.level, factsOf,
+expectations.json at "first-section"), the test with the binary under test (two units and two instances of the corpus),
+and the environment (ASAN_OPTIONS is no longer changed).
+
+default-check-contract.patch
+  The files of this unit against 3110ce85cf: runner/check_bun_lint.ts, runner/run.ts, runner/expectations.ts,
+  runner/index.ts (three export lines), fixtures/lints-fixture.ts, conformance.test.ts (describe "run", "default check",
+  "expectations.json"; outside them the import list, spawnTimeout and the parameter `level` of failuresOf).
+    cd /workspace/wt/conformance && git apply --check <this directory>/default-check-contract.patch
+  It does not hold the glue that the test file needs besides (runner/corpus.ts and its exports, expectations.json).
+  With ../../prototype/index.ts.patch it applies in both orders. With ../../corpus-glue/bottom-up/index.ts.patch and
+  ../../runner-corpus-binding/top-down/index.ts.patch the hunks of runner/index.ts meet: add by hand `factsOf` to the
+  exports of ./expectations, `verdictOutcomes` to those of ./run, and the types `Death` and `Verdict`.
+  ../../instance-tool (E5) changes run.ts too (difference(), RunResult.first): merge by hand, the two do not depend on
+  each other. A tool that prints "pass" by RunResult.outcome needs no change for the level: outcome is the answer at
+  the level that the run was given.
+
+sweep-handoff.patch
+  test/cli/lint/conformance/sweep.ts against 3110ce85cf, for whoever owns the sweep in this round: what
+  default-check-classification had (probe before the corpus is read, causes, rules, crashes, timeouts) and on top of it
+  `level: lists.level` for the run, factsOf for the lists, "pass by level", the guard and what is near it, the lines by
+  category and name. It meets the patches of ../../corpus-glue and ../../runner-corpus-binding in sweep.ts.
+
+expectations.json
+  The lists as the test of describe("expectations.json") wants them: level "first-section", both lists empty.
+
+delta-over-default-check-classification.diff
+  What this pass changed over the two patches of ../../default-check-classification, for a reader who knows those.
+
+What ran (2026-10-01, Linux x64, load average 350 to 650), in a scratch clone made with ../../scratch.sh <dir> --prototype,
+the two patches of this directory and expectations.json laid over it (probes/run3.sh, through /workspace/tools/lk):
+  installed bun 1.4.3-canary.1+367d939d9 (no --lint), whole file: 119 tests, 117 pass, 2 fail. One is wanted:
+    "default check > the binary under test: ..." with the probe's answer "the command ran the file that it was to check".
+    The other is "enumerator > every instance is its line of the list ...", timed out at 30 s under the load; it passed
+    in the two runs before (117 pass, 1 fail of 118).
+  release build of be1ebe5295 (/workspace/wt/parser/build/release/bun, the src of 3110ce85cf), whole file:
+    119 pass, 0 fail, 10.2 s; the two runs before it 118 of 118 in 4.0 s and in 17.2 s. The time follows the load.
+  build/debug/bun-debug of the worktree (3110ce85c), -t "default check|^run |expectations.json": 47 pass, 0 fail, 51 s.
+  the same build with BUN_DESTRUCT_VM_ON_EXIT=1 ASAN_OPTIONS=allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1
+    LSAN_OPTIONS=malloc_context_size=30:print_suppressions=0:suppressions=<tree>/test/leaksan.supp, whole file, default
+    timeouts: 117 pass, 1 skip, 1 fail: "reference > the list has the instances of the reference's run ..." timed out at
+    5 s (5.9 s, no process, not of this unit). The two runs before: 117 pass, 1 skip, 0 fail (75 s and 129 s).
+    The test with the binary under test took 2.7 to 4.5 s there, 4.6 s without the leak check, 0.14 to 5.4 s in release.
+  ../../typecheck.sh <scratch> from a directory outside the tree: no type error below test/cli/lint. Run inside the tree
+    it reports nothing whatever the files hold: tsc prints paths relative to the current directory, and the script
+    looks for "/test/cli/lint/".
+  prettier --check with the .prettierrc of the repository: clean for the seven files.
+  Not run: anything on Windows or macOS (no machine in this session); the whole corpus through `bun --lint` with these
+    files (the counts below are from the 12,797 raw runs of ../../default-check-classification, /tmp/dccbu/raw-release-full.jsonl).
+
+observed/
+  installed, release, debug-three, debug-leak-whole (.tail.txt)   the ends of the four runs of probes/run3.sh
+  rep-parser.head.txt       sweep of conformance/parser/ecmascript5/ErrorRecovery/ and Statements/ with the release build:
+                            185 run, E fail syntax 91, fail nothing 57; C pass 36 (all wrote nothing), fail syntax 1; no crash
+                            (at 3110ce85cf 92 of these 185 are "crash")
+  rep-near.head.txt         eight instances by name: the guard, a report of a rule alone, warnings alone, unsupported-extension
+  rep-plain-first.head.txt  the oracle's own diagnostics cut down to what the plain format holds, whole corpus, lists at the level
+                            first-section: E 7,013 of 7,027 pass (first-section 7,012, baseline 1), 14 fail (the pretty form)
+  rep-plain-base.head.txt   the same with lists at the level baseline: E 1 pass, "first section alone: 7012"
+  rep-listed.head.txt       after --update (E 6,916 and C 4,964 entered): --listed, not passing 0
+  rep-listed-full.head.txt  the same lists against the oracle replayed whole: every pass is at the level baseline, not passing 0
+
+probes/
+  near.ts                   the raw runs by class, exit code and the kinds of lines on stderr
+  plain-replay-check.ts, full-replay-check.ts   the two modules for --check of the sweeps above (they name the scratch clone)
+  run3.sh                   the four test runs

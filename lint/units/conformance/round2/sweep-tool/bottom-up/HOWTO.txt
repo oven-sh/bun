@@ -1,0 +1,48 @@
+The prototype of the research "sweep-tool", pass 1a (bottom-up), as run on 2026-10-01 against 3110ce85cf. H is test/cli/lint/conformance.
+Nothing here is committed to the worktree: these files ran in a copy of a scratch clone (/tmp/st1a/repo: the tree of ../../scratch.sh
+without its .git), with the installed bun 1.4.3-canary.1+367d939d9 and, where it says so, the debug build of the worktree.
+
+Files
+  sweep-tool.patch          H/sweep.ts (--each, --shard, --resume, a directory without "/", four instances in flight, the tables of
+                            outcomes by directory and by code, directoryOutcomes and the outcomes of a code in the report),
+                            H/runner/expectations.ts (--shard and --resume in the copy of the valued options), conformance.test.ts
+                            (describe("sweep.ts") at its end, four tests), and the three check fixtures as new files.
+                            It applies to 3110ce85cf: patch -p1 < sweep-tool.patch
+  sweep.ts                  H/sweep.ts with the patch: compose.sh cuts the run of the instances out of it
+  empty-check-fixture.ts    H/fixtures/: a check module that reports nothing
+  replay-check-fixture.ts   H/fixtures/: a check module that replays the oracle
+  wrong-check-fixture.ts    H/fixtures/: the replay, wrong for three instances, each in another way
+  compose.sh                lays ../../corpus-glue/top-down/verified, ../../default-check-contract/bottom-up (with its
+                            sweep-handoff.patch) and sweep-tool.patch over one tree, and says what the lines become that two of
+                            them change: the export line of runner/index.ts, the import of node:fs, the sentence of the exit codes,
+                            the fields of Options, the run of the instances (fact.instance, corpus.input, corpus.oracle, level),
+                            and directoryOutcomes of the report, which the hand-off and this unit both add.
+  silent-column.patch       over the composed sweep.ts: a column "silent" in the table by directory, from RunResult.silent of the
+                            contract (the guard by directory). Without the contract there is no such field and no such column.
+  probes/compare.sh         sweep.ts of 3110ce85cf (beside the new one as sweep-orig.ts) and the new one on 31 command lines
+  probes/probe-lines.ts     every line of an output of --each against the three forms; counts, the longest line
+  probes/changed-check.ts   a check that is wrong for every instance (another text for the first diagnostic, or one made up)
+  probes/from-reports.ts    the reports of ../../lint-survey/bottom-up (nine chunks, debug build) -> a file of --resume
+  probes/cmp-reports.ts     two reports, member by member
+  probes/tsconfig.check.json  tsc -p: sweep.ts, the runner and the fixtures, with the settings of test/tsconfig.json
+  observed/                 what the runs below printed
+
+What ran
+  USE_SYSTEM_BUN=1 bun test test/cli/lint/conformance.test.ts -t "sweep.ts"          4 pass, 0.9 to 2.6 s at a load of 200 to 800
+  the same with the debug build of the worktree and the leak check of CI, through /workspace/tools/lk
+                                                     4 pass: 7.9 s, 21.3 s, 21.5 s, 31.4 s side by side, 43.3 s in all (load 440)
+  the composed tree (compose.sh), the whole file, installed bun                       122 pass, 1 fail: the test of the contract
+                                                                                      that starts the binary under test with --lint
+  tsc -p probes/tsconfig.check.json, prettier --check                                 clean (sweep.ts, fixtures, expectations.ts, test)
+  bun H/sweep.ts --each --check <replay|empty|changed> --no-files                     14,915 lines each: pass 12,797 skip 2,118 (exit 0);
+                                                     pass 5,770 fail 7,027 skip 2,118 (exit 1); fail 12,797 skip 2,118 (exit 1);
+                                                     every line in one of the three forms, the names in byte order, 9 to 18 s
+  --each --shard k/3 conformance/types, k = 1, 2, 3  286 + 285 + 285 lines; sorted by the name they are the 856 lines of the whole
+  --shard k/4 --resume f for k = 1..4, then --resume f alone: 12,797 outcomes kept, nothing run; text and report are those of a
+                                                     sweep in one run (but for the line "resume", the seconds and the member resumed)
+  --resume of the outcomes of the debug build (probes/from-reports.ts)                observed/tables-of-the-debug-survey.txt
+  --each --bin /workspace/wt/parser/build/release/bun (a release build with --lint), 13 instances, twice: the same bytes
+                                                                                      observed/each-bin-release.txt
+  probes/compare.sh                                  23 command lines the same; the others differ by what was meant: the directory
+                                                     without "/" runs, the hint is gone, --help, and the path of the report that the
+                                                     script gives each side

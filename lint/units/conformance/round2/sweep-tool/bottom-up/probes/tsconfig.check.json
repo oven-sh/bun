@@ -1,0 +1,6 @@
+{
+  "extends": "/workspace/wt/conformance/test/tsconfig.json",
+  "compilerOptions": { "noEmit": true, "skipLibCheck": true, "composite": false, "incremental": false, "baseUrl": "/workspace/wt/conformance/test", "types": ["/workspace/wt/conformance/packages/bun-types"] },
+  "include": ["/tmp/st1a/repo/test/cli/lint/conformance/*.ts", "/tmp/st1a/repo/test/cli/lint/conformance/runner/*.ts", "/tmp/st1a/repo/test/cli/lint/conformance/fixtures/*-check-fixture.ts"],
+  "exclude": ["/tmp/st1a/repo/test/cli/lint/conformance/corpus"]
+}

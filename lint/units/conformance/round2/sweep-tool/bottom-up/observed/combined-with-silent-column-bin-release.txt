@@ -1,0 +1,52 @@
+instances 75: run 75 (E 49, C 26), skipped 0
+check /workspace/wt/parser/build/release/bun --lint
+pass at the level first-section: E 0 of 49, C 22 of 26
+by outcome, E: fail 49
+by outcome, C: pass 22, fail 4
+by cause, E: fail: nothing 35, fail: syntax 14
+by cause, C: fail: syntax 4
+the command wrote nothing and ended with the exit code 0: E 35, C 22 (of C: the guard)
+near the guard: C 0 pass with reports of rules left out; lines and the exit code 0 (no error among them): E 0, C 0
+lines with a name for a code, and the instances that had them: error syntax 31 in 18
+
+by directory: the instances that ran and how many of them had each outcome, of those whose oracle has errors (E) and of those whose oracle has none (C)
+                                       E run  fail  silent  C run  pass  fail  silent
+  conformance/importDefer                 19    19       6      8     6     2       6
+  conformance/nonjsExtensions              7     7       6      7     5     2       5
+  conformance/types/tuple                 20    20      20      7     7     0       7
+  conformance/types/tuple/emptyTuples      2     2       2      0     0     0       0
+  conformance/types/tuple/named            1     1       1      4     4     0       4
+  total                                   49    49      35     26    22     4      22
+
+by diagnostic code: 41 codes; the instances whose oracle has the code and how many of them had each outcome
+           E run  fail
+  TS2322      13    13
+  TS18060      8     8
+  TS2493       7     7
+  TS1005       5     5
+  TS2307       5     5
+  TS2304       4     4
+  TS2345       4     4
+  TS6263       4     4
+  TS1257       3     3
+  TS1434       3     3
+  TS2339       3     3
+  TS1141       2     2
+  TS2344       2     2
+  TS2352       2     2
+  TS2403       2     2
+  TS2574       2     2
+  TS2741       2     2
+  TS4104       2     2
+  TS17019      2     2
+  TS18058      2     2
+  TS1128       1     1
+  TS1265       1     1
+  TS1266       1     1
+  TS1354       1     1
+  TS2454       1     1
+  and 16 more codes in the report
+
+listed: E 0, C 0; of them run 0, not passing 0
+22 instances pass and may not enter a list: quota 22
+report <path>

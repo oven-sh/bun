@@ -1,0 +1,13 @@
+pass 2dArrays.ts
+crash ArrowFunction1.ts the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+fail ArrowFunction3.ts line 1: - "ArrowFunction3.ts(1,10): error TS2304: Cannot find name 'a'."
+pass ArrowFunction4.ts
+pass namedTupleMembers.ts
+fail namedTupleMembersErrors.ts line 1: - "namedTupleMembersErrors.ts(10,29): error TS5086: A labeled tuple element is declared as optional with a question mark after the name and before the colon, rather than after the type."
+crash parserX_ArrowFunction1.ts the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+fail parserX_ArrowFunction3.ts line 1: - "parserX_ArrowFunction3.ts(1,10): error TS2304: Cannot find name 'a'."
+pass parserX_ArrowFunction4.ts
+pass partiallyNamedTuples.ts
+pass partiallyNamedTuples2.ts
+pass partiallyNamedTuples3.ts
+fail tsxReactEmit1.tsx line 1: - "file.tsx(9,5): error TS7034: Variable 'p' implicitly has type 'any' in some locations where its type cannot be determined."

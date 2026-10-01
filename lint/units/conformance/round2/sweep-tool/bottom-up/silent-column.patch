@@ -1,0 +1,77 @@
+--- a/test/cli/lint/conformance/sweep.ts
++++ b/test/cli/lint/conformance/sweep.ts
+@@ -391,13 +391,17 @@
+   return [...counts].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+ }
+ 
++// What a table counts of an instance: its outcome, and "silent" where the command of its check wrote nothing and ended with the exit code 0.
++const counted = [...outcomes, "silent"] as const;
++type Counted = (typeof counted)[number];
++
+ // How many instances had each outcome, of those whose oracle has errors and of those whose oracle has none.
+-type OutcomeCounts = Record<Kind, Partial<Record<Outcome, number>>>;
++type OutcomeCounts = Record<Kind, Partial<Record<Counted, number>>>;
+ 
+ // The instances that ran by a key of theirs: the outcomes of each class, in the order of the keys.
+ function outcomesBy(
+   ran: readonly Fact[],
+-  outcomeOf: (fact: Fact) => Outcome,
++  countedOf: (fact: Fact) => readonly Counted[],
+   key: (fact: Fact) => string,
+ ): Map<string, OutcomeCounts> {
+   const out = new Map<string, OutcomeCounts>();
+@@ -405,8 +409,7 @@
+     let counts = out.get(key(fact));
+     if (counts === undefined) out.set(key(fact), (counts = { E: {}, C: {} }));
+     const ofKind = counts[fact.kind!];
+-    const outcome = outcomeOf(fact);
+-    ofKind[outcome] = (ofKind[outcome] ?? 0) + 1;
++    for (const column of countedOf(fact)) ofKind[column] = (ofKind[column] ?? 0) + 1;
+   }
+   return new Map([...out].sort((a, b) => (a[0] < b[0] ? -1 : 1)));
+ }
+@@ -416,9 +419,9 @@
+   const total: OutcomeCounts = { E: {}, C: {} };
+   for (const row of rows) {
+     for (const kind of ["E", "C"] as const) {
+-      for (const outcome of outcomes) {
+-        const n = row[kind][outcome];
+-        if (n !== undefined) total[kind][outcome] = (total[kind][outcome] ?? 0) + n;
++      for (const column of counted) {
++        const n = row[kind][column];
++        if (n !== undefined) total[kind][column] = (total[kind][column] ?? 0) + n;
+       }
+     }
+   }
+@@ -430,10 +433,10 @@
+   const all = sumOf(rows.map(([, counts]) => counts));
+   const columns = kinds.flatMap(kind => {
+     const ran = (counts: OutcomeCounts) => outcomes.reduce((sum, outcome) => sum + (counts[kind][outcome] ?? 0), 0);
+-    const had = outcomes.filter(outcome => all[kind][outcome] !== undefined);
++    const had = counted.filter(column => all[kind][column] !== undefined);
+     return [
+       { head: `${kind} run`, cell: ran },
+-      ...had.map(outcome => ({ head: outcome as string, cell: (counts: OutcomeCounts) => counts[kind][outcome] ?? 0 })),
++      ...had.map(column => ({ head: column as string, cell: (counts: OutcomeCounts) => counts[kind][column] ?? 0 })),
+     ];
+   });
+   const width = Math.max(...rows.map(([key]) => key.length));
+@@ -963,12 +966,16 @@
+ 
+   const outcomeOf = (fact: Fact) => resultOf.get(fact.name)!.outcome;
+   const directories = rowsBy(ran, passes, fact => fact.directory);
+-  const directoryOutcomes = outcomesBy(ran, outcomeOf, fact => fact.directory);
++  const countedOf = (fact: Fact): Counted[] => {
++    const r = resultOf.get(fact.name)!;
++    return r.silent === true ? [r.outcome, "silent"] : [r.outcome];
++  };
++  const directoryOutcomes = outcomesBy(ran, countedOf, fact => fact.directory);
+   // A class without an instance is no part of a table.
+   const kinds = (["E", "C"] as const).filter(kind => (kind === "E" ? ranE : ranC).length > 0);
+   if (directories.size > 0) {
+     const cut = cutOf([...directories.keys()]);
+-    const groups = [...outcomesBy(ran, outcomeOf, fact => cut(fact.directory))];
++    const groups = [...outcomesBy(ran, countedOf, fact => cut(fact.directory))];
+     const total = ["total", sumOf(groups.map(([, counts]) => counts))] as const;
+     say();
+     say(

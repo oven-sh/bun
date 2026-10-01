@@ -1,9 +1,9 @@
-export = Widgets
-export as namespace Widgets
+export = Widgets;
+export as namespace Widgets;
 declare namespace Widgets {
-  type Node = string | number | Element
+  type Node = string | number | Element;
   interface Element {
-    tag: string
+    tag: string;
   }
-  function make(tag: string): Element
+  function make(tag: string): Element;
 }

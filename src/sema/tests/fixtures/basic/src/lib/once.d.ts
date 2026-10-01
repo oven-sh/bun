@@ -1,2 +1,2 @@
-import { once } from './toolbox'
-export default once
+import { once } from "./toolbox";
+export default once;

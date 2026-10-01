@@ -1,4 +1,4 @@
 export interface Engine {
-  clock: { now(): number }
+  clock: { now(): number };
 }
 export interface State {}

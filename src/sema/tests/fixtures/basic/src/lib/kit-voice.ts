@@ -1,9 +1,9 @@
-export type Voice = { say(text: string): void }
-declare module './kit' {
+export type Voice = { say(text: string): void };
+declare module "./kit" {
   interface Engine {
-    voice: Voice
+    voice: Voice;
   }
   interface State {
-    open: boolean
+    open: boolean;
   }
 }

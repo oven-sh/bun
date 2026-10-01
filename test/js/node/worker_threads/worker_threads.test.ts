@@ -1266,6 +1266,11 @@ test("onmessage = <non-function> releases the port only when it removed the last
       p.onmessage = {} as any;
       p.onmessage = g;
     }),
+    functionReplacedByObjectWhileOnListenerRemains: await hasRefAfter(p => {
+      p.on("message", f);
+      p.onmessage = g;
+      p.onmessage = {} as any;
+    }),
   };
   expect(results).toEqual({
     handlerCleared: false,
@@ -1279,6 +1284,7 @@ test("onmessage = <non-function> releases the port only when it removed the last
     objectHandlerCleared: false,
     objectReplacedByObject: true,
     functionReplacedByObjectThenFunction: true,
+    functionReplacedByObjectWhileOnListenerRemains: true,
   });
 });
 

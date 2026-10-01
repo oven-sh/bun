@@ -109,6 +109,8 @@ public:
 
     void jsRef(JSGlobalObject*);
     void jsUnref();
+    // A non-callable object displacing the onmessage function fires no Remove hook (replaceJSFunctionForAttributeListener).
+    void handlerReplacedByNonCallable();
     // Report the actual loop-ref state (matches Node's uv_has_ref), not the intent flag.
     bool jsHasRef() { return m_hasRef || m_listenerLoopRefActive; }
 

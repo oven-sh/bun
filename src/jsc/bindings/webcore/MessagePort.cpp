@@ -586,6 +586,13 @@ void MessagePort::jsUnref()
     releaseJsRef();
 }
 
+void MessagePort::handlerReplacedByNonCallable()
+{
+    // node counts only functions, so this removed the last 'message' listener unless on() listeners remain.
+    if (m_messageEventCount == 1)
+        jsUnref();
+}
+
 void MessagePort::releaseJsRef()
 {
     if (!m_hasRef)

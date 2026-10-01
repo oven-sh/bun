@@ -1,0 +1,1 @@
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet "/workspace/notes/lint/units/parser/round2/statement-and-list-codes/probe.cjs" "/workspace/notes/lint/units/parser/round2/statement-and-list-codes/inputs.json" --go /tmp/rr/parsediag-bu

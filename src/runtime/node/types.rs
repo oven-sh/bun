@@ -1583,18 +1583,9 @@ impl FileSystemFlags {
             // arrive double-boxed and must not be rejected.
             let number = validators::validate_int32(ctx, val, "flags", None, None)?;
             let flags = number.max(0);
-            // On Windows, numeric flags from fs.constants (e.g. O_CREAT=0x100)
-            // use the platform's native MSVC values which differ from the
-            // internal bun.O representation. Convert them here so downstream
-            // code that operates on bun.O flags works correctly.
             #[cfg(windows)]
-            {
-                return Ok(Some(FileSystemFlags(bun_sys::windows::O::to_bun_o(flags))));
-            }
-            #[cfg(not(windows))]
-            {
-                return Ok(Some(FileSystemFlags(flags)));
-            }
+            let flags = bun_sys::windows::O::from_js(flags);
+            return Ok(Some(FileSystemFlags(flags)));
         }
 
         if val.is_undefined_or_null() {

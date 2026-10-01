@@ -52,8 +52,8 @@ pub(crate) mod netc {
         AF_INET, AF_INET6, AF_UNSPEC, SOCK_STREAM, addrinfo, sockaddr, sockaddr_in, sockaddr_in6,
         sockaddr_storage,
     };
-    /// `c_ares::Error::init_eai` reads `UV_EAI_*` codes on Windows.
-    pub(crate) const EAI_NONAME: core::ffi::c_int = bun_errno::uv_codes::UV_EAI_NONAME;
+    pub(crate) const EAI_NONAME: core::ffi::c_int =
+        bun_sys::windows::Win32Error::WSAHOST_NOT_FOUND.0 as core::ffi::c_int;
 }
 type SockaddrStorage = netc::sockaddr_storage;
 type AddrInfo = netc::addrinfo;
@@ -903,8 +903,7 @@ pub(crate) mod get_addr_info_request {
     /// The libc backend (worker-thread blocking getaddrinfo).
     pub(crate) enum LibcBackend {
         Success(GetAddrInfoResultList),
-        /// An `EAI_*` code; on Windows the `UV_EAI_*` spelling, which is what
-        /// `c_ares::Error::init_eai` reads there.
+        /// An `EAI_*` code.
         Err(i32),
         Query(GetAddrInfo),
     }
@@ -1004,10 +1003,8 @@ pub(crate) mod get_addr_info_request {
         fn FreeAddrInfoW(info: *mut AddrInfo);
     }
 
-    /// `GetAddrInfoW` (it resolves Unicode host names, which `getaddrinfo`
-    /// would read in the ANSI code page), returning the `UV_EAI_*` code libuv's
-    /// `uv__getaddrinfo_translate_error` gives for its result, which is what
-    /// `c_ares::Error::init_eai` reads on Windows.
+    /// `GetAddrInfoW`: it resolves Unicode host names, which `getaddrinfo`
+    /// would read in the ANSI code page.
     #[cfg(windows)]
     fn windows_get_addr_info(
         host: &[u8],
@@ -1015,17 +1012,6 @@ pub(crate) mod get_addr_info_request {
         hints: Option<&AddrInfo>,
         result: *mut *mut AddrInfo,
     ) -> c_int {
-        use bun_errno::uv_codes as uv;
-        use bun_sys::windows::Win32Error as W;
-        const WSAEINVAL: c_int = W::WSAEINVAL.0 as c_int;
-        const WSAEAFNOSUPPORT: c_int = W::WSAEAFNOSUPPORT.0 as c_int;
-        const WSAESOCKTNOSUPPORT: c_int = W::WSAESOCKTNOSUPPORT.0 as c_int;
-        const WSATYPE_NOT_FOUND: c_int = W::WSATYPE_NOT_FOUND.0 as c_int;
-        const WSAHOST_NOT_FOUND: c_int = W::WSAHOST_NOT_FOUND.0 as c_int;
-        const WSATRY_AGAIN: c_int = W::WSATRY_AGAIN.0 as c_int;
-        const WSANO_RECOVERY: c_int = W::WSANO_RECOVERY.0 as c_int;
-        const WSA_NOT_ENOUGH_MEMORY: c_int = W::NOT_ENOUGH_MEMORY.0 as c_int;
-
         bun_uws_sys::iocp::us_internal_winsock_ensure();
 
         let mut host_buf = bun_paths::w_path_buffer_pool::get();
@@ -1035,7 +1021,7 @@ pub(crate) mod get_addr_info_request {
             strings::try_convert_utf8_to_utf16_in_buffer(&mut host_buf[..host_cap], host)
                 .map(|w| w.len())
         else {
-            return uv::UV_EAI_NONAME;
+            return netc::EAI_NONAME;
         };
         // The resolver would encode a name that is not ASCII by its own rules,
         // which are not the ones URLs and Node go by.
@@ -1063,7 +1049,7 @@ pub(crate) mod get_addr_info_request {
                 )
             };
             let Ok(len) = usize::try_from(len) else {
-                return uv::UV_EAI_NONAME;
+                return netc::EAI_NONAME;
             };
             ascii_buf[len] = 0;
             ascii_buf.as_ptr()
@@ -1075,25 +1061,13 @@ pub(crate) mod get_addr_info_request {
 
         // SAFETY: both strings are NUL-terminated; `hints` is null or valid;
         // `result` is a valid out-pointer.
-        let err = unsafe {
+        unsafe {
             GetAddrInfoW(
                 host_ptr,
                 service_buf.as_ptr(),
                 hints.map_or(ptr::null(), std::ptr::from_ref),
                 result,
             )
-        };
-        match err {
-            0 => 0,
-            WSATRY_AGAIN => uv::UV_EAI_AGAIN,
-            WSAEINVAL => uv::UV_EAI_BADFLAGS,
-            WSANO_RECOVERY => uv::UV_EAI_FAIL,
-            WSAEAFNOSUPPORT => uv::UV_EAI_FAMILY,
-            WSA_NOT_ENOUGH_MEMORY => uv::UV_EAI_MEMORY,
-            WSAHOST_NOT_FOUND => uv::UV_EAI_NONAME,
-            WSATYPE_NOT_FOUND => uv::UV_EAI_SERVICE,
-            WSAESOCKTNOSUPPORT => uv::UV_EAI_SOCKTYPE,
-            other => bun_errno::Bun__translateWin32ErrorToUV(other as u32),
         }
     }
 

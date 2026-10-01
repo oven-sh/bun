@@ -1,14 +1,14 @@
 // The uv_mutex_* functions are libuv's (src/win/thread.c).
 #include "uv-polyfills.h"
 
-uv_pid_t uv_os_getpid()
+UV_EXTERN uv_pid_t uv_os_getpid(void)
 {
     return GetCurrentProcessId();
 }
 
 int32_t Bun__getParentProcessId(void);
 
-uv_pid_t uv_os_getppid()
+UV_EXTERN uv_pid_t uv_os_getppid(void)
 {
     return Bun__getParentProcessId();
 }
@@ -67,7 +67,7 @@ UV_EXTERN int uv_mutex_trylock(uv_mutex_t* mutex)
 {
     if (TryEnterCriticalSection(mutex))
         return 0;
-    return UV_EBUSY;
+    return UV__EBUSY;
 }
 
 UV_EXTERN void uv_mutex_unlock(uv_mutex_t* mutex)

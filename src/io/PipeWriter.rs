@@ -2122,7 +2122,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         // re-enters JS and may reach this writer through a fresh `&mut Self`.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         let Some(source) = Self::r(this).source.as_mut() else {
-            Self::fail_send(this, sys::Error::from_code(sys::E::PIPE, sys::Tag::pipe));
+            Self::fail_send(this, sys::Error::from_code(sys::E::EPIPE, sys::Tag::pipe));
             return;
         };
         let submitted = match source {
@@ -2205,7 +2205,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         kind: WriteKind,
     ) -> WriteResult {
         let Some(source) = self.source.as_mut() else {
-            return WriteResult::Err(sys::Error::from_code(sys::E::PIPE, sys::Tag::pipe));
+            return WriteResult::Err(sys::Error::from_code(sys::E::EPIPE, sys::Tag::pipe));
         };
         let written = match (source, kind) {
             // A console takes UTF-16: no detour through UTF-8.

@@ -1,7 +1,8 @@
-# libuv copied headers
+# libuv's names and error numbers
 
-Bun does not link libuv on any platform. These are copied headers from libuv. `bun uv-stubs` uses them to generate stubs which crash with a helpful error message when a NAPI
-module tries to access a libuv function which is not supported in Bun. The handful of functions Bun does implement (`uv-polyfills.c`) use them too, and `uv/errno.h` has libuv's error numbers, which are what `err.errno` is on Windows.
+Bun does not link libuv on any platform. It exports every `uv_*` function all the same, so that a NAPI module which uses one loads: the handful Bun implements (`uv-polyfills.c`), and a stub for each of the others (`uv-stubs.c`) which crashes with a helpful error message when it is called.
+
+`uv/errno.h` is copied from libuv. It has libuv's error numbers, which are what `err.errno` is on Windows.
 
 libuv commit hash: bb706f5fe71827f667f0bce532e95ce0698a498d
 

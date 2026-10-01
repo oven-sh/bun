@@ -1233,8 +1233,8 @@ impl<const SSL: bool> NewSocket<SSL> {
                 BunString::static_("ECONNREFUSED")
             };
             #[cfg(windows)]
-            let errno_ = -bun_errno::uv_codes::e_discriminant_to_uv(errno_ as u16)
-                .unwrap_or(bun_errno::uv_codes::UV_ECONNREFUSED);
+            let errno_ =
+                -bun_errno::e_to_uv(errno_ as u16).unwrap_or(bun_errno::uv_codes::UV_ECONNREFUSED);
             SystemError {
                 errno: -errno_,
                 message: BunString::static_("Failed to connect"),

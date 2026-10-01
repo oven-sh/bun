@@ -3,10 +3,7 @@ import { bunEnv, bunExe, canBuildNodeAddons, isWindows, tempDirWithFiles } from 
 import { existsSync, readFileSync } from "node:fs";
 import { constants } from "node:os";
 import path from "node:path";
-import { symbols, test_skipped } from "../../src/jsc/bindings/libuv/generate_uv_stubs_constants";
 import source from "./uv-stub-stuff/uv_impl.c";
-
-const symbols_to_test = symbols.filter(s => !test_skipped.includes(s));
 
 describe.skipIf(!canBuildNodeAddons())("uv stubs", () => {
   const cwd = process.cwd();
@@ -42,7 +39,7 @@ describe.skipIf(!canBuildNodeAddons())("uv stubs", () => {
           {
             "target_name": "uv_test",
             "sources": [ "uv_impl.c" ],
-            "include_dirs": [ ".", "./libuv" ],
+            "include_dirs": [ "." ],
             "cflags": ["-fPIC"],
             "ldflags": ["-Wl,--export-dynamic"]
           },
@@ -55,8 +52,6 @@ describe.skipIf(!canBuildNodeAddons())("uv stubs", () => {
 
     process.chdir(tempdir);
 
-    const libuvDir = path.join(__dirname, "../../src/jsc/bindings/libuv");
-    await Bun.$`cp -R ${libuvDir} ${path.join(tempdir, "libuv")}`;
     // --ignore-scripts skips the implicit `node-gyp rebuild` bun install runs for a
     // root binding.gyp package; build:napi below is the single, explicit gyp build.
     await Bun.$`${bunExe()} i --ignore-scripts && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);

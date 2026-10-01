@@ -286,14 +286,13 @@ impl Listener {
                         // does (EADDRINUSE vs EACCES need different caller
                         // handling) rather than an invalid-arguments TypeError.
                         if let ListenPipeError::Sys(sys_err) = &e {
-                            // get_error_code_tag_name does not reject EUNKNOWN /
-                            // UV_EAI_* (>=3000); neither is a node-style code, so
-                            // route those through the generic error below.
+                            // get_error_code_tag_name does not reject EUNKNOWN,
+                            // which is not a node-style code: that one goes
+                            // through the generic error below.
                             if let Some((name, se)) = sys_err.get_error_code_tag_name()
-                                && let Some(uv_errno) =
-                                    bun_errno::uv_codes::e_discriminant_to_uv(sys_err.errno)
+                                && let Some(uv_errno) = bun_errno::e_to_uv(sys_err.errno)
                             {
-                                if se != bun_sys::SystemErrno::EUNKNOWN && (se as u16) < 3000 {
+                                if se != bun_sys::SystemErrno::EUNKNOWN {
                                     let err = jsc::SystemError {
                                         errno: uv_errno,
                                         code: bun_core::String::static_(name).into(),
@@ -319,7 +318,7 @@ impl Listener {
                         }
                         let detail = match &e {
                             ListenPipeError::Other(err) => err.name(),
-                            // Sys whose errno has no node-style code (EUNKNOWN / UV_EAI_*).
+                            // Sys whose errno has no node-style code (EUNKNOWN).
                             ListenPipeError::Sys(..) => "UNKNOWN",
                         };
                         return Err(cx.global().throw_invalid_arguments(format_args!(

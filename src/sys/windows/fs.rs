@@ -461,7 +461,6 @@ pub(crate) struct OpenRequest {
 }
 
 impl OpenRequest {
-    /// `flags` are `windows::O` values (the numbers `fs.constants` exposes).
     /// `O::FILEMAP` (Node's `UV_FS_O_FILEMAP`) requests I/O through a file
     /// mapping. File contents are the same without it, so it is accepted and
     /// ignored, as Node documents for every other OS.
@@ -529,7 +528,7 @@ impl OpenRequest {
 /// `open(2)` over `CreateFileW`. `flags` are `bun_sys::O` values. The result
 /// is a HANDLE-kind `Fd`.
 pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
-    let result = open_impl(path.as_bytes(), O::from_bun_o(flags), mode);
+    let result = open_impl(path.as_bytes(), flags, mode);
     crate::syslog!(
         "open({}, {:#o}, {:#o}) = {:?}",
         bstr::BStr::new(path.as_bytes()),
@@ -543,7 +542,6 @@ pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
     }
 }
 
-/// `flags` are `windows::O` values.
 fn open_impl(path: &[u8], flags: i32, mode: Mode) -> core::result::Result<HANDLE, E> {
     let request = OpenRequest::new(flags, mode)?;
     let disposition = match request.disposition {

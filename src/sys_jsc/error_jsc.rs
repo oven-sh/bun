@@ -94,7 +94,7 @@ pub mod TestingAPIs {
         #[cfg(windows)]
         {
             let code: core::ffi::c_int = arguments[0].to_int32();
-            let result = bun_sys::windows::translate_uv_error_to_e(code);
+            let result = bun_sys::windows::uv_to_e(code).unwrap_or(bun_sys::E::EUNKNOWN);
             return bun_string_jsc::create_utf8_for_js(
                 global,
                 <&'static str>::from(result).as_bytes(),

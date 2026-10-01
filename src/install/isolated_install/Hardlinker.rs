@@ -72,7 +72,7 @@ impl Hardlinker {
                     Ok(s) => &*s,
                     Err(_) => {
                         return Ok(sys::Result::Err(sys::Error::from_code(
-                            sys::E::ACCES,
+                            sys::E::EACCES,
                             sys::Tag::link,
                         )));
                     }
@@ -149,7 +149,7 @@ impl Hardlinker {
                             match sys::link_w(self.src.slice_z(), destfile_path) {
                                 sys::Result::Ok(()) => {}
                                 sys::Result::Err(link_err1) => match link_err1.get_errno() {
-                                    sys::E::UV_EEXIST | sys::E::EEXIST => {
+                                    sys::E::EEXIST => {
                                         if crate::PackageManager::verbose_install() {
                                             bun_core::pretty_errorln!(
                                                 "Hardlinking {} to a path that already exists: {}",
@@ -182,7 +182,7 @@ impl Hardlinker {
                                             }
                                         }
                                     }
-                                    sys::E::UV_ENOENT | sys::E::ENOENT => {
+                                    sys::E::ENOENT => {
                                         if crate::PackageManager::verbose_install() {
                                             bun_core::pretty_errorln!(
                                                 "Hardlinking {} to a path that doesn't exist: {}",

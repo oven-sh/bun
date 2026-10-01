@@ -450,11 +450,6 @@ export const globalFlags: Flag[] = [
     when: c => c.unix,
     desc: "Skip unwind tables (we don't use C++ exceptions)",
   },
-  {
-    // libuv stubs use C23 anonymous parameters
-    flag: "-Wno-c23-extensions",
-    desc: "Allow C23 extensions (libuv stubs use anonymous parameters)",
-  },
 
   // ─── Sections (enables dead-code stripping at link) ───
   {

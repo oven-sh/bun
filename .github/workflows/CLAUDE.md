@@ -22,7 +22,7 @@ The `format.yml` workflow runs code formatters (Prettier, clang-format, and `car
 **Important exclusions**:
 
 - `src/runtime/napi/` - Node API headers (third-party)
-- `src/jsc/bindings/libuv/` - libuv headers (third-party)
+- `src/jsc/bindings/libuv/` - libuv's `uv/errno.h` (third-party)
 - `src/jsc/bindings/sqlite/` - SQLite headers (third-party)
 - `src/runtime/ffi/ffi-*.h` - FFI headers (generated/third-party)
 - `src/deps/` - Dependencies (third-party)

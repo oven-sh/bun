@@ -59,15 +59,6 @@ impl IntoErrnoInt for E {
         self as Int
     }
 }
-// On POSIX `E` is a `type` alias for `SystemErrno` (same type → duplicate impl);
-// on Windows they are distinct enums, so the second impl is required.
-#[cfg(windows)]
-impl IntoErrnoInt for SystemErrno {
-    #[inline]
-    fn into_errno_int(self) -> Int {
-        self as Int
-    }
-}
 
 impl Error {
     /// `Error::new(errno, tag)` — dispatches via `IntoErrnoInt` so a single
@@ -249,6 +240,16 @@ impl Error {
         Some(coreutils_error_map::COREUTILS_ERROR_MAP[system_errno].as_bytes())
     }
 
+    /// `err.errno` as Node has it: libuv's number. On POSIX that is the negated
+    /// host errno; on Windows the errno's `UV_E*` value.
+    pub fn uv_errno(&self) -> c_int {
+        #[cfg(windows)]
+        if let Some(uv) = bun_errno::e_to_uv(self.errno) {
+            return uv;
+        }
+        c_int::from(self.errno).wrapping_neg()
+    }
+
     /// Shared scaffolding for [`to_shell_system_error`] and [`to_system_error`].
     /// Fills `errno`/`syscall`/`code`/`path`/`dest`/`fd`, leaves `message` empty,
     /// and returns the looked-up `(code, label)` so each caller can build its own
@@ -257,17 +258,8 @@ impl Error {
         &self,
         map: &enum_map::EnumMap<SystemErrno, &'static str>,
     ) -> (SystemError, Option<(&'static str, &'static str)>) {
-        // Node reports libuv's codes in `err.errno` on every platform. On POSIX
-        // that is just the negated host errno; on Windows the discriminant maps
-        // back to its `UV_E*` value.
-        #[cfg(windows)]
-        let js_errno = bun_errno::uv_codes::e_discriminant_to_uv(self.errno)
-            .unwrap_or_else(|| c_int::from(self.errno).wrapping_neg());
-        #[cfg(not(windows))]
-        let js_errno = c_int::from(self.errno).wrapping_neg();
-
         let mut err = SystemError {
-            errno: js_errno,
+            errno: self.uv_errno(),
             syscall: BunString::static_(<&'static str>::from(self.syscall).as_bytes()),
             ..Default::default()
         };

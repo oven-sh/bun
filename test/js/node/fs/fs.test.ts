@@ -5708,6 +5708,58 @@ it("fs.constants", () => {
   expect(constants.S_IWOTH).toBeDefined();
 });
 
+// `fs.constants` has MSVC's numbers there, which are not the ones the names have anywhere else.
+it.skipIf(!isWindows)("a numeric open flag does what its name says", () => {
+  using dir = tempDir("fs-numeric-flags", { "file.txt": "0123456789" });
+  const file = join(String(dir), "file.txt");
+  const { O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, O_EXCL, O_TRUNC, O_APPEND, UV_FS_O_FILEMAP } = fs.constants;
+  const open = <T>(path: string, flags: number, then?: (fd: number) => T) => {
+    const fd = fs.openSync(path, flags);
+    try {
+      return then?.(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+  };
+  const codeOf = (fn: () => unknown) => {
+    try {
+      fn();
+      return null;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code;
+    }
+  };
+
+  expect(codeOf(() => open(join(String(dir), "made.txt"), O_WRONLY))).toBe("ENOENT");
+  open(join(String(dir), "made.txt"), O_WRONLY | O_CREAT);
+  expect(fs.existsSync(join(String(dir), "made.txt"))).toBe(true);
+  expect(codeOf(() => open(file, O_WRONLY | O_CREAT | O_EXCL))).toBe("EEXIST");
+  expect(fs.readFileSync(file, "utf8")).toBe("0123456789");
+
+  open(file, O_WRONLY | O_APPEND, fd => fs.writeSync(fd, "ab"));
+  expect(fs.readFileSync(file, "utf8")).toBe("0123456789ab");
+  open(file, O_WRONLY, fd => fs.writeSync(fd, "XY"));
+  expect(fs.readFileSync(file, "utf8")).toBe("XY23456789ab");
+  expect(codeOf(() => open(file, O_RDONLY, fd => fs.writeSync(fd, "no")))).toBe("EBADF");
+  expect(open(file, O_RDWR, fd => [fs.writeSync(fd, "Z"), fs.readSync(fd, Buffer.alloc(1))])).toEqual([1, 1]);
+
+  // _O_TEXT, _O_BINARY, _O_WTEXT, _O_U16TEXT, _O_U8TEXT: nothing here reads them.
+  for (const bit of [0x4000, 0x8000, 0x10000, 0x20000, 0x40000]) {
+    expect(open(file, O_RDONLY | bit, fd => fs.fstatSync(fd).isFile())).toBe(true);
+    expect(codeOf(() => fs.writeFileSync(file, "text", { flag: O_WRONLY | O_CREAT | bit }))).toBe(null);
+  }
+  // UV_FS_O_DIRECT, UV_FS_O_DSYNC, UV_FS_O_SYNC, which `fs.constants` leaves out.
+  for (const extra of [0x02000000, 0x04000000, 0x08000000, UV_FS_O_FILEMAP]) {
+    expect(open(file, O_RDONLY | extra, fd => fs.fstatSync(fd).isFile())).toBe(true);
+  }
+  expect(codeOf(() => open(file, O_WRONLY | O_RDWR))).toBe("EINVAL");
+
+  // As in Node: without O_CREAT it is TRUNCATE_EXISTING, which wants GENERIC_WRITE by that name.
+  expect(codeOf(() => open(file, O_RDWR | O_TRUNC))).toBe("EINVAL");
+  open(file, O_RDWR | O_CREAT | O_TRUNC);
+  expect(fs.readFileSync(file, "utf8")).toBe("");
+});
+
 it("fs.promises.constants", () => {
   expect(promises.constants).toBeDefined();
   expect(promises.constants).toBe(fs.constants);

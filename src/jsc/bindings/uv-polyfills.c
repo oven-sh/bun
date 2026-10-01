@@ -13,14 +13,6 @@ void __bun_throw_not_implemented(const char* symbol_name)
 #include <unistd.h>
 #include <stdlib.h>
 
-// libuv does the annoying thing of #undef'ing these
-#include <errno.h>
-#if EDOM > 0
-#define UV__ERR(x) (-(x))
-#else
-#define UV__ERR(x) (x)
-#endif
-
 // Internals
 
 uint64_t uv__hrtime(uv_clocktype_t type);
@@ -35,12 +27,12 @@ uint64_t uv__hrtime(uv_clocktype_t type);
 #include "uv-polyfills-posix.c"
 #endif
 
-uv_pid_t uv_os_getpid()
+UV_EXTERN uv_pid_t uv_os_getpid(void)
 {
     return getpid();
 }
 
-uv_pid_t uv_os_getppid()
+UV_EXTERN uv_pid_t uv_os_getppid(void)
 {
     return getppid();
 }
@@ -119,7 +111,7 @@ UV_EXTERN int uv_mutex_trylock(uv_mutex_t* mutex)
     if (err) {
         if (err != EBUSY && err != EAGAIN)
             abort();
-        return UV_EBUSY;
+        return UV__EBUSY;
     }
 
     return 0;

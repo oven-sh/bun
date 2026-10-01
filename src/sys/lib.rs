@@ -47,15 +47,6 @@ impl SystemError {
     /// (`Error::to_system_error` stores `errno` negated to match Node.)
     #[inline]
     pub fn get_errno(&self) -> E {
-        // On Windows `self.errno` is a `UV_E*` code (e.g. UV_EBUSY = -4082);
-        // canonicalize to the small `E` discriminant so Rust-side callers that
-        // compare against `E::BUSY`/`E::BADF` keep matching.
-        #[cfg(windows)]
-        if let Some(d) = bun_errno::uv_codes::uv_err_to_e_discriminant(self.errno) {
-            if let Some(e) = E::try_from_raw(d) {
-                return e;
-            }
-        }
         e_from_negated(self.errno)
     }
 }
@@ -1109,33 +1100,17 @@ pub mod O {
     pub const RDONLY: i32 = libc::O_RDONLY;
     pub const WRONLY: i32 = libc::O_WRONLY;
     pub const RDWR: i32 = libc::O_RDWR;
-    // On Windows the `O.*` constants are fixed octal, Linux-shaped values,
-    // NOT MSVCRT `_O_*`. `windows::O::from_bun_o` bit-tests
-    // against these exact values, so re-using `libc::O_CREAT` (0x100) etc.
-    // silently dropped CREAT/EXCL/APPEND on Windows.
-    #[cfg(unix)]
     pub const CREAT: i32 = libc::O_CREAT;
-    #[cfg(unix)]
     pub const TRUNC: i32 = libc::O_TRUNC;
-    #[cfg(unix)]
     pub const APPEND: i32 = libc::O_APPEND;
-    #[cfg(unix)]
     pub const EXCL: i32 = libc::O_EXCL;
-    #[cfg(windows)]
-    pub const CREAT: i32 = 0o100;
-    #[cfg(windows)]
-    pub const EXCL: i32 = 0o200;
-    #[cfg(windows)]
-    pub const TRUNC: i32 = 0o1000;
-    #[cfg(windows)]
-    pub const APPEND: i32 = 0o2000;
     #[cfg(unix)]
     pub const NONBLOCK: i32 = libc::O_NONBLOCK;
     #[cfg(unix)]
     pub const CLOEXEC: i32 = libc::O_CLOEXEC;
-    // Windows libc has no `O_NONBLOCK`/`O_CLOEXEC`; `open` ignores them. Values
-    // chosen to round-trip through `windows::O::from_bun_o` without colliding
-    // with the `_O_*` flags MSVCRT defines.
+    // Windows libc has no `O_NONBLOCK`/`O_CLOEXEC`; `open` ignores them. These
+    // and the other values MSVCRT lacks are not those of an `_O_*` flag `open`
+    // reads (`windows::O::from_js`).
     #[cfg(windows)]
     pub const NONBLOCK: i32 = 0o4000;
     #[cfg(windows)]
@@ -1187,7 +1162,7 @@ pub mod O {
     /// Windows: the file is read or written front to back, which the cache
     /// manager reads ahead and unmaps behind for. Nothing to say elsewhere.
     #[cfg(windows)]
-    pub const SEQUENTIAL: i32 = 0o20000;
+    pub const SEQUENTIAL: i32 = libc::O_SEQUENTIAL;
     #[cfg(not(windows))]
     pub const SEQUENTIAL: i32 = 0;
     #[cfg(target_os = "macos")]
@@ -6120,7 +6095,7 @@ pub fn normalize_path_windows_opts<'a>(
         Err(windows::GetFinalPathNameByHandleError::NameTooLong) => return Err(too_long()),
         // `E.BADFD` (errno 77 'file descriptor in bad state'),
         // not `EBADF` (9).
-        Err(_) => return Err(Error::from_code(E::BADFD, Tag::open)),
+        Err(_) => return Err(Error::from_code(E::EBADFD, Tag::open)),
     };
 
     // The volume boundary is only needed when `..` resolves above the dirfd:
@@ -6143,7 +6118,7 @@ pub fn normalize_path_windows_opts<'a>(
         ) {
             Ok(p) => p,
             Err(windows::GetFinalPathNameByHandleError::NameTooLong) => return Err(too_long()),
-            Err(_) => return Err(Error::from_code(E::BADFD, Tag::open)),
+            Err(_) => return Err(Error::from_code(E::EBADFD, Tag::open)),
         };
         // A mis-placed boundary would resolve `..` to the wrong file; fail
         // loud when the two names don't compose (e.g. a rename race).
@@ -6152,7 +6127,7 @@ pub fn normalize_path_windows_opts<'a>(
                 share_rooted = rooted;
                 len
             }
-            None => return Err(Error::from_code(E::BADFD, Tag::open)),
+            None => return Err(Error::from_code(E::EBADFD, Tag::open)),
         }
     };
     // The `\Device\…` name of a volume-root handle ends in `\`; keep the
@@ -6506,7 +6481,7 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
     const FILE_SEQUENTIAL_ONLY: u32 = 0x0000_0004;
     const FILE_NO_INTERMEDIATE_BUFFERING: u32 = 0x0000_0008;
 
-    let request = windows::fs::OpenRequest::new(windows::O::from_bun_o(flags), perm)
+    let request = windows::fs::OpenRequest::new(flags, perm)
         .map_err(|errno| Error::from_code(errno, Tag::open))?;
     // FILE_READ_ATTRIBUTES is what `fstat` needs; `CreateFileW` adds it to
     // every open, `NtCreateFile` does not.
@@ -8212,7 +8187,7 @@ mod win_symlink_impl {
                 // Only ENOENT/EEXIST keep `has_failed_to_create_symlink`
                 // unset; every other failure flips the sticky bit so
                 // `symlinkOrJunction` falls through to junctions next time.
-                if !matches!(err.get_errno(), E::NOENT | E::EXIST) {
+                if !matches!(err.get_errno(), E::ENOENT | E::EEXIST) {
                     WindowsSymlinkOptions::set_has_failed_to_create_symlink(true);
                 }
                 err
@@ -8248,7 +8223,7 @@ mod win_symlink_impl {
                 Err(err) => match err.get_errno() {
                     // EEXIST/ENOENT: surface the symlink error; junctions
                     // would hit the same condition.
-                    E::EXIST | E::NOENT => return Err(err),
+                    E::EEXIST | E::ENOENT => return Err(err),
                     // anything else: fall through to junction.
                     _ => {}
                 },
@@ -9493,7 +9468,7 @@ mod normalize_path_windows_tests {
                 let _ = close(fd);
             },
         );
-        assert_eq!(normalize_err(*nul, ".\\x").get_errno(), E::BADFD);
+        assert_eq!(normalize_err(*nul, ".\\x").get_errno(), E::EBADFD);
     }
 
     #[test]

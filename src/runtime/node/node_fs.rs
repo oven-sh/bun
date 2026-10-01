@@ -7590,7 +7590,7 @@ impl NodeFS {
         result: Maybe<ret::CopyFile>,
     ) -> Maybe<ret::CopyFile> {
         let Err(ref e) = result else { return result };
-        if e.get_errno() != E::BUSY {
+        if e.get_errno() != E::EBUSY {
             return result;
         }
         let mut buf = bun_paths::path_buffer_pool::get();

@@ -1,4 +1,4 @@
-; uv_* is the list in src/symbols.txt (every UV_EXTERN function in src/jsc/bindings/libuv),
+; uv_* is the list in src/symbols.txt (`exported` in src/jsc/bindings/libuv/generate_uv_stubs_constants.ts),
 ; defined by src/jsc/bindings/uv-stubs.c and src/jsc/bindings/uv-polyfills.c.
 ;
 ; napi_* can be listed from a local build with:

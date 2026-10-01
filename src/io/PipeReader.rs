@@ -1261,7 +1261,7 @@ impl BufferedReader {
         if bun_core::env_var::feature_flag::BUN_INTERNAL_FAIL_PIPE_READER_START.get() == Some(true)
         {
             self.release_source();
-            return sys::Result::Err(sys::Error::from_code(sys::E::INVAL, sys::Tag::open));
+            return sys::Result::Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
         }
         // With nothing left to read the source is never read: like POSIX, the parent's first read request ends the reader.
         if self.flags.contains(ReaderFlags::IS_PAUSED) || self.limit.reached() {
@@ -1292,7 +1292,7 @@ impl BufferedReader {
             .contains(ReaderFlags::USE_PREAD)
             .then_some(self._offset as u64);
         match self.source.as_mut() {
-            None => sys::Result::Err(sys::Error::from_code(sys::E::BADF, sys::Tag::read)),
+            None => sys::Result::Err(sys::Error::from_code(sys::E::EBADF, sys::Tag::read)),
             Some(Source::Pipe(pipe)) => {
                 pipe.set_read_size(len);
                 pipe.read_start(this, Self::on_source_read)

@@ -1,17 +1,3 @@
-export const test_skipped = [
-  "uv_getrusage_thread",
-  "uv_thread_detach",
-  "uv_thread_getname",
-  "uv_thread_getpriority",
-  "uv_thread_setname",
-  "uv_udp_try_send2",
-  "uv_utf16_length_as_wtf8",
-  "uv_utf16_to_wtf8",
-  "uv_wtf8_length_as_utf16",
-  "uv_wtf8_to_utf16",
-  "uv_thread_setpriority",
-];
-
 /**
  * uv functions bun implements. Everything in `symbols` is a stub that reports
  * "unsupported uv function" and aborts.

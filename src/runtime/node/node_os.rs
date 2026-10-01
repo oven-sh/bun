@@ -1533,7 +1533,7 @@ mod _impl {
         }
         // POSIX `setpriority` returns -1 and sets errno; Windows returns a `UV_E*` number.
         #[cfg(windows)]
-        return bun_sys::windows::translate_uv_error_to_e(code);
+        return bun_sys::windows::uv_to_e(code).unwrap_or(bun_sys::E::EUNKNOWN);
         #[cfg(not(windows))]
         return bun_sys::get_errno(code);
     }

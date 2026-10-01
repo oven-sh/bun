@@ -108,8 +108,7 @@ extern "C" fn Bun__Process__kill(
 ) -> core::ffi::c_int {
     match bun_spawn_sys::windows::kill_pid(pid, signum) {
         Ok(()) => 0,
-        Err(err) => bun_errno::uv_codes::e_discriminant_to_uv(err.errno)
-            .unwrap_or_else(|| core::ffi::c_int::from(err.errno).wrapping_neg()),
+        Err(err) => err.uv_errno(),
     }
 }
 

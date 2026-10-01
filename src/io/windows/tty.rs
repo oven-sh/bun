@@ -263,8 +263,7 @@ extern "C" fn Bun__Windows__setConsoleMode(
     };
     match set_console_mode(input, mode) {
         Ok(()) => 0,
-        Err(err) => bun_errno::uv_codes::e_discriminant_to_uv(err.errno)
-            .unwrap_or_else(|| core::ffi::c_int::from(err.errno).wrapping_neg()),
+        Err(err) => err.uv_errno(),
     }
 }
 

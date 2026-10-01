@@ -480,14 +480,7 @@ pub(crate) fn string_to_flags_for_testing(
     use crate::node::types::FileSystemFlags;
     let [val] = frame.arguments_as_array::<1>();
     let flags = FileSystemFlags::from_js(global, val)?.unwrap_or(FileSystemFlags::R);
-    // On Windows the internal bun.O bits are POSIX-shaped and translated to the
-    // MSVCRT `_O_*` values at the open boundary; node's stringToFlags and
-    // fs.constants both speak MSVCRT, so translate here too.
-    #[cfg(windows)]
-    let bits = bun_sys::windows::O::from_bun_o(flags.as_int());
-    #[cfg(not(windows))]
-    let bits = flags.as_int();
-    Ok(JSValue::js_number_from_int32(bits))
+    Ok(JSValue::js_number_from_int32(flags.as_int()))
 }
 
 #[bun_jsc::host_fn]

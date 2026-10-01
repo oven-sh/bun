@@ -355,7 +355,7 @@ pub use bun_windows_sys::externs::{
 /// type.
 pub use bun_windows_sys::Win32Error;
 
-/// `to_system_errno()` / `to_e()` — extension trait from `bun_errno` (the
+/// `to_e()` — extension trait from `bun_errno` (the
 /// `SystemErrno` mapping table is a higher-tier concern than the tier-0
 /// newtype).
 pub use bun_errno::Win32ErrorExt;
@@ -364,7 +364,7 @@ pub use bun_errno::Win32ErrorExt;
 /// with `Error::from_win32(Win32Error::get(), tag)` instead.
 #[inline]
 pub fn last_system_errno() -> SystemErrno {
-    Win32Error::get().to_system_errno()
+    Win32Error::get().to_e()
 }
 
 #[allow(non_snake_case)]
@@ -403,7 +403,7 @@ pub fn is_app_container() -> bool {
     })
 }
 
-pub use bun_errno::translate_uv_error_to_e;
+pub use bun_errno::uv_to_e;
 
 pub use bun_windows_sys::externs::GetProcAddress;
 
@@ -481,7 +481,7 @@ pub fn translate_nt_status_to_errno(err: NTSTATUS) -> E {
             OBJECT_NAME_INVALID => bun_core::debug_warn!(
                 "Received OBJECT_NAME_INVALID, indicates a file path conversion issue.",
             ),
-            t if e == E::UNKNOWN => bun_core::debug_warn!(
+            t if e == E::EUNKNOWN => bun_core::debug_warn!(
                 "Called translateNTStatusToErrno with {:?} which does not have a mapping to errno.",
                 t
             ),
@@ -936,7 +936,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
     // NtCreateFile's caller gets a recoverable error rather than an abort.
     let path_len_bytes = match u16::try_from(sub_path_w.len() * 2) {
         Ok(n) => n,
-        Err(_) => return bun_sys::Result::errno(E::NAMETOOLONG, bun_sys::Tag::open),
+        Err(_) => return bun_sys::Result::errno(E::ENAMETOOLONG, bun_sys::Tag::open),
     };
     let mut nt_name = UNICODE_STRING {
         Length: path_len_bytes,
@@ -1677,7 +1677,7 @@ pub fn move_opened_file_at(
 
     let struct_len = size_of::<win32::FILE_RENAME_INFORMATION_EX>() - 1 + new_file_name.len() * 2;
     if struct_len > STRUCT_BUF_LEN {
-        return bun_sys::Result::errno(E::NAMETOOLONG, bun_sys::Tag::NtSetInformationFile);
+        return bun_sys::Result::errno(E::ENAMETOOLONG, bun_sys::Tag::NtSetInformationFile);
     }
 
     // SAFETY: AlignedBuf is #[repr(align(8))] which matches FILE_RENAME_INFORMATION_EX alignment.
@@ -1917,20 +1917,20 @@ mod tests {
     /// may read as success.
     #[test]
     fn to_e_never_success() {
-        assert_eq!(Win32Error::FILE_NOT_FOUND.to_e(), E::NOENT);
-        assert_eq!(UNMAPPED.to_e(), E::UNKNOWN);
-        assert_eq!(Win32Error::SUCCESS.to_e(), E::UNKNOWN);
+        assert_eq!(Win32Error::FILE_NOT_FOUND.to_e(), E::ENOENT);
+        assert_eq!(UNMAPPED.to_e(), E::EUNKNOWN);
+        assert_eq!(Win32Error::SUCCESS.to_e(), E::EUNKNOWN);
         // `HRESULT_FROM_WIN32(ERROR_ACCESS_DENIED)` unwraps; other HRESULTs do not.
-        assert_eq!(Win32Error::from_u32(0x8007_0005).to_e(), E::PERM);
-        assert_eq!(Win32Error::from_u32(0x8000_4005).to_e(), E::UNKNOWN);
+        assert_eq!(Win32Error::from_u32(0x8007_0005).to_e(), E::EPERM);
+        assert_eq!(Win32Error::from_u32(0x8000_4005).to_e(), E::EUNKNOWN);
         assert_eq!(Win32Error::from_u32(5), Win32Error::ACCESS_DENIED);
         assert_eq!(
             Error::from_win32(UNMAPPED, Tag::open).get_errno(),
-            E::UNKNOWN
+            E::EUNKNOWN
         );
         assert_eq!(
             Error::from_win32(Win32Error::ACCESS_DENIED, Tag::open).get_errno(),
-            E::PERM
+            E::EPERM
         );
     }
 

@@ -58,22 +58,53 @@ interface Guarded {
   signature: string;
   /** Text that must precede the signature, to disambiguate a common name. */
   within?: string;
+  /**
+   * The conditions the body must `assert!` (one `assert!(<condition>, ..)`
+   * each, whitespace-insensitive). Pinning the expressions, not just the
+   * macro, means dropping one of two checks fails the lint.
+   */
+  asserts: string[];
 }
 
 const GUARDED: Guarded[] = [
   // bun_core: NUL-terminated borrowed strings. The returned `&ZStr`/`&WStr` is
   // handed straight to open/stat/unlink/CreateFileW; the asserted NUL is what
   // stops libc from reading past the buffer.
-  { name: "ZStr::from_static", signature: "from_static(s: &'static [u8]) -> &'static ZStr" },
-  { name: "ZStr::from_buf", signature: "from_buf(buf: &[u8], len: usize) -> &ZStr" },
-  { name: "ZStr::from_buf_mut", signature: "from_buf_mut(buf: &mut [u8], len: usize) -> &mut ZStr" },
-  { name: "ZStr::from_slice_with_nul", signature: "from_slice_with_nul(buf: &[u8]) -> &ZStr" },
-  { name: "WStr::from_buf", signature: "from_buf(buf: &[u16], len: usize) -> &WStr" },
-  { name: "WStr::from_slice_with_nul", signature: "from_slice_with_nul(buf: &[u16]) -> &WStr" },
+  {
+    name: "ZStr::from_static",
+    signature: "from_static(s: &'static [u8]) -> &'static ZStr",
+    asserts: ["!s.is_empty() && s[s.len() - 1] == 0"],
+  },
+  {
+    name: "ZStr::from_buf",
+    signature: "from_buf(buf: &[u8], len: usize) -> &ZStr",
+    asserts: ["len < buf.len()", "buf[len] == 0"],
+  },
+  {
+    name: "ZStr::from_buf_mut",
+    signature: "from_buf_mut(buf: &mut [u8], len: usize) -> &mut ZStr",
+    asserts: ["len < buf.len()", "buf[len] == 0"],
+  },
+  {
+    name: "ZStr::from_slice_with_nul",
+    signature: "from_slice_with_nul(buf: &[u8]) -> &ZStr",
+    asserts: ["!buf.is_empty()", "buf[buf.len() - 1] == 0"],
+  },
+  {
+    name: "WStr::from_buf",
+    signature: "from_buf(buf: &[u16], len: usize) -> &WStr",
+    asserts: ["len < buf.len()", "buf[len] == 0"],
+  },
+  {
+    name: "WStr::from_slice_with_nul",
+    signature: "from_slice_with_nul(buf: &[u16]) -> &WStr",
+    asserts: ["!buf.is_empty()", "buf[buf.len() - 1] == 0"],
+  },
   // bun_core: forming a misaligned `&mut [T]` is UB even if never read.
   {
     name: "Unaligned::slice_align_cast_mut",
     signature: "slice_align_cast_mut(slice: &mut [Unaligned<T>]) -> &mut [T]",
+    asserts: ["(slice.as_ptr() as usize).is_multiple_of(core::mem::align_of::<T>())"],
   },
 ];
 
@@ -83,12 +114,14 @@ const GUARDED: Guarded[] = [
 // transmute from the raw integer is the unchecked shape this lint keeps out.
 // `bun_sys::E` is an alias of `SystemErrno` on POSIX, so both spellings are
 // covered.
-const ERRNO_TRANSMUTE = /\btransmute::<\s*u16\s*,\s*(?:[\w:]+::)?(?:E|SystemErrno)\s*>/;
+const ERRNO_TRANSMUTE = /\btransmute::<\s*u16\s*,\s*(?:[\w:]+::)?(?:E|SystemErrno)\s*,?\s*>/g;
 
 const DEBUG_ASSERT = /\bdebug_assert(?:_eq|_ne)?!/;
-// A check that survives release: `assert!`-family or an explicit `panic!`
-// arm (the `match check(..) { None => panic!(..) }` shape).
-const HARD_CHECK = /(?<![\w.])(?:assert(?:_eq|_ne)?|panic)!\s*\(/;
+
+/** `assert!(<condition>` with any whitespace, as a regex over a whitespace-collapsed body. */
+function hardAssert(condition: string): RegExp {
+  return new RegExp(String.raw`(?<![\w.])assert!\( ?${escape(condition.replace(/\s+/g, " "))}`);
+}
 
 function escape(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -143,15 +176,27 @@ for (const abs of rustSources) {
   for (const g of GUARDED) {
     definitions.get(g.name)!.push(...findDefinitions(source, content, g));
   }
-  for (const [index, line] of content.split("\n").entries()) {
-    if (ERRNO_TRANSMUTE.test(line)) transmutes.push(`${source}:${index + 1}: ${line.trim()}`);
-  }
+  transmutes.push(...findTransmutes(source, content));
 }
 
-function violations(def: Definition): string[] {
+/** Every errno transmute in `content`, as `file:line: text`; rustfmt may split the turbofish across lines. */
+function findTransmutes(source: string, content: string): string[] {
+  const out: string[] = [];
+  for (const m of content.matchAll(ERRNO_TRANSMUTE)) {
+    const line = content.slice(0, m.index).split("\n").length;
+    out.push(`${source}:${line}: ${m[0].replace(/\s+/g, " ")}`);
+  }
+  return out;
+}
+
+function violations(def: Definition, g: Guarded): string[] {
   const out: string[] = [];
   if (DEBUG_ASSERT.test(def.body)) out.push("precondition is only debug_assert!ed");
-  if (!def.isUnsafe && !HARD_CHECK.test(def.body)) out.push("safe fn with no assert!/panic! in its body");
+  if (def.isUnsafe) return out;
+  const body = def.body.replace(/\s+/g, " ");
+  for (const condition of g.asserts) {
+    if (!hardAssert(condition).test(body)) out.push(`safe fn does not assert!(${condition})`);
+  }
   return out;
 }
 
@@ -162,11 +207,15 @@ test("scans a non-empty set of tracked Rust sources", () => {
 });
 
 test("the extractor and the check classify the shapes it claims to", () => {
-  const g: Guarded = { name: "t", signature: "from_buf(buf: &[u8], len: usize) -> &ZStr" };
+  const g: Guarded = {
+    name: "t",
+    signature: "from_buf(buf: &[u8], len: usize) -> &ZStr",
+    asserts: ["len < buf.len()", "buf[len] == 0"],
+  };
   const classify = (src: string) => {
     const defs = findDefinitions("t.rs", stripComments(src), g);
     expect(defs).toHaveLength(1);
-    return violations(defs[0]);
+    return violations(defs[0], g);
   };
   // The shape this lint was written against.
   expect(
@@ -176,33 +225,33 @@ test("the extractor and the check classify the shapes it claims to", () => {
           debug_assert_eq!(buf[len], 0);
           unsafe { Self::from_raw(buf.as_ptr(), len) }
       }`),
-  ).toEqual(["precondition is only debug_assert!ed", "safe fn with no assert!/panic! in its body"]);
-  // Either accepted fix.
+  ).toEqual([
+    "precondition is only debug_assert!ed",
+    "safe fn does not assert!(len < buf.len())",
+    "safe fn does not assert!(buf[len] == 0)",
+  ]);
+  // The accepted fix, in both rustfmt layouts.
   expect(
     classify(`
       pub fn from_buf(buf: &[u8], len: usize) -> &ZStr {
           assert!(len < buf.len(), "ZStr::from_buf: NUL must lie within buf");
+          assert!(
+              buf[len] == 0,
+              "ZStr::from_buf: missing NUL at buf[len]"
+          );
           // SAFETY: asserted above; a debug_assert! would not do here.
           unsafe { Self::from_raw(buf.as_ptr(), len) }
       }`),
   ).toEqual([]);
-  expect(
-    classify(`
-      pub const fn from_buf(buf: &[u8], len: usize) -> &ZStr {
-          match check(buf, len) {
-              Some(z) => z,
-              None => panic!("missing NUL"), // not debug_assert!
-          }
-      }`),
-  ).toEqual([]);
+  // An `unsafe fn` moves the precondition to its callers.
   expect(
     classify(`
       pub unsafe fn from_buf(buf: &[u8], len: usize) -> &ZStr {
           unsafe { Self::from_raw(buf.as_ptr(), len) }
       }`),
   ).toEqual([]);
-  // Mixed: a hard check plus a leftover debug_assert! on another part of the
-  // precondition is still a violation; so is a body with no check at all.
+  // Half a fix: one condition hard, the other only debug_assert!ed, or
+  // dropped outright.
   expect(
     classify(`
       pub fn from_buf(buf: &[u8], len: usize) -> &ZStr {
@@ -210,27 +259,51 @@ test("the extractor and the check classify the shapes it claims to", () => {
           debug_assert_eq!(buf[len], 0);
           unsafe { Self::from_raw(buf.as_ptr(), len) }
       }`),
-  ).toEqual(["precondition is only debug_assert!ed"]);
+  ).toEqual(["precondition is only debug_assert!ed", "safe fn does not assert!(buf[len] == 0)"]);
   expect(
     classify(`
       pub fn from_buf(buf: &[u8], len: usize) -> &ZStr {
+          assert!(len < buf.len());
           unsafe { Self::from_raw(buf.as_ptr(), len) }
       }`),
-  ).toEqual(["safe fn with no assert!/panic! in its body"]);
-  // Nested braces inside the body do not cut the extraction short.
+  ).toEqual(["safe fn does not assert!(buf[len] == 0)"]);
+  // `debug_assert!` does not satisfy the pin, and nested braces inside the
+  // body do not cut the extraction short.
   expect(
     classify(`
       pub fn from_buf(buf: &[u8], len: usize) -> &ZStr {
           if len >= buf.len() { panic!("{}", len) }
+          debug_assert!(buf[len] == 0);
           unsafe { Self::from_raw(buf.as_ptr(), len) }
       }`),
-  ).toEqual([]);
+  ).toEqual([
+    "precondition is only debug_assert!ed",
+    "safe fn does not assert!(len < buf.len())",
+    "safe fn does not assert!(buf[len] == 0)",
+  ]);
 
-  expect(ERRNO_TRANSMUTE.test("unsafe { core::mem::transmute::<u16, SystemErrno>(n) }")).toBe(true);
-  expect(ERRNO_TRANSMUTE.test("unsafe { core::mem::transmute::<u16, E>(int as u16) }")).toBe(true);
-  expect(ERRNO_TRANSMUTE.test("unsafe { transmute::<u16, bun_errno::SystemErrno>(n) }")).toBe(true);
-  expect(ERRNO_TRANSMUTE.test("unsafe { transmute::<u16, Endian>(n) }")).toBe(false);
-  expect(ERRNO_TRANSMUTE.test("SystemErrno::from_repr(n)")).toBe(false);
+  const hits = (src: string) => findTransmutes("t.rs", src);
+  expect(hits("unsafe { core::mem::transmute::<u16, SystemErrno>(n) }")).toEqual([
+    "t.rs:1: transmute::<u16, SystemErrno>",
+  ]);
+  expect(hits("unsafe { core::mem::transmute::<u16, E>(int as u16) }")).toEqual(["t.rs:1: transmute::<u16, E>"]);
+  expect(hits("unsafe { transmute::<u16, bun_errno::SystemErrno>(n) }")).toEqual([
+    "t.rs:1: transmute::<u16, bun_errno::SystemErrno>",
+  ]);
+  // rustfmt splits a long turbofish across lines; the line reported is the one
+  // the expression starts on.
+  expect(
+    hits(`fn f(n: u16) -> E {
+    unsafe {
+        core::mem::transmute::<
+            u16,
+            bun_errno::SystemErrno,
+        >(n)
+    }
+}`),
+  ).toEqual(["t.rs:3: transmute::< u16, bun_errno::SystemErrno, >"]);
+  expect(hits("unsafe { transmute::<u16, Endian>(n) }")).toEqual([]);
+  expect(hits("SystemErrno::from_repr(n)")).toEqual([]);
 });
 
 test.each(GUARDED)("$name checks its precondition in release builds", g => {
@@ -238,7 +311,7 @@ test.each(GUARDED)("$name checks its precondition in release builds", g => {
   // Exactly one definition: a rename or a second copy must update this table
   // rather than silently dropping the function out of the lint.
   expect(defs.map(d => d.source)).toHaveLength(1);
-  expect(violations(defs[0])).toEqual([]);
+  expect(violations(defs[0], g)).toEqual([]);
 });
 
 test("no errno enum is built by transmuting a raw u16", () => {

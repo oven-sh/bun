@@ -46,12 +46,6 @@ pub enum ExhaustiveEffectDepsMode {
     ExtraOnly,
 }
 
-impl Default for ExhaustiveEffectDepsMode {
-    fn default() -> Self {
-        Self::Off
-    }
-}
-
 /// Compiler environment configuration. Contains feature flags and settings.
 ///
 /// Fields that would require passing JS functions across the JS/Rust boundary

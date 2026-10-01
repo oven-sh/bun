@@ -18,7 +18,7 @@ impl Expect {
 
         let arguments = frame.arguments();
 
-        if arguments.len() < 1 {
+        if arguments.len() < 2 {
             return Err(global.throw_invalid_arguments(format_args!(
                 "toBeWithin() requires 2 arguments"
             )));
@@ -61,7 +61,6 @@ impl Expect {
         let mut formatter = super::make_formatter(global);
         let mut formatter2 = super::make_formatter(global);
         let mut formatter3 = super::make_formatter(global);
-        // defer formatter.deinit(); — handled by Drop
         let start_fmt = start_value.to_fmt(&mut formatter);
         let end_fmt = end_value.to_fmt(&mut formatter2);
         let received_fmt = value.to_fmt(&mut formatter3);

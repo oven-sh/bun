@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { totalmem } from "node:os";
+import { join } from "node:path";
 import {
   compileFunction,
   constants,
@@ -8,6 +10,7 @@ import {
   runInNewContext,
   runInThisContext,
   Script,
+  SourceTextModule,
 } from "node:vm";
 
 function capture(_: any, _1?: any) {}
@@ -64,6 +67,24 @@ describe("vm", () => {
         },
       );
       expect(result).toBe(2);
+    });
+    test("ShadowRealm can be created and used inside a context", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const vm = require("node:vm");
+          const realm = vm.runInNewContext("new ShadowRealm()");
+          const wrapped = vm.runInNewContext("new ShadowRealm().evaluate('(a, b) => a + b')");
+          console.log(typeof realm.evaluate, realm.evaluate("6 * 7"), wrapped(20, 22));`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("function 42 42\n");
+      expect(exitCode).toBe(0);
     });
   });
 
@@ -391,6 +412,18 @@ describe("Script", () => {
       err = e;
     }
     expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:2", "   %%", "   ^", ""]);
+  });
+
+  test("a compile-time error without a position gets no arrow header", () => {
+    // Overflowing the parser's stack fails compilation without a line, like Node's RangeError.
+    let err: any;
+    try {
+      new Script(Buffer.alloc(200_000, "(").toString());
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(RangeError);
+    expect(err.stack.split("\n")[0]).toBe("RangeError: Maximum call stack size exceeded.");
   });
 
   test("vm.compileFunction compile-time SyntaxError is arrow-decorated like new Script", () => {
@@ -847,6 +880,110 @@ resp.text().then((a) => {
   }
 });
 
+// The realm of a function defined in a context is the context's global object. That is not
+// the Bun global that holds the File and fs.Stats structures.
+describe.concurrent("File and fs.Stats accept a newTarget that belongs to a context", () => {
+  const prelude = /*js*/ `
+    const vm = require("node:vm");
+    const fs = require("node:fs");
+    const BigIntStats = fs.statSync(".", { bigint: true }).constructor;
+    const bigintArgs = [1n, 0o100644n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 2000000n, 0n, 0n, 0n];
+  `;
+
+  test.each([
+    {
+      name: "class extends File",
+      script: /*js*/ `
+        const context = vm.createContext({ File });
+        const [Upload, upload] = vm.runInContext(
+          'class Upload extends File { get custom() { return 42; } }; [Upload, new Upload(["abc"], "a.txt")]',
+          context,
+        );
+        console.log(JSON.stringify({
+          prototype: Object.getPrototypeOf(upload) === Upload.prototype,
+          instanceof: upload instanceof File,
+          name: upload.name,
+          size: upload.size,
+          custom: upload.custom,
+        }));
+      `,
+      expected: { prototype: true, instanceof: true, name: "a.txt", size: 3, custom: 42 },
+    },
+    {
+      name: "class extends fs.Stats",
+      script: /*js*/ `
+        const context = vm.createContext({ Stats: fs.Stats });
+        const [S, stats] = vm.runInContext(
+          "class S extends Stats { get custom() { return 42; } }; [S, new S(1, 0o100644)]",
+          context,
+        );
+        console.log(JSON.stringify({
+          prototype: Object.getPrototypeOf(stats) === S.prototype,
+          instanceof: stats instanceof fs.Stats,
+          isFile: stats.isFile(),
+          mode: stats.mode,
+          custom: stats.custom,
+        }));
+      `,
+      expected: { prototype: true, instanceof: true, isFile: true, mode: 0o100644, custom: 42 },
+    },
+    {
+      name: "class extends BigIntStats",
+      script: /*js*/ `
+        const context = vm.createContext({ BigIntStats, bigintArgs });
+        const [S, stats] = vm.runInContext(
+          "class S extends BigIntStats { get custom() { return 42; } }; [S, new S(...bigintArgs)]",
+          context,
+        );
+        console.log(JSON.stringify({
+          prototype: Object.getPrototypeOf(stats) === S.prototype,
+          instanceof: stats instanceof BigIntStats,
+          isFile: stats.isFile(),
+          atimeNs: String(stats.atimeNs),
+          custom: stats.custom,
+        }));
+      `,
+      expected: { prototype: true, instanceof: true, isFile: true, atimeNs: "2000000", custom: 42 },
+    },
+    {
+      // A bound function has no "prototype", so the object gets the prototype of the constructor.
+      name: "Reflect.construct with a function, a bound function, and a Proxy",
+      script: /*js*/ `
+        const context = vm.createContext({});
+        const constructors = [[File, [["abc"], "a.txt"]], [fs.Stats, [1, 0o100644]], [BigIntStats, bigintArgs]];
+        const result = {};
+        for (const source of ["(function F() {})", "(function F() {}).bind(null)", "new Proxy(function F() {}, {})"]) {
+          const newTarget = vm.runInContext(source, context);
+          result[source] = constructors.map(([C, args]) => {
+            const object = Reflect.construct(C, args, newTarget);
+            return Object.getPrototypeOf(object) === (newTarget.prototype ?? C.prototype);
+          });
+        }
+        console.log(JSON.stringify(result));
+      `,
+      expected: {
+        "(function F() {})": [true, true, true],
+        "(function F() {}).bind(null)": [true, true, true],
+        "new Proxy(function F() {}, {})": [true, true, true],
+      },
+    },
+  ])("$name", async ({ script, expected }) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", prelude + script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: JSON.stringify(expected),
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+});
+
 test("can't use export syntax in vm.Script", () => {
   // vm.Script now parses eagerly (like Node), so the SyntaxError surfaces at
   // construction rather than at runInThisContext()/createCachedData().
@@ -890,6 +1027,406 @@ test("can't use bytecode from a different script", () => {
   expect(secondScript.cachedDataRejected).toBeTrue();
   expect(firstScript.runInThisContext()).toBe(2);
   expect(secondScript.runInThisContext()).toBe(4);
+});
+
+test("SourceTextModule accepts the cachedData it produced", () => {
+  const source = `{ function inBlock() { return 1; } }\nexport default await Promise.resolve(inBlock);`; // module-only syntax, and a block function (strict semantics)
+  const cachedData = new SourceTextModule(source, { identifier: "m" }).createCachedData();
+  expect(cachedData.length).toBeGreaterThan(0);
+  expect(() => new SourceTextModule(source, { identifier: "m", cachedData })).not.toThrow(); // ERR_VM_MODULE_CACHED_DATA_REJECTED otherwise
+  expect(() => new SourceTextModule("export default 2;", { identifier: "m", cachedData })).toThrow(
+    expect.objectContaining({ code: "ERR_VM_MODULE_CACHED_DATA_REJECTED" }),
+  );
+});
+
+// Several SourceTextModules with one identifier and one source text are several records of the same module. Each reads
+// the bindings of the module it was linked to, whatever that module's text is, including from functions that were
+// already hot when the next record was made.
+test.each([
+  ["the main context", false],
+  ["a new context", true],
+])(
+  "SourceTextModules with the same identifier and source keep their own import bindings in %s",
+  async (_, inNewContext) => {
+    const context = inNewContext ? createContext({}) : undefined;
+    const importerSource = `
+      import { x, shape, bump as bumpDep } from "dep";
+      export function read() { return [x, shape].join(); }
+      export function loop(n) { let r; for (let i = 0; i < n; i++) r = read(); return r; }
+      export function bump() { bumpDep(); }
+    `;
+    const dep1 = `export let x = 0; export const shape = 1; export function bump() { x++; }`;
+    // The same names at other places in the module's environment.
+    const dep2 = `export let w = "w"; export let x = 100; export const shape = 2; export function bump() { x++; }`;
+    const make = async (depSource: string) => {
+      const dep = new SourceTextModule(depSource, { identifier: "dep", context });
+      const importer = new SourceTextModule(importerSource, { identifier: "importer", context });
+      await importer.link(() => dep);
+      await importer.evaluate();
+      return importer.namespace as { read(): string; loop(n: number): string; bump(): void };
+    };
+    const a = await make(dep1);
+    const before = a.loop(20000);
+    const b = await make(dep1);
+    const c = await make(dep2);
+    const d = await make(dep2);
+    const e = await make(dep1);
+    b.bump();
+    c.bump();
+    c.bump();
+    d.bump();
+    d.bump();
+    d.bump();
+    expect([before, ...[a, b, c, d, e].map(m => m.loop(20000))]).toEqual([
+      "0,1",
+      "0,1",
+      "1,1",
+      "102,2",
+      "103,2",
+      "0,1",
+    ]);
+  },
+);
+
+// NodeVMSourceTextModule::createModuleRecord pairs import declarations with requestedModules() by position, but JSC lists
+// a specifier once however many declarations name it: builds with assertions enabled abort on "More attributes nodes
+// than requests" (other builds go on, with the attributes lined up by that position). In a subprocess, since the abort
+// would take the test runner with it.
+test.todoIf(isDebug || isASAN)("SourceTextModule with several import declarations for one specifier", async () => {
+  const script = `
+    const { SourceTextModule } = require("node:vm");
+    (async () => {
+      const dep = new SourceTextModule("export let x = 1; export function bump() { x++; }", { identifier: "dep" });
+      const importer = new SourceTextModule(
+        'import { x } from "dep"; import * as ns from "dep"; export { bump } from "dep"; export const read = () => [x, ns.x].join();',
+        { identifier: "importer" },
+      );
+      await importer.link(() => dep);
+      await importer.evaluate();
+      importer.namespace.bump();
+      console.log(importer.namespace.read(), JSON.stringify(importer.moduleRequests));
+    })();
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr: stderr.trim() }).toEqual({
+    stdout: '2,2 [{"specifier":"dep","attributes":{},"phase":"evaluation"}]',
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
+// JSC decodes a code block's function bodies one at a time, the first time each body runs,
+// reading the cachedData payload through the Decoder until then. The three entry points
+// lent JSC a span over a temporary WTF::Vector copy of the caller's buffer that died with
+// the call, so the first call of a function compiled from accepted cachedData read freed
+// memory. Keeping the caller's Buffer alive does not help: the dangling span is over bun's
+// copy of it.
+describe("a compile from cachedData keeps the payload alive", () => {
+  // Malloc=1 routes WTF's allocator through the system allocator so ASAN sees the freed
+  // payload. Without the fix the child aborts at the first case.
+  test.skipIf(!isASAN)("does not decode function bodies out of freed memory", async () => {
+    const fixture = String.raw`
+      const vm = require("node:vm");
+      const out = [];
+
+      // compileFunction: the compiled function's own body decodes on its first call.
+      {
+        const source = "return a + 1234;";
+        const produced = vm.compileFunction(source, ["a"], { produceCachedData: true });
+        const fn = vm.compileFunction(source, ["a"], { cachedData: produced.cachedData });
+        out.push("compileFunction rejected=" + fn.cachedDataRejected + " call=" + fn(1));
+      }
+
+      // An inner function decodes later still, on its own first call.
+      {
+        const source = "function inner() { return 42 }\nreturn inner;";
+        const produced = vm.compileFunction(source, [], { produceCachedData: true });
+        const fn = vm.compileFunction(source, [], { cachedData: produced.cachedData });
+        out.push("inner rejected=" + fn.cachedDataRejected + " call=" + fn()());
+      }
+
+      // vm.Script holds its cachedData in a member the garbage collector owns.
+      {
+        const source = "(function inner() { return 7 })()";
+        const cachedData = new vm.Script(source).createCachedData();
+        const script = new vm.Script(source, { cachedData });
+        out.push("Script rejected=" + script.cachedDataRejected + " run=" + script.runInThisContext());
+      }
+
+      // vm.SourceTextModule passes a span over a stack local, like compileFunction.
+      {
+        const source = "function inner() { return 9 }\nexport default inner();";
+        const cachedData = new vm.SourceTextModule(source, { identifier: "m" }).createCachedData();
+        const mod = new vm.SourceTextModule(source, { identifier: "m", cachedData });
+        await mod.link(() => {});
+        await mod.evaluate();
+        out.push("SourceTextModule default=" + mod.namespace.default);
+      }
+
+      console.log(out.join("\n"));
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: {
+        ...bunEnv,
+        ...(isWindows ? {} : { Malloc: "1" }),
+        // symbolize=0: symbolizing a failure report outlasts the test timeout.
+        // detect_leaks=0: Malloc=1 exposes JSC's never-freed startup allocations to LSAN.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // stderr first: the failure this test guards against aborts the child, so the sanitizer
+    // report is the diagnostic. An empty-stdout diff is not.
+    expect(stderr).not.toContain("ERROR: AddressSanitizer");
+    expect(stdout).toBe(
+      [
+        "compileFunction rejected=false call=1235",
+        "inner rejected=false call=42",
+        "Script rejected=false run=7",
+        "SourceTextModule default=9",
+        "",
+      ].join("\n"),
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  // The same bug with no sanitizer. Work between the compile and the first call reuses the
+  // freed payload's memory, and roughly two unfixed processes in five then die with
+  // "Segmentation fault at address 0x0". It is down to heap layout (an ES module on disk
+  // shows it, `-e` and CommonJS do not), so several children run.
+  test.skipIf(isASAN)("runs the compiled functions after the payload's memory is reused", async () => {
+    const fixture = String.raw`
+      import vm from "node:vm";
+      const out = [];
+      for (let i = 0; i < 20; i++) {
+        const source = 'function inner(x){ return x * ' + (i + 2) + ' + 1 } return [inner(7), "k' + i + '".repeat(3)]';
+        const produced = vm.compileFunction(source, [], { produceCachedData: true });
+        const junk = Array.from({ length: 50 }, (_, j) => new Uint8Array(produced.cachedData.length).fill(j));
+        const fn = vm.compileFunction(source, [], { cachedData: produced.cachedData });
+        const want = JSON.stringify(produced());
+        let got;
+        try {
+          got = JSON.stringify(fn());
+        } catch (e) {
+          got = "threw " + e.message;
+        }
+        out.push(fn.cachedDataRejected + ":" + (got === want ? "ok" : "WRONG " + got));
+      }
+      console.log(out.join(" "));
+    `;
+
+    using dir = tempDir("vm-cached-data-reuse", { "reuse-fixture.mjs": fixture });
+    const children = 8;
+    const runs = await Promise.all(
+      Array.from({ length: children }, async () => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "reuse-fixture.mjs"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+      }),
+    );
+
+    const clean = { stdout: Array(20).fill("false:ok").join(" ") + "\n", stderr: "", exitCode: 0, signalCode: null };
+    expect(runs).toEqual(Array(children).fill(clean));
+  });
+});
+
+describe("Script compiles its source once and links that in every context it runs in", () => {
+  // Runs Script(s) in fresh contexts, keeping what every run produced alive (each run's wrapper function
+  // pins that run's ProgramExecutable), and reports how many UnlinkedProgramCodeBlock cells (one per
+  // compile of a program) the runs after the first added. BUN_JSC_useCodeCache=0 takes JSC's own cache
+  // out of the picture, so a Script that does not hold on to its compile adds one per context.
+  const fixture = String.raw`
+    const { Script, createContext } = require("node:vm");
+    const { heapStats } = require("bun:jsc");
+    let body = "";
+    for (let i = 0; i < 50; i++) body += "function f" + i + "(a) { return a + " + i + "; }\n";
+    const source = "(function (exports) {\n" + body + "exports.sum = f0(1) + f49(1);\n})";
+    const options = process.env.VM_FIXTURE_CACHED_DATA ? { cachedData: new Script(source).createCachedData() } : {};
+    const scripts = [new Script(source, options)];
+    if (process.env.VM_FIXTURE_TWO_SCRIPTS) scripts.push(new Script(source, options));
+    const programBlocks = () => {
+      Bun.gc(true);
+      return heapStats().objectTypeCounts.UnlinkedProgramCodeBlock ?? 0;
+    };
+    const keep = [];
+    let afterFirstContext = 0;
+    for (let i = 0; i < 6; i++) {
+      const context = createContext({});
+      for (const script of scripts) {
+        const wrapper = script.runInContext(context);
+        const exports = {};
+        wrapper(exports);
+        if (exports.sum !== 51) throw new Error("context " + i + " computed " + exports.sum);
+        keep.push(wrapper);
+      }
+      if (i === 0) afterFirstContext = programBlocks();
+    }
+    console.log(JSON.stringify({
+      programBlocksAddedByLaterContexts: programBlocks() - afterFirstContext,
+      cachedDataRejected: scripts.map(script => script.cachedDataRejected),
+      cachedDataStillProducible: scripts.every(script => script.createCachedData().length > 0),
+    }));
+  `;
+
+  async function runFixture(extraEnv: Record<string, string>) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, BUN_JSC_useCodeCache: "0", ...extraEnv },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const { programBlocksAddedByLaterContexts, ...rest } = JSON.parse(stdout);
+    // A Script that recompiles adds one per Script per context (+5 / +10 here). Slightly negative is
+    // possible: garbage from before the first measurement may only be collected by the second one.
+    expect(programBlocksAddedByLaterContexts).toBeLessThanOrEqual(0);
+    return rest;
+  }
+
+  test.concurrent("one Script", async () => {
+    expect(await runFixture({})).toEqual({ cachedDataRejected: [null], cachedDataStillProducible: true });
+  });
+
+  test.concurrent("two Scripts with the same source", async () => {
+    expect(await runFixture({ VM_FIXTURE_TWO_SCRIPTS: "1" })).toEqual({
+      cachedDataRejected: [null, null],
+      cachedDataStillProducible: true,
+    });
+  });
+
+  test.concurrent("a Script constructed with accepted cachedData", async () => {
+    expect(await runFixture({ VM_FIXTURE_CACHED_DATA: "1" })).toEqual({
+      cachedDataRejected: [false],
+      cachedDataStillProducible: true,
+    });
+  });
+
+  test("each context gets its own global declarations", () => {
+    const script = new Script(
+      "var counter = (typeof counter === 'number' ? counter : 0) + 1; function whoami() { return tag; } counter;",
+    );
+    const first = createContext({ tag: "first" });
+    const second = createContext({ tag: "second" });
+    expect(script.runInContext(first)).toBe(1);
+    expect(script.runInContext(second)).toBe(1);
+    expect(script.runInContext(first)).toBe(2);
+    expect(runInContext("whoami()", first)).toBe("first");
+    expect(runInContext("whoami()", second)).toBe("second");
+    expect(first.counter).toBe(2);
+    expect(second.counter).toBe(1);
+  });
+
+  test("source positions are the same in every context the compile is linked into", () => {
+    const script = new Script("\n\nnew Error('where').stack.split('\\n')[1].trim()", {
+      filename: "shared.js",
+      lineOffset: 100,
+    });
+    for (const context of [createContext({}), createContext({})]) {
+      expect(script.runInContext(context)).toBe("at shared.js:103:10");
+    }
+  });
+});
+
+describe("the file: URL origin made from a filename", () => {
+  // The last filename made into a URL is kept per VM. The import() tests alternate two filenames, so every
+  // compile finds the URL of the other filename in the cache.
+  const loader = { importModuleDynamically: constants.USE_MAIN_CONTEXT_DEFAULT_LOADER };
+  const dependencies = { "a/dep.mjs": "export default 'a';", "b/dep.mjs": "export default 'b';" };
+
+  test("import() in a Script resolves against the filename of that Script", async () => {
+    using dir = tempDir("vm-script-origin", dependencies);
+    const scripts = ["a", "b", "a", "b"].map(
+      name => new Script("import('./dep.mjs')", { ...loader, filename: join(String(dir), name, "main.js") }),
+    );
+    const namespaces = await Promise.all(scripts.map(script => script.runInThisContext()));
+    expect(namespaces.map(namespace => namespace.default)).toEqual(["a", "b", "a", "b"]);
+  });
+
+  test("import() in a compiled function resolves against the filename of that function", async () => {
+    using dir = tempDir("vm-function-origin", dependencies);
+    const functions = ["a", "b", "a", "b"].map(name =>
+      compileFunction("return import('./dep.mjs')", [], { ...loader, filename: join(String(dir), name, "main.js") }),
+    );
+    const namespaces = await Promise.all(functions.map(fn => fn()));
+    expect(namespaces.map(namespace => namespace.default)).toEqual(["a", "b", "a", "b"]);
+  });
+
+  // Every "<" is percent-encoded, the slow path of the URL parser: about 0.4 ms for this filename in a release
+  // build, far more than the rest of a compile.
+  const longFilename = Buffer.alloc(16 * 1024, "<").toString() + ".js";
+  const elapsed = (fn: () => void) => {
+    const start = performance.now();
+    fn();
+    return performance.now() - start;
+  };
+
+  test.each([
+    ["Scripts", (options: object) => new Script("1", options)],
+    ["compiled functions", (options: object) => compileFunction("return 1", [], options)],
+  ])("is made once for %s that share a filename", (label, compile) => {
+    // Both windows compile four times. In the first, two filenames take turns, so every compile makes a URL.
+    // In the second, one filename is used again, so no compile does. Without the cache the two take the same
+    // time. The best of three trials, so that a pause inside one window does not decide the result.
+    let alternating = Infinity;
+    let repeated = Infinity;
+    for (let trial = 0; trial < 3; trial++) {
+      const one = { filename: `${label}-${trial}-one-${longFilename}` };
+      const other = { filename: `${label}-${trial}-other-${longFilename}` };
+      alternating = Math.min(
+        alternating,
+        elapsed(() => {
+          for (let i = 0; i < 4; i++) compile(i & 1 ? one : other);
+        }),
+      );
+      compile(one);
+      repeated = Math.min(
+        repeated,
+        elapsed(() => {
+          for (let i = 0; i < 4; i++) compile(one);
+        }),
+      );
+    }
+    expect(repeated).toBeLessThan(alternating / 2);
+  });
+
+  // BUN_JSC_useCodeCache=0: the code cache keeps the filename of a Script alive too, through its SourceProvider.
+  test.skipIf(isASAN)("does not keep the string that a filename was sliced from", async () => {
+    const fixture = `
+      const { Script } = require("node:vm");
+      const rss = () => process.memoryUsage.rss() / 1024 / 1024;
+      function compileWithSlicedFilename() {
+        const large = Buffer.alloc(128 * 1024 * 1024, "a").toString("latin1");
+        new Script("1", { filename: large.slice(1000, 1060) });
+      }
+      const before = rss();
+      compileWithSlicedFilename();
+      Bun.gc(true);
+      console.log(JSON.stringify({ keptMB: Math.round(rss() - before) }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, BUN_JSC_useCodeCache: "0" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // The string is 128 MB. A Script and its filename are a few hundred bytes.
+    expect(JSON.parse(stdout).keptMB).toBeLessThan(64);
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("codeGeneration options", () => {
@@ -1055,6 +1592,98 @@ describe("the options argument", () => {
   });
 });
 
+describe("a run option rejected with a vm context's global", () => {
+  // Script#runInContext and Script#runInNewContext validate displayErrors,
+  // timeout and breakOnSigint with the context's global object, which is not a
+  // Bun global. The message renders the rejected value through the console
+  // formatter, and the formatter needs a Bun global, so it read past the end of
+  // the context's cell: ASAN reports a heap-buffer-overflow and a release build
+  // segfaults. Each case gets its own process.
+  //
+  // The vm.* wrappers build the Script first, and that rejects a bad timeout
+  // with the main global, so only the Script methods reach the bug with it.
+  const types = { displayErrors: "boolean", timeout: "number", breakOnSigint: "boolean" } as const;
+  type Option = keyof typeof types;
+  const entryPoints: [name: string, call: string, options: Option[]][] = [
+    ["vm.runInContext()", `vm.runInContext("1", vm.createContext({}), options)`, ["displayErrors", "breakOnSigint"]],
+    ["vm.runInNewContext()", `vm.runInNewContext("1", {}, options)`, ["displayErrors", "breakOnSigint"]],
+    [
+      "Script#runInContext()",
+      `new vm.Script("1").runInContext(vm.createContext({}), options)`,
+      ["displayErrors", "timeout", "breakOnSigint"],
+    ],
+    [
+      "Script#runInNewContext()",
+      `new vm.Script("1").runInNewContext({}, options)`,
+      ["displayErrors", "timeout", "breakOnSigint"],
+    ],
+  ];
+
+  async function run(fixture: string) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // A custom inspect function reaches the Bun global's inspect builtins. The
+  // function reports what it was handed, so a wrong global is visible in the
+  // output instead of only as a crash. It sits on the null-prototype object
+  // itself because Node renders the value with `depth: -1`, which runs no
+  // nested inspect function, so this message is Node's byte for byte.
+  test.concurrent.each(
+    entryPoints.flatMap(([name, call, options]) => options.map(option => [name, option, call] as const)),
+  )("%s renders a bad %s through a custom inspect function", async (_, option, call) => {
+    const { stdout, stderr, exitCode } = await run(`
+      const vm = require("node:vm");
+      const util = require("node:util");
+      const seen = [];
+      const bad = Object.create(null);
+      bad[util.inspect.custom] = function (depth, opts, inspect) {
+        seen.push(typeof opts, typeof opts.stylize, typeof inspect, opts.colors);
+        return "CUSTOM";
+      };
+      const options = { ${option}: bad };
+      try {
+        ${call};
+      } catch (e) {
+        console.log([e.code, e.message, seen.join(",")].join(" | "));
+      }
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(
+      `ERR_INVALID_ARG_TYPE | The "options.${option}" property must be of type ${types[option]}. ` +
+        `Received CUSTOM | object,function,function,false\n`,
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  // A value that owns a DOM wrapper reaches a second Bun-global-only read:
+  // printing one builds its wrapper, which needs the global's DOM world. These
+  // need no user hook. The rendering of the value itself is not asserted, only
+  // that the message is produced and the process lives.
+  test.concurrent.each([
+    ["a Response", `new Response("body")`],
+    ["a Request", `new Request("http://127.0.0.1:9/")`],
+    ["a Response.json", `Response.json({ a: 1 })`],
+  ])("renders a bad displayErrors holding %s", async (_, valueExpression) => {
+    const { stdout, stderr, exitCode } = await run(`
+      const vm = require("node:vm");
+      const bad = Object.create(null);
+      bad.value = ${valueExpression};
+      try {
+        vm.runInContext("1", vm.createContext({}), { displayErrors: bad });
+      } catch (e) {
+        console.log([e.code, e.message].join(" | "));
+      }
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toStartWith(
+      `ERR_INVALID_ARG_TYPE | The "options.displayErrors" property must be of type boolean. Received `,
+    );
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("context options with throwing getters", () => {
   // Without the fix, reading these options with a pending exception aborted
   // the process, so run the matrix in a subprocess.
@@ -1176,6 +1805,82 @@ describe("DONT_CONTEXTIFY", () => {
 
     ctx.fromOutside = 456;
     expect(runInContext("fromOutside", ctx)).toBe(456);
+  });
+});
+
+describe("defineProperty errors use vm-realm global", () => {
+  test("data descriptor on sandbox-only property", () => {
+    const sandbox = {};
+    Object.defineProperty(sandbox, "locked", { value: 1, writable: false, configurable: false });
+    createContext(sandbox);
+
+    const result = runInContext(
+      `
+        let err;
+        try {
+          Object.defineProperty(this, "locked", { value: 2, configurable: true });
+        } catch (e) { err = e; }
+        ({
+          isVmRealmTypeError: err instanceof TypeError,
+          hostFunction: err && err.constructor && err.constructor.constructor,
+        });
+      `,
+      sandbox,
+    );
+
+    expect(result.isVmRealmTypeError).toBe(true);
+    expect(result.hostFunction === Function).toBe(false);
+    expect(typeof result.hostFunction).toBe("function");
+    expect(result.hostFunction("return typeof process")()).toBe("undefined");
+  });
+
+  test("accessor descriptor", () => {
+    const sandbox = {};
+    Object.defineProperty(sandbox, "locked", { value: 1, writable: false, configurable: false });
+    createContext(sandbox);
+
+    const result = runInContext(
+      `
+        let err;
+        try {
+          Object.defineProperty(this, "locked", { get() { return 2; }, configurable: true });
+        } catch (e) { err = e; }
+        ({
+          isVmRealmTypeError: err instanceof TypeError,
+          hostFunction: err && err.constructor && err.constructor.constructor,
+        });
+      `,
+      sandbox,
+    );
+
+    expect(result.isVmRealmTypeError).toBe(true);
+    expect(result.hostFunction === Function).toBe(false);
+    expect(result.hostFunction("return typeof process")()).toBe("undefined");
+  });
+
+  test("data descriptor on a property not on the sandbox (non-extensible sandbox)", () => {
+    // preventExtensions makes the define of a new key throw from the sandbox itself.
+    const sandbox = {};
+    Object.preventExtensions(sandbox);
+    createContext(sandbox);
+
+    const result = runInContext(
+      `
+        let err;
+        try {
+          Object.defineProperty(this, "newKey", { value: 1 });
+        } catch (e) { err = e; }
+        ({
+          isVmRealmTypeError: err instanceof TypeError,
+          hostFunction: err && err.constructor && err.constructor.constructor,
+        });
+      `,
+      sandbox,
+    );
+
+    expect(result.isVmRealmTypeError).toBe(true);
+    expect(result.hostFunction === Function).toBe(false);
+    expect(result.hostFunction("return typeof process")()).toBe("undefined");
   });
 });
 
@@ -1718,6 +2423,25 @@ test("a module whose evaluation times out is errored", async () => {
   expect(exitCode).toBe(0);
 }, 30_000);
 
+// The same timeout value reaches the native evaluate() either as an int32 or as a double (a
+// Float64Array element is always the latter). Only the value may decide whether the deadline is armed.
+test("SourceTextModule#evaluate() arms the timeout when the number is boxed as a double", async () => {
+  const code = `
+    const vm = require("node:vm");
+    const timeout = new Float64Array([20])[0];
+    // Spins far past the 20ms deadline, but not forever: without the deadline the body finishes
+    // and evaluate() resolves, so a timeout that is not armed fails this test instead of hanging it.
+    const m = new vm.SourceTextModule("for (const end = Date.now() + 2000; Date.now() < end;) {}", { context: vm.createContext({}) });
+    await m.link(() => { throw new Error("unreachable"); });
+    console.log(timeout === 20, await m.evaluate({ timeout }).then(() => "resolved", (e) => e.code), m.status);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("true ERR_SCRIPT_EXECUTION_TIMEOUT errored\n");
+  expect(exitCode).toBe(0);
+});
+
 // A vm timeout that lands while a host function beneath the timed script is spinning a nested event-loop
 // wait (expect().resolves ticks the loop until its promise settles) must unwind to the run and surface as
 // ERR_SCRIPT_EXECUTION_TIMEOUT; the nested wait used to keep ticking over the pending termination (a hang).
@@ -1734,4 +2458,288 @@ test.concurrent("timeout during a nested event-loop wait beneath the script", as
   expect(stderr).toBe("");
   expect(stdout).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT\n");
   expect(exitCode).toBe(0);
+});
+
+test("SourceTextModule applies lineOffset and columnOffset to reported positions the way Script does", async () => {
+  const options = { lineOffset: 5, columnOffset: 10 };
+  const position = (error: unknown) =>
+    /:(\d+):(\d+)\)?$/m
+      .exec((error as Error).stack!)
+      ?.slice(1, 3)
+      .map(Number);
+  for (const [code, line] of [
+    ['throw new Error("first line")', 6],
+    ['1;\nthrow new Error("second line")', 7],
+  ] as const) {
+    let fromScript: number[] | undefined, fromModule: number[] | undefined;
+    try {
+      new Script(code, { filename: "offset.js", ...options }).runInThisContext();
+    } catch (e) {
+      fromScript = position(e);
+    }
+    const module = new SourceTextModule(code, { identifier: "offset.mjs", ...options });
+    await module.link(() => {});
+    try {
+      await module.evaluate();
+    } catch (e) {
+      fromModule = position(e);
+    }
+    expect(fromScript?.[0]).toBe(line);
+    expect(fromModule).toEqual(fromScript);
+  }
+});
+
+describe("node:vm lineOffset/columnOffset at the edge of int32", () => {
+  // Node's validator accepts any int32 here. JSC stores positions as ints,
+  // converts the offset to one-based and counts the source's own lines on top
+  // of it, so an offset this large used to overflow in the parser: assertion
+  // builds abort in JSTextPosition::checkConsistency ("line >= 0"), release
+  // builds report wrapped negative line numbers. Each case gets its own
+  // process because the failure mode is an abort.
+  const INT32_MAX = 2147483647;
+
+  async function runFixture(body: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const vm = require("node:vm");\n${body}`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return stdout;
+  }
+
+  test.concurrent.each([
+    ["new Script, one-line source", `new vm.Script("1", { lineOffset: ${INT32_MAX} })`],
+    [
+      "new Script, second line steps past INT32_MAX",
+      `new vm.Script(${JSON.stringify("1;\n2;")}, { lineOffset: ${INT32_MAX - 1} })`,
+    ],
+    ["new Script, columnOffset", `new vm.Script(${JSON.stringify("1;\n2;")}, { columnOffset: ${INT32_MAX} })`],
+    ["compileFunction", `vm.compileFunction("return 1", [], { lineOffset: ${INT32_MAX} })`],
+    [
+      "compileFunction with params, a multi-line body and both offsets",
+      `vm.compileFunction(${JSON.stringify("a;\nreturn a;")}, ["a"], { lineOffset: ${INT32_MAX - 1}, columnOffset: ${INT32_MAX} })`,
+    ],
+    // Three lines so the counter steps past INT32_MAX whether the module's
+    // first line is taken as lineOffset or, like Script, as lineOffset + 1.
+    ["SourceTextModule", `new vm.SourceTextModule(${JSON.stringify("1;\n2;\n3;")}, { lineOffset: ${INT32_MAX - 1} })`],
+  ])("%s compiles", async (_, expression) => {
+    const stdout = await runFixture(`${expression};\nconsole.log("ok");`);
+    expect(stdout).toBe("ok\n");
+  });
+
+  test.concurrent.each([
+    [
+      "line of a runtime error thrown by a Script",
+      `new vm.Script(${JSON.stringify('1;\nthrow new Error("q")')}, { filename: "big.js", lineOffset: ${INT32_MAX - 1} }).runInThisContext()`,
+      /big\.js:(-?\d+)/,
+    ],
+    [
+      "line of a compile-time SyntaxError from a Script",
+      `new vm.Script(${JSON.stringify("1;\n%%")}, { filename: "big.js", lineOffset: ${INT32_MAX - 1} })`,
+      /big\.js:(-?\d+)/,
+    ],
+    [
+      "column of a runtime error thrown on the first line of a Script",
+      `new vm.Script('throw new Error("q")', { filename: "big.js", columnOffset: ${INT32_MAX} }).runInThisContext()`,
+      /big\.js:1:(-?\d+)/,
+    ],
+    [
+      "line of a runtime error thrown by a compileFunction body",
+      `vm.compileFunction('throw new Error("q")', [], { filename: "big.js", lineOffset: ${INT32_MAX} })()`,
+      /big\.js:(-?\d+)/,
+    ],
+    [
+      "line of a compile-time SyntaxError from compileFunction",
+      `vm.compileFunction("%%", [], { filename: "big.js", lineOffset: ${INT32_MAX} })`,
+      /big\.js:(-?\d+)/,
+    ],
+  ])("%s stays near the requested offset", async (_, expression, pattern) => {
+    const stdout = await runFixture(`try { ${expression}; } catch (e) { console.log(e.stack); }`);
+    const match = pattern.exec(stdout);
+    expect(match).not.toBeNull();
+    // The offset is only pulled down by as much as the (tiny) source could
+    // possibly add to it, so the reported position stays just below INT32_MAX
+    // rather than wrapping negative or being dropped.
+    const position = Number(match![1]);
+    expect(position).toBeGreaterThan(INT32_MAX - 100);
+    expect(position).toBeLessThanOrEqual(INT32_MAX);
+  });
+});
+
+// node:vm joins strings that come from JS into a program text, into an error message, and into the
+// arrow header (`<filename>:<line>`, the source line, the caret) that goes in front of the stack of an
+// error from a vm script. Past `WTF::String::MaxLength` (2**31 - 1 characters) each join aborted the
+// process (`panic(main thread): abort() called`, exit code 134), also inside try/catch. A program text
+// or a message that does not fit is now `RangeError: Out of memory`, like `new Function`. An error
+// whose header does not fit keeps the stack it has.
+//
+// The length is what is under test, so the child needs a string of about 2 GiB and the test skips on
+// small machines. One child runs every case, so that string is allocated once. `repeat` of one
+// character is used instead of `Buffer.alloc(n, fill).toString()`: JSC fills it in one pass, and it does
+// not hold a second 2 GiB (1.2 s and 2.4 GB against 2.6 s and 4.4 GB in a debug ASAN build).
+//
+// The child touches about 3.5 GB of pages, which takes 2 to 3 seconds in a debug ASAN build and more
+// on a loaded machine. That is too close to the default 5 second limit, so this one test carries its
+// own ceiling.
+//
+// Inside a container totalmem() reports the host's RAM. process.constrainedMemory() reports the
+// cgroup limit there. This is the gate blob-oom.test.ts uses.
+const memoryForLongStrings = Math.min(totalmem(), process.constrainedMemory() || Infinity);
+test.skipIf(memoryForLongStrings < 10 * 1024 ** 3)(
+  "node:vm does not abort the process when text it joins passes the string length limit",
+  async () => {
+    const fixture = `
+      const vm = require("node:vm");
+      const long = "q".repeat(2 ** 31 - 10);
+
+      // Each case prints its line as soon as it finishes. If a case aborts the child, the diff shows which one.
+      async function report(name, run) {
+        try {
+          console.log(name + ": " + (await run()));
+        } catch (e) {
+          console.log(name + ": " + e.name + ": " + e.message);
+        }
+      }
+
+      // Joined, the two params are 2**31 + 2 characters. slice() shares the characters of \`long\`.
+      const half = long.slice(0, 2 ** 30);
+      await report("compileFunction params", () => typeof vm.compileFunction("", [half, half]));
+
+      // The message names the export that the module does not have.
+      await report("SyntheticModule#setExport", () => new vm.SyntheticModule([], () => {}).setExport(long, 1));
+
+      // Without importModuleDynamically, import() in a context rejects with a message that names the specifier.
+      await report("import() in a context", () => vm.runInNewContext("Function")("s", "return import(s)")(long));
+
+      const keptItsStack = (error, name) =>
+        error.name === name && error.stack === long ? name + " with the stack it had" : error.name + " with another stack";
+
+      // A stack this long leaves no room for the header in front of it.
+      function thrownBy(code) {
+        const error = new Error("x");
+        error.stack = long;
+        try {
+          new vm.Script(code).runInNewContext({ error });
+        } catch (e) {
+          if (e !== error) throw e;
+          return keptItsStack(e, "Error");
+        }
+        return "did not throw";
+      }
+      await report("error thrown by a script", () => thrownBy("throw error"));
+      // A source line over 1024 characters is left out of the header. A second join builds that header.
+      await report("error thrown from a line too long for the header", () => thrownBy("throw error;" + Buffer.alloc(2000, " ").toString()));
+
+      // The header of a compile-time SyntaxError goes in front of what Error.prepareStackTrace returned.
+      await report("SyntaxError from new Script", () => {
+        const prepareStackTrace = Error.prepareStackTrace;
+        Error.prepareStackTrace = () => long;
+        try {
+          new vm.Script("%%");
+        } catch (e) {
+          return keptItsStack(e, "SyntaxError");
+        } finally {
+          Error.prepareStackTrace = prepareStackTrace;
+        }
+        return "did not throw";
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+      stdout: [
+        "compileFunction params: RangeError: Out of memory",
+        "SyntheticModule#setExport: RangeError: Out of memory",
+        "import() in a context: RangeError: Out of memory",
+        "error thrown by a script: Error with the stack it had",
+        "error thrown from a line too long for the header: Error with the stack it had",
+        "SyntaxError from new Script: SyntaxError with the stack it had",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  30_000,
+);
+
+test.concurrent("a FinalizationRegistry cleanup job is dropped when its context dies before the job runs", async () => {
+  const fixture = /* js */ `
+    import vm from "node:vm";
+    import { edenGC, fullGC } from "bun:jsc";
+
+    const nextTurn = () => new Promise(resolve => setImmediate(resolve));
+    const liveContextCleanedUp = Promise.withResolvers();
+    let liveContext;
+    let deadContextCleanups = 0;
+
+    function setup() {
+      // A collection sweeps the first 8 cells of a type itself and leaves the rest for later. ~JSGlobalObject
+      // cancels the job too, so these contexts are past the first 8 and their registries are not.
+      const swept = Array.from({ length: 8 }, () => vm.createContext({}));
+      const contexts = Array.from({ length: 4 }, () => vm.createContext({ onCleanup: () => deadContextCleanups++ }));
+      liveContext = vm.createContext({ onCleanup: liveContextCleanedUp.resolve });
+      contexts.push(liveContext);
+      for (const context of contexts) vm.runInContext("globalThis.registry = new FinalizationRegistry(onCleanup)", context);
+      edenGC(); // Old generation now: the next eden collection leaves them marked.
+      for (const context of contexts) for (let i = 0; i < 5; i++) context.registry.register({ i }, i);
+    }
+
+    await nextTurn().then(setup);
+    await nextTurn();
+    edenGC(); // The registered objects are dead: every registry posts its cleanup job.
+    fullGC(); // All contexts but one are dead, and their registries are destroyed.
+    await liveContextCleanedUp.promise;
+    await nextTurn(); // A job posted after the live context's has run by now too.
+    console.log({ deadContextCleanups });
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "{\n  deadContextCleanups: 0,\n}\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test.concurrent("Atomics.notify does not wake the Atomics.waitAsync of a context that died", async () => {
+  const fixture = /* js */ `
+    import vm from "node:vm";
+    import { fullGC } from "bun:jsc";
+
+    const nextTurn = () => new Promise(resolve => setImmediate(resolve));
+    const shared = new Int32Array(new SharedArrayBuffer(4));
+    const liveContextWoke = Promise.withResolvers();
+    let liveContext;
+
+    function setup() {
+      // ~JSGlobalObject unregisters the waiter too. A collection sweeps the first 8 globals itself and leaves the rest for later.
+      const swept = Array.from({ length: 8 }, () => vm.createContext({}));
+      const contexts = Array.from({ length: 4 }, () => vm.createContext({ shared, onWake() {} }));
+      liveContext = vm.createContext({ shared, onWake: liveContextWoke.resolve });
+      contexts.push(liveContext);
+      for (const context of contexts) vm.runInContext("Atomics.waitAsync(shared, 0, 0).value.then(onWake)", context);
+    }
+
+    await nextTurn().then(setup);
+    await nextTurn();
+    fullGC();
+    console.log("woken:", Atomics.notify(shared, 0));
+    console.log("the live context's wait resolved:", await liveContextWoke.promise);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "woken: 1\nthe live context's wait resolved: ok\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });

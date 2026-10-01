@@ -6,7 +6,7 @@ use bun_core::ZStr;
 // ─── FFI bindings ─────────────────────────────────────────────────────────
 // Externs stay in this crate per PORTING.md §FFI: "If your file has externs
 // and isn't already *_sys, leave them in place".
-#[allow(non_camel_case_types, non_snake_case, non_upper_case_globals)]
+#[allow(non_camel_case_types, non_upper_case_globals)]
 pub mod c {
     use core::ffi::{c_char, c_int, c_uint, c_ulonglong, c_void};
 
@@ -33,6 +33,9 @@ pub mod c {
 
     // ZSTD_EndDirective
     pub const ZSTD_e_continue: ZSTD_EndDirective = 0;
+
+    // ZSTD_cParameter
+    pub const ZSTD_c_compressionLevel: ZSTD_cParameter = 100;
 
     pub const ZSTD_reset_session_and_parameters: ZSTD_ResetDirective = 3;
 
@@ -278,32 +281,7 @@ pub fn is_error(code: usize) -> bool {
     c::ZSTD_isError(code) != 0
 }
 
-/// ZSTD_decompress() :
-/// `compressedSize` : must be the _exact_ size of some number of compressed and/or skippable frames.
-/// `dstCapacity` is an upper bound of originalSize to regenerate.
-/// If user cannot imply a maximum upper bound, it's better to use streaming mode to decompress data.
-/// @return : the number of bytes decompressed into `dst` (<= `dstCapacity`),
-///           or an errorCode if it fails (which can be tested using ZSTD_isError()). */
-// ZSTDLIB_API size_t ZSTD_decompress( void* dst, size_t dstCapacity,
-//   const void* src, size_t compressedSize);
-pub fn decompress(dest: &mut [u8], src: &[u8]) -> Result {
-    // SAFETY: dest/src are valid for their lengths; ZSTD_decompress reads src and writes dest.
-    let result = unsafe {
-        c::ZSTD_decompress(
-            dest.as_mut_ptr().cast::<c_void>(),
-            dest.len(),
-            src.as_ptr().cast::<c_void>(),
-            src.len(),
-        )
-    };
-    if c::ZSTD_isError(result) != 0 {
-        // SAFETY: ZSTD_getErrorName returns a static NUL-terminated string.
-        return Result::Err(unsafe { ZStr::from_c_ptr(c::ZSTD_getErrorName(result)) });
-    }
-    Result::Success(result)
-}
-
-/// [`decompress`] into `out`'s spare capacity, which is the output bound; commits the bytes written.
+/// `ZSTD_decompress` into `out`'s spare capacity, which is the output bound; commits the bytes written.
 fn decompress_append(out: &mut Vec<u8>, src: &[u8]) -> core::result::Result<(), ZstdError> {
     let spare = out.spare_capacity_mut();
     // SAFETY: spare/src are valid for their lengths; ZSTD_decompress reads src
@@ -391,7 +369,6 @@ struct ZstdReaderArrayList<'a> {
     // `list_allocator` / `allocator` params deleted — global mimalloc.
     pub(crate) zstd: *mut c::ZSTD_DStream,
     pub(crate) state: State,
-    pub(crate) total_out: usize,
     pub(crate) total_in: usize,
     /// Decompression-bomb guard: `read_all` errors instead of growing the
     /// output past this many bytes. Defaults to unbounded.
@@ -425,7 +402,6 @@ impl<'a> ZstdReaderArrayList<'a> {
             list_ptr: list,
             zstd,
             state: State::Uninitialized,
-            total_out: 0,
             total_in: 0,
             max_output_size: usize::MAX,
         }))
@@ -504,7 +480,6 @@ impl<'a> ZstdReaderArrayList<'a> {
             // into the spare capacity starting at the previous len.
             unsafe { bun_core::vec::commit_spare(self.list_ptr, bytes_written) };
             self.total_in += bytes_read;
-            self.total_out += bytes_written;
 
             if rc == 0 {
                 // Frame is complete
@@ -576,6 +551,8 @@ pub struct StreamingDecoder {
     /// Decompression-bomb guard: `decompress` errors instead of growing the
     /// output past this many bytes. Defaults to unbounded.
     pub(crate) max_output_size: usize,
+    /// zstd filled its last window and may hold more. `max_output` can end a call there.
+    output_full: bool,
 }
 
 impl StreamingDecoder {
@@ -588,27 +565,35 @@ impl StreamingDecoder {
             stream,
             state: State::Uninitialized,
             max_output_size: usize::MAX,
+            output_full: false,
         })
     }
 
-    /// Consume all of `input`, appending decompressed bytes to `out`
-    /// (growing in 4096-byte steps). Returns `ShortRead` when more input is
-    /// required and `is_done` is false.
+    #[inline]
+    pub fn is_inflating(&self) -> bool {
+        matches!(self.state, State::Inflating)
+    }
+
+    /// Append decompressed bytes to `out` (growing in 4096-byte steps) until `input` is
+    /// consumed or `out.len()` reaches `max_output`. Returns the input bytes consumed.
+    /// Returns `ShortRead` when more input is required and `is_done` is false.
     pub fn decompress(
         &mut self,
         input: &[u8],
         out: &mut Vec<u8>,
+        max_output: usize,
         is_done: bool,
-    ) -> core::result::Result<(), ZstdError> {
+    ) -> core::result::Result<usize, ZstdError> {
         if matches!(self.state, State::End | State::Error) {
-            return Ok(());
+            return Ok(input.len());
         }
 
         let mut total_in = 0usize;
         while matches!(self.state, State::Uninitialized | State::Inflating) {
             let next_in = &input[total_in..];
 
-            if next_in.is_empty() {
+            // Call zstd again with no input until it leaves the window short.
+            if next_in.is_empty() && !self.output_full {
                 if is_done {
                     if self.state == State::Inflating {
                         self.state = State::Error;
@@ -616,7 +601,11 @@ impl StreamingDecoder {
                     }
                     self.state = State::End;
                 }
-                return Ok(());
+                return Ok(total_in);
+            }
+
+            if out.len() >= max_output {
+                return Ok(total_in);
             }
 
             let remaining_output = self.max_output_size.saturating_sub(out.len());
@@ -629,6 +618,7 @@ impl StreamingDecoder {
                 self.state = State::Error;
                 return Err(ZstdError::OutOfMemory);
             }
+            let budget = max_output - out.len();
             let spare = out.spare_capacity_mut();
             let mut in_buf = c::ZSTD_inBuffer {
                 src: next_in.as_ptr().cast::<c_void>(),
@@ -637,7 +627,7 @@ impl StreamingDecoder {
             };
             let mut out_buf = c::ZSTD_outBuffer {
                 dst: spare.as_mut_ptr().cast::<c_void>(),
-                size: spare.len().min(remaining_output),
+                size: spare.len().min(remaining_output).min(budget),
                 pos: 0,
             };
 
@@ -656,19 +646,21 @@ impl StreamingDecoder {
 
             let bytes_written = out_buf.pos;
             let bytes_read = in_buf.pos;
+            self.output_full = bytes_written == out_buf.size;
             // SAFETY: zstd wrote exactly `bytes_written` initialized bytes into
             // the spare capacity starting at the previous len.
             unsafe { bun_core::vec::commit_spare(out, bytes_written) };
             total_in += bytes_read;
 
             if rc == 0 {
-                // Frame complete.
+                // Frame complete, and fully flushed.
                 self.state = State::Uninitialized;
+                self.output_full = false;
                 if total_in >= input.len() {
                     if is_done {
                         self.state = State::End;
                     }
-                    return Ok(());
+                    return Ok(total_in);
                 }
                 // More input available — reinitialize for the next frame.
                 // SAFETY: stream is a valid DStream.
@@ -679,7 +671,7 @@ impl StreamingDecoder {
             self.state = State::Inflating;
 
             if bytes_read == next_in.len() {
-                if bytes_written > 0 {
+                if self.output_full {
                     continue;
                 }
                 if is_done {
@@ -689,7 +681,7 @@ impl StreamingDecoder {
                 return Err(ZstdError::ShortRead);
             }
         }
-        Ok(())
+        Ok(total_in)
     }
 }
 
@@ -698,4 +690,105 @@ impl Drop for StreamingDecoder {
         // SAFETY: stream was created by ZSTD_createDStream; freed once here.
         let _ = unsafe { c::ZSTD_freeDStream(self.stream.as_ptr()) };
     }
+}
+
+// ── compressed embedded assets ────────────────────────────────────────────
+
+/// Embed an asset zstd-compressed and inflate it on first use. Only for bytes
+/// Bun never executes or parses itself: the shell completion scripts and the
+/// JS/CSS bundles that are shipped to a browser (dev-server client runtime,
+/// error overlay/page). Anything that runs inside Bun stays uncompressed.
+///
+/// Release (`bun_codegen_embed`) builds include the `.zst` twin that
+/// `scripts/build/codegen.ts` (`emitCompressedEmbeds`) writes to
+/// `<codegen>/compressed/<name>.zst`; other builds evaluate `$fallback`.
+#[macro_export]
+macro_rules! embed_compressed {
+    // A codegen output (`<codegen>/$sub`); debug builds read it at runtime.
+    (codegen $sub:literal) => {
+        $crate::embed_compressed!(
+            ("codegen/", $sub),
+            ::bun_core::runtime_embed_file!(Codegen, $sub).as_bytes()
+        )
+    };
+    // Same, with a trailing NUL included in the slice (for C-string consumers).
+    (codegen_nul $sub:literal) => {{
+        #[allow(unexpected_cfgs)]
+        let __bytes: &'static [u8] = {
+            #[cfg(bun_codegen_embed)]
+            {
+                static __INFLATED: ::bun_core::Once<::std::boxed::Box<[u8]>> = ::bun_core::Once::new();
+                __INFLATED
+                    .get_or_init(|| {
+                        $crate::inflate_embedded_nul(::core::include_bytes!(::core::concat!(
+                            ::core::env!("BUN_CODEGEN_DIR"),
+                            "/compressed/codegen/",
+                            $sub,
+                            ".zst"
+                        )))
+                    })
+            }
+            #[cfg(not(bun_codegen_embed))]
+            {
+                static __COPY: ::std::sync::OnceLock<::std::boxed::Box<[u8]>> = ::std::sync::OnceLock::new();
+                &__COPY.get_or_init(|| {
+                    let text = ::bun_core::runtime_embed_file!(Codegen, $sub).as_bytes();
+                    let mut copy = ::std::vec::Vec::with_capacity(text.len() + 1);
+                    copy.extend_from_slice(text);
+                    copy.push(0);
+                    copy.into_boxed_slice()
+                })[..]
+            }
+        };
+        __bytes
+    }};
+    // A file under `src/`; debug builds read it from the source tree at runtime.
+    (src $sub:literal) => {
+        $crate::embed_compressed!(("src/", $sub), ::bun_core::runtime_embed_file!(Src, $sub).as_bytes())
+    };
+    ($name:literal, $fallback:expr) => {
+        $crate::embed_compressed!(($name), $fallback)
+    };
+    (($($name:literal),+), $fallback:expr) => {{
+        #[allow(unexpected_cfgs)]
+        let __bytes: &'static [u8] = {
+            #[cfg(bun_codegen_embed)]
+            {
+                static __INFLATED: ::bun_core::Once<::std::boxed::Box<[u8]>> = ::bun_core::Once::new();
+                __INFLATED
+                    .get_or_init(|| {
+                        $crate::inflate_embedded(::core::include_bytes!(::core::concat!(
+                            ::core::env!("BUN_CODEGEN_DIR"),
+                            "/compressed/",
+                            $($name,)+
+                            ".zst"
+                        )))
+                    })
+            }
+            #[cfg(not(bun_codegen_embed))]
+            {
+                $fallback
+            }
+        };
+        __bytes
+    }};
+}
+
+/// Cold, shared body of [`embed_compressed!`]'s release arm.
+#[cold]
+#[inline(never)]
+pub fn inflate_embedded(compressed: &'static [u8]) -> Box<[u8]> {
+    decompress_alloc(compressed)
+        .expect("embedded asset: invalid zstd frame")
+        .into_boxed_slice()
+}
+
+/// [`inflate_embedded`] plus a trailing NUL byte.
+#[cold]
+#[inline(never)]
+pub fn inflate_embedded_nul(compressed: &'static [u8]) -> Box<[u8]> {
+    let mut inflated = decompress_alloc(compressed).expect("embedded asset: invalid zstd frame");
+    inflated.reserve_exact(1);
+    inflated.push(0);
+    inflated.into_boxed_slice()
 }

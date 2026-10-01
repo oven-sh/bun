@@ -13,7 +13,7 @@ use bun_install::package_manager_real::{
     package_manager_options::LogLevel, setup_global_dir,
 };
 use bun_install::{DependencyID, PackageID, PackageManager, migration};
-use bun_paths::{self as Path, PathBuffer};
+use bun_paths as Path;
 use bun_resolver::fs as Fs;
 use bun_sys::{self, Dir, Fd, File};
 
@@ -265,7 +265,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Ok(v) => v,
             Err(err) => {
                 if err == bun_install::Error::MissingPackageJSON {
-                    let mut cwd_buf = PathBuffer::uninit();
+                    let mut cwd_buf = bun_paths::path_buffer_pool::get();
                     match bun_sys::getcwd(&mut cwd_buf[..]) {
                         Ok(len) => {
                             Output::err_generic(
@@ -440,7 +440,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 let mut process_env = bun_dotenv::Loader::init();
                 process_env.load_process()?;
                 let cache_dir = fetch_cache_directory_path(&mut process_env, None);
-                let mut rm_buf = PathBuffer::uninit();
+                let mut rm_buf = bun_paths::path_buffer_pool::get();
                 let rm_dir = match Dir::cwd().make_open_path(&cache_dir.path, Default::default()) {
                     Ok(d) => d,
                     Err(err) => {
@@ -532,7 +532,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 Global::exit(if had_err { 1 } else { 0 });
             }
 
-            let mut dir = PathBuffer::uninit();
+            let mut dir = bun_paths::path_buffer_pool::get();
             let fd = get_cache_directory(pm);
             let outpath = match bun_sys::get_fd_path(fd, &mut dir) {
                 Ok(p) => &p[..],
@@ -619,7 +619,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     )?;
                 }
             } else {
-                let mut cwd_buf = PathBuffer::uninit();
+                let mut cwd_buf = bun_paths::path_buffer_pool::get();
                 let path = match bun_sys::getcwd(&mut cwd_buf[..]) {
                     Ok(len) => &cwd_buf[..len],
                     Err(_) => {
@@ -636,7 +636,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 let root_deps = slice.items_dependencies()[0];
 
                 Output::println(format_args!(
-                    "{} node_modules ({})",
+                    "{} node_modules ({} installed)",
                     bstr::BStr::new(path),
                     lockfile.buffers.hoisted_dependencies.len(),
                 ));
@@ -650,11 +650,9 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     dependencies,
                     buf: string_bytes,
                 };
-                // `sort_unstable_by` is pdqsort; names are
-                // unique so stability is irrelevant.
-                index_sort::sort_indices_unstable(&mut sorted_dependencies, &mut |a, b| {
-                    by_name.cmp(a, b)
-                });
+                // The root lists a workspace it also declares once per declaration.
+                index_sort::sort_indices(&mut sorted_dependencies, &mut |a, b| by_name.cmp(a, b));
+                sorted_dependencies.dedup_by(|a, b| by_name.cmp(*a, *b) == Ordering::Equal);
 
                 if trusted_only {
                     sorted_dependencies.retain(|&dep_id| {
@@ -824,7 +822,6 @@ fn print_node_modules_folder_structure(
             }
         }
 
-        let mut resolution_buf = [0u8; 512];
         if let Some(id) = directory_package_id {
             let mut path: &[u8] = directory.relative_path.as_bytes();
 
@@ -836,28 +833,18 @@ fn print_node_modules_folder_structure(
                     }
                 }
             }
-            let directory_version = buf_print(
-                &mut resolution_buf,
-                format_args!(
-                    "{}",
-                    resolutions[id as usize].fmt(string_bytes, PathSep::Auto)
-                ),
-            );
+            let directory_version = resolutions[id as usize].fmt(string_bytes, PathSep::Auto);
             if let Some(j) = strings::index_of(path, b"node_modules") {
                 bun_core::prettyln!(
                     "{}<d>@{}<r>",
                     bstr::BStr::new(&path[0..j - 1]),
-                    bstr::BStr::new(directory_version),
+                    directory_version,
                 );
             } else {
-                bun_core::prettyln!(
-                    "{}<d>@{}<r>",
-                    bstr::BStr::new(path),
-                    bstr::BStr::new(directory_version),
-                );
+                bun_core::prettyln!("{}<d>@{}<r>", bstr::BStr::new(path), directory_version);
             }
         } else {
-            let mut cwd_buf = PathBuffer::uninit();
+            let mut cwd_buf = bun_paths::path_buffer_pool::get();
             let path = match bun_sys::getcwd(&mut cwd_buf[..]) {
                 Ok(len) => &cwd_buf[..len],
                 Err(_) => {
@@ -961,18 +948,10 @@ fn print_node_modules_folder_structure(
             bun_core::pretty!("<d>└──<r> ");
         }
 
-        let mut resolution_buf = [0u8; 512];
-        let package_version = buf_print(
-            &mut resolution_buf,
-            format_args!(
-                "{}",
-                resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto)
-            ),
-        );
         bun_core::prettyln!(
             "{}<d>@{}<r>",
             bstr::BStr::new(package_name),
-            bstr::BStr::new(package_version),
+            resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto),
         );
     }
 
@@ -984,7 +963,7 @@ fn print_trusted_dependencies_flat(
     directories: &[NodeModulesFolder],
     lockfile: &Lockfile,
 ) {
-    let mut cwd_buf = PathBuffer::uninit();
+    let mut cwd_buf = bun_paths::path_buffer_pool::get();
     let path = match bun_sys::getcwd(&mut cwd_buf[..]) {
         Ok(len) => &cwd_buf[..len],
         Err(_) => {
@@ -1054,5 +1033,3 @@ fn print_trusted_dependencies_flat(
         }
     }
 }
-
-use bun_core::fmt::buf_print_infallible as buf_print;

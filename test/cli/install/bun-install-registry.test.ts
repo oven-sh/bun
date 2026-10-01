@@ -1,13 +1,15 @@
 import { file, spawn, write } from "bun";
 import { install_test_helpers, npm_manifest_test_helpers } from "bun:internal-for-testing";
-import { afterAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { once } from "events";
 import { copyFileSync, mkdirSync } from "fs";
-import { cp, exists, lstat, mkdir, readlink, rm, writeFile } from "fs/promises";
+import { cp, exists, lstat, mkdir, readlink, rename, rm, writeFile } from "fs/promises";
 import {
   assertManifestsPopulated,
   bunExe,
   bunEnv as env,
   isFlaky,
+  isLinux,
   isMacOS,
   isWindows,
   mergeWindowEnvs,
@@ -24,7 +26,9 @@ import {
   VerdaccioRegistry,
   writeShebangScript,
 } from "harness";
+import { createServer as createTcpServer, connect as tcpConnect, type Socket } from "net";
 import { join, resolve } from "path";
+import { createServer as createTlsServer } from "tls";
 const { parseLockfile } = install_test_helpers;
 
 expect.extend({
@@ -231,6 +235,144 @@ describe("certificate authority", () => {
     expect(err).not.toContain("error:");
     expect(await exited).toBe(0);
   });
+
+  /** A forward proxy that only speaks CONNECT. `targets` holds the `host:port` of each tunnel it opened. */
+  async function startConnectProxy(protocol: "http" | "https") {
+    const targets: string[] = [];
+    const sockets = new Set<Socket>();
+    const onClient = (client: Socket) => {
+      sockets.add(client);
+      client.on("error", () => {});
+      client.on("close", () => sockets.delete(client));
+      let head = "";
+      client.on("data", function onData(chunk: Buffer) {
+        head += chunk.toString("latin1");
+        if (!head.includes("\r\n\r\n")) return;
+        client.off("data", onData);
+        // `pipe()` below resumes the socket once the upstream is connected.
+        client.pause();
+        const target = head.split(" ")[1];
+        targets.push(target);
+        const [host, port] = target.split(":");
+        const upstream = tcpConnect(Number(port), host, () => {
+          client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+          client.pipe(upstream);
+          upstream.pipe(client);
+        });
+        sockets.add(upstream);
+        upstream.on("error", () => client.destroy());
+        upstream.on("close", () => sockets.delete(upstream));
+        client.on("close", () => upstream.destroy());
+      });
+    };
+    const server = protocol === "https" ? createTlsServer(tls, onClient) : createTcpServer(onClient);
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    return {
+      targets,
+      url: `${protocol}://127.0.0.1:${(server.address() as { port: number }).port}`,
+      async [Symbol.asyncDispose]() {
+        for (const socket of sockets) socket.destroy();
+        server.close();
+        await once(server, "close");
+      },
+    };
+  }
+
+  /** Runs `bun install <args>` with `HTTPS_PROXY` set, for a project whose one dependency is a tarball on `server`. */
+  async function installThroughProxy(
+    server: { port: number },
+    proxyUrl: string,
+    args: string[],
+    extraEnv: Record<string, string> = {},
+  ) {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.1.1",
+          dependencies: {
+            "no-deps": `https://localhost:${server.port}/no-deps-1.0.0.tgz`,
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "bunfig.toml"),
+        Bun.TOML.stringify({
+          install: {
+            cache: false,
+            registry: `https://localhost:${server.port}/`,
+          },
+        }),
+      ),
+    ]);
+
+    const proxyEnv = { ...env, ...extraEnv, HTTPS_PROXY: proxyUrl };
+    for (const key of ["https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy"]) delete proxyEnv[key];
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd: packageDir,
+      stderr: "pipe",
+      stdout: "pipe",
+      env: proxyEnv,
+    });
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    return { out, err, exitCode };
+  }
+
+  // The TLS handshake with the registry runs inside the CONNECT tunnel, not on the socket to the proxy.
+  test.each([
+    { flag: "--cafile", protocol: "http" },
+    { flag: "--ca", protocol: "http" },
+    { flag: "--cafile", protocol: "https" },
+  ] as const)("valid $flag through an $protocol:// proxy", async ({ flag, protocol }) => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: mockRegistryFetch(),
+      ...tls,
+    });
+    await using proxy = await startConnectProxy(protocol);
+    await write(join(packageDir, "cafile"), tls.cert);
+
+    const { out, err, exitCode } = await installThroughProxy(server, proxy.url, [
+      flag,
+      flag === "--cafile" ? "cafile" : tls.cert,
+    ]);
+    expect(err).not.toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("+ no-deps@");
+    expect(proxy.targets).toContain(`localhost:${server.port}`);
+    expect(exitCode).toBe(0);
+  });
+
+  test("--cafile replaces the default trust store through a proxy", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: mockRegistryFetch(),
+      ...tls,
+    });
+    await using proxy = await startConnectProxy("http");
+    // NODE_EXTRA_CA_CERTS puts the registry's certificate in the default trust store.
+    await write(join(packageDir, "extra-ca"), tls.cert);
+    const extraCaEnv = { NODE_EXTRA_CA_CERTS: join(packageDir, "extra-ca"), BUN_CONFIG_HTTP_RETRY_COUNT: "0" };
+
+    // The CA in `--cafile` did not sign the certificate: the install can only succeed if the tunnel ignores `--cafile`.
+    const unrelatedCa = join(import.meta.dir, "../../js/node/test/fixtures/keys/ca1-cert.pem");
+    let { out, err, exitCode } = await installThroughProxy(server, proxy.url, ["--cafile", unrelatedCa], extraCaEnv);
+    expect(err).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(out).not.toContain("+ no-deps@");
+    expect(exitCode).toBe(1);
+
+    // now without --cafile: the default trust store does accept the registry
+    ({ out, err, exitCode } = await installThroughProxy(server, proxy.url, [], extraCaEnv));
+    expect(err).not.toContain("error:");
+    expect(out).toContain("+ no-deps@");
+    expect(exitCode).toBe(0);
+    expect(proxy.targets).toEqual([`localhost:${server.port}`, `localhost:${server.port}`]);
+  });
+
   test(`non-existent --cafile`, async () => {
     await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", "dependencies": { "no-deps": "1.1.1" } }));
 
@@ -1352,6 +1494,374 @@ describe("bundledDependencies", () => {
       await check();
     });
   }
+
+  // bundled-file@1.0.0 depends on "bundled-file-dep" through a `file:` spec and
+  // bundles it. The tarball ships the bundled copy in its node_modules. The
+  // install from bun.lock must keep treating the dependency as bundled and must
+  // not replace the bundled copy with symlinks.
+  test("(bun.lock) file: dependency stays bundled when installing from the lockfile", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "bundled-file-root",
+        dependencies: {
+          "bundled-file": "1.0.0",
+        },
+      }),
+    );
+
+    const bundledDepDir = join(packageDir, "node_modules", "bundled-file", "node_modules", "bundled-file-dep");
+
+    async function check() {
+      const [pkgJsonStat, indexStat] = await Promise.all([
+        lstat(join(bundledDepDir, "package.json")),
+        lstat(join(bundledDepDir, "index.js")),
+      ]);
+      expect([pkgJsonStat.isFile(), indexStat.isFile()]).toEqual([true, true]);
+
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", `console.log(require("bundled-file"))`],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("bundled-file-dep\n");
+      expect(exitCode).toBe(0);
+    }
+
+    let { out } = await runBunInstall(env, packageDir, { saveTextLockfile: true });
+    expect(out).toContain("1 package installed");
+    await check();
+
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfile).toContain(
+      `"bundled-file/bundled-file-dep": ["bundled-file-dep@file:vendor/bundled-file-dep", { "bundled": true }],`,
+    );
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    ({ out } = await runBunInstall(env, packageDir, { frozenLockfile: true }));
+    expect(out).toContain("1 package installed");
+    await check();
+  });
+
+  // bundled-file@2.0.0 ships node_modules/bundled-file-dep in its tarball but
+  // does not bundle it. The install links the `file:` dependency over those
+  // files. The links must point at the cached vendor copy, not at themselves.
+  test("file: dependency links over files the tarball already shipped", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "unbundled-file-root",
+        dependencies: {
+          "bundled-file": "2.0.0",
+        },
+      }),
+    );
+
+    const { out } = await runBunInstall(env, packageDir, { saveTextLockfile: true });
+    expect(out).toContain("2 packages installed");
+
+    const depDir = join(packageDir, "node_modules", "bundled-file", "node_modules", "bundled-file-dep");
+    const [pkgJsonStat, indexStat] = await Promise.all([
+      lstat(join(depDir, "package.json")),
+      lstat(join(depDir, "index.js")),
+    ]);
+    expect([pkgJsonStat.isSymbolicLink(), indexStat.isSymbolicLink()]).toEqual([true, true]);
+    expect(await readlink(join(depDir, "package.json"))).toEndWith(join("vendor", "bundled-file-dep", "package.json"));
+
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", `console.log(require("bundled-file"))`],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("bundled-file-dep\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// A fresh resolve starts to download tarballs before the install phase runs.
+// It must ask for the tarballs that an install from its lockfile asks for, and
+// for no others. The installers place nothing below a bundled dependency, a
+// package for another platform, or a group that --production or --omit turns off.
+describe.concurrent("tarballs of a fresh resolve", () => {
+  const packages: Record<string, object> = {
+    // The tarball of outer ships bd and tr in its node_modules.
+    "outer": { dependencies: { bd: "1.0.0" }, bundleDependencies: ["bd"] },
+    "bd": { dependencies: { tr: "1.0.0" } },
+    // No CI machine has this cpu.
+    "uses-native": { optionalDependencies: { "native-wasm": "1.0.0" } },
+    "native-wasm": { cpu: ["wasm32"], dependencies: { tr: "1.0.0" } },
+    "tool": { dependencies: { tr: "1.0.0" } },
+    "uses-tr": { dependencies: { tr: "1.0.0" } },
+    "tr": {},
+    "leaf": {},
+  };
+  const packageJsonOf = (name: string) => JSON.stringify({ name, version: "1.0.0", ...packages[name] });
+  const files: Record<string, Record<string, string>> = {
+    "outer": {
+      "index.js": `module.exports = require("bd");`,
+      "node_modules/bd/package.json": packageJsonOf("bd"),
+      "node_modules/bd/index.js": `module.exports = "bundled bd, " + require("tr");`,
+      "node_modules/tr/package.json": packageJsonOf("tr"),
+      "node_modules/tr/index.js": `module.exports = "bundled tr";`,
+    },
+    "bd": { "index.js": `module.exports = "registry bd, " + require("tr");\n` },
+    "tr": { "index.js": `module.exports = "registry tr";\n` },
+    "uses-tr": { "index.js": `module.exports = require("tr");` },
+  };
+  const tarballs: Record<string, Uint8Array> = {};
+
+  beforeAll(async () => {
+    for (const name of Object.keys(packages)) {
+      const archive: Record<string, string> = { "package/package.json": packageJsonOf(name) };
+      for (const [path, contents] of Object.entries(files[name] ?? {})) archive[`package/${path}`] = contents;
+      tarballs[name] = await new Bun.Archive(archive, { compress: "gzip" }).bytes();
+    }
+  });
+
+  type Requests = { tarballs: string[]; manifests: Set<string> };
+
+  /** Serves the packages above and records what it is asked for. `holdManifest` can delay a manifest. */
+  function serveRegistry(requests: Requests, holdManifest: (name: string) => Promise<void> | void = () => {}) {
+    return Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        const tarballOf = pathname.match(/^\/(.+)-1\.0\.0\.tgz$/)?.[1];
+        const name = tarballOf ?? pathname.slice(1);
+        if (!(name in packages)) return new Response("not found", { status: 404 });
+        if (tarballOf) {
+          requests.tarballs.push(name);
+          return new Response(tarballs[name]);
+        }
+        requests.manifests.add(name);
+        await holdManifest(name);
+        const integrity = "sha512-" + new Bun.CryptoHasher("sha512").update(tarballs[name]).digest("base64");
+        return Response.json({
+          name,
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": {
+              name,
+              version: "1.0.0",
+              ...packages[name],
+              dist: { tarball: `${origin}/${name}-1.0.0.tgz`, integrity },
+            },
+          },
+        });
+      },
+    });
+  }
+
+  function envFor(cwd: string) {
+    const tmp = join(cwd, ".bun-tmp");
+    return { ...env, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache"), BUN_TMPDIR: tmp, TMPDIR: tmp, TEMP: tmp };
+  }
+
+  type Project = {
+    manifest: object;
+    files?: Record<string, string>;
+    args?: string[];
+    /** The tarballs that the installers need, sorted. */
+    tarballs: string[];
+    /** What `require(name)` returns from the root after the install. */
+    requires?: Record<string, string>;
+    /** Hold the manifest of `uses-tr` until the other dependency has asked for the manifest of `tr`, so that one resolves tr@1.0.0 first. */
+    usesTrResolvesLast?: boolean;
+  };
+
+  /**
+   * Installs the project three times. A fresh resolve with a cold cache takes
+   * its manifests from the registry. A fresh resolve that finds the manifests
+   * in the cache resolves before anything else can finish, a patch hash for
+   * one. The last install reads the lockfile, with a cold cache (--production
+   * saves no lockfile and resolves again).
+   */
+  async function installEachWay(linker: string, project: Project) {
+    const trRequested = Promise.withResolvers<void>();
+    const requests: Requests = { tarballs: [], manifests: new Set() };
+    await using registry = serveRegistry(requests, name => {
+      if (name === "tr") trRequested.resolve();
+      if (name === "uses-tr" && project.usesTrResolvesLast) return trRequested.promise;
+    });
+    using dir = tempDir("fresh-resolve-tarballs", {
+      ...project.files,
+      "package.json": JSON.stringify({ name: "foo", ...project.manifest }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url.href, linker } }),
+    });
+    const cwd = String(dir);
+    const cache = join(cwd, ".bun-cache");
+
+    const asked: Record<string, string[]> = {};
+    for (const phase of ["fresh resolve", "fresh resolve, manifests in the cache", "from the lockfile"]) {
+      await rm(join(cwd, "node_modules"), { recursive: true, force: true });
+      if (phase === "fresh resolve, manifests in the cache") {
+        // bun install does not wait for the manifest cache writes before it exits.
+        const deadline = Date.now() + 5_000;
+        let entries = await readdirSorted(cache);
+        while (
+          entries.filter(entry => entry.endsWith(".npm")).length < requests.manifests.size &&
+          Date.now() < deadline
+        ) {
+          await Bun.sleep(10);
+          entries = await readdirSorted(cache);
+        }
+        await Promise.all([
+          rm(join(cwd, "bun.lock"), { force: true }),
+          ...entries.filter(entry => !entry.endsWith(".npm")).map(entry => rm(join(cache, entry), { recursive: true })),
+        ]);
+      } else {
+        await rm(cache, { recursive: true, force: true });
+      }
+      requests.tarballs.length = 0;
+      await using proc = spawn({
+        cmd: [bunExe(), "install", ...(project.args ?? [])],
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: envFor(cwd),
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      asked[phase] = requests.tarballs.toSorted();
+    }
+    expect(asked).toEqual({
+      "fresh resolve": project.tarballs,
+      "fresh resolve, manifests in the cache": project.tarballs,
+      "from the lockfile": project.tarballs,
+    });
+
+    const names = Object.keys(project.requires ?? {});
+    if (names.length === 0) return;
+    await using proc = spawn({
+      cmd: [bunExe(), "-p", `JSON.stringify([${names.map(name => `require(${JSON.stringify(name)})`).join(", ")}])`],
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: envFor(cwd),
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(Object.values(project.requires!));
+    expect(exitCode).toBe(0);
+  }
+
+  /** A patch for the index.js that the registry copy of `name` has. */
+  const patchOf = (name: string) => `diff --git a/index.js b/index.js
+index 0000000..1111111 100644
+--- a/index.js
++++ b/index.js
+@@ -1 +1 @@
+-${files[name]["index.js"]}+${files[name]["index.js"].replace("registry", "patched")}`;
+
+  const projects: Record<string, Project> = {
+    "below a bundled dependency": {
+      manifest: { dependencies: { outer: "1.0.0" } },
+      tarballs: ["outer"],
+      requires: { outer: "bundled bd, bundled tr" },
+    },
+    "below a package for another platform": {
+      manifest: { dependencies: { "uses-native": "1.0.0" } },
+      tarballs: ["uses-native"],
+    },
+    "below a devDependency with --production": {
+      manifest: { dependencies: { leaf: "1.0.0" }, devDependencies: { tool: "1.0.0" } },
+      args: ["--production"],
+      tarballs: ["leaf"],
+    },
+    "below a devDependency with --omit=dev": {
+      manifest: { dependencies: { leaf: "1.0.0" }, devDependencies: { tool: "1.0.0" } },
+      args: ["--omit=dev"],
+      tarballs: ["leaf"],
+    },
+    "below an optionalDependency with --omit=optional": {
+      manifest: { dependencies: { leaf: "1.0.0" }, optionalDependencies: { tool: "1.0.0" } },
+      args: ["--omit=optional"],
+      tarballs: ["leaf"],
+    },
+    "below a peerDependency with --omit=peer": {
+      manifest: { dependencies: { leaf: "1.0.0" }, peerDependencies: { tool: "1.0.0" } },
+      args: ["--omit=peer"],
+      tarballs: ["leaf"],
+    },
+    // The install phase downloads a package that was first resolved below a
+    // dependency the installers do not place, when another dependency needs it.
+    "first below a bundled dependency, then needed": {
+      manifest: { dependencies: { outer: "1.0.0", "uses-tr": "1.0.0" } },
+      tarballs: ["outer", "tr", "uses-tr"],
+      requires: { outer: "bundled bd, bundled tr", "uses-tr": "registry tr" },
+      usesTrResolvesLast: true,
+    },
+    "first below a package for another platform, then needed": {
+      manifest: { dependencies: { "uses-native": "1.0.0", "uses-tr": "1.0.0" } },
+      tarballs: ["tr", "uses-native", "uses-tr"],
+      requires: { "uses-tr": "registry tr" },
+      usesTrResolvesLast: true,
+    },
+    "first below a devDependency with --production, then needed": {
+      manifest: { dependencies: { "uses-tr": "1.0.0" }, devDependencies: { tool: "1.0.0" } },
+      args: ["--production"],
+      tarballs: ["tr", "uses-tr"],
+      requires: { "uses-tr": "registry tr" },
+      usesTrResolvesLast: true,
+    },
+    // A package with a patch takes other arms of the resolve: it waits for
+    // the hash of the patch, then it downloads.
+    "with a patch, below a bundled dependency": {
+      manifest: { dependencies: { outer: "1.0.0" }, patchedDependencies: { "bd@1.0.0": "patches/bd.patch" } },
+      files: { "patches/bd.patch": patchOf("bd") },
+      tarballs: ["outer"],
+      requires: { outer: "bundled bd, bundled tr" },
+    },
+    "with a patch, first below a bundled dependency, then needed": {
+      manifest: {
+        dependencies: { outer: "1.0.0", "uses-tr": "1.0.0" },
+        patchedDependencies: { "tr@1.0.0": "patches/tr.patch" },
+      },
+      files: { "patches/tr.patch": patchOf("tr") },
+      tarballs: ["outer", "tr", "uses-tr"],
+      requires: { outer: "bundled bd, bundled tr", "uses-tr": "patched tr" },
+      usesTrResolvesLast: true,
+    },
+  };
+
+  for (const linker of ["hoisted", "isolated"]) {
+    for (const [name, project] of Object.entries(projects)) {
+      test(`(${linker}) ${name}`, () => installEachWay(linker, project));
+    }
+  }
+
+  // The runtime has no install phase. With --install=force it loads every
+  // package from the cache, a bundled dependency too.
+  test("the runtime auto-install downloads a bundled dependency", async () => {
+    const requests: Requests = { tarballs: [], manifests: new Set() };
+    await using registry = serveRegistry(requests);
+    using dir = tempDir("fresh-resolve-tarballs", {
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url.href } }),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "--install=force", "-p", `require("outer@1.0.0")`],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: envFor(String(dir)),
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("registry bd, registry tr\n");
+    expect(requests.tarballs.toSorted()).toEqual(["bd", "outer", "tr"]);
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("optionalDependencies", () => {
@@ -3256,6 +3766,112 @@ describe("binaries", () => {
     expect(await result.exited).toBe(0);
   }
 
+  // Before it appends a bin name, the bin linker writes `<node_modules>/<package>/` and
+  // `<node_modules>/.bin/` into two path buffers of MAX_PATH_BYTES (4096 bytes on Linux, 1024 on
+  // macOS). A project deep enough for one of them not to fit has to fail like a bin name that does
+  // not fit. Windows is left out: its buffer holds more than any path the OS accepts.
+  describe.skipIf(isWindows)("directories longer than the path buffer", () => {
+    const maxPathBytes = isLinux ? 4096 : 1024;
+
+    // Writes `<dir>/<name>`, a package whose bin is named after it.
+    const writeBinPackage = (dir: string, name: string) =>
+      Promise.all([
+        write(
+          join(dir, name, "package.json"),
+          JSON.stringify({ name, version: "1.0.0", bin: { [name]: `${name}.js` } }),
+        ),
+        write(join(dir, name, `${name}.js`), `#!/usr/bin/env node\nconsole.log("${name}")`),
+      ]);
+
+    // Directory names of at most 200 bytes which bring `base` to exactly `length` bytes.
+    function componentsUpTo(base: string, length: number) {
+      const components: string[] = [];
+      let remaining = length - Buffer.byteLength(base);
+      while (remaining > 0) {
+        let len = Math.min(200, remaining - "/".length);
+        // Never leave exactly one byte: it would have to be a separator with no name after it.
+        if (remaining - "/".length - len === 1) len -= 1;
+        components.push(Buffer.alloc(len, "d").toString());
+        remaining -= "/".length + len;
+      }
+      return components;
+    }
+
+    // Creates, under `base`, a directory whose `<dir>/<subpath>` is exactly maxPathBytes long. The
+    // directory itself fits, so it can be created. Whatever bun creates below `<dir>/<subpath>` does
+    // not, so `shorten()` renames the first directory name to one byte before those paths are used.
+    function directoryFilledBy(base: string, subpath: string) {
+      const components = componentsUpTo(base, maxPathBytes - Buffer.byteLength("/" + subpath));
+      const dir = join(base, ...components);
+      expect(Buffer.byteLength(join(dir, subpath))).toBe(maxPathBytes);
+      mkdirSync(dir, { recursive: true });
+      const shorten = async () => {
+        await rename(join(base, components[0]), join(base, "x"));
+        return join(base, "x", ...components.slice(1));
+      };
+      return { dir, shorten };
+    }
+
+    async function run(args: string[], cwd: string, runEnv: NodeJS.Dict<string>) {
+      await using proc = spawn({
+        cmd: [bunExe(), ...args],
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: runEnv,
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { out, err, exitCode };
+    }
+
+    // With `has-bin`, `<project>/node_modules/has-bin/` is one byte too long for the buffer. With
+    // `a`, the package directory fits and `<project>/node_modules/.bin/` is one byte too long.
+    test.each([
+      ["package directory", "has-bin", join("node_modules", "has-bin")],
+      [".bin directory", "a", join("node_modules", ".bin")],
+    ])("install reports a %s that does not fit as ENAMETOOLONG", async (_, name, subpath) => {
+      await writeBinPackage(packageDir, name);
+      const { dir: project, shorten } = directoryFilledBy(packageDir, subpath);
+      await write(
+        join(project, "package.json"),
+        JSON.stringify({ name: "foo", dependencies: { [name]: `file:${join(packageDir, name)}` } }),
+      );
+
+      const { out, err, exitCode } = await run(["install"], project, env);
+      const shortened = await shorten();
+
+      expect(err).toContain(`error: Failed to link ${name}: ENAMETOOLONG`);
+      expect(out).not.toContain("installed");
+      // The package itself was installed. Only its bin is missing.
+      expect(await exists(join(shortened, "node_modules", name, "package.json"))).toBeTrue();
+      expect(await exists(join(shortened, "node_modules", ".bin", name))).toBeFalse();
+      expect(exitCode).toBe(1);
+    });
+
+    // `bun link` symlinks the package into the global directory's node_modules and links its bins
+    // from there, into the global bin directory.
+    test("bun link reports a global package directory that does not fit as ENAMETOOLONG", async () => {
+      await writeBinPackage(packageDir, "has-bin");
+      const { dir: globalDir, shorten } = directoryFilledBy(packageDir, join("node_modules", "has-bin"));
+      const globalBinDir = join(packageDir, "global-bin-dir");
+
+      const { out, err, exitCode } = await run(["link"], join(packageDir, "has-bin"), {
+        ...env,
+        BUN_INSTALL: join(packageDir, "global-install-dir"),
+        BUN_INSTALL_GLOBAL_DIR: globalDir,
+        BUN_INSTALL_BIN: globalBinDir,
+      });
+      const shortened = await shorten();
+
+      expect(err).toContain("error: failed to link bin due to error ENAMETOOLONG");
+      expect(out).not.toContain("Success!");
+      // The package itself was registered. Only its bin is missing.
+      expect(await exists(join(shortened, "node_modules", "has-bin", "package.json"))).toBeTrue();
+      expect(await exists(join(globalBinDir, "has-bin"))).toBeFalse();
+      expect(exitCode).toBe(1);
+    });
+  });
+
   test("it will skip (without errors) if a folder from `directories.bin` does not exist", async () => {
     await Promise.all([
       write(
@@ -3280,6 +3896,102 @@ describe("binaries", () => {
     const err = await stderr.text();
     expect(err).not.toContain("error:");
     expect(await exited).toBe(0);
+  });
+
+  // An empty `bin` names no file, so the bins come from `directories.bin`. Each path below is
+  // longer than the room that a parsed package.json or manifest has for a string that its
+  // counting pass missed. The `./` segments drop out of the resolved path, so each one still
+  // names the folder in its last segment.
+  describe("`directories.bin` next to an empty `bin`", () => {
+    const longDirOf = (folder: string) => Buffer.alloc(512, "./").toString() + folder;
+
+    /** Runs `bun install` in `packageDir`, expects it to succeed, and returns `bun.lock`. */
+    async function install(expectedOut: string) {
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--save-text-lockfile"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ out, err, exitCode, signalCode: proc.signalCode }).toEqual({
+        out: expect.stringContaining(expectedOut),
+        err: expect.not.stringContaining("error:"),
+        exitCode: 0,
+        signalCode: null,
+      });
+      const lockfile = file(join(packageDir, "bun.lock"));
+      return (await lockfile.exists()) ? ((Bun.JSONC.parse(await lockfile.text()) as any).packages ?? {}) : undefined;
+    }
+
+    test("in the root package.json", async () => {
+      await write(packageJson, JSON.stringify({ name: "foo", bin: "", directories: { bin: longDirOf("bins") } }));
+
+      expect(await install("done")).toBeUndefined();
+    });
+
+    test("in a folder dependency", async () => {
+      const binDir = longDirOf("executables");
+      await Promise.all([
+        write(packageJson, JSON.stringify({ name: "foo", dependencies: { "dir-bin": "./dir-bin" } })),
+        write(
+          join(packageDir, "dir-bin", "package.json"),
+          JSON.stringify({ name: "dir-bin", version: "1.1.1", bin: "", directories: { bin: binDir } }),
+        ),
+        write(
+          join(packageDir, "dir-bin", "executables", "dir-bin-1.js"),
+          `#!/usr/bin/env node\nconsole.log("dir-bin-1")`,
+        ),
+      ]);
+
+      expect(await install("1 package installed")).toEqual({
+        "dir-bin": ["dir-bin@file:dir-bin", { binDir }],
+      });
+      expect(join(packageDir, "node_modules", ".bin", "dir-bin-1.js")).toBeValidBin(
+        join("..", "dir-bin", "executables", "dir-bin-1.js"),
+      );
+    });
+
+    test("in a registry manifest", async () => {
+      const name = "dep-with-directory-bins";
+      const binDir = longDirOf("bins");
+      await using server = Bun.serve({
+        port: 0,
+        fetch(request) {
+          const { origin, pathname } = new URL(request.url);
+          if (pathname.endsWith(".tgz")) {
+            return new Response(file(join(import.meta.dir, "registry", "packages", name, `${name}-1.0.0.tgz`)));
+          }
+          return Response.json({
+            name,
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name,
+                version: "1.0.0",
+                bin: "",
+                directories: { bin: binDir },
+                dist: { tarball: `${origin}/${name}-1.0.0.tgz` },
+              },
+            },
+          });
+        },
+      });
+      await Promise.all([
+        write(packageJson, JSON.stringify({ name: "foo", dependencies: { [name]: "1.0.0" } })),
+        write(
+          join(packageDir, "bunfig.toml"),
+          Bun.TOML.stringify({ install: { cache: false, registry: server.url.href, linker: "hoisted" } }),
+        ),
+      ]);
+
+      expect(await install("1 package installed")).toEqual({
+        [name]: [`${name}@1.0.0`, `${server.url.origin}/${name}-1.0.0.tgz`, { binDir }, ""],
+      });
+      await runBin("directory-bin-1", "directory-bin-1\n", false);
+      await runBin("directory-bin-2", "directory-bin-2\n", false);
+    });
   });
 });
 
@@ -9013,7 +9725,7 @@ describe("outdated", () => {
 // test/cli/install/registry/bun-install-windowsshim.test.ts:
 //
 // This test is to verify that BinLinkingShim.zig creates correct shim files as
-// well as bun_shim_impl.exe works in various edge cases. There are many fast
+// well as bun-shim-impl.exe works in various edge cases. There are many fast
 // paths for many many cases.
 describe("windows bin linking shim should work", async () => {
   if (!isWindows) return;
@@ -9756,6 +10468,233 @@ test("npm manifest cache entries are only reused for the package name they were 
 
   expect(parseManifest(byName["no-deps"], registryUrl()).name).toBe("no-deps");
   expect(exitCode).toBe(0);
+});
+
+test("a cached manifest whose name hash disagrees with the name installs with the hash of the name", async () => {
+  const { parseManifest } = npm_manifest_test_helpers;
+  const cacheDir = join(packageDir, ".bun-cache");
+  const lockbPath = join(packageDir, "bun.lockb");
+
+  // bun.lockb stores packages as columns. `name` (8 bytes per package) comes
+  // first, then `name_hash` (8 bytes per package). Package 0 is the root.
+  const nameHashes = async () => {
+    const lockb = Buffer.from(await file(lockbPath).arrayBuffer());
+    const count = Number(lockb.readBigUInt64LE(86));
+    const start = Number(lockb.readBigUInt64LE(110)) + count * 8;
+    return Array.from({ length: count }, (_, i) => lockb.readBigUInt64LE(start + i * 8));
+  };
+
+  // The name must be longer than 8 bytes. Shorter names are stored inline and
+  // never touch the string buffer.
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "dep-with-tags": "1.0.0",
+      },
+    }),
+  );
+
+  {
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).toContain("Saved lockfile");
+    expect(out).toContain("+ dep-with-tags@1.0.0");
+    expect(exitCode).toBe(0);
+  }
+
+  const hashes = await nameHashes();
+  expect(hashes).toHaveLength(2);
+  const nameHash = hashes[1];
+
+  const manifestFiles = (await readdirSorted(cacheDir)).filter(name => name.endsWith(".npm"));
+  expect(manifestFiles).toHaveLength(1);
+  const manifestPath = join(cacheDir, manifestFiles[0]);
+
+  // The package record starts at byte 72 (the 49-byte header and the registry
+  // hash and length, aligned to 8). Its name is at byte 32 of the record: a
+  // string (8 bytes), then the hash (8 bytes).
+  const hashOffset = 72 + 32 + 8;
+  const manifest = Buffer.from(await file(manifestPath).arrayBuffer());
+  expect(manifest.readBigUInt64LE(hashOffset)).toBe(nameHash);
+  manifest.writeBigUInt64LE(nameHash ^ 0xffffn, hashOffset);
+  await write(manifestPath, manifest);
+  expect(parseManifest(manifestPath, registryUrl()).name).toBe("dep-with-tags");
+
+  await Promise.all([
+    rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
+    rm(lockbPath, { force: true }),
+  ]);
+
+  // The root's dependency had already pooled the name by its bytes, so the
+  // size pass reserved nothing for it. The append looked the name up by the
+  // cached hash, found nothing, and wrote the name past the reserved bytes:
+  // "panic: range end index N out of range for slice of length M".
+  await using proc = spawn({
+    cmd: [bunExe(), "install", "--prefer-offline"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(err).toContain("Saved lockfile");
+  expect(out).toContain("+ dep-with-tags@1.0.0");
+  expect(exitCode).toBe(0);
+
+  expect(await nameHashes()).toEqual(hashes);
+});
+
+// A manifest cache entry is written to a temporary file in the temporary
+// directory and renamed into the cache directory. Every install on the machine
+// shares the temporary directory, so the temporary file name has to be unique
+// per writer. It used to be the package name hash and the current millisecond:
+// two installs that saved the same package in the same millisecond opened one
+// file, and the rename of one moved the other's bytes into its cache (an entry
+// for the wrong registry) or left it with no entry at all. Linux writes the
+// entry with O_TMPFILE and does not use the name.
+describe("manifest cache temporary files", () => {
+  const { parseManifest } = npm_manifest_test_helpers;
+  const name = "shared-temp-name";
+  const tarballPath = `/${name}-1.0.0.tgz`;
+  let tarball: Uint8Array;
+  beforeAll(async () => {
+    tarball = await new Bun.Archive(
+      { "package/package.json": JSON.stringify({ name, version: "1.0.0" }) },
+      { compress: "gzip" },
+    ).bytes();
+  });
+
+  function cacheDirOf(cwd: string) {
+    return join(cwd, ".bun-cache");
+  }
+
+  async function cacheEntries(cwd: string) {
+    return (await readdirSorted(cacheDirOf(cwd))).filter(entry => entry.endsWith(".npm"));
+  }
+
+  /**
+   * Serves `name` to the project at `cwd`. The manifest response waits for
+   * `hold`. The tarball response waits until the manifest's cache entry exists
+   * (bun install writes it from a thread pool task it does not wait for before
+   * exiting, so this keeps the install alive until the entry is on disk), or
+   * gives up after a few seconds so a lost write still ends as a failed assertion.
+   */
+  function serveRegistry(cwd: string, hold: () => Promise<void> = async () => {}) {
+    return Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        if (pathname === tarballPath) {
+          const deadline = Date.now() + 5_000;
+          while ((await cacheEntries(cwd)).length === 0 && Date.now() < deadline) await Bun.sleep(10);
+          return new Response(tarball);
+        }
+        if (pathname !== `/${name}`) return new Response("not found", { status: 404 });
+        await hold();
+        return Response.json({
+          name,
+          "dist-tags": { latest: "1.0.0" },
+          versions: { "1.0.0": { name, version: "1.0.0", dist: { tarball: `${origin}${tarballPath}` } } },
+        });
+      },
+    });
+  }
+
+  /** Installs `name` into the project at `cwd`, with its own cache directory, and returns the cache entry it left, by package name. */
+  async function installAndReadCache(cwd: string, registryHref: string) {
+    const cacheDir = cacheDirOf(cwd);
+    mkdirSync(cacheDir, { recursive: true });
+    await Promise.all([
+      write(join(cwd, "package.json"), JSON.stringify({ name: "app", dependencies: { [name]: "1.0.0" } })),
+      write(join(cwd, "bunfig.toml"), `[install]\nregistry = "${registryHref}"\n`),
+    ]);
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir },
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(out).toContain(`+ ${name}@1.0.0`);
+    expect(exitCode).toBe(0);
+
+    // parseManifest rejects an entry that was saved for another registry.
+    const entries = await cacheEntries(cwd);
+    try {
+      return {
+        entries,
+        cached: entries.length === 1 ? parseManifest(join(cacheDir, entries[0]), registryHref).name : undefined,
+      };
+    } catch (error) {
+      return { entries, cached: String(error) };
+    }
+  }
+
+  test("concurrent installs saving the same manifest keep their own cache entries", async () => {
+    const installs = 4;
+    for (let round = 0; round < 3; round++) {
+      // Every registry holds its manifest response until all of them have been
+      // asked, so the installs parse and save the manifest at the same time.
+      let asked = 0;
+      const { promise: allAsked, resolve: release } = Promise.withResolvers<void>();
+      const projects = Array.from({ length: installs }, (_, i) => join(packageDir, `round-${round}-${i}`));
+      const registries = projects.map(cwd =>
+        serveRegistry(cwd, () => {
+          if (++asked === installs) release();
+          return allAsked;
+        }),
+      );
+      try {
+        const results = await Promise.all(projects.map((cwd, i) => installAndReadCache(cwd, registries[i].url.href)));
+        expect({ round, cached: results.map(result => result.cached) }).toEqual({
+          round,
+          cached: Array(installs).fill(name),
+        });
+      } finally {
+        for (const server of registries) server.stop(true);
+      }
+    }
+  });
+
+  test("the temporary file is not named after the package and the current millisecond", async () => {
+    // A cold install caches the manifest as <hash of name>-<hash of registry url>.npm.
+    const first = join(packageDir, "first");
+    await using registry = serveRegistry(first);
+    const { entries, cached } = await installAndReadCache(first, registry.url.href);
+    expect(cached).toBe(name);
+    const nameHash = entries[0].slice(0, entries[0].indexOf("-"));
+    expect(nameHash).toMatch(/^[0-9a-f]{16}$/);
+
+    // Hold the manifest response until a directory sits at the old temporary
+    // file name of this package for every millisecond of the next seconds. An
+    // install that picks such a name cannot open it (EISDIR) and saves nothing.
+    const second = join(packageDir, "second");
+    const { promise: trapReady, resolve: trapIsReady } = Promise.withResolvers<void>();
+    await using trapped = serveRegistry(second, () => trapReady);
+    const installed = installAndReadCache(second, trapped.url.href);
+    const tmpDir = String(env.BUN_TMPDIR);
+    mkdirSync(tmpDir, { recursive: true });
+    const start = Date.now() - 100;
+    for (let ms = start; ms < Date.now() + 3_000 && ms < start + 10_000; ms++) {
+      mkdirSync(join(tmpDir, `${nameHash}.npm-${ms.toString(16).padStart(16, "0")}`));
+    }
+    trapIsReady();
+    expect((await installed).cached).toBe(name);
+  });
 });
 
 describe("manifest conditional requests", () => {

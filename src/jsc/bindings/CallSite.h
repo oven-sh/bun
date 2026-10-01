@@ -29,6 +29,7 @@ public:
         IsWasm = 16,
         IsFunction = 32,
         IsAsync = 64,
+        IsSloppyFunctionCall = 128,
     };
 
 private:
@@ -56,7 +57,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -64,12 +65,7 @@ public:
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
 
-        return WebCore::subspaceForImpl<CallSite, UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForCallSite.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCallSite = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForCallSite.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForCallSite = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<CallSite, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForCallSite, m_subspaceForCallSite));
     }
 
     JSC::JSValue thisValue() const { return m_thisValue.get(); }
@@ -84,6 +80,7 @@ public:
     bool isStrict() const { return m_flags & static_cast<unsigned int>(Flags::IsStrict); }
     bool isNative() const { return m_flags & static_cast<unsigned int>(Flags::IsNative); }
     bool isAsync() const { return m_flags & static_cast<unsigned int>(Flags::IsAsync); }
+    bool isSloppyFunctionCall() const { return m_flags & static_cast<unsigned int>(Flags::IsSloppyFunctionCall); }
 
     void setLineNumber(OrdinalNumber lineNumber) { m_lineNumber = lineNumber; }
     void setColumnNumber(OrdinalNumber columnNumber) { m_columnNumber = columnNumber; }

@@ -9,7 +9,8 @@ libraries/headers it provides.
 1. Copy `hdrhistogram.ts` (the simplest direct dep) to `<name>.ts`
 2. Fill in `name`, `repo`, `commit`, `sources`, `includes`, `provides.includes`
 3. Add `import { <name> } from "./<name>.ts"` + entry in `allDeps` array in `index.ts`
-4. `bun run scripts/build/phase3-test.ts` to verify it builds
+4. Add the name to `DepName` in `../source.ts`
+5. `bun run scripts/build/phase3-test.ts` to verify it builds
 
 That's it. For most deps you're done. If the dep's build is too entangled
 to list sources by hand (zlib-ng's per-file SIMD flags are about the
@@ -28,7 +29,7 @@ Case-sensitive filesystems enforce this.
 ## Removing a dependency
 
 1. Delete `<name>.ts`
-2. Remove from `allDeps` in `index.ts`
+2. Remove from `allDeps` in `index.ts`, and from `DepName` in `../source.ts`
 3. If any other dep has `fetchDeps: ["<name>"]`, remove that reference
 
 ## Updating a commit
@@ -59,7 +60,7 @@ bun bd --local-deps=mimalloc=~/code/mimalloc test foo.test.ts
 ```
 
 Any `github-archive` dep the graph compiles or includes can be redirected
-(so not lolhtml, which cargo reads from `vendor/lolhtml` via the workspace
+(so not lolhtml or rust-argon2, which cargo reads from `vendor/` via the workspace
 `Cargo.toml` — point that path at your checkout instead); several at once
 with `name=path,name=path`. Cross-dep references (`depSourceDir()`, e.g.
 lsquic's `-I` into boringssl) follow the redirect. The checkout is compiled
@@ -138,7 +139,7 @@ export const mydep: Dependency = {
   across the dep boundary into bun's call sites.
 - **`nested-cmake`**: Runs `cmake --fresh -B ...` then `cmake --build`.
   See `NestedCmakeBuild` in `../source.ts` for all fields.
-- **`cargo`**: Rust deps (currently just lolhtml). See `CargoBuild` in `../source.ts`.
+- **`cargo`**: Rust deps (currently lolhtml and rust-argon2). See `CargoBuild` in `../source.ts`.
 - **`none`**: Header-only or prebuilt. No build step; `.ref` stamp is the output.
 
 ## Worked examples

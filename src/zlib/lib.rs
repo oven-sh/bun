@@ -13,25 +13,12 @@ pub const MAX_WBITS: c_int = 15;
 unsafe extern "C" {
     pub safe fn zlibVersion() -> *const c_char;
 
-    pub fn compress(
-        dest: *mut Bytef,
-        dest_len: *mut uLongf,
-        source: *const Bytef,
-        source_len: uLong,
-    ) -> c_int;
     pub fn compress2(
         dest: *mut Bytef,
         dest_len: *mut uLongf,
         source: *const Bytef,
         source_len: uLong,
         level: c_int,
-    ) -> c_int;
-    pub safe fn compressBound(source_len: uLong) -> uLong;
-    pub fn uncompress(
-        dest: *mut Bytef,
-        dest_len: *mut uLongf,
-        source: *const Bytef,
-        source_len: uLong,
     ) -> c_int;
 }
 
@@ -40,8 +27,7 @@ pub use bun_zlib_sys::shared::{Bytef, uInt, uLong, uLongf};
 // typedef voidpf (*alloc_func) OF((voidpf opaque, uInt items, uInt size));
 // typedef void   (*free_func)  OF((voidpf opaque, voidpf address));
 
-pub use crate::internal::z_stream;
-pub use crate::internal::z_streamp;
+pub use bun_zlib_sys::shared::{z_stream, z_streamp};
 
 // typedef struct z_stream_s {
 //     z_const Bytef *next_in;  /* next input byte */
@@ -65,10 +51,9 @@ pub use crate::internal::z_streamp;
 //     uLong   reserved;   /* reserved for future use */
 // } z_stream;
 
-pub use crate::internal::FlushValue;
-pub use crate::internal::ReturnCode;
+pub use bun_zlib_sys::shared::{FlushValue, ReturnCode};
 
-use crate::internal::{DataType, zStream_struct};
+use bun_zlib_sys::shared::{DataType, zStream_struct};
 
 // ZEXTERN int ZEXPORT inflateInit OF((z_streamp strm));
 
@@ -385,7 +370,6 @@ impl<'a> ZlibReaderArrayList<'a> {
             Ok(())
         })();
 
-        // defer epilogue (runs unconditionally):
         let total_out = self.zlib.total_out as usize;
         if self.list_ptr.len() > total_out {
             self.list_ptr.truncate(total_out);
@@ -954,7 +938,15 @@ impl DeflateEncoder {
         reserve: usize,
         flush: FlushValue,
     ) -> (usize, ReturnCode) {
-        step(&mut self.strm, input, out, reserve, flush, deflate)
+        step(
+            &mut self.strm,
+            input,
+            out,
+            reserve,
+            usize::MAX,
+            flush,
+            deflate,
+        )
     }
 }
 
@@ -1019,6 +1011,11 @@ impl InflateDecoder {
         rc
     }
 
+    #[inline]
+    pub fn is_inflating(&self) -> bool {
+        matches!(self.state, State::Inflating)
+    }
+
     /// One `inflate()` call writing into `out`'s spare capacity. Same
     /// contract as [`DeflateEncoder::step`].
     pub fn step(
@@ -1028,12 +1025,21 @@ impl InflateDecoder {
         reserve: usize,
         flush: FlushValue,
     ) -> (usize, ReturnCode) {
-        step(&mut self.strm, input, out, reserve, flush, inflate)
+        step(
+            &mut self.strm,
+            input,
+            out,
+            reserve,
+            usize::MAX,
+            flush,
+            inflate,
+        )
     }
 
-    /// Consume all of `input`, appending decompressed output to `out`
-    /// (growing by 4096-byte steps, capped at `max_output_size`). Returns
-    /// `ShortRead` when more input is required and `is_done` is false.
+    /// Append decompressed output to `out` (growing by 4096-byte steps, capped at
+    /// `max_output_size`) until `input` is consumed or `out.len()` reaches `max_output`.
+    /// Returns the input bytes consumed. Returns `ShortRead` when more input is required and
+    /// `is_done` is false.
     ///
     /// The stream state persists across calls so this can be driven one
     /// body chunk at a time.
@@ -1041,10 +1047,12 @@ impl InflateDecoder {
         &mut self,
         mut input: &[u8],
         out: &mut Vec<u8>,
+        max_output: usize,
         is_done: bool,
-    ) -> Result<(), ZlibError> {
+    ) -> Result<usize, ZlibError> {
+        let input_len = input.len();
         if matches!(self.state, State::Error) {
-            return Ok(());
+            return Ok(input_len);
         }
         if matches!(self.state, State::End) {
             // A prior call completed a gzip member at the chunk boundary.
@@ -1057,17 +1065,29 @@ impl InflateDecoder {
                     return Err(ZlibError::ZlibError);
                 }
             } else {
-                return Ok(());
+                return Ok(input_len);
             }
         }
         loop {
+            if out.len() >= max_output {
+                return Ok(input_len - input.len());
+            }
             let remaining = self.max_output_size.saturating_sub(out.len());
             if remaining == 0 {
                 self.state = State::Error;
                 return Err(ZlibError::ZlibError);
             }
-            let reserve = remaining.min(4096);
-            let (consumed, rc) = self.step(input, out, reserve, FlushValue::NoFlush);
+            let budget = max_output - out.len();
+            let reserve = remaining.min(4096).min(budget);
+            let (consumed, rc) = step(
+                &mut self.strm,
+                input,
+                out,
+                reserve,
+                budget,
+                FlushValue::NoFlush,
+                inflate,
+            );
             input = &input[consumed..];
             self.state = State::Inflating;
             if out.len() > self.max_output_size {
@@ -1088,7 +1108,7 @@ impl InflateDecoder {
                         }
                         continue;
                     }
-                    return Ok(());
+                    return Ok(input_len);
                 }
                 ReturnCode::MemError => {
                     self.state = State::Error;
@@ -1157,6 +1177,7 @@ fn step(
     input: &[u8],
     out: &mut Vec<u8>,
     reserve: usize,
+    limit: usize,
     flush: FlushValue,
     op: unsafe extern "C" fn(*mut zStream_struct, FlushValue) -> ReturnCode,
 ) -> (usize, ReturnCode) {
@@ -1169,7 +1190,7 @@ fn step(
     strm.avail_in = in_len as uInt;
 
     let spare = out.spare_capacity_mut();
-    let out_len = spare.len().min(u32::MAX as usize);
+    let out_len = spare.len().min(limit).min(u32::MAX as usize);
     strm.next_out = spare.as_mut_ptr().cast::<u8>();
     strm.avail_out = out_len as uInt;
 
@@ -1183,16 +1204,4 @@ fn step(
     unsafe { bun_core::vec::commit_spare(out, produced) };
     let consumed = in_len - strm.avail_in as usize;
     (consumed, rc)
-}
-
-// Re-export from bun_zlib_sys, platform-selected.
-mod internal {
-    #[cfg(not(windows))]
-    pub(super) use bun_zlib_sys::posix::{DataType, zStream_struct};
-    #[cfg(not(windows))]
-    pub use bun_zlib_sys::posix::{FlushValue, ReturnCode, z_stream, z_streamp};
-    #[cfg(windows)]
-    pub(super) use bun_zlib_sys::win32::{DataType, zStream_struct};
-    #[cfg(windows)]
-    pub use bun_zlib_sys::win32::{FlushValue, ReturnCode, z_stream, z_streamp};
 }

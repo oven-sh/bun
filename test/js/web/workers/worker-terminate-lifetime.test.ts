@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tls } from "harness";
 import { join } from "path";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
@@ -725,6 +725,48 @@ test(
   timeout,
 );
 
+// Spawns workers that each start `connectExpr` in one immediate and call
+// process.exit(0) in the next, so whatever that connect attempt left behind is
+// still pending when the worker's VM tears down.
+async function exitRightAfterConnecting(connectExpr: string) {
+  const workers = slow ? 8 : 24;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { Worker } = require("node:worker_threads");
+      const src =
+        "const { parentPort } = require('node:worker_threads');" +
+        "Bun.file(process.execPath).slice(0, 100).json().catch(() => {});" +
+        ${JSON.stringify(`setImmediate(() => ${connectExpr}.catch(() => {}));`)} +
+        "parentPort.postMessage('up');" +
+        "setImmediate(() => process.exit(0));";
+      let started = 0, exited = 0;
+      function again() {
+        if (started >= ${workers}) {
+          if (exited === ${workers}) console.log("PASS");
+          return;
+        }
+        started++;
+        const w = new Worker(src, { eval: true });
+        w.on("error", (e) => { console.error(e); process.exit(1); });
+        w.on("exit", () => { exited++; again(); });
+      }
+      again(); again();
+    `,
+    ],
+    env: { ...bunEnv, UV_THREADPOOL_SIZE: "4" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("PASS\n");
+  expect(exitCode).toBe(0);
+}
+
 // For a debug build: host code that runs after the worker's own process.exit()
 // unwound script — here a redis connect started in the same immediate tick as
 // the exit, whose ECONNREFUSED then lands in that loop tick — builds JS error
@@ -735,43 +777,62 @@ test(
 // for as long as it keeps the exception.
 test.skipIf(!isDebug)(
   "process.exit() with native error completions landing in the same tick does not trip DeferTermination",
+  () =>
+    exitRightAfterConnecting(
+      "new Bun.RedisClient('redis://127.0.0.1:9', { connectionTimeout: 100, autoReconnect: false }).connect()",
+    ),
+  timeout,
+);
+
+// A TLS context that cannot be built fails the dial before there is a socket;
+// the redis client then settles that from a task it queues on the event loop,
+// holding a ref to itself and the loop. The exit in the next immediate tears
+// the VM down with that task still queued, so it has to be released without
+// running (a debug build asserts on the refcount if either ref is mishandled;
+// the ASAN build reports the leak).
+test.skipIf(!isDebug && !isASAN)(
+  "process.exit() with a redis client's deferred close still queued releases it cleanly",
+  () =>
+    exitRightAfterConnecting(
+      "new Bun.RedisClient('rediss://127.0.0.1:9', { tls: { key: 'x', cert: 'x' }, autoReconnect: false }).connect()",
+    ),
+  timeout,
+);
+
+// The same task, queued by a first command whose dial failed outright (a unix
+// socket path nobody listens on), with the command itself still queued behind it.
+test.skipIf((!isDebug && !isASAN) || isWindows)(
+  "process.exit() with a redis client's deferred close and a queued command releases both cleanly",
+  () => exitRightAfterConnecting("new Bun.RedisClient('redis+unix:///nonexistent/redis.sock').ping()"),
+  timeout,
+);
+
+// The same deferred close on the main thread, left to run: it settles the
+// connect and drops its refs, so nothing keeps the event loop alive and the
+// process exits on its own.
+test(
+  "a redis client whose TLS context cannot be built does not keep the process alive",
   async () => {
-    const workers = slow ? 8 : 24;
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
-        const { Worker } = require("node:worker_threads");
-        const src =
-          "const { parentPort } = require('node:worker_threads');" +
-          "Bun.file(process.execPath).slice(0, 100).json().catch(() => {});" +
-          "setImmediate(() => new Bun.RedisClient('redis://127.0.0.1:9', { connectionTimeout: 100, autoReconnect: false }).connect().catch(() => {}));" +
-          "parentPort.postMessage('up');" +
-          "setImmediate(() => process.exit(0));";
-        let started = 0, exited = 0;
-        function again() {
-          if (started >= ${workers}) {
-            if (exited === ${workers}) console.log("PASS");
-            return;
-          }
-          started++;
-          const w = new Worker(src, { eval: true });
-          w.on("error", (e) => { console.error(e); process.exit(1); });
-          w.on("exit", () => { exited++; again(); });
-        }
-        again(); again();
-      `,
+        new Bun.RedisClient("rediss://127.0.0.1:1", { tls: { key: "x", cert: "x" }, autoReconnect: false })
+          .connect()
+          .catch(err => console.log("connect rejected", err.code));
+        `,
       ],
-      env: { ...bunEnv, UV_THREADPOOL_SIZE: "4" },
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
-
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("PASS\n");
-    expect(exitCode).toBe(0);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "connect rejected ERR_REDIS_CONNECTION_CLOSED\n",
+      stderr: "",
+      exitCode: 0,
+    });
   },
   timeout,
 );
@@ -895,6 +956,49 @@ test(
     expect(stderr).toBe("");
     expect(stdout).toBe("worker exit 0\n");
     expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// A worker torn down while a Bun.spawn() child with `stdin: "pipe"` is alive and script never read
+// `.stdin`: the Subprocess then holds the only ref on the stdin FileSink. On Windows the stop phase
+// closes that pipe, and the close notifies the Subprocess, which drops its ref: the sink was freed
+// while FileSink::on_close still used it (debug build: "misaligned pointer dereference ... 0xdfdfdfdfdfdf").
+// Only a Windows debug build fails here without the fix: a release build reads the freed sink
+// silently, and no other platform closes the pipe in the stop phase. filesink.test.ts has the same
+// close through a testing hook, which ASAN catches on every platform.
+test(
+  "worker terminate with a live spawned child whose stdin pipe was never read from script",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const w = new Worker(\`
+          // The child lives until its stdin reaches EOF, so it is alive when the worker is torn down.
+          globalThis.keep = Bun.spawn({
+            cmd: [process.execPath, "-e", "process.stdin.on('data', () => {}).on('end', () => process.exit(0))"],
+            stdin: "pipe",
+            stdout: "ignore",
+            stderr: "ignore",
+          });
+          require("node:worker_threads").parentPort.postMessage("spawned");
+        \`, { eval: true });
+        w.on("error", (e) => { console.error(e); process.exit(1); });
+        w.once("message", async () => {
+          await w.terminate();
+          console.log("terminated");
+        });
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "terminated\n", stderr: "", exitCode: 0 });
   },
   timeout,
 );
@@ -1096,6 +1200,104 @@ test(
     // well and unrelated to what this test guards; anything else on stderr fails the test.
     expect(stderr.split("\n").filter(l => l.trim() !== "" && l.trim() !== "error")).toEqual([]);
     expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// A worker that ends while a stream is still being piped into a FileSink (Bun.write(file, body), a
+// Bun.spawn() stdin). The pipe's controller cell holds no ref on the sink and dies attached only in
+// the VM's last sweep, where its destructor ran the JS wrapper's FileSink::finalize: that releases
+// the keep-alive ref and then a ref of its own. For a native source (a fetch() body, a child's
+// stdout) the keep-alive ref was the last one, so the rest of finalize ran on the freed sink (ASAN
+// heap-use-after-free in FileSink::finalize), and for every source the freed sink's Drop detached
+// the cell being destroyed (debug JSC "ASSERTION FAILED: decontaminate()").
+test(
+  "a worker ends while a stream is still being piped into a FileSink",
+  async () => {
+    const cells = [
+      ["Bun.write(path, response)", "terminate()"],
+      ["Bun.write(path, response)", "process.exit()"],
+      ["Bun.write(path, response)", "uncaught throw"],
+      ["Bun.file(path).write(response)", "terminate()"],
+      ["Bun.write(path, new Response(response.body))", "terminate()"],
+      ["Bun.write(path, new Response(child.stdout))", "terminate()"],
+      ["Bun.write(path, new Response(jsStream))", "terminate()"],
+      ["Bun.spawn({ stdin: response.body })", "terminate()"],
+      // Windows closes a worker's pipes in the stop phase, before the last sweep, and the sink then
+      // keeps the ref of its pending JS pump: a leak on another path than the one tested here.
+      ...(isWindows ? [] : [["Bun.spawn({ stdin: jsStream })", "terminate()"]]),
+    ];
+    using dir = tempDir("worker-ends-mid-pipe", {
+      "worker.js": `
+        const { parentPort, workerData } = require("node:worker_threads");
+        const { url, out, door, end } = workerData;
+        // One chunk, then the source stays open: the pipe is live when this worker ends.
+        const stalled = () => new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(1024)); return new Promise(() => {}); } });
+        // This child exits when its stdin closes: with this worker's sink, or with the process.
+        const drainStdin = "for await (const _ of Bun.stdin.stream()) {}";
+        const doors = {
+          "Bun.write(path, response)": async () => void Bun.write(out, await fetch(url)),
+          "Bun.file(path).write(response)": async () => void Bun.file(out).write(await fetch(url)),
+          "Bun.write(path, new Response(response.body))": async () => void Bun.write(out, new Response((await fetch(url)).body)),
+          "Bun.write(path, new Response(child.stdout))": async () => {
+            // The child outlives this worker, like the Blob stdin test's child above.
+            const child = Bun.spawn({ cmd: [process.execPath, "-e", "process.stdout.write(Buffer.alloc(65536)); setTimeout(() => {}, 3000)"], stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+            void Bun.write(out, new Response(child.stdout));
+          },
+          "Bun.write(path, new Response(jsStream))": async () => void Bun.write(out, new Response(stalled())),
+          "Bun.spawn({ stdin: response.body })": async () => void Bun.spawn({ cmd: [process.execPath, "-e", drainStdin], stdin: (await fetch(url)).body, stdout: "ignore", stderr: "ignore" }),
+          "Bun.spawn({ stdin: jsStream })": async () => void Bun.spawn({ cmd: [process.execPath, "-e", drainStdin], stdin: stalled(), stdout: "ignore", stderr: "ignore" }),
+        };
+        const ends = {
+          "terminate()": () => parentPort.postMessage("piping"),
+          "process.exit()": () => process.exit(0),
+          "uncaught throw": () => setTimeout(() => { throw new Error("uncaught"); }, 0),
+        };
+        doors[door]().then(ends[end]);
+      `,
+      "main.js": `
+        const { Worker } = require("node:worker_threads");
+        const { fileSinkInternals } = require("bun:internal-for-testing");
+        const { join } = require("node:path");
+        const server = Bun.serve({
+          port: 0,
+          idleTimeout: 0,
+          fetch: () => new Response(new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(65536)); return new Promise(() => {}); } })),
+        });
+        const cells = JSON.parse(process.argv[2]);
+        (async () => {
+          const baseline = fileSinkInternals.liveCount();
+          const failures = [];
+          await Promise.all(cells.map(async ([door, end], i) => {
+            const w = new Worker(join(__dirname, "worker.js"), { workerData: { url: server.url.href, out: join(__dirname, "out-" + i + ".bin"), door, end } });
+            // The exit event follows the worker's VM teardown, where the sink is released.
+            const exited = new Promise(resolve => w.once("exit", resolve));
+            w.on("error", error => { if (end !== "uncaught throw") failures.push(door + ": " + error); });
+            if (end === "terminate()") {
+              const piping = await Promise.race([new Promise(resolve => w.once("message", resolve)), exited]);
+              if (piping === "piping") await w.terminate();
+              else failures.push(door + ": exited before the pipe was live");
+            }
+            await exited;
+          }));
+          server.stop(true);
+          console.log(JSON.stringify({ failures, leakedFileSinks: fileSinkInternals.liveCount() - baseline }));
+          process.exit(0);
+        })();
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js", JSON.stringify(cells)],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(JSON.stringify({ failures: [], leakedFileSinks: 0 }) + "\n");
     expect(exitCode).toBe(0);
   },
   timeout,

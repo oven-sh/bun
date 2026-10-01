@@ -81,13 +81,6 @@ impl Compressor {
         libdeflate_alloc_compressor(compression_level)
     }
 
-    /// Frees the compressor. `this` must not be used afterward.
-    pub unsafe fn destroy(this: *mut Compressor) {
-        // SAFETY: caller guarantees `this` was returned by libdeflate_alloc_compressor
-        // and is not used after this call.
-        unsafe { libdeflate_free_compressor(this) }
-    }
-
     /// Compresses `input` into `output` and returns the number of bytes written.
     pub(crate) fn inflate(&mut self, input: &[u8], output: &mut [u8]) -> Result {
         // SAFETY: self is a valid *mut Compressor; slice ptr/len pairs are valid.
@@ -260,13 +253,6 @@ bun_opaque::opaque_ffi! {
 impl Decompressor {
     pub(crate) fn alloc() -> *mut Decompressor {
         libdeflate_alloc_decompressor()
-    }
-
-    /// Frees the decompressor. `this` must not be used afterward.
-    pub unsafe fn destroy(this: *mut Decompressor) {
-        // SAFETY: caller guarantees `this` was returned by libdeflate_alloc_decompressor[_ex]
-        // and is not used after this call.
-        unsafe { libdeflate_free_decompressor(this) }
     }
 
     pub(crate) fn deflate(&mut self, input: &[u8], output: &mut [u8]) -> Result {
@@ -530,14 +516,6 @@ pub enum Status {
 }
 
 unsafe extern "C" {
-    pub fn libdeflate_deflate_decompress(
-        decompressor: *mut Decompressor,
-        in_: *const c_void,
-        in_nbytes: usize,
-        out: *mut c_void,
-        out_nbytes_avail: usize,
-        actual_out_nbytes_ret: *mut usize,
-    ) -> Status;
     pub(crate) fn libdeflate_deflate_decompress_ex(
         decompressor: *mut Decompressor,
         in_: *const c_void,

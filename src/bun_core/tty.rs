@@ -1,8 +1,6 @@
 use core::ffi::{c_int, c_void};
 
-// ─── MOVE-IN: Winsize (TYPE_ONLY from bun_sys → bun_core) ─────────────────
-// Used by output.rs::TERMINAL_SIZE. Field names
-// match the move-out forward-ref in output.rs (row/col, not ws_row/ws_col).
+/// Terminal size as reported by the tty (`struct winsize` on POSIX).
 #[repr(C)]
 #[derive(Clone, Copy, Default, Debug)]
 pub struct Winsize {
@@ -13,8 +11,6 @@ pub struct Winsize {
 }
 // SAFETY: four `u16` fields; all-zero is a valid `Winsize`.
 unsafe impl crate::ffi::Zeroable for Winsize {}
-// SAFETY: `#[repr(C)]` over four `u16` — exactly 8 bytes, no padding.
-crate::unsafe_impl_atom!(Winsize);
 
 #[repr(C)]
 #[derive(Copy, Clone, Eq, PartialEq)]

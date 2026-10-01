@@ -608,6 +608,44 @@ describe("junit reporter", () => {
     expect(longPathCase.failure[0]._).toContain(`at fromLongPath (${longPath}:1:`);
     expect(pathCase.failure[0]._).toContain("at fromPath (generated.js:1:");
   });
+
+  it("includes the type, message and location of a build or resolve error in <failure>", async () => {
+    await using tmpDir = tempDir("junit-build-error", {
+      "package.json": "{}",
+      "broken.js": "const x = ;\n",
+      "load.test.js": `
+        import { test } from "bun:test";
+        test("syntax error", async () => { await import("./broken.js"); });
+        test("missing module", async () => { await import("./does-not-exist.js"); });
+      `,
+    });
+
+    const junitPath = join(tmpDir, "junit.xml");
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: tmpDir,
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const xmlContent = await file(junitPath).text();
+    const result = await new Promise((resolve, reject) => {
+      xml2js.parseString(xmlContent, { strict: true }, (err, r) => (err ? reject(err) : resolve(r)));
+    });
+    const [syntax, missing] = result.testsuites.testsuite[0].testcase;
+
+    expect(syntax.failure).toEqual([
+      {
+        $: { type: "BuildMessage", message: "Unexpected ;" },
+        _: "BuildMessage: Unexpected ;\n      at broken.js:1:11\n",
+      },
+    ]);
+    expect(missing.failure[0].$.type).toBe("ResolveMessage");
+    expect(missing.failure[0].$.message).toStartWith("Cannot find module './does-not-exist.js' from ");
+    expect(missing.failure[0]._).toStartWith("ResolveMessage: Cannot find module './does-not-exist.js' from ");
+    expect(exitCode).toBe(1);
+  });
 });
 
 function filterJunitXmlOutput(xmlContent) {

@@ -6033,6 +6033,47 @@ impl VirtualMachine {
         }
     }
 
+    /// `BuildMessage` and `ResolveMessage` print from their `Msg`, so `print_error_instance_body` never calls the hook for them.
+    #[inline]
+    fn report_msg_to_print_hook(
+        &self,
+        name: &'static str,
+        msg: &bun_ast::Msg,
+        allow_side_effects: bool,
+    ) {
+        #[cold]
+        fn call(
+            hook: fn(*mut c_void, &ZigException),
+            ctx: *mut c_void,
+            name: &'static str,
+            msg: &bun_ast::Msg,
+        ) {
+            let mut frame = [crate::ZigStackFrame::ZERO];
+            let mut frames_len = 0;
+            if let Some(location) = &msg.data.location
+                && !location.file.is_empty()
+            {
+                frame[0].source_url = bun_core::String::from_bytes(&location.file);
+                if location.line > 0 {
+                    frame[0].position.line = bun_core::Ordinal::from_one_based(location.line);
+                    if location.column > 0 {
+                        frame[0].position.column =
+                            bun_core::Ordinal::from_one_based(location.column);
+                    }
+                }
+                frames_len = 1;
+            }
+            let stack = crate::ZigStackTrace::from_frames(&mut frame[..frames_len]);
+            let mut exception = ZigException::with_stack(stack);
+            exception.name = bun_core::String::static_(name);
+            exception.message = bun_core::String::from_bytes(&msg.data.text);
+            hook(ctx, &exception);
+        }
+        if allow_side_effects && let Some(hook) = self.on_print_error_zig_exception {
+            call(hook, self.on_print_error_zig_exception_ctx, name, msg);
+        }
+    }
+
     fn print_error_from_maybe_private_data(
         &mut self,
         value: JSValue,
@@ -6056,6 +6097,7 @@ impl VirtualMachine {
             // `as_class_ref` is the audited `as_::<T>() → &T` backref-deref;
             // R-2: shared borrow — `logged` is `Cell<bool>`.
             if let Some(build_error) = value.as_class_ref::<crate::BuildMessage>() {
+                self.report_msg_to_print_hook("BuildMessage", &build_error.msg, allow_side_effects);
                 if !build_error.logged.get() {
                     if self.had_errors {
                         let _ = writer.write_all(b"\n");
@@ -6075,6 +6117,11 @@ impl VirtualMachine {
                 bun_core::Output::flush();
                 return true;
             } else if let Some(resolve_error) = value.as_class_ref::<crate::ResolveMessage>() {
+                self.report_msg_to_print_hook(
+                    "ResolveMessage",
+                    &resolve_error.msg,
+                    allow_side_effects,
+                );
                 if !resolve_error.logged.get() {
                     if self.had_errors {
                         let _ = writer.write_all(b"\n");

@@ -86,3 +86,5 @@ Results (2026-10-01):
   rules-sim.cjs on cases/ts-getter-return.json: 39 of 44 the same, 5 the same but for the start of a class member.
   rules-sim.cjs on fuzz-ts.cjs lists (three rules without no-fallthrough): 2,973 constructors 2,905 the same, 68 differ
   only in the place of a `public constructor`; 2,738 getters 2,498 the same, 238 + 2 only in the start of a class member.
+  rules-sim.cjs, no-fallthrough alone over every case of ESLint's rule tests: 27,826 of 27,833 the same, the 7 others have a
+  clause that ends with `;`.

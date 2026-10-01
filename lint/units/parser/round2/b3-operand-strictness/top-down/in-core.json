@@ -1,0 +1,8 @@
+[
+{"g":"the list of L2 and of the brief"},
+"a + b = c;", "-a = b;", "a++ = b;", "async function f() { await x = y; }", "<T>a = c;", "a++ ++;", "a--.b;", "++ delete a.b;",
+"function* g() { yield*; }", "a.\nb in c;", "(a + b = c);", "f(a + b = c);", "(a + b) = c;", "a! = c;",
+["js","a + b = c;"], ["js","-a = b;"], ["js","a++ = b;"], ["js","async function f() { await x = y; }"], ["js","a++ ++;"], ["js","a--.b;"],
+["js","++ delete a.b;"], ["js","function* g() { yield*; }"], ["js","a.\nb in c;"], ["js","(a + b = c);"], ["js","f(a + b = c);"], ["js","(a + b) = c;"],
+["tsx","a + b = c;"], ["tsx","a++ ++;"], ["tsx","a--.b;"], ["jsx","a + b = c;"], ["jsx","a.\nb in c;"]
+]

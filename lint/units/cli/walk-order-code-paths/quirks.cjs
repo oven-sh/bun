@@ -67,7 +67,7 @@ for (const s of sources) {
 			? { parser: (tsParser = tsParser || require("module").createRequire("/workspace/ref/tseslint/package.json")("@typescript-eslint/parser")), parserOptions: { ecmaFeatures: { jsx: !!s.jsx } }, sourceType }
 			: { ecmaVersion: "latest", sourceType, parserOptions: { ecmaFeatures: { jsx: true } } };
 		try {
-			const m = linter.verify(s.code, [{ files: ["**/*"], plugins: { t: { rules: { r: rule } } }, rules: { "t/r": 2 }, languageOptions }], { filename: s.ts ? (s.jsx ? "c.tsx" : "c.ts") : "c.js" });
+			const m = linter.verify(s.code, [{ files: ["**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}"], plugins: { t: { rules: { r: rule } } }, rules: { "t/r": 2 }, languageOptions }], { filename: s.ts ? (s.jsx ? "c.tsx" : "c.ts") : "c.js" });
 			if (!m.some(x => x.fatal)) { ok = true; break; }
 		} catch (e) {
 			threw++;

@@ -96,3 +96,32 @@ test/cli/lint/conformance.test.ts:
  0 fail
  190 expect() calls
 Ran 118 tests across 1 file. [16.49s]
+
+# alternative.patch in its last form (run7.sh)
+--- t3-release
+bun test v1.4.3-canary.1 (be1ebe529)
+
+test/cli/lint/conformance.test.ts:
+
+ 119 pass
+ 0 fail
+ 202 expect() calls
+Ran 119 tests across 1 file. [32.11s]
+--- t3-installed
+
+1 tests failed:
+(fail) default check > the binary under test is a linter: a unit without an error passes an instance without errors, a syntax error fails it [202.12ms]
+
+ 118 pass
+ 1 fail
+ 201 expect() calls
+Ran 119 tests across 1 file. [3.70s]
+--- t3-debug-leak
+
+test/cli/lint/conformance.test.ts:
+
+ 32 pass
+ 87 filtered out
+ 0 fail
+ 46 expect() calls
+Ran 32 tests across 1 file. [69.88s]

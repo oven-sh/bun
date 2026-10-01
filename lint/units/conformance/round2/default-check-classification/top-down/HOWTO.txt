@@ -1,0 +1,44 @@
+Research of the default check (top-down pass, round 2). Nothing here is in the worktree.
+
+The rulings are those of ../bottom-up (same outcomes, same names that are no rules, same tests of a rule report). This
+pass built its own prototype from the goal, ran both over the whole test file, and recommends ONE thing to apply:
+
+  1. ../bottom-up/default-check.patch        the six files of the unit, against 3110ce85cf
+  2. amend-bottom-up.patch                   over it: patch -p1 < amend-bottom-up.patch in the root of the worktree
+       - check_bun_lint.ts: Bun.spawn gets maxBuffer 16 MiB, so a command that writes without end is ended (SIGKILL) and
+         cannot fill the memory of a sweep (probes/maxbuf.ts: killed at the cap, 59 ms).
+       - run.ts: a crash and a timeout carry `program: { rootFiles, currentDirectory }`, the files that the check was given;
+         sweep.ts takes the operands of its lists `crashes` and `timeouts` from it and no longer calls layOut for them
+         (that call is what collides with round2/runner-corpus-binding, which moves layOut out of sweep.ts).
+       - conformance.test.ts: spawnTimeout is 20 s in a release build (was the default 5 s): with the load of this
+         machine (600 to 740) twenty tests that wait for one shared probe timed out at 5 s (observed/tests.txt).
+
+alternative.patch
+  The prototype of this pass, whole, against 3110ce85cf: the same rulings with other mechanics (the check throws an error
+  with a member `death` for a dead command, and returns `failure`, `named` and `ruleReports`). It is NOT to be applied
+  with the two above. It is kept because it was run over the whole file and the whole corpus, and for its parts that
+  the other patch lacks: one process for each test of the block, an excerpt that keeps the lines that name a fault.
+
+What ran (2026-10-01, Linux x64; scratch clones of 3110ce85cf made with ../../scratch.sh <dir> --prototype):
+  1 + 2:  release build of be1ebe5295 (the src of 3110ce85cf, has --lint), whole file: 118 pass, 0 fail, 9.87 s
+          debug build of the worktree with the leak settings of CI, whole file: 116 pass, 1 skip, 1 fail; the failure is
+            "error baselines > read and written again ...: group 10", timed out at 5 s: CPU-bound, not of this block
+          installed bun 1.4.3 (no --lint), whole file: 116 pass, 2 fail: the probe of the binary under test (wanted) and
+            "enumerator > every instance is its line of the list ..." timed out at 30 s under load
+          sweep with probes/bun-fake (dies on one file, exits 134 on one, hangs on one): crash 2, timeout 1, each in the
+            lists `crashes` and `timeouts` of the report with operands, current directory and what was left
+  alternative.patch: release 119 pass; installed bun 118 pass, 1 fail (wanted); debug with the leak settings, whole
+          file 118 pass, 1 skip (before its last three small edits), -t "default check" 32 pass (after them);
+          the whole corpus with the release build, --jobs 4: E 0 of 7,027, C 5,650 of 5,770, unsupported 186, no crash,
+          no timeout (observed/sweep-release-alternative.txt); conformance/parser with the debug build: no crash, no timeout
+  Not run: anything on Windows or macOS (no machine in this session); the whole corpus with the debug build.
+
+probes/ (they read /tmp/dcc-scratch, a scratch clone with the corpus; adjust the path at the top)
+  survey.ts     the operands that the default check hands over, by extension, over the 12,797 run instances
+  raw.ts        every run instance through `<bin> --lint <operands>`; what came back, as JSON lines
+  analyze.ts    the rules over such a file: classes, codes, samples
+  codes2.ts     oracles of class E by the codes of the parser's table (src/js_parser/parse/syntax_errors.rs)
+  probe.ts      probe() against binaries
+  maxbuf.ts     Bun.spawn with maxBuffer
+  bun-fake      a stand-in binary for a sweep: SIGABRT after a long report on one file, exit code 134 on one, a hang on one
+  run4.sh, run6.sh, run7.sh   the test runs above, each through /workspace/tools/lk

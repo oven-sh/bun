@@ -1,6 +1,6 @@
 diff -ruN a/test/cli/lint/conformance/fixtures/lints-fixture.ts b/test/cli/lint/conformance/fixtures/lints-fixture.ts
 --- a/test/cli/lint/conformance/fixtures/lints-fixture.ts	2026-10-01 12:50:11.649923858 +0000
-+++ b/test/cli/lint/conformance/fixtures/lints-fixture.ts	2026-10-01 12:50:12.818864073 +0000
++++ b/test/cli/lint/conformance/fixtures/lints-fixture.ts	2026-10-01 13:40:44.097553251 +0000
 @@ -1,39 +1,64 @@
 -// A command that stands for a linter: it reads its operands and never runs them. A line of an operand that starts with "//~ " tells it what to do.
 +// A command that stands for `bun --lint`: it reads its operands and never runs them. A line of an operand that starts with "//~ " tells it what to do.
@@ -118,7 +118,7 @@ diff -ruN a/test/cli/lint/conformance/fixtures/lints-fixture.ts b/test/cli/lint/
  
 diff -ruN a/test/cli/lint/conformance/runner/check_bun_lint.ts b/test/cli/lint/conformance/runner/check_bun_lint.ts
 --- a/test/cli/lint/conformance/runner/check_bun_lint.ts	2026-10-01 12:50:11.564923252 +0000
-+++ b/test/cli/lint/conformance/runner/check_bun_lint.ts	2026-10-01 12:50:12.366661283 +0000
++++ b/test/cli/lint/conformance/runner/check_bun_lint.ts	2026-10-01 13:40:42.807543715 +0000
 @@ -4,7 +4,7 @@
  import { tsgoRules } from "./diagnosticwriter";
  import { isDefaultLibraryFile } from "./error_baseline";
@@ -338,7 +338,7 @@ diff -ruN a/test/cli/lint/conformance/runner/check_bun_lint.ts b/test/cli/lint/c
  }
 diff -ruN a/test/cli/lint/conformance/runner/index.ts b/test/cli/lint/conformance/runner/index.ts
 --- a/test/cli/lint/conformance/runner/index.ts	2026-10-01 12:50:11.566516300 +0000
-+++ b/test/cli/lint/conformance/runner/index.ts	2026-10-01 12:50:12.367544328 +0000
++++ b/test/cli/lint/conformance/runner/index.ts	2026-10-01 13:40:44.038155814 +0000
 @@ -30,6 +30,7 @@
    Check,
    CheckInput,
@@ -349,7 +349,7 @@ diff -ruN a/test/cli/lint/conformance/runner/index.ts b/test/cli/lint/conformanc
    Outcome,
 diff -ruN a/test/cli/lint/conformance/runner/run.ts b/test/cli/lint/conformance/runner/run.ts
 --- a/test/cli/lint/conformance/runner/run.ts	2026-10-01 12:50:11.567923273 +0000
-+++ b/test/cli/lint/conformance/runner/run.ts	2026-10-01 12:50:12.367504937 +0000
++++ b/test/cli/lint/conformance/runner/run.ts	2026-10-01 13:40:44.034552785 +0000
 @@ -72,9 +72,27 @@
    standIns?: string[];
    // Why the check cannot check the instance.
@@ -475,7 +475,7 @@ diff -ruN a/test/cli/lint/conformance/runner/run.ts b/test/cli/lint/conformance/
        try {
 diff -ruN a/test/cli/lint/conformance/sweep.ts b/test/cli/lint/conformance/sweep.ts
 --- a/test/cli/lint/conformance/sweep.ts	2026-10-01 12:50:11.498113393 +0000
-+++ b/test/cli/lint/conformance/sweep.ts	2026-10-01 12:50:11.930001812 +0000
++++ b/test/cli/lint/conformance/sweep.ts	2026-10-01 13:40:39.894522181 +0000
 @@ -24,7 +24,7 @@
    updateCommand,
    verify,
@@ -576,7 +576,18 @@ diff -ruN a/test/cli/lint/conformance/sweep.ts b/test/cli/lint/conformance/sweep
      ),
 diff -ruN a/test/cli/lint/conformance.test.ts b/test/cli/lint/conformance.test.ts
 --- a/test/cli/lint/conformance.test.ts	2026-10-01 12:50:10.540662486 +0000
-+++ b/test/cli/lint/conformance.test.ts	2026-10-01 12:50:11.880954618 +0000
++++ b/test/cli/lint/conformance.test.ts	2026-10-01 13:40:38.611075013 +0000
+@@ -48,8 +48,8 @@
+ 
+ // A debug or sanitizer build runs this file's JavaScript about a hundred times slower: it takes the samples and leaves the whole corpus to release builds.
+ const small = isDebug || isASAN;
+-// A debug build needs more than the default time of a test for the processes that a test starts.
+-const spawnTimeout = small ? 60_000 : undefined;
++// A test that starts processes waits for a machine that is busy: the default time of a test is for one that is not.
++const spawnTimeout = small ? 60_000 : 20_000;
+ 
+ // One of every n names, the same on every platform and without an order of the directory entries.
+ const sampled = (name: string, n: number) => Bun.hash.crc32(name) % n === 0;
 @@ -661,6 +661,55 @@
        outcome: "crash",
        reason: "the check threw: Error: the command ended by the signal SIGSEGV",
@@ -841,7 +852,11 @@ diff -ruN a/test/cli/lint/conformance.test.ts b/test/cli/lint/conformance.test.t
 -      "a diagnostic of a rule",
 -      "//~ print {file}(1,1): error no-debugger: Unexpected 'debugger' statement.\n",
 -      "stderr line 1 has the code no-debugger, which is no code of TypeScript",
--    ],
++      "a name that is no rule's, on a line without a file",
++      "//~ print error no-such-name: x\n",
++      "1 diagnostics without a code of TypeScript, the first is error no-such-name: x",
++      { "no-such-name": 1 },
+     ],
 -    // Windows has no signals.
 -    ...(isWindows ? [] : [["a signal", "//~ kill SIGKILL\n", "the command ended by the signal SIGKILL"]]),
 -  ] as [string, string, string][])(
@@ -850,11 +865,6 @@ diff -ruN a/test/cli/lint/conformance.test.ts b/test/cli/lint/conformance.test.t
 -      expect(await ending(C, linter(), orders)).toEqual({
 -        outcome: "crash",
 -        reason: `the check threw: Error: ${reason}`,
-+      "a name that is no rule's, on a line without a file",
-+      "//~ print error no-such-name: x\n",
-+      "1 diagnostics without a code of TypeScript, the first is error no-such-name: x",
-+      { "no-such-name": 1 },
-+    ],
 +    [
 +      "a stand-in beside an error of the parser",
 +      "//~ print error internal-stand-in: checker.getTypeOfExpression\n//~ print {file}(2,1): error syntax: x\n",

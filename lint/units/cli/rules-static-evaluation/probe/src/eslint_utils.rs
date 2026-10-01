@@ -101,6 +101,15 @@ fn member_value(
     chain: Option<OptionalChain>,
     property: impl FnOnce(&Ctx<'_, '_>) -> Option<Vec<u16>>,
 ) -> Option<(StaticValue, bool)> {
+    // A number that is a property of the global `Math` or `Number`: the objects themselves are no value here.
+    if let ExprData::EIdentifier(identifier) = &target.data {
+        let object = ctx.parsed.name_of(identifier.ref_);
+        if matches!(object, b"Math" | b"Number") && ctx.is_global(object) {
+            let property = property(ctx)?;
+            let name: Vec<u8> = property.iter().map(|&unit| u8::try_from(unit).ok()).collect::<Option<_>>()?;
+            return builtin_number(object, &name).map(|number| (StaticValue::Number(number), false));
+        }
+    }
     // The object of a link that continues a chain is a link of the same chain; any other object is a chain of its own.
     let (object, object_optional) = match chain {
         Some(OptionalChain::Continuation) => get_static_value_r(ctx, target)?,
@@ -152,6 +161,30 @@ fn member_value(
         _ => return None,
     };
     Some((value, false))
+}
+
+/// The properties of `Math` and of `Number` that are numbers.
+fn builtin_number(object: &[u8], name: &[u8]) -> Option<f64> {
+    use core::f64::consts;
+    Some(match (object, name) {
+        (b"Math", b"E") => consts::E,
+        (b"Math", b"LN10") => consts::LN_10,
+        (b"Math", b"LN2") => consts::LN_2,
+        (b"Math", b"LOG10E") => consts::LOG10_E,
+        (b"Math", b"LOG2E") => consts::LOG2_E,
+        (b"Math", b"PI") => consts::PI,
+        (b"Math", b"SQRT1_2") => consts::FRAC_1_SQRT_2,
+        (b"Math", b"SQRT2") => consts::SQRT_2,
+        (b"Number", b"EPSILON") => f64::EPSILON,
+        (b"Number", b"MAX_SAFE_INTEGER") => 9_007_199_254_740_991.0,
+        (b"Number", b"MAX_VALUE") => f64::MAX,
+        (b"Number", b"MIN_SAFE_INTEGER") => -9_007_199_254_740_991.0,
+        (b"Number", b"MIN_VALUE") => 5e-324,
+        (b"Number", b"NaN") => f64::NAN,
+        (b"Number", b"NEGATIVE_INFINITY") => f64::NEG_INFINITY,
+        (b"Number", b"POSITIVE_INFINITY") => f64::INFINITY,
+        _ => return None,
+    })
 }
 
 /// The index that `key` names as a property of a string: the digits of an integer below 2^32 - 1, written as `ToString` writes it.

@@ -7,15 +7,13 @@ test("ipc with json serialization still works when bun is parent and not the chi
     stdio: ["ignore", "pipe", "pipe"],
   });
   await child.exited;
-  expect(await new Response(child.stdout).text()).toEqual(
-    `p start
-p end
-c start
-c end
-c I am your father
-p I am your father
-`,
-  );
+  // Both processes write to the same stdout. Nothing orders the parent's "p end" against the
+  // child's lines, so compare the lines of each process on their own.
+  const lines = (await new Response(child.stdout).text()).trimEnd().split("\n");
+  expect(Object.groupBy(lines, line => line[0])).toEqual({
+    p: ["p start", "p end", "p I am your father"],
+    c: ["c start", "c end", "c I am your father"],
+  });
   expect(await new Response(child.stderr).text()).toEqual("");
 });
 

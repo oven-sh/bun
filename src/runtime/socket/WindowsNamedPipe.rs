@@ -290,6 +290,10 @@ impl WindowsNamedPipe {
         let _keep_alive = self.keep_alive();
         self.peer_ended_writing.set(true);
         (self.handlers.on_end)(self.handlers.ctx);
+        // As a socket that is not `allowHalfOpen` ends with its peer.
+        if !self.stays_half_open.get() {
+            self.begin_end_of_write();
+        }
         if self.end_of_write.get() == EndOfWrite::Told {
             self.close_writer();
         }

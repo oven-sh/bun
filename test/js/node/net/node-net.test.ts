@@ -393,6 +393,29 @@ it.skipIf(!isWindows)(
   },
 );
 
+it.skipIf(!isWindows)(
+  "a Bun.connect() socket that is not allowHalfOpen closes when the server of a message-type named pipe ends its writing",
+  async () => {
+    await using server = await messagePipeServer("end-then-close");
+    const events: string[] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+    await Bun.connect({
+      unix: server.name,
+      socket: {
+        data: (_, data) => void events.push("data:" + data),
+        end: () => void events.push("end"),
+        error: (_, err) => void events.push("error:" + (err as any).code),
+        close() {
+          events.push("close");
+          resolve();
+        },
+      },
+    });
+    await promise;
+    expect(events).toEqual(["data:hello", "end", "close"]);
+  },
+);
+
 describe("net.Socket read", () => {
   var unix_servers = 0;
   for (let [message, label] of [
@@ -1577,6 +1600,41 @@ describe.concurrent.skipIf(!isWindows)("a named pipe server under a burst of con
 // instance the server makes next is the other's, not one the destroyed client takes and drops.
 // The server makes it before it lets go of the first: a pipe whose last instance is closed is
 // gone, and whoever waits for it is told so.
+it.skipIf(!isWindows).each(["\\\\.\\pipe\\..\\", "\\\\?\\pipe\\..\\"])(
+  "a pipe name that is a file's, %j in front of its path, is refused and the file left alone",
+  async prefix => {
+    using dir = tempDir("net-pipe-name-of-a-file", { "file.txt": "contents" });
+    const file = join(String(dir), "file.txt");
+    const outcomes: Record<string, string> = {};
+
+    const socket = connect(prefix + file);
+    outcomes["net.connect"] = await new Promise(resolve => {
+      socket.on("connect", () => socket.write("overwritten", () => resolve("connected")));
+      socket.on("error", err => resolve((err as NodeJS.ErrnoException).code!));
+    });
+    socket.destroy();
+
+    outcomes["Bun.connect"] = await Bun.connect({
+      unix: prefix + file,
+      socket: {
+        open(client) {
+          client.write("overwritten");
+          client.end();
+        },
+        data() {},
+      },
+    }).then(
+      () => "connected",
+      err => err.code,
+    );
+
+    expect({ outcomes, file: fs.readFileSync(file, "utf8") }).toEqual({
+      outcomes: { "net.connect": "ENOTSOCK", "Bun.connect": "ENOTSOCK" },
+      file: "contents",
+    });
+  },
+);
+
 it.skipIf(!isWindows || !Bun.which("powershell.exe"))(
   "a client waits for a busy named pipe, and a waiting client can be destroyed",
   async () => {

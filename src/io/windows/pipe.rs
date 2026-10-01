@@ -23,9 +23,8 @@
 //! wants what the pipe holds now can have it ([`Pipe::drain`]), and one that
 //! pauses leaves everything in the pipe. The exception is a message-type pipe
 //! somebody else serves: a zero-length message, which says its writer has
-//! finished, ends only a read that asks for bytes. A read that takes bytes is
-//! never cancelled except by closing: that can make the peer's `WriteFile`
-//! report success for bytes nobody received.
+//! finished, ends only a read that asks for bytes. That read is left to finish
+//! when its owner stops reading, and what it brings is kept.
 
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -377,9 +376,13 @@ const READ_ORPHANED: u8 = 2;
 /// The loop thread is waiting for the answer ([`SyncReader::take`]), which is
 /// signalled to it and has no packet.
 const READ_AWAITED: u8 = 3;
+/// As `READ_AWAITED`, and the reader thread is reading bytes it found in the
+/// pipe: the loop thread waits until it has them.
+const READ_TAKING: u8 = 4;
 
-/// How long the loop thread waits for the reader thread to take what is in the
-/// pipe: microseconds, unless another process is ahead of it on the HANDLE.
+/// How long the loop thread waits for the reader thread to start on what is in
+/// the pipe: microseconds, unless the thread has no CPU or another process is
+/// ahead of it on the HANDLE.
 const TAKE_WAIT_MS: u32 = 1;
 /// How often in one tick of the loop a `Sync` pipe is read.
 const TAKES_PER_TICK: usize = 8;
@@ -2561,17 +2564,18 @@ impl Drop for SyncShared {
 /// A request is answered in two steps. The thread waits in a zero-byte read,
 /// which consumes nothing and can be interrupted without the peer losing
 /// anything, and reports that the pipe is readable. The loop asks again, and
-/// the thread takes what `PeekNamedPipe` reports. The bytes leave the pipe only
+/// the thread takes what the pipe says it holds. The bytes leave the pipe only
 /// after the loop thread has asked for them with them waiting, as with a
 /// readiness poll: while it is blocked, or once its owner has stopped reading,
 /// they stay for whoever else reads the HANDLE. `disarm` stops anything more
 /// being taken.
 ///
 /// The loop thread waits for that second answer ([`take`](Self::take)) and hands
-/// the bytes over at once, so its owner cannot stop reading with bytes out of
-/// the pipe that it has not been given. It does not wait long: a thread that is
-/// queued behind another process's read of the HANDLE answers with a packet,
-/// whenever that is.
+/// the bytes over at once, and the thread takes bytes only while it waits
+/// (`READ_TAKING`), so its owner cannot stop reading with bytes out of the pipe
+/// that it has not been given. It does not wait long for the thread to start: one
+/// that comes to the request later takes nothing and says again, with a packet,
+/// that the pipe is readable.
 ///
 /// For an `Unknown` pipe the thread classifies the HANDLE first and its first
 /// answer carries the verdict. Unless that is `Synchronous`, the answer is all
@@ -2642,7 +2646,8 @@ impl SyncReader {
 
     /// Ask for the bytes and wait until the thread has taken them. `true`: `op`
     /// is the loop's again, with its answer, which is no bytes if the pipe was
-    /// empty. `false`: the thread is held up, and answers with a packet.
+    /// empty. `false`: the thread is held up. It takes nothing, and answers with
+    /// a packet.
     ///
     /// # Safety
     /// As [`request`](Self::request).
@@ -2668,7 +2673,8 @@ impl SyncReader {
             {
                 return false;
             }
-            // Answered as the wait ran out.
+            // Answered as the wait ran out, or about to be: the thread is in a
+            // read of bytes that are there.
             WaitForSingleObject(self.shared.answered, INFINITE);
             true
         }
@@ -2730,18 +2736,28 @@ impl SyncReader {
     }
 }
 
+/// What [`SyncShared::read`] did.
+enum Taken {
+    /// How it went, how many bytes were taken and how many the pipe held.
+    Answer(Win32Error, u32, u32),
+    /// The pipe is empty, or the owner stopped.
+    Nothing,
+    /// There are bytes, and the loop thread no longer waits for them: whether
+    /// its owner still wants them is for the loop to say.
+    NotAwaited,
+}
+
 impl SyncShared {
     fn run(&self) {
         if self.classify {
             let kind = classify(self.handle);
             self.verdict.set(Some(kind));
             if kind != Kind::Synchronous {
-                while !self.shutdown.load(Ordering::Acquire)
-                    && self.request.load(Ordering::Acquire).is_null()
-                {
+                // The verdict goes with an answer. A request that is seen here
+                // can be taken back (`disarm`) before it is taken.
+                while !self.abort_request() && !self.shutdown.load(Ordering::Acquire) {
                     self.park();
                 }
-                self.abort_request();
                 return;
             }
         }
@@ -2762,7 +2778,9 @@ impl SyncShared {
             if self.zero_wait.load(Ordering::Acquire) {
                 match self.wait_for_data() {
                     Some(Win32Error::SUCCESS) => self.announce(),
-                    Some(err) => self.finish_request(err),
+                    Some(err) => {
+                        self.finish_request(err);
+                    }
                     None => {}
                 }
                 continue;
@@ -2776,18 +2794,22 @@ impl SyncShared {
             // SAFETY: `op` was taken from `request`: it is this thread's until
             // it is posted or stored again.
             unsafe {
-                match self.read((*op).dest, (*op).max_len) {
-                    Some((err, bytes, held)) => {
+                match self.read(op) {
+                    Taken::Answer(err, bytes, held) => {
                         (*op).zero_wait = false;
                         (*op).held = held as usize;
                         self.answer(op, err, bytes);
                     }
-                    // Nothing there: another reader of the pipe took it.
-                    None if (*op).finisher.load(Ordering::SeqCst) == READ_AWAITED => {
+                    // Another reader of the pipe took it.
+                    Taken::Nothing if (*op).finisher.load(Ordering::SeqCst) == READ_AWAITED => {
                         (*op).held = 0;
                         self.answer(op, Win32Error::SUCCESS, 0);
                     }
-                    None => self.wait_again(op),
+                    Taken::Nothing => self.wait_again(op),
+                    Taken::NotAwaited => {
+                        (*op).zero_wait = true;
+                        self.answer(op, Win32Error::SUCCESS, 0);
+                    }
                 }
             }
         }
@@ -2847,7 +2869,7 @@ impl SyncShared {
                     Ordering::SeqCst,
                     Ordering::SeqCst,
                 ) {
-                    Ok(READ_AWAITED) => {
+                    Ok(READ_AWAITED | READ_TAKING) => {
                         win::SetEvent(self.answered);
                         return;
                     }
@@ -2868,56 +2890,70 @@ impl SyncShared {
         }
     }
 
-    fn abort_request(&self) {
-        self.finish_request(Win32Error::OPERATION_ABORTED);
+    fn abort_request(&self) -> bool {
+        self.finish_request(Win32Error::OPERATION_ABORTED)
     }
 
-    /// The request is over: with `bytes` bytes at its `dest`, or with `err`.
-    fn finish_request(&self, err: Win32Error) {
+    /// The request is over, with `err`. `false`: there was none.
+    fn finish_request(&self, err: Win32Error) -> bool {
         let op = self.request.swap(ptr::null_mut(), Ordering::AcqRel);
-        if !op.is_null() {
-            // SAFETY: `op` was taken from `request`.
-            unsafe {
-                (*op).zero_wait = false;
-                self.answer(op, err, 0);
-            }
+        if op.is_null() {
+            return false;
         }
+        // SAFETY: `op` was taken from `request`.
+        unsafe {
+            (*op).zero_wait = false;
+            self.answer(op, err, 0);
+        }
+        true
     }
 
-    /// Take at most `want` bytes to `dest`, without waiting, and say how it
-    /// went, how many they were and how many the pipe held. `None` when nothing
-    /// was taken and nothing went wrong: the owner stopped, or the pipe is
-    /// empty.
+    /// Take what `op` asks for, without waiting for any to come.
     ///
     /// # Safety
-    /// `dest` has room for `want` bytes.
-    unsafe fn read(&self, dest: *mut u8, want: u32) -> Option<(Win32Error, u32, u32)> {
+    /// `op` was taken from `request`.
+    unsafe fn read(&self, op: *mut ReadOp) -> Taken {
         if !self.armed.load(Ordering::Acquire) {
-            return None;
+            return Taken::Nothing;
         }
         // SAFETY: `handle` is open while `self` is, and synchronous.
         let available = match unsafe { bytes_in_pipe(self.handle, ptr::null_mut()) } {
             Ok(available) => available,
-            Err(err) => return Some((err, 0, 0)),
+            Err(err) => return Taken::Answer(err, 0, 0),
         };
         if available == 0 {
-            return None;
+            return Taken::Nothing;
         }
         let mut n: u32 = 0;
-        // SAFETY: `handle` is open while `self` is; caller contract for `dest`.
+        // SAFETY: caller contract; `handle` is open while `self` is, and `dest`
+        // has room for `max_len` bytes.
         let ok = unsafe {
+            // After the peek, which can be queued behind another process's read
+            // for as long as that one likes.
+            if (*op)
+                .finisher
+                .compare_exchange(
+                    READ_AWAITED,
+                    READ_TAKING,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                )
+                .is_err()
+            {
+                return Taken::NotAwaited;
+            }
             win::ReadFile(
                 self.handle,
-                dest,
-                available.min(want),
+                (*op).dest,
+                available.min((*op).max_len),
                 &raw mut n,
                 ptr::null_mut(),
             )
         };
         if ok == 0 {
-            return Some((win::last_error(), 0, 0));
+            return Taken::Answer(win::last_error(), 0, 0);
         }
-        Some((Win32Error::SUCCESS, n, available))
+        Taken::Answer(Win32Error::SUCCESS, n, available)
     }
 
     /// The cancellable zero-byte read. `None`: interrupted, or not to start.
@@ -3534,7 +3570,16 @@ fn open_client(name: &[u16]) -> Result<HANDLE, Win32Error> {
             )
         };
         if handle != INVALID_HANDLE_VALUE {
-            return Ok(handle);
+            // `\\.\pipe\..\C:\file` is a file to Win32.
+            if matches!(
+                bun_sys::File::borrow(&Fd::from_system(handle)).kind(),
+                Ok(bun_sys::FileKind::NamedPipe)
+            ) {
+                return Ok(handle);
+            }
+            // SAFETY: `handle` was opened above.
+            unsafe { win::CloseHandle(handle) };
+            return Err(Win32Error::WSAENOTSOCK);
         }
         last = win::last_error();
         // A one-way pipe refuses the duplex open with ACCESS_DENIED.

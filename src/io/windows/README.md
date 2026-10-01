@@ -24,8 +24,8 @@ I/O, cannot be associated with a completion port, and cannot be converted:
 | `KernelBase!NamedPipeEventSelect` (undocumented)                         | needs `PIPE_NOWAIT`; on Windows 10 also `FILE_WRITE_DATA`, which a read-only stdin lacks       |
 
 So reads of a `Mode::Sync` pipe block on the pipe's own reader thread
-(`pipe.rs`, `SyncReader`). Like every mode, it waits with a zero-byte read and
-then takes at most what `PeekNamedPipe` reports: the wait consumes nothing, so
+(`pipe.rs`, `SyncReader`). It waits with a zero-byte read and then takes at
+most what the pipe says it holds: the wait consumes nothing, so
 pausing leaves the data for whoever reads the handle next (a child that
 inherits stdin); a zero-byte read can be cancelled without the peer's write
 losing anything, where cancelling an N-byte read can; a pending N-byte read
@@ -40,9 +40,12 @@ spawn whose child inherits the handle), it stays for the child. libuv does the
 same: its pool thread only ever does the zero-byte read. And the loop thread
 waits while the bytes are taken and hands them over at once, so nothing of the
 owner's runs with bytes out of the pipe that it has not been given: it can stop
-reading from anywhere and lose nothing for a child. The wait is short. A reader
-thread that is queued behind another process's read answers later, with a
-packet, which is what keeps the loop from blocking where libuv's does.
+reading from anywhere and lose nothing for a child. The wait for the thread to
+start is short, and it is not what decides: the thread takes bytes only from a
+request the loop is still waiting on. One that comes to it later (it had no CPU,
+or was queued behind another process's read) takes nothing and says again, with
+a packet, that the pipe is readable, which is what keeps the loop from blocking
+where libuv's does.
 
 ### Finding out whether a handle is synchronous
 

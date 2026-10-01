@@ -2174,7 +2174,7 @@ function parseOptions(
 
   // Without this, an unset rejectUnauthorized takes NODE_TLS_REJECT_UNAUTHORIZED and 0 skips the verify-* checks.
   if (sslMode >= SSLMode.verify_ca && !verifyOptedOut) {
-    tls = { ...($isObject(tls) ? tls : {}), rejectUnauthorized: true };
+    tls = { __proto__: null, ...($isObject(tls) ? tls : {}), rejectUnauthorized: true };
   }
 
   // Explicit tls/ssl options request an encrypted connection: if the server

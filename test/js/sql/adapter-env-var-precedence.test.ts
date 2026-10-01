@@ -607,6 +607,21 @@ describe("SQL adapter environment variable precedence", () => {
         delete (Object.prototype as any).rejectUnauthorized;
       }
     });
+
+    test("a polluted Object.prototype does not supply the CA of a verify mode", () => {
+      (Object.prototype as any).ca = "polluted";
+      (Object.prototype as any).caFile = "polluted";
+      try {
+        const tls = new SQL("postgres://u@h:5432/db?sslmode=verify-full").options.tls as any;
+        expect({ ca: tls.ca, caFile: tls.caFile }).toEqual({ ca: undefined, caFile: undefined });
+
+        const own = new SQL("postgres://u@h:5432/db?sslmode=verify-full", { tls: { ca: "x" } });
+        expect(own.options.tls).toEqual({ ca: "x", serverName: "h", rejectUnauthorized: true });
+      } finally {
+        delete (Object.prototype as any).ca;
+        delete (Object.prototype as any).caFile;
+      }
+    });
   });
 
   describe("tls given as a BunFile", () => {

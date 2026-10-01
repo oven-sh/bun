@@ -514,6 +514,59 @@ describe.concurrent("bun check", () => {
     });
   });
 
+  describe("project references", () => {
+    const options = { strict: true, composite: true, target: "esnext", module: "esnext", moduleResolution: "bundler", lib: ["esnext"], types: [], skipLibCheck: true };
+    const monorepo = (extra: Record<string, string> = {}) =>
+      project({
+        // A solution file: no files of its own.
+        "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "packages/app" }] }),
+        "console.d.ts": "",
+        "packages/lib/tsconfig.json": JSON.stringify({ compilerOptions: options, include: ["src"] }),
+        "packages/lib/src/index.ts": `export const double = (n: number) => n * 2;\n`,
+        "packages/app/tsconfig.json": JSON.stringify({
+          compilerOptions: { ...options, noImplicitAny: false },
+          include: ["src"],
+          references: [{ path: "../lib" }],
+        }),
+        "packages/app/src/index.ts": `import { double } from "../../lib/src/index";\nexport const four: number = double(2);\n`,
+        ...extra,
+      });
+
+    test("every referenced project is checked, without building anything", async () => {
+      using dir = monorepo();
+      const { stdout, stderr, exitCode } = await check(dir);
+      expect(stdout).toBe("");
+      expect(stderr).toMatchInlineSnapshot(`"✓ No type errors in 2 files across 2 projects [time]"`);
+      expect(exitCode).toBe(0);
+    });
+
+    test("errors in a project that is only reached through another one", async () => {
+      using dir = monorepo({ "packages/lib/src/broken.ts": `export const wrong: string = 1;\n` });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`"packages/lib/src/broken.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'."`);
+      expect(exitCode).toBe(1);
+    });
+
+    test("each project is checked with its own options, and each file once", async () => {
+      using dir = monorepo({
+        // Implicit any: an error under lib's options, allowed under app's.
+        "packages/lib/src/loose.ts": `export function f(x) {\n  return x;\n}\n`,
+        "packages/app/src/loose.ts": `import { f } from "../../lib/src/loose";\nexport function g(x) {\n  return f(x);\n}\n`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`"packages/lib/src/loose.ts(1,19): error TS7006: Parameter 'x' implicitly has an 'any' type."`);
+    });
+
+    test("a reference that does not exist", async () => {
+      using dir = monorepo({
+        "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "packages/app" }, { path: "packages/gone" }] }),
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`"error TS6053: File '<dir>/packages/gone/tsconfig.json' not found."`);
+      expect(exitCode).toBe(1);
+    });
+  });
+
   describe("files nothing imports", () => {
     test("a test, and the helper next to it that it imports", async () => {
       using dir = project({

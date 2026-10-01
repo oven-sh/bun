@@ -2183,6 +2183,7 @@ Execute a shell script directly from Bun.
 
   Uses the nearest <b>tsconfig.json<r> and reports the same errors as <b>tsc<r>, using all CPU cores.
   Pass files or directories to check only those and their imports.
+  Project <b>references<r> are followed, like <b>tsc -b<r>, and nothing has to be built first.
 
 <b>Flags:<r>
   <cyan>-p<r>, <cyan>--project<r> <d>\\<path\\><r>   Path to a tsconfig.json or its directory

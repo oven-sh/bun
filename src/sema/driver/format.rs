@@ -920,6 +920,10 @@ pub fn write_summary(out: &mut String, report: &Report, style: &Style) {
     }
     let errors = report.error_count();
     let took = format!(" [{}]", duration(report.load_time + report.check_time));
+    let projects = match report.projects_checked {
+        0 => String::new(),
+        n => format!(" across {}", plural(n, "project", "projects")),
+    };
     if errors == 0 {
         paint.put(out, &[GREEN], "\u{2713}");
         out.push_str(" No type errors");
@@ -927,7 +931,7 @@ pub fn write_summary(out: &mut String, report: &Report, style: &Style) {
             out,
             &[DIM],
             &format!(
-                " in {}{took}",
+                " in {}{projects}{took}",
                 plural(report.files_checked, "file", "files")
             ),
         );
@@ -946,7 +950,7 @@ pub fn write_summary(out: &mut String, report: &Report, style: &Style) {
         out,
         &[DIM],
         &format!(
-            ", checked {}{took}",
+            ", checked {}{projects}{took}",
             plural(report.files_checked, "file", "files")
         ),
     );

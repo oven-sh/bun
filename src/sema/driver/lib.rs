@@ -64,6 +64,7 @@ pub struct Progress {
     pub errors: AtomicUsize,
 }
 
+#[derive(Clone, Copy)]
 pub struct Request<'a> {
     /// The working directory, as the operating system names it.
     pub cwd: &'a str,
@@ -134,6 +135,8 @@ pub struct Report {
     pub config_path: String,
     pub files_loaded: usize,
     pub files_checked: usize,
+    /// How many projects were checked, if the configuration has `references`. Otherwise 0.
+    pub projects_checked: usize,
     pub load_time: Duration,
     pub check_time: Duration,
     /// The most stack any file took, in bytes.
@@ -146,6 +149,17 @@ impl Report {
             .iter()
             .filter(|d| d.category == Category::Error)
             .count()
+    }
+
+    /// Adds the result of checking another project. The diagnostics are left unsorted.
+    fn merge(&mut self, other: Report) {
+        self.diagnostics.extend(other.diagnostics);
+        self.gave_up.extend(other.gave_up);
+        self.incomplete.extend(other.incomplete);
+        self.files_loaded += other.files_loaded;
+        self.files_checked += other.files_checked;
+        self.check_time += other.check_time;
+        self.deepest_stack = self.deepest_stack.max(other.deepest_stack);
     }
 }
 
@@ -375,11 +389,148 @@ pub fn check(request: &Request) -> Report {
         roots.sort_unstable();
         named = Some(roots);
     }
-    let report = check_what_is_named(&disk, project, request, report, started, named);
+    let report = if named.is_none() && !project.references.is_empty() {
+        check_with_references(&disk, project, request, report, started)
+    } else {
+        check_what_is_named(&disk, project, request, report, started, named, None)
+    };
     if request.ends_the_process {
         std::mem::forget(disk);
     }
     report
+}
+
+struct ReferencedProject {
+    project: config::Project,
+    /// Indices into the list of projects.
+    references: Vec<usize>,
+}
+
+/// Appends `project` after the projects it references, transitively, so that dependencies come first. Each config file is loaded
+/// once. Returns the index of `project`, or `None` if it is already being visited (TS6202).
+fn collect_referenced_projects(
+    host: &dyn Host,
+    project: config::Project,
+    projects: &mut Vec<ReferencedProject>,
+    index_of: &mut std::collections::HashMap<String, Option<usize>>,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<usize> {
+    index_of.insert(project.config_path.clone(), None);
+    let dir = parent_dir(&project.config_path).to_owned();
+    let mut references = Vec::new();
+    for reference in &project.references {
+        // `resolveProjectReferencePath`
+        let path = join(&dir, reference);
+        let path = if path.ends_with(".json") {
+            path
+        } else {
+            join(&path, "tsconfig.json")
+        };
+        match index_of.get(&path) {
+            Some(Some(index)) => references.push(*index),
+            Some(None) => {
+                diagnostics.push(global(6202, &[format!("{}\n{path}", project.config_path)]))
+            }
+            None if !host.is_file(&path) => diagnostics.push(global(6053, &[path])),
+            None => {
+                let referenced = config::load_overriding(
+                    host,
+                    &path,
+                    vec![("noEmit".to_owned(), Json::Bool(true))],
+                );
+                references.extend(collect_referenced_projects(
+                    host,
+                    referenced,
+                    projects,
+                    index_of,
+                    diagnostics,
+                ));
+            }
+        }
+    }
+    let index = projects.len();
+    index_of.insert(project.config_path.clone(), Some(index));
+    projects.push(ReferencedProject {
+        project,
+        references,
+    });
+    Some(index)
+}
+
+/// What `tsc -b` checks: `root` and every project it references, each with its own options. Nothing has to be built first: an
+/// import from a referenced project resolves to its source, where `tsc` would read the `.d.ts` it emitted.
+fn check_with_references(
+    host: &dyn Host,
+    root: config::Project,
+    request: &Request,
+    mut report: Report,
+    started: Instant,
+) -> Report {
+    let mut projects = Vec::new();
+    collect_referenced_projects(
+        host,
+        root,
+        &mut projects,
+        &mut std::collections::HashMap::new(),
+        &mut report.diagnostics,
+    );
+    // A file that belongs to a referenced project is checked there, with that project's options.
+    let roots: Vec<Vec<String>> = projects.iter().map(|p| p.project.files.clone()).collect();
+    let references: Vec<Vec<usize>> = projects.iter().map(|p| p.references.clone()).collect();
+    let last = projects.len() - 1;
+    for (index, referenced) in projects.into_iter().enumerate() {
+        let mut project = referenced.project;
+        if project.files.is_empty() {
+            // A solution file: `"files": []` or `"include": []` with references only.
+            project
+                .errors
+                .retain(|e| e.code != 18003 && e.code != 18002);
+            if project.errors.is_empty() {
+                continue;
+            }
+        }
+        let mut is_referenced = vec![false; roots.len()];
+        let mut pending = references[index].clone();
+        while let Some(i) = pending.pop() {
+            if !std::mem::replace(&mut is_referenced[i], true) {
+                pending.extend(&references[i]);
+            }
+        }
+        let own: std::collections::HashSet<&str> =
+            roots[index].iter().map(String::as_str).collect();
+        let owned_elsewhere: std::collections::HashSet<&str> = (0..roots.len())
+            .filter(|&i| is_referenced[i])
+            .flat_map(|i| roots[i].iter().map(String::as_str))
+            .filter(|path| !own.contains(path))
+            .collect();
+        let request = Request {
+            ends_the_process: request.ends_the_process && index == last,
+            ..*request
+        };
+        report.merge(check_what_is_named(
+            host,
+            project,
+            &request,
+            Report::default(),
+            Instant::now(),
+            None,
+            Some(&owned_elsewhere),
+        ));
+        report.projects_checked += 1;
+    }
+    report.load_time = started.elapsed().saturating_sub(report.check_time);
+    sort_and_deduplicate(&mut report.diagnostics);
+    report
+}
+
+/// `SortAndDeduplicateDiagnostics`, with `CompareDiagnostics`.
+fn sort_and_deduplicate(diagnostics: &mut Vec<Diagnostic>) {
+    diagnostics.sort_by(|a, b| {
+        (&a.path, a.start, a.end, a.code, &a.text).cmp(&(&b.path, b.start, b.end, b.code, &b.text))
+    });
+    diagnostics.dedup_by(|a, b| {
+        (&a.path, a.start, a.end, a.code, &a.text) == (&b.path, b.start, b.end, b.code, &b.text)
+    });
 }
 
 /// Checks `project`, which is read through `host`. `report` has what has been found wrong on the way to it, since `started`.
@@ -390,10 +541,11 @@ pub fn check_project(
     report: Report,
     started: Instant,
 ) -> Report {
-    check_what_is_named(host, project, request, report, started, None)
+    check_what_is_named(host, project, request, report, started, None, None)
 }
 
 /// `check_project`. `named`: of all that is loaded, only these files, sorted, and what they refer to is checked.
+/// `owned_elsewhere`: files of referenced projects, which are loaded but not checked.
 fn check_what_is_named(
     host: &dyn Host,
     mut project: config::Project,
@@ -401,6 +553,7 @@ fn check_what_is_named(
     mut report: Report,
     started: Instant,
     named: Option<Vec<String>>,
+    owned_elsewhere: Option<&std::collections::HashSet<&str>>,
 ) -> Report {
     let threads = match request.threads {
         0 => std::thread::available_parallelism().map_or(4, usize::from),
@@ -519,6 +672,10 @@ fn check_what_is_named(
     });
     if let Some(is_reached) = &is_reached {
         to_check.retain(|file| is_reached[file.idx()]);
+    }
+    if let Some(owned_elsewhere) = owned_elsewhere {
+        to_check
+            .retain(|&f| !owned_elsewhere.contains(program.files.modules[f.idx()].path.as_str()));
     }
     if let Some(only) = request.only {
         to_check.retain(|&f| program.files.modules[f.idx()].path.contains(only));
@@ -716,14 +873,7 @@ fn check_what_is_named(
     report.incomplete = incomplete.into_inner().unwrap();
     report.incomplete.sort();
     report.incomplete.dedup();
-    // `CompareDiagnostics`
-    report.diagnostics.sort_by(|a, b| {
-        (&a.path, a.start, a.end, a.code, &a.text).cmp(&(&b.path, b.start, b.end, b.code, &b.text))
-    });
-    // `SortAndDeduplicateDiagnostics`
-    report.diagnostics.dedup_by(|a, b| {
-        (&a.path, a.start, a.end, a.code, &a.text) == (&b.path, b.start, b.end, b.code, &b.text)
-    });
+    sort_and_deduplicate(&mut report.diagnostics);
     // What the program says of no file is at -1 (`NewCompilerDiagnostic`), what the checker says of none at 0 (`NewDiagnosticForNode`).
     let of_the_checker = program.global_errors();
     let in_no_file = report.diagnostics.partition_point(|d| d.path.is_empty());

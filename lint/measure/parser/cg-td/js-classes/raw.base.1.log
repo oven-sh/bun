@@ -1,0 +1,12 @@
+==903060== Cachegrind, a high-precision tracing profiler
+==903060== Copyright (C) 2002-2025, and GNU GPL'd, by Nicholas Nethercote et al.
+==903060== Using Valgrind-3.27.1 and LibVEX; rerun with -h for copyright info
+==903060== Command: /workspace/notes/lint/measure/parser/base/bun-profile /workspace/notes/lint/units/parser/round2/zero-cost-measure/top-down/js-classes-bench.mjs --iterations=1
+==903060== 
+js-classes source 284090 output 317990 passes 1
+==903060== 
+==903060== I refs:        72,542,638
+==903060== 
+==903060== Branches:      11,156,102  (10,501,470 cond + 654,632 ind)
+==903060== Mispredicts:      932,709  (   577,190 cond + 355,519 ind)
+==903060== Mispred rate:         8.4% (       5.5%     +    54.3%   )

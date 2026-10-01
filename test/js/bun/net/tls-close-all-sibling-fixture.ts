@@ -35,6 +35,7 @@
 // which is the proof that N - 5 sockets were parked when stop(true) ran.
 import { getEventLoopStats } from "bun:internal-for-testing";
 import net from "node:net";
+import { join } from "node:path";
 import tls from "node:tls";
 import { tls as certs, bunEnv, bunExe } from "harness";
 
@@ -127,14 +128,22 @@ const clientHello = await captureClientHello();
 
 // The child reads one command per line on stdin:
 //   connect <n> <port> -> connects n sockets, writes ONLY the ClientHello to
-//                         each, answers `hellos <n>` once every write callback
-//                         has fired, and later `closed <n> <flights>` once all
-//                         n sockets have closed, where <flights> is how many
-//                         of them received any bytes first
+//                         each, answers `hellos <n>` once every ClientHello is
+//                         in the server's receive queue, and later
+//                         `closed <n> <flights>` once all n sockets have
+//                         closed, where <flights> is how many of them received
+//                         any bytes first
 //   exit               -> exits 0
+//
+// A write callback says that the kernel took the bytes, not that they have
+// arrived (see loopback-round-trip.ts). A socket that the server resumes
+// before its ClientHello arrives has nothing to read in the next iteration,
+// so it takes none of the budget and is not parked. The child therefore
+// answers `hellos` after a loopback round trip.
 const clientSrc = `
 const net = require("node:net");
 const readline = require("node:readline");
+const { loopbackRoundTrip } = require(${JSON.stringify(join(import.meta.dir, "loopback-round-trip.ts"))});
 const hello = Buffer.from(process.env.REPRO_HELLO, "hex");
 const say = line => process.stdout.write(line + "\\n");
 readline.createInterface({ input: process.stdin }).on("line", line => {
@@ -159,7 +168,9 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
       socks.push(c);
       c.on("connect", () => {
         if (++connected < n) return;
-        for (const s of socks) s.write(hello, () => { if (++written === n) say("hellos " + n); });
+        for (const s of socks) s.write(hello, () => {
+          if (++written === n) loopbackRoundTrip().then(() => say("hellos " + n));
+        });
       });
     }
   } else if (cmd === "exit") {

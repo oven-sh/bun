@@ -28,8 +28,8 @@
 // One wave:
 //   1. The child connects N sockets. The server pauses each accepted socket in
 //      `open`, so the ClientHellos the child then writes stay unread in the
-//      kernel buffers. The child reports `hellos` once every write callback
-//      has fired.
+//      kernel buffers. The child reports `hellos` once every ClientHello is in
+//      the server's receive queue.
 //   2. The server resumes all N at once: N readables land in one loop
 //      iteration, the budget processes 5 ClientHellos (flight -> send() -> 0
 //      -> WANT_WRITE) and parks the rest at the ClientHello stage. Each later
@@ -58,6 +58,7 @@
 // per-record WANT_WRITE path and the per-wave numbers are exact.
 import { socketFaultInjection as fault, getEventLoopStats } from "bun:internal-for-testing";
 import net from "node:net";
+import { join } from "node:path";
 import tls from "node:tls";
 import { tls as certs, bunEnv, bunExe } from "harness";
 
@@ -168,8 +169,14 @@ async function captureClientHello(): Promise<Buffer> {
 const clientHello = await captureClientHello();
 
 // The child reads one command per line on stdin and answers one line on
-// stdout once the command's effect has reached the kernel (write callbacks)
-// or the sockets are gone (close events).
+// stdout once the command's effect has reached the server's sockets. A write
+// callback or a close event says that the kernel took the bytes or the FIN,
+// not that they have arrived (see loopback-round-trip.ts). A socket that the
+// server resumes before its bytes arrive has nothing to read in the next
+// iteration. A primer that is still open when the server stops reports a
+// failed handshake, and one that the child closed first reports nothing. So
+// the child answers after a loopback round trip. The round trip runs here
+// because the server faults its own sends.
 //   connect <n> <port> -> connects n sockets and writes ONLY the ClientHello
 //                         to each (trailing bytes in the same segment would
 //                         trip the unread-ciphertext close in on_data before
@@ -182,6 +189,7 @@ const clientHello = await captureClientHello();
 const clientSrc = `
 const net = require("node:net");
 const readline = require("node:readline");
+const { loopbackRoundTrip } = require(${JSON.stringify(join(import.meta.dir, "loopback-round-trip.ts"))});
 const hello = Buffer.from(process.env.REPRO_HELLO, "hex");
 const say = line => process.stdout.write(line + "\\n");
 let all = [];
@@ -189,7 +197,7 @@ let batch = [];
 function writeAll(socks, data, done) {
   let pending = socks.length;
   if (!pending) return done();
-  for (const c of socks) c.write(data, () => { if (--pending === 0) done(); });
+  for (const c of socks) c.write(data, () => { if (--pending === 0) loopbackRoundTrip().then(done); });
 }
 readline.createInterface({ input: process.stdin }).on("line", line => {
   const [cmd, arg, arg2] = line.split(" ");
@@ -217,7 +225,7 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
     let pending = open.length;
     if (!pending) return say("reset");
     for (const c of open) {
-      c.once("close", () => { if (--pending === 0) say("reset"); });
+      c.once("close", () => { if (--pending === 0) loopbackRoundTrip().then(() => say("reset")); });
       c.destroy();
     }
   } else if (cmd === "exit") {

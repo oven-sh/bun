@@ -69,7 +69,7 @@ test.concurrent.skipIf(skip)(
         closed: 130,
         // Every wave socket is closed mid-handshake by the unread-ciphertext
         // guard, which reports the handshake as failed; the primers are
-        // closed by stop(true) and report nothing.
+        // closed by the child's `reset` and report nothing.
         handshakeFailed: 128,
         handshakeOk: 0,
         data: 0,

@@ -25,6 +25,7 @@ setTimeout(() => {
   let diff = rss() - baseline;
   diff = (diff / 1024 / 1024) | 0;
   console.log({ leaked: diff + " MB" });
+  console.error("esm-fixture-leak-small: leaked", diff, "MB");
   // This test seems to be more flaky on slow filesystems.
   // This used to be 40 MB, but the original version of Bun which this triggered on would reach 120 MB
   // so we can increase it to 100 and still catch the leak.
@@ -37,7 +38,8 @@ setTimeout(() => {
   // {
   //   leaked: "38 MB",
   // }
-  if (diff >= (isASAN ? 500 : 100)) {
+  // Under ASAN the quarantine alone reads ~4 KB per import: 180 to 191 MB at 40,000 imports.
+  if (diff >= (isASAN ? 225 : 100)) {
     console.log("\n--fail--\n");
     process.exit(1);
   } else {

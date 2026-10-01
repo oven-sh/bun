@@ -1,7 +1,17 @@
 import { spawn, spawnSync } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { chmodSync, chownSync, existsSync, lchownSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "fs";
+import {
+  chmodSync,
+  chownSync,
+  existsSync,
+  lchownSync,
+  mkdirSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import { dirname, join } from "path";
 
@@ -323,11 +333,12 @@ describe.concurrent("workspaces entries longer than the path buffer", () => {
 // shared directory, and the current user owns it, or its owner also owns the directory the
 // command ran in.
 //
-// Most cases need a second uid, so they run as root only.
-describe("untrusted ancestor package.json", () => {
+// The cases that need a second uid run as root only.
+describe.concurrent("untrusted ancestor package.json", () => {
   // "nobody" on Linux and macOS.
   const OTHER_UID = 65534;
-  const notRoot = isWindows || process.getuid?.() !== 0;
+  const isRoot = process.getuid?.() === 0;
+  const notRoot = isWindows || !isRoot;
 
   // A dependency that is a folder with a postinstall script. The script runs only if the
   // root manifest trusts the dependency by name.
@@ -373,12 +384,20 @@ describe("untrusted ancestor package.json", () => {
     chownSync(path, OTHER_UID, OTHER_UID);
   }
 
+  function anotherUserOwns(directory: string) {
+    return `another user owns ${directory}/package.json`;
+  }
+
+  function otherUsersCanAddFilesTo(directory: string) {
+    return `other local users can add files to ${directory}`;
+  }
+
   // Installs in `planted/sub` and asserts that the walk passed over `planted/package.json`
   // and installed the empty project above it instead: no error, and nothing in `planted`.
-  async function expectPlantedProjectIgnored(root: string) {
+  async function expectPlantedProjectIgnored(root: string, warning: (directory: string) => string) {
     const { stdout, stderr, exitCode } = await installIn(root, "planted/sub");
 
-    expect(stderr).toContain(`another user owns ${join(root, "planted")}/package.json`);
+    expect(stderr).toContain(warning(join(root, "planted")));
     expect(stderr).not.toContain("error");
     expect(stdout).not.toContain("+ dep");
     expect(existsSync(marker(root))).toBe(false);
@@ -411,7 +430,16 @@ describe("untrusted ancestor package.json", () => {
     const root = String(dir);
     chownToOtherUser(join(root, "planted", "package.json"));
 
-    await expectPlantedProjectIgnored(root);
+    await expectPlantedProjectIgnored(root, anotherUserOwns);
+  });
+
+  // The same walk, refused for the directory and not for the owner, so no second uid.
+  test.skipIf(isWindows)("is not the project in a sticky directory every user may write to", async () => {
+    using dir = tempDir("bad-workspace-project-shared-dir", noWorkspacesFiles);
+    const root = String(dir);
+    chmodSync(join(root, "planted"), 0o1777);
+
+    await expectPlantedProjectIgnored(root, otherUsersCanAddFilesTo);
   });
 
   // `fstat` on the descriptor the walk holds reports the owner of a symlink's target, so
@@ -424,7 +452,30 @@ describe("untrusted ancestor package.json", () => {
     symlinkSync("real.json", join(root, "planted", "package.json"));
     lchownSync(join(root, "planted", "package.json"), OTHER_UID, OTHER_UID);
 
-    await expectPlantedProjectIgnored(root);
+    await expectPlantedProjectIgnored(root, anotherUserOwns);
+  });
+
+  // The other way around: the link is this user's, the file it opens is not. Only `fstat`
+  // sees that owner.
+  test.skipIf(notRoot)("is not the project when this user's link names another user's file", async () => {
+    using dir = tempDir("bad-workspace-project-own-link", noWorkspacesFiles);
+    const root = String(dir);
+    renameSync(join(root, "planted", "package.json"), join(root, "planted", "real.json"));
+    chownToOtherUser(join(root, "planted", "real.json"));
+    symlinkSync("real.json", join(root, "planted", "package.json"));
+
+    await expectPlantedProjectIgnored(root, anotherUserOwns);
+  });
+
+  // The same shape without a second uid: to any user but root, /etc/passwd is a file that
+  // root owns.
+  test.skipIf(isWindows || isRoot)("is not the project when this user's link names a file root owns", async () => {
+    using dir = tempDir("bad-workspace-project-own-link-root-file", noWorkspacesFiles);
+    const root = String(dir);
+    rmSync(join(root, "planted", "package.json"));
+    symlinkSync("/etc/passwd", join(root, "planted", "package.json"));
+
+    await expectPlantedProjectIgnored(root, anotherUserOwns);
   });
 
   // Owning the manifest is not enough in a directory with the mode `/tmp` has: another
@@ -467,7 +518,7 @@ describe("untrusted ancestor package.json", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(notRoot)("is adopted when the current user owns it", async () => {
+  test.skipIf(isWindows)("is adopted when the current user owns it", async () => {
     using dir = tempDir("bad-workspace-root-same-user", workspaceFiles);
     const root = String(dir);
 

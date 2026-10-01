@@ -7,6 +7,10 @@ pub trait WriterContext: Copy {
     fn offset(self) -> usize;
     fn write(self, bytes: &[u8]) -> Result<(), AnyPostgresError>;
     fn pwrite(self, bytes: &[u8], offset: usize) -> Result<(), AnyPostgresError>;
+    /// Discard every byte written at or after `offset`.
+    fn truncate(self, offset: usize);
+    /// Changes when another writer is handed out or the buffer is drained.
+    fn epoch(self) -> u32;
 }
 
 #[derive(Copy, Clone)]
@@ -58,6 +62,20 @@ impl<C: WriterContext> NewWriter<C> {
     #[inline]
     pub(crate) fn pwrite(self, data: &[u8], i: usize) -> Result<(), AnyPostgresError> {
         C::pwrite(self.wrapped, data, i)
+    }
+
+    /// Run `f`. If it fails and nothing else touched the buffer, discard what it wrote.
+    pub fn atomically(
+        self,
+        f: impl FnOnce(Self) -> Result<(), AnyPostgresError>,
+    ) -> Result<(), AnyPostgresError> {
+        let start = self.offset();
+        let epoch = C::epoch(self.wrapped);
+        let result = f(self);
+        if result.is_err() && C::epoch(self.wrapped) == epoch {
+            C::truncate(self.wrapped, start);
+        }
+        result
     }
 
     pub fn int4(self, value: PostgresInt32) -> Result<(), AnyPostgresError> {

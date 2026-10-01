@@ -409,4 +409,81 @@ describe("TLSSocket allowHalfOpen", () => {
       }
     });
   });
+
+  describe.concurrent("a peer reset under a server-side wrap", () => {
+    // The reset closes the wrapped socket too, and the wrapped socket's 'close'
+    // destroys the TLS socket. That must not run ahead of the TLS socket's own
+    // close, which is what reports the reset. In both tests the server also
+    // listens for errors on the raw socket it wrapped (the usual STARTTLS shape).
+
+    test("new TLSSocket(socket, { isServer }): the reset is an 'error' on the TLS socket", async () => {
+      const events: string[] = [];
+      const teardown = Promise.withResolvers<string[]>();
+      const gotData = Promise.withResolvers<void>();
+      let wrapped: TLSSocket | undefined;
+      const rawServer = net.createServer(socket => {
+        socket.on("error", () => {});
+        wrapped = new TLSSocket(socket, { isServer: true, ...COMMON_CERT });
+        wrapped.on("error", (err: NodeJS.ErrnoException) => events.push(`error:${err.code}`));
+        wrapped.on("close", hadError => {
+          events.push(`close:${hadError}`);
+          teardown.resolve(events);
+          gotData.reject(new Error(`the TLS socket closed before it got data (${events.join(", ")})`));
+        });
+        wrapped.once("data", () => gotData.resolve());
+      });
+      let raw: net.Socket | undefined;
+      let client: TLSSocket | undefined;
+      try {
+        const port = await listen(rawServer);
+        raw = net.connect({ port, host: "127.0.0.1" });
+        // Both are no-ops once the data has arrived, which is before the reset.
+        raw.on("error", gotData.reject);
+        client = tls.connect({ socket: raw, rejectUnauthorized: false }, () => client!.write("hi"));
+        client.on("error", gotData.reject);
+        await gotData.promise;
+        raw.resetAndDestroy();
+        expect(await teardown.promise).toEqual(["error:ECONNRESET", "close:true"]);
+      } finally {
+        client?.destroy();
+        raw?.destroy();
+        wrapped?.destroy();
+        rawServer.close();
+      }
+    });
+
+    test("a socket injected into a tls.Server: a reset during the handshake is a 'tlsClientError'", async () => {
+      const tlsServer = tls.createServer(COMMON_CERT);
+      const clientError = Promise.withResolvers<NodeJS.ErrnoException>();
+      tlsServer.on("tlsClientError", clientError.resolve);
+      tlsServer.on("secureConnection", () => clientError.reject(new Error("the handshake completed")));
+      const injected = Promise.withResolvers<void>();
+      const rawServer = net.createServer(socket => {
+        socket.on("error", () => {});
+        // The TLS socket the server builds over an injected socket is not reachable from
+        // here, so a lost 'tlsClientError' shows only as silence. The error comes from the
+        // same native close that closes the raw socket: a few event-loop turns bound it.
+        socket.on("close", async () => {
+          for (let turn = 0; turn < 10; turn++) await new Promise<void>(resolve => setImmediate(resolve));
+          clientError.reject(new Error("the raw socket closed and no 'tlsClientError' followed"));
+        });
+        tlsServer.emit("connection", socket);
+        injected.resolve();
+      });
+      let raw: net.Socket | undefined;
+      try {
+        const port = await listen(rawServer);
+        raw = net.connect({ port, host: "127.0.0.1" });
+        // A no-op once the server has the connection, which is before the reset.
+        raw.on("error", injected.reject);
+        await injected.promise;
+        raw.resetAndDestroy();
+        expect((await clientError.promise).code).toBe("ECONNRESET");
+      } finally {
+        raw?.destroy();
+        rawServer.close();
+        tlsServer.close();
+      }
+    });
+  });
 });

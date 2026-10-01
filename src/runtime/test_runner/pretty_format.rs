@@ -86,17 +86,17 @@ impl EventType {
 }
 
 #[derive(Default)]
-pub struct JestPrettyFormat {}
+pub(crate) struct JestPrettyFormat {}
 
 #[repr(u32)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum MessageLevel {
+pub(crate) enum MessageLevel {
     Error = 2,
     Debug = 3,
 }
 
 #[derive(Copy, Clone, Default)]
-pub struct FormatOptions {
+pub(crate) struct FormatOptions {
     pub(crate) enable_colors: bool,
     pub(crate) add_newline: bool,
     pub flush: bool,
@@ -260,7 +260,7 @@ impl JestPrettyFormat {
 }
 
 // For detecting circular references
-pub mod visited {
+pub(crate) mod visited {
     use super::*;
 
     // JSValue keys live on heap; safe because every visited value is also
@@ -272,7 +272,7 @@ pub mod visited {
     // `.get_or_put()`, `.remove()`, `mem::take`) unchanged.
     #[repr(transparent)]
     #[derive(Default)]
-    pub struct Map(pub(crate) HashMap<JSValue, ()>);
+    pub(crate) struct Map(pub(crate) HashMap<JSValue, ()>);
 
     impl core::ops::Deref for Map {
         type Target = HashMap<JSValue, ()>;
@@ -304,10 +304,10 @@ pub mod visited {
     // storage; without it `ObjectPool<Map, true, 16>` defaults to
     // `UnwiredStorage` which panics on first `get_node()`.
     bun_collections::object_pool!(pub Pool: Map, threadsafe, 16);
-    pub type PoolNode = bun_collections::pool::Node<Map>;
+    pub(crate) type PoolNode = bun_collections::pool::Node<Map>;
 }
 
-pub struct Formatter<'a> {
+pub(crate) struct Formatter<'a> {
     pub(crate) remaining_values: &'a [JSValue],
     pub(crate) map: visited::Map,
     /// Lazily acquired from `visited::Pool`; released back in `Drop`.
@@ -375,7 +375,7 @@ impl Drop for Formatter<'_> {
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, core::marker::ConstParamTy)]
-pub enum Tag {
+pub(crate) enum Tag {
     StringPossiblyFormatted,
     String,
     Undefined,
@@ -428,7 +428,7 @@ impl Tag {
 }
 
 #[derive(Copy, Clone)]
-pub struct TagResult {
+pub(crate) struct TagResult {
     pub(crate) tag: Tag,
     pub cell: JSType,
 }
@@ -440,7 +440,7 @@ impl Default for TagResult {
 }
 
 impl Tag {
-    pub fn get(value: JSValue, global_this: &JSGlobalObject) -> JsResult<TagResult> {
+    pub(crate) fn get(value: JSValue, global_this: &JSGlobalObject) -> JsResult<TagResult> {
         if value.is_empty() || value == JSValue::UNDEFINED {
             return Ok(TagResult { tag: Tag::Undefined, ..Default::default() });
         }
@@ -675,7 +675,7 @@ impl<'a> Formatter<'a> {
     }
 }
 
-pub struct WrappedWriter<'w, W: bun_io::Write> {
+pub(crate) struct WrappedWriter<'w, W: bun_io::Write> {
     pub ctx: &'w mut W,
     pub(crate) failed: bool,
 }
@@ -2670,7 +2670,7 @@ impl bun_jsc::ConsoleFormatter for Formatter<'_> {
 /// [`bun_jsc::console_object::Formatter`] so the same body serves the test
 /// runner *and* `console.log`'s `.Private` arm (via the
 /// `RuntimeHooks::console_print_runtime_object` hook).
-pub trait AsymmetricMatcherFormatter {
+pub(crate) trait AsymmetricMatcherFormatter {
     fn amf_add_for_new_line(&mut self, n: usize);
     fn amf_global_this(&self) -> &JSGlobalObject;
     fn amf_quote_strings(&mut self) -> &mut bool;

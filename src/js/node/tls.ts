@@ -4,7 +4,9 @@ const net = require("node:net");
 const Duplex = require("internal/streams/duplex");
 const EventEmitter = require("node:events");
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
+const setListenerSecureContext = $newRustFunction("Listener.rs", "jsSetSecureContext", 2);
 const { throwNotImplemented } = require("internal/shared");
+const { idnaToASCII } = require("internal/url");
 const {
   throwOnInvalidTLSArray,
   tlsStringToProtocolVersion,
@@ -396,6 +398,9 @@ function check(hostParts, pattern, wildcards) {
 
   const { 0: prefix, 1: suffix } = patternSubdomainParts;
 
+  // Node lets "*" match the empty label of ".example.com", the IDNA form of "。example.com".
+  if (hostSubdomain === "") return false;
+
   if (prefix.length + suffix.length > hostSubdomain.length) return false;
 
   if (!StringPrototypeStartsWith.$call(hostSubdomain, prefix)) return false;
@@ -450,6 +455,13 @@ function checkServerIdentity(hostname, cert) {
   const ips = [];
 
   hostname = "" + hostname;
+  // CVE-2026-48618: UTS #46 maps "。" to ".". Not url.domainToASCII() as in Node.js: that URL host parse cuts the name at "/".
+  const hostnameASCII =
+    RegExpPrototypeExec.$call(/[^\u0000-\u007F]/, hostname) === null ? hostname : idnaToASCII(hostname);
+
+  // Remove trailing dots for error messages and matching.
+  hostname = unfqdn(hostname);
+  const hostnameASCIIWithoutFQDN = unfqdn(hostnameASCII);
 
   if (altNames) {
     const splitAltNames = StringPrototypeIncludes.$call(altNames, '"')
@@ -467,14 +479,18 @@ function checkServerIdentity(hostname, cert) {
   let valid = false;
   let reason = "Unknown reason";
 
-  hostname = unfqdn(hostname); // Remove trailing dot for error messages.
+  // As in Node.js (https://github.com/nodejs/node/commit/1d87a24050), a host is an IP address only as typed.
   if (net.isIP(hostname)) {
-    valid = ArrayPrototypeIncludes.$call(ips, canonicalizeIP(hostname));
+    // canonicalizeIP() is undefined for "::1%lo" and for a malformed IP SAN, and undefined must not match undefined.
+    const ip = canonicalizeIP(hostname);
+    valid = ip !== undefined && ArrayPrototypeIncludes.$call(ips, ip);
     if (!valid) reason = `IP: ${hostname} is not in the cert's list: ` + ArrayPrototypeJoin.$call(ips, ", ");
   } else {
     const hasDnsNames = dnsNames.length > 0;
     if (hasDnsNames || subject?.CN) {
-      const hostParts = splitHost(hostname);
+      // Not in Node.js: a host with a character that no hostname has matches nothing, as in rustls and mozilla::pkix. "*.evil.test" would cover "localhost/.evil.test".
+      const isHostname = RegExpPrototypeExec.$call(/[^A-Za-z0-9._-]/, hostnameASCIIWithoutFQDN) === null;
+      const hostParts = isHostname ? splitHost(hostnameASCIIWithoutFQDN) : [];
       const wildcard = pattern => check(hostParts, pattern, true);
 
       if (hasDnsNames) {
@@ -538,11 +554,20 @@ function normalizePemKeyOption(key, ctxPassphrase) {
 
 const SSL_OP_CIPHER_SERVER_PREFERENCE = 0x00400000;
 
+// SNI is a C string, so as in Node.js it ends at a NUL. checkServerIdentity() still gets the whole servername.
+function sniName(servername) {
+  if (typeof servername !== "string") return servername;
+  const nul = StringPrototypeIndexOf.$call(servername, "\0");
+  return nul === -1 ? servername : StringPrototypeSlice.$call(servername, 0, nul);
+}
+
 function newNativeSecureContext(options, cached = false) {
   maybeWarnAboutExtraCACerts();
   // tls.createSecureContext() with no options still goes through the version
   // translation below so the module-level DEFAULT_MIN/MAX_VERSION apply.
   options = options == null ? {} : processPfxOptions(options);
+  const servername = options.servername;
+  if (sniName(servername) !== servername) options = { ...options, servername: sniName(servername) };
   // PKCS#12-embedded CAs extend the trust set after the context is built; a
   // mutated context must not be the shared cached one.
   const pfxExtraCAs = options._pfxExtraCACerts;
@@ -552,7 +577,7 @@ function newNativeSecureContext(options, cached = false) {
   // convertALPNProtocols normalizes them on the socket options.
   const ALPNProtocols = options.ALPNProtocols;
   if (Array.isArray(ALPNProtocols)) {
-    const normalized = {};
+    const normalized: { ALPNProtocols?: Buffer } = {};
     convertALPNProtocols(ALPNProtocols, normalized);
     options = { ...options, ALPNProtocols: normalized.ALPNProtocols };
   }
@@ -1138,6 +1163,7 @@ TLSSocket.prototype[buntls] = function (port, host) {
     // of rebuilding from raw cert/key bytes.
     secureContext: ctx?.context,
     servername,
+    serverName: sniName(servername),
   };
 };
 
@@ -1226,6 +1252,8 @@ function Server(options, secureConnectionListener): void {
   this._rejectUnauthorized = serverOptions?.rejectUnauthorized !== false;
   this.servername = undefined;
   this.ALPNProtocols = undefined;
+  // Constructor-only in node, like the two flags above: setSecureContext() never reads it.
+  if (serverOptions?.ALPNProtocols) convertALPNProtocols(serverOptions.ALPNProtocols, this);
   this._sharedCreds = undefined;
 
   let contexts: Map<string, typeof InternalSecureContext> | null = null;
@@ -1257,14 +1285,6 @@ function Server(options, secureConnectionListener): void {
     if (options) {
       validateSecureContextOptions(options);
       options = processPfxOptions(options);
-      const { ALPNProtocols } = options;
-
-      if (ALPNProtocols) {
-        convertALPNProtocols(ALPNProtocols, next);
-      } else {
-        // An omitted ALPNProtocols clears the previous call's protocols.
-        next.ALPNProtocols = undefined;
-      }
 
       let cert = options.cert;
       // Assign unconditionally so a later setSecureContext() that omits an
@@ -1394,13 +1414,19 @@ function Server(options, secureConnectionListener): void {
       // validateSecureContextOptions already rejected unknown method names.
       // Assign unconditionally so a later setSecureContext() without these
       // options clears the previous call's version constraints instead of
-      // re-applying them on the next listen.
+      // re-applying them to the next context built.
       next.secureProtocol = options.secureProtocol;
       next.minVersion = options.minVersion;
       next.maxVersion = options.maxVersion;
     }
     if (options) {
-      this.ALPNProtocols = next.ALPNProtocols;
+      // Throws on material BoringSSL rejects, so it runs before the fields change.
+      const handle = this._handle;
+      if (handle && !(serverTLSOptions instanceof InternalSecureContext)) {
+        // [buntls] reads its receiver: the staged fields over the server's own.
+        const staged = { __proto__: this, ...next };
+        setListenerSecureContext(handle, staged[buntls](0, undefined, false)[0]);
+      }
       this.cert = next.cert;
       this.key = next.key;
       this.ca = next.ca;
@@ -1444,9 +1470,10 @@ function Server(options, secureConnectionListener): void {
   };
 
   this[buntls] = function (port, host, isClient) {
+    const requestCert = isClient ? true : this._requestCert;
     return [
       {
-        serverName: this.servername || host || "localhost",
+        serverName: sniName(this.servername || host || "localhost"),
         key: normalizePemKeyOption(this.key, this.passphrase),
         cert: this.cert,
         ca: this.ca,
@@ -1457,8 +1484,9 @@ function Server(options, secureConnectionListener): void {
         ecdhCurve: this.ecdhCurve ?? DEFAULT_ECDH_CURVE,
         passphrase: this.passphrase,
         secureOptions: this.secureOptions,
-        rejectUnauthorized: this._rejectUnauthorized,
-        requestCert: isClient ? true : this._requestCert,
+        // A server that requests no client certificate has none to reject.
+        rejectUnauthorized: requestCert ? this._rejectUnauthorized : false,
+        requestCert,
         ALPNProtocols: this.ALPNProtocols,
         clientRenegotiationLimit: CLIENT_RENEG_LIMIT,
         clientRenegotiationWindow: CLIENT_RENEG_WINDOW,
@@ -1583,7 +1611,7 @@ function normalizeConnectArgs(listArgs) {
 function connect(...args) {
   let normal = normalizeConnectArgs(args);
   const options = normal[0];
-  const { ALPNProtocols, servername } = options as { ALPNProtocols?: unknown; servername?: unknown };
+  const { ALPNProtocols, servername } = options as { ALPNProtocols?: unknown; servername?: string };
 
   // The TLSSocket applies the NODE_TLS_REJECT_UNAUTHORIZED default itself
   // (rejectUnauthorizedDefault); this call exists to emit Node's one-time
@@ -1611,7 +1639,7 @@ function connect(...args) {
     ? options.rejectUnauthorized !== false
     : rejectUnauthorizedDefault();
 
-  const connectOptions = { checkServerIdentity, ...options, rejectUnauthorized };
+  const connectOptions: Record<PropertyKey, any> = { checkServerIdentity, ...options, rejectUnauthorized };
   if (!ObjectPrototypeHasOwnProperty.$call(options, "ciphers") || connectOptions.ciphers == null) {
     connectOptions.ciphers = getDefaultCiphers();
   }
@@ -1899,4 +1927,7 @@ export default {
     return cacheBundledRootCertificates();
   },
   getCACertificates,
-} as any as typeof import("node:tls");
+} as any as typeof import("node:tls") & {
+  SecureContext: typeof SecureContext;
+  convertALPNProtocols: typeof convertALPNProtocols;
+};

@@ -149,6 +149,7 @@ describe("frozen arrays keep their elements in the vector", () => {
          console.log(JSON.stringify({ threw, frozen: Object.isFrozen(Array.prototype), blank: describe(Array.prototype).includes("ArrayClass") }));`,
       ],
       env: bunEnv,
+      stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");

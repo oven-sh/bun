@@ -213,6 +213,35 @@ pub(crate) enum GetBinNameError {
     NeedToInstall,
 }
 
+/// Name of the directory bunx roots its package cache in, inside the install
+/// cache directory or the temp directory. `bun pm cache rm` clears it, so both
+/// spell it from here.
+pub(crate) fn cache_root_name() -> Vec<u8> {
+    #[cfg(unix)]
+    // SAFETY: getuid(2) is always-successful with no preconditions.
+    let uid = unsafe { libc::getuid() };
+    #[cfg(windows)]
+    let uid = bun_sys::windows::user_unique_id();
+    let mut name = Vec::new();
+    write!(&mut name, ".bunx-{uid}").expect("unreachable");
+    name
+}
+
+/// The directory the bunx package cache tree is rooted in. One directory per
+/// package sits directly below it.
+struct CacheRoot {
+    /// Absolute path of the root.
+    path: Vec<u8>,
+    /// Length of the directory the root was created in. bunx owns everything
+    /// below it and nothing above it, which is where the ownership checks
+    /// stop.
+    parent_len: usize,
+    /// True when the package directory carries the `bunx-<uid>-` prefix
+    /// because the root holds more than the bunx cache (Windows, where the
+    /// temp directory is already per-user).
+    prefix_package_with_uid: bool,
+}
+
 impl BunxCommand {
     /// Adds `create-` to the string, but also handles scoped packages correctly.
     /// Always clones the string in the process.
@@ -268,8 +297,7 @@ impl BunxCommand {
     const NANOSECONDS_CACHE_VALID: i128 = (Self::SECONDS_CACHE_VALID as i128) * 1_000_000_000;
 
     /// `bin` keys (and the `name` fallback) in package.json are command
-    /// names, not paths. The bunx cache lives in a world-writable temp dir,
-    /// so a crafted package.json there could yield a key like
+    /// names, not paths. A published package.json could yield a key like
     /// `../../../../tmp/x` or `/tmp/x`; `bun_which::which` resolves
     /// slash-containing names against the cwd, escaping `node_modules/.bin`
     /// and skipping the cache-ownership check before execution. Reject
@@ -528,8 +556,9 @@ impl BunxCommand {
     /// Refuse to execute a binary resolved from inside the bunx cache unless
     /// it is owned by the current user.
     ///
-    /// The bunx cache lives under the world-writable temp dir at a predictable
-    /// path. Another local user could pre-create that path. Bun's bin linker
+    /// The cache root is a private per-user directory, but bunx also reaches
+    /// it through `$PATH` and through paths built from `package.json`, so the
+    /// check runs on every candidate as defense in depth. Bun's bin linker
     /// creates `.bin/<name>` entries as *symlinks* on Unix
     /// (`Linker::create_symlink`), so a regular-file-only check would mark every
     /// legitimate cache hit as untrusted and reinstall on every invocation.
@@ -538,8 +567,8 @@ impl BunxCommand {
     /// regular file so an attacker-planted, uid-matching link can't redirect
     /// execution outside the cache.
     ///
-    /// On non-Unix targets there is no comparable shared world-writable temp
-    /// dir / uid model, so the check is a no-op there.
+    /// On non-Unix targets there is no comparable uid model, so the check is a
+    /// no-op there.
     #[cfg(unix)]
     fn is_trusted_cached_binary(destination: &ZStr, uid: libc::uid_t) -> bool {
         let lstat_ok = |st: &bun_sys::Stat| {
@@ -566,10 +595,14 @@ impl BunxCommand {
         true
     }
 
+    /// Check every directory bunx owns on the way to `cache_root`: the
+    /// per-user cache root itself and each component below it.
+    /// `root_parent_len` is the length of the directory the root was created
+    /// in, which bunx does not own and does not judge here.
     #[cfg(unix)]
-    fn is_trusted_cache_root(cache_root: &[u8], temp_dir_len: usize, uid: libc::uid_t) -> bool {
+    fn is_trusted_cache_root(cache_root: &[u8], root_parent_len: usize, uid: libc::uid_t) -> bool {
         let mut buf = bun_paths::path_buffer_pool::get();
-        if cache_root.len() >= buf.len() || temp_dir_len >= cache_root.len() {
+        if cache_root.len() >= buf.len() || root_parent_len >= cache_root.len() {
             return false;
         }
         buf[..cache_root.len()].copy_from_slice(cache_root);
@@ -578,7 +611,7 @@ impl BunxCommand {
                 && st.st_uid == uid
                 && (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) == 0
         };
-        let mut start = temp_dir_len + 1;
+        let mut start = root_parent_len + 1;
         loop {
             let end = match strings::index_of_char_pos(cache_root, bun_paths::SEP, start) {
                 Some(i) => i,
@@ -607,15 +640,19 @@ impl BunxCommand {
 
     #[cfg(not(unix))]
     #[inline(always)]
-    fn is_trusted_cache_root(_cache_root: &[u8], _temp_dir_len: usize, _uid: u32) -> bool {
+    fn is_trusted_cache_root(_cache_root: &[u8], _root_parent_len: usize, _uid: u32) -> bool {
         true
     }
 
+    /// The same check as `is_trusted_cache_root`, bound to the directory bunx
+    /// actually opened: the leaf must be the same inode as the path it was
+    /// opened by, so a rename between the open and the install cannot redirect
+    /// it.
     #[cfg(unix)]
     fn is_trusted_opened_cache_dir(
         dir: Fd,
         cache_dir: &[u8],
-        temp_dir_len: usize,
+        root_parent_len: usize,
         uid: libc::uid_t,
     ) -> bool {
         let dir_ok = |st: &bun_sys::Stat| {
@@ -646,7 +683,7 @@ impl BunxCommand {
             }
             is_leaf = false;
             match strings::last_index_of_char(&cache_dir[..end], bun_paths::SEP) {
-                Some(idx) if idx > temp_dir_len => end = idx,
+                Some(idx) if idx > root_parent_len => end = idx,
                 _ => return true,
             }
         }
@@ -657,10 +694,106 @@ impl BunxCommand {
     fn is_trusted_opened_cache_dir(
         _dir: Fd,
         _cache_dir: &[u8],
-        _temp_dir_len: usize,
+        _root_parent_len: usize,
         _uid: u32,
     ) -> bool {
         true
+    }
+
+    /// Make `root` usable as the cache root. Reports false only when it does
+    /// not exist and cannot be created, which is what sends bunx to the next
+    /// candidate root. A directory that exists is left for
+    /// `is_trusted_cache_root` to judge, so a root owned by somebody else is
+    /// reported to the user instead of being quietly worked around.
+    ///
+    /// Only the root itself is private. Its parents are the install cache
+    /// directory, which `bun install` creates with the default mode.
+    #[cfg(unix)]
+    fn ensure_cache_root(root: &[u8]) -> bool {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        if root.len() >= buf.len() {
+            return false;
+        }
+        buf[..root.len()].copy_from_slice(root);
+        buf[root.len()] = 0;
+        if bun_sys::lstat(ZStr::from_buf(&buf[..], root.len())).is_ok() {
+            return true;
+        }
+        let parent = match bun_paths::dirname(root) {
+            Some(parent) => parent,
+            None => return false,
+        };
+        if Fd::cwd().make_path(parent).is_err() {
+            return false;
+        }
+        bun_sys::mkdirat(Fd::cwd(), ZStr::from_buf(&buf[..], root.len()), 0o700).is_ok()
+    }
+
+    /// Pick the directory the bunx package cache tree is rooted in.
+    ///
+    /// A package bunx installs can carry a native addon whose library search
+    /// path climbs out of the package with `..`. The dynamic loader resolves
+    /// those paths, so the root has to sit in a tree where every directory
+    /// such a climb can reach belongs to the current user or to root.
+    ///
+    /// The install cache (`BUN_INSTALL_CACHE_DIR`, `BUN_INSTALL`,
+    /// `XDG_CACHE_HOME`, `HOME`) is that tree. When nothing names one, or the
+    /// root cannot be created there, bunx uses a private directory in the temp
+    /// directory instead: a climb that stays inside it is still safe, and it
+    /// is the only writable location left.
+    #[cfg(unix)]
+    fn user_cache_root(
+        env: &mut bun_dotenv::Loader,
+        temp_dir: &'static [u8],
+    ) -> crate::Result<CacheRoot> {
+        let root_name = cache_root_name();
+        let join = |base: &[u8]| -> Vec<u8> {
+            let base = strings::without_trailing_slash(base);
+            let mut root = Vec::with_capacity(base.len() + root_name.len() + 1);
+            root.extend_from_slice(base);
+            root.push(bun_paths::SEP);
+            root.extend_from_slice(&root_name);
+            root
+        };
+
+        let cache_dir = bun_install::package_manager::fetch_cache_directory_path(env, None);
+        if !cache_dir.is_cwd_fallback {
+            let root = join(&cache_dir.path);
+            if Self::ensure_cache_root(&root) {
+                return Ok(CacheRoot {
+                    parent_len: root.len() - root_name.len() - 1,
+                    path: root,
+                    prefix_package_with_uid: false,
+                });
+            }
+            bun_output::scoped_log!(bunx, "install cache root unusable: {}", BStr::new(&root[..]));
+        }
+
+        // A failure to create this one is reported by the install below, which
+        // needs the directory anyway.
+        let root = join(temp_dir);
+        Self::ensure_cache_root(&root);
+        Ok(CacheRoot {
+            parent_len: root.len() - root_name.len() - 1,
+            path: root,
+            prefix_package_with_uid: false,
+        })
+    }
+
+    /// Windows has no shared temp directory: `GetTempPath` is per-user, so the
+    /// layout stays as it was.
+    #[cfg(not(unix))]
+    fn user_cache_root(
+        _env: &mut bun_dotenv::Loader,
+        temp_dir: &'static [u8],
+    ) -> crate::Result<CacheRoot> {
+        let root = strings::without_trailing_slash(temp_dir).to_vec();
+        let parent_len = root.len();
+        Ok(CacheRoot {
+            path: root,
+            parent_len,
+            prefix_package_with_uid: true,
+        })
     }
 
     fn exit_with_usage() -> ! {
@@ -931,17 +1064,26 @@ impl BunxCommand {
 
         // The bunx cache path is at the following location
         //
-        //   <temp_dir>/bunx-<uid>-<package_fmt>/node_modules/.bin/<bin>
+        //   <cache_root>/<package_fmt>/node_modules/.bin/<bin>
+        //
+        // where <cache_root> is a directory only the current user can write,
+        // chosen by `user_cache_root`. On Windows it is the temp directory,
+        // which is already per-user, and the package component keeps its
+        // `bunx-<uid>-` prefix.
         //
         // Reasoning:
-        // - Prefix with "bunx" to identify the bunx cache, make it easier to "rm -r"
-        //   - Suffix would not work because scoped packages have a "/" in them, and
-        //     before Bun 1.1 this was practically impossible to clear the cache manually.
-        //     It was easier to just remove the entire temp directory.
-        // - Use the uid to prevent conflicts between users. If the paths were the same
-        //   across users, you run into permission conflicts
-        //   - If you set permission to 777, you run into a potential attack vector
-        //     where a user can replace the directory with malicious code.
+        // - A package in this tree can carry a native addon whose library
+        //   search path (DT_RPATH, DT_RUNPATH, LC_RPATH) climbs out of the
+        //   package with `..`. The dynamic loader resolves those paths and
+        //   loads whatever it finds. So every directory such a climb can reach
+        //   has to belong to the current user or to root, which is why the
+        //   tree no longer sits one component below the shared temp directory.
+        // - Name the root after the uid to prevent conflicts between users. If
+        //   the paths were the same across users, you run into permission
+        //   conflicts.
+        // - Keep the "bunx" string in the path to identify the cache and make
+        //   it easier to "rm -r". A suffix would not work because scoped
+        //   packages have a "/" in them.
         //
         // If this format changes, please update cache clearing code in package_manager_command.rs
         #[cfg(unix)]
@@ -950,16 +1092,27 @@ impl BunxCommand {
         #[cfg(windows)]
         let uid = bun_sys::windows::user_unique_id();
 
+        let cache_root = Self::user_cache_root(env_loader, temp_dir)?;
+        let bunx_cache_dir_buf: Vec<u8> = {
+            let mut v = Vec::with_capacity(cache_root.path.len() + package_fmt.len() + 1);
+            v.extend_from_slice(&cache_root.path);
+            v.push(bun_paths::SEP);
+            if cache_root.prefix_package_with_uid {
+                write!(&mut v, "bunx-{uid}-").map_err(|_| crate::Error::Alloc(AllocError))?;
+            }
+            v.extend_from_slice(&package_fmt);
+            v
+        };
+        let bunx_cache_dir: &[u8] = &bunx_cache_dir_buf;
+
         path = {
             let mut v = Vec::new();
             let path_is_nonzero = !path.is_empty();
             write!(
                 &mut v,
-                "{tmp}{sep}bunx-{uid}-{pkg}{sep}node_modules{sep}.bin",
-                tmp = BStr::new(temp_dir),
+                "{cache}{sep}node_modules{sep}.bin",
+                cache = BStr::new(bunx_cache_dir),
                 sep = bun_paths::SEP as char,
-                uid = uid,
-                pkg = BStr::new(&package_fmt),
             )
             .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
             if path_is_nonzero {
@@ -972,9 +1125,6 @@ impl BunxCommand {
         env_loader.map.put(b"PATH", &path)?;
         // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
         let fs = unsafe { &mut *this_transpiler.fs };
-        let uid_digits = bun_core::fmt::digit_count(uid);
-        let bunx_cache_dir: &[u8] =
-            &path[0..temp_dir.len() + b"/bunx--".len() + package_fmt.len() + uid_digits];
 
         bun_output::scoped_log!(bunx, "bunx_cache_dir: {}", BStr::new(bunx_cache_dir));
 
@@ -1002,7 +1152,7 @@ impl BunxCommand {
             unsafe { core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written) }
         };
 
-        if !Self::is_trusted_cache_root(bunx_cache_dir, temp_dir.len(), uid) {
+        if !Self::is_trusted_cache_root(bunx_cache_dir, cache_root.parent_len, uid) {
             Output::err_generic(
                 "refusing to use bunx cache directory <b>{}<r> because it or a parent directory is not a directory owned by the current user. Remove it and try again.",
                 format_args!("{}", BStr::new(bunx_cache_dir)),
@@ -1235,8 +1385,7 @@ impl BunxCommand {
                                     // Same hardening as the first cache probe: this path
                                     // resolves the package's *real* bin name (which may
                                     // differ from the package name), so it is just as
-                                    // reachable for a binary planted by another local user
-                                    // in the world-writable bunx cache.
+                                    // reachable for a binary planted in the cache.
                                     if strings::has_prefix(out, bunx_cache_dir)
                                         && !Self::is_trusted_cached_binary(destination, uid)
                                     {
@@ -1296,11 +1445,13 @@ impl BunxCommand {
             Global::exit(1);
         }
 
+        // The root carries 0700 from `user_cache_root`; `make_open_path` only
+        // creates the package directory below it.
         let bunx_install_dir = Fd::cwd().make_open_path(bunx_cache_dir)?;
         if !Self::is_trusted_opened_cache_dir(
             bunx_install_dir.fd,
             bunx_cache_dir,
-            temp_dir.len(),
+            cache_root.parent_len,
             uid,
         ) {
             Output::err_generic(
@@ -1489,9 +1640,8 @@ impl BunxCommand {
         ) {
             let out: &[u8] = destination.as_bytes();
             // The install we just ran should have created this symlink as the
-            // current user, but the cache lives in a world-writable temp dir; an
-            // attacker can race the install and plant a uid-mismatched entry.
-            // Bail out to the generic error rather than execute it.
+            // current user. Bail out to the generic error rather than execute
+            // an entry whose uid does not match.
             if Self::is_trusted_cached_binary(destination, uid) {
                 let stored = fs.dirname_store.append_slice(out)?;
                 Run::run_binary(

@@ -440,6 +440,26 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 let mut process_env = bun_dotenv::Loader::init();
                 process_env.load_process()?;
                 let cache_dir = fetch_cache_directory_path(&mut process_env, None);
+
+                // `bunx` roots its package cache at `<cache dir>/.bunx-<uid>`,
+                // or at `<temp dir>/.bunx-<uid>` when no cache directory
+                // resolves. Both are counted here; the first is inside the
+                // install cache tree deleted below, so count it first.
+                let mut deleted: usize = 0;
+                let bunx_root_name = crate::cli::bunx_command::cache_root_name();
+                if !cache_dir.is_cwd_fallback {
+                    let mut root = strings::without_trailing_slash(&cache_dir.path).to_vec();
+                    root.push(Path::SEP);
+                    root.extend_from_slice(&bunx_root_name);
+                    if let Ok(root_dir) = Dir::open(&root) {
+                        let mut root_iter = bun_sys::iterate_dir(root_dir.fd());
+                        while let Ok(Some(_)) = root_iter.next() {
+                            deleted += 1;
+                        }
+                        root_dir.close();
+                    }
+                }
+
                 let mut rm_buf = bun_paths::path_buffer_pool::get();
                 let rm_dir = match Dir::cwd().make_open_path(&cache_dir.path, Default::default()) {
                     Ok(d) => d,
@@ -485,7 +505,10 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     };
                     let mut iter = bun_sys::iterate_dir(tmp_dir.fd());
 
-                    // This is to match 'bunx_command.BunxCommand.exec's logic
+                    // This is to match 'bunx_command.BunxCommand.exec's logic:
+                    // the per-package directories it writes directly in the
+                    // temp directory (Windows, and caches written by an older
+                    // bun).
                     let mut prefix: Vec<u8> = Vec::new();
                     #[cfg(unix)]
                     {
@@ -499,7 +522,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                             .expect("unreachable");
                     }
 
-                    let mut deleted: usize = 0;
                     loop {
                         let entry = match iter.next() {
                             Ok(Some(e)) => e,
@@ -515,19 +537,36 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                             }
                         };
                         let name = entry.name.slice_u8();
-                        if name.starts_with(prefix.as_slice()) {
-                            if let Err(err) = tmp_dir.delete_tree(name) {
-                                Output::err(err, "Could not delete {s}", (bstr::BStr::new(name),));
-                                had_err = true;
-                                continue;
-                            }
-
-                            deleted += 1;
+                        let is_cache_root = strings::eql(name, &bunx_root_name);
+                        if !is_cache_root && !name.starts_with(prefix.as_slice()) {
+                            continue;
                         }
-                    }
+                        // One package per entry for the flat layout, one per
+                        // entry *inside* the cache root for the nested one.
+                        let count = if is_cache_root {
+                            let mut packages: usize = 0;
+                            if let Ok(root_dir) = tmp_dir.open_at(name) {
+                                let mut root_iter = bun_sys::iterate_dir(root_dir.fd());
+                                while let Ok(Some(_)) = root_iter.next() {
+                                    packages += 1;
+                                }
+                                root_dir.close();
+                            }
+                            packages
+                        } else {
+                            1
+                        };
+                        if let Err(err) = tmp_dir.delete_tree(name) {
+                            Output::err(err, "Could not delete {s}", (bstr::BStr::new(name),));
+                            had_err = true;
+                            continue;
+                        }
 
-                    bun_core::prettyln!("Cleared {} cached 'bunx' packages", deleted);
+                        deleted += count;
+                    }
                 }
+
+                bun_core::prettyln!("Cleared {} cached 'bunx' packages", deleted);
 
                 Global::exit(if had_err { 1 } else { 0 });
             }

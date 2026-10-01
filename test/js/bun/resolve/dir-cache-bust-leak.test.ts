@@ -9,7 +9,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-test("dir cache busts don't re-intern unchanged package.json/tsconfig.json", async () => {
+test.concurrent("dir cache busts don't re-intern unchanged package.json/tsconfig.json", async () => {
   const pkgA = JSON.stringify({ name: "dir-cache-bust-fixture", version: "1.0.0", main: "./a/x.js" });
   const pkgB = JSON.stringify({ name: "dir-cache-bust-fixture", version: "1.0.0", main: "./b/y.js" });
   // The extends target does not exist at first; the recompute must notice
@@ -202,7 +202,7 @@ test("dir cache busts don't re-intern unchanged package.json/tsconfig.json", asy
 // router reload busts the directory and recomputes it under a fresh log, so a
 // skipped re-parse would silently drop the diagnostics of an unchanged (but
 // still broken or warning-bearing) package.json or tsconfig.json.
-test("a recompute served from the interner reports the parse diagnostics", async () => {
+test.concurrent("a recompute served from the interner reports the parse diagnostics", async () => {
   const pkgWarn = JSON.stringify({ name: "dir-cache-bust-diagnostics", type: 123 });
   const tsWarn = JSON.stringify({ compilerOptions: { importsNotUsedAsValues: "bogus" } });
   using dir = tempDir("dir-cache-bust-diagnostics", {
@@ -247,7 +247,8 @@ test("a recompute served from the interner reports the parse diagnostics", async
   expect(stderr).toBe("");
   const out = JSON.parse(stdout);
   const warnings = ['Invalid value "bogus" for "importsNotUsedAsValues"', 'The value for "type" must be a string'];
-  expect(out.brokenFirst).toHaveLength(2);
+  // One JSON parse error per malformed file.
+  const errors = ['Expected string but found "this"', 'Expected string but found "this"'];
   expect(out).toEqual({
     clean: [],
     first: warnings,
@@ -256,8 +257,8 @@ test("a recompute served from the interner reports the parse diagnostics", async
     third: warnings,
     reparsed: 0,
     // Same for the negative cache: the parse errors of unchanged broken files.
-    brokenFirst: out.brokenFirst,
-    brokenSecond: out.brokenFirst,
+    brokenFirst: errors,
+    brokenSecond: errors,
     brokenReparsed: 0,
   });
   expect(exitCode).toBe(0);

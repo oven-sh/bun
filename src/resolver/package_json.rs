@@ -435,9 +435,7 @@ impl PackageJSON {
                 return None;
             }
         };
-        // `mem::take` the contents (leaving `Contents::Empty` behind) so
-        // `entry` stays whole for the close-guard. `use_shared_buffer = false`
-        // above guarantees `Contents::Owned`/`Empty`, so `into_vec` moves.
+        // `mem::take` keeps `entry` whole for the close-guard; `use_shared_buffer = false` means `into_vec` moves.
         let entry_contents: Box<[u8]> = core::mem::take(&mut entry.contents)
             .into_vec()
             .into_boxed_slice();

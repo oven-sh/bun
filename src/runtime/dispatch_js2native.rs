@@ -130,10 +130,8 @@ pub(crate) fn resolver_resolver_js_tsconfig_parse_count(
     ))
 }
 
-/// Bust `dir` and recompute its `DirInfo` under a scratch log, as a watcher
-/// or router reload does; returns the log's message texts, one per line. Lets
-/// a test check that a recompute served from the interner reports what a
-/// parse would.
+/// Bust `dir` and recompute it under a scratch log, as a watcher or router reload
+/// does. Returns the log's message texts, one per line.
 pub(crate) fn resolver_resolver_js_dir_info_diagnostics(
     global: &JSGlobalObject,
     frame: &CallFrame,

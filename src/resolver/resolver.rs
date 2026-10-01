@@ -332,13 +332,11 @@ enum InternedPackageJsonState {
 struct InternedPackageJson {
     shape: PackageJsonParseShape,
     state: InternedPackageJsonState,
-    /// What the parse logged (at `Level::Verbose`, so any log level can be
-    /// served). Replayed on every reuse: a recompute that skips the parse
-    /// still reports what the parse would have.
+    /// What the parse logged, replayed into the caller's log on every reuse.
     diagnostics: Vec<Msg>,
 }
 
-/// A `Log` that records everything a parse emits, for [`replay_diagnostics`].
+/// Records every message kind, so a replay can filter by any caller's log level.
 fn capture_log() -> bun_ast::Log {
     let mut log = bun_ast::Log::init();
     log.level = bun_ast::Level::Verbose;
@@ -350,8 +348,7 @@ fn captured_diagnostics(log: &bun_ast::Log) -> Vec<Msg> {
     log.msgs.iter().map(Msg::clone).collect()
 }
 
-/// Add `msgs` to `into` as if the parse had logged them there: filtered by
-/// `into.level` like `Log::add_warning` / `add_error`, with the counters kept.
+/// Add `msgs` to `into` as `add_warning` / `add_error` would: level-filtered, counters kept.
 fn replay_diagnostics(msgs: &[Msg], into: &mut bun_ast::Log) {
     for msg in msgs {
         if !msg.kind.should_print(into.level) {
@@ -4543,8 +4540,7 @@ impl<'a> Resolver<'a> {
         } else {
             IncludeScripts::IgnoreScripts
         };
-        // The parse logs into `parse_log` so its messages can be kept with the
-        // interned outcome; they reach the real log through `replay_diagnostics`.
+        // Logged into `parse_log` so the messages can be kept with the interned outcome.
         let mut parse_log = capture_log();
         let pkg = {
             // SAFETY: `self` outlives the guard, and `parse_log` is declared
@@ -6924,9 +6920,7 @@ impl<'a> Resolver<'a> {
                 if let Some(cached) = self.reuse_interned_tsconfig(tsconfigpath) {
                     info.tsconfig_json = cached;
                 } else {
-                    // The walk logs into `parse_log` so its messages can be
-                    // kept with the interned outcome; they reach the real log
-                    // through `replay_diagnostics` once the guard restores it.
+                    // Logged into `parse_log` so the messages can be kept with the interned outcome.
                     let mut parse_log = capture_log();
                     // SAFETY: `self` outlives the guard, and `parse_log` is
                     // declared before it, so it drops (and restores the

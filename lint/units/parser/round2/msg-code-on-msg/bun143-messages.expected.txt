@@ -1,0 +1,25 @@
+"import * ass x from 'y'" [ts]
+   bun @9+0 Expected "as" but found "ass"
+"export * as x frm 'y'" [ts]
+   bun @14+0 Expected "from" but found "frm"
+"import x frm 'y'" [ts]
+   bun @9+0 Expected "from" but found "frm"
+"\"abc" [ts]
+   bun @0+0 Unterminated string literal
+"/* abc" [ts]
+   bun @6+0 Expected "*/" to terminate multi-line comment
+"`abc " [ts]
+   bun @0+0 Unterminated string literal
+"function f(...a, ) {}" [ts]
+   bun @15+1 Expected ")" but found ","
+"export { class };" [ts]
+   bun @9+5 Expected identifier but found "class"
+"x = a ? b" [ts]
+   bun @9+0 Expected ":" but found end of file
+"let x = 1 1;" [ts]
+   bun @10+1 Expected ";" but found "1"
+"async function f() { for await (x in y) {} }" [ts]
+   bun @34+2 Expected "of" but found "in"
+"<a" [tsx]
+   bun @2+0 Expected ">" but found end of file
+1.4.3 367d939d9afc919c6ccce278c970e7c3f23da8c9

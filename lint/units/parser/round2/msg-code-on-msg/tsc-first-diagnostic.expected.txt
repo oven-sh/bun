@@ -1,0 +1,66 @@
+"\"abc" [ts]
+   tsc @4+0 TS1002 Unterminated string literal.
+"'abc\n x" [ts]
+   tsc @4+0 TS1002 Unterminated string literal.
+"`abc " [ts]
+   tsc @5+0 TS1160 Unterminated template literal.
+"`abc ${x" [ts]
+   tsc @8+0 TS1005 '}' expected.
+"/* abc" [ts]
+   tsc @6+0 TS1010 '*/' expected.
+"// c\n/* abc" [ts]
+   tsc @11+0 TS1010 '*/' expected.
+"function f(...a, ) {}" [ts]
+   tsc parses
+"export { class };" [ts]
+   tsc parses
+"export { default };" [ts]
+   tsc parses
+"\u0001" [ts]
+   tsc @0+1 TS1127 Invalid character.
+"#!/usr/bin/env bun\n\"abc" [ts]
+   tsc @23+0 TS1002 Unterminated string literal.
+"0b2" [ts]
+   tsc @2+0 TS1177 Binary digit expected.
+"1_" [ts]
+   tsc @1+1 TS6188 Numeric separators are not allowed here.
+"let x = \"abc" [ts]
+   tsc @12+0 TS1002 Unterminated string literal.
+"x = `abc" [ts]
+   tsc @8+0 TS1160 Unterminated template literal.
+"function class() {}" [ts]
+   tsc @9+5 TS1359 Identifier expected. 'class' is a reserved word that cannot be used here.
+   tsc @14+1 TS1005 '{' expected.
+   tsc @17+1 TS1005 '=>' expected.
+"function (" [ts]
+   tsc @9+1 TS1003 Identifier expected.
+   tsc @10+0 TS1005 ')' expected.
+"x = a ? b" [ts]
+   tsc @9+0 TS1005 ':' expected.
+"default" [ts]
+   tsc @0+7 TS1005 'export' expected.
+"catch (e) {}" [ts]
+   tsc @0+5 TS1005 'try' expected.
+"x as A | () => void;" [ts]
+   tsc @8+11 TS1385 Function type notation must be parenthesized when used in a union type.
+"for (const x off y) {}" [ts]
+   tsc @13+3 TS1005 ',' expected.
+   tsc @17+1 TS1005 ',' expected.
+   tsc @18+1 TS1005 ',' expected.
+   tsc @22+0 TS1005 ';' expected.
+"import.foo" [ts]
+   tsc parses
+"import * ass x from 'y'" [ts]
+   tsc @9+3 TS1005 'as' expected.
+   tsc @13+1 TS1005 'from' expected.
+   tsc @15+4 TS1005 ';' expected.
+"type as T" [ts]
+   tsc @8+1 TS1005 '=' expected.
+"'\\" [ts]
+   tsc @2+0 TS1126 Unexpected end of text.
+"let x = ;" [js]
+   tsc @8+1 TS1109 Expression expected.
+"<a></b>" [tsx]
+   tsc @5+1 TS17002 Expected corresponding JSX closing tag for 'a'.
+"<a" [tsx]
+   tsc @2+0 TS1005 '/' expected.

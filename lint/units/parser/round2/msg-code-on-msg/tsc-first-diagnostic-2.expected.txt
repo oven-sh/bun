@@ -1,0 +1,22 @@
+"import * ass x from 'y'" [ts]
+   tsc @9+3 TS1005 'as' expected.
+   tsc @13+1 TS1005 'from' expected.
+   tsc @15+4 TS1005 ';' expected.
+"export * as x frm 'y'" [ts]
+   tsc @14+3 TS1005 'from' expected.
+   tsc @18+3 TS1005 ';' expected.
+"import x frm 'y'" [ts]
+   tsc @9+3 TS1005 '=' expected.
+   tsc @13+3 TS1005 ';' expected.
+"import x" [ts]
+   tsc @8+0 TS1005 '=' expected.
+"function f(...a, ) {}" [ts]
+   tsc parses
+"let x: (a: ) => void" [ts]
+   tsc @11+1 TS1110 Type expected.
+"let x: (A & | B);" [ts]
+   tsc @12+1 TS1110 Type expected.
+"x = \"abc" [ts]
+   tsc @8+0 TS1002 Unterminated string literal.
+"let a = <b c=\"d\n" [tsx]
+   tsc @16+0 TS1002 Unterminated string literal.

@@ -318,6 +318,7 @@ pub trait PosixBufferedWriterParent: PosixWriterParent {
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus);
+    /// May release every other ref on `this`: the writer holds one until its `close()` returns.
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_error(this: *mut Self, err: sys::Error);
@@ -649,6 +650,7 @@ pub trait PosixStreamingWriterParent: PosixWriterParent {
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus);
+    /// May release every other ref on `this`: the writer holds one until its `close()` returns.
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_error(this: *mut Self, err: sys::Error);

@@ -1,0 +1,80 @@
+   Compiling proc-macro2 v1.0.106
+   Compiling quote v1.0.45
+   Compiling unicode-ident v1.0.24
+    Checking memchr v2.8.0
+   Compiling rustversion v1.0.22
+   Compiling libc v0.2.186
+   Compiling heck v0.5.0
+    Checking bstr v1.12.1
+    Checking konst_macro_rules v0.2.19
+   Compiling thiserror v2.0.18
+    Checking allocator-api2 v0.2.21
+    Checking bun_opaque v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/opaque)
+   Compiling unicode-xid v0.2.6
+    Checking bun_mimalloc_sys v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/mimalloc_sys)
+    Checking konst v0.2.20
+    Checking bun_wyhash v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/wyhash)
+   Compiling syn v2.0.117
+    Checking bun_highway v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/highway)
+   Compiling bun_output_tags v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/bun_output_tags)
+   Compiling const_format_proc_macros v0.2.34
+   Compiling bun_core v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/bun_core)
+    Checking bun_hash v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/hash)
+    Checking bun_simdutf_sys v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/simdutf_sys)
+    Checking bun_alloc v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/bun_alloc)
+    Checking bytemuck v1.25.0
+    Checking itoa v1.0.18
+    Checking scopeguard v1.2.0
+   Compiling paste v1.0.15
+    Checking bun_windows_sys v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/windows_sys)
+    Checking const_format v0.2.36
+    Checking hashbrown v0.15.5
+    Checking smallvec v1.15.1
+    Checking rustc-hash v2.1.2
+    Checking bitflags v2.11.1
+   Compiling ident_case v1.0.1
+   Compiling fnv v1.0.7
+   Compiling rustix v0.38.44
+    Checking linux-raw-sys v0.4.15
+   Compiling darling_core v0.21.3
+   Compiling strum_macros v0.26.4
+   Compiling thiserror-impl v2.0.18
+   Compiling bun_core_macros v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/bun_core_macros)
+   Compiling bun_dispatch v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/dispatch)
+   Compiling enum-map-derive v0.17.0
+   Compiling darling_macro v0.21.3
+    Checking enum-map v2.7.3
+    Checking strum v0.26.3
+   Compiling darling v0.21.3
+    Checking bun_libuv_sys v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/libuv_sys)
+   Compiling enumset_derive v0.14.0
+    Checking enumset v1.1.10
+    Checking bun_errno v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/errno)
+    Checking bun_ptr v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/ptr)
+    Checking bun_boringssl_sys v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/boringssl_sys)
+    Checking bun_safety v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/safety)
+    Checking bun_zlib_sys v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/zlib_sys)
+    Checking bun_base64 v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/base64)
+    Checking bun_collections v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/collections)
+    Checking bun_paths v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/paths)
+    Checking bun_semver v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/semver)
+    Checking bun_zlib v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/zlib)
+    Checking bun_sys v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/sys)
+    Checking bun_url v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/url)
+    Checking bun_analytics v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/analytics)
+    Checking bun_http_types v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/http_types)
+    Checking bun_perf v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/perf)
+    Checking bun_which v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/which)
+    Checking bun_spawn_sys v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/spawn_sys)
+    Checking bun_threading v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/threading)
+    Checking bun_uws_sys v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/uws_sys)
+    Checking bun_ast v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/ast)
+    Checking bun_dotenv v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/dotenv)
+    Checking bun_io v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/io)
+    Checking bun_install_types v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/install_types)
+    Checking bun_react_compiler v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/react_compiler)
+    Checking bun_crash_handler v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/crash_handler)
+    Checking bun_options_types v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/options_types)
+    Checking bun_js_parser v0.0.0 (/tmp/sizeprobe-a-incrate-head/tree/src/js_parser)
+error: could not compile `bun_js_parser` (lib) due to 7 previous errors
+cargo check release exit=101

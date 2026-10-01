@@ -1,0 +1,14 @@
+leak typescript-grammar.test.ts rc=0 12s |  180 pass; 0 fail;Ran 180 tests across 1 file. [3.05s];
+leak typescript-grammar-expressions.test.ts rc=0 10s |  63 pass; 0 fail;Ran 63 tests across 1 file. [2.77s];
+leak typescript-grammar-statements.test.ts rc=0 11s |  66 pass; 0 fail;Ran 66 tests across 1 file. [2.90s];
+leak typescript-grammar-decorator-metadata.test.ts rc=0 18s |  57 pass; 0 fail;Ran 57 tests across 1 file. [3.62s];
+leak decorator-metadata.test.ts rc=0 13s |  5 pass; 0 fail;Ran 5 tests across 1 file. [2.93s];
+leak bundler_decorator_metadata.test.ts rc=0 26s |  2 pass; 0 fail;Ran 2 tests across 1 file. [14.07s];
+leak decorators.test.ts rc=0 29s |  24 pass; 0 fail;Ran 24 tests across 1 file. [18.60s];
+leak transpiler-stack-overflow.test.ts rc=0 33s |  1 pass; 0 fail;Ran 1 test across 1 file. [21.59s];
+leak ts.test.ts rc=0 94s |  59 pass; 16 todo; 0 fail;Ran 75 tests across 1 file. [80.80s];
+leak transpiler-cache.test.ts rc=1 96s |  12 pass; 8 fail;Ran 20 tests across 1 file. [82.12s];
+leak transpiler-cache.test.ts --timeout 180000 rc=0 102s |  20 pass; 0 fail;Ran 20 tests across 1 file. [88.85s];
+leak type-export.test.ts rc=1 115s |  53 pass; 18 skip; 17 fail;Ran 88 tests across 1 file. [107.83s];
+leak type-export.test.ts --timeout 180000 rc=0 141s |  70 pass; 18 skip; 0 fail;Ran 88 tests across 1 file. [130.84s];
+leak transpiler.test.js rc=0 82s |  237 pass; 1 skip; 21 todo; 0 fail;Ran 259 tests across 1 file. [70.47s];

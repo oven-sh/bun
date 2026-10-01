@@ -1,0 +1,4 @@
+# rev=e3566be889 profile=dev: probes appended to a copy of src/js_parser/p.rs
+416	size_of ParserSnapshot<'static>
+240	size_of js_lexer::LexerSnapshot<'static>
+36	size_of FnOrArrowDataParse

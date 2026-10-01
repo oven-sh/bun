@@ -1,0 +1,8 @@
+# rev=be1ebe5295 profile=release: probes appended to a copy of src/js_parser/p.rs
+472	size_of ParserSnapshot<'static>
+48	size_of SidecarMark
+56	size_of Option<SidecarMark>
+240	size_of js_lexer::LexerSnapshot<'static>
+36	size_of FnOrArrowDataParse
+8	size_of crate::parse::erased::ErasedMark
+32	size_of crate::parse::attached::AttachedMark

@@ -10,3 +10,6 @@ START 05b-base-sizes 2026-10-01T07:55:09Z load=825.46 774.34 713.92 dir=/tmp/pbb
 END   03b-base-build-release-j8 rc=0 wall=2071s lockwait=2063s run=8s 2026-10-01T07:57:34Z load=708.81 744.90 711.64
 START 07c-tests-leak 2026-10-01T08:16:45Z load=689.16 704.62 716.64 dir=/workspace/wt/parser cmd: /tmp/pbb1b/tests.sh leak
 END   07b-tests-plain rc=0 wall=2129s lockwait=1526s run=603s 2026-10-01T08:24:34Z load=741.04 798.87 766.54
+END   05b-base-sizes rc=0 wall=1850s lockwait=1765s run=85s 2026-10-01T08:26:00Z load=711.04 778.50 762.46
+START 08-check-clippy-fmt 2026-10-01T08:37:06Z load=810.07 811.30 791.67 dir=/workspace/wt/parser cmd: /tmp/pbb1b/s8.sh
+END   07c-tests-leak rc=0 wall=1996s lockwait=1201s run=795s 2026-10-01T08:50:04Z load=840.37 753.56 766.90

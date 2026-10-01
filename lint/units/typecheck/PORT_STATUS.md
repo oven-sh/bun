@@ -14,6 +14,14 @@ declares it in `lib.rs`:
   No `cargo check` and no `cargo test` was run with that commit: the survey of round 2
   (`/workspace/notes/lint/tools/typecheck-survey.sh`) is the first cargo compile of the six files, and their tests
   have run from the scratch root only.
+- `jsnum`: declared by `80dcacd6db` (`pub mod jsnum;`, its four files are unchanged since `1e45ca9abb`). It names
+  `crate::stringutil`, which the same commit declares. The line was written without a cargo run: the survey of
+  round 2 is the first cargo compile of the four files, and the seven tests of `jsnum` have run from the scratch
+  root only.
+- `tspath`: declared by `c1d548ae4e` (`pub mod tspath;`, its three files are unchanged since `1e45ca9abb`). It names
+  `crate::stringutil`, so it compiles only in a tree whose `lib.rs` declares `stringutil` as well. No `cargo check`
+  and no `cargo test` was run with that commit: the survey of round 2 is the first cargo compile of the three files,
+  and the three tests of `tspath/path.rs` have run from the scratch root only.
 
 | upstream file, lines | Rust module under `src/typecheck/` | state | not ported |
 | --- | --- | --- | --- |

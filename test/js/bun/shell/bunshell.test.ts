@@ -101,9 +101,15 @@ describe("bunshell", () => {
       expect(exitCode).toBe(1);
     });
 
+    // `cat` holds the builtin back until the pipe's other end is closed, which is when stdin ends.
     test.each(["echo hi", "which which"])("%s, to a pipe nobody reads", async script => {
-      const proc = nodeSpawn(bunExe(), ["exec", script], { env: bunEnv, stdio: ["ignore", "pipe", "ignore"] });
+      const proc = nodeSpawn(bunExe(), ["exec", `cat && ${script}`], {
+        env: bunEnv,
+        stdio: ["pipe", "pipe", "ignore"],
+      });
       proc.stdout.destroy();
+      await once(proc.stdout, "close");
+      proc.stdin.end();
       const [exitCode, signal] = await once(proc, "exit");
       expect({ exitCode, signal }).toEqual({ exitCode: 1, signal: null });
     });

@@ -2056,17 +2056,22 @@ pub(crate) struct Injected<'a> {
 impl<'a> Injected<'a> {
     /// `zname` was opened relative to `cwd` (or is already absolute); pin it in
     /// `temp_path_buf` so a later `chdir` cannot retarget the rename/unlink.
-    fn new(fd: Fd, cwd: &[u8], zname: &ZStr, temp_path_buf: &'a mut PathBuffer) -> Injected<'a> {
-        let len = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
+    fn new(
+        fd: Fd,
+        cwd: &[u8],
+        zname: &ZStr,
+        temp_path_buf: &'a mut PathBuffer,
+    ) -> Option<Injected<'a>> {
+        let len = path::resolve_path::join_abs_string_buf_z_checked::<path::platform::Auto>(
             cwd,
             &mut temp_path_buf[..],
             &[zname.as_bytes()],
-        )
+        )?
         .len();
-        Injected {
+        Some(Injected {
             fd,
             temp_path: ZStr::from_buf(&temp_path_buf[..], len),
-        }
+        })
     }
 }
 
@@ -2124,6 +2129,15 @@ pub(crate) fn inject<'a>(
         let _ = Syscall::unlink(name);
     };
 
+    // Renamed by its absolute path later: a `cwd/zname` that does not fit one starts in the tmpdir.
+    #[cfg(not(windows))]
+    let fits_in_cwd = path::resolve_path::join_abs_string_buf_z_checked::<path::platform::Auto>(
+        cwd,
+        &mut temp_path_buf[..],
+        &[zname.as_bytes()],
+    )
+    .is_some();
+
     let cloned_executable_fd: Fd = 'brk: {
         #[cfg(windows)]
         {
@@ -2174,7 +2188,7 @@ pub(crate) fn inject<'a>(
         {
             // if we're on a mac, use clonefile() if we can
             // failure is okay, clonefile is just a fast path.
-            if let bun_sys::Result::Ok(()) = Syscall::clonefile(self_exe, zname) {
+            if fits_in_cwd && Syscall::clonefile(self_exe, zname).is_ok() {
                 if let bun_sys::Result::Ok(res) =
                     Syscall::open(zname, bun_sys::O::RDWR | bun_sys::O::CLOEXEC, 0)
                 {
@@ -2189,12 +2203,23 @@ pub(crate) fn inject<'a>(
         let fd: Fd = 'brk2: {
             let mut tried_changing_abs_dir = false;
             for retry in 0..3 {
-                match Syscall::open(
-                    zname,
-                    bun_sys::O::CLOEXEC | bun_sys::O::RDWR | bun_sys::O::CREAT | bun_sys::O::EXCL,
-                    // Not 0: WSL2 DrvFS re-checks the mode on ftruncate() (#40111).
-                    0o600,
-                ) {
+                let opened = if retry == 0 && !fits_in_cwd {
+                    Err(bun_sys::Error::from_code(
+                        E::ENAMETOOLONG,
+                        bun_sys::Tag::open,
+                    ))
+                } else {
+                    Syscall::open(
+                        zname,
+                        bun_sys::O::CLOEXEC
+                            | bun_sys::O::RDWR
+                            | bun_sys::O::CREAT
+                            | bun_sys::O::EXCL,
+                        // Not 0: WSL2 DrvFS re-checks the mode on ftruncate() (#40111).
+                        0o600,
+                    )
+                };
+                match opened {
                     Ok(res) => break 'brk2 res,
                     Err(err) => {
                         if retry < 2 {
@@ -2297,6 +2322,14 @@ pub(crate) fn inject<'a>(
     };
     let _ = (&mut zname_owned, &mut zname);
 
+    let Some(injected) = Injected::new(cloned_executable_fd, cwd, zname, temp_path_buf) else {
+        bun_core::pretty_errorln!(
+            "<r><red>error<r><d>:<r> failed to get temporary file name: ENAMETOOLONG"
+        );
+        cleanup(zname, cloned_executable_fd);
+        return None;
+    };
+
     match target.os {
         CompileTargetOs::Mac => {
             let input_bytes = match bun_sys::File::borrow(&cloned_executable_fd).read_to_end() {
@@ -2362,12 +2395,7 @@ pub(crate) fn inject<'a>(
                 // SAFETY: libc fchmod on a valid native fd.
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
-            return Some(Injected::new(
-                cloned_executable_fd,
-                cwd,
-                zname,
-                temp_path_buf,
-            ));
+            return Some(injected);
         }
         CompileTargetOs::Windows => {
             let input_bytes = match bun_sys::File::borrow(&cloned_executable_fd).read_to_end() {
@@ -2428,12 +2456,7 @@ pub(crate) fn inject<'a>(
                 // SAFETY: libc fchmod on a valid native fd.
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
-            return Some(Injected::new(
-                cloned_executable_fd,
-                cwd,
-                zname,
-                temp_path_buf,
-            ));
+            return Some(injected);
         }
         CompileTargetOs::Linux | CompileTargetOs::Freebsd => {
             // ELF section approach: find .bun section and expand it
@@ -2491,12 +2514,7 @@ pub(crate) fn inject<'a>(
                 // SAFETY: libc fchmod on a valid native fd.
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
-            return Some(Injected::new(
-                cloned_executable_fd,
-                cwd,
-                zname,
-                temp_path_buf,
-            ));
+            return Some(injected);
         }
         _ => {
             let total_byte_count: usize;
@@ -2575,12 +2593,7 @@ pub(crate) fn inject<'a>(
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
 
-            return Some(Injected::new(
-                cloned_executable_fd,
-                cwd,
-                zname,
-                temp_path_buf,
-            ));
+            return Some(injected);
         }
     }
 }

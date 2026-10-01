@@ -12,6 +12,7 @@ import {
   isPosix,
   isWindows,
   MAX_PATH_BYTES,
+  mkdirToLength,
   tempDir,
 } from "harness";
 import {
@@ -24,6 +25,7 @@ import {
   readdirSync,
   readFileSync,
   readSync,
+  realpathSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -2079,6 +2081,46 @@ export function inOther() {
       expect(exitCode).toBe(1);
     },
   );
+
+  // The executable is built in a temporary file that is renamed by its absolute path. Below a
+  // working directory this close to the limit that path does not fit, so the file goes to the
+  // temporary directory. A Windows working directory cannot be that close to the limit.
+  describe.skipIf(isWindows)("compile in a working directory that leaves no room for the temporary file", () => {
+    async function compile(env: Record<string, string>) {
+      using dir = tempDir("build-compile-long-cwd", {});
+      const cwd = mkdirToLength(realpathSync(String(dir)), MAX_PATH_BYTES - 20);
+      writeFileSync(join(cwd, "s.js"), `console.log(1);`);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "s.js", "--compile", "--outfile", "w"],
+        env: { ...bunEnv, ...env },
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { output: stdout + stderr, files: readdirSync(cwd).sort(), exitCode };
+    }
+
+    test("writes the executable", async () => {
+      using tmp = tempDir("build-compile-long-cwd-tmp", {});
+      expect(await compile({ BUN_TMPDIR: String(tmp) })).toEqual({
+        output: expect.stringContaining(" compile  w"),
+        files: ["s.js", "w"],
+        exitCode: 0,
+      });
+      expect(readdirSync(String(tmp))).toEqual([]);
+      // A debug build copies about 1 GB, and here it also moves the copy.
+    }, 30_000);
+
+    test("reports a temporary directory that leaves no room either", async () => {
+      expect(await compile({ BUN_TMPDIR: "/" + Buffer.alloc(MAX_PATH_BYTES, "a").toString() })).toEqual({
+        output: expect.stringContaining("error: failed to open temporary file to copy bun into"),
+        files: ["s.js"],
+        exitCode: 1,
+      });
+    });
+  });
 
   // One compile per test: each compile copies the whole bun binary (~1 GB under debug+ASAN),
   // which by itself takes a good part of the default per-test timeout.

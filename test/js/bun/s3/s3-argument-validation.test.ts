@@ -76,4 +76,17 @@ describe("S3Client instance method argument validation", () => {
       }),
     );
   });
+
+  test.each(["contentDisposition", "contentEncoding"] as const)(
+    "S3 file writer() rejects a non-string %s option with the error of write()",
+    async option => {
+      const s3file = client.file("some-key.bin");
+      const error = {
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "${option}" argument must be of type string. Received type number (123)`,
+      };
+      expect(() => s3file.writer({ [option]: 123 } as any)).toThrow(expect.objectContaining(error));
+      await expect(s3file.write("data", { [option]: 123 } as any)).rejects.toMatchObject(error);
+    },
+  );
 });

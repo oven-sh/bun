@@ -32,9 +32,7 @@ pub(crate) fn get_truthy_string_utf8(
     Ok(get_string_utf8(opts, global, key, strict)?.filter(|utf8| !utf8.is_empty()))
 }
 
-/// [`get_truthy_string_utf8`], but an empty JS string is `Some` with no bytes. For an option
-/// that is the value of a header, where the empty string says "send no such header" and
-/// `None` says "use the value of the file or of the client".
+/// [`get_truthy_string_utf8`] for a header value: an empty string is `Some`, and means "no header".
 fn get_string_utf8(
     opts: JSValue,
     global: &JSGlobalObject,

@@ -1251,17 +1251,14 @@ pub struct S3CredentialsWithOptions {
     pub changed_credentials: bool,
 }
 
-/// `contentDisposition` and `contentEncoding` of the options that a client or a file was made
-/// with. Each upload of the file sends them, unless the call has a value of its own.
-/// The bytes are owned: a blob store keeps the value, and any thread can release a blob store.
+/// What a client or a file keeps for its uploads. Owned bytes: any thread can release a blob store.
 pub struct S3ContentHeaders {
     pub content_disposition: Option<Box<[u8]>>,
     pub content_encoding: Option<Box<[u8]>>,
 }
 
 impl S3ContentHeaders {
-    /// The values of `options`. For a value that `options` does not have, the one of `defaults`.
-    /// An empty value of `options` says "no header": nothing is kept for it.
+    /// `options` over `defaults`, value by value. An empty value of `options` means "no header".
     pub fn from_options(
         options: &S3CredentialsWithOptions,
         defaults: Option<&Arc<S3ContentHeaders>>,

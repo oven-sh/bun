@@ -67,10 +67,7 @@ pub(crate) trait S3Ext {
         options: Option<JSValue>,
         global_object: &JSGlobalObject,
     ) -> JsResult<S3CredentialsWithOptions>;
-    /// [`Self::get_credentials_with_options`] for an upload. A `contentDisposition` or
-    /// `contentEncoding` that `options` does not have is the one that the file was made with.
-    /// An empty string in `options` is a value: the upload sends no such header.
-    /// The other calls (`presign()`, `unlink()`, `list()`) take these two from `options` only.
+    /// `get_credentials_with_options` for an upload, with the `Content-*` values of the file.
     fn upload_options(
         &self,
         options: Option<JSValue>,

@@ -897,8 +897,8 @@ pub mod store {
         }
     }
 
-    // No explicit `Drop`: the owned fields (`pathlike`, `credentials`, `content`)
-    // are all released by `PathLike::drop` / `Option<Arc<_>>::drop`.
+    // No explicit `Drop`: the owned fields (`pathlike`, `credentials`) are
+    // all released by `PathLike::drop` / `Option<Arc<_>>::drop`.
 
     // ────────────────────────────────────────────────────────────────────
     // Store impl

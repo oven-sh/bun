@@ -940,8 +940,13 @@ impl Channel {
         }
     }
 
+    /// `errored`: the poll reported an error on `fd`. c-ares learns of a socket
+    /// error only from its own `recv()`/`send()`, so it gets the fd as readable
+    /// and writable, like node:
+    /// https://github.com/nodejs/node/blob/8a41d9b636be86350cd32847c3f89d327c4f6ff7/src/cares_wrap.cc#L93
     #[inline]
-    pub fn process(&mut self, fd: ares_socket_t, readable: bool, writable: bool) {
+    pub fn process(&mut self, fd: ares_socket_t, readable: bool, writable: bool, errored: bool) {
+        let (readable, writable) = (readable || errored, writable || errored);
         ares_process_fd(
             self,
             if readable { fd } else { ARES_SOCKET_BAD },

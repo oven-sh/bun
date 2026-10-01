@@ -3,6 +3,7 @@
 //! Output (`SMPH_OUT`): one line for each source, tab separated: `<id> ok`, or
 //! `<id> err <offset> <length> <code, 0 for none> <start> <end> <messages> <hex of the message of bun> <hex of the text of the reference>`,
 //! or `<id> init ...` with the same fields where `Parser::init` failed, or `<id> panic`.
+//! `SMPH_TLA=1` turns `features.top_level_await` on and `SMPH_STANDARD_DECORATORS=1` `features.standard_decorators`, as `bun --lint` has them.
 use crate::defines::Define;
 use crate::parse::parse_entry::{Options, Parser};
 use crate::parse::syntax_errors::SyntaxErrors;
@@ -49,6 +50,8 @@ fn run(kind: &str, text: &'static [u8]) -> String {
     let mut options = Options::init(Default::default(), loader);
     options.features.no_macros = true;
     options.features.dont_bundle_twice = true;
+    options.features.top_level_await = std::env::var_os("SMPH_TLA").is_some();
+    options.features.standard_decorators = std::env::var_os("SMPH_STANDARD_DECORATORS").is_some();
     let define = Define::default();
     let mut log = Log::init();
     let mut errors = SyntaxErrors::default();

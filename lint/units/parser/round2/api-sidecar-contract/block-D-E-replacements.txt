@@ -1,0 +1,139 @@
+PASTE SOURCE FOR API.md, BLOCKS D and E, and the replacements of stale paragraphs. Describes be1ebe5295.
+
+=====BLOCK D: insert before "## Syntax errors of a lint parse: the codes of the reference"=====
+## The type grammar without lint and with lint (P1)
+
+At `be1ebe5295`. One grammar reads every type: `src/js_parser/parse/parse_skip_typescript.rs`, with the productions
+of `internal/parser/parser.go` of typescript-go under their names (`parse_type`, `parse_union_type_or_higher`,
+`parse_intersection_type_or_higher`, `parse_type_operator_or_higher`, `parse_postfix_type_or_higher`,
+`parse_non_array_type`, `parse_function_or_constructor_type_to_error`, ...), generic over a sink
+(`src/js_parser/parse/type_sink.rs`). `TypeSink::CONDITIONAL_FALSE_LEVEL` is gone: every sink reads the type after
+the `:` of a conditional type at one level.
+
+| sink | `Out` | `STRICT` | `BUILDS` | `Sub` | used by |
+| --- | --- | --- | --- | --- | --- |
+| `Discard` | `()` | false | false | `Discard` | every parse: `skip_type_script_type`, `skip_typescript_return_type`, `skip_type_script_type_arguments` |
+| `DecoratorMetadata` | `Tag` | false | false | `Discard` | `emitDecoratorMetadata`: `skip_type_script_type_with_metadata`, `skip_typescript_return_type_with_metadata` |
+| `Build` | `Option<ts::Type>` | true | true | `Build` | a lint parse only: `build_type_script_type`, `build_typescript_return_type`, `build_type_script_type_arguments`, `build_type_script_type_parameters` |
+
+### How the grammar knows that it is a lint parse
+
+Two switches, and a parse without lint takes neither.
+
+1. At compile time, by the sink: `S::STRICT`, true for `Build` alone. It gates, in `parse_skip_typescript.rs`:
+   TS1385 to TS1388 (`parse_function_or_constructor_type_to_error`), `|` or `&` where
+   `parseTypeOperatorOrHigher` reads a type (`parse_type_after_leading_operators`), a conditional type after the
+   operand of `keyof` and `readonly` where none may follow, a reserved word as an index type (`A[if]`) and as a
+   type argument, the word before `{` in `implements class {}`, a missing type (`parse_type_reference`),
+   reserved type names (`is_reserved_type_name`), and `typeof #x`.
+2. At run time, by the parse: `P::is_lint_parse()`, true when `Parser::parse_for_lint` made the side table. It has
+   four readers: `P::type_expected` (`syntax_errors.rs`, on the path of an error: in a lint parse a missing type is
+   TS1110 for every sink, also inside an attempt), `pfx_t_open_paren` (`parse_prefix.rs:50`, every `(` that starts
+   an expression: a lint parse records the parentheses), `parse_path` (`parse/mod.rs:1993`: `with` on the line
+   after a module path starts import attributes), and the statement reader for a declaration whose name is `as`
+   or `satisfies` (`parse_stmt.rs:1951`).
+
+The sites that record test `p.starts_for_parse_only.is_some()`, which holds for `parse_only` and for a lint parse,
+after the test of the TypeScript token that guarded them before, and call `#[cold]` functions (`lint_*`, `build_*`).
+
+A lint parse reads with `Build`, and so strictly, what it records: annotations, return types and predicates, the
+type of a `this` parameter, the types of `as`, `satisfies` and `<T>x`, type arguments after an expression, in JSX
+and in heritage entries, and every list of type parameters. It reads with `Discard`, and so as a parse without lint
+does but for TS1110, what it does not record: the type of a type alias, the `extends` clause and the members of an
+interface, an index signature of a class. Before it builds, it also reads with the loose sinks the type that
+decorator metadata is made of (`lint_type_metadata`) and the `<...>` that decides between a cast and an arrow
+function.
+
+### The rule for a parse without lint
+
+A parse without lint accepts what it accepted before this work and rejects nothing new. Valid TypeScript means that
+tsc as a whole reports nothing: no diagnostic of its parser and no grammar error of its checker. Where the parser
+of tsc accepts a text, its checker rejects it, and Bun rejected it before, Bun keeps rejecting it for a sink whose
+`STRICT` is false. The case that made the rule: `const a: typeof #a = 1;` stays
+`Expected identifier but found "#a"` (`4d06830629`), and only `Build` reads it.
+
+### The cache of the runtime transpiler
+
+`EXPECTED_VERSION` in `src/jsc/RuntimeTranspilerCache.rs` is 33 at `e3566be889` and at `be1ebe5295`: it was not
+raised, though the tags of decorator metadata changed.
+
+### Differential run against the tree before this work (A1)
+
+Base: a release build of `e3566be889`. Head: a release build of this branch. Harness and oracle:
+`grammar-diff/` in the notes. Classes: A>R the base accepts and the head rejects, R>A the reverse, A>A both accept
+and the output differs, R>R both reject and the messages differ.
+
+| class | cause | count | one example |
+| --- | --- | ---: | --- |
+| A>R | none is allowed | | |
+| R>A | | | |
+| A>A | decorator metadata | | |
+| crash, hang | none is allowed | | |
+
+### Decorator metadata that changed (P1.3)
+
+The expectations of the head are in `test/bundler/transpiler/typescript-grammar-decorator-metadata.test.ts`
+(57 cases, each what tsc 6.0.2 writes with `experimentalDecorators` and `emitDecoratorMetadata`).
+
+| type of `@d p: T`, or return type | base | head | tsc 6.0.2 |
+| --- | --- | --- | --- |
+| | | | |
+
+=====BLOCK E: append at the end of API.md=====
+## Memory: what an arena holds
+
+Rule: a value that an arena holds owns no memory of the global heap, because an arena never drops it. Read at
+`be1ebe5295` over `src/ast/ts_nodes.rs`, `attached.rs`, `erased.rs`, `generics.rs`, `wrappers.rs` and the `Build`
+sink of `type_sink.rs`:
+
+- Every node of `bun_ast::ts` and every record of the four tables is `Copy` (`ts::List<T>` by its own `impl`), so
+  none can hold a `Vec`, a `Box` or a `String`. What they point to is in the arena or in the AST stores:
+  `StoreRef`, `StoreSlice`, `StoreStr`, `Expr`, `Binding`, `Stmt`.
+- `ErasedMemberData::Property` points to a `G::Property` in the arena. It is not `Copy`: it holds
+  `ts_decorators: Vec<Expr, AstAlloc>`, whose buffer is in the AST allocation scope, as in every `G::Property` of a
+  class that stays, and `ts_metadata`, which holds no heap memory since `be1ebe5295` (`Metadata::MDot` is a
+  `StoreSlice<Ref>`).
+- The lists themselves are `Vec`s of the global heap: eight in `Attached`, two public and one private in
+  `ErasedTables`, two in `Generics`, one in `Wrappers`, three `HashMap`s, and `SyntaxErrors` (an entry holds a
+  `Cow<'static, [u8]>`). They are in the `Box` on the parser and are dropped with it, or with the side table when
+  `f` returns.
+- The `Build` sink gathers the items of a list in a `Vec` on the stack (`b::List`, `b::Set`, the `items` of the
+  `build_*` functions, the entries of `lint_class_implements`) and copies them to the arena with
+  `ts::List::from_slice`: the `Vec` is dropped where its function returns, also on an error.
+
+=====REPLACEMENTS OF STALE PARAGRAPHS (line numbers of API.md as it is today, 984 lines)=====
+R1. l.7-9, last sentence of the intro of "Type nodes" ("Nothing builds these nodes yet: the `Build` sink does."):
+    The `Build` sink (`src/js_parser/parse/type_sink.rs`) builds them in a lint parse, except `TypeData::JSDocAll`,
+    `KeywordKind::Intrinsic`, `Body` and `TypeParameter::expression`, which nothing builds at `be1ebe5295`.
+    (`ts_nodes.rs` is unchanged since `e1c99be1a4`: the structs and sizes of the section are current.)
+R2. l.698-703, body of "### State at that commit" (scratch crate, Miri, "not built in the worktree"):
+    Built in the worktree and in CI on every platform. See "State of this file".
+R3. l.705-710 "### Tests": still true. Add: `bun_ast` is in `MIRI_CRATES` (`scripts/rust-miri.ts`), so CI runs them.
+R4. l.714-718: delete "Not built and not run in the worktree at these commits: ... passed there." Put:
+    The nine tests of the file pass (`cargo test -p bun_js_parser --lib parse::syntax_errors`).
+R5. l.720-721 ("`bun_ast::Msg` has no field for a code ..."):
+    `bun_ast::Msg` can carry a code since `4d9b8e5139` (`Metadata::Code(u32)`, `Msg::code()`). At `be1ebe5295` the
+    parser does not write it yet: the codes are in the table below, and a caller that wants a code reads
+    `errors.get(i)`, not `msg.code()`.
+    (The work of parser2.md B2 changes this sentence again.)
+R6. l.811-813 ("`P::is_lint_parse()`, which is tested only on paths that an error takes"): false at this commit.
+    How the grammar knows that it is a lint parse: see "The type grammar without lint and with lint (P1)".
+    `P::is_lint_parse()` has four readers, one of them on the path of an error.
+R7. l.852-853 ("`lexer_backtracker_kept` does not."): false for a parse with a side table
+    (`parse_skip_typescript.rs:3396-3428`, `rewind_lint_attempt`).
+    `lexer_backtracker_kept` truncates the log only in a parse that has a side table.
+R8. l.881 ("The checks that need the `Build` sink are tested through `x as T` only."): add
+    and, for the nodes, by `type_sink_tests.rs`.
+R9. l.900-901 ("The four tests that run the parser were not run."): All nine pass.
+R10. l.922-924: still true. Add: `bun --lint` exists and calls `parse_only` and `Parser::parse`, no lint parse.
+R11. l.964-984, body of "### State at that commit" of the test section:
+    The test binary builds and its 70 tests pass in the worktree (`cargo test -p bun_js_parser --lib`). The 57
+    stand-ins of `native_test_shims.rs` are enough for every test of P2 and P3. The scripts of `probes/test-seam/`
+    are how the seam was checked before the first build.
+
+NEEDS.md (same notes directory):
+- Head N1 with: Landed in `4d9b8e5139` (in this branch through `72cd14a00e`). `set_code` was not added;
+  `Msg::metadata` is public. "What changes in the parser when N1 lands" is the work of parser2.md B2.
+- Add to N2: the advisory job `mordant` counted 43 `unused_pub` in six files on run 36807579271:
+  `src/ast/ts_nodes.rs` 17, `attached.rs` 16, `wrappers.rs` 3, `generics.rs` 3, `syntax_errors.rs` 2,
+  `parse_entry.rs` 2 (`/workspace/notes/lint/measure/parser/pass1b/ci-mordant-counts.txt`).

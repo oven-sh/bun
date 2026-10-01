@@ -7,7 +7,7 @@ set -e
 ROOT=${1:-/workspace/wt/parser}
 SCRATCH=${2:-/tmp/smph}
 HERE=$(cd "$(dirname "$0")" && pwd)
-rm -rf "$SCRATCH/src/js_parser" "$SCRATCH/out"
+rm -rf "$SCRATCH/src/js_parser"
 mkdir -p "$SCRATCH/src" "$SCRATCH/out"
 cp -r "$ROOT/src/js_parser" "$SCRATCH/src/js_parser"
 cp "$HERE/zz_probe.rs" "$SCRATCH/src/js_parser/zz_probe.rs"
@@ -24,7 +24,8 @@ for dir in "$BUILD"/*/*/out; do SEARCH="$SEARCH -L dependency=$dir"; done
 cd "$ROOT"
 # shellcheck disable=SC2086
 rustc --crate-name bun_js_parser --edition=2024 "$SCRATCH/src/js_parser/lib.rs" --test --emit=link \
-  -C debuginfo=0 -C codegen-units=16 --cap-lints allow -o "$SCRATCH/out/bun_js_parser" \
+  -C debuginfo=0 -C codegen-units=16 --cap-lints allow -o "$SCRATCH/out/bun_js_parser.new" \
   -C linker=/usr/lib/llvm-23/bin/clang++ -C link-arg=-fuse-ld=lld -C link-arg=-Qunused-arguments \
   $SEARCH $EXTERNS
+mv "$SCRATCH/out/bun_js_parser.new" "$SCRATCH/out/bun_js_parser"
 ls -la "$SCRATCH/out/bun_js_parser"

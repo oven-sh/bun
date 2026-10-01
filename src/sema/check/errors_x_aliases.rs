@@ -1872,7 +1872,8 @@ impl Checker<'_> {
                         .contains(Flags::AMBIENT);
                 }
                 Parent::VarInit(d) if hir[d].flags.contains(Flags::AMBIENT) => return true,
-                Parent::MemberInit(m) if matches!(bound.member_owner[m.idx()], MemberOwner::Class(c) if hir[c].flags.contains(Flags::AMBIENT)) => {
+                Parent::MemberInit(m) if matches!(bound.member_owner[m.idx()], MemberOwner::Class(c) if hir[c].flags.contains(Flags::AMBIENT)) =>
+                {
                     return true;
                 }
                 Parent::Expr(x) => {

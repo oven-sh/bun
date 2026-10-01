@@ -3849,7 +3849,8 @@ impl<'p> Checker<'p> {
             return false;
         }
         match bound.stmt_parent[stmt.idx()] {
-            Parent::Stmt(owner) if matches!(hir[owner].kind, StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == stmt) => {
+            Parent::Stmt(owner) if matches!(hir[owner].kind, StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == stmt) =>
+            {
                 return false;
             }
             Parent::File if !self.files().modules[file.idx()].is_module() => return false,

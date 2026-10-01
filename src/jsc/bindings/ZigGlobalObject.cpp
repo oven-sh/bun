@@ -4730,11 +4730,9 @@ extern "C" void Zig__GlobalObject__retireForTestIsolation(Zig::GlobalObject* glo
     globalObject->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
 }
 
-// Whether `value` is an object of a realm retired above; native code does not call into one.
 extern "C" bool Bun__JSValue__isFromRetiredTestIsolationRealm(JSC::EncodedJSValue encodedValue)
 {
-    JSC::JSObject* object = JSC::JSValue::decode(encodedValue).getObject();
-    return object && Bun::isRetiredTestIsolationRealm(object->globalObject());
+    return Bun::isFromRetiredTestIsolationRealm(JSC::JSValue::decode(encodedValue));
 }
 
 extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)

@@ -167,9 +167,10 @@ test("onEndTag callbacks are released after the rewrite", () => {
 // LOLHTMLContext.deinit() must destroy those allocations. Previously it only
 // unprotected the held JSValues and leaked the struct memory.
 //
-// The allocator counts the blocks it has handed out and not got back, in
-// release builds too. A leaked struct is one block more for every
-// registration, whatever its size and whatever the OS does with freed pages.
+// mimalloc counts, for each size class, the blocks it has handed out and not
+// got back, in release builds too. Next to nothing else is in the size class
+// of the handler structs, so its count is the count of live structs, whatever
+// the OS does with freed pages.
 //
 // Skipped in debug: too slow for this many registrations, and CI has no debug
 // lane.
@@ -178,6 +179,9 @@ test.skipIf(isDebug || isASAN)("HTMLRewriter does not leak element/document hand
   const REWRITERS_PER_ROUND = 1000;
   // Each rewriter gets 32 on() and 32 onDocument() calls.
   const REGISTRATIONS_PER_ROUND = REWRITERS_PER_ROUND * 64;
+  // ElementHandler is 40 bytes and DocumentHandler is 48. mimalloc serves both
+  // from its 48-byte size class.
+  const HANDLER_BLOCK_SIZE = 48;
   const code = /* js */ `
     const { heapStats } = require("bun:jsc");
     const noop = { element() {}, comments() {}, text() {} };
@@ -185,8 +189,8 @@ test.skipIf(isDebug || isASAN)("HTMLRewriter does not leak element/document hand
 
     // malloc_bins has an entry for each size class. Its "current" is the
     // count of live blocks of that size.
-    function liveBlocks() {
-      return heapStats().mimalloc.malloc_bins.reduce((sum, bin) => sum + bin.current, 0);
+    function liveHandlerBlocks() {
+      return heapStats().mimalloc.malloc_bins.find(bin => bin.block_size === ${HANDLER_BLOCK_SIZE}).current;
     }
 
     // Counts while the rewriters of the round are alive, then lets the
@@ -199,7 +203,7 @@ test.skipIf(isDebug || isASAN)("HTMLRewriter does not leak element/document hand
         for (let j = 0; j < 32; j++) rewriter.onDocument(docNoop);
         rewriters.push(rewriter);
       }
-      const held = liveBlocks();
+      const held = liveHandlerBlocks();
       rewriters.length = 0;
       Bun.gc(true);
       return held;
@@ -207,10 +211,10 @@ test.skipIf(isDebug || isASAN)("HTMLRewriter does not leak element/document hand
 
     // The first round pays for what is allocated once.
     round();
-    const before = liveBlocks();
+    const before = liveHandlerBlocks();
     let held;
     for (let i = 0; i < ${ROUNDS}; i++) held = round();
-    const after = liveBlocks();
+    const after = liveHandlerBlocks();
 
     process.stdout.write(JSON.stringify({ before, held, after }));
   `;
@@ -235,11 +239,12 @@ test.skipIf(isDebug || isASAN)("HTMLRewriter does not leak element/document hand
   });
   const { before, held, after } = JSON.parse(stdout);
 
-  // The count sees the handler structs: while the rewriters of a round are
-  // alive, it has at least one block for each registration.
-  expect(held - before, stdout).toBeGreaterThanOrEqual(REGISTRATIONS_PER_ROUND);
+  // While the rewriters of a round are alive, the count is up by one for each
+  // registration. One kind of struct alone is half of that: a struct that
+  // leaves this size class, or that mimalloc does not count, fails here.
+  expect(held - before, stdout).toBeGreaterThan((REGISTRATIONS_PER_ROUND * 3) / 4);
   // Unfixed: the struct of every registration of both rounds is still there,
-  // 128,000 blocks. Fixed: within a few hundred of zero.
+  // 128,000 blocks. Fixed: within 100 of zero.
   expect(after - before, stdout).toBeLessThan((ROUNDS * REGISTRATIONS_PER_ROUND) / 4);
 });
 

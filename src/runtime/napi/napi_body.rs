@@ -2803,6 +2803,10 @@ impl ThreadSafeFunction {
 
         // Run the tasks.
         loop {
+            // A checkpoint can stop the VM, so leave payloads queued until it succeeds.
+            if !is_first && !is_stopped {
+                is_stopped = event_loop.drain_microtasks().is_err();
+            }
             // SAFETY: `this` is moved into the closure, which stores or returns it.
             let next = unsafe {
                 Self::with_lock_raw(Arc::as_ptr(&this), |function, shared| {
@@ -2821,9 +2825,7 @@ impl ThreadSafeFunction {
 
             match step {
                 DispatchStep::Call { item } => {
-                    // One call's microtasks are drained before the next call (https://github.com/nodejs/node/pull/38506).
-                    is_stopped = (!is_first && event_loop.drain_microtasks().is_err())
-                        || this.call(js, item).is_err();
+                    is_stopped = this.call(js, item).is_err();
                     is_first = false;
                 }
                 DispatchStep::QueueFinalizer { leftovers } => {

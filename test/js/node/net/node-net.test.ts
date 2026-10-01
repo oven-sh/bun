@@ -31,7 +31,7 @@ import {
   Stream,
 } from "node:net";
 import { join } from "node:path";
-import { TLSSocket } from "node:tls";
+import { TLSSocket, connect as tlsConnect } from "node:tls";
 
 const socket_domain = tmpdirSync();
 
@@ -3493,7 +3493,8 @@ describe("a write that is still queued natively", () => {
     }
   });
 
-  it.each(["the peer resets the connection", "destroy()"] as const)("stays in bytesWritten when %s", async how => {
+  // A write that destroy() cuts is read from the handle before the handle closes, so only a close by the peer tests the count.
+  it("stays in bytesWritten when the peer resets the connection", async () => {
     const accepted = Promise.withResolvers<Socket>();
     const server = createServer({ pauseOnConnect: true }, peer => {
       peer.on("error", () => {});
@@ -3508,12 +3509,40 @@ describe("a write that is still queued natively", () => {
       const peer = await accepted.promise;
       const closed = Promise.withResolvers<void>();
       socket.on("close", () => closed.resolve());
-      if (how === "destroy()") socket.destroy();
-      else peer.resetAndDestroy();
+      peer.resetAndDestroy();
       await closed.promise;
-      peer.destroy();
       expect({ queued, bytesWritten: socket.bytesWritten }).toEqual({ queued: true, bytesWritten: written });
     } finally {
+      server.close();
+    }
+  });
+
+  it("does not hold back the FIN of a shutdown on the raw half of a socket that tls.connect() took over", async () => {
+    // The peer speaks no TLS and does not read at first, so the raw half queues what it cannot send.
+    const accepted = Promise.withResolvers<Socket>();
+    const server = createServer({ allowHalfOpen: true, pauseOnConnect: true }, peer => accepted.resolve(peer));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const raw = connect({ port: (server.address() as import("node:net").AddressInfo).port, host: "127.0.0.1" });
+    raw.on("error", () => {});
+    await once(raw, "connect");
+    const secure = tlsConnect({ socket: raw, rejectUnauthorized: false });
+    secure.on("error", () => {});
+    try {
+      const { queued } = writeUntilQueued(raw);
+      // @ts-expect-error the native handle
+      raw._handle.shutdown();
+
+      const peer = await accepted.promise;
+      const sawFin = Promise.withResolvers<void>();
+      peer.on("error", () => {});
+      peer.on("end", () => sawFin.resolve());
+      peer.resume();
+      await sawFin.promise;
+      peer.destroy();
+      expect(queued).toBe(true);
+    } finally {
+      secure.destroy();
+      raw.destroy();
       server.close();
     }
   });

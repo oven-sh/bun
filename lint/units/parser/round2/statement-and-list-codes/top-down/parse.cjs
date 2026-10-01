@@ -21,7 +21,7 @@ function parse(file) {
     }
     if (!line) continue;
     const m = /^(".*") \[(\w+)\]$/.exec(line);
-    if (!m) throw new Error("bad " + line);
+    if (!m) continue; // the rest of a message that holds a line break
     cur = { g, s: JSON.parse(m[1]), l: m[2], tsc: [], chk: [], go: [], bun: [], bunKind: null };
     recs.push(cur);
   }

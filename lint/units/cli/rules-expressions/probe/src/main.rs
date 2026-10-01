@@ -1,7 +1,12 @@
 //! Research probe: what `Parser::parse_for_lint` leaves for the rules on expression shape.
 //! usage: probe <file>...   for each file: every statement and expression of the walk, with the wrapper records that name it,
 //!                          then the records that no expression of the walk is the operand of.
+//!        probe dupe <file>...   no-dupe-else-if as it is to be written, on the tree and the records of a lint parse and on
+//!                          the scanner of src/lint/tokens.rs: prints `path(line,col): no-dupe-else-if` for each report.
+mod dupe;
 mod shims;
+#[path = "/workspace/wt/cli/src/lint/tokens.rs"]
+mod tokens;
 
 use bun_ast::walk::{self, Visitor};
 use bun_ast::{Expr, ExprData, Loc, Stmt, StmtData, E};
@@ -161,6 +166,12 @@ fn dump(path: &str) -> Option<String> {
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("dupe") {
+        for path in std::env::args().skip(2) {
+            dupe::run(&path);
+        }
+        return;
+    }
     for path in std::env::args().skip(1) {
         println!("== {path}");
         match dump(&path) {

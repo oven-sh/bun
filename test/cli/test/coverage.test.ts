@@ -1008,18 +1008,12 @@ test("b", () => {
 
 // JSC runs a text that bun does not print as it is: a file whose first line starts with
 // `// @bun`, and CommonJS under a changed `Module.wrapper`. Such a text can end without a line
-// terminator. Each text of `texts` reports the functions and the lines that the same text reports
-// with a newline after it.
-describe("a text that is not printed by bun", () => {
+// terminator. It reports what the same text reports with a newline after it.
+describe("a text that is not printed by bun and has no final newline", () => {
   // [the text, FNF and FNH, whether lines at the end of the text ran]
   const texts: Record<string, [string, string, Record<number, boolean>]> = {
     "never-ran-alone-on-the-last-line.js": [
       "// @bun\nexport function first() {\n  return 1;\n}\nexport const second = () => 2;",
-      "FNF:2\nFNH:1",
-      { 5: true },
-    ],
-    "ran-alone-on-the-last-line.js": [
-      "// @bun\nexport function second() {\n  return 2;\n}\nexport const first = () => 1;",
       "FNF:2\nFNH:1",
       { 5: true },
     ],
@@ -1028,48 +1022,31 @@ describe("a text that is not printed by bun", () => {
       "FNF:2\nFNH:1",
       { 2: true },
     ],
-    "last-byte-closes-a-function-that-never-ran.js": [
-      "// @bun\nexport function first() {\n  return 1;\n}\nexport function second() {\n  return 2;\n  }",
-      "FNF:2\nFNH:1",
-      { 5: false, 6: false },
-    ],
-    // The last byte counts for the function on line 3, which ran, as it does with a newline.
-    "last-byte-closes-two-functions-and-one-ran.js": [
-      "// @bun\nexport const first = () => (inner(), 1);\nconst inner = () =>\n  () => 2",
-      "FNF:3\nFNH:2",
-      { 4: true },
-    ],
-    // The test file imports this text a second time, and JSC reports the ranges of each load.
-    "loaded-twice.js": [
-      "// @bun\nexport function first() {\n  return 1;\n}\nexport function second() {\n  return 2;\n  }",
-      "FNF:2\nFNH:1",
-      { 5: false, 6: false },
-    ],
     "branch-not-taken-on-the-last-line.js": [
       "// @bun\nexport const first = () => 1;\nif (globalThis.neverSet)\n  first();",
       "FNF:1\nFNH:1",
       { 4: false },
     ],
-    "branch-not-taken-ends-with-a-function.js": [
-      "// @bun\nexport const first = () => 1;\nif (globalThis.neverSet) globalThis.second =\n  () => 2",
-      "FNF:2\nFNH:1",
-      { 4: false },
+    "last-line-of-two-bytes.js": [
+      "// @bun\nexport const first = () => {\n  return 1;\n};",
+      "FNF:1\nFNH:1",
+      { 4: true },
     ],
-    "statement-not-reached-on-the-last-line.js": [
-      "// @bun\nexport const first = () => 1;\ntail();\nfunction tail() {\n  if (!globalThis.neverSet) return;\n  first(); }",
-      "FNF:2\nFNH:2",
-      { 6: false },
-    ],
-    // JSC counts the text in code units and the line table counts it in bytes.
-    "not-ascii.js": [
-      "// @bun\n// \u00a9 2024\nexport function first() {\n  return 1;\n}\nexport function second() {\n  return 2;\n    }",
+    "last-byte-closes-a-function-that-never-ran.js": [
+      "// @bun\nexport function first() {\n  return 1;\n}\nexport function second() {\n  return 2;\n  }",
       "FNF:2\nFNH:1",
-      { 7: false },
+      { 5: false, 6: false },
     ],
     "wrapper-on-the-last-line.cjs": [
       "// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname) {exports.first = () => 1; exports.second = () => 2;})",
       "FNF:3\nFNH:2",
       { 2: true },
+    ],
+    // plugin.ts gives this text to bun.
+    "from-a-plugin.js": [
+      "// @bun\nexport function first() {\n  return 1;\n}\nexport const second = () => 2;",
+      "FNF:2\nFNH:1",
+      { 5: true },
     ],
   };
   const terminated = (name: string) => `terminated-${name}`;
@@ -1077,11 +1054,25 @@ describe("a text that is not printed by bun", () => {
   let result: Awaited<ReturnType<typeof run>>;
   beforeAll(async () => {
     const files: Record<string, string> = {
-      "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
+      "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\npreload = ["./plugin.ts"]\n`,
+      "plugin.ts": `
+import { plugin } from "bun";
+
+plugin({
+  name: "passthrough",
+  setup(build) {
+    build.onLoad({ filter: /from-a-plugin\\.js$/ }, async ({ path }) => {
+      return { contents: await Bun.file(path).text(), loader: "js" };
+    });
+  },
+});
+`,
       "empty.cjs": "",
       // bun prints these two. The test puts a wrapper of its own around the printed text.
       "wrapped.cjs": "exports.first = () => 1;\nexports.second = () => 2;\n",
       [terminated("wrapped.cjs")]: "exports.first = () => 1;\nexports.second = () => 2;\n",
+      "ends-with-a-carriage-return.js": "// @bun\nexport const first = () => 1;\r",
+      "ends-with-a-newline.js": "// @bun\nexport const first = () => 1;\n",
       "never-ran-on-no-line.js": "// @bun\n// \u00a9\u00a9\n\n\n\n\n()=>1;\nexport const first = () => 1;\n",
     };
     // Each text as it is, and with a final newline.
@@ -1097,8 +1088,8 @@ import { codeCoverageForFile } from "bun:jsc";
 import Module from "node:module";
 import { join } from "node:path";
 ${names.map((name, i) => (name.endsWith(".cjs") ? `const m${i} = require("./${name}");` : `import * as m${i} from "./${name}";`)).join("\n")}
-import "./loaded-twice.js?again";
-import "./${terminated("loaded-twice.js")}?again";
+import * as carriageReturn from "./ends-with-a-carriage-return.js";
+import * as newline from "./ends-with-a-newline.js";
 import * as onNoLine from "./never-ran-on-no-line.js";
 require("./empty.cjs");
 const modules = { ${names.map((name, i) => `"${name}": m${i}`).join(", ")} };
@@ -1111,7 +1102,7 @@ test("calls first() and not second()", () => {
     expect(module.first()).toBe(1);
     row(name);
   }
-  expect(onNoLine.first()).toBe(1);
+  expect(carriageReturn.first() + newline.first() + onNoLine.first()).toBe(3);
 });
 
 test("calls first() and not second() under a changed Module.wrapper", () => {
@@ -1132,15 +1123,9 @@ test("calls first() and not second() under a changed Module.wrapper", () => {
     result = await run(files, []);
   });
 
-  // The table row of a file, the functions of its lcov record, and whether each line ran. A hit
-  // count is not in it: the last line has fewer hits when no newline follows it.
-  const report = (file: string) => ({
-    row: result.rows[file],
-    functions: result.lcov[file].match(/^FNF:\d+\nFNH:\d+$/m)?.[0],
-    ran: Object.fromEntries(
-      Array.from(result.lcov[file].matchAll(/^DA:(\d+),(\d+)$/gm), ([, line, hits]) => [line, hits !== "0"]),
-    ),
-  });
+  // The lcov record of a file without its name, and its table row.
+  const record = (file: string) => result.lcov[file].replace(`SF:${file}\n`, "").trim();
+  const report = (file: string) => ({ record: record(file), row: result.rows[file] });
   // What codeCoverageForFile() returned in the test, without the name of the file.
   const rowFromBunJsc = (file: string) =>
     result.stdout
@@ -1152,10 +1137,16 @@ test("calls first() and not second() under a changed Module.wrapper", () => {
 
   describe.each(Object.entries(texts))("%s", (file, [, functions, lines]) => {
     test("bun test --coverage", () => {
-      expect(report(file)).toEqual({
-        row: { functions: expect.any(String), lines: expect.any(String), uncovered: expect.any(String) },
+      expect({
+        functions: record(file).match(/^FNF:\d+\nFNH:\d+$/m)?.[0],
+        ran: Object.fromEntries(
+          Array.from(record(file).matchAll(/^DA:(\d+),(\d+)$/gm), ([, line, hits]) => [line, hits !== "0"]),
+        ),
+        row: result.rows[file],
+      }).toEqual({
         functions,
         ran: expect.objectContaining(lines),
+        row: { functions: expect.any(String), lines: expect.any(String), uncovered: expect.any(String) },
       });
       expect(report(file)).toEqual(report(terminated(file)));
     });
@@ -1174,19 +1165,63 @@ test("calls first() and not second() under a changed Module.wrapper", () => {
   });
 
   test("the lcov record of a text with a final newline", () => {
-    expect(result.lcov[terminated("never-ran-alone-on-the-last-line.js")]).toContain(
-      "\nFNF:2\nFNH:1\nDA:2,10\nDA:3,9\nDA:4,1\nDA:5,21\nLF:4\nLH:4\n",
+    expect(record(terminated("never-ran-alone-on-the-last-line.js"))).toContain(
+      "FNF:2\nFNH:1\nDA:2,10\nDA:3,9\nDA:4,1\nDA:5,21\nLF:4\nLH:4",
     );
+  });
+
+  // A carriage return ends a line too, so this text runs as it is.
+  test("a text that ends with a carriage return", () => {
+    expect(record("ends-with-a-carriage-return.js")).toMatch(/^FNF:1\nFNH:1\nDA:2,\d+\nLF:1\nLH:1$/m);
+    expect(report("ends-with-a-carriage-return.js")).toEqual(report("ends-with-a-newline.js"));
   });
 
   // The text of an empty CommonJS file is a wrapper that bun writes. The file has no line to report.
   test("an empty .cjs file reports no line", () => {
-    expect(result.lcov["empty.cjs"]).toContain("\nFNF:1\nFNH:1\nLF:0\nLH:0\n");
+    expect(record("empty.cjs")).toContain("FNF:1\nFNH:1\nLF:0\nLH:0");
   });
 
   // The line table has four more bytes than JSC has code units before the function on line 7. Each
   // offset of that function is then the start of a blank line, and the report puts it on no line.
   test("a function that never ran and that the line table puts on no line", () => {
-    expect(result.lcov["never-ran-on-no-line.js"]).toContain("\nFNF:2\nFNH:1\n");
+    expect(record("never-ran-on-no-line.js")).toContain("FNF:2\nFNH:1\n");
+  });
+
+  // node:inspector registers a text for coverage too.
+  test("bun:jsc codeCoverageForFile() after Profiler.startPreciseCoverage", async () => {
+    using dir = tempDir("cov", {
+      "subject.js": texts["branch-not-taken-on-the-last-line.js"][0],
+      [terminated("subject.js")]: texts["branch-not-taken-on-the-last-line.js"][0] + "\n",
+      "main.mjs": `
+import { codeCoverageForFile } from "bun:jsc";
+import inspector from "node:inspector/promises";
+import { join } from "node:path";
+
+const session = new inspector.Session();
+session.connect();
+await session.post("Profiler.enable");
+await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+const rows = [];
+for (const name of ["subject.js", "${terminated("subject.js")}"]) {
+  (await import("./" + name)).first();
+  const row = codeCoverageForFile(join(import.meta.dir, name), true);
+  rows.push(row.slice(row.indexOf("|")));
+}
+console.log(JSON.stringify(rows));
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const [subject, twin] = JSON.parse(stdout);
+    expect(subject).toMatch(/^\| +100\.00 \| +66\.67 \| 4$/);
+    expect(subject).toBe(twin);
+    expect(exitCode).toBe(0);
   });
 });

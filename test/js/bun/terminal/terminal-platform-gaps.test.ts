@@ -818,8 +818,13 @@ describe("Bun.Terminal platform behaviour", () => {
        process.stdout.write(" READY");`,
       { done: o => o.includes("READY") },
     );
-    // Server 2019's ConPTY scrolls first, and prints a character again over itself.
-    expect(Bun.stripANSI(output).replace(/.\x08|\s/g, "")).toMatch(/^(?:<\ufffd+>){8}READY/);
+    // Server 2019's ConPTY scrolls first, and prints a character again over itself: after a backspace,
+    // or, when it is the first of the line, after moving there.
+    expect(
+      Bun.stripANSI(output)
+        .replace(/.\x08|\s/g, "")
+        .replace(/^<+/, "<"),
+    ).toMatch(/^(?:<\ufffd+>){8}READY/);
   });
 
   test("GAP: ANSI escape sequences", async () => {

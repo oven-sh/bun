@@ -10,7 +10,9 @@
 //! decides; only a `.workspace` resolution falls back to re-inferring the
 //! parent's literal, because `linkWorkspacePackages` can rewrite a plain
 //! semver to a workspace. Root `overrides`/`resolutions` take priority over
-//! the transitive literal when the resolver applied them.
+//! the transitive literal when the resolver applied them. A range or dist-tag
+//! that binds to a non-registry package is allowed only when the root or a
+//! workspace depends on that package directly.
 
 use bstr::BStr;
 use bun_collections::ArrayHashMap;
@@ -112,6 +114,15 @@ pub fn enforce_block_exotic_subdeps(manager: &PackageManager) -> usize {
                 continue;
             };
 
+            // A plain range names no source. It can bind to a package the
+            // project itself took from one (a plugin's peer range on a library
+            // the root pins to a tarball). The project chose that package.
+            if names_no_source(literal_raw)
+                && manager.lockfile.is_workspace_declared_package(dep_pkg_id)
+            {
+                continue;
+            }
+
             let key = ((parent_id as u64) << 32) | (dep_pkg_id as u64);
             let gop = bun_core::handle_oom(seen.get_or_put(key));
             if gop.found_existing {
@@ -137,7 +148,7 @@ pub fn enforce_block_exotic_subdeps(manager: &PackageManager) -> usize {
             // literal can print empty when the lockfile clone pass wiped it.
             // Macro form so only the template is tag-rewritten and the
             // untrusted interpolated bytes print verbatim.
-            bun_core::pretty_errorln!(
+            bun_core::pretty_error!(
                 "  <b>{}<r><d>@{}<r> depends on <b>{}<r><d>@{}<r> via <yellow>{}<r> source",
                 BStr::new(parent_name),
                 parent_res.fmt(string_buf, bun_fmt::PathSep::Auto),
@@ -145,16 +156,33 @@ pub fn enforce_block_exotic_subdeps(manager: &PackageManager) -> usize {
                 BStr::new(literal_raw),
                 verdict,
             );
+            // An override is looked up by this name, not by the dependency key.
+            let package_name = pkg_names[dep_pkg_id as usize].slice(string_buf);
+            if package_name != dep_name {
+                bun_core::pretty_error!(" <d>(package name: {})<r>", BStr::new(package_name));
+            }
+            bun_core::pretty_errorln!("");
         }
     }
 
     if count > 0 && !silent {
         bun_core::pretty_errorln!(
-            "\n<d>To allow these, disable <b>install.blockExoticSubdeps<r><d> in bunfig.toml or set <b>block-exotic-subdeps=false<r><d> in .npmrc; to fix a single offender, add an <b>overrides<r><d> entry in package.json pointing it at a registry version (an override to a non-registry source is itself blocked).<r>",
+            "\n<d>To allow these, disable <b>install.blockExoticSubdeps<r><d> in bunfig.toml or set <b>block-exotic-subdeps=false<r><d> in .npmrc; to fix a single offender, add an <b>overrides<r><d> entry in package.json for its package name that points at a registry version (an override to a non-registry source is itself blocked).<r>",
         );
         Output::flush();
     }
     count
+}
+
+/// Is the literal a range or a dist-tag? An empty one does not count: the
+/// lockfile clone pass can wipe a literal.
+fn names_no_source(literal_raw: &[u8]) -> bool {
+    let literal = strings::trim_left(literal_raw, b" \t\n\r");
+    !literal.is_empty()
+        && matches!(
+            dependency::Tag::infer(literal),
+            dependency::Tag::Npm | dependency::Tag::DistTag
+        )
 }
 
 /// Returns the exotic-source label if the (resolution, literal) pair is
@@ -177,8 +205,8 @@ fn classify(res_tag: ResolutionTag, literal_raw: &[u8]) -> Option<&'static str> 
     match res_tag {
         ResolutionTag::Uninitialized | ResolutionTag::Root | ResolutionTag::Npm => None,
 
-        // These tags are unreachable via `linkWorkspacePackages` or any
-        // other implicit rewrite; the resolution alone is authoritative.
+        // `linkWorkspacePackages` never produces these tags. A plain range
+        // can still bind to one: the caller checks `names_no_source`.
         ResolutionTag::Git => Some("git"),
         ResolutionTag::Github => Some("github"),
         ResolutionTag::LocalTarball => Some("local_tarball"),

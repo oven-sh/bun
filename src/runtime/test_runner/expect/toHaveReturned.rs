@@ -5,7 +5,7 @@ use super::throw;
 use super::Expect;
 
 #[derive(PartialEq, Eq, Clone, Copy)]
-pub enum Mode {
+pub(crate) enum Mode {
     ToHaveReturned,
     ToHaveReturnedTimes,
 }

@@ -1,0 +1,24 @@
+node:internal/modules/cjs/loader:1522
+  throw err;
+  ^
+
+Error: Cannot find module '/workspace/ref/tseslint/node_modules/@typescript-eslint/parser'
+Require stack:
+- /workspace/notes/lint/units/cli/rules-source-text/oracle/eslint.cjs
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1519:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1073:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1097:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1124:12)
+    at Module._load (node:internal/modules/cjs/loader:1296:5)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1619:12)
+    at require (node:internal/modules/helpers:191:16)
+    at Object.<anonymous> (/workspace/notes/lint/units/cli/rules-source-text/oracle/eslint.cjs:13:18)
+    at Module._compile (node:internal/modules/cjs/loader:1873:14) {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: [
+    '/workspace/notes/lint/units/cli/rules-source-text/oracle/eslint.cjs'
+  ]
+}
+
+Node.js v26.3.0

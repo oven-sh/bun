@@ -1,0 +1,527 @@
+[
+	{
+		"kind": "valid",
+		"code": "(x || y).aFunction()",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "[a, b, c].forEach(doSomething)",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var a = b;\n(x || y).doSomething()",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var a = b\n;(x || y).doSomething()",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var a = b\nvoid (x || y).doSomething()",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var a = b;\n[1, 2, 3].forEach(console.log)",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var a = b\nvoid [1, 2, 3].forEach(console.log)",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "\"abc\\\n(123)\"",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var a = (\n(123)\n)",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "f(\n(x)\n)",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "(\nfunction () {}\n)[1]",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "let x = function() {};\n   `hello`",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "let x = function() {}\nx `hello`",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "String.raw `Hi\n${2+3}!`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "x\n.y\nz `Valid Test Case`",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "f(x\n)`Valid Test Case`",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "x.\ny `Valid Test Case`",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "(x\n)`Valid Test Case`",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "\n            foo\n            / bar /2\n        ",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "\n            foo\n            / bar / mgy\n        ",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "\n            foo\n            / bar /\n            gym\n        ",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "\n            foo\n            / bar\n            / ygm\n        ",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "\n            foo\n            / bar /GYM\n        ",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "\n            foo\n            / bar / baz\n        ",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "foo /bar/g",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "\n            foo\n            /denominator/\n            2\n        ",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "\n            foo\n            / /abc/\n        ",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "\n            5 / (5\n            / 5)\n        ",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "\n                tag<generic>`\n                    multiline\n                `;\n            ",
+		"run": 0,
+		"parser": "fixture:typescript-parsers/tagged-template-with-generic/tagged-template-with-generic-1"
+	},
+	{
+		"kind": "valid",
+		"code": "\n                tag<\n                  generic\n                >`\n                    multiline\n                `;\n            ",
+		"run": 0,
+		"parser": "fixture:typescript-parsers/tagged-template-with-generic/tagged-template-with-generic-2"
+	},
+	{
+		"kind": "valid",
+		"code": "\n                tag<\n                  generic\n                >`multiline`;\n            ",
+		"run": 0,
+		"parser": "fixture:typescript-parsers/tagged-template-with-generic/tagged-template-with-generic-3"
+	},
+	{
+		"kind": "valid",
+		"code": "var a = b\n  ?.(x || y).doSomething()",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2020
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var a = b\n  ?.[a, b, c].forEach(doSomething)",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2020
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var a = b?.\n  (x || y).doSomething()",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2020
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var a = b?.\n  [a, b, c].forEach(doSomething)",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2020
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "class C { field1\n[field2]; }",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2022
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "class C { field1\n*gen() {} }",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2022
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "class C { field1 = () => {}\n[field2]; }",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2022
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "class C { field1 = () => {}\n*gen() {} }",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2022
+		}
+	},
+	{
+		"kind": "invalid",
+		"code": "var a = b\n(x || y).doSomething()",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "function",
+				"line": 2,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 2
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var a = (a || b)\n(x || y).doSomething()",
+		"run": 0,
+		"errors": [
+			{
+				"line": 2,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 2,
+				"messageId": "function"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var a = (a || b)\n(x).doSomething()",
+		"run": 0,
+		"errors": [
+			{
+				"line": 2,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 2,
+				"messageId": "function"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var a = b\n[a, b, c].forEach(doSomething)",
+		"run": 0,
+		"errors": [
+			{
+				"line": 2,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 2,
+				"messageId": "property"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var a = b\n    (x || y).doSomething()",
+		"run": 0,
+		"errors": [
+			{
+				"line": 2,
+				"column": 5,
+				"endLine": 2,
+				"endColumn": 6,
+				"messageId": "function"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var a = b\n  [a, b, c].forEach(doSomething)",
+		"run": 0,
+		"errors": [
+			{
+				"line": 2,
+				"column": 3,
+				"endLine": 2,
+				"endColumn": 4,
+				"messageId": "property"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "let x = function() {}\n `hello`",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"errors": [
+			{
+				"line": 2,
+				"column": 2,
+				"endLine": 2,
+				"endColumn": 3,
+				"messageId": "taggedTemplate"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "let x = function() {}\nx\n`hello`",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"errors": [
+			{
+				"line": 3,
+				"column": 1,
+				"endLine": 3,
+				"endColumn": 2,
+				"messageId": "taggedTemplate"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "x\n.y\nz\n`Invalid Test Case`",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"errors": [
+			{
+				"line": 4,
+				"column": 1,
+				"endLine": 4,
+				"endColumn": 2,
+				"messageId": "taggedTemplate"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n                foo\n                / bar /gym\n            ",
+		"run": 0,
+		"errors": [
+			{
+				"line": 3,
+				"column": 17,
+				"endLine": 3,
+				"endColumn": 18,
+				"messageId": "division"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n                foo\n                / bar /g\n            ",
+		"run": 0,
+		"errors": [
+			{
+				"line": 3,
+				"column": 17,
+				"endLine": 3,
+				"endColumn": 18,
+				"messageId": "division"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n                foo\n                / bar /g.test(baz)\n            ",
+		"run": 0,
+		"errors": [
+			{
+				"line": 3,
+				"column": 17,
+				"endLine": 3,
+				"endColumn": 18,
+				"messageId": "division"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n                foo\n                /bar/gimuygimuygimuy.test(baz)\n            ",
+		"run": 0,
+		"errors": [
+			{
+				"line": 3,
+				"column": 17,
+				"endLine": 3,
+				"endColumn": 18,
+				"messageId": "division"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n                foo\n                /bar/s.test(baz)\n            ",
+		"run": 0,
+		"errors": [
+			{
+				"line": 3,
+				"column": 17,
+				"endLine": 3,
+				"endColumn": 18,
+				"messageId": "division"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n                foo\n                /bar/d.test(baz)\n            ",
+		"run": 0,
+		"errors": [
+			{
+				"line": 3,
+				"column": 17,
+				"endLine": 3,
+				"endColumn": 18,
+				"messageId": "division"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n                foo\n                /bar/v.test(baz)\n            ",
+		"run": 0,
+		"errors": [
+			{
+				"line": 3,
+				"column": 17,
+				"endLine": 3,
+				"endColumn": 18,
+				"messageId": "division"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "const x = aaaa<\n  test\n>/*\ntest\n*/`foo`",
+		"run": 0,
+		"parser": "fixture:typescript-parsers/tagged-template-with-generic/tagged-template-with-generic-and-comment",
+		"errors": [
+			{
+				"line": 5,
+				"column": 3,
+				"endLine": 5,
+				"endColumn": 4,
+				"messageId": "taggedTemplate"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "class C { field1 = obj\n[field2]; }",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2022
+		},
+		"errors": [
+			{
+				"line": 2,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 2,
+				"messageId": "property"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "class C { field1 = function() {}\n[field2]; }",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2022
+		},
+		"errors": [
+			{
+				"line": 2,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 2,
+				"messageId": "property"
+			}
+		]
+	}
+]

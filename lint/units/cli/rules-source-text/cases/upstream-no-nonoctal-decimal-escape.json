@@ -1,0 +1,2370 @@
+[
+	{
+		"kind": "valid",
+		"code": "8",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var \\u8888",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/\\8/",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "''",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'foo'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'8'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'9'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'foo8'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'foo9bar'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'\\ '",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'\\\\'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'\\a'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'\\n'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'\\0'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'\\1'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'\\7'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'\\01'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'\\08'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'\\19'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'\\t9'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'\\👍8'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'\\\\8'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'\\\\9'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'\\\\8\\\\9'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'\\\\ \\\\8'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'\\\\\\\\9'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'\\\\9bar'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'a\\\\8'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'foo\\\\8'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'foo\\\\8bar'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'9\\\\9'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'n\\n8'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'n\\nn\\n8'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'\\1.8'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'\\1\\28'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'\\x99'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'\\\\\\x38'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "\\u99999",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'\\\n8'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "'\\\n\\\\9'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "invalid",
+		"code": "'\\8'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 4,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "8"
+						},
+						"output": "'8'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "'\\\\8'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'\\9'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\9"
+				},
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 4,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\9",
+							"replacement": "9"
+						},
+						"output": "'9'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\9",
+							"replacement": "\\\\9"
+						},
+						"output": "'\\\\9'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\"\\8\"",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 4,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "8"
+						},
+						"output": "\"8\""
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "\"\\\\8\""
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'f\\9'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\9"
+				},
+				"line": 1,
+				"column": 3,
+				"endLine": 1,
+				"endColumn": 5,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\9",
+							"replacement": "9"
+						},
+						"output": "'f9'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\9",
+							"replacement": "\\\\9"
+						},
+						"output": "'f\\\\9'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'fo\\9'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\9"
+				},
+				"line": 1,
+				"column": 4,
+				"endLine": 1,
+				"endColumn": 6,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\9",
+							"replacement": "9"
+						},
+						"output": "'fo9'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\9",
+							"replacement": "\\\\9"
+						},
+						"output": "'fo\\\\9'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'foo\\9'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\9"
+				},
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 7,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\9",
+							"replacement": "9"
+						},
+						"output": "'foo9'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\9",
+							"replacement": "\\\\9"
+						},
+						"output": "'foo\\\\9'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'foo\\8bar'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 7,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "8"
+						},
+						"output": "'foo8bar'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "'foo\\\\8bar'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'👍\\8'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 1,
+				"column": 4,
+				"endLine": 1,
+				"endColumn": 6,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "8"
+						},
+						"output": "'👍8'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "'👍\\\\8'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'\\\\\\8'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 1,
+				"column": 4,
+				"endLine": 1,
+				"endColumn": 6,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "8"
+						},
+						"output": "'\\\\8'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "'\\\\\\\\8'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'\\\\\\\\\\9'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\9"
+				},
+				"line": 1,
+				"column": 6,
+				"endLine": 1,
+				"endColumn": 8,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\9",
+							"replacement": "9"
+						},
+						"output": "'\\\\\\\\9'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\9",
+							"replacement": "\\\\9"
+						},
+						"output": "'\\\\\\\\\\\\9'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'foo\\\\\\8'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 9,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "8"
+						},
+						"output": "'foo\\\\8'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "'foo\\\\\\\\8'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'\\ \\8'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 1,
+				"column": 4,
+				"endLine": 1,
+				"endColumn": 6,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "8"
+						},
+						"output": "'\\ 8'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "'\\ \\\\8'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'\\1\\9'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\9"
+				},
+				"line": 1,
+				"column": 4,
+				"endLine": 1,
+				"endColumn": 6,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\9",
+							"replacement": "9"
+						},
+						"output": "'\\19'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\9",
+							"replacement": "\\\\9"
+						},
+						"output": "'\\1\\\\9'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'foo\\1\\9'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\9"
+				},
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 9,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\9",
+							"replacement": "9"
+						},
+						"output": "'foo\\19'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\9",
+							"replacement": "\\\\9"
+						},
+						"output": "'foo\\1\\\\9'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'\\n\\n\\8\\n'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 1,
+				"column": 6,
+				"endLine": 1,
+				"endColumn": 8,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "8"
+						},
+						"output": "'\\n\\n8\\n'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "'\\n\\n\\\\8\\n'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'\\n.\\n\\8\\n'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 9,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "8"
+						},
+						"output": "'\\n.\\n8\\n'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "'\\n.\\n\\\\8\\n'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'\\n.\\nn\\8\\n'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 10,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "8"
+						},
+						"output": "'\\n.\\nn8\\n'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "'\\n.\\nn\\\\8\\n'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'\\👍\\8'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 7,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "8"
+						},
+						"output": "'\\👍8'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "'\\👍\\\\8'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'\\\\8\\9'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\9"
+				},
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 7,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\9",
+							"replacement": "9"
+						},
+						"output": "'\\\\89'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\9",
+							"replacement": "\\\\9"
+						},
+						"output": "'\\\\8\\\\9'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'\\8\\\\9'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 4,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "8"
+						},
+						"output": "'8\\\\9'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "'\\\\8\\\\9'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'\\8 \\\\9'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 4,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "8"
+						},
+						"output": "'8 \\\\9'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "'\\\\8 \\\\9'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'\\8\\8'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 4,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "8"
+						},
+						"output": "'8\\8'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "'\\\\8\\8'"
+					}
+				]
+			},
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 1,
+				"column": 4,
+				"endLine": 1,
+				"endColumn": 6,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "8"
+						},
+						"output": "'\\88'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "'\\8\\\\8'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'\\9\\8'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\9"
+				},
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 4,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\9",
+							"replacement": "9"
+						},
+						"output": "'9\\8'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\9",
+							"replacement": "\\\\9"
+						},
+						"output": "'\\\\9\\8'"
+					}
+				]
+			},
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 1,
+				"column": 4,
+				"endLine": 1,
+				"endColumn": 6,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "8"
+						},
+						"output": "'\\98'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "'\\9\\\\8'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'foo\\8bar\\9baz'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 7,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "8"
+						},
+						"output": "'foo8bar\\9baz'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "'foo\\\\8bar\\9baz'"
+					}
+				]
+			},
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\9"
+				},
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 12,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\9",
+							"replacement": "9"
+						},
+						"output": "'foo\\8bar9baz'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\9",
+							"replacement": "\\\\9"
+						},
+						"output": "'foo\\8bar\\\\9baz'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'\\8\\1\\9'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 4,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "8"
+						},
+						"output": "'8\\1\\9'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "'\\\\8\\1\\9'"
+					}
+				]
+			},
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\9"
+				},
+				"line": 1,
+				"column": 6,
+				"endLine": 1,
+				"endColumn": 8,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\9",
+							"replacement": "9"
+						},
+						"output": "'\\8\\19'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\9",
+							"replacement": "\\\\9"
+						},
+						"output": "'\\8\\1\\\\9'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'\\9\\n9\\\\9\\9'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\9"
+				},
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 4,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\9",
+							"replacement": "9"
+						},
+						"output": "'9\\n9\\\\9\\9'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\9",
+							"replacement": "\\\\9"
+						},
+						"output": "'\\\\9\\n9\\\\9\\9'"
+					}
+				]
+			},
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\9"
+				},
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 12,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\9",
+							"replacement": "9"
+						},
+						"output": "'\\9\\n9\\\\99'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\9",
+							"replacement": "\\\\9"
+						},
+						"output": "'\\9\\n9\\\\9\\\\9'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'\\8\\\\\\9'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 4,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "8"
+						},
+						"output": "'8\\\\\\9'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "'\\\\8\\\\\\9'"
+					}
+				]
+			},
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\9"
+				},
+				"line": 1,
+				"column": 6,
+				"endLine": 1,
+				"endColumn": 8,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\9",
+							"replacement": "9"
+						},
+						"output": "'\\8\\\\9'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\9",
+							"replacement": "\\\\9"
+						},
+						"output": "'\\8\\\\\\\\9'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = '\\8'; bar('\\9')",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 14,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "8"
+						},
+						"output": "var foo = '8'; bar('\\9')"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "var foo = '\\\\8'; bar('\\9')"
+					}
+				]
+			},
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\9"
+				},
+				"line": 1,
+				"column": 22,
+				"endLine": 1,
+				"endColumn": 24,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\9",
+							"replacement": "9"
+						},
+						"output": "var foo = '\\8'; bar('9')"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\9",
+							"replacement": "\\\\9"
+						},
+						"output": "var foo = '\\8'; bar('\\\\9')"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = '8'\n  bar = '\\9'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\9"
+				},
+				"line": 2,
+				"column": 10,
+				"endLine": 2,
+				"endColumn": 12,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\9",
+							"replacement": "9"
+						},
+						"output": "var foo = '8'\n  bar = '9'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\9",
+							"replacement": "\\\\9"
+						},
+						"output": "var foo = '8'\n  bar = '\\\\9'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'\\\n\\8'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 2,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 3,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "8"
+						},
+						"output": "'\\\n8'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "'\\\n\\\\8'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'\\\r\n\\9'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\9"
+				},
+				"line": 2,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 3,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\9",
+							"replacement": "9"
+						},
+						"output": "'\\\r\n9'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\9",
+							"replacement": "\\\\9"
+						},
+						"output": "'\\\r\n\\\\9'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'\\\\\\\n\\8'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 2,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 3,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "8"
+						},
+						"output": "'\\\\\\\n8'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "'\\\\\\\n\\\\8'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'foo\\\nbar\\9baz'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\9"
+				},
+				"line": 2,
+				"column": 4,
+				"endLine": 2,
+				"endColumn": 6,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\9",
+							"replacement": "9"
+						},
+						"output": "'foo\\\nbar9baz'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\9",
+							"replacement": "\\\\9"
+						},
+						"output": "'foo\\\nbar\\\\9baz'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'\\0\\8'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 1,
+				"column": 4,
+				"endLine": 1,
+				"endColumn": 6,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\0\\8",
+							"replacement": "\\u00008"
+						},
+						"output": "'\\u00008'"
+					},
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\u0038"
+						},
+						"output": "'\\0\\u0038'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "'\\0\\\\8'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'foo\\0\\9bar'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\9"
+				},
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 9,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\0\\9",
+							"replacement": "\\u00009"
+						},
+						"output": "'foo\\u00009bar'"
+					},
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\9",
+							"replacement": "\\u0039"
+						},
+						"output": "'foo\\0\\u0039bar'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\9",
+							"replacement": "\\\\9"
+						},
+						"output": "'foo\\0\\\\9bar'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'\\1\\0\\8'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 1,
+				"column": 6,
+				"endLine": 1,
+				"endColumn": 8,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\0\\8",
+							"replacement": "\\u00008"
+						},
+						"output": "'\\1\\u00008'"
+					},
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\u0038"
+						},
+						"output": "'\\1\\0\\u0038'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "'\\1\\0\\\\8'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'\\0\\8\\9'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 1,
+				"column": 4,
+				"endLine": 1,
+				"endColumn": 6,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\0\\8",
+							"replacement": "\\u00008"
+						},
+						"output": "'\\u00008\\9'"
+					},
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\u0038"
+						},
+						"output": "'\\0\\u0038\\9'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "'\\0\\\\8\\9'"
+					}
+				]
+			},
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\9"
+				},
+				"line": 1,
+				"column": 6,
+				"endLine": 1,
+				"endColumn": 8,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\9",
+							"replacement": "9"
+						},
+						"output": "'\\0\\89'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\9",
+							"replacement": "\\\\9"
+						},
+						"output": "'\\0\\8\\\\9'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'\\8\\0\\9'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 4,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "8"
+						},
+						"output": "'8\\0\\9'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "'\\\\8\\0\\9'"
+					}
+				]
+			},
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\9"
+				},
+				"line": 1,
+				"column": 6,
+				"endLine": 1,
+				"endColumn": 8,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\0\\9",
+							"replacement": "\\u00009"
+						},
+						"output": "'\\8\\u00009'"
+					},
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\9",
+							"replacement": "\\u0039"
+						},
+						"output": "'\\8\\0\\u0039'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\9",
+							"replacement": "\\\\9"
+						},
+						"output": "'\\8\\0\\\\9'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'0\\8'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 1,
+				"column": 3,
+				"endLine": 1,
+				"endColumn": 5,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "8"
+						},
+						"output": "'08'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "'0\\\\8'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'\\\\0\\8'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 7,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "8"
+						},
+						"output": "'\\\\08'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "'\\\\0\\\\8'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'\\0 \\8'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 7,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "8"
+						},
+						"output": "'\\0 8'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "'\\0 \\\\8'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'\\01\\8'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 7,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "8"
+						},
+						"output": "'\\018'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "'\\01\\\\8'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'\\0\\1\\8'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 1,
+				"column": 6,
+				"endLine": 1,
+				"endColumn": 8,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "8"
+						},
+						"output": "'\\0\\18'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "'\\0\\1\\\\8'"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "'\\0\\\n\\8'",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "decimalEscape",
+				"data": {
+					"decimalEscape": "\\8"
+				},
+				"line": 2,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 3,
+				"suggestions": [
+					{
+						"messageId": "refactor",
+						"data": {
+							"original": "\\8",
+							"replacement": "8"
+						},
+						"output": "'\\0\\\n8'"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"data": {
+							"original": "\\8",
+							"replacement": "\\\\8"
+						},
+						"output": "'\\0\\\n\\\\8'"
+					}
+				]
+			}
+		]
+	}
+]

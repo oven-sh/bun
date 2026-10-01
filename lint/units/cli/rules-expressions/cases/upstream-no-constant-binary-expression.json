@@ -1,1258 +1,5885 @@
 {
-	"base": {
-		"ecmaVersion": 2021,
-		"sourceType": "script",
-		"parserOptions": {
-			"ecmaFeatures": {
-				"jsx": true
-			}
-		}
-	},
 	"valid": [
 		{
-			"code": "<p /> && foo"
+			"code": "<p /> && foo",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "<></> && foo"
+			"code": "<></> && foo",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "<p /> ?? foo"
+			"code": "<p /> ?? foo",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "<></> ?? foo"
+			"code": "<></> ?? foo",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "arbitraryFunction(n) ?? foo"
+			"code": "arbitraryFunction(n) ?? foo",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "foo.Boolean(n) ?? foo"
+			"code": "foo.Boolean(n) ?? foo",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "(x += 1) && foo"
+			"code": "(x += 1) && foo",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "`${bar}` && foo"
+			"code": "`${bar}` && foo",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "bar && foo"
+			"code": "bar && foo",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "delete bar.baz && foo"
+			"code": "delete bar.baz && foo",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "true ? foo : bar"
+			"code": "true ? foo : bar",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "new Foo() == true"
+			"code": "new Foo() == true",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "foo == true"
+			"code": "foo == true",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "`${foo}` == true"
+			"code": "`${foo}` == true",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "`${foo}${bar}` == true"
+			"code": "`${foo}${bar}` == true",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "`0${foo}` == true"
+			"code": "`0${foo}` == true",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "`00000000${foo}` == true"
+			"code": "`00000000${foo}` == true",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "`0${foo}.000` == true"
+			"code": "`0${foo}.000` == true",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "[n] == true"
+			"code": "[n] == true",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "delete bar.baz === true"
+			"code": "delete bar.baz === true",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "foo.Boolean(true) && foo"
+			"code": "foo.Boolean(true) && foo",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "function Boolean(n) { return n; }; Boolean(x) ?? foo"
+			"code": "function Boolean(n) { return n; }; Boolean(x) ?? foo",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "function String(n) { return n; }; String(x) ?? foo"
+			"code": "function String(n) { return n; }; String(x) ?? foo",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "function Number(n) { return n; }; Number(x) ?? foo"
+			"code": "function Number(n) { return n; }; Number(x) ?? foo",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "function Symbol(n) { return n; }; Symbol(x) ?? foo"
+			"code": "function Symbol(n) { return n; }; Symbol(x) ?? foo",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "function BigInt(n) { return n; }; BigInt(x) ?? foo"
+			"code": "function BigInt(n) { return n; }; BigInt(x) ?? foo",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "function Boolean(n) { return Math.random(); }; Boolean(x) === 1"
+			"code": "function Boolean(n) { return Math.random(); }; Boolean(x) === 1",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "function Boolean(n) { return Math.random(); }; Boolean(1) == true"
+			"code": "function Boolean(n) { return Math.random(); }; Boolean(1) == true",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "new Foo() === x"
+			"code": "new Foo() === x",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "x === new someObj.Promise()"
+			"code": "x === new someObj.Promise()",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "Boolean(foo) === true"
+			"code": "Boolean(foo) === true",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "function foo(undefined) { undefined ?? bar;}"
+			"code": "function foo(undefined) { undefined ?? bar;}",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "function foo(undefined) { undefined == true;}"
+			"code": "function foo(undefined) { undefined == true;}",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "function foo(undefined) { undefined === true;}"
+			"code": "function foo(undefined) { undefined === true;}",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "[...arr, 1] == true"
+			"code": "[...arr, 1] == true",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "[,,,] == true"
+			"code": "[,,,] == true",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
 			"code": "new Foo() === bar;",
 			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				},
 				"globals": {
 					"Foo": "writable"
 				}
 			}
 		},
 		{
-			"code": "(foo && true) ?? bar"
+			"code": "(foo && true) ?? bar",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "foo ?? null ?? bar"
+			"code": "foo ?? null ?? bar",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "a ?? (doSomething(), undefined) ?? b"
+			"code": "a ?? (doSomething(), undefined) ?? b",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "a ?? (something = null) ?? b"
+			"code": "a ?? (something = null) ?? b",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "5 < 10"
+			"code": "5 < 10",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "5 <= 10"
+			"code": "5 <= 10",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "10 > 5"
+			"code": "10 > 5",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "10 >= 5"
+			"code": "10 >= 5",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "'a' < 'b'"
+			"code": "'a' < 'b'",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "undefined >= 5"
+			"code": "undefined >= 5",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "`` < ``"
+			"code": "`` < ``",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "1n < 2n"
+			"code": "1n < 2n",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "null >= 5"
+			"code": "null >= 5",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		},
 		{
-			"code": "5 < 10"
+			"code": "5 < 10",
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			}
 		}
 	],
 	"invalid": [
 		{
 			"code": "[] && greeting",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"line": 1,
+					"column": 1
+				}
+			]
 		},
 		{
 			"code": "[] || greeting",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"line": 1,
+					"column": 1
+				}
+			]
 		},
 		{
 			"code": "[] ?? greeting",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"line": 1,
+					"column": 1
+				}
+			]
 		},
 		{
 			"code": "[] == true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"line": 1,
+					"column": 1
+				}
+			]
 		},
 		{
 			"code": "true == []",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"line": 1,
+					"column": 9
+				}
+			]
 		},
 		{
 			"code": "[] != true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"line": 1,
+					"column": 1
+				}
+			]
 		},
 		{
 			"code": "[] === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"line": 1,
+					"column": 1
+				}
+			]
 		},
 		{
 			"code": "[] !== true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"line": 1,
+					"column": 1
+				}
+			]
 		},
 		{
 			"code": "!foo == null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "=="
+					}
+				}
+			]
 		},
 		{
 			"code": "!foo ?? bar",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "(a + b) / 2 ?? bar",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "String(foo.bar) ?? baz",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "\"hello\" + name ?? \"\"",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "[foo?.bar ?? \"\"] ?? []",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "true && hello",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "truthiness",
+						"operator": "&&"
+					}
+				}
+			]
 		},
 		{
 			"code": "true || hello",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "truthiness",
+						"operator": "||"
+					}
+				}
+			]
 		},
 		{
 			"code": "true && foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "truthiness",
+						"operator": "&&"
+					}
+				}
+			]
 		},
 		{
 			"code": "'' && foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "truthiness",
+						"operator": "&&"
+					}
+				}
+			]
 		},
 		{
 			"code": "100 && foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "truthiness",
+						"operator": "&&"
+					}
+				}
+			]
 		},
 		{
 			"code": "+100 && foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "truthiness",
+						"operator": "&&"
+					}
+				}
+			]
 		},
 		{
 			"code": "-100 && foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "truthiness",
+						"operator": "&&"
+					}
+				}
+			]
 		},
 		{
 			"code": "~100 && foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "truthiness",
+						"operator": "&&"
+					}
+				}
+			]
 		},
 		{
 			"code": "/[a-z]/ && foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "truthiness",
+						"operator": "&&"
+					}
+				}
+			]
 		},
 		{
 			"code": "Boolean([]) && foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "truthiness",
+						"operator": "&&"
+					}
+				}
+			]
 		},
 		{
 			"code": "Boolean() && foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "truthiness",
+						"operator": "&&"
+					}
+				}
+			]
 		},
 		{
 			"code": "Boolean([], n) && foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "truthiness",
+						"operator": "&&"
+					}
+				}
+			]
 		},
 		{
 			"code": "({}) && foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "truthiness",
+						"operator": "&&"
+					}
+				}
+			]
 		},
 		{
 			"code": "[] && foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "truthiness",
+						"operator": "&&"
+					}
+				}
+			]
 		},
 		{
 			"code": "(() => {}) && foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "truthiness",
+						"operator": "&&"
+					}
+				}
+			]
 		},
 		{
 			"code": "(function() {}) && foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "truthiness",
+						"operator": "&&"
+					}
+				}
+			]
 		},
 		{
 			"code": "(class {}) && foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "truthiness",
+						"operator": "&&"
+					}
+				}
+			]
 		},
 		{
 			"code": "(class { valueOf() { return x; } }) && foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "truthiness",
+						"operator": "&&"
+					}
+				}
+			]
 		},
 		{
 			"code": "(class { [x]() { return x; } }) && foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "truthiness",
+						"operator": "&&"
+					}
+				}
+			]
 		},
 		{
 			"code": "new Foo() && foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "truthiness",
+						"operator": "&&"
+					}
+				}
+			]
 		},
 		{
 			"code": "new Boolean(unknown) && foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "truthiness",
+						"operator": "&&"
+					}
+				}
+			]
 		},
 		{
 			"code": "(bar = false) && foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "truthiness",
+						"operator": "&&"
+					}
+				}
+			]
 		},
 		{
 			"code": "(bar.baz = false) && foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "truthiness",
+						"operator": "&&"
+					}
+				}
+			]
 		},
 		{
 			"code": "(bar[0] = false) && foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "truthiness",
+						"operator": "&&"
+					}
+				}
+			]
 		},
 		{
 			"code": "`hello ${hello}` && foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "truthiness",
+						"operator": "&&"
+					}
+				}
+			]
 		},
 		{
 			"code": "void bar && foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "truthiness",
+						"operator": "&&"
+					}
+				}
+			]
 		},
 		{
 			"code": "!true && foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "truthiness",
+						"operator": "&&"
+					}
+				}
+			]
 		},
 		{
 			"code": "typeof bar && foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "truthiness",
+						"operator": "&&"
+					}
+				}
+			]
 		},
 		{
 			"code": "(bar, baz, true) && foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "truthiness",
+						"operator": "&&"
+					}
+				}
+			]
 		},
 		{
 			"code": "undefined && foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "truthiness",
+						"operator": "&&"
+					}
+				}
+			]
 		},
 		{
 			"code": "({}) ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "([]) ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "(() => {}) ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "(function() {}) ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "(class {}) ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "new Foo() ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "1 ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "/[a-z]/ ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "`${''}` ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "(a = true) ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "(a += 1) ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "(a -= 1) ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "(a *= 1) ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "(a /= 1) ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "(a %= 1) ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "(a <<= 1) ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "(a >>= 1) ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "(a >>>= 1) ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "(a |= 1) ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "(a ^= 1) ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "(a &= 1) ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "undefined ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "!bar ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "void bar ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "typeof bar ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "+bar ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "-bar ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "~bar ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "++bar ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "bar++ ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "--bar ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "bar-- ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "(x == y) ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "(x + y) ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "(x / y) ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "(x instanceof String) ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "(x in y) ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "Boolean(x) ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "String(x) ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "Number(x) ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "Symbol(x) ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "BigInt(x) ?? foo",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		},
 		{
 			"code": "({}) != null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "!="
+					}
+				}
+			]
 		},
 		{
 			"code": "({}) == null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "=="
+					}
+				}
+			]
 		},
 		{
 			"code": "null == ({})",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 10,
+					"data": {
+						"otherSide": "left",
+						"operator": "=="
+					}
+				}
+			]
 		},
 		{
 			"code": "({}) == undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "=="
+					}
+				}
+			]
 		},
 		{
 			"code": "undefined == ({})",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 15,
+					"data": {
+						"otherSide": "left",
+						"operator": "=="
+					}
+				}
+			]
 		},
 		{
 			"code": "Symbol(x) != null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "!="
+					}
+				}
+			]
 		},
 		{
 			"code": "Symbol(x) != undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "!="
+					}
+				}
+			]
 		},
 		{
 			"code": "BigInt(x) != null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "!="
+					}
+				}
+			]
 		},
 		{
 			"code": "BigInt(x) != undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "!="
+					}
+				}
+			]
 		},
 		{
 			"code": "({}) != true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "!="
+					}
+				}
+			]
 		},
 		{
 			"code": "({}) == true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "=="
+					}
+				}
+			]
 		},
 		{
 			"code": "([]) == true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "=="
+					}
+				}
+			]
 		},
 		{
 			"code": "([a, b]) == true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "=="
+					}
+				}
+			]
 		},
 		{
 			"code": "(() => {}) == true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "=="
+					}
+				}
+			]
 		},
 		{
 			"code": "(function() {}) == true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "=="
+					}
+				}
+			]
 		},
 		{
 			"code": "void foo == true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 13,
+					"data": {
+						"otherSide": "left",
+						"operator": "=="
+					}
+				}
+			]
 		},
 		{
 			"code": "typeof foo == true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "=="
+					}
+				}
+			]
 		},
 		{
 			"code": "![] == true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 8,
+					"data": {
+						"otherSide": "left",
+						"operator": "=="
+					}
+				}
+			]
 		},
 		{
 			"code": "true == class {}",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 9,
+					"data": {
+						"otherSide": "left",
+						"operator": "=="
+					}
+				}
+			]
 		},
 		{
 			"code": "true == 1",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 9,
+					"data": {
+						"otherSide": "left",
+						"operator": "=="
+					}
+				}
+			]
 		},
 		{
 			"code": "undefined == true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 14,
+					"data": {
+						"otherSide": "left",
+						"operator": "=="
+					}
+				}
+			]
 		},
 		{
 			"code": "true == undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 9,
+					"data": {
+						"otherSide": "left",
+						"operator": "=="
+					}
+				}
+			]
 		},
 		{
 			"code": "`hello` == true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "=="
+					}
+				}
+			]
 		},
 		{
 			"code": "/[a-z]/ == true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "=="
+					}
+				}
+			]
 		},
 		{
 			"code": "({}) == Boolean({})",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "=="
+					}
+				}
+			]
 		},
 		{
 			"code": "({}) == Boolean()",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "=="
+					}
+				}
+			]
 		},
 		{
 			"code": "({}) == Boolean(() => {}, foo)",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "=="
+					}
+				}
+			]
 		},
 		{
 			"code": "({}) !== true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "!=="
+					}
+				}
+			]
 		},
 		{
 			"code": "({}) == !({})",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "=="
+					}
+				}
+			]
 		},
 		{
 			"code": "({}) === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "([]) === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(function() {}) === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(() => {}) === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "!{} === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 9,
+					"data": {
+						"otherSide": "left",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "typeof n === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "void n === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 12,
+					"data": {
+						"otherSide": "left",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "+n === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "-n === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "~n === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "true === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 10,
+					"data": {
+						"otherSide": "left",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "1 === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "'hello' === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "/[a-z]/ === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "undefined === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 15,
+					"data": {
+						"otherSide": "left",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(a = {}) === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(a += 1) === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(a -= 1) === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(a *= 1) === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(a %= 1) === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(a ** b) === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(a << b) === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(a >> b) === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(a >>> b) === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "--a === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "a-- === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "++a === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "a++ === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(a + b) === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(a - b) === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(a * b) === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(a / b) === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(a % b) === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(a | b) === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(a ^ b) === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(a & b) === true",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "Boolean(0) === Boolean(1)",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 16,
+					"data": {
+						"otherSide": "left",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "true === String(x)",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 10,
+					"data": {
+						"otherSide": "left",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "true === Number(x)",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 10,
+					"data": {
+						"otherSide": "left",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "true === Symbol(x)",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 10,
+					"data": {
+						"otherSide": "left",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "true === BigInt(x)",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 10,
+					"data": {
+						"otherSide": "left",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "Boolean(0) == !({})",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 15,
+					"data": {
+						"otherSide": "left",
+						"operator": "=="
+					}
+				}
+			]
 		},
 		{
 			"code": "({}) !== null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "!=="
+					}
+				}
+			]
 		},
 		{
 			"code": "({}) === null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "([]) === null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(() => {}) === null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(function() {}) === null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(class {}) === null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "new Foo() === null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "`` === null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "1 === null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "'hello' === null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "/[a-z]/ === null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "true === null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 10,
+					"data": {
+						"otherSide": "left",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "null === null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 10,
+					"data": {
+						"otherSide": "left",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "a++ === null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "++a === null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "--a === null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "a-- === null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "!a === null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "typeof a === null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "delete a === null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "void a === null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 12,
+					"data": {
+						"otherSide": "left",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "undefined === null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 15,
+					"data": {
+						"otherSide": "left",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(x = {}) === null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(x += y) === null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(x -= y) === null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(a, b, {}) === null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "Symbol(x) === null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "BigInt(x) === null",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "({}) !== undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "!=="
+					}
+				}
+			]
 		},
 		{
 			"code": "({}) === undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "([]) === undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(() => {}) === undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(function() {}) === undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(class {}) === undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "new Foo() === undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "`` === undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "1 === undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "'hello' === undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "/[a-z]/ === undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "true === undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 10,
+					"data": {
+						"otherSide": "left",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "null === undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 10,
+					"data": {
+						"otherSide": "left",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "a++ === undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "++a === undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "--a === undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "a-- === undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "!a === undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "typeof a === undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "delete a === undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "void a === undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 12,
+					"data": {
+						"otherSide": "left",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "undefined === undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 15,
+					"data": {
+						"otherSide": "left",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(x = {}) === undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(x += y) === undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(x -= y) === undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "(a, b, {}) === undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 2,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "Symbol(x) === undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "BigInt(x) === undefined",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantBinaryOperand",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"otherSide": "right",
+						"operator": "==="
+					}
+				}
+			]
 		},
 		{
 			"code": "[a] == [a]",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "bothAlwaysNew",
+					"line": 1,
+					"column": 1
+				}
+			]
 		},
 		{
 			"code": "[a] != [a]",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "bothAlwaysNew",
+					"line": 1,
+					"column": 1
+				}
+			]
 		},
 		{
 			"code": "({}) == []",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "bothAlwaysNew",
+					"line": 1,
+					"column": 2
+				}
+			]
 		},
 		{
 			"code": "x === {}",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "alwaysNew",
+					"line": 1,
+					"column": 7
+				}
+			]
 		},
 		{
 			"code": "x !== {}",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "alwaysNew",
+					"line": 1,
+					"column": 7
+				}
+			]
 		},
 		{
 			"code": "x === []",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "alwaysNew",
+					"line": 1,
+					"column": 7
+				}
+			]
 		},
 		{
 			"code": "x === (() => {})",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "alwaysNew",
+					"line": 1,
+					"column": 8
+				}
+			]
 		},
 		{
 			"code": "x === (function() {})",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "alwaysNew",
+					"line": 1,
+					"column": 8
+				}
+			]
 		},
 		{
 			"code": "x === (class {})",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "alwaysNew",
+					"line": 1,
+					"column": 8
+				}
+			]
 		},
 		{
 			"code": "x === new Boolean()",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "alwaysNew",
+					"line": 1,
+					"column": 7
+				}
+			]
 		},
 		{
 			"code": "x === new Promise()",
 			"languageOptions": {
-				"ecmaVersion": 6
+				"ecmaVersion": 6,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
 			},
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "alwaysNew",
+					"line": 1,
+					"column": 7
+				}
+			]
 		},
 		{
 			"code": "x === new WeakSet()",
 			"languageOptions": {
-				"ecmaVersion": 6
+				"ecmaVersion": 6,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
 			},
-			"errors": 1
+			"errors": [
+				{
+					"messageId": "alwaysNew",
+					"line": 1,
+					"column": 7
+				}
+			]
 		},
 		{
 			"code": "x === (foo, {})",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "alwaysNew",
+					"line": 1,
+					"column": 8
+				}
+			]
 		},
 		{
 			"code": "x === (y = {})",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "alwaysNew",
+					"line": 1,
+					"column": 8
+				}
+			]
 		},
 		{
 			"code": "x === (y ? {} : [])",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "alwaysNew",
+					"line": 1,
+					"column": 8
+				}
+			]
 		},
 		{
 			"code": "x === /[a-z]/",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "alwaysNew",
+					"line": 1,
+					"column": 7
+				}
+			]
 		},
 		{
 			"code": "x === (x = {})",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "alwaysNew",
+					"line": 1,
+					"column": 8
+				}
+			]
 		},
 		{
 			"code": "window.abc && false && anything",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "truthiness",
+						"operator": "&&"
+					}
+				}
+			]
 		},
 		{
 			"code": "window.abc || true || anything",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "truthiness",
+						"operator": "||"
+					}
+				}
+			]
 		},
 		{
 			"code": "window.abc ?? 'non-nullish' ?? anything",
-			"errors": 1
+			"languageOptions": {
+				"ecmaVersion": 2021,
+				"sourceType": "script",
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					}
+				}
+			},
+			"errors": [
+				{
+					"messageId": "constantShortCircuit",
+					"line": 1,
+					"column": 1,
+					"data": {
+						"property": "nullishness",
+						"operator": "??"
+					}
+				}
+			]
 		}
 	],
-	"skipped": [
-		{
-			"kind": "valid",
-			"code": "x < 5",
-			"why": "options [{\"checkRelationalComparisons\":true}]"
-		},
-		{
-			"kind": "valid",
-			"code": "5 < x",
-			"why": "options [{\"checkRelationalComparisons\":true}]"
-		},
-		{
-			"kind": "valid",
-			"code": "x > y",
-			"why": "options [{\"checkRelationalComparisons\":true}]"
-		},
-		{
-			"kind": "valid",
-			"code": "x >= undefined",
-			"why": "options [{\"checkRelationalComparisons\":true}]"
-		},
-		{
-			"kind": "valid",
-			"code": "`${x}` < 5",
-			"why": "options [{\"checkRelationalComparisons\":true}]"
-		},
-		{
-			"kind": "valid",
-			"code": "5 > `${x}`",
-			"why": "options [{\"checkRelationalComparisons\":true}]"
-		},
-		{
-			"kind": "valid",
-			"code": "~x < 10",
-			"why": "options [{\"checkRelationalComparisons\":true}]"
-		},
-		{
-			"kind": "valid",
-			"code": "-x >= 5",
-			"why": "options [{\"checkRelationalComparisons\":true}]"
-		},
-		{
-			"kind": "valid",
-			"code": "x < /a/",
-			"why": "options [{\"checkRelationalComparisons\":true}]"
-		},
-		{
-			"kind": "valid",
-			"code": "/a/ >= x",
-			"why": "options [{\"checkRelationalComparisons\":true}]"
-		},
-		{
-			"kind": "invalid",
-			"code": "5 < 10",
-			"why": "options [{\"checkRelationalComparisons\":true}]"
-		},
-		{
-			"kind": "invalid",
-			"code": "5 <= 10",
-			"why": "options [{\"checkRelationalComparisons\":true}]"
-		},
-		{
-			"kind": "invalid",
-			"code": "10 > 5",
-			"why": "options [{\"checkRelationalComparisons\":true}]"
-		},
-		{
-			"kind": "invalid",
-			"code": "10 >= 5",
-			"why": "options [{\"checkRelationalComparisons\":true}]"
-		},
-		{
-			"kind": "invalid",
-			"code": "'a' < 'b'",
-			"why": "options [{\"checkRelationalComparisons\":true}]"
-		},
-		{
-			"kind": "invalid",
-			"code": "true >= false",
-			"why": "options [{\"checkRelationalComparisons\":true}]"
-		},
-		{
-			"kind": "invalid",
-			"code": "undefined < 5",
-			"why": "options [{\"checkRelationalComparisons\":true}]"
-		},
-		{
-			"kind": "invalid",
-			"code": "5 > undefined",
-			"why": "options [{\"checkRelationalComparisons\":true}]"
-		},
-		{
-			"kind": "invalid",
-			"code": "`` < ``",
-			"why": "options [{\"checkRelationalComparisons\":true}]"
-		},
-		{
-			"kind": "invalid",
-			"code": "`` >= 5",
-			"why": "options [{\"checkRelationalComparisons\":true}]"
-		},
-		{
-			"kind": "invalid",
-			"code": "`foo` < `bar`",
-			"why": "options [{\"checkRelationalComparisons\":true}]"
-		},
-		{
-			"kind": "invalid",
-			"code": "1n < 2n",
-			"why": "options [{\"checkRelationalComparisons\":true}]"
-		},
-		{
-			"kind": "invalid",
-			"code": "null >= 5",
-			"why": "options [{\"checkRelationalComparisons\":true}]"
-		},
-		{
-			"kind": "invalid",
-			"code": "-5 < 10",
-			"why": "options [{\"checkRelationalComparisons\":true}]"
-		},
-		{
-			"kind": "invalid",
-			"code": "10 >= +5",
-			"why": "options [{\"checkRelationalComparisons\":true}]"
-		},
-		{
-			"kind": "invalid",
-			"code": "~5 <= 10",
-			"why": "options [{\"checkRelationalComparisons\":true}]"
-		},
-		{
-			"kind": "invalid",
-			"code": "~1 > ~2",
-			"why": "options [{\"checkRelationalComparisons\":true}]"
-		},
-		{
-			"kind": "invalid",
-			"code": "/a/ < /b/",
-			"why": "options [{\"checkRelationalComparisons\":true}]"
-		},
-		{
-			"kind": "invalid",
-			"code": "/a/ >= /b/",
-			"why": "options [{\"checkRelationalComparisons\":true}]"
+	"skipped": 29,
+	"tester": {
+		"languageOptions": {
+			"ecmaVersion": 2021,
+			"sourceType": "script",
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
 		}
-	]
+	},
+	"runs": 1
 }

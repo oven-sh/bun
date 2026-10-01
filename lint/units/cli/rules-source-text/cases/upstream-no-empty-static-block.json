@@ -1,0 +1,172 @@
+[
+	{
+		"kind": "valid",
+		"code": "class Foo { static { bar(); } }",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2022
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "class Foo { static { /* comments */ } }",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2022
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "class Foo { static {\n// comment\n} }",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2022
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "class Foo { static { bar(); } static { bar(); } }",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2022
+		}
+	},
+	{
+		"kind": "invalid",
+		"code": "class Foo { static {} }",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2022
+		},
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 22,
+				"suggestions": [
+					{
+						"messageId": "suggestComment",
+						"output": "class Foo { static { /* empty */ } }"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "class Foo { static { } }",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2022
+		},
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 23,
+				"suggestions": [
+					{
+						"messageId": "suggestComment",
+						"output": "class Foo { static { /* empty */ } }"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "class Foo { static { \n\n } }",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2022
+		},
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"line": 1,
+				"column": 20,
+				"endLine": 3,
+				"endColumn": 3,
+				"suggestions": [
+					{
+						"messageId": "suggestComment",
+						"output": "class Foo { static { /* empty */ } }"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "class Foo { static { bar(); } static {} }",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2022
+		},
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"line": 1,
+				"column": 38,
+				"endLine": 1,
+				"endColumn": 40,
+				"suggestions": [
+					{
+						"messageId": "suggestComment",
+						"output": "class Foo { static { bar(); } static { /* empty */ } }"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "class Foo { static // comment\n {} }",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2022
+		},
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"line": 2,
+				"column": 2,
+				"endLine": 2,
+				"endColumn": 4,
+				"suggestions": [
+					{
+						"messageId": "suggestComment",
+						"output": "class Foo { static // comment\n { /* empty */ } }"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "class Foo { static /* empty */ {} /* empty */ }",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2022
+		},
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"line": 1,
+				"column": 32,
+				"endLine": 1,
+				"endColumn": 34,
+				"suggestions": [
+					{
+						"messageId": "suggestComment",
+						"output": "class Foo { static /* empty */ { /* empty */ } /* empty */ }"
+					}
+				]
+			}
+		]
+	}
+]

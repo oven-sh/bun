@@ -1,0 +1,25 @@
+{"kind":"valid","code":"var x = 0; if (x == 0) { var b = 1; }","type":"script","reports":[]}
+{"kind":"valid","code":"var x = 5; while (x < 5) { x = x + 1; }","type":"script","reports":[]}
+{"kind":"valid","code":"if ((someNode = someNode.parentNode) !== null) { }","type":"script","reports":[]}
+{"kind":"valid","code":"if ((someNode = someNode.parentNode) !== null) { }","type":"script","reports":[]}
+{"kind":"valid","code":"if ((a = b));","type":"script","reports":[]}
+{"kind":"valid","code":"while ((a = b));","type":"script","reports":[]}
+{"kind":"valid","code":"do {} while ((a = b));","type":"script","reports":[]}
+{"kind":"valid","code":"for (;(a = b););","type":"script","reports":[]}
+{"kind":"valid","code":"for (;;) {}","type":"script","reports":[]}
+{"kind":"valid","code":"if (someNode || (someNode = parentNode)) { }","type":"script","reports":[]}
+{"kind":"valid","code":"while (someNode || (someNode = parentNode)) { }","type":"script","reports":[]}
+{"kind":"valid","code":"do { } while (someNode || (someNode = parentNode));","type":"script","reports":[]}
+{"kind":"valid","code":"for (;someNode || (someNode = parentNode););","type":"script","reports":[]}
+{"kind":"valid","code":"if ((function(node) { return node = parentNode; })(someNode)) { }","type":"script","reports":[]}
+{"kind":"valid","code":"if ((node => node = parentNode)(someNode)) { }","type":"script","reports":[]}
+{"kind":"valid","code":"if (function(node) { return node = parentNode; }) { }","type":"script","reports":[]}
+{"kind":"valid","code":"var x; var b = (x === 0) ? 1 : 0;","type":"script","reports":[]}
+{"kind":"valid","code":"switch (foo) { case a = b: bar(); }","type":"script","reports":[]}
+{"kind":"invalid","code":"var x; if (x = 0) { var b = 1; }","type":"script","reports":["1:12-1:17 Expected a conditional expression and instead saw an assignment."]}
+{"kind":"invalid","code":"var x; while (x = 0) { var b = 1; }","type":"script","reports":["1:15-1:20 Expected a conditional expression and instead saw an assignment."]}
+{"kind":"invalid","code":"var x = 0, y; do { y = x; } while (x = x + 1);","type":"script","reports":["1:36-1:45 Expected a conditional expression and instead saw an assignment."]}
+{"kind":"invalid","code":"var x; for(; x+=1 ;){};","type":"script","reports":["1:14-1:18 Expected a conditional expression and instead saw an assignment."]}
+{"kind":"invalid","code":"var x; if ((x) = (0));","type":"script","reports":["1:12-1:21 Expected a conditional expression and instead saw an assignment."]}
+{"kind":"invalid","code":"var x; var b = (x = 0) ? 1 : 0;","type":"script","reports":["1:17-1:22 Expected a conditional expression and instead saw an assignment."]}
+{"kind":"invalid","code":"(((3496.29)).bkufyydt = 2e308) ? foo : bar;","type":"script","reports":["1:2-1:30 Expected a conditional expression and instead saw an assignment."]}

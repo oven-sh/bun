@@ -1,0 +1,447 @@
+[
+	{
+		"kind": "valid",
+		"code": "if (foo) { bar() }",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "while (foo) { bar() }",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "for (;foo;) { bar() }",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "try { foo() } catch (ex) { foo() }",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "switch(foo) {case 'foo': break;}",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "(function() { }())",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = () => {};",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "function foo() { }",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "if (foo) {/* empty */}",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "while (foo) {/* empty */}",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "switch (foo) {/* empty */}",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "for (;foo;) {/* empty */}",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "try { foo() } catch (ex) {/* empty */}",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "try { foo() } catch (ex) {// empty\n}",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "try { foo() } finally {// empty\n}",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "try { foo() } finally {// test\n}",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "try { foo() } finally {\n \n // hi i am off no use\n}",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "try { foo() } catch (ex) {/* test111 */}",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "if (foo) { bar() } else { // nothing in me \n}",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "if (foo) { bar() } else { /**/ \n}",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "if (foo) { bar() } else { // \n}",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "try { foo(); } catch (ex) {}",
+		"run": 0,
+		"options": [
+			{
+				"allowEmptyCatch": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "try { foo(); } catch (ex) {} finally { bar(); }",
+		"run": 0,
+		"options": [
+			{
+				"allowEmptyCatch": true
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "try {} catch (ex) {throw ex}",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"type": "block"
+				},
+				"suggestions": [
+					{
+						"messageId": "suggestComment",
+						"data": {
+							"type": "block"
+						},
+						"output": "try { /* empty */ } catch (ex) {throw ex}"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "try { foo() } catch (ex) {}",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"type": "block"
+				},
+				"suggestions": [
+					{
+						"messageId": "suggestComment",
+						"data": {
+							"type": "block"
+						},
+						"output": "try { foo() } catch (ex) { /* empty */ }"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "try { foo() } catch (ex) {throw ex} finally {}",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"type": "block"
+				},
+				"suggestions": [
+					{
+						"messageId": "suggestComment",
+						"data": {
+							"type": "block"
+						},
+						"output": "try { foo() } catch (ex) {throw ex} finally { /* empty */ }"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "if (foo) {}",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"type": "block"
+				},
+				"suggestions": [
+					{
+						"messageId": "suggestComment",
+						"data": {
+							"type": "block"
+						},
+						"output": "if (foo) { /* empty */ }"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "while (foo) {}",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"type": "block"
+				},
+				"suggestions": [
+					{
+						"messageId": "suggestComment",
+						"data": {
+							"type": "block"
+						},
+						"output": "while (foo) { /* empty */ }"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "for (;foo;) {}",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"type": "block"
+				},
+				"suggestions": [
+					{
+						"messageId": "suggestComment",
+						"data": {
+							"type": "block"
+						},
+						"output": "for (;foo;) { /* empty */ }"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "switch(foo) {}",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"type": "switch"
+				},
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 15,
+				"suggestions": [
+					{
+						"messageId": "suggestComment",
+						"data": {
+							"type": "switch"
+						},
+						"output": "switch(foo) { /* empty */ }"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "switch /* empty */ (/* empty */ foo /* empty */) /* empty */ {} /* empty */",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"type": "switch"
+				},
+				"line": 1,
+				"column": 62,
+				"endLine": 1,
+				"endColumn": 64,
+				"suggestions": [
+					{
+						"messageId": "suggestComment",
+						"data": {
+							"type": "switch"
+						},
+						"output": "switch /* empty */ (/* empty */ foo /* empty */) /* empty */ { /* empty */ } /* empty */"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "try {} catch (ex) {}",
+		"run": 0,
+		"options": [
+			{
+				"allowEmptyCatch": true
+			}
+		],
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"type": "block"
+				},
+				"suggestions": [
+					{
+						"messageId": "suggestComment",
+						"data": {
+							"type": "block"
+						},
+						"output": "try { /* empty */ } catch (ex) {}"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "try { foo(); } catch (ex) {} finally {}",
+		"run": 0,
+		"options": [
+			{
+				"allowEmptyCatch": true
+			}
+		],
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"type": "block"
+				},
+				"suggestions": [
+					{
+						"messageId": "suggestComment",
+						"data": {
+							"type": "block"
+						},
+						"output": "try { foo(); } catch (ex) {} finally { /* empty */ }"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "try {} catch (ex) {} finally {}",
+		"run": 0,
+		"options": [
+			{
+				"allowEmptyCatch": true
+			}
+		],
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"type": "block"
+				},
+				"suggestions": [
+					{
+						"messageId": "suggestComment",
+						"data": {
+							"type": "block"
+						},
+						"output": "try { /* empty */ } catch (ex) {} finally {}"
+					}
+				]
+			},
+			{
+				"messageId": "unexpected",
+				"data": {
+					"type": "block"
+				},
+				"suggestions": [
+					{
+						"messageId": "suggestComment",
+						"data": {
+							"type": "block"
+						},
+						"output": "try {} catch (ex) {} finally { /* empty */ }"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "try { foo(); } catch (ex) {} finally {}",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"type": "block"
+				},
+				"suggestions": [
+					{
+						"messageId": "suggestComment",
+						"data": {
+							"type": "block"
+						},
+						"output": "try { foo(); } catch (ex) { /* empty */ } finally {}"
+					}
+				]
+			},
+			{
+				"messageId": "unexpected",
+				"data": {
+					"type": "block"
+				},
+				"suggestions": [
+					{
+						"messageId": "suggestComment",
+						"data": {
+							"type": "block"
+						},
+						"output": "try { foo(); } catch (ex) {} finally { /* empty */ }"
+					}
+				]
+			}
+		]
+	}
+]

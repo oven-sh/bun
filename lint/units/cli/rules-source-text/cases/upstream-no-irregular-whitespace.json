@@ -1,0 +1,3381 @@
+[
+	{
+		"kind": "valid",
+		"code": "'\\u000B';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'\\u000C';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'\\u0085';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'\\u00A0';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'\\u180E';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'\\ufeff';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'\\u2000';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'\\u2001';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'\\u2002';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'\\u2003';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'\\u2004';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'\\u2005';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'\\u2006';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'\\u2007';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'\\u2008';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'\\u2009';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'\\u200A';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'\\u200B';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'\\u2028';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'\\u2029';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'\\u202F';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'\\u205f';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'\\u3000';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'\u000b';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'\f';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "' ';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'᠎';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'﻿';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "' ';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "' ';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "' ';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "' ';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "' ';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "' ';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "' ';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "' ';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "' ';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "' ';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "' ';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'​';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'\\ ';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'\\ ';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "' ';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "' ';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "'　';",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "// \u000b",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "// \f",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "// ",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "//  ",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "// ᠎",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "// ﻿",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "//  ",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "//  ",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "//  ",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "//  ",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "//  ",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "//  ",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "//  ",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "//  ",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "//  ",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "//  ",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "//  ",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "// ​",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "//  ",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "//  ",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "// 　",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/* \u000b */",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/* \f */",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/*  */",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/*   */",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/* ᠎ */",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/* ﻿ */",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/*   */",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/*   */",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/*   */",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/*   */",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/*   */",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/*   */",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/*   */",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/*   */",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/*   */",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/*   */",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/*   */",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/* ​ */",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/*   */",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/*   */",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/*   */",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/*   */",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/* 　 */",
+		"run": 0,
+		"options": [
+			{
+				"skipComments": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/\u000b/",
+		"run": 0,
+		"options": [
+			{
+				"skipRegExps": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/\f/",
+		"run": 0,
+		"options": [
+			{
+				"skipRegExps": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "//",
+		"run": 0,
+		"options": [
+			{
+				"skipRegExps": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/ /",
+		"run": 0,
+		"options": [
+			{
+				"skipRegExps": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/᠎/",
+		"run": 0,
+		"options": [
+			{
+				"skipRegExps": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/﻿/",
+		"run": 0,
+		"options": [
+			{
+				"skipRegExps": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/ /",
+		"run": 0,
+		"options": [
+			{
+				"skipRegExps": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/ /",
+		"run": 0,
+		"options": [
+			{
+				"skipRegExps": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/ /",
+		"run": 0,
+		"options": [
+			{
+				"skipRegExps": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/ /",
+		"run": 0,
+		"options": [
+			{
+				"skipRegExps": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/ /",
+		"run": 0,
+		"options": [
+			{
+				"skipRegExps": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/ /",
+		"run": 0,
+		"options": [
+			{
+				"skipRegExps": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/ /",
+		"run": 0,
+		"options": [
+			{
+				"skipRegExps": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/ /",
+		"run": 0,
+		"options": [
+			{
+				"skipRegExps": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/ /",
+		"run": 0,
+		"options": [
+			{
+				"skipRegExps": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/ /",
+		"run": 0,
+		"options": [
+			{
+				"skipRegExps": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/ /",
+		"run": 0,
+		"options": [
+			{
+				"skipRegExps": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/​/",
+		"run": 0,
+		"options": [
+			{
+				"skipRegExps": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/ /",
+		"run": 0,
+		"options": [
+			{
+				"skipRegExps": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/ /",
+		"run": 0,
+		"options": [
+			{
+				"skipRegExps": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "/　/",
+		"run": 0,
+		"options": [
+			{
+				"skipRegExps": true
+			}
+		]
+	},
+	{
+		"kind": "valid",
+		"code": "`\u000b`",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "`\f`",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "``",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "` `",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "`᠎`",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "`﻿`",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "` `",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "` `",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "` `",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "` `",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "` `",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "` `",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "` `",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "` `",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "` `",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "` `",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "` `",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "`​`",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "` `",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "` `",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "`　`",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "`　${foo}　`",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "const error = ` 　 `;",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "const error = `\n　`;",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "const error = `　\n`;",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "const error = `\n　\n`;",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "const error = `foo　bar\nfoo　bar`;",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "<div>\u000b</div>;",
+		"run": 0,
+		"options": [
+			{
+				"skipJSXText": true
+			}
+		],
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "<div>\f</div>;",
+		"run": 0,
+		"options": [
+			{
+				"skipJSXText": true
+			}
+		],
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "<div></div>;",
+		"run": 0,
+		"options": [
+			{
+				"skipJSXText": true
+			}
+		],
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "<div> </div>;",
+		"run": 0,
+		"options": [
+			{
+				"skipJSXText": true
+			}
+		],
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "<div>᠎</div>;",
+		"run": 0,
+		"options": [
+			{
+				"skipJSXText": true
+			}
+		],
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "<div>﻿</div>;",
+		"run": 0,
+		"options": [
+			{
+				"skipJSXText": true
+			}
+		],
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "<div> </div>;",
+		"run": 0,
+		"options": [
+			{
+				"skipJSXText": true
+			}
+		],
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "<div> </div>;",
+		"run": 0,
+		"options": [
+			{
+				"skipJSXText": true
+			}
+		],
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "<div> </div>;",
+		"run": 0,
+		"options": [
+			{
+				"skipJSXText": true
+			}
+		],
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "<div> </div>;",
+		"run": 0,
+		"options": [
+			{
+				"skipJSXText": true
+			}
+		],
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "<div> </div>;",
+		"run": 0,
+		"options": [
+			{
+				"skipJSXText": true
+			}
+		],
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "<div> </div>;",
+		"run": 0,
+		"options": [
+			{
+				"skipJSXText": true
+			}
+		],
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "<div> </div>;",
+		"run": 0,
+		"options": [
+			{
+				"skipJSXText": true
+			}
+		],
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "<div> </div>;",
+		"run": 0,
+		"options": [
+			{
+				"skipJSXText": true
+			}
+		],
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "<div> </div>;",
+		"run": 0,
+		"options": [
+			{
+				"skipJSXText": true
+			}
+		],
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "<div> </div>;",
+		"run": 0,
+		"options": [
+			{
+				"skipJSXText": true
+			}
+		],
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "<div> </div>;",
+		"run": 0,
+		"options": [
+			{
+				"skipJSXText": true
+			}
+		],
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "<div>​</div>;",
+		"run": 0,
+		"options": [
+			{
+				"skipJSXText": true
+			}
+		],
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "<div> </div>;",
+		"run": 0,
+		"options": [
+			{
+				"skipJSXText": true
+			}
+		],
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "<div> </div>;",
+		"run": 0,
+		"options": [
+			{
+				"skipJSXText": true
+			}
+		],
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "<div>　</div>;",
+		"run": 0,
+		"options": [
+			{
+				"skipJSXText": true
+			}
+		],
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "﻿console.log('hello BOM');",
+		"run": 0
+	},
+	{
+		"kind": "invalid",
+		"code": "var any \u000b = 'thing';",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var any \f = 'thing';",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var any   = 'thing';",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var any ﻿ = 'thing';",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var any   = 'thing';",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var any   = 'thing';",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var any   = 'thing';",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var any   = 'thing';",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var any   = 'thing';",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var any   = 'thing';",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var any   = 'thing';",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var any   = 'thing';",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var any   = 'thing';",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var any   = 'thing';",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var any   = 'thing';",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var any   = 'thing';",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var any   = 'thing';",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var any   = 'thing';",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var any   = 'thing';",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var any 　 = 'thing';",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var a = 'b', c = 'd',\ne = 'f' ",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 13
+			},
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 3,
+				"column": 8
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var any 　 = 'thing', other 　 = 'thing';\nvar third 　 = 'thing';",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 9
+			},
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 28
+			},
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 2,
+				"column": 11
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "// \u000b",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "// \f",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "// ",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "//  ",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "// ᠎",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "// ﻿",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "//  ",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "//  ",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "//  ",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "//  ",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "//  ",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "//  ",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "//  ",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "//  ",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "//  ",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "//  ",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "//  ",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "// ​",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "//  ",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "//  ",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "// 　",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/* \u000b */",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/* \f */",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/*  */",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/*   */",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/* ᠎ */",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/* ﻿ */",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/*   */",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/*   */",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/*   */",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/*   */",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/*   */",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/*   */",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/*   */",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/*   */",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/*   */",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/*   */",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/*   */",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/* ​ */",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/*   */",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/*   */",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/*   */",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/*   */",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/* 　 */",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var any = /　/, other = /\u000b/;",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 12
+			},
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 25
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var any = '　', other = '\u000b';",
+		"run": 0,
+		"options": [
+			{
+				"skipStrings": false
+			}
+		],
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 12
+			},
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 25
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var any = `　`, other = `\u000b`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 12
+			},
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 25
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var any = `　`, other = `\u000b`;",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": false
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 12
+			},
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 25
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "`something ${　 10} another thing`",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 14
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "`something ${10　} another thing`",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 16
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "　\n`　template`",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 1
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "　\n`　multiline\ntemplate`",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 1
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "　`　template`",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 1
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "　`　multiline\ntemplate`",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 1
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "`　template`　",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 12
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "`　multiline\ntemplate`　",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 2,
+				"column": 10
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "`　template`\n　",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 2,
+				"column": 1
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "`　multiline\ntemplate`\n　",
+		"run": 0,
+		"options": [
+			{
+				"skipTemplates": true
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 3,
+				"column": 1
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = \u000b bar;",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 12
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo =\u000bbar;",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 11
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = \u000b\u000b bar;",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 13
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = \u000b\f bar;",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 13
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = \u000b \u000b bar;",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 12
+			},
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 14
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = \u000bbar\u000b;",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 12
+			},
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 16
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\u000b",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 2
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "   ",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = \u000b\nbar;",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 12
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo =\u000b\n\u000bbar;",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 11
+			},
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 2,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 2
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = \f\u000b\n\f\u000b\fbar\n;\u000b\f\n",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 13
+			},
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 2,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 4
+			},
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 3,
+				"column": 2,
+				"endLine": 3,
+				"endColumn": 4
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo =  bar;",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 11,
+				"endLine": 2,
+				"endColumn": 1
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo =  bar;",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 10,
+				"endLine": 2,
+				"endColumn": 1
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = bar; ",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 15,
+				"endLine": 2,
+				"endColumn": 1
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": " ",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 1
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "foo  ",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4,
+				"endLine": 2,
+				"endColumn": 1
+			},
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 2,
+				"column": 1,
+				"endLine": 3,
+				"endColumn": 1
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "foo  ",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4,
+				"endLine": 2,
+				"endColumn": 1
+			},
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 2,
+				"column": 1,
+				"endLine": 3,
+				"endColumn": 1
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "foo \n ",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4,
+				"endLine": 2,
+				"endColumn": 1
+			},
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 3,
+				"column": 1,
+				"endLine": 4,
+				"endColumn": 1
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "foo\u000b \u000b",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 4,
+				"endLine": 1,
+				"endColumn": 5
+			},
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 5,
+				"endLine": 2,
+				"endColumn": 1
+			},
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 2,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 2
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "<div>\u000b</div>;",
+		"run": 0,
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 6
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "<div>\f</div>;",
+		"run": 0,
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 6
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "<div></div>;",
+		"run": 0,
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 6
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "<div> </div>;",
+		"run": 0,
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 6
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "<div>᠎</div>;",
+		"run": 0,
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 6
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "<div>﻿</div>;",
+		"run": 0,
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 6
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "<div> </div>;",
+		"run": 0,
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 6
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "<div> </div>;",
+		"run": 0,
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 6
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "<div> </div>;",
+		"run": 0,
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 6
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "<div> </div>;",
+		"run": 0,
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 6
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "<div> </div>;",
+		"run": 0,
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 6
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "<div> </div>;",
+		"run": 0,
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 6
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "<div> </div>;",
+		"run": 0,
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 6
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "<div> </div>;",
+		"run": 0,
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 6
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "<div> </div>;",
+		"run": 0,
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 6
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "<div> </div>;",
+		"run": 0,
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 6
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "<div> </div>;",
+		"run": 0,
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 6
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "<div>​</div>;",
+		"run": 0,
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 6
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "<div> </div>;",
+		"run": 0,
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 6
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "<div> </div>;",
+		"run": 0,
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 6
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "<div>　</div>;",
+		"run": 0,
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		},
+		"errors": [
+			{
+				"messageId": "noIrregularWhitespace",
+				"line": 1,
+				"column": 6
+			}
+		]
+	}
+]

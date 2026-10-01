@@ -114,3 +114,71 @@
   FirstNode pos=23 start=30 end=47
  ImportEqualsDeclaration pos=55 start=56 end=121
   ExternalModuleReference pos=84 start=85 end=112
+--- cast-before-paren [ts] "let u = < /*1*/ T /*2*/ > /*3*/ ( /*4*/ d /*5*/ ) /*6*/ ; let f = < /*7*/ T /*8*/ >( /*9*/ x /*10*/ ) /*11*/ => x;"
+ FirstStatement pos=0 start=0 end=57
+  VariableDeclarationList pos=0 start=0 end=49
+   VariableDeclaration pos=3 start=4 end=49
+    TypeAssertionExpression pos=7 start=8 end=49
+     TypeReference pos=9 start=16 end=17
+     ParenthesizedExpression pos=25 start=32 end=49
+ FirstStatement pos=57 start=58 end=114
+  VariableDeclarationList pos=57 start=58 end=113
+   VariableDeclaration pos=61 start=62 end=113
+    ArrowFunction pos=65 start=66 end=113 typeParameters[67,75) parameters[84,92)
+     TypeParameter pos=67 start=74 end=75
+     Parameter pos=84 start=91 end=92
+--- async-type-args-call [ts] "let c = async /*1*/ < /*2*/ T /*3*/ >( /*4*/ x /*5*/ ) /*6*/ ; let g = async /*7*/ < /*8*/ U /*9*/ >( /*10*/ y: U) /*11*/ => y;"
+ FirstStatement pos=0 start=0 end=62
+  VariableDeclarationList pos=0 start=0 end=54
+   VariableDeclaration pos=3 start=4 end=54
+    CallExpression pos=7 start=8 end=54 typeArguments[21,29)
+     TypeReference pos=21 start=28 end=29
+ FirstStatement pos=62 start=63 end=127
+  VariableDeclarationList pos=62 start=63 end=126
+   VariableDeclaration pos=66 start=67 end=126
+    ArrowFunction pos=70 start=71 end=126 modifiers[70,76) typeParameters[84,92) parameters[101,113)
+     TypeParameter pos=84 start=91 end=92
+     Parameter pos=101 start=109 end=113
+      TypeReference pos=111 start=112 end=113
+--- type-literal-members [ts] "let o = x as { /*1*/ a /*2*/ ? /*3*/ : 1 /*4*/ , /*5*/ readonly /*6*/ b: 2 /*7*/ ; /*8*/ m /*9*/ ( ) /*10*/ : void /*11*/ \n /*12*/ [ /*13*/ k: string /*14*/ ] /*15*/ : 3 /*16*/ };"
+ FirstStatement pos=0 start=0 end=179
+  VariableDeclarationList pos=0 start=0 end=178
+   VariableDeclaration pos=3 start=4 end=178
+    AsExpression pos=7 start=8 end=178
+     TypeLiteral pos=12 start=13 end=178 members[14,169)
+      PropertySignature pos=14 start=21 end=48
+       LiteralType pos=38 start=39 end=40
+      PropertySignature pos=48 start=55 end=82 modifiers[48,63)
+       LiteralType pos=72 start=73 end=74
+      MethodSignature pos=82 start=89 end=114 parameters[98,98)
+      IndexSignature pos=114 start=131 end=169 parameters[132,149)
+       Parameter pos=132 start=140 end=149
+       LiteralType pos=167 start=168 end=169
+--- decorated-members [ts] "class M { @d /*1*/ x /*2*/ : /*3*/ A /*4*/ | /*5*/ B /*6*/ ; @d /*7*/ m( /*8*/ @p /*9*/ a /*10*/ : C /*11*/ ) /*12*/ : /*13*/ D /*14*/ { } }"
+ ClassDeclaration pos=0 start=0 end=140 members[9,138)
+  PropertyDeclaration pos=9 start=10 end=60 modifiers[9,12)
+   Decorator pos=9 start=10 end=12
+   UnionType pos=28 start=35 end=52 types[28,52)
+    TypeReference pos=28 start=35 end=36
+    TypeReference pos=44 start=51 end=52
+  MethodDeclaration pos=60 start=61 end=138 modifiers[60,63) parameters[72,100)
+   Decorator pos=60 start=61 end=63
+   Parameter pos=72 start=79 end=100 modifiers[72,81)
+    Decorator pos=72 start=79 end=81
+    TypeReference pos=98 start=99 end=100
+   TypeReference pos=118 start=126 end=127
+   Block pos=127 start=135 end=138
+--- jsx-in-cond-arrow [tsx] "let v = c ? (a) : b => <i /*1*/ j={ /*2*/ k /*3*/ } /*4*/ >t /* text */ </i /*5*/ > : e;"
+ FirstStatement pos=0 start=0 end=88
+  VariableDeclarationList pos=0 start=0 end=87
+   VariableDeclaration pos=3 start=4 end=87
+    ConditionalExpression pos=7 start=8 end=87
+     ArrowFunction pos=11 start=12 end=83 parameters[13,14)
+      Parameter pos=13 start=13 end=14
+      TypeReference pos=17 start=18 end=19
+      JsxElement pos=22 start=23 end=83
+       JsxOpeningElement pos=22 start=23 end=59
+        JsxAttributes pos=25 start=32 end=51
+         JsxAttribute pos=25 start=32 end=51
+          JsxExpression pos=34 start=34 end=51
+       JsxClosingElement pos=72 start=72 end=83

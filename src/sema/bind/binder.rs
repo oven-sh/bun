@@ -1566,6 +1566,21 @@ impl<'f> Binder<'f> {
                         set(&mut looked_at, expr.idx());
                     }
                 }
+                // `for (const k in x)` says of `x` that it is there.
+                Flow::Assign {
+                    target: FlowTarget::Var(decl),
+                    ..
+                } => {
+                    let stmt = b.var_stmt[decl.idx()];
+                    if stmt.is_some()
+                        && let Parent::Stmt(owner) = b.stmt_parent[stmt.idx()]
+                        && let StmtKind::ForIn { left, expr, .. } = f[owner].kind
+                        && left == stmt
+                        && expr.is_some()
+                    {
+                        set(&mut looked_at, expr.idx());
+                    }
+                }
                 Flow::Switch { stmt, .. } => {
                     if let StmtKind::Switch { expr, cases } = f[stmt].kind {
                         if expr.is_some() {
@@ -1782,6 +1797,18 @@ impl<'f> Binder<'f> {
             }
         };
 
+        // `for (const k in x)` says of `x` that it is there.
+        let for_in_over = |decl: VarDeclId| -> ExprId {
+            let stmt = b.var_stmt[decl.idx()];
+            if stmt.is_some()
+                && let Parent::Stmt(owner) = b.stmt_parent[stmt.idx()]
+                && let StmtKind::ForIn { left, expr, .. } = f[owner].kind
+                && left == stmt
+            {
+                return expr;
+            }
+            ExprId::NONE
+        };
         // The expressions nodes are about get a slot each.
         let mut slot_of = vec![u32::MAX; f.exprs.len()];
         let mut slots = 0u32;
@@ -1800,6 +1827,10 @@ impl<'f> Binder<'f> {
                     target: FlowTarget::Expr(expr),
                     ..
                 } => give_slot(expr),
+                Flow::Assign {
+                    target: FlowTarget::Var(decl),
+                    ..
+                } => give_slot(for_in_over(decl)),
                 Flow::Switch { stmt, .. } => {
                     if let StmtKind::Switch { expr, cases } = f[stmt].kind {
                         give_slot(expr);
@@ -1899,9 +1930,10 @@ impl<'f> Binder<'f> {
                 Flow::Assign { before, target } => (
                     match target {
                         FlowTarget::Expr(e) => about_expr(e),
-                        FlowTarget::Var(decl) => {
-                            symbols_of(decl).fold(0, |all, s| all | 1 << bit[s.idx()])
-                        }
+                        FlowTarget::Var(decl) => symbols_of(decl)
+                            .fold(about_expr(for_in_over(decl)), |all, s| {
+                                all | 1 << bit[s.idx()]
+                            }),
                         FlowTarget::Pat(pat) => {
                             let symbol = b.pat_symbol[pat.idx()];
                             if symbol.is_some() {

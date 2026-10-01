@@ -1,0 +1,8 @@
+(pass) listed instances > a name in the list of the other class, a skipped instance and a name of no instance are failures [1.99ms]
+(pass) expectations.json > is in the form that the update writes [0.05ms]
+(pass) expectations.json > records the level that the default check reaches [0.01ms]
+
+ 127 pass
+ 0 fail
+ 209 expect() calls
+Ran 127 tests across 1 file. [4.33s]

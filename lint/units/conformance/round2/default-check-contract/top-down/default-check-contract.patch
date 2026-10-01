@@ -1,0 +1,1399 @@
+diff --git a/test/cli/lint/conformance.test.ts b/test/cli/lint/conformance.test.ts
+index 0f294fa055..e53c6e485f 100644
+--- a/test/cli/lint/conformance.test.ts
++++ b/test/cli/lint/conformance.test.ts
+@@ -12,10 +12,12 @@ import type {
+   InputFile,
+   InputResult,
+   Instance,
++  Level,
++  RunResult,
+ } from "./conformance/runner";
+ import * as runner from "./conformance/runner";
+ import { emptyCheck, replayCheck, runInstance, runInstances } from "./conformance/runner";
+-import { createSpawnCheck, probe } from "./conformance/runner/check_bun_lint";
++import { type EndedCommand, createSpawnCheck, probe, resultOfRun } from "./conformance/runner/check_bun_lint";
+ import { tsgoRules } from "./conformance/runner/diagnosticwriter";
+ import { getErrorBaseline } from "./conformance/runner/error_baseline";
+ import {
+@@ -29,6 +31,7 @@ import {
+ } from "./conformance/runner/gostrings";
+ import { skippedEmitTests } from "./conformance/runner/harnessutil_options";
+ import { type Origin, listErrorBaselines, roundTripFiles, sampleErrorBaselines } from "./conformance/runner/roundtrip";
++import type { Death } from "./conformance/runner/run";
+ import { skipTrivia } from "./conformance/runner/scanner";
+ import { toWriterInput } from "./conformance/runner/shape";
+ import { isLineBreak, isWhiteSpaceLike, isWhiteSpaceSingleLine } from "./conformance/runner/stringutil";
+@@ -166,7 +169,12 @@ const endingOf = ({ outcome, reason, headerOnly }: Ending): Ending =>
+   headerOnly === undefined ? { outcome, reason } : { outcome, reason, headerOnly };
+ 
+ // One batch of listed names through a check: the names that are no run instance of their list or that do not pass.
+-async function failuresOf(batch: readonly { name: string; list: "E" | "C" }[], check: Check, directory: string) {
++async function failuresOf(
++  batch: readonly { name: string; list: "E" | "C" }[],
++  check: Check,
++  directory: string,
++  level?: Level,
++) {
+   const failures: { name: string; outcome: string; reason: string }[] = [];
+   const instances: CorpusInstance[] = [];
+   for (const { name, list } of batch) {
+@@ -188,6 +196,7 @@ async function failuresOf(batch: readonly { name: string; list: "E" | "C" }[], c
+     directory,
+     concurrency: Math.min(8, availableParallelism()),
+     timeoutMs: small ? 60_000 : 10_000,
++    level,
+   });
+   for (const r of results) {
+     if (r.outcome === "pass") continue;
+@@ -617,21 +626,69 @@ describe("run", () => {
+     });
+   });
+ 
+-  test("the first section alone, which is all that the plain format holds, is reported apart and is never a pass", async () => {
++  test("the first section alone, which is all that the plain format holds, passes at the level first-section and at no other", async () => {
+     const reason = "the first section is the oracle's; a baseline needs the lengths and the related information";
+-    expect(await ending(E, reports({ diagnostics: [{ ...known, location: printed }] }))).toEqual({
+-      outcome: "fail",
+-      reason,
+-      headerOnly: true,
+-    });
++    const plain = reports({ diagnostics: [{ ...known, location: printed }] });
++    expect(await ending(E, plain)).toEqual({ outcome: "fail", reason, headerOnly: true });
+     expect(await ending(E, reports({ diagnostics: [{ ...known, relatedInformation: undefined }] }))).toEqual({
+       outcome: "fail",
+       reason,
+       headerOnly: true,
+     });
+-    const other = await ending(E, reports({ diagnostics: [{ ...known, location: printed, messageText: "Other." }] }));
++    const otherText = reports({ diagnostics: [{ ...known, location: printed, messageText: "Other." }] });
++    const other = await ending(E, otherText);
+     expect({ outcome: other.outcome, headerOnly: other.headerOnly }).toEqual({ outcome: "fail", headerOnly: false });
+     expect(other.reason).toStartWith("the first section differs from the oracle at byte ");
++
++    // The level that a run asks for is the level of its outcome, and a pass says what it compared.
++    const at = async (level: Level | undefined, check: Check, instance = E, more: Partial<typeof options> = {}) => {
++      const r = await runInstance(instance, check, { ...options, ...more, level });
++      return { outcome: r.outcome, level: r.level, headerOnly: r.headerOnly };
++    };
++    expect(await at(undefined, plain)).toEqual({ outcome: "fail", level: "baseline", headerOnly: true });
++    expect(await at("first-section", plain)).toEqual({ outcome: "pass", level: "first-section", headerOnly: true });
++    expect(await at("first-section", otherText)).toEqual({
++      outcome: "fail",
++      level: "first-section",
++      headerOnly: false,
++    });
++    // Every byte is the stronger pass, whatever the run asked for.
++    const whole = reports({ diagnostics: [known] });
++    expect(await at("first-section", whole)).toEqual({ outcome: "pass", level: "baseline", headerOnly: undefined });
++    // A length that the oracle does not have leaves the first section as it is.
++    const longer = reports({ diagnostics: [{ ...known, location: { ...known.location!, length: 5 } }] });
++    expect(await at("baseline", longer)).toEqual({ outcome: "fail", level: "baseline", headerOnly: true });
++    expect(await at("first-section", longer)).toEqual({ outcome: "pass", level: "first-section", headerOnly: true });
++    // An instance without errors has no baseline: its pass is the same at every level.
++    expect(await at("first-section", emptyCheck, C)).toEqual({
++      outcome: "pass",
++      level: "first-section",
++      headerOnly: undefined,
++    });
++    expect(await at("first-section", emptyCheck, E)).toEqual({
++      outcome: "fail",
++      level: "first-section",
++      headerOnly: undefined,
++    });
++    // The first section of the pretty form shows the lengths: the plain format holds none of it.
++    const written = toWriterInput(tsgoRules, [unit], [known]);
++    const pretty = {
++      input: (instance: Instance, root: string | undefined): InputResult => {
++        const built = options.input(instance, root);
++        return built.ok ? { ok: true, input: { ...built.input, options: { pretty: "true" } } } : built;
++      },
++      oracle: () => tsgoRules.model.toBytes(getErrorBaseline(tsgoRules, written.files, written.diagnostics, true).text),
++    };
++    expect(await at("first-section", plain, E, pretty)).toEqual({
++      outcome: "fail",
++      level: "first-section",
++      headerOnly: false,
++    });
++    expect(await at("first-section", whole, E, pretty)).toEqual({
++      outcome: "pass",
++      level: "baseline",
++      headerOnly: undefined,
++    });
+   });
+ 
+   test("what is no list of diagnostics of the instance is no pass", async () => {
+@@ -655,11 +712,71 @@ describe("run", () => {
+       reason: "a diagnostic has the code -1",
+     });
+     const throws: Check = async () => {
+-      throw new Error("the command ended by the signal SIGSEGV");
++      throw new Error("the checker is not built");
+     };
+     expect(await ending(C, throws)).toEqual({
+       outcome: "crash",
+-      reason: "the check threw: Error: the command ended by the signal SIGSEGV",
++      reason: "the check threw: Error: the checker is not built",
++    });
++  });
++
++  test("a check that finds an outcome by itself says why, and it never says that an instance passes", async () => {
++    const program = { rootFiles: ["/.src/a.ts"], currentDirectory: "/.src" };
++    const death: Death = {
++      exitCode: null,
++      signal: "SIGSEGV",
++      stderr: "panic(main thread): index out of bounds\n",
++      stdout: "",
++    };
++    const reason = "the command ended by the signal SIGSEGV";
++    const dead = reports({ diagnostics: [], verdict: { outcome: "crash", cause: "signal SIGSEGV", reason, death } });
++    const { instance: _dead, ...crash } = await runInstance(C, dead, options);
++    expect(crash).toEqual({ outcome: "crash", cause: "signal SIGSEGV", reason, death, program, level: "baseline" });
++    // A hang and a check that throws name the files that the check was given, as a crash does.
++    const hangs: Check = (_input, signal) =>
++      new Promise(resolve => signal.addEventListener("abort", () => resolve({ diagnostics: [] })));
++    const { instance: _hung, ...timeout } = await runInstance(C, hangs, { ...options, timeoutMs: 1 });
++    expect(timeout).toEqual({
++      outcome: "timeout",
++      cause: "timeout",
++      reason: "the check did not end within 1 ms",
++      program,
++      level: "baseline",
++    });
++    // What no baseline can hold is counted by its name, beside the reports of rules that were left out.
++    const fails = reports({
++      diagnostics: [],
++      verdict: { outcome: "fail", cause: "syntax", reason: "x" },
++      named: { syntax: 3 },
++      rules: { "no-debugger": 2 },
++    });
++    const { instance: _failed, ...fail } = await runInstance(E, fails, { ...options, level: "first-section" });
++    expect(fail).toEqual({
++      outcome: "fail",
++      cause: "syntax",
++      reason: "x",
++      named: { syntax: 3 },
++      rules: { "no-debugger": 2 },
++      level: "first-section",
++    });
++    // Such a name fails the instance without a verdict too.
++    const silent = await runInstance(C, reports({ diagnostics: [], named: { syntax: 1 } }), options);
++    expect({ outcome: silent.outcome, cause: silent.cause, reason: silent.reason, named: silent.named }).toEqual({
++      outcome: "fail",
++      cause: "named",
++      reason: "the check holds what no baseline can hold: syntax",
++      named: { syntax: 1 },
++    });
++    const passes = reports({ diagnostics: [], verdict: { outcome: "pass", cause: "", reason: "" } as never });
++    expect(await ending(C, passes)).toEqual({
++      outcome: "crash",
++      reason: "the check returned a verdict of no known outcome",
++    });
++    // The reports of rules stay with the outcome of the comparison.
++    const counted = await runInstance(C, reports({ diagnostics: [], rules: { "no-debugger": 1 } }), options);
++    expect({ outcome: counted.outcome, rules: counted.rules }).toEqual({
++      outcome: "pass",
++      rules: { "no-debugger": 1 },
+     });
+   });
+ 
+@@ -920,13 +1037,32 @@ describe("default check", () => {
+   const linter = lazy(() => createSpawnCheck({ command: command("lints-fixture.ts"), env: bunEnv }));
+   const C: Instance = { name: "a.ts", status: "run", oracle: { class: "C" } };
+   const E: Instance = { name: "a.ts", status: "run", oracle: { class: "E" } };
++  type More = { oracle?: () => Uint8Array; timeoutMs?: number; level?: Level };
+   // One unit through a check that starts a command: the unit is written below the directory and is the operand.
+-  const ending = async (instance: Instance, check: Check, content: string, oracle?: () => Uint8Array) => {
++  const run = async (instance: Instance, check: Check, content: string, more: More = {}) => {
+     using dir = tempDir("lint-conformance", {});
+     const input = unitInput({ unitName: "/.src/a.ts", content });
+-    const options = { input, oracle: oracle ?? (() => new Uint8Array()), directory: join(String(dir), "instances") };
+-    return endingOf(await runInstance(instance, check, options));
++    const oracle = more.oracle ?? (() => new Uint8Array());
++    const directory = join(String(dir), "instances");
++    return await runInstance(instance, check, {
++      input,
++      oracle,
++      directory,
++      timeoutMs: more.timeoutMs,
++      level: more.level,
++    });
+   };
++  const ending = async (instance: Instance, check: Check, content: string, more: More = {}) =>
++    endingOf(await run(instance, check, content, more));
++  // What the tables below compare of a result: the outcome, the key of its count, the reason, what was counted by name and what a dead command left.
++  const classOf = ({ outcome, cause, reason, named, rules, death }: RunResult) => ({
++    outcome,
++    cause,
++    reason,
++    named,
++    rules,
++    death,
++  });
+ 
+   test.concurrent.each([
+     ["a command that lints", "lints-fixture.ts", { ok: true, reason: "" }],
+@@ -974,6 +1110,51 @@ describe("default check", () => {
+     expect(verdict.reason).toStartWith("a file without an error: the command did not start: ");
+   });
+ 
++  // The three tests of this file that need `bun --lint` itself: four processes of the binary under test. A binary without the flag runs the first file of the probe, and no instance reaches it.
++  const binary = { command: [bunExe()], env: bunEnv };
++  const probedBinary = lazy(() => probe(binary));
++  const binaryTimeout = small ? 120_000 : 20_000;
++
++  test.concurrent(
++    "the binary under test: the probe takes it for a linter, and it ends both runs as the test run asks of a child",
++    async () => {
++      expect(await probedBinary()).toEqual({ ok: true, reason: "" });
++    },
++    binaryTimeout,
++  );
++
++  test.concurrent(
++    "the binary under test: a file without errors passes an instance without errors, and nothing was printed",
++    async () => {
++      const check = createSpawnCheck({ ...binary, probed: await probedBinary() });
++      expect(classOf(await run(C, check, "export const x: number = 1;\n"))).toEqual({
++        outcome: "pass",
++        cause: undefined,
++        reason: "",
++        named: undefined,
++        rules: undefined,
++        death: undefined,
++      });
++    },
++    binaryTimeout,
++  );
++
++  test.concurrent(
++    "the binary under test: a syntax error of its parser is a difference from the oracle, and no crash",
++    async () => {
++      const check = createSpawnCheck({ ...binary, probed: await probedBinary() });
++      const { outcome, cause, death } = await run(C, check, "const = ;\n");
++      // The errors of the parser have the name "syntax" until they have the numbers of TypeScript: then they are diagnostics, which the comparison takes.
++      const difference = cause === "syntax" || cause === "diagnostics";
++      expect({ outcome, death, cause: difference ? "a difference from the oracle" : cause }).toEqual({
++        outcome: "fail",
++        death: undefined,
++        cause: "a difference from the oracle",
++      });
++    },
++    binaryTimeout,
++  );
++
+   test.concurrent(
+     "a command that lints gets the written unit as its operand, and no diagnostic passes an instance without errors",
+     async () => {
+@@ -983,7 +1164,7 @@ describe("default check", () => {
+   );
+ 
+   test.concurrent(
+-    "stderr is read in the plain format, chain lines too: the first section is the oracle's, and that is no pass",
++    "stderr is read in the plain format, chain lines too: the first section is the oracle's, which passes at the level first-section and at no other",
+     async () => {
+       const unit: InputFile = {
+         unitName: "/.src/a.ts",
+@@ -1005,11 +1186,18 @@ describe("default check", () => {
+           },
+         ],
+       );
+-      expect(await ending(E, linter(), unit.content, () => expected)).toEqual({
++      expect(await ending(E, linter(), unit.content, { oracle: () => expected })).toEqual({
+         outcome: "fail",
+         reason: "the first section is the oracle's; a baseline needs the lengths and the related information",
+         headerOnly: true,
+       });
++      const first = await run(E, linter(), unit.content, { oracle: () => expected, level: "first-section" });
++      expect({ ...endingOf(first), level: first.level }).toEqual({
++        outcome: "pass",
++        reason: "",
++        headerOnly: true,
++        level: "first-section",
++      });
+     },
+     spawnTimeout,
+   );
+@@ -1034,44 +1222,325 @@ describe("default check", () => {
+     spawnTimeout,
+   );
+ 
++  const panic = "panic(main thread): index out of bounds";
++  const died = (exitCode: number | null, stderr = "", stdout = "", signal: string | null = null): Death => ({
++    exitCode,
++    signal,
++    stderr,
++    stdout,
++  });
+   test.concurrent.each([
+-    ["an exit code that is none of 0, 1 and 2", "//~ exit 7\n", "the command ended with the exit code 7"],
+-    ["the exit code of a refusal", "//~ print error: no\n//~ exit 1\n", "the command refused: error: no"],
++    [
++      "an exit code that is none of 0, 1 and 2",
++      "//~ exit 7\n",
++      "exit code 7",
++      "the command ended with the exit code 7",
++      died(7),
++    ],
+     [
+       "a line of no form",
+       "//~ print Bun has crashed\n//~ exit 0\n",
++      "stderr",
+       "stderr line 1 is neither a diagnostic nor a line of a message chain: Bun has crashed",
++      died(0, "Bun has crashed\n"),
+     ],
+     [
+       "an error and the exit code 0",
+       "//~ print {file}(1,1): error TS1: x\n//~ exit 0\n",
++      "exit code and errors",
+       "the exit code is 0 and stderr has 1 errors",
++      died(0, "/.src/a.ts(1,1): error TS1: x\n"),
++    ],
++    [
++      "no error and the exit code 2",
++      "//~ exit 2\n",
++      "exit code and errors",
++      "the exit code is 2 and stderr has no error",
++      died(2),
++    ],
++    ["text on stdout", "//~ stdout hello\n", "stdout", "the command wrote to stdout: hello", died(0, "", "hello\n")],
++    // Windows has no signals.
++    ...(isWindows
++      ? []
++      : [
++          [
++            "a signal",
++            "//~ kill SIGKILL\n",
++            "signal SIGKILL",
++            "the command ended by the signal SIGKILL",
++            died(null, "", "", "SIGKILL"),
++          ],
++          [
++            "a signal after the report of a panic",
++            `//~ print Args: "bun" "--lint" "{file}"\n//~ print ${panic}\n//~ stdout bun_js_parser::parse\n//~ kill SIGKILL\n`,
++            "signal SIGKILL",
++            `the command ended by the signal SIGKILL: ${panic}`,
++            died(null, `Args: "bun" "--lint" "/.src/a.ts"\n${panic}\n`, "bun_js_parser::parse\n", "SIGKILL"),
++          ],
++        ]),
++  ] as [string, string, string, string, Death][])(
++    "a command that died is a crash with what it left, and never an empty list of diagnostics: %s",
++    async (_label, orders, cause, reason, death) => {
++      expect(classOf(await run(C, linter(), orders))).toEqual({
++        outcome: "crash",
++        cause,
++        reason,
++        named: undefined,
++        rules: undefined,
++        death,
++      });
++    },
++    spawnTimeout,
++  );
++
++  type Class = Partial<ReturnType<typeof classOf>>;
++  test.concurrent.each([
++    [
++      "the exit code of a refusal",
++      "//~ print error: no\n//~ exit 1\n",
++      { outcome: "unsupported", cause: "refusal", reason: "the command refused: error: no" },
+     ],
+-    ["no error and the exit code 2", "//~ exit 2\n", "the exit code is 2 and stderr has no error"],
+-    ["text on stdout", "//~ stdout hello\n", "the command wrote to stdout: hello"],
+     [
+       "a file that is not of the instance",
+       "//~ print /etc/passwd(1,1): error TS1: x\n",
+-      "stderr line 1 names a file that is not of the instance: /etc/passwd",
++      {
++        outcome: "fail",
++        cause: "file outside the instance",
++        reason: "a diagnostic in a file that is not of the instance: /etc/passwd(1,1): error TS1: x",
++      },
+     ],
+     [
+       "an error of the command",
+       "//~ print error internal-error: an assertion of the checker\n",
+-      "the command reports an error of its own: an assertion of the checker",
++      {
++        outcome: "fail",
++        cause: "internal-error",
++        reason: "the command reports an error of its own: error internal-error: an assertion of the checker",
++        named: { "internal-error": 1 },
++      },
+     ],
+     [
+-      "a diagnostic of a rule",
++      "a diagnostic of a rule, which is left out and counted",
+       "//~ print {file}(1,1): error no-debugger: Unexpected 'debugger' statement.\n",
+-      "stderr line 1 has the code no-debugger, which is no code of TypeScript",
++      { outcome: "pass", reason: "", rules: { "no-debugger": 1 } },
+     ],
+-    // Windows has no signals.
+-    ...(isWindows ? [] : [["a signal", "//~ kill SIGKILL\n", "the command ended by the signal SIGKILL"]]),
+-  ] as [string, string, string][])(
+-    "a run that breaks the rules is a crash and never an empty list of diagnostics: %s",
+-    async (_label, orders, reason) => {
+-      expect(await ending(C, linter(), orders)).toEqual({
++  ] as [string, string, Class][])(
++    "a command that ended with a list of diagnostics is no crash: %s",
++    async (_label, orders, want) => {
++      const empty = { cause: undefined, named: undefined, rules: undefined, death: undefined };
++      expect(classOf(await run(C, linter(), orders))).toEqual({ ...empty, ...want } as ReturnType<typeof classOf>);
++    },
++    spawnTimeout,
++  );
++
++  // What the default check makes of a command that ended, without a process. Each text is what `bun --lint` prints: a file relative to its current directory, an operand as it was given.
++  const extensions = "'.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'";
++  const unsupported = (file: string) =>
++    `error unsupported-extension: File '${file}' has an unsupported extension. The only supported extensions are ${extensions}.`;
++  const named = (code: string) => `the code ${code} is a name of the command and no code of TypeScript`;
++  const debuggers =
++    "a.ts(1,1): error no-debugger: Unexpected 'debugger' statement.\n" +
++    "a.ts(2,5): error no-debugger: Unexpected 'debugger' statement.\n" +
++    "a.ts(3,5): warning use-isnan: Use the isNaN function to compare with NaN.\n";
++  const warning = 'a.ts(9,22): warning syntax: Reading from setter-only property "#value" will throw';
++  const sanitizer = "==7==ERROR: AddressSanitizer: SEGV on unknown address 0x000000000008";
++  const noRefusal = "the command ended with the exit code 1, and what it wrote is no refusal";
++  test.each([
++    ["the guard: nothing printed and the exit code 0", C, 0, "", { outcome: "pass", reason: "" }],
++    [
++      "near the guard: reports of rules alone, which are left out and counted",
++      C,
++      2,
++      debuggers,
++      { outcome: "pass", reason: "", rules: { "no-debugger": 2, "use-isnan": 1 } },
++    ],
++    [
++      "near the guard: a warning of the parser and no error",
++      C,
++      0,
++      warning + "\n",
++      {
++        outcome: "fail",
++        cause: "syntax warning",
++        reason: `the parser of the command warns and reports no error, and the reference has no such warning: /.src/${warning}`,
++        named: { syntax: 1 },
++      },
++    ],
++    [
++      "syntax errors",
++      C,
++      2,
++      'a.ts(1,7): error syntax: This constant must be initialized\na.ts(1,7): error syntax: Expected identifier but found "="\n',
++      {
++        outcome: "fail",
++        cause: "syntax",
++        reason: `${named("syntax")}: /.src/a.ts(1,7): error syntax: This constant must be initialized, and 1 more`,
++        named: { syntax: 2 },
++      },
++    ],
++    [
++      "a warning of the parser beside an error of it",
++      C,
++      2,
++      warning + "\na.ts(12,1): error syntax: Unexpected }\n",
++      {
++        outcome: "fail",
++        cause: "syntax",
++        reason: `${named("syntax")}: /.src/a.ts(12,1): error syntax: Unexpected }, and 1 more`,
++        named: { syntax: 2 },
++      },
++    ],
++    [
++      "an operand that cannot be read",
++      C,
++      2,
++      "error cannot-read-file: File '{root}/.src/a.ts' not found.\n",
++      {
++        outcome: "fail",
++        cause: "cannot-read-file",
++        reason: `${named("cannot-read-file")}: error cannot-read-file: File '/.src/a.ts' not found.`,
++        named: { "cannot-read-file": 1 },
++      },
++    ],
++    [
++      "an operand with an unsupported extension",
++      E,
++      2,
++      unsupported("{root}/.src/b.js.map") + "\n",
++      {
++        outcome: "fail",
++        cause: "unsupported-extension",
++        reason: `${named("unsupported-extension")}: ${unsupported("/.src/b.js.map")}`,
++        named: { "unsupported-extension": 1 },
++      },
++    ],
++    [
++      "an error of the command in a file",
++      C,
++      2,
++      "a.ts(3,9): error internal-error: This file is nested too deeply to check all of it.\n",
++      {
++        outcome: "fail",
++        cause: "internal-error",
++        reason:
++          "the command reports an error of its own: /.src/a.ts(3,9): error internal-error: This file is nested too deeply to check all of it.",
++        named: { "internal-error": 1 },
++      },
++    ],
++    [
++      "an error of the command beside a syntax error and a report of a rule",
++      E,
++      2,
++      "error internal-error: an assertion of the checker\na.ts(1,1): error syntax: x\na.ts(2,1): error no-debugger: y\n",
++      {
++        outcome: "fail",
++        cause: "internal-error",
++        reason: "the command reports an error of its own: error internal-error: an assertion of the checker",
++        named: { "internal-error": 1, syntax: 1 },
++        rules: { "no-debugger": 1 },
++      },
++    ],
++    [
++      "a name without a file that is no name of the command",
++      C,
++      2,
++      "error made-up-name: x\n",
++      {
++        outcome: "fail",
++        cause: "unknown code",
++        reason:
++          "a code that is no code of TypeScript, no name of the command and, without a file, no rule: error made-up-name: x",
++        named: { "made-up-name": 1 },
++      },
++    ],
++    [
++      "reports of rules alone where the oracle has errors",
++      E,
++      2,
++      debuggers,
++      {
++        outcome: "fail",
++        cause: "nothing",
++        reason: "no diagnostic where the oracle has a baseline",
++        rules: { "no-debugger": 2, "use-isnan": 1 },
++      },
++    ],
++    [
++      "a diagnostic of TypeScript beside reports of rules",
++      C,
++      2,
++      debuggers + "a.ts(1,1): error TS2322: x\n",
++      {
++        outcome: "fail",
++        cause: "diagnostics",
++        reason: "1 diagnostics where the oracle has none, the first is TS2322: x",
++        rules: { "no-debugger": 2, "use-isnan": 1 },
++      },
++    ],
++    [
++      "the exit code 1 with the report of a sanitizer",
++      C,
++      1,
++      `${sanitizer}\nSUMMARY: AddressSanitizer: SEGV in parse\n`,
++      {
+         outcome: "crash",
+-        reason: `the check threw: Error: ${reason}`,
++        cause: "exit code 1",
++        reason: `${noRefusal}: ${sanitizer}`,
++        death: died(1, `${sanitizer}\nSUMMARY: AddressSanitizer: SEGV in parse\n`),
++      },
++    ],
++    [
++      "the exit code 1 and nothing written",
++      C,
++      1,
++      "",
++      { outcome: "crash", cause: "exit code 1", reason: noRefusal, death: died(1) },
++    ],
++  ] as [string, Instance, number, string, Class][])(
++    "what a command printed, by the name of its codes: %s",
++    async (_label, instance, exitCode, stderr, want) => {
++      using dir = tempDir("lint-conformance", {});
++      const root = String(dir);
++      const ended: EndedCommand = {
++        exitCode,
++        signal: null,
++        timedOut: false,
++        stdout: "",
++        stderr: stderr.replaceAll("{root}", root),
++      };
++      const check: Check = async () => resultOfRun(ended, root, join(root, ".src"));
++      const options = { input: unitInput({ unitName: "/.src/a.ts", content: "" }), oracle: () => new Uint8Array() };
++      const empty = { cause: undefined, named: undefined, rules: undefined, death: undefined };
++      expect(classOf(await runInstance(instance, check, options))).toEqual({
++        ...empty,
++        ...want,
++      } as ReturnType<typeof classOf>);
++    },
++  );
++
++  test("a command that did not start makes the instance unavailable", async () => {
++    const none: EndedCommand = { exitCode: null, signal: null, timedOut: false, stdout: "", stderr: "" };
++    expect(resultOfRun({ ...none, notStarted: "Error: ENOENT: no such file" }, "/r", "/r/.src")).toEqual({
++      diagnostics: [],
++      unavailable: "the command did not start: Error: ENOENT: no such file",
++    });
++  });
++
++  test.concurrent(
++    "a command that does not end is a timeout",
++    async () => {
++      // The verdict of a probe is given: the time of the instance is the time of its own run.
++      const probed = { ok: true, reason: "" };
++      const hangs = createSpawnCheck({ command: command("lints-fixture.ts"), env: bunEnv, probed });
++      const hung = await run(C, hangs, "//~ hang\n", { timeoutMs: 500 });
++      expect({ ...classOf(hung), program: hung.program }).toEqual({
++        outcome: "timeout",
++        cause: "timeout",
++        reason: "the check did not end within 500 ms",
++        named: undefined,
++        rules: undefined,
++        death: undefined,
++        program: { rootFiles: ["/.src/a.ts"], currentDirectory: "/.src" },
+       });
+     },
+     spawnTimeout,
+@@ -1141,12 +1610,17 @@ describe("expectations.json", () => {
+     expect(formatExpectations(lists)).toBe(text);
+   });
+ 
++  // The check below reads the plain format, which holds the first section of a baseline and no more: the lists record that, and a name of list E passes at that level.
++  test("records the level that the default check reaches", () => {
++    expect(lists.level).toBe("first-section");
++  });
++
+   // One batch at a time: a batch keeps as many processes in flight as it may, and a second batch beside it would double them.
+   test.each(groupsOf(listed, small ? 8 : 64).map((g, k) => [k + 1, g] as const))(
+     "every listed instance is a run instance of its list and passes: batch %d",
+     async (_k, batch) => {
+       using dir = tempDir("lint-conformance", {});
+-      const failures = await failuresOf(batch, check(), String(dir));
++      const failures = await failuresOf(batch, check(), String(dir), lists.level);
+       // The first failures in full and the number of all: a binary that cannot lint fails every name for one reason.
+       expect({ failed: failures.length, first: failures.slice(0, 5) }).toEqual({ failed: 0, first: [] });
+     },
+diff --git a/test/cli/lint/conformance/fixtures/lints-fixture.ts b/test/cli/lint/conformance/fixtures/lints-fixture.ts
+index c3f5484ed5..195e0405a9 100644
+--- a/test/cli/lint/conformance/fixtures/lints-fixture.ts
++++ b/test/cli/lint/conformance/fixtures/lints-fixture.ts
+@@ -1,5 +1,5 @@
+ // A command that stands for a linter: it reads its operands and never runs them. A line of an operand that starts with "//~ " tells it what to do.
+-import { readFileSync } from "node:fs";
++import { readFileSync, writeSync } from "node:fs";
+ import { extname, relative, resolve } from "node:path";
+ 
+ const loaders: Record<string, "ts" | "tsx" | "jsx"> = {
+@@ -45,6 +45,9 @@ async function lint(args: string[]): Promise<number> {
+       } else if (verb === "stdout") out += value + "\n";
+       else if (verb === "exit") exit = Number(value);
+       else if (verb === "kill") {
++        // What it printed so far has left before it dies, as the report of a crash has.
++        writeSync(1, out);
++        writeSync(2, err);
+         process.kill(process.pid, value);
+         await forever();
+       } else if (verb === "hang") await forever();
+diff --git a/test/cli/lint/conformance/runner/check_bun_lint.ts b/test/cli/lint/conformance/runner/check_bun_lint.ts
+index 986639e021..dbd3ef5b61 100644
+--- a/test/cli/lint/conformance/runner/check_bun_lint.ts
++++ b/test/cli/lint/conformance/runner/check_bun_lint.ts
+@@ -4,11 +4,17 @@ import { join, resolve } from "node:path";
+ import { tsgoRules } from "./diagnosticwriter";
+ import { isDefaultLibraryFile } from "./error_baseline";
+ import { makeTemporaryDirectory, mapRealPaths, toRealPath, toVirtualName } from "./materialise";
+-import type { Check, CheckResult } from "./run";
++import type { Check, CheckResult, Death } from "./run";
+ import type { Diagnostic, DiagnosticLocation, DiagnosticMessageChain } from "./shape";
+ import { type PlainChain, type PlainDiagnostic, parsePlainDiagnostics } from "./tsc_plain_format";
+ import { getBaseFileName, getNormalizedAbsolutePath, normalizeSlashes } from "./tspath";
+ 
++export interface ProbeResult {
++  ok: boolean;
++  // Why the command is no linter; empty when it is one.
++  reason: string;
++}
++
+ export interface SpawnCheckOptions {
+   // The command without the flag and the operands: [bunExe()].
+   command: string[];
+@@ -18,25 +24,37 @@ export interface SpawnCheckOptions {
+   probeTimeoutMs?: number;
+   // Directory for the two files of the probe, which stay there. Absent: a new directory of temporary files, removed after the probe.
+   probeDirectory?: string;
+-  // Names of rules whose diagnostics are left out. Absent: a diagnostic whose code is a name makes the run a crash.
+-  ignoreRules?: readonly string[];
+-}
+-
+-export interface ProbeResult {
+-  ok: boolean;
+-  // Why the command is no linter; empty when it is one.
+-  reason: string;
++  // What a probe of the caller found. Absent: the first instance probes the command, within its own time.
++  probed?: ProbeResult;
+ }
+ 
+ // What the first file of the probe writes to stdout when a command runs it. The file holds the two parts apart: a command that prints its lines does not print this.
+ const probeSays = ["bun-lint-probe: ", "the file ran"] as const;
+-// A line with this code names a part that the checker reached and does not have yet.
+-const standInCode = "internal-stand-in";
++// An error or a warning of the parser of the command that has no number of TypeScript.
++const syntaxCode = "syntax";
++// An operand that is missing or cannot be read, and an operand with another extension: each has the text of a diagnostic of TypeScript and no number.
++const cannotReadFileCode = "cannot-read-file";
++const unsupportedExtensionCode = "unsupported-extension";
+ // A line with this code is an error of the command itself, not of a file.
+ const internalErrorCode = "internal-error";
++// A line with this code names a part that the checker reached and does not have yet.
++const standInCode = "internal-stand-in";
++// Every name that the command prints as a code and that is no rule. Any other name is the name of a rule.
++const commandCodes: ReadonlySet<string> = new Set([
++  syntaxCode,
++  cannotReadFileCode,
++  unsupportedExtensionCode,
++  internalErrorCode,
++  standInCode,
++]);
+ const defaultProbeTimeoutMs = 60_000;
+ // The longest delay that a timer takes.
+ const longestTimeoutMs = 2 ** 31 - 1;
++// The most that a command may write before it is ended: eighty times the longest baseline of the corpus. A command that writes without end must not fill the memory of the run.
++const mostOutput = 16 * 1024 * 1024;
++// Of a longer text of a command a report keeps this many characters of its start and of its end.
++const excerptHead = 5000;
++const excerptTail = 3000;
+ 
+ // The environment of every run: the flag of the feature, and nothing that adds a debug log, a colour or an option.
+ function spawnEnvironment(env: Readonly<Record<string, string | undefined>>): Record<string, string> {
+@@ -45,12 +63,15 @@ function spawnEnvironment(env: Readonly<Record<string, string | undefined>>): Re
+   out.BUN_FEATURE_FLAG_EXPERIMENTAL_LINT = "1";
+   out.BUN_DEBUG_QUIET_LOGS = "1";
+   out.NO_COLOR = "1";
++  // A canary build sends a crash to a server unless it is told not to.
++  out.BUN_ENABLE_CRASH_REPORTING = "0";
+   delete out.FORCE_COLOR;
+   delete out.BUN_OPTIONS;
+   return out;
+ }
+ 
+-interface Ended {
++// What a command left when it ended.
++export interface EndedCommand {
+   // Null: a signal ended the command, or no process started.
+   exitCode: number | null;
+   // The name of the signal, or its number where it has no name.
+@@ -69,7 +90,7 @@ async function spawnCommand(
+   cwd: string,
+   env: Record<string, string>,
+   limit: AbortSignal,
+-): Promise<Ended> {
++): Promise<EndedCommand> {
+   const none = { exitCode: null, signal: null, stdout: "", stderr: "" };
+   if (limit.aborted) return { ...none, timedOut: true };
+   let proc: Bun.Subprocess<"ignore", "pipe", "pipe">;
+@@ -83,6 +104,7 @@ async function spawnCommand(
+       stderr: "pipe",
+       signal: limit,
+       killSignal: "SIGKILL",
++      maxBuffer: mostOutput,
+     });
+   } catch (error) {
+     return { ...none, timedOut: false, notStarted: String(error) };
+@@ -99,7 +121,7 @@ async function spawnWithin(
+   cwd: string,
+   env: Record<string, string>,
+   timeoutMs: number | undefined,
+-): Promise<Ended> {
++): Promise<EndedCommand> {
+   const wanted = timeoutMs !== undefined && timeoutMs > 0 ? Math.ceil(timeoutMs) : defaultProbeTimeoutMs;
+   const controller = new AbortController();
+   const timer = setTimeout(() => controller.abort(), Math.min(wanted, longestTimeoutMs));
+@@ -110,32 +132,78 @@ async function spawnWithin(
+   }
+ }
+ 
++function cut(line: string): string {
++  return line.length > 200 ? line.slice(0, 200) + "..." : line;
++}
++
+ // The first line of a text that holds more than white space, for a reason.
+ function head(text: string): string {
+-  const line = text.split(/\r?\n/).find(l => l.trim() !== "") ?? "";
+-  return line.length > 200 ? line.slice(0, 200) + "..." : line;
++  return cut(text.split(/\r?\n/).find(l => l.trim() !== "") ?? "");
++}
++
++// The start of the line with which a panic, a sanitizer or an assertion says why the command died.
++const telling =
++  /^(?:panic(?:\([^)]*\))?: |==\d+==ERROR: |SUMMARY: |thread '.*' panicked|Assertion failed|ASSERTION FAILED)/;
++
++// The line that says why a command died where it wrote one, else the first line of what it wrote.
++function headline(run: EndedCommand): string {
++  const lines = run.stderr.split(/\r?\n/);
++  const line = lines.find(l => telling.test(l));
++  return line !== undefined ? cut(line) : head(run.stderr) || head(run.stdout);
++}
++
++// A refusal is one line on stderr with a colon directly after "error", which no diagnostic has, and nothing on stdout.
++function isRefusal(run: EndedCommand): boolean {
++  return run.stdout === "" && /^error: [^\r\n]*\r?\n$/.test(run.stderr);
+ }
+ 
+-type Reading = { ok: true; diagnostics: PlainDiagnostic[] } | { ok: false; reason: string };
++type Reading =
++  | { ok: true; diagnostics: PlainDiagnostic[] }
++  // "death": the command died. "refusal": it refused its command line. The two others: no command ran to its end.
++  | { ok: false; is: "death" | "refusal" | "not-started" | "timed-out"; cause: string; reason: string };
+ 
+ // What a run says before any name is mapped. Exit code 0 is no error, 2 is one or more, 1 is a refusal; stdout stays empty.
+-function readRun(run: Ended): Reading {
+-  const no = (reason: string): Reading => ({ ok: false, reason });
+-  if (run.notStarted !== undefined) return no(`the command did not start: ${head(run.notStarted)}`);
+-  if (run.timedOut) return no("the command did not end in time");
+-  if (run.signal !== null) return no(`the command ended by the signal ${run.signal}`);
+-  if (run.exitCode === 1) return no(`the command refused: ${head(run.stderr)}`);
+-  if (run.exitCode !== 0 && run.exitCode !== 2) return no(`the command ended with the exit code ${run.exitCode}`);
+-  if (run.stdout !== "") return no(`the command wrote to stdout: ${head(run.stdout)}`);
++function readRun(run: EndedCommand): Reading {
++  const died = (cause: string, reason: string): Reading => ({ ok: false, is: "death", cause, reason });
++  const said = (reason: string) => {
++    const line = headline(run);
++    return line === "" ? reason : `${reason}: ${line}`;
++  };
++  if (run.notStarted !== undefined) {
++    const reason = `the command did not start: ${head(run.notStarted)}`;
++    return { ok: false, is: "not-started", cause: "not started", reason };
++  }
++  if (run.timedOut) return { ok: false, is: "timed-out", cause: "timeout", reason: "the command did not end in time" };
++  if (run.signal !== null) return died(`signal ${run.signal}`, said(`the command ended by the signal ${run.signal}`));
++  if (run.exitCode === 1) {
++    if (isRefusal(run)) {
++      return { ok: false, is: "refusal", cause: "refusal", reason: `the command refused: ${head(run.stderr)}` };
++    }
++    // A sanitizer that finds an error ends with this code too, and so does a command that is no linter.
++    return died("exit code 1", said("the command ended with the exit code 1, and what it wrote is no refusal"));
++  }
++  if (run.exitCode !== 0 && run.exitCode !== 2) {
++    return died(`exit code ${run.exitCode}`, said(`the command ended with the exit code ${run.exitCode}`));
++  }
++  if (run.stdout !== "") return died("stdout", `the command wrote to stdout: ${head(run.stdout)}`);
+   // A text with one line of no known form is refused whole: a crash report never reads as an empty list.
+   const parsed = parsePlainDiagnostics(run.stderr);
+-  if (!parsed.ok) return no(`stderr line ${parsed.at} is ${parsed.reason}: ${head(parsed.text)}`);
++  if (!parsed.ok) return died("stderr", `stderr line ${parsed.at} is ${parsed.reason}: ${head(parsed.text)}`);
+   const errors = parsed.diagnostics.filter(d => d.category === "error").length;
+-  if (run.exitCode === 0 && errors > 0) return no(`the exit code is 0 and stderr has ${errors} errors`);
+-  if (run.exitCode === 2 && errors === 0) return no("the exit code is 2 and stderr has no error");
++  if (run.exitCode === 0 && errors > 0) {
++    return died("exit code and errors", `the exit code is 0 and stderr has ${errors} errors`);
++  }
++  if (run.exitCode === 2 && errors === 0) {
++    return died("exit code and errors", "the exit code is 2 and stderr has no error");
++  }
+   return { ok: true, diagnostics: parsed.diagnostics };
+ }
+ 
++// A report of a lint rule: its code is a name that is no name of the command, and it is in a file.
++function isRuleReport(d: PlainDiagnostic): boolean {
++  return d.code === undefined && d.rule !== undefined && !commandCodes.has(d.rule) && d.path !== undefined;
++}
++
+ function chainOf(
+   next: readonly PlainChain[] | undefined,
+   text: (printed: string) => string,
+@@ -157,33 +225,76 @@ function nameOfPrinted(root: string, cwd: string, printed: string): string | und
+   return toVirtualName(root, "/", getNormalizedAbsolutePath(printed, normalizeSlashes(cwd)));
+ }
+ 
+-// The diagnostics of a run with the names of the instance: a real path below the root becomes the name that the harness has. cwd is the current directory that the command had.
+-function toCheckResult(
+-  plain: readonly PlainDiagnostic[],
+-  root: string,
+-  cwd: string,
+-  ignoreRules: readonly string[],
+-): CheckResult {
++// Of a long text its start and its end, with the number of characters between them.
++function excerpt(text: string): string {
++  if (text.length <= excerptHead + excerptTail) return text;
++  const left = text.length - excerptHead - excerptTail;
++  return `${text.slice(0, excerptHead)}\n[... ${left} characters ...]\n${text.slice(-excerptTail)}`;
++}
++
++// What a dead command left, with the names of the instance for the real paths below the root.
++function deathOf(run: EndedCommand, root: string): Death {
++  return {
++    exitCode: run.exitCode,
++    signal: run.signal,
++    stderr: excerpt(mapRealPaths(root, run.stderr)),
++    stdout: excerpt(mapRealPaths(root, run.stdout)),
++  };
++}
++
++// What fails an instance whatever its oracle holds, by kind; the kind that says most of the run comes first: an error of the command itself, then what the runner does not know.
++const syntaxWarningKind = "syntax warning";
++const unknownCodeKind = "unknown code";
++const outsideKind = "file outside the instance";
++const failingKinds = [
++  internalErrorCode,
++  unknownCodeKind,
++  cannotReadFileCode,
++  unsupportedExtensionCode,
++  syntaxCode,
++  syntaxWarningKind,
++  outsideKind,
++] as const;
++
++// The diagnostics of a run with the names of the instance: a real path below the root becomes the name that the harness has. cwd is the current directory that the command had. A report of a rule is counted and left out. What has another name as its code is in no baseline: it is counted by that name, the instance fails, and the reason names the first such line.
++function toCheckResult(plain: readonly PlainDiagnostic[], root: string, cwd: string): CheckResult {
+   const diagnostics: Diagnostic[] = [];
+   const standIns: string[] = [];
++  const named: Record<string, number> = {};
++  const rules: Record<string, number> = {};
++  // The lines that fail the instance by their kind: the first of each kind as the harness names it, and how many.
++  const failing = new Map<string, { first: string; count: number }>();
+   const text = (printed: string) => mapRealPaths(root, printed);
++  const fails = (kind: string, p: PlainDiagnostic, file: string | undefined) => {
++    const known = failing.get(kind);
++    if (known !== undefined) {
++      known.count++;
++      return;
++    }
++    const place = file === undefined ? "" : `${file}(${p.line},${p.character}): `;
++    const first = `${place}${p.category} ${p.rule ?? `TS${p.code}`}: ${text(p.messageText)}`;
++    failing.set(kind, { first, count: 1 });
++  };
+   for (const p of plain) {
++    const inInstance = p.path === undefined ? undefined : nameOfPrinted(root, cwd, p.path);
+     if (p.code === undefined) {
+-      if (p.rule === standInCode) standIns.push(p.messageText);
+-      else if (p.rule === internalErrorCode) {
+-        throw new Error(`the command reports an error of its own: ${p.messageText}`);
+-      } else if (p.rule === undefined || !ignoreRules.includes(p.rule)) {
+-        // The name of a rule or a name of the command: no baseline holds it, and without it the list would say less than the run.
+-        throw new Error(`stderr line ${p.at} has the code ${p.rule}, which is no code of TypeScript`);
++      const name = p.rule ?? "";
++      if (name === standInCode) standIns.push(p.messageText);
++      else if (isRuleReport(p)) rules[name] = (rules[name] ?? 0) + 1;
++      else {
++        named[name] = (named[name] ?? 0) + 1;
++        const warns = name === syntaxCode && p.category !== "error";
++        fails(warns ? syntaxWarningKind : commandCodes.has(name) ? name : unknownCodeKind, p, inInstance ?? p.path);
+       }
+       continue;
+     }
+     let location: DiagnosticLocation | undefined;
+     if (p.path !== undefined) {
+-      let file = nameOfPrinted(root, cwd, p.path);
++      let file = inInstance;
+       if (file === undefined) {
+         if (!isDefaultLibraryFile(p.path)) {
+-          throw new Error(`stderr line ${p.at} names a file that is not of the instance: ${p.path}`);
++          fails(outsideKind, p, p.path);
++          continue;
+         }
+         // A default library of the command, wherever it keeps it, is the bundled library of the reference.
+         file = tsgoRules.libraryRoot + getBaseFileName(p.path);
+@@ -199,7 +310,44 @@ function toCheckResult(
+       location,
+     });
+   }
+-  return { diagnostics, standIns };
++  const more = { standIns, named, rules };
++  // A parser that warns and reports no error is near a clean run, and it is counted apart; beside an error its warnings count with the errors.
++  const errors = failing.get(syntaxCode);
++  const warnings = failing.get(syntaxWarningKind);
++  if (errors !== undefined && warnings !== undefined) {
++    errors.count += warnings.count;
++    failing.delete(syntaxWarningKind);
++  }
++  for (const kind of failingKinds) {
++    const found = failing.get(kind);
++    if (found === undefined) continue;
++    const line = found.count === 1 ? found.first : `${found.first}, and ${found.count - 1} more`;
++    let reason: string;
++    if (kind === internalErrorCode) reason = `the command reports an error of its own: ${line}`;
++    else if (kind === unknownCodeKind) {
++      reason = `a code that is no code of TypeScript, no name of the command and, without a file, no rule: ${line}`;
++    } else if (kind === outsideKind) reason = `a diagnostic in a file that is not of the instance: ${line}`;
++    else if (kind === syntaxWarningKind) {
++      reason = `the parser of the command warns and reports no error, and the reference has no such warning: ${line}`;
++    } else reason = `the code ${kind} is a name of the command and no code of TypeScript: ${line}`;
++    return { diagnostics: [], verdict: { outcome: "fail", cause: kind, reason }, ...more };
++  }
++  return { diagnostics, ...more };
++}
++
++// What the default check makes of a command that ended. root is the real directory of the instance and cwd the current directory that the command had. A command that died is a crash with what it left, a refusal is unsupported, and only a list of diagnostics in the plain format goes on to the comparison.
++export function resultOfRun(run: EndedCommand, root: string, cwd: string): CheckResult {
++  const read = readRun(run);
++  if (read.ok) return toCheckResult(read.diagnostics, root, cwd);
++  // The command wrote a list of diagnostics or it did not: nothing that it wrote besides is read as an empty list.
++  if (read.is === "death") {
++    const death = deathOf(run, root);
++    return { diagnostics: [], verdict: { outcome: "crash", cause: read.cause, reason: read.reason, death } };
++  }
++  if (read.is === "refusal") {
++    return { diagnostics: [], verdict: { outcome: "unsupported", cause: read.cause, reason: read.reason } };
++  }
++  return { diagnostics: [], unavailable: read.reason };
+ }
+ 
+ function remove(directory: string): void {
+@@ -232,8 +380,8 @@ async function probeIn(given: string, options: SpawnCheckOptions): Promise<Probe
+   if (existsSync(mark) || first.stdout.includes(probeSays.join(""))) return ran;
+   const firstRead = readRun(first);
+   if (!firstRead.ok) return no(`a file without an error: ${firstRead.reason}`);
+-  // A stand-in is no diagnostic of the file: a checker that lacks a part is a linter all the same.
+-  const found = firstRead.diagnostics.filter(d => d.rule !== standInCode).length;
++  // A stand-in is no diagnostic of the file, and neither is the report of a rule: a checker that lacks a part is a linter all the same.
++  const found = firstRead.diagnostics.filter(d => d.rule !== standInCode && !isRuleReport(d)).length;
+   if (found > 0) return no(`a file without an error gave ${found} diagnostics and the exit code ${first.exitCode}`);
+ 
+   const second = await spawnWithin([...options.command, "--lint", broken], directory, env, options.probeTimeoutMs);
+@@ -241,7 +389,11 @@ async function probeIn(given: string, options: SpawnCheckOptions): Promise<Probe
+   const secondRead = readRun(second);
+   if (!secondRead.ok) return no(`a file with a syntax error: ${secondRead.reason}`);
+   const hit = secondRead.diagnostics.some(
+-    d => d.category === "error" && d.path !== undefined && nameOfPrinted(directory, directory, d.path) === "/bad.ts",
++    d =>
++      d.category === "error" &&
++      !isRuleReport(d) &&
++      d.path !== undefined &&
++      nameOfPrinted(directory, directory, d.path) === "/bad.ts",
+   );
+   if (!hit) return no(`a file with a syntax error gave no error in it (exit code ${second.exitCode})`);
+   return { ok: true, reason: "" };
+@@ -264,11 +416,10 @@ export async function probe(options: SpawnCheckOptions): Promise<ProbeResult> {
+ export function createSpawnCheck(options: SpawnCheckOptions): Check {
+   const command = [...options.command];
+   const env = spawnEnvironment(options.env);
+-  const ignoreRules = [...(options.ignoreRules ?? [])];
+   const unavailable = (reason: string): CheckResult => ({ diagnostics: [], unavailable: reason });
+   let probed: Promise<ProbeResult> | undefined;
+   return async (input, signal) => {
+-    const verdict = await (probed ??= probe({ ...options, command, env }));
++    const verdict = options.probed ?? (await (probed ??= probe({ ...options, command, env })));
+     if (!verdict.ok) return unavailable(`the command is no linter: ${verdict.reason}`);
+     if (input.root === undefined) return unavailable("the run wrote no file for the command to read");
+     // With its links resolved the root has the spelling of the current directory of the command, which prints an operand relative to it.
+@@ -278,9 +429,6 @@ export function createSpawnCheck(options: SpawnCheckOptions): Check {
+     const operands = input.rootFiles.map(name => toRealPath(root, getNormalizedAbsolutePath(name, currentDirectory)));
+     if (operands.length === 0) return unavailable("the instance has no file of a program to be an operand");
+     const cwd = physical(toRealPath(root, currentDirectory));
+-    const read = readRun(await spawnCommand([...command, "--lint", ...operands], cwd, env, signal));
+-    // A signal, an exit without a list of diagnostics and a text of no known form are a crash of the instance.
+-    if (!read.ok) throw new Error(read.reason);
+-    return toCheckResult(read.diagnostics, root, cwd, ignoreRules);
++    return resultOfRun(await spawnCommand([...command, "--lint", ...operands], cwd, env, signal), root, cwd);
+   };
+ }
+diff --git a/test/cli/lint/conformance/runner/expectations.ts b/test/cli/lint/conformance/runner/expectations.ts
+index 9e75f90bfb..9530d373cf 100644
+--- a/test/cli/lint/conformance/runner/expectations.ts
++++ b/test/cli/lint/conformance/runner/expectations.ts
+@@ -4,7 +4,7 @@ import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
+ import { utf8String } from "./gostrings";
+ import type { Outcome } from "./run";
+ 
+-// What a pass compared: every byte of the baseline, or its first section alone.
++// What a pass compared: every byte of the baseline, or its first section alone. The plain format of a command holds the first section and no more, so the lists of the default check record "first-section".
+ export type Level = "baseline" | "first-section";
+ // The list of an instance. E: its oracle has errors. C: its oracle has none.
+ export type Kind = "E" | "C";
+diff --git a/test/cli/lint/conformance/runner/run.ts b/test/cli/lint/conformance/runner/run.ts
+index d3d6efcb32..52a3221499 100644
+--- a/test/cli/lint/conformance/runner/run.ts
++++ b/test/cli/lint/conformance/runner/run.ts
+@@ -16,6 +16,7 @@ import {
+   getErrorBaseline,
+   removeTestPathPrefixes,
+ } from "./error_baseline";
++import type { Level } from "./expectations";
+ import { readErrorBaseline } from "./reader";
+ import { type Diagnostic, type InputFile, toErrorBaseline, toWriterInput } from "./shape";
+ 
+@@ -65,6 +66,31 @@ export interface CheckInput {
+   options: Readonly<Record<string, string>>;
+ }
+ 
++// What a command that died left: the outcome is "crash", and a report of its death is written from this alone.
++export interface Death {
++  // Null: a signal ended the command.
++  exitCode: number | null;
++  // The name of the signal, or its number where it has no name. Null: the command ended by itself.
++  signal: string | number | null;
++  // What the command wrote, with the names of the instance for its real paths: of a long text the first 5,000 and the last 3,000 characters.
++  stderr: string;
++  stdout: string;
++}
++
++// The outcomes that a check may find by itself. A pass is found by the comparison with the oracle and by nothing else.
++export const verdictOutcomes = ["fail", "unsupported", "crash"] as const;
++
++// What a check found without a comparison of diagnostics.
++export interface Verdict {
++  outcome: (typeof verdictOutcomes)[number];
++  // A word or two that every instance of the kind shares: the key of a count.
++  cause: string;
++  // One line.
++  reason: string;
++  // With "crash": the command of the check died.
++  death?: Death;
++}
++
+ export interface CheckResult {
+   // A start and a length count UTF-8 bytes of the text of the unit.
+   diagnostics: Diagnostic[];
+@@ -72,6 +98,12 @@ export interface CheckResult {
+   standIns?: string[];
+   // Why the check cannot check the instance.
+   unavailable?: string;
++  // The outcome that the check found by itself: the diagnostics are not compared.
++  verdict?: Verdict;
++  // What the check holds that no baseline can hold, by the name that it has for a code, and how many: "syntax", "unsupported-extension". A check that has one gives a verdict.
++  named?: Record<string, number>;
++  // The reports of lint rules that the check left out of the diagnostics: the name of each rule and how many.
++  rules?: Record<string, number>;
+ }
+ 
+ // The signal is aborted when the time limit is reached: a check that starts a process ends it with the signal.
+@@ -90,8 +122,20 @@ export interface RunResult {
+   // The baseline of the diagnostics, when it differs from the oracle.
+   actual?: Uint8Array;
+   standIns?: string[];
+-  // True: the first section equals the oracle's and the baseline does not. It is reported apart and is never a pass.
++  // What the outcome compared. A pass at "first-section" compared the first section of the baseline and nothing after it; any other outcome has the level that the run asked for.
++  level: Level;
++  // True: the first section equals the oracle's, and the rest of the baseline does not or was not compared. It is a pass at the level "first-section" and at no other.
+   headerOnly?: boolean;
++  // A word or two that every instance with this kind of reason shares: the key of a count. Absent for a pass and a skip.
++  cause?: string;
++  // The command of the check died. A crash without it is a fault of the check function or of the runner.
++  death?: Death;
++  // Of a crash and of a timeout: the file names of the program that the check was given, and its current directory, as the instance names them.
++  program?: { rootFiles: string[]; currentDirectory: string };
++  // What the check held that no baseline can hold, by the name that it had for a code, and how many: the instance failed for it.
++  named?: Record<string, number>;
++  // The reports of lint rules that were left out of the comparison: the name of each rule and how many. An instance without errors that passes and has none printed nothing.
++  rules?: Record<string, number>;
+ }
+ 
+ export interface RunOptions {
+@@ -104,13 +148,16 @@ export interface RunOptions {
+   concurrency?: number;
+   // Time for the check of one instance. Absent: 30 seconds.
+   timeoutMs?: number;
++  // What passes an instance with errors. Absent: "baseline", every byte. "first-section": the first section of the baseline, which is all that the plain format of a command holds: code, line, column, text and chain of every diagnostic, in order.
++  level?: Level;
+   // Directory below which each instance is written before its check and removed after it. Absent: no file is written.
+   directory?: string;
+   // Called once for each instance when its outcome is known; what it throws is thrown after the last instance.
+   onResult?(result: RunResult): void;
+ }
+ 
+-type Ending = Omit<RunResult, "instance">;
++// The level is there where the comparison passed an instance with errors: the run fills in the one that it asked for.
++type Ending = Omit<RunResult, "instance" | "level"> & { level?: Level };
+ 
+ // The oracle is the output of typescript-go, whichever project holds the file.
+ const rules = tsgoRules;
+@@ -220,9 +267,10 @@ function topOf(sorted: WriterDiagnostic[], pretty: boolean): Uint8Array {
+ }
+ 
+ // error_baseline.go DoErrorBaseline and baseline.go writeComparison: no diagnostic and no baseline, or the same bytes.
+-function compare(input: CheckInput, diagnostics: Diagnostic[], oracle: RunOptions["oracle"]): Ending {
++function compare(input: CheckInput, diagnostics: Diagnostic[], oracle: RunOptions["oracle"], level: Level): Ending {
+   // The reference fails a test with a diagnostic of the code -1, whatever its baseline is.
+-  if (diagnostics.some(d => d?.code === -1)) return { outcome: "fail", reason: "a diagnostic has the code -1" };
++  if (diagnostics.some(d => d?.code === -1))
++    return { outcome: "fail", cause: "code -1", reason: "a diagnostic has the code -1" };
+   const oracleClass = input.instance.oracle?.class;
+   if (oracleClass === "C") {
+     if (diagnostics.length === 0) return { outcome: "pass", reason: "" };
+@@ -230,16 +278,19 @@ function compare(input: CheckInput, diagnostics: Diagnostic[], oracle: RunOption
+     const label = `TS${first?.code}: ${textOf(first?.messageText)}`;
+     return {
+       outcome: "fail",
++      cause: "diagnostics",
+       reason: `${diagnostics.length} diagnostics where the oracle has none, the first is ${label}`,
+     };
+   }
+-  if (oracleClass !== "E") return { outcome: "unsupported", reason: "the instance has no oracle" };
+-  if (diagnostics.length === 0) return { outcome: "fail", reason: "no diagnostic where the oracle has a baseline" };
++  if (oracleClass !== "E") return { outcome: "unsupported", cause: "no oracle", reason: "the instance has no oracle" };
++  if (diagnostics.length === 0) {
++    return { outcome: "fail", cause: "nothing", reason: "no diagnostic where the oracle has a baseline" };
++  }
+   let expected: Uint8Array;
+   try {
+     expected = oracle(input.instance);
+   } catch (error) {
+-    return { outcome: "crash", reason: `the oracle cannot be read: ${textOf(error)}` };
++    return { outcome: "crash", cause: "oracle", reason: `the oracle cannot be read: ${textOf(error)}` };
+   }
+   const pretty = isPretty(input.options);
+   try {
+@@ -249,31 +300,61 @@ function compare(input: CheckInput, diagnostics: Diagnostic[], oracle: RunOption
+     if (!whole) {
+       const needs = "a baseline needs the lengths and the related information";
+       // The first section of the pretty form shows the lengths.
+-      if (pretty) return { outcome: "fail", reason: needs, headerOnly: false };
++      if (pretty) return { outcome: "fail", cause: "lengths", reason: needs, headerOnly: false };
+       const top = topOf(written.diagnostics.slice().sort(compareByStart), false);
+       if (startsWith(expected, top)) {
+-        return { outcome: "fail", reason: `the first section is the oracle's; ${needs}`, headerOnly: true };
++        if (level === "first-section") return { outcome: "pass", reason: "", level, headerOnly: true };
++        const reason = `the first section is the oracle's; ${needs}`;
++        return { outcome: "fail", cause: "lengths", reason, headerOnly: true };
+       }
+-      return { outcome: "fail", ...difference("the first section", expected, top), headerOnly: false };
++      return {
++        outcome: "fail",
++        cause: "first section",
++        ...difference("the first section", expected, top),
++        headerOnly: false,
++      };
+     }
+     const result = getErrorBaseline(rules, written.files, written.diagnostics, pretty);
+     const actual = model.toBytes(result.text);
+     // A failed check of the writer fails the test of the reference, whatever text it wrote.
+     const refused = result.failedChecks.length > 0;
+-    if (!refused && equalBytes(actual, expected)) return { outcome: "pass", reason: "" };
++    if (!refused && equalBytes(actual, expected)) return { outcome: "pass", reason: "", level: "baseline" };
+     const sorted = written.diagnostics.slice().sort((a, b) => compareDiagnostics(rules, a, b));
+     const headerOnly = startsWith(expected, topOf(sorted, pretty));
+     if (refused) {
+-      return { outcome: "fail", reason: `the writer: ${shown(result.failedChecks.join("; "))}`, actual, headerOnly };
++      const reason = `the writer: ${shown(result.failedChecks.join("; "))}`;
++      return { outcome: "fail", cause: "writer", reason, actual, headerOnly };
+     }
+-    return { outcome: "fail", ...difference("the baseline", expected, actual), actual, headerOnly };
++    if (headerOnly && level === "first-section") return { outcome: "pass", reason: "", level, headerOnly };
++    return { outcome: "fail", cause: "baseline", ...difference("the baseline", expected, actual), actual, headerOnly };
+   } catch (error) {
+     // A panic of the writer of the reference fails its test; its text is in the model of the rules.
+-    if (error instanceof WriterPanic) return { outcome: "fail", reason: `the writer: ${textOf(shown(error.message))}` };
+-    return { outcome: "fail", reason: `the diagnostics do not make a baseline: ${textOf(error)}` };
++    if (error instanceof WriterPanic) {
++      return { outcome: "fail", cause: "writer", reason: `the writer: ${textOf(shown(error.message))}` };
++    }
++    return { outcome: "fail", cause: "writer", reason: `the diagnostics do not make a baseline: ${textOf(error)}` };
+   }
+ }
+ 
++// The counts of a check by name; undefined where there is none.
++function countsOf(value: unknown): Record<string, number> | undefined {
++  if (typeof value !== "object" || value === null) return undefined;
++  const counts = Object.entries(value).filter(([, n]) => typeof n === "number" && n > 0);
++  return counts.length === 0 ? undefined : Object.fromEntries(counts);
++}
++
++// The evidence of a verdict as plain data; undefined where the check gave none.
++function deathOf(value: unknown): Death | undefined {
++  if (typeof value !== "object" || value === null) return undefined;
++  const { exitCode, signal, stderr, stdout } = value as Partial<Death>;
++  return {
++    exitCode: typeof exitCode === "number" ? exitCode : null,
++    signal: typeof signal === "number" || typeof signal === "string" ? signal : null,
++    stderr: typeof stderr === "string" ? stderr : "",
++    stdout: typeof stdout === "string" ? stdout : "",
++  };
++}
++
+ type Ended = { how: "returned"; value: unknown } | { how: "threw"; error: unknown } | { how: "timeout" };
+ 
+ // No timer comes while the call of the check holds the thread, so the call is timed by itself. Nothing is measured after the check has ended: other instances in flight hold the thread then, and that time is not the check's.
+@@ -315,35 +396,59 @@ async function attempt(instance: Instance, check: Check, options: RunOptions): P
+     try {
+       built = options.input(instance, root);
+     } catch (error) {
+-      return { outcome: "crash", reason: `the input of the check cannot be built: ${textOf(error)}` };
++      return { outcome: "crash", cause: "input", reason: `the input of the check cannot be built: ${textOf(error)}` };
+     }
+-    if (!built.ok) return { outcome: "unsupported", reason: built.reason };
++    if (!built.ok) return { outcome: "unsupported", cause: "layout", reason: built.reason };
+     const input: CheckInput = { instance, root, ...built.input };
+     const wanted = options.timeoutMs;
+     const timeoutMs =
+       wanted !== undefined && wanted > 0 ? Math.min(Math.ceil(wanted), longestTimeoutMs) : defaultTimeoutMs;
+     const ended = await callWithLimit(check, input, timeoutMs);
++    // What a report of a death or of a hang names: the check got these files, whatever it made of them.
++    const program = { rootFiles: input.rootFiles, currentDirectory: input.currentDirectory };
+     if (ended.how === "timeout") {
+-      return { outcome: "timeout", reason: `the check did not end within ${timeoutMs} ms` };
++      const reason = `the check did not end within ${timeoutMs} ms`;
++      return { outcome: "timeout", cause: "timeout", reason, program };
++    }
++    if (ended.how === "threw") {
++      return { outcome: "crash", cause: "check threw", reason: `the check threw: ${textOf(ended.error)}`, program };
+     }
+-    if (ended.how === "threw") return { outcome: "crash", reason: `the check threw: ${textOf(ended.error)}` };
+     const value = ended.value as Partial<CheckResult> | null | undefined;
+     if (typeof value !== "object" || value === null) {
+-      return { outcome: "crash", reason: "the check returned no result" };
++      return { outcome: "crash", cause: "check result", reason: "the check returned no result" };
+     }
+     const unavailable: unknown = value.unavailable;
+     if (unavailable !== undefined && unavailable !== null && unavailable !== false) {
+-      return { outcome: "unavailable", reason: textOf(unavailable) };
++      return { outcome: "unavailable", cause: "unavailable", reason: textOf(unavailable) };
++    }
++    const standIns = Array.isArray(value.standIns) ? value.standIns.map(name => textOf(name)) : [];
++    const named = countsOf(value.named);
++    const more = { standIns: standIns.length > 0 ? standIns : undefined, named, rules: countsOf(value.rules) };
++    const verdict: unknown = value.verdict;
++    if (verdict !== undefined && verdict !== null) {
++      const { outcome, cause, reason, death } = verdict as Partial<Verdict>;
++      // A check never says that an instance passes.
++      if (!verdictOutcomes.includes(outcome as Verdict["outcome"])) {
++        return { outcome: "crash", cause: "check result", reason: "the check returned a verdict of no known outcome" };
++      }
++      const found: Ending = { outcome: outcome!, cause: textOf(cause), reason: textOf(reason), ...more };
++      if (outcome === "crash") Object.assign(found, { death: deathOf(death), program });
++      return found;
+     }
+     if (!Array.isArray(value.diagnostics)) {
+-      return { outcome: "crash", reason: "the check returned no list of diagnostics" };
++      return { outcome: "crash", cause: "check result", reason: "the check returned no list of diagnostics" };
++    }
++    // What no baseline can hold fails the instance before any comparison, with or without a verdict of the check.
++    if (named !== undefined) {
++      const reason = `the check holds what no baseline can hold: ${Object.keys(named).join(", ")}`;
++      return { outcome: "fail", cause: "named", reason, ...more };
+     }
+-    const standIns = Array.isArray(value.standIns) ? value.standIns.map(name => textOf(name)) : [];
+     if (standIns.length > 0) {
+       const names = standIns.slice(0, 5).join(", ") + (standIns.length > 5 ? ", ..." : "");
+-      return { outcome: "provisional", reason: `the check reached ${standIns.length} stand-ins: ${names}`, standIns };
++      const reason = `the check reached ${standIns.length} stand-ins: ${names}`;
++      return { outcome: "provisional", cause: "stand-ins", reason, ...more };
+     }
+-    return compare(input, value.diagnostics, options.oracle);
++    return { ...compare(input, value.diagnostics, options.oracle, levelOf(options)), rules: more.rules };
+   } finally {
+     if (root !== undefined) {
+       try {
+@@ -353,15 +458,20 @@ async function attempt(instance: Instance, check: Check, options: RunOptions): P
+   }
+ }
+ 
++// The level that a run asks for: every byte of the baseline unless the first section is named.
++function levelOf(options: RunOptions): Level {
++  return options.level === "first-section" ? "first-section" : "baseline";
++}
++
+ // One instance through the check and the comparison. It never throws: what goes wrong is the outcome.
+ export async function runInstance(instance: Instance, check: Check, options: RunOptions): Promise<RunResult> {
+   let ending: Ending;
+   try {
+     ending = await attempt(instance, check, options);
+   } catch (error) {
+-    ending = { outcome: "crash", reason: `the runner threw: ${textOf(error)}` };
++    ending = { outcome: "crash", cause: "runner threw", reason: `the runner threw: ${textOf(error)}` };
+   }
+-  return { instance, ...ending };
++  return { instance, ...ending, level: ending.level ?? levelOf(options) };
+ }
+ 
+ // One batch: at most `concurrency` checks are in flight, and the results are in the order of the instances.

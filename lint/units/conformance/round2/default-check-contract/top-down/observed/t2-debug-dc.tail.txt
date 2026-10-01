@@ -1,0 +1,8 @@
+(pass) default check > never equal to an oracle without errors: a stand-in [2979.89ms]
+(pass) expectations.json > records the level that the default check reaches [4.97ms]
+
+ 41 pass
+ 86 filtered out
+ 0 fail
+ 44 expect() calls
+Ran 41 tests across 1 file. [21.62s]

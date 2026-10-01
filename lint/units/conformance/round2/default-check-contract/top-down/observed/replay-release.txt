@@ -1,0 +1,48 @@
+instances 12797, level asked first-section
+    93 C crash [check threw] level=first-section
+    27 C fail [syntax] level=first-section
+  5650 C pass level=first-section
+    93 E crash [check threw] level=first-section
+  5628 E fail [nothing] level=first-section
+     7 E fail [syntax warning] level=first-section
+  1292 E fail [syntax] level=first-section
+     7 E fail [unsupported-extension] level=first-section
+guard {"silent":5649,"rulesAlone":1,"warningsAlone":0}
+  named C syntax: 41 lines in 27 instances
+  named E syntax: 3527 lines in 1299 instances
+  named E unsupported-extension: 11 lines in 7 instances
+  rules C no-empty-pattern: 1 lines in 1 instances
+  rules E no-debugger: 1 lines in 1 instances
+  rules E no-self-assign: 3 lines in 1 instances
+{
+ "compiler": {
+  "run": 6282,
+  "result": 6203,
+  "C pass": 3040,
+  "E fail": 3154,
+  "E syntax": 445,
+  "C crash": 46,
+  "E crash": 33,
+  "C fail": 9,
+  "C syntax": 9
+ },
+ "conformance": {
+  "run": 6515,
+  "result": 6408,
+  "C pass": 2610,
+  "E fail": 3780,
+  "E syntax": 847,
+  "C fail": 18,
+  "C syntax": 18,
+  "E syntax warning": 7,
+  "E crash": 60,
+  "C crash": 47
+ }
+}
+E privateNameAccessors.ts: the parser of the command warns and reports no error, and the reference has no such warning: /.src/privateNameAccessors.ts(9,14): warning syntax: Writing to getter-only property "#roProp" will throw
+E privateNameMethodAssignment.ts: the parser of the command warns and reports no error, and the reference has no such warning: /.src/privateNameMethodAssignment.ts(4,14): warning syntax: Writing to read-only method "#method" will throw, and 4 more
+E privateNameReadonly.ts: the parser of the command warns and reports no error, and the reference has no such warning: /.src/privateNameReadonly.ts(4,14): warning syntax: Writing to read-only method "#bar" will throw
+E privateNameSetterNoGetter.ts: the parser of the command warns and reports no error, and the reference has no such warning: /.src/privateNameSetterNoGetter.ts(4,14): warning syntax: Reading from setter-only property "#x" will throw
+E privateNameStaticAccessors.ts: the parser of the command warns and reports no error, and the reference has no such warning: /.src/privateNameStaticAccessors.ts(9,12): warning syntax: Writing to getter-only property "#roProp" will throw
+E privateNameStaticMethodAssignment.ts: the parser of the command warns and reports no error, and the reference has no such warning: /.src/privateNameStaticMethodAssignment.ts(4,12): warning syntax: Writing to read-only method "#method" will throw, and 4 more
+E privateWriteOnlyAccessorRead.ts: the parser of the command warns and reports no error, and the reference has no such warning: /.src/privateWriteOnlyAccessorRead.ts(9,22): warning syntax: Reading from setter-only property "#value" will throw, and 7 more

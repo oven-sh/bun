@@ -1,0 +1,11 @@
+  5649 C exit 0 :: (nothing) 
+     1 C exit 2 :: error rule:no-empty-pattern    e.g. declarationEmitClassSetAccessorParamNameInJs2.ts
+    27 C exit 2 :: error syntax    e.g. continueTarget3.ts, duplicateVarAndImport.ts, elidedEmbeddedStatementsReplacedWithSemicolon.ts, fileWithNextLine2.ts, isolatedModulesSketchyAliasLocalMerge(isolatedmodules=false,verbatimmodulesyntax=false).ts, sourceMap-LineBreaks(target=es2015).ts, strictModeEnumMemberNameReserved.ts, symbolMergeValueAndImportedType.ts
+    93 C notLaid 
+  5626 E exit 0 :: (nothing) 
+     7 E exit 0 :: warning syntax    e.g. privateNameAccessors.ts, privateNameMethodAssignment.ts, privateNameReadonly.ts, privateNameSetterNoGetter.ts, privateNameStaticAccessors.ts, privateNameStaticMethodAssignment.ts, privateWriteOnlyAccessorRead.ts
+     1 E exit 2 :: error rule:no-debugger    e.g. typedefOnStatements.ts
+     1 E exit 2 :: error rule:no-self-assign    e.g. jsdocTypeTagCast.ts
+  1292 E exit 2 :: error syntax 
+     7 E exit 2 :: error unsupported-extension (no file)    e.g. jsFileCompilationWithMapFileAsJs.ts, jsFileCompilationWithMapFileAsJsWithInlineSourceMap.ts, jsFileCompilationWithMapFileAsJsWithOutDir.ts, bundlerImportTsExtensions(allowimportingtsextensions=false,noemit=false).ts, bundlerImportTsExtensions(allowimportingtsextensions=false,noemit=true).ts, bundlerImportTsExtensions(allowimportingtsextensions=true,noemit=false).ts, bundlerImportTsExtensions(allowimportingtsextensions=true,noemit=true).ts
+    93 E notLaid 

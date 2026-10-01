@@ -1,0 +1,19 @@
+laid out 12611
+   366 C has a JavaScript root
+   644 C more than one root
+    93 C not laid out
+    21 C only declaration roots: exit 0, stderr empty
+   214 C some declaration roots
+   574 E has a JavaScript root
+     7 E has a root without a loader
+   862 E more than one root
+    93 E not laid out
+    41 E only declaration roots: exit 0, stderr empty
+   259 E some declaration roots
+jsFileCompilationWithMapFileAsJs.ts: /.src/b.js.map
+jsFileCompilationWithMapFileAsJsWithInlineSourceMap.ts: /.src/b.js.map
+jsFileCompilationWithMapFileAsJsWithOutDir.ts: /.src/b.js.map
+bundlerImportTsExtensions(allowimportingtsextensions=false,noemit=false).ts: /project/e /project/e.txt
+bundlerImportTsExtensions(allowimportingtsextensions=false,noemit=true).ts: /project/e /project/e.txt
+bundlerImportTsExtensions(allowimportingtsextensions=true,noemit=false).ts: /project/e /project/e.txt
+bundlerImportTsExtensions(allowimportingtsextensions=true,noemit=true).ts: /project/e /project/e.txt

@@ -50,3 +50,9 @@ A fixture, once a rule is in a build (the tool is the one of rules-statements; T
 node ../../rules-statements/oracle/make-fixture.cjs <rule> --bun /workspace/wt/cli/build/debug/bun-debug \
   --out /workspace/wt/cli/test/cli/lint/rules/<rule>.json cases/extract-<rule>.json cases/edge-literals.json cases/edge-calls.json \
   answers/cross-lists.jsonl answers/cross-existing-fixtures.jsonl
+proto/d3-plan.cjs [--show] <list>... what the four rules on calls are planned to say before D4: ESLint's own rule code with the three
+                                     readers of scopes replaced by the plan (a name is the global when nothing in the file declares it;
+                                     the calls whose callee passes `RegExp` or `globalThis.RegExp` through, no variable; no static value
+                                     of a declared name, an array, an object, a call). answers/d3-plan.txt: ESLint's own cases 48/49,
+                                     72/73, 187/190, 178/183 the same (1 missing; 1 extra and 1 missing; 3 missing); edge-calls 91/113
+                                     (7 aliases, 6 writes, 7 names of another scope, 1 array, 1 switch); ts-calls 49/55; edge-literals 83/83.

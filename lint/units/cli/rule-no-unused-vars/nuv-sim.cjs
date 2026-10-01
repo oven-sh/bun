@@ -5,7 +5,8 @@
 // (no parent pointer is followed): assign target, logical operator, update operand, unused value, in a loop,
 // the for-in/of exception, and where the references of the right side end. Of a function: whether it is a setter, and
 // the number of references that existed when the node that decides "storable" was entered.
-// usage: node nuv-sim.cjs [--type script|module|commonjs] [--show N] <file.js | cases.json | --code "...">...
+// usage: node nuv-sim.cjs [--type script|module|commonjs] [--show N] [--source-order] <file.js | cases.json | --code "..." | --list files.txt>...
+//   --source-order: the experiment that numbers the references by where they stand instead of by when the Referencer made them.
 //   a .json is [{code, ext?, sourceType?}] or ["code"]; every case runs as each source type that parses unless --type.
 "use strict";
 const fs = require("fs");
@@ -196,7 +197,22 @@ const linter = new Linter({ configType: "flat" });
 let current = null;
 const simRule = {
 	create(context) {
-		return { "Program:exit"(ast) { current = unusedVars(context.sourceCode.scopeManager, ast, collectFacts(ast, context.sourceCode.visitorKeys)); } };
+		return { "Program:exit"(ast) {
+			const sm = context.sourceCode.scopeManager;
+			if (SOURCE_ORDER) {
+				// The experiment: references numbered by where they stand, and the two ticks of a node counted from its range.
+				const all = [];
+				for (const scope of sm.scopes) for (const ref of scope.references) all.push(ref);
+				all.sort((a, b) => a.identifier.range[0] - b.identifier.range[0] || a.seq - b.seq);
+				all.forEach((ref, i) => (ref.seq = i));
+				const starts = all.map(r => r.identifier.range[0]);
+				const before = pos => { let lo = 0, hi = starts.length; while (lo < hi) { const mid = (lo + hi) >> 1; if (starts[mid] < pos) lo = mid + 1; else hi = mid; } return lo; };
+				entered = { get: n => before(n.range[0]) };
+				exited = { get: n => before(n.range[1]) };
+				for (const scope of sm.scopes) for (const v of scope.variables) v.references.sort((a, b) => a.seq - b.seq);
+			}
+			current = unusedVars(sm, ast, collectFacts(ast, context.sourceCode.visitorKeys));
+		} };
 	},
 };
 function run(code, sourceType, jsx) {
@@ -214,11 +230,13 @@ function run(code, sourceType, jsx) {
 }
 const args = process.argv.slice(2);
 let only = null, show = 20;
+var SOURCE_ORDER = false;
 const inputs = [];
 while (args.length) {
 	const a = args.shift();
 	if (a === "--type") only = args.shift();
 	else if (a === "--show") show = Number(args.shift());
+	else if (a === "--source-order") SOURCE_ORDER = true;
 	else if (a === "--code") inputs.push({ code: args.shift(), from: "(arg)" });
 	else if (a === "--list") for (const f of fs.readFileSync(args.shift(), "utf8").split("\n").filter(Boolean)) inputs.push({ file: f });
 	else if (a.endsWith(".json")) for (const c of JSON.parse(fs.readFileSync(a, "utf8"))) inputs.push(typeof c === "string" ? { code: c, from: a } : { code: c.code, ext: c.ext, sourceType: c.sourceType, jsx: c.jsx, from: a });

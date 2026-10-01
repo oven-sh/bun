@@ -1,0 +1,8 @@
+(pass) expectations.json > is in the form that the update writes [0.03ms]
+(pass) expectations.json > records the level that the default check reaches
+
+ 15 pass
+ 112 filtered out
+ 0 fail
+ 50 expect() calls
+Ran 15 tests across 1 file. [1496.00ms]

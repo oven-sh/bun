@@ -1,0 +1,8 @@
+(fail) default check > the binary under test: a file without errors passes an instance without errors, and nothing was printed [47.64ms]
+(fail) default check > the binary under test: a syntax error of its parser is a difference from the oracle, and no crash [47.55ms]
+
+ 38 pass
+ 86 filtered out
+ 3 fail
+ 44 expect() calls
+Ran 41 tests across 1 file. [1.67s]

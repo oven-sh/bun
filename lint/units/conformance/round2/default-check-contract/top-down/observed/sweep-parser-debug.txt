@@ -1,0 +1,69 @@
+instances 208: run 185 (E 148, C 37), skipped 23
+      22  skipped: unsupported target ES5
+       1  skipped: alwaysStrict=false is unsupported
+check /workspace/wt/conformance/build/debug/bun-debug --lint
+pass at the level first-section: E 0 of 148, C 36 of 37
+by outcome, E: fail 148
+by outcome, C: pass 36, fail 1
+by cause, E: fail: syntax 91, fail: nothing 57
+by cause, C: fail: syntax 1
+guard: C 36 of 37 have nothing reported; near it: 0 pass with reports of rules alone, 0 have warnings of the parser and no error
+names that are no code of TypeScript and fail an instance, and the instances that had them: syntax 136 in 92
+
+by directory: instances that pass, of those whose oracle has errors (E) and of those whose oracle has none (C)
+  conformance/parser/ecmascript5/ErrorRecovery                             E     0 of 20     C     2 of 2
+  conformance/parser/ecmascript5/ErrorRecovery/AccessibilityAfterStatic    E     0 of 4      C     6 of 6
+  conformance/parser/ecmascript5/ErrorRecovery/ArgumentLists               E     0 of 6      C     0 of 0
+  conformance/parser/ecmascript5/ErrorRecovery/ArrayLiteralExpressions     E     0 of 3      C     0 of 0
+  conformance/parser/ecmascript5/ErrorRecovery/ArrowFunctions              E     0 of 4      C     2 of 2
+  conformance/parser/ecmascript5/ErrorRecovery/Blocks                      E     0 of 3      C     0 of 0
+  conformance/parser/ecmascript5/ErrorRecovery/ClassElements               E     0 of 3      C     0 of 0
+  conformance/parser/ecmascript5/ErrorRecovery/Expressions                 E     0 of 1      C     0 of 0
+  conformance/parser/ecmascript5/ErrorRecovery/ExtendsOrImplementsClauses  E     0 of 6      C     0 of 0
+  conformance/parser/ecmascript5/ErrorRecovery/IfStatements                E     0 of 6      C     0 of 0
+  conformance/parser/ecmascript5/ErrorRecovery/IncompleteMemberVariables   E     0 of 2      C     0 of 0
+  conformance/parser/ecmascript5/ErrorRecovery/LeftShifts                  E     0 of 1      C     0 of 0
+  conformance/parser/ecmascript5/ErrorRecovery/ModuleElements              E     0 of 2      C     0 of 0
+  conformance/parser/ecmascript5/ErrorRecovery/ObjectLiterals              E     0 of 5      C     0 of 0
+  conformance/parser/ecmascript5/ErrorRecovery/ParameterLists              E     0 of 5      C     0 of 0
+  conformance/parser/ecmascript5/ErrorRecovery/SourceUnits                 E     0 of 1      C     0 of 0
+  conformance/parser/ecmascript5/ErrorRecovery/SwitchStatements            E     0 of 2      C     0 of 0
+  conformance/parser/ecmascript5/ErrorRecovery/TypeArgumentLists           E     0 of 2      C     0 of 0
+  conformance/parser/ecmascript5/ErrorRecovery/VariableLists               E     0 of 2      C     4 of 4
+  conformance/parser/ecmascript5/Statements                                E     0 of 53     C     5 of 5
+  conformance/parser/ecmascript5/Statements/BreakStatements                E     0 of 5      C     7 of 7
+  conformance/parser/ecmascript5/Statements/ContinueStatements             E     0 of 8      C     6 of 7
+  conformance/parser/ecmascript5/Statements/LabeledStatements              E     0 of 2      C     2 of 2
+  conformance/parser/ecmascript5/Statements/ReturnStatements               E     0 of 2      C     2 of 2
+
+by diagnostic code: 59 codes; instances that pass, of those whose oracle has the code
+  TS2304       0 of 71
+  TS1005       0 of 29
+  TS1036       0 of 18
+  TS1109       0 of 9
+  TS1128       0 of 8
+  TS1107       0 of 5
+  TS1127       0 of 5
+  TS1097       0 of 4
+  TS1108       0 of 4
+  TS1135       0 of 4
+  TS1184       0 of 4
+  TS7010       0 of 4
+  TS1003       0 of 3
+  TS1009       0 of 3
+  TS1029       0 of 3
+  TS1091       0 of 3
+  TS1123       0 of 3
+  TS1188       0 of 3
+  TS2695       0 of 3
+  TS1039       0 of 2
+  TS1046       0 of 2
+  TS1068       0 of 2
+  TS1101       0 of 2
+  TS1104       0 of 2
+  TS1110       0 of 2
+  and 34 more codes in the report
+
+listed: E 0, C 0; of them run 0, not passing 0
+36 instances pass and may not enter a list: quota 36
+report /tmp/dcc1b/report-parser-debug.json

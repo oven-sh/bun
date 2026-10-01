@@ -1,0 +1,8 @@
+asked baseline: E 7027 in 23 s
+  7012  fail [lengths] level=baseline headerOnly=true
+    14  fail [lengths] level=baseline headerOnly=false
+     1  pass level=baseline
+asked first-section: E 7027 in 5 s
+  7012  pass level=first-section headerOnly=true
+    14  fail [lengths] level=first-section headerOnly=false
+     1  pass level=baseline

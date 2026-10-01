@@ -25,9 +25,11 @@ import {
   listeningServer,
   MYSQL_CLIENT_SSL,
   MYSQL_DEFAULT_CAPABILITIES,
+  mysqlErrPacket,
   mysqlHandshakeV10,
   neverAnsweringServer,
   pgAuthenticationOk,
+  pgErrorResponse,
   pgReadyForQuery,
   pgSSLResponse,
 } from "./wire-frames";
@@ -38,26 +40,36 @@ const drivers = [
 ] as const;
 
 // How each protocol gets to TLS: what the server says first, how long the client's plaintext
-// request for TLS is, and what the server answers it with.
+// request for TLS is, and what the server answers it with. `refusal` turns the client's first
+// message over TLS down.
 const startTls = {
-  postgres: { greeting: undefined, requestLength: 8, answer: pgSSLResponse("S") },
+  postgres: {
+    greeting: undefined,
+    requestLength: 8,
+    answer: pgSSLResponse("S"),
+    refusal: pgErrorResponse({ S: "FATAL", C: "53300", M: "too many connections" }),
+    refusalCode: "ERR_POSTGRES_SERVER_ERROR",
+  },
   mysql: {
     greeting: mysqlHandshakeV10({ capabilities: MYSQL_DEFAULT_CAPABILITIES | MYSQL_CLIENT_SSL }),
     requestLength: 36,
     answer: undefined,
+    refusal: mysqlErrPacket(3, 1040, "08004", "Too many connections"),
+    refusalCode: "ERR_MYSQL_SERVER_ERROR",
   },
 } as const;
 
 /**
  * A server that completes the TLS handshake, takes the client's first message and from then on
- * reads nothing: a close_notify gets no answer. `silent` resolves once it has stopped reading.
+ * reads nothing: a close_notify gets no answer. `silent` resolves once it has stopped reading,
+ * to a function that sends the client `refusal`.
  */
 async function silentAfterFirstMessageTlsServer(name: keyof typeof startTls) {
-  const { greeting, requestLength, answer } = startTls[name];
-  const silent = Promise.withResolvers<void>();
+  const { greeting, requestLength, answer, refusal } = startTls[name];
+  const silent = Promise.withResolvers<() => void>();
   const terminator = tls.createServer(tlsCert, socket => {
     socket.on("error", () => {});
-    socket.once("data", () => silent.resolve());
+    socket.once("data", () => silent.resolve(() => void socket.write(refusal)));
   });
   await new Promise<void>(resolve => terminator.listen(0, "127.0.0.1", resolve));
   const { port, server } = await listeningServer(client => {
@@ -172,46 +184,47 @@ for (const [name, scheme, closedCode, timeoutCode] of drivers) {
 
   // A graceful TLS close waits for the peer's close_notify. A connection that failed does not.
   test.each([
-    ["close()", 0, `await sql.close({ timeout: "0" });`, closedCode],
-    ["the connection timeout", 0.5, "", timeoutCode],
-  ])(
-    `${name}: the process exits after %s of a TLS connection whose peer has gone silent`,
-    async (_, connectionTimeout, act, code) => {
-      const server = await silentAfterFirstMessageTlsServer(name);
-      try {
-        await using proc = Bun.spawn({
-          cmd: [
-            bunExe(),
-            "-e",
-            `
+    ["close()", `await sql.close({ timeout: "0" });`, closedCode],
+    ["the server's refusal", "", startTls[name].refusalCode],
+  ])(`${name}: the process exits after %s of a TLS connection whose peer reads nothing more`, async (_, act, code) => {
+    const server = await silentAfterFirstMessageTlsServer(name);
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
             const sql = new Bun.SQL({
               url: "${scheme}127.0.0.1:${server.port}/db",
               max: 1,
               tls: { rejectUnauthorized: false },
-              connectionTimeout: ${connectionTimeout},
+              connectionTimeout: 0,
             });
             const query = sql\`SELECT 1\`.catch(err => err.code);
-            // The peer has gone silent.
+            // The peer reads nothing more.
             await Bun.stdin.text();
             ${act}
             console.log(await query);
             `,
-          ],
-          env: bunEnv,
-          stdin: "pipe",
-          stdout: "pipe",
-          stderr: "inherit",
-        });
-        await server.silent;
-        proc.stdin.end();
-        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-        expect(stdout).toBe(code + "\n");
-        expect(exitCode).toBe(0);
-      } finally {
-        server.close();
-      }
-    },
-  );
+        ],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const refuse = await server.silent;
+      if (!act) refuse();
+      proc.stdin.end();
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect({ stdout, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: code + "\n",
+        exitCode: 0,
+        signalCode: null,
+      });
+    } finally {
+      server.close();
+    }
+  });
 }
 
 // https://github.com/oven-sh/bun/issues/39940

@@ -596,11 +596,11 @@ describe.concurrent("bun test --isolate", () => {
       client: "RedisClient",
       greeting: Buffer.from("+OK\r\n"),
       leak: `
-        const dial = () =>
-          new Bun.RedisClient("redis://127.0.0.1:" + port, { autoReconnect: false, connectionTimeout: timeout });
+        const dial = (options = {}) =>
+          new Bun.RedisClient("redis://127.0.0.1:" + port, { autoReconnect: false, ...options });
         const first = dial();
         first.onclose = () => {
-          dial().connect().catch(() => {});
+          dial({ connectionTimeout: timeout }).connect().catch(() => {});
         };
         await first.connect();
       `,
@@ -609,14 +609,11 @@ describe.concurrent("bun test --isolate", () => {
       client: "SQL",
       greeting: Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]),
       leak: `
-        const sql = new Bun.SQL({
-          url: "postgres://u@127.0.0.1:" + port + "/db",
-          max: 1,
-          connectionTimeout: timeout / 1000,
-        });
-        await sql.connect();
-        const poll = () => void sql\`select 1\`.then(poll, poll);
-        poll();
+        const pool = (options = {}) => new Bun.SQL({ url: "postgres://u@127.0.0.1:" + port + "/db", max: 1, ...options });
+        const first = pool();
+        await first.connect();
+        // Never answered: rejected when the swap closes its connection.
+        first\`select 1\`.catch(() => pool({ connectionTimeout: timeout / 1000 })\`select 1\`.catch(() => {}));
       `,
     },
   ])(
@@ -624,6 +621,7 @@ describe.concurrent("bun test --isolate", () => {
     async ({ greeting, leak }) => {
       const shared = `
       const port = Number(process.env.PORT!);
+      // Of the dial the close handler makes only: nothing that has to succeed is timed.
       const timeout = 200;
     `;
       using dir = tempDir("isolate-redial", {

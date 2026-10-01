@@ -552,6 +552,20 @@ impl<'s, 'a> Checker<'s, 'a> {
                 _ => break,
             };
         }
+        // The leaf of the left spine is the first token of the operand: one that starts no left-hand side expression is reported there.
+        let is_postfix_leaf = matches!(&node.data, ExprData::EUnary(e) if is_postfix(e.op));
+        if !is_postfix_leaf && self.ends_the_chain(&node) {
+            match offset(node.loc).and_then(|at| self.token_at(at)) {
+                Some(mut token) => {
+                    if matches!(node.data, ExprData::EJsxElement(_)) {
+                        token.end = token.start + 1;
+                    }
+                    self.keep(Self::at_token(&token, Report::ExpressionExpected, id));
+                }
+                None => self.keep(Self::at_node(id, Report::ExpressionExpected)),
+            }
+            return;
+        }
         if let Some(operand) = innermost {
             match self.token_after(&operand) {
                 Some(token) if matches!(token.token, T::TPlusPlus | T::TMinusMinus) => {
@@ -559,20 +573,6 @@ impl<'s, 'a> Checker<'s, 'a> {
                 }
                 _ => self.keep(Self::at_node(id, Report::Ends)),
             }
-            return;
-        }
-        if !self.ends_the_chain(&value) {
-            return;
-        }
-        // The operand starts with a token that starts no left-hand side expression.
-        match offset(value.loc).and_then(|at| self.token_at(at)) {
-            Some(mut token) => {
-                if matches!(value.data, ExprData::EJsxElement(_)) {
-                    token.end = token.start + 1;
-                }
-                self.keep(Self::at_token(&token, Report::ExpressionExpected, id));
-            }
-            None => self.keep(Self::at_node(id, Report::ExpressionExpected)),
         }
     }
 

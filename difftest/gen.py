@@ -116,4 +116,12 @@ case("symlink-under-symlink-name-rev", [L("a/c", "d"), L("a", "b"), F("b/keep")]
 case("symlink-nested-three", [L("x", "y"), L("x/p/q", "r"), L("x/p", "s"), F("ok")])
 case("symlink-only-deep", [L("p/q/r/s/link", "../target"), L("p/other", "q")])
 case("XPRE-symlink-entry-deep-under-symlink", [L("d/e/f/link", "x"), F("ok")], "mkdir -p out victim && ln -s ../victim out/d")
+# --- order of a member and the directory entry of its parent
+case("symlink-member-before-dir-700", [L("d/link", "x"), D("d/", 0o700), F("d/x")])
+case("file-member-before-dir-700", [F("d/x"), D("d/", 0o700)])
+case("symlink-member-only-dir-700-after", [L("p/q/link", "x"), D("p/", 0o700), D("p/q/", 0o700)])
+case("XPRE-dir-entry-over-dangling-symlink", [D("d/"), F("ok")], "mkdir -p out && ln -s ../outside out/d")
+case("XPRE-dir-entry-no-slash-over-dangling-symlink", [D("d"), F("ok")], "mkdir -p out && ln -s ../outside out/d")
+case("XPRE-symlink-entry-over-symlink", [L("l", "new"), F("ok")], "mkdir -p out && ln -s old out/l")
+case("XPRE-hardlink-through-symlink", [F("a/orig", b"orig"), H("d/hard", "a/orig")], "mkdir -p out victim && ln -s ../victim out/d")
 print("cases:", len(os.listdir(ROOT)))

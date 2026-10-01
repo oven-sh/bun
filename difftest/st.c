@@ -25,8 +25,10 @@ static void read_str(pid_t pid, unsigned long addr, char *out, size_t cap) {
   out[n] = 0;
 }
 
+static long n_mkdirat, n_open_dir, n_open_file, n_symlinkat, n_unlinkat, n_fstatat, n_close, n_write, n_failed;
 int main(int argc, char **argv) {
   if (argc < 2) return 2;
+  int summary = getenv("ST_SUMMARY") != NULL;
   pid_t child = fork();
   if (child == 0) {
     ptrace(PTRACE_TRACEME, 0, 0, 0);
@@ -68,15 +70,25 @@ int main(int argc, char **argv) {
         else if (nr == SYS_unlinkat) name = "unlinkat";
         else if (nr == SYS_newfstatat) name = "newfstatat";
         else if (nr == SYS_symlinkat) { name = "symlinkat"; dirfd = (int)regs.rsi; p = regs.rdx; }
+        if (nr == SYS_close) n_close++;
+        if (nr == SYS_write || nr == SYS_pwrite64) n_write++;
         if (name && dirfd != AT_FDCWD) {
-          read_str(pid, p, path, sizeof(path));
           long ret = (long)regs.rax;
+          if (ret < 0) n_failed++;
+          if (nr == SYS_mkdirat) n_mkdirat++;
+          else if (nr == SYS_openat) { if (regs.rdx & (O_PATH | O_DIRECTORY)) n_open_dir++; else n_open_file++; }
+          else if (nr == SYS_symlinkat) n_symlinkat++;
+          else if (nr == SYS_unlinkat) n_unlinkat++;
+          else if (nr == SYS_newfstatat) n_fstatat++;
+          if (summary) goto next;
+          read_str(pid, p, path, sizeof(path));
           if (nr == SYS_openat)
             fprintf(stderr, "ST %s(%d, \"%s\", 0%lo) = %ld\n", name, dirfd, path, (unsigned long)regs.rdx, ret);
           else
             fprintf(stderr, "ST %s(%d, \"%s\") = %ld\n", name, dirfd, path, ret);
         }
       }
+    next:
       in_sys[idx] = !in_sys[idx];
     } else if (sig == SIGTRAP) {
       int ev = status >> 16;
@@ -87,5 +99,7 @@ int main(int argc, char **argv) {
     }
     ptrace(PTRACE_SYSCALL, pid, 0, inject);
   }
+  fprintf(stderr, "STSUM mkdirat=%ld open_dir=%ld open_file=%ld symlinkat=%ld unlinkat=%ld fstatat=%ld failed=%ld | all close=%ld write=%ld\n",
+          n_mkdirat, n_open_dir, n_open_file, n_symlinkat, n_unlinkat, n_fstatat, n_failed, n_close, n_write);
   return exit_code;
 }

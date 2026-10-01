@@ -1577,6 +1577,8 @@ describe("a TLS socket over a Duplex transport follows that transport's teardown
     Bun.gc(true);
     const baseline = nativeSockets();
     const count = 20;
+    // Well under the 10 of each kind, so a leak of every client or of every server wrap fails.
+    const bound = 2;
     await (async () => {
       const closes: Promise<void>[] = [];
       for (let i = 0; i < count; i++) {
@@ -1595,12 +1597,34 @@ describe("a TLS socket over a Duplex transport follows that transport's teardown
       await Promise.all(closes);
     })();
     let alive = count;
-    for (let i = 0; i < 10 && alive > count / 2; i++) {
+    for (let i = 0; i < 10 && alive > bound; i++) {
       await new Promise<void>(resolve => setImmediate(resolve));
       Bun.gc(true);
       alive = nativeSockets() - baseline;
     }
-    expect(alive).toBeLessThanOrEqual(count / 2);
+    expect(alive).toBeLessThanOrEqual(bound);
+  });
+
+  it.each([
+    ["socket", "in the same tick"],
+    ["socket", "after the engine started"],
+    ["transport", "in the same tick"],
+    ["transport", "after the engine started"],
+  ])("the %s is destroyed %s: the destroyed transport gets no end()", async (which, when) => {
+    // Node destroys the transport and never ends it.
+    const transport = makeTransport();
+    let ends = 0;
+    const end = transport.end;
+    transport.end = function (this: Duplex, ...args: Parameters<Duplex["end"]>) {
+      ends++;
+      return end.apply(this, args);
+    } as Duplex["end"];
+    const client = tls.connect({ socket: transport, rejectUnauthorized: false });
+    const teardown = recordTeardown(client);
+    if (when === "after the engine started") await new Promise<void>(resolve => setImmediate(resolve));
+    (which === "socket" ? client : transport).destroy();
+    expect(await teardown).toEqual(["close:false"]);
+    expect({ ends, writableEnded: transport.writableEnded }).toEqual({ ends: 0, writableEnded: false });
   });
 
   it.each(["in the same tick", "after the engine started"])(
@@ -1655,6 +1679,8 @@ describe("a TLS socket over a Duplex transport follows that transport's teardown
       return closed.promise;
     };
     const resetByPeer = ["end", "transport close", "error:ECONNRESET", "close:true"];
+    // The start of a handshake record: an engine that reads it waits for the rest.
+    const partialRecord = Buffer.from([0x16, 0x03, 0x03]);
     // Only the last one runs after the engine exists.
     const timings = {
       "in the same tick": (fn: () => void) => fn(),
@@ -1680,6 +1706,28 @@ describe("a TLS socket over a Duplex transport follows that transport's teardown
         const wrapped = new TLSSocket(transport, serverContext());
         const lifecycle = recordLifecycle(wrapped, transport);
         timings[when](() => finish(transport));
+        expect(await lifecycle).toEqual(["end", "transport close", "close:false"]);
+      });
+
+      it("tls.connect({ socket }) fails with ECONNRESET when bytes come ahead of the EOF", async () => {
+        const transport = makeTransport();
+        const client = tls.connect({ socket: transport, rejectUnauthorized: false });
+        const lifecycle = recordLifecycle(client, transport);
+        timings[when](() => {
+          transport.push(partialRecord);
+          finish(transport);
+        });
+        expect(await lifecycle).toEqual(resetByPeer);
+      });
+
+      it("a server wrap emits 'end' and closes with no error when bytes come ahead of the EOF", async () => {
+        const transport = makeTransport();
+        const wrapped = new TLSSocket(transport, serverContext());
+        const lifecycle = recordLifecycle(wrapped, transport);
+        timings[when](() => {
+          transport.push(partialRecord);
+          finish(transport);
+        });
         expect(await lifecycle).toEqual(["end", "transport close", "close:false"]);
       });
     });
@@ -1999,6 +2047,64 @@ describe("a TLS socket over a Duplex transport reports that transport's error", 
     req.end();
     await closed.promise;
     expect(events).toEqual(["error:transport failed", "close destroyed=true"]);
+  });
+
+  it("what a method or an accessor of the transport throws is reported", async () => {
+    // Out of process: a socket that has closed emits no 'error', so the throw is uncaught, as in node.
+    const script = `
+      const tls = require("node:tls");
+      const { Duplex } = require("node:stream");
+
+      const uncaught = [];
+      process.on("uncaughtException", err => uncaught.push(err.message));
+
+      async function run(method, kind, when) {
+        const transport = new Duplex({ read() {}, write(chunk, encoding, callback) { callback(); } });
+        const name = method + " " + kind;
+        const fail = () => { throw new Error(name); };
+        Object.defineProperty(transport, method, kind === "call" ? { value: fail } : { get: fail });
+        // Only a transport that is still open is ended.
+        transport.destroy = function () { return this; };
+        const socket = tls.connect({ socket: transport, rejectUnauthorized: false });
+        const events = [];
+        const closed = Promise.withResolvers();
+        socket.on("error", err => events.push("error:" + err.message));
+        socket.on("close", hadError => {
+          events.push("close:" + hadError);
+          closed.resolve();
+        });
+        if (when === "after the engine started") await new Promise(resolve => setImmediate(resolve));
+        // The ClientHello is the write that fails, and that destroys the socket.
+        if (method === "end") socket.destroy();
+        await closed.promise;
+        console.log(name + ", " + when + ": " + events.join("|") + " uncaught:" + uncaught.splice(0).join("|"));
+      }
+
+      for (const kind of ["call", "getter"]) {
+        await run("end", kind, "before the engine starts");
+        await run("end", kind, "after the engine started");
+        await run("write", kind, "after the engine started");
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+      stdout: [
+        "end call, before the engine starts: close:false uncaught:end call",
+        "end call, after the engine started: close:false uncaught:end call",
+        "write call, after the engine started: error:write call|close:true uncaught:",
+        "end getter, before the engine starts: close:false uncaught:end getter",
+        "end getter, after the engine started: close:false uncaught:end getter",
+        "write getter, after the engine started: error:write getter|close:true uncaught:",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

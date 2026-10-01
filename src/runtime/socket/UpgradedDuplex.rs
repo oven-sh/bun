@@ -57,8 +57,6 @@ pub(crate) struct UpgradedDuplex {
     /// forever, so stage them here and replay them from
     /// [`Self::drain_pending`] as soon as the engine is up.
     pub pending_data: JsCell<Vec<u8>>,
-    /// The transport's EOF, held until the bytes in [`Self::pending_data`] are delivered.
-    pub pending_end: Cell<bool>,
     /// The transport closed before the TLS engine existed (same window as
     /// [`Self::pending_data`]). Consumed by the queued `StartTLS` task.
     pub pending_close: Cell<bool>,
@@ -253,17 +251,12 @@ impl UpgradedDuplex {
             if data.is_some() && self.transport_eof.get() {
                 return;
             }
-            match duplex.get(&global, "writableEnded") {
-                Ok(Some(ended)) if ended.to_boolean() => return,
-                Ok(_) => {}
-                // Best-effort probe: consume the exception and fall through.
-                Err(err) => drop(global.take_exception(err)),
-            }
-            // Node ends no destroyed stream. A close after the engine started is left as it is.
-            if self.wrapper_ref().is_none() {
-                match duplex.get(&global, "destroyed") {
-                    Ok(Some(destroyed)) if destroyed.to_boolean() => return,
+            // Node ends no destroyed stream.
+            for property in ["writableEnded", "destroyed"] {
+                match duplex.get(&global, property) {
+                    Ok(Some(done)) if done.to_boolean() => return,
                     Ok(_) => {}
+                    // Best-effort probe: consume the exception and fall through.
                     Err(err) => drop(global.take_exception(err)),
                 }
             }
@@ -272,7 +265,11 @@ impl UpgradedDuplex {
         let name = if msg_more { "write" } else { "end" };
         let write_or_end = match duplex.get(&global, name) {
             Ok(Some(f)) if f.is_callable() => f,
-            _ => return,
+            Ok(_) => return,
+            Err(err) => {
+                (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
+                return;
+            }
         };
 
         if let Some(data) = data {
@@ -361,22 +358,6 @@ impl UpgradedDuplex {
                 _ => break,
             }
         }
-        self.drain_pending_end();
-    }
-
-    /// Report the EOF that was held behind the staged bytes.
-    fn drain_pending_end(&self) {
-        if !self.pending_end.get() {
-            return;
-        }
-        self.pending_end.set(false);
-        // A re-entrant teardown during the byte replay above neuters the
-        // engine in place (`teardown()` keeps the Option `Some` but frees the
-        // SSL); do not synthesize an EOF into a dead socket.
-        if self.wrapper_ref().is_none_or(|w| w.ssl.get().is_none()) {
-            return;
-        }
-        (self.handlers.on_end)(self.handlers.ctx);
     }
 
     pub(crate) fn on_timeout(&self) {
@@ -423,7 +404,6 @@ impl UpgradedDuplex {
             )),
             current_timeout: Cell::new(0),
             pending_data: JsCell::new(Vec::new()),
-            pending_end: Cell::new(false),
             pending_close: Cell::new(false),
             transport_eof: Cell::new(false),
         }
@@ -699,7 +679,6 @@ impl UpgradedDuplex {
         }
         self.ssl_error.set(CertError::default());
         self.pending_data.set(Vec::new());
-        self.pending_end.set(false);
         self.pending_close.set(false);
         self.transport_eof.set(false);
     }
@@ -761,10 +740,6 @@ fn on_end(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let this = unsafe { &*self_ptr.cast::<UpgradedDuplex>() };
 
         this.transport_eof.set(true);
-        if this.wrapper_ref().is_none() && !this.pending_data.get().is_empty() {
-            this.pending_end.set(true);
-            return Ok(JSValue::UNDEFINED);
-        }
         // Node's JSStreamSocket reports the EOF inside the transport's 'end' too.
         (this.handlers.on_end)(this.handlers.ctx);
     }

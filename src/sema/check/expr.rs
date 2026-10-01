@@ -978,6 +978,22 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// `checkSatisfiesExpression` reports 1360 as soon as the expression is checked, and the message prints both types. Inside a
+    /// function whose return type is being inferred that can close a circularity.
+    fn print_unsatisfied_types(&mut self, file: FileId, source: TypeId, ty: TypeNodeId) {
+        if !self.stack.iter().any(|q| matches!(q, Query::Return(..))) {
+            return;
+        }
+        let uncertain = self.uncertain;
+        let target = self.type_from_node(file, ty);
+        if self.is_known(source) && self.is_known(target) && !self.is_assignable(source, target) {
+            let mut visited = Vec::new();
+            self.resolve_as_printed(source, 0, &mut visited);
+            self.resolve_as_printed(target, 0, &mut visited);
+        }
+        self.uncertain = uncertain;
+    }
+
     /// `checkElementAccessExpression`: the type of `a[b]` when it is got to, as `getFlowTypeOfAccessExpression` leaves it, and
     /// whether the chain may stop before. `checkIndexedAccessIndexType` has not had its say: 2536, 4105 and 2542 go by this.
     pub(super) fn type_of_element_access_unchecked(
@@ -1271,7 +1287,12 @@ impl<'p> Checker<'p> {
                 let (yes, no) = (self.type_of_expr(file, yes), self.type_of_expr(file, no));
                 self.union_reduced(&[yes, no])
             }
-            ExprKind::Spread(x) | ExprKind::Satisfies { expr: x, .. } => self.type_of_expr(file, x),
+            ExprKind::Spread(x) => self.type_of_expr(file, x),
+            ExprKind::Satisfies { expr: x, ty } => {
+                let source = self.type_of_expr(file, x);
+                self.print_unsatisfied_types(file, source, ty);
+                source
+            }
             ExprKind::AsConst(x) => {
                 let ty = self.type_of_expr(file, x);
                 self.regular(ty)
@@ -2474,8 +2495,16 @@ impl<'p> Checker<'p> {
             let list = self.array_of(TypeId::ANY);
             let is_readonly = is_const
                 && !context.is_some_and(|c| {
-                    self.parts(c).to_vec().into_iter().any(|m| {
-                        !self.is_any(m) && !self.is_nullish(m) && self.is_assignable(m, list)
+                    // `getApparentTypeOfContextualType`: a type variable maps to its constraint, and `someType` tests each member of that.
+                    self.parts(c).iter().any(|&member| {
+                        let apparent = if self.is_deferred(member) {
+                            self.base_constraint(member)
+                        } else {
+                            member
+                        };
+                        self.parts(apparent).iter().any(|&m| {
+                            !self.is_any(m) && !self.is_nullish(m) && self.is_assignable(m, list)
+                        })
                     })
                 });
             let made_before = self.p.types.len();
@@ -3014,17 +3043,26 @@ impl<'p> Checker<'p> {
                     }
                 }
             }
+            let mut source = p;
             if let Some(existing) = shape.props.iter().position(|x| x.name == name) {
-                // A getter and a setter: the getter says what it is.
                 if prop.kind == PropKind::Setter {
-                    continue;
+                    // A getter and a setter: the getter says what it is.
+                    if !shape.props[existing].flags.contains(PropFlags::METHOD) {
+                        continue;
+                    }
+                    // `declareSymbolEx` refuses a method next to an accessor: the last member of the name is the property.
+                    if let Some(getter) =
+                        self.accessor_of_literal(file, props, name, PropKind::Getter)
+                    {
+                        source = getter;
+                    }
                 }
                 shape.props.remove(existing);
             }
             shape.props.push(Prop {
                 name,
                 flags,
-                source: PropSource::Literal(file, p),
+                source: PropSource::Literal(file, source),
                 mapper: MapperId::IDENTITY,
             });
         }
@@ -3140,6 +3178,13 @@ impl<'p> Checker<'p> {
                 let ExprKind::Fn(f) = hir[prop.value].kind else {
                     return TypeId::UNRESOLVED;
                 };
+                // `getTypeOfAccessors`: `getReturnTypeFromBody` of whatever body there is. A block whose `{` is missing returns nothing.
+                if hir[f].flags.contains(Flags::MISSING_BODY)
+                    && hir[f].ret.is_none()
+                    && self.setter_annotation_next_to(file, f).is_none()
+                {
+                    return TypeId::VOID;
+                }
                 self.return_type_of_fn(file, f)
             }
             PropKind::Setter => {
@@ -3228,9 +3273,12 @@ impl<'p> Checker<'p> {
                         self.number_literal(hir.numbers[n as usize], true)
                     }
                     ExprKind::BigInt(text) if is_bare && op == UnOp::Minus => {
+                        // `NewPseudoBigInt`: zero has no sign.
+                        let digits = self.files().atoms.bytes(text);
+                        let negative = !digits.iter().all(|&c| c == b'0' || c == b'n');
                         self.intern(TypeData::BigIntLit {
                             text,
-                            negative: true,
+                            negative,
                             fresh: true,
                         })
                     }

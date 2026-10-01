@@ -55,7 +55,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn pfx_super_without_access(p: &mut Self, super_range: bun_ast::Range) -> PResult<Expr> {
         let loc = super_range.loc;
         let target = p.new_expr(E::Super {}, loc);
-        if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TLessThan {
+        if Self::IS_TYPESCRIPT_ENABLED
+            && p.lexer.token == T::TLessThan
+            && !p.lexer.is_javascript_file()
+        {
             let less_than = p.lexer.loc();
             if p.try_skip_type_script_type_arguments_with_backtracking() {
                 let after_super = bun_ast::Range {
@@ -286,6 +289,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         if p.fn_or_arrow_data_parse.is_top_level {
                             p.top_level_await_keyword = name_range;
+                            // `isAwaitExpression`: to the first parse this `await` is a name, so `reparseTopLevelAwait` parses the statement again.
+                            if p.lexer.tolerant && !Self::pfx_operand_follows_on_same_line(p) {
+                                p.lexer.await_name_seen = true;
+                            }
                         }
 
                         if p.fn_or_arrow_data_parse.track_arrow_arg_errors {
@@ -421,7 +428,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 needs_async_loc: loc,
                 ..Default::default()
             };
-            let arrow_result = p.parse_arrow_body(args, &mut fn_or_arrow_data);
+            let arrow_result = p.parse_arrow_body_with_flags(args, &mut fn_or_arrow_data, flags);
             p.pop_scope();
             return Ok(p.new_expr(arrow_result?, loc));
         }
@@ -846,6 +853,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if p.lexer.tolerant && !p.lexer.is_log_disabled {
                 // `parseDecoratedExpression`: 1109 where the last decorator ends, and a missing declaration.
                 let node_pos = p.lexer.full_start();
+                p.note_stray_decorators(ts_decorators.slice(), node_pos);
                 p.lexer.ts_error(
                     bun_ast::Range {
                         loc: node_pos,
@@ -989,7 +997,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.mark_type_syntax(loc, crate::sema::Mark::TypeArguments, type_arguments);
             }
             // Skip over TypeScript type arguments here if there are any
-            if p.lexer.token == T::TLessThan {
+            if p.lexer.token == T::TLessThan && !p.lexer.is_javascript_file() {
                 let type_arguments = p.lexer.loc();
                 if p.try_skip_type_script_type_arguments_with_backtracking() {
                     p.mark_type_syntax(loc, crate::sema::Mark::TypeArguments, type_arguments);

@@ -576,11 +576,12 @@ fn non_null_type(c: &mut Checker<'_>, ty: TypeId) -> TypeId {
     if c.p.files.options.strict_null_checks && ty == TypeId::UNKNOWN {
         return TypeId::ANY;
     }
-    if !c.some_type(ty, |c, m| c.is_nullish(m)) {
+    // `TypeFactsVoidFacts` has neither `IsUndefined` nor `IsNull`.
+    if !c.some_type(ty, |_, m| m.is_undefined() || m.is_null()) {
         return ty;
     }
     let rest = c.non_nullable(ty);
-    if rest == TypeId::NEVER || c.is_nullish(rest) {
+    if rest == TypeId::NEVER || rest.is_undefined() || rest.is_null() {
         TypeId::ANY
     } else {
         rest

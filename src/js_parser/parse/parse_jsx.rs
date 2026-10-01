@@ -34,8 +34,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if TYPESCRIPT {
             // Pass a flag to the type argument skipper because we need to call
             let type_arguments = p.lexer.loc();
-            // `</` is one token for TypeScript. It opens no type arguments.
+            // `</` is one token for TypeScript. It opens no type arguments. Nor are there any in a JavaScript file
+            // (`parseJsxOpeningOrSelfClosingElementOrOpeningFragment`).
             if !(p.lexer.tolerant && p.lexer.is_less_than_slash())
+                && !p.lexer.is_javascript_file()
                 && p.skip_type_script_type_arguments::<true, false>()?
             {
                 p.mark_type_syntax(loc, crate::sema::Mark::TypeArguments, type_arguments);

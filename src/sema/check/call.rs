@@ -3521,8 +3521,22 @@ impl<'p> Checker<'p> {
             }
             self.infer(&mut inference, spread, rest, 0);
         }
+        // Only the call under way says what is expected of a literal that a generic rest parameter collects
+        // (`getSpreadArgumentType`), and the members of an object literal are not looked at before `getInferredType`.
+        let early = if rest_ty.is_some_and(|rest| self.has_type_variables(rest))
+            && args.iter().enumerate().skip(arg_count).any(|(i, a)| {
+                !is_sensitive[i]
+                    && matches!(a, Arg::Expr(e) if self.is_literal_that_depends_on_context(file, *e))
+            }) {
+            Some(self.inference_mapper(&inference))
+        } else {
+            None
+        };
         self.resolving.pop();
-        let mapper = self.inference_mapper(&inference);
+        let mapper = match early {
+            Some(mapper) => mapper,
+            None => self.inference_mapper(&inference),
+        };
         let sig = self.instantiate_sig(sig, mapper);
         // `getSignatureInstantiation`, with `inferredTypeParameters`
         if !inferred_type_params.is_empty() {
@@ -4702,7 +4716,11 @@ impl<'p> Checker<'p> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         match hir[e].kind {
             ExprKind::Fn(func) => {
-                if hir[func].ret.is_some() || self.contextual_signature(file, func).is_none() {
+                // `NodeCheckFlagsContextChecked` is set before the body is looked at.
+                if hir[func].ret.is_some()
+                    || self.stack.contains(&Query::Return(file, func))
+                    || self.contextual_signature(file, func).is_none()
+                {
                     return;
                 }
                 self.return_type_of_fn(file, func);

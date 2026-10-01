@@ -1659,11 +1659,13 @@ impl<'p> Checker<'p> {
             Origin::Function(sym) => {
                 b.shape.call = self.sigs_of_function_declarations(sym);
                 self.add_namespace_exports(&mut b, sym);
-                // What is assigned to a name declares it only if nothing else does.
-                let bound = self.bound(sym.file);
-                let named = Bound::expandos_of(&bound.declared_fn_expandos, sym.id);
-                let keyed = Bound::expandos_of(&bound.declared_fn_keyed_expandos, sym.id);
-                self.add_all_expandos(&mut b, sym.file, named, keyed);
+                // What is assigned to a name declares it only if nothing else does. `mergeSymbolTable`: every part brings its own.
+                for part in self.files().parts(sym) {
+                    let bound = self.bound(part.file);
+                    let named = Bound::expandos_of(&bound.declared_fn_expandos, part.id);
+                    let keyed = Bound::expandos_of(&bound.declared_fn_keyed_expandos, part.id);
+                    self.add_all_expandos(&mut b, part.file, named, keyed);
+                }
             }
             Origin::EnumObject(sym) => {
                 // A number gives back the name of the member that has it.
@@ -2673,6 +2675,15 @@ impl<'p> Checker<'p> {
         if let Some(cached) = self.p.assigned_prop_types.get(&key) {
             return cached;
         }
+        // `checkCallExpression` checks the descriptor of `Object.defineProperty(f, "name", descriptor)` before anything asks for the
+        // type of `name`: what `reportNonexistentProperty` prints for an access in the descriptor starts the resolution.
+        let in_report = !self.reporting_nonexistent.is_empty()
+            && matches!(self.hir(file)[assignments[0]].kind, ExprKind::Call(_));
+        if in_report
+            && self.stack[self.resolution_start..].contains(&Query::Assigned(file, assignments[0]))
+        {
+            return TypeId::ANY;
+        }
         if !self.enter(Query::Assigned(file, assignments[0])) {
             return if self.came_full_circle {
                 TypeId::ANY
@@ -2680,7 +2691,13 @@ impl<'p> Checker<'p> {
                 TypeId::UNRESOLVED
             };
         }
+        // `checkExpressionCached` has no guard against re-entry: the descriptor is checked again from the start.
+        let resolution_start = self.resolution_start;
+        if in_report {
+            self.resolution_start = self.stack.len() - 1;
+        }
         let ty = self.widened_type_of_assignments(file, name, assignments);
+        self.resolution_start = resolution_start;
         // The last step of `getWidenedTypeForAssignmentDeclaration`: in a JavaScript file an all-nullable type is an implicit `any`.
         let ty = if self.hir(file).is_js && self.is_all_null_or_undefined(ty) {
             TypeId::ANY

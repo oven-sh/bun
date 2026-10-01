@@ -27,7 +27,7 @@ pub(super) fn has_parse_diagnostics(hir: &hir::File) -> bool {
 }
 
 /// Whether `checkGrammarParameterList` objects to the parameters of `func`: 1014 1047 1048, 1015, 1016.
-fn has_parameter_list_error(hir: &hir::File, func: &Func) -> bool {
+pub(super) fn has_parameter_list_error(hir: &hir::File, func: &Func) -> bool {
     let mut seen_optional = false;
     for (i, p) in func.params.iter().enumerate() {
         let param = &hir[p];

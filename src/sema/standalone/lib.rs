@@ -152,7 +152,8 @@ pub fn load_project(config: &str) -> bun_sema::program::Files {
         bun_sema::resolve::Options::from_tsconfig(&disk, config).expect("tsconfig.json");
     options.lib_dir =
         find_lib_dir(config).expect("TypeScript's lib directory (set BUN_SEMA_TS_LIB)");
-    let files = std::mem::take(&mut options.files);
+    // The checker asks `options.files` which files are root files.
+    let files = options.files.clone();
     bun_sema::program::Files::load(&disk, options, &files)
 }
 

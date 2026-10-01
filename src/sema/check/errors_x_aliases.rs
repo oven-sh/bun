@@ -1,5 +1,5 @@
 //! Aliases, what module specifiers lead to, and a few things that are about a file as a whole:
-//! 2303; 18042 18043; 1205 1269 1288 1448 1484 1485 2748 2865; 1379 1380; 2308; 1544;
+//! 2303; 18042 18043; 1205 1269 1288 1293 1448 1484 1485 2748 2865; 2866; 1272; 1379 1380; 2308; 1544;
 //! 6137 6142 2846 5097 2876 2877, 1471 1479 1541 1542; 7036; 1470 17013; 1006; 2578.
 //!
 //! Follows `resolveAlias` with `pushTypeResolution`, `getTargetOfAliasDeclaration` and what it calls, `getSymbolFlags`,
@@ -13,7 +13,7 @@
 
 use super::errors::{Diagnostic, is_close};
 use super::*;
-use crate::bind::{Decl, MemberOwner, Parent, ScopeId, ScopeKind, SymbolId};
+use crate::bind::{ClassOwner, Decl, MemberOwner, Parent, PatParent, ScopeId, ScopeKind, SymbolId};
 use crate::resolve::{JsxEmit, ModuleKind, join, parent_dir};
 use crate::util::FxHashSet;
 
@@ -118,6 +118,9 @@ impl Checker<'_> {
         }
         self.xa_self_references(file, out);
         self.xa_alias_declarations(file, out);
+        self.xa_required_types(file, out);
+        self.xa_imports_hiding_global_values(file, out);
+        self.xa_decorator_metadata(file, out);
         self.xa_export_star_conflicts(file, out);
         self.xa_imported_members(file, out);
         self.xa_module_specifiers(file, out);
@@ -1199,6 +1202,15 @@ impl Checker<'_> {
                 _ => {}
             }
         }
+        // `GetEmitModuleFormatOfFile` is CommonJS. With `verbatimModuleSyntax` a TypeScript file gets 1286 instead.
+        if options.module == ModuleKind::Preserve
+            && (!is_verbatim || hir.is_js)
+            && !matches!(decl, Decl::ImportEquals(_))
+            && files.module(file).implied_format == ResolutionMode::Require
+            && files.resolve_alias(sym).is_some()
+        {
+            out.push(Diagnostic { start, code: 1293 });
+        }
         if is_verbatim && self.xa_is_ambient_const_enum(target) {
             out.push(Diagnostic { start, code: 2748 });
         }
@@ -1252,6 +1264,58 @@ impl Checker<'_> {
         }
     }
 
+    /// `checkVariableLikeDeclaration`, `checkAliasSymbol`: 18042 at the name of `const a = require("m")` or `const { a } = require("m")`
+    /// that stands for no value.
+    fn xa_required_types(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+        let files = self.files();
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        if !hir.is_js {
+            return;
+        }
+        for (i, symbol) in bound.symbols.iter().enumerate() {
+            if !symbol.flags.contains(SymFlags::ALIAS) {
+                continue;
+            }
+            for &decl in &symbol.decls {
+                let Decl::Require(pat) = decl else { continue };
+                let Some((spec, part)) = bound.required_by(hir, pat) else {
+                    continue;
+                };
+                let sym = files.sym(file, SymbolId(i as u32));
+                // `None`: `unknownSymbol`.
+                let Some(target) = files.resolve_alias(sym) else {
+                    continue;
+                };
+                if files.symbol_flags(target).intersects(SymFlags::VALUE) {
+                    continue;
+                }
+                // `combineValueAndTypeSymbols`: a property of the `export =` value with the same name adds the value meaning.
+                if part.is_some()
+                    && let Some(equals) = files
+                        .module_of_specifier_as(file, spec, ResolutionMode::Require)
+                        .and_then(|m| files.export(m, known::export_equals))
+                {
+                    let Some(value) = self.xa_resolve_symbol(equals) else {
+                        continue;
+                    };
+                    let ty = self.type_of_symbol(value);
+                    if !self.is_known(ty)
+                        || self.is_any(ty)
+                        || self.imported_property_of_export_equals(sym).is_some()
+                    {
+                        continue;
+                    }
+                }
+                // `node.PropertyNameOrName()`
+                let start = match bound.pat_parent[pat.idx()] {
+                    PatParent::Prop(_, p) => hir[p].pos,
+                    _ => hir[pat].pos,
+                };
+                out.push(Diagnostic { start, code: 18042 });
+            }
+        }
+    }
+
     /// A `const enum` whose first declaration is only declared.
     fn xa_is_ambient_const_enum(&self, sym: Sym) -> bool {
         let files = self.files();
@@ -1272,6 +1336,279 @@ impl Checker<'_> {
                         && (flags.contains(Flags::AMBIENT)
                             || self.hir(f).kind == FileKind::Declaration)
                 })
+    }
+
+    /// The end of `onSuccessfullyResolvedSymbol`: 2866 at an import that stands for no value, where its name is used for a global value.
+    fn xa_imports_hiding_global_values(&self, file: FileId, out: &mut Vec<Diagnostic>) {
+        let files = self.files();
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        // `compilerOptions.isolatedModules` itself, not `GetIsolatedModules`. `IsExternalOrCommonJSModule`
+        if !files.options.isolated_modules_said
+            || bound.alias_idents.is_empty()
+            || !files.module(file).is_module()
+        {
+            return;
+        }
+        let locals = bound.scopes[0].locals;
+        let mut seen: Vec<SymbolId> = Vec::new();
+        for &(e, scope) in &bound.alias_idents {
+            let ExprKind::Ident(name) = hir[e].kind else {
+                continue;
+            };
+            // `checkExportAssignment`: a name that is no value is not checked as an expression.
+            let is_checked = match bound.expr_parent[e.idx()] {
+                Parent::None => false,
+                Parent::Stmt(s) if s.is_some() => !matches!(
+                    hir[s].kind,
+                    StmtKind::ExportAssign(_) | StmtKind::ExportDefault(_)
+                ),
+                _ => true,
+            };
+            if !is_checked || hir.is_in_with(hir[e].pos) {
+                continue;
+            }
+            // `getSymbol(lastLocation.Locals(), name, ^SymbolFlagsValue)`
+            let Some(local) = bound.lookup(locals, name) else {
+                continue;
+            };
+            if seen.contains(&local) {
+                continue;
+            }
+            let found = files.resolve_name(file, scope, name, SymFlags::VALUE);
+            if found.is_none() || found != files.global(name, SymFlags::VALUE) {
+                continue;
+            }
+            seen.push(local);
+            let import = bound.symbols[local.idx()].decls.iter().copied().find(|d| {
+                matches!(
+                    d,
+                    Decl::ImportDefault(_)
+                        | Decl::ImportNamespace(_)
+                        | Decl::ImportSpec(_)
+                        | Decl::ImportEquals(_)
+                )
+            });
+            let Some(import) = import else { continue };
+            // `IsTypeOnlyImportDeclaration`
+            if self.xa_type_only_kind(file, import).is_some() {
+                continue;
+            }
+            let start = match import {
+                Decl::ImportDefault(x) => hir[x].default_pos,
+                Decl::ImportNamespace(x) => hir[x].namespace_pos,
+                Decl::ImportSpec(s) => hir[s].imported_pos,
+                Decl::ImportEquals(x) => hir
+                    .stmts
+                    .iter()
+                    .find(|s| matches!(s.kind, StmtKind::ImportEquals(i) if i == x))
+                    .map_or(hir[x].name_pos, |s| s.pos),
+                _ => continue,
+            };
+            out.push(Diagnostic { start, code: 2866 });
+        }
+    }
+
+    /// `markDecoratorAliasReferenced`, `markEntityNameOrEntityExpressionAsReference`: 1272 at each type of a decorated signature that
+    /// `emitDecoratorMetadata` writes out by name, if the name is an import that stands for no value and does not say `type`.
+    fn xa_decorator_metadata(&self, file: FileId, out: &mut Vec<Diagnostic>) {
+        let files = self.files();
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let options = &files.options;
+        // `canCollectSymbolAliasAccessibilityData`, `GetIsolatedModules`, `GetEmitModuleKind`
+        if !options.emit_decorator_metadata
+            || options.verbatim_module_syntax
+            || !options.isolated_modules
+            || options.module < ModuleKind::Es2015
+            || hir.decorators.is_empty()
+        {
+            return;
+        }
+        // `getParameterTypeNodeForDecoratorCheck`, `GetRestParameterElementType`
+        let type_of_parameter = |p: ParamId| {
+            let ty = hir[p].ty;
+            if ty.is_none() || !hir[p].flags.contains(Flags::REST) {
+                return ty;
+            }
+            match hir[ty].kind {
+                TypeNodeKind::Array(element) => element,
+                TypeNodeKind::Ref { args, .. } if !args.is_empty() => hir.id_at(args, 0),
+                _ => TypeNodeId::NONE,
+            }
+        };
+        let signature = |f: FnId, types: &mut Vec<TypeNodeId>| {
+            types.push(hir[f].this_ty);
+            types.extend(hir[f].params.iter().map(|p| type_of_parameter(p)));
+            types.push(hir[f].ret);
+        };
+        // `getAnnotatedAccessorTypeNode`
+        let type_of_accessor = |m: MemberId| {
+            let f = hir[m].func;
+            if f.is_none() {
+                TypeNodeId::NONE
+            } else if hir[m].kind == MemberKind::Getter {
+                hir[f].ret
+            } else {
+                hir[f]
+                    .params
+                    .iter()
+                    .next()
+                    .map_or(TypeNodeId::NONE, |p| hir[p].ty)
+            }
+        };
+        let mut types: Vec<TypeNodeId> = Vec::new();
+        let mut last = None;
+        for &(owner, e) in &hir.decorators {
+            // The decorators of one node follow each other.
+            if last == Some(owner) {
+                continue;
+            }
+            last = Some(owner);
+            // `NodeCanBeDecorated`
+            if matches!(bound.expr_parent[e.idx()], Parent::None)
+                || bound.refused_decorators.contains(&e)
+            {
+                continue;
+            }
+            match owner {
+                DecoratorOwner::Class(c) => {
+                    if !matches!(bound.class_owner[c.idx()], ClassOwner::Stmt(_))
+                        || hir[c].flags.contains(Flags::AMBIENT)
+                    {
+                        continue;
+                    }
+                    // `GetFirstConstructorWithBody`
+                    let constructor = hir[c].members.iter().find(|&m| {
+                        hir[m].kind == MemberKind::Constructor
+                            && hir[m].func.is_some()
+                            && !matches!(hir[hir[m].func].body, FnBody::None)
+                    });
+                    if let Some(constructor) = constructor {
+                        signature(hir[constructor].func, &mut types);
+                    }
+                }
+                DecoratorOwner::Member(m) => match hir[m].kind {
+                    MemberKind::Property => types.push(hir[m].ty),
+                    MemberKind::Method => signature(hir[m].func, &mut types),
+                    MemberKind::Getter | MemberKind::Setter => {
+                        let mut ty = type_of_accessor(m);
+                        if ty.is_none()
+                            && let MemberOwner::Class(c) = bound.member_owner[m.idx()]
+                        {
+                            let other = hir[c].members.iter().find(|&o| {
+                                matches!(hir[o].kind, MemberKind::Getter | MemberKind::Setter)
+                                    && hir[o].kind != hir[m].kind
+                                    && hir[o].key == hir[m].key
+                                    && hir[o].flags.contains(Flags::STATIC)
+                                        == hir[m].flags.contains(Flags::STATIC)
+                            });
+                            ty = other.map_or(TypeNodeId::NONE, |o| type_of_accessor(o));
+                        }
+                        types.push(ty);
+                    }
+                    _ => {}
+                },
+                DecoratorOwner::Param(p) => {
+                    let f = bound.param_fn[p.idx()];
+                    if f.is_some() {
+                        signature(f, &mut types);
+                    }
+                }
+            }
+        }
+        let mut links = AliasLinks::default();
+        for ty in types {
+            let Some(reference) = self.xa_entity_name_for_decorator_metadata(file, ty) else {
+                continue;
+            };
+            let TypeNodeKind::Ref { name, .. } = hir[reference].kind else {
+                continue;
+            };
+            if name.is_empty() {
+                continue;
+            }
+            let meaning = SymFlags::ALIAS
+                | if name.len() == 1 {
+                    SymFlags::TYPE
+                } else {
+                    SymFlags::NAMESPACE
+                };
+            let scope = bound.type_scope[reference.idx()];
+            let Some(root) = files.resolve_name(file, scope, hir.id_at(name, 0), meaning) else {
+                continue;
+            };
+            if !files.flags(root).contains(SymFlags::ALIAS) {
+                continue;
+            }
+            // `symbolIsValue`: not by way of what says `type`. An alias that leads nowhere is everything.
+            let is_value = files.flags(root).intersects(SymFlags::VALUE) || {
+                self.xa_resolve_alias(root, &mut links);
+                !links.type_only.contains_key(&root)
+                    && self
+                        .xa_symbol_flags(root, &mut links)
+                        .is_none_or(|flags| flags.intersects(SymFlags::VALUE))
+            };
+            if is_value
+                || files
+                    .symbol(root)
+                    .decls
+                    .iter()
+                    .any(|&d| self.xa_type_only_kind(root.file, d).is_some())
+            {
+                continue;
+            }
+            out.push(Diagnostic {
+                start: hir[reference].pos,
+                code: 1272,
+            });
+        }
+    }
+
+    /// `getEntityNameForDecoratorMetadata`: the type reference whose name stands for `ty` in the metadata.
+    fn xa_entity_name_for_decorator_metadata(
+        &self,
+        file: FileId,
+        ty: TypeNodeId,
+    ) -> Option<TypeNodeId> {
+        if ty.is_none() {
+            return None;
+        }
+        let hir = self.hir(file);
+        let parts: Vec<TypeNodeId> = match hir[ty].kind {
+            TypeNodeKind::Ref { .. } => return Some(ty),
+            TypeNodeKind::Union(types) | TypeNodeKind::Intersection(types) => {
+                hir.ids(types).collect()
+            }
+            TypeNodeKind::Cond { yes, no, .. } => vec![yes, no],
+            _ => return None,
+        };
+        // `getEntityNameForDecoratorMetadataFromTypeList`
+        let mut common: Option<TypeNodeId> = None;
+        for part in parts {
+            match hir[part].kind {
+                TypeNodeKind::Keyword(Keyword::Never) => continue,
+                TypeNodeKind::Keyword(Keyword::Null | Keyword::Undefined)
+                    if !self.files().options.strict_null_checks =>
+                {
+                    continue;
+                }
+                _ => {}
+            }
+            let individual = self.xa_entity_name_for_decorator_metadata(file, part)?;
+            let Some(first) = common else {
+                common = Some(individual);
+                continue;
+            };
+            // Both are the same identifier, or an `Object` is written out.
+            let (TypeNodeKind::Ref { name: a, .. }, TypeNodeKind::Ref { name: b, .. }) =
+                (hir[first].kind, hir[individual].kind)
+            else {
+                return None;
+            };
+            if a.len() != 1 || b.len() != 1 || hir.id_at(a, 0) != hir.id_at(b, 0) {
+                return None;
+            }
+        }
+        common
     }
 
     // ───────────────────────────── what is imported by name ─────────────────────────────
@@ -1668,12 +2005,23 @@ impl Checker<'_> {
                     }
                 }
                 // `checkImportMetaProperty`
-                ExprKind::ImportMeta => {
-                    if files.options.module.is_node() && !files.module(file).is_esm {
-                        out.push(Diagnostic {
-                            start: hir.exprs[i].pos,
-                            code: 1470,
-                        });
+                kind @ (ExprKind::ImportMeta | ExprKind::Missing) => {
+                    let module = files.options.module;
+                    let code = if module.is_node() {
+                        if files.module(file).is_esm {
+                            continue;
+                        }
+                        1470
+                    } else if module < ModuleKind::Es2020 && module != ModuleKind::System {
+                        1343
+                    } else {
+                        continue;
+                    };
+                    let start = hir.exprs[i].pos;
+                    if matches!(kind, ExprKind::ImportMeta)
+                        || is_other_import_meta_property(&hir.text, start)
+                    {
+                        out.push(Diagnostic { start, code });
                     }
                 }
                 // `checkNewTargetMetaProperty`
@@ -2060,6 +2408,13 @@ fn eat_word(text: &[u8], at: usize, word: &[u8]) -> Option<usize> {
 fn eat(text: &[u8], at: usize, c: u8) -> Option<usize> {
     let at = skip_trivia(text, at);
     (text.get(at) == Some(&c)).then_some(at + 1)
+}
+
+/// Whether `import.name` is written at `pos`, the name being neither `meta` nor `defer`. It is kept as a missing expression.
+fn is_other_import_meta_property(text: &[u8], pos: u32) -> bool {
+    eat_word(text, pos as usize, b"import")
+        .and_then(|end| eat(text, end, b'.'))
+        .is_some_and(|dot_end| eat_word(text, skip_trivia(text, dot_end), b"defer").is_none())
 }
 
 /// The string literal at `at`: what is between the quotes, as written, and where it ends.

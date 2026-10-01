@@ -73,6 +73,8 @@ impl Checker<'_> {
                     start: self.start_of_signature(file, func),
                     code: 7020,
                 }),
+                // `checkObjectLiteralMethod`, unlike `checkFunctionOrMethodDeclaration`, says nothing of a missing body.
+                FnKind::Method if matches!(bound.fns[f].owner, FnOwner::Expr(_)) => {}
                 FnKind::Decl | FnKind::Method if !is_private_ambient => {
                     // `reportImplicitAny`: one without a name is spoken of as a function expression is.
                     let code = if decl.kind == FnKind::Decl && decl.name.is_none() {
@@ -111,6 +113,13 @@ impl Checker<'_> {
             match bound.member_owner[m] {
                 MemberOwner::None => continue,
                 MemberOwner::Class(c) => {
+                    // `bindClassLikeDeclaration`: it is one symbol with the `prototype` of the class (`SymbolFlagsPrototype`), whose
+                    // type is `getTypeOfPrototypeProperty`.
+                    if member.flags.contains(Flags::STATIC)
+                        && member.key == PropKey::Name(known::prototype)
+                    {
+                        continue;
+                    }
                     // `isPrivateWithinAmbient`. A property that says `declare` is ambient by itself.
                     let is_ambient = hir[c].flags.contains(Flags::AMBIENT)
                         || member.flags.contains(Flags::AMBIENT)

@@ -1049,10 +1049,15 @@ pub struct File {
     pub with_bodies: Vec<(u32, u32)>,
     /// The start of each token that follows a token the parser skipped in a list (`abortParsingListOrMoveToNextToken`). Sorted.
     pub after_skipped: Vec<u32>,
+    /// The decorators of missing declarations and of `this` parameters, which `checkDecorators` never looks at: from where the
+    /// expression starts to where what comes after the decorators starts. The expressions are statements of their own.
+    pub stray_decorators: Vec<(u32, u32)>,
     /// Where module specifiers are written, but for those of `import()`, which are expressions.
     pub specifier_uses: Vec<SpecifierUse>,
     /// The specifier of an `import()` that has a second argument, and that argument.
     pub import_options: Vec<(ExprId, ExprId)>,
+    /// The specifier of each `import.defer(..)`, and where the `)` of the call is.
+    pub deferred_import_calls: Vec<(ExprId, u32)>,
     /// `with { .. }` of imports and exports: the start of `with`, and the attributes as an `ExprKind::Object`.
     pub import_attributes: Vec<(u32, ExprId)>,
     /// The expressions written in parentheses, in order, and where the parentheses open. Nothing else is kept of them.
@@ -1287,9 +1292,11 @@ impl File {
             parens,
             with_bodies,
             import_options,
+            deferred_import_calls,
             import_attributes,
             checker_errors,
-            after_skipped
+            after_skipped,
+            stray_decorators
         );
     }
 }

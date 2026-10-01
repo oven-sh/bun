@@ -292,6 +292,13 @@ fn main() {
                 })
                 .map(|i| bun_sema::program::FileId(i as u32))
                 .collect();
+            // No file takes anywhere near this. One that does has run into a bug.
+            let time_limit = std::time::Duration::from_millis(
+                std::env::var("BUN_SEMA_FILE_LIMIT_MS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(3000),
+            );
             let lines = std::sync::Mutex::new(Vec::new());
             for code in program.files.configuration_errors() {
                 lines
@@ -312,7 +319,11 @@ fn main() {
                 }
                 let mut checker = program.checker();
                 checker.set_stack_limit(bun_sema_standalone::STACK - (64 << 20));
+                checker.set_time_limit(time_limit);
                 let errors = checker.check_file(sources[i]);
+                if checker.timed_out() {
+                    lines.lock().unwrap().push(format!("{path}:1:1 TIMEOUT"));
+                }
                 if errors.is_empty() {
                     return;
                 }

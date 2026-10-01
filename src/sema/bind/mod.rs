@@ -3,7 +3,7 @@
 
 mod binder;
 
-use crate::atom::{Atom, known};
+use crate::atom::{Atom, Interner, known};
 use crate::hir::*;
 use crate::util::{FxHashMap, FxHashSet};
 
@@ -97,7 +97,7 @@ pub enum Decl {
     Require(PatId),
     /// `module.exports = e` in JavaScript: the assignment.
     ModuleExports(ExprId),
-    /// `exports.a = e`, `module.exports.a = e` in JavaScript: the assignment.
+    /// `exports.a = e`, `module.exports.a = e` in JavaScript: the assignment. `Object.defineProperty(exports, "a", descriptor)`: the call.
     ExportsProperty(ExprId),
     /// `module` and `exports` in a CommonJS module.
     CommonJsVariable,
@@ -109,7 +109,7 @@ pub enum JsDeclarationKind {
     None,
     /// `module.exports = e`, but for `module.exports = exports`
     ModuleExports,
-    /// `exports.name = e`, `module.exports.name = e`. The name is `NONE` for a numeric key, which the binder cannot spell.
+    /// `exports.name = e`, `module.exports.name = e`. The name is `NONE` for a numeric key, which takes an interner to spell.
     ExportsProperty(Atom),
     /// `this.name = e`
     ThisProperty,
@@ -140,7 +140,7 @@ fn is_string_or_numeric_literal_like(hir: &File, e: ExprId) -> bool {
 }
 
 /// The text of a string literal or of a template without substitutions, in parentheses or not. `NONE` for anything else,
-/// including a numeric literal: the binder has no interner to spell a number with.
+/// including a numeric literal, which takes an interner to spell.
 fn string_literal_text(hir: &File, e: ExprId) -> Atom {
     match hir[e].kind {
         ExprKind::String(text) => text,
@@ -815,5 +815,10 @@ pub struct BindOptions {
 }
 
 pub fn bind(file: &File, options: BindOptions) -> Bound {
-    binder::Binder::run(file, options)
+    binder::Binder::run(file, options, None)
+}
+
+/// The same, with the interner that spells the numeric names of CommonJS exports: `exports[0] = e`.
+pub fn bind_with_atoms(file: &File, options: BindOptions, atoms: &Interner) -> Bound {
+    binder::Binder::run(file, options, Some(atoms))
 }

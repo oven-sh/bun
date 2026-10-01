@@ -221,6 +221,15 @@ impl<'p> Checker<'p> {
                 continue;
             };
             any = true;
+            // `getAssignmentDeclarationInitializerType`: `Object.defineProperty(exports, "a", descriptor)` declares what the descriptor says.
+            if matches!(self.hir(file)[assignment].kind, ExprKind::Call(_)) {
+                let name = self.files().symbol(sym).name;
+                let ty = self.widened_type_of_assignments(file, name, &[assignment]);
+                if !types.contains(&ty) {
+                    types.push(ty);
+                }
+                continue;
+            }
             // `GetRightMostAssignedExpression` also steps through compound assignments.
             let mut value = assignment;
             while let ExprKind::Assign { value: next, .. } = self.hir(file)[value].kind {
@@ -1366,9 +1375,10 @@ impl<'p> Checker<'p> {
         pattern: PatId,
         ty: TypeId,
     ) -> TypeId {
-        if !self.p.files.options.strict_null_checks || !self.some_type(ty, |c, m| c.is_nullish(m)) {
+        if !self.p.files.options.strict_null_checks {
             return ty;
         }
+        let has_nullish = self.some_type(ty, |c, m| c.is_nullish(m));
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `IsPartOfParameterDeclaration`
         let mut root = pattern;
@@ -1392,7 +1402,11 @@ impl<'p> Checker<'p> {
                 scope = s.parent;
             }
             if is_ambient {
-                return self.non_nullable(ty);
+                return if has_nullish {
+                    self.non_nullable(ty)
+                } else {
+                    ty
+                };
             }
         }
         let initializer = match bound.pat_parent[pattern.idx()] {
@@ -1402,13 +1416,17 @@ impl<'p> Checker<'p> {
             PatParent::Elem(_, elem) => hir[elem].default,
             PatParent::None => ExprId::NONE,
         };
-        // `TypeFactsNEUndefined`, which `void` does not have either.
-        if initializer.is_none()
-            || !self.some_type(ty, |_, m| m.is_undefined() || m == TypeId::VOID)
-        {
+        if initializer.is_none() {
             return ty;
         }
+        // `getTypeOfInitializer` is asked whatever `ty` is: an initializer that reads a name of the pattern is a circle.
+        let uncertain = self.uncertain;
         let given = self.type_of_expr(file, initializer);
+        // `TypeFactsNEUndefined`, which `void` does not have either.
+        if !self.some_type(ty, |_, m| m.is_undefined() || m == TypeId::VOID) {
+            self.uncertain = uncertain;
+            return ty;
+        }
         if self.may_be_undefined(given) {
             return ty;
         }
@@ -1500,7 +1518,8 @@ impl<'p> Checker<'p> {
                         }
                     }
                     let keys = self.union(&keys);
-                    return self.rest_of_object(parent_ty, &omitted, keys);
+                    let ty = self.rest_of_object(parent_ty, &omitted, keys);
+                    return self.with_default(file, pat, ty, prop.default);
                 }
                 // `AccessFlagsAllowMissing`: with a default, what an object literal does not mention is `undefined`.
                 let allows_missing =
@@ -2444,6 +2463,9 @@ impl<'p> Checker<'p> {
             let ExprKind::Yield { value, star } = hir[e].kind else {
                 continue;
             };
+            if self.is_yield_in_parameter(file, e) {
+                continue;
+            }
             let operand = if value.is_none() {
                 TypeId::UNDEFINED
             } else {
@@ -2534,6 +2556,23 @@ impl<'p> Checker<'p> {
             }
         }
         TypeId::EMPTY_OBJECT
+    }
+
+    /// `forEachYieldExpression` goes through the body alone: whether the `yield` `e` is in a parameter of its function instead.
+    fn is_yield_in_parameter(&self, file: FileId, e: ExprId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut at = bound.expr_parent[e.idx()];
+        loop {
+            at = match at {
+                Parent::ParamDefault(_) => return true,
+                // What a static block yields is for the function around.
+                Parent::FnBody(f) if hir[f].kind != FnKind::StaticBlock => return false,
+                Parent::None | Parent::File | Parent::Module(_) => return false,
+                Parent::Expr(x) if x.is_none() => return false,
+                Parent::Key(literal) if literal.is_some() => Parent::Expr(literal),
+                _ => self.outward(file, at),
+            };
+        }
     }
 
     /// The type `ty` of `e`, which is returned or yielded: `getRegularTypeOfLiteralType` of it if `isConstContext(e)`.

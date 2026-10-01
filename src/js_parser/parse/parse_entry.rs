@@ -544,15 +544,21 @@ impl<'a> Parser<'a> {
                 );
             }
             let syntax = *p.type_syntax.take().unwrap();
-            return (
-                crate::sema::lower::Lower::run_declaration_file(
-                    p,
-                    syntax,
-                    atoms,
-                    scratch_lexer(&self),
-                ),
-                false,
+            let logged = Self::logged_syntax_errors(p.log(), self.source.contents());
+            let mut file = crate::sema::lower::Lower::run_declaration_file(
+                p,
+                syntax,
+                atoms,
+                scratch_lexer(&self),
+                logged.is_some(),
             );
+            if file.has_parse_diagnostics
+                && let Some((syntactic, checker)) = logged
+            {
+                file.early_errors.extend(syntactic);
+                file.checker_errors.extend(checker);
+            }
+            return (file, false);
         }
         let Ok(stmts) = stmts else {
             return (failed(), awaited);
@@ -569,7 +575,8 @@ impl<'a> Parser<'a> {
             match (crate::sema::early_error(&msg.data.text, at), offset) {
                 (Some((0, _)), _) => {}
                 (Some((code, delta)), Some(offset)) => {
-                    let list = if msg.data.text.starts_with(b"TC") {
+                    // 1368: `checkMethodDeclaration` reports it with a plain `c.error`.
+                    let list = if msg.data.text.starts_with(b"TC") || code == 1368 {
                         &mut checker
                     } else if Self::is_syntactic_error(&msg.data.text, code) {
                         &mut syntactic
@@ -607,6 +614,32 @@ impl<'a> Parser<'a> {
             file.checker_errors.extend(checker);
         }
         (file, awaited)
+    }
+
+    /// The syntax errors in `log`, and the errors TypeScript's checker reports with a plain `c.error`: start and code.
+    /// `None` if there is no syntax error, or an error that has no code.
+    fn logged_syntax_errors(
+        log: &bun_ast::Log,
+        contents: &[u8],
+    ) -> Option<(Vec<(u32, u32)>, Vec<(u32, u32)>)> {
+        let (mut syntactic, mut checker) = (Vec::new(), Vec::new());
+        for msg in log.msgs.iter().filter(|m| m.kind == bun_ast::Kind::Err) {
+            let offset = msg.data.location.as_ref().map(|l| l.offset);
+            let at = offset.and_then(|o| contents.get(o..)).unwrap_or_default();
+            match (crate::sema::early_error(&msg.data.text, at), offset) {
+                (Some((0, _)), _) => {}
+                (Some((code, delta)), Some(offset)) => {
+                    let start = (offset as i64 + i64::from(delta)).max(0) as u32;
+                    if msg.data.text.starts_with(b"TC") {
+                        checker.push((start, code));
+                    } else if Self::is_syntactic_error(&msg.data.text, code) {
+                        syntactic.push((start, code));
+                    }
+                }
+                _ => return None,
+            }
+        }
+        (!syntactic.is_empty()).then_some((syntactic, checker))
     }
 
     /// Whether TypeScript's parser or scanner reports the logged error `text`, which `early_error` translated to `code`.

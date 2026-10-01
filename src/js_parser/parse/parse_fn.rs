@@ -11,6 +11,7 @@ use crate::parser::{
 };
 use crate::sema::Mark;
 use bun_ast as js_ast;
+use bun_ast::expr::EFlags;
 use bun_ast::op::Level;
 use bun_ast::{E, Expr, Flags, G, S, Stmt};
 
@@ -722,6 +723,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .ts_error(bun_ast::Range { loc: start, len: 0 }, 1433);
         }
         if is_first {
+            p.note_stray_decorators(decorators.slice(), loc);
             return Ok(None);
         }
         let r#ref = p.store_name_in_ref(b"this");
@@ -884,10 +886,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
+    #[inline]
     pub(crate) fn parse_arrow_body(
         &mut self,
         args: &'a mut [G::Arg],
         data: &mut FnOrArrowDataParse,
+    ) -> Result<E::Arrow, Error> {
+        self.parse_arrow_body_with_flags(args, data, EFlags::None)
+    }
+
+    /// `flags` are those the arrow function itself is parsed with. Only tolerant mode hands them on to a body that is an expression
+    /// (`parseArrowFunctionExpressionBody`, `allowReturnTypeInArrowFunction`).
+    pub(crate) fn parse_arrow_body_with_flags(
+        &mut self,
+        args: &'a mut [G::Arg],
+        data: &mut FnOrArrowDataParse,
+        flags: EFlags,
     ) -> Result<E::Arrow, Error> {
         let p = self;
         let arrow_loc = p.lexer.loc();
@@ -955,11 +969,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
 
         p.fn_or_arrow_data_parse = data.clone();
-        let parsed = if has_arrow || !p.lexer.tolerant {
-            p.parse_expr(Level::Comma)
-        } else {
-            p.parse_arrow_body_without_arrow()
-        };
+        let parsed =
+            if flags == EFlags::AfterQuestionAndBeforeColon && has_arrow && p.lexer.tolerant {
+                p.parse_arrow_body_before_colon()
+            } else if has_arrow || !p.lexer.tolerant {
+                p.parse_expr(Level::Comma)
+            } else {
+                p.parse_arrow_body_without_arrow()
+            };
         let expr = match parsed {
             Ok(e) => e,
             Err(err) => {
@@ -990,6 +1007,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_react_hooks_suppression,
             ..Default::default()
         })
+    }
+
+    /// The body of an arrow function between the "?" and ":" of a conditional is between them too.
+    #[cold]
+    #[inline(never)]
+    fn parse_arrow_body_before_colon(&mut self) -> Result<Expr, Error> {
+        let mut body = Expr::EMPTY;
+        self.parse_expr_with_flags(Level::Comma, EFlags::AfterQuestionAndBeforeColon, &mut body)?;
+        Ok(body)
     }
 
     /// `parseArrowFunctionExpressionBody`: whether a statement that is no expression statement follows the "=>". Then the "{" of a

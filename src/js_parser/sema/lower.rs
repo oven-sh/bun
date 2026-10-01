@@ -60,18 +60,21 @@ impl<'p, 'a> Lower<'p, 'a> {
         atoms: &'a Interner,
         lexer: crate::lexer::Lexer<'a>,
     ) -> hir::File {
-        Self::run_on(p, syntax, Some(stmts), atoms, lexer)
+        Self::run_on(p, syntax, Some(stmts), atoms, lexer, false)
     }
 
     /// For a `.d.ts` file. The parser's statements are not used yet: `type_syntax::Builder` reads the statements from the source and
     /// takes the type nodes the parser kept.
+    /// `has_syntax_errors`: the parser logged syntax errors. If the file cannot be read without going on from them, the result says
+    /// `has_parse_diagnostics` and the caller reports them.
     pub(crate) fn run_declaration_file(
         p: &'p P<'a, true, false>,
         syntax: TypeSyntax,
         atoms: &'a Interner,
         lexer: crate::lexer::Lexer<'a>,
+        has_syntax_errors: bool,
     ) -> hir::File {
-        Self::run_on(p, syntax, None, atoms, lexer)
+        Self::run_on(p, syntax, None, atoms, lexer, has_syntax_errors)
     }
 
     fn run_on(
@@ -80,6 +83,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         stmts: Option<&[Stmt]>,
         atoms: &'a Interner,
         lexer: crate::lexer::Lexer<'a>,
+        has_syntax_errors: bool,
     ) -> hir::File {
         let mut marks = syntax.marks;
         marks.sort_unstable();
@@ -100,6 +104,11 @@ impl<'p, 'a> Lower<'p, 'a> {
         let mut b = Builder::new(lexer, atoms);
         b.ts = syntax.ast;
         b.kept = syntax.by_offset;
+        b.ambient_statements = syntax.ambient_statements;
+        b.ambient_statements.sort_by_key(|statement| statement.0);
+        b.ambient_initializers = syntax.ambient_initializers;
+        b.ambient_initializers
+            .sort_by_key(|initializer| initializer.0);
         let mut this = Lower {
             b,
             p,
@@ -112,7 +121,12 @@ impl<'p, 'a> Lower<'p, 'a> {
         };
         this.b.file.source_len = this.source.len() as u32;
         let Some(stmts) = stmts else {
-            this.b.declaration_file();
+            this.b.declaration_file(false);
+            if this.b.file.has_errors && has_syntax_errors {
+                this.b.start_over();
+                this.b.declaration_file(true);
+                this.b.file.has_parse_diagnostics = true;
+            }
             this.fill_in_pending_parts();
             this.b.file.parens.sort_unstable_by_key(|p| p.0.0);
             return this.b.file;
@@ -132,6 +146,12 @@ impl<'p, 'a> Lower<'p, 'a> {
             .collect();
         this.b.file.after_skipped.sort_unstable();
         this.b.file.after_skipped.dedup();
+        this.b.file.stray_decorators = this
+            .marks
+            .iter()
+            .filter(|mark| mark.1 == Mark::StrayDecorator)
+            .map(|mark| (mark.0 as u32, mark.2 as u32))
+            .collect();
         this.b.file.body = body;
         // `checkImportAttributes`
         for (with_keyword, attributes) in syntax.import_attributes {
@@ -177,6 +197,33 @@ impl<'p, 'a> Lower<'p, 'a> {
                     self.b.file.pat_elems[element.idx()].default = default;
                 }
             }
+        }
+        let mut filled_in_any = false;
+        while let Some((placeholder, statement)) = self.b.pending_statements.pop() {
+            self.fill_in_ambient_statement(placeholder, &statement);
+            filled_in_any = true;
+        }
+        while let Some((decl, initializer)) = self.b.pending_initializers.pop() {
+            let initializer = self.expr(&initializer);
+            self.b.file.var_decls[decl.idx()].init = initializer;
+            filled_in_any = true;
+        }
+        if filled_in_any {
+            self.fill_in_pending_parts();
+        }
+    }
+
+    /// Turns the empty statement `placeholder` into `statement`, which the parser read there in an ambient context.
+    fn fill_in_ambient_statement(&mut self, placeholder: StmtId, statement: &Stmt) {
+        let Some(lowered) = self.stmt(statement) else {
+            return;
+        };
+        self.b.file.stmts[placeholder.idx()].kind = self.b.file.stmts[lowered.idx()].kind;
+        // Nothing refers to `lowered` yet.
+        if lowered.idx() + 1 == self.b.file.stmts.len() {
+            self.b.file.stmts.pop();
+        } else {
+            self.b.file.stmts[lowered.idx()].kind = StmtKind::Empty;
         }
     }
 
@@ -321,8 +368,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         if s.is_utf8() {
             return self.b.atom(s.slice8());
         }
-        self.b
-            .atom(std::string::String::from_utf16_lossy(s.slice16()).as_bytes())
+        self.b.atom(&crate::lexer::utf16_to_wtf8(s.slice16()))
     }
 
     // ───────────────────────────── statements ─────────────────────────────
@@ -488,6 +534,14 @@ impl<'p, 'a> Lower<'p, 'a> {
                 let statement = self.ts_statement(placeholder.syntax, pos);
                 self.drop_modifier_errors_in_block(statement, pos, errors_before);
                 return statement;
+            }
+            // The `B` of `namespace A.B { }` that the parser dropped: its placeholder is at the dot.
+            StmtData::STypeScript(_) if self.source.get(pos as usize) == Some(&b'.') => {
+                let module = self.b.nested_module_at(pos);
+                if module.is_none() {
+                    self.b.file.syntax_errors += 1;
+                }
+                return module;
             }
             StmtData::STypeScript(_)
             | StmtData::SImport(_)
@@ -1016,13 +1070,25 @@ impl<'p, 'a> Lower<'p, 'a> {
             has_rest && !args.iter().any(|arg| self.has_dots_before(arg.binding.loc));
         for (i, arg) in args.iter().enumerate() {
             let mut flags = Flags::empty();
+            // A missing name took no token. What is noted at its place is about the parameter after it, and the dots before both are its own.
+            let took_nothing = self.is_missing_name(&arg.binding)
+                && args
+                    .get(i + 1)
+                    .is_some_and(|next| next.binding.loc == arg.binding.loc);
+            let dots_are_taken = i > 0
+                && self.is_missing_name(&args[i - 1].binding)
+                && self
+                    .source
+                    .get(pos_of(args[i - 1].binding.loc) as usize..pos_of(arg.binding.loc) as usize)
+                    .is_some_and(|between| between.trim_ascii().is_empty());
             // `parseParameterEx`: each parameter has its own `...`.
             if has_rest
+                && !dots_are_taken
                 && (self.has_dots_before(arg.binding.loc) || last_is_rest && i + 1 == args.len())
             {
                 flags |= Flags::REST;
             }
-            if self.mark(arg.binding.loc, Mark::Optional).is_some() {
+            if !took_nothing && self.mark(arg.binding.loc, Mark::Optional).is_some() {
                 flags |= Flags::OPTIONAL;
             }
             let mut pos = pos_of(arg.binding.loc);
@@ -1106,7 +1172,11 @@ impl<'p, 'a> Lower<'p, 'a> {
                 }
             }
             let pat = self.binding(&arg.binding);
-            let ty = self.annotation(arg.binding.loc);
+            let ty = if took_nothing {
+                TypeNodeId::NONE
+            } else {
+                self.annotation(arg.binding.loc)
+            };
             let default = self.optional_expr(arg.default.as_ref());
             // It starts with what decorates it.
             if let Some(first) = arg.ts_decorators.first()
@@ -1442,6 +1512,8 @@ impl<'p, 'a> Lower<'p, 'a> {
             // `tryParseConstructorDeclaration`: the keyword, or a string that says the same right before the `(`. Never `[..]`.
             let is_named_constructor = !is_computed
                 && member.key == PropKey::Name(bun_sema::atom::known::constructor)
+                // `parsePropertyOrMethodDeclaration`: after `*` it names a method.
+                && !f.func.flags.contains(ast::flags::Function::IsGenerator)
                 && (!is_quoted
                     || self.is_right_after_string(member.pos, pos_of(f.func.open_parens_loc)));
             let is_constructor = is_named_constructor
@@ -1574,8 +1646,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                     CastKind::NonNull => ExprKind::NonNull(id),
                     CastKind::Instantiation => {
                         let type_args = self.type_args_at(at as u32);
-                        // Type arguments that were given up on: as if there were none.
-                        if type_args.is_empty() {
+                        // Type arguments that were given up on: as if there were none. `f<>` is kept as an empty list.
+                        if type_args.is_empty() && !self.b.kept.type_arguments.contains_key(&at) {
                             continue;
                         }
                         ExprKind::Instantiation {
@@ -1899,6 +1971,9 @@ impl<'p, 'a> Lower<'p, 'a> {
             },
             Data::EImport(e) => {
                 let spec = self.expr(&e.expr);
+                if let Some(close) = self.mark(expr.loc, Mark::DeferredImportClose) {
+                    self.b.file.deferred_import_calls.push((spec, close));
+                }
                 if !matches!(e.options.data, Data::EMissing(_)) {
                     let options = self.expr(&e.options);
                     self.b.file.import_options.push((spec, options));

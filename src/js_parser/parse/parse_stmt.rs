@@ -45,7 +45,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     #[inline]
     fn t_semicolon(p: &mut Self) -> Result<Stmt> {
+        let loc = p.lexer.loc();
         p.lexer.next()?;
+        if p.lexer.tolerant {
+            // 1313 is reported at the `;`.
+            return Ok(Stmt {
+                loc,
+                ..Stmt::empty()
+            });
+        }
         Ok(Stmt::empty())
     }
 
@@ -183,8 +191,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
         if !is_declaration {
             // A MissingDeclaration: nothing is consumed, and its decorators are not checked.
-            opts.ts_decorators = None;
             let at = p.lexer.full_start();
+            if let Some(decorators) = opts.ts_decorators.take() {
+                p.note_stray_decorators(decorators.values, at);
+            }
             p.lexer.ts_error(bun_ast::Range { loc: at, len: 0 }, 1146);
             return Ok(Stmt::empty());
         }
@@ -461,6 +471,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut stmt_opts = ParseStatementOptions::default();
         let body = p.parse_stmt(&mut stmt_opts)?;
         p.pop_scope();
+        p.mark_type_syntax(loc, crate::sema::Mark::WithEnd, p.lexer.loc());
 
         Ok(p.s(
             S::With {
@@ -2125,9 +2136,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         );
                                     } else {
                                         // "import type foo from 'bar';" (foo may be "from")
+                                        let has_bindings =
+                                            p.lexer.token == T::TComma && p.lexer.tolerant;
+                                        if has_bindings {
+                                            Self::bindings_after_type_only_name(p)?;
+                                        }
                                         p.lexer.expect_contextual_keyword(b"from")?;
                                         if p.lexer.tolerant && !Self::is_at_string_specifier(p) {
                                             return Self::import_with_expression_specifier(p, loc);
+                                        }
+                                        if has_bindings && opts.scope.is_module() {
+                                            // `checkGrammarImportClause`
+                                            let type_keyword = stmt
+                                                .default_name
+                                                .as_ref()
+                                                .map_or(loc, |name| name.loc);
+                                            p.lexer.ts_grammar_error(
+                                                bun_ast::Range {
+                                                    loc: type_keyword,
+                                                    len: 4,
+                                                },
+                                                1363,
+                                            );
                                         }
                                         let _ = p.parse_path()?;
                                         p.lexer.expect_or_insert_semicolon()?;
@@ -2231,6 +2261,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.expect_or_insert_semicolon()?;
 
         p.process_import_statement(stmt, path, loc, was_originally_bare_import)
+    }
+
+    /// `parseImportClause`, at the "," after `import type name`: the namespace import or the named imports.
+    #[cold]
+    #[inline(never)]
+    fn bindings_after_type_only_name(p: &mut Self) -> Result<()> {
+        p.lexer.next()?;
+        match p.lexer.token {
+            T::TAsterisk => {
+                p.lexer.next()?;
+                p.lexer.expect_contextual_keyword(b"as")?;
+                p.lexer.expect(T::TIdentifier)?;
+            }
+            T::TOpenBrace => {
+                let _ = p.parse_import_clause()?;
+            }
+            // `parseNamedImports`: the "{" is missing, and so is the list.
+            _ => p.lexer.expect(T::TOpenBrace)?,
+        }
+        Ok(())
     }
 
     /// Whether `parse_path` can read the module specifier at the current token.
@@ -2581,7 +2631,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some((range, code)) = error {
             p.lexer.ts_grammar_error(range, code);
         }
-        Ok(Some(p.parse_stmt(opts)?))
+        let mut stmt = p.parse_stmt(opts)?;
+        // `parseFunctionDeclaration`: `modifierListHasAsync`, wherever `async` stands among the modifiers.
+        if modifiers.iter().any(|modifier| modifier.0 == ASYNC)
+            && let js_ast::StmtData::SFunction(function) = &mut stmt.data
+        {
+            function.func.flags.insert(js_ast::Flags::Function::IsAsync);
+        }
+        Ok(Some(stmt))
     }
 
     /// `parseErrorForMissingSemicolonAfter(expression)`, for the expression of the statement that starts at `loc`.
@@ -2897,6 +2954,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let after_declare_range = p.lexer.range();
                 let scope_index = p.scopes_in_order.len();
                 let stmt = p.parse_stmt(opts)?;
+                p.note_ambient_statement(after_declare_range.loc, &stmt);
                 // Anything unexpected is a syntax error ("declare foo", "declare type \n Foo").
                 // esbuild rewinds its lexer here; we point at the range captured above instead.
                 if !matches!(

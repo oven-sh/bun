@@ -459,7 +459,8 @@ pub struct Checker<'p> {
     /// Since it was last reset, narrowing went by something whose type could not be found out: an assigned value, what may
     /// be a type guard. What came of it is a guess, and nothing is to be reported on the strength of it.
     pub(super) uncertain: bool,
-    /// Set when `union_reduced` gives up on a union that is too complex to represent (2590). The caller clears it first.
+    /// Set when `union_reduced` or `intersection_ex` gives up on a union that is too complex to represent (2590). The caller
+    /// clears it first.
     pub(super) union_too_complex: bool,
     deadline: Option<std::time::Instant>,
     /// The `stack` of `getResolvedBaseConstraint`: what the constraints being worked out, one for the sake of the other, are instances of.

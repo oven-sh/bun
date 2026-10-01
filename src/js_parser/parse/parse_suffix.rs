@@ -65,9 +65,51 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.forbid_suffix_after_as_loc = p.lexer.loc();
                 return Ok(Continuation::Done);
             }
+            if p.lexer.tolerant && Self::sfx_operator_cannot_follow_cast(p, level, left) {
+                return Ok(Continuation::Done);
+            }
             return Ok(Continuation::Next);
         }
         Ok(Continuation::Done)
+    }
+
+    /// `parseBinaryExpressionRest`, after `a ## b as T`: an operator that binds tighter than `##` is not taken, because `as T` could
+    /// not be erased before it. `left` is `a ## b`, `level` is that of the suffix loop.
+    #[cold]
+    #[inline(never)]
+    fn sfx_operator_cannot_follow_cast(p: &mut Self, level: Level, left: &Expr) -> bool {
+        let ExprData::EBinary(binary) = &left.data else {
+            return false;
+        };
+        // `GetBinaryOperatorPrecedence`. `##` binds at least as tight as `as` does.
+        let next = match p.lexer.token {
+            T::TLessThanLessThan
+            | T::TGreaterThanGreaterThan
+            | T::TGreaterThanGreaterThanGreaterThan => Level::Shift,
+            T::TPlus | T::TMinus => Level::Add,
+            T::TAsterisk | T::TSlash | T::TPercent => Level::Multiply,
+            T::TAsteriskAsterisk => Level::Exponentiation,
+            _ => return false,
+        };
+        if next.lte(bun_ast::op::TABLE.get_ptr_const(binary.op).level) {
+            return false;
+        }
+        // `(a ## b)` is no binary expression.
+        let key = ExprKey::of(left);
+        if p.type_syntax.as_ref().is_some_and(|syntax| {
+            syntax
+                .casts
+                .iter()
+                .any(|&(of, kind, _)| of == key && kind == CastKind::Paren)
+        }) {
+            return false;
+        }
+        // The operand of an operator is handed back to `parseBinaryExpressionRest`, which goes on. Nothing above an assignment
+        // expression takes an operator, as after the body of an arrow function.
+        if level.lt(Level::NullishCoalescing) {
+            p.after_arrow_body_loc = p.lexer.loc();
+        }
+        true
     }
 
     fn sfx_t_dot(
@@ -274,7 +316,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     loc,
                 );
             }
-            T::TLessThan | T::TLessThanLessThan => {
+            T::TLessThan | T::TLessThanLessThan if !p.lexer.is_javascript_file() => {
                 // "a?.<T>()"
                 if !Self::IS_TYPESCRIPT_ENABLED {
                     p.lexer.expected(T::TIdentifier)?;
@@ -1124,7 +1166,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // inside an expression. Unlike in other languages, this unfortunately
         // appears to require backtracking to parse.
         let less_than = p.lexer.loc();
-        if Self::IS_TYPESCRIPT_ENABLED && p.try_skip_type_script_type_arguments_with_backtracking()
+        if Self::IS_TYPESCRIPT_ENABLED
+            // `tryParseTypeArgumentsInExpression`
+            && !p.lexer.is_javascript_file()
+            && p.try_skip_type_script_type_arguments_with_backtracking()
         {
             *optional_chain = Self::sfx_chain_after_type_arguments(p, old_optional_chain);
             // `parseSuperExpression`: type arguments after `super` are objected to from where the keyword ends. Not after what `new`
@@ -1237,7 +1282,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // inside an expression. Unlike in other languages, this unfortunately
         // appears to require backtracking to parse.
         let less_than = p.lexer.loc();
-        if Self::IS_TYPESCRIPT_ENABLED && p.try_skip_type_script_type_arguments_with_backtracking()
+        if Self::IS_TYPESCRIPT_ENABLED
+            && !p.lexer.is_javascript_file()
+            && p.try_skip_type_script_type_arguments_with_backtracking()
         {
             *optional_chain = Self::sfx_chain_after_type_arguments(p, old_optional_chain);
             p.note_type_arguments(left, less_than);

@@ -1065,10 +1065,11 @@ impl Checker<'_> {
             {
                 continue;
             }
-            let Some(p) = hir[member.func].params.iter().next() else {
+            let params = hir[member.func].params;
+            let Some(p) = params.iter().next() else {
                 continue;
             };
-            if hir[p].ty.is_none() {
+            if params.len != 1 || hir[p].ty.is_none() {
                 continue;
             }
             let keys = self.type_from_node(file, hir[p].ty);

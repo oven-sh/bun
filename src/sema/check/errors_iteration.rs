@@ -238,16 +238,32 @@ impl Checker<'_> {
             if !self.is_known(given) || self.is_any(given) {
                 continue;
             }
-            if self
-                .check_iterated(given, false, hir[pat].pos, out)
-                .is_none()
+            // `getIteratedTypeOrElementType`: without `Iterable` a list is taken apart as it is.
+            if has_iterable
+                && self
+                    .check_iterated(given, false, hir[pat].pos, out)
+                    .is_none()
             {
                 continue;
             }
-            // `getPropertyTypeForIndexType`: past the end of a tuple there is nothing.
+            // `getBindingElementTypeFromParentType`: the elements of a list are looked up by number, 2339 where it has none.
             if !self.every_type(given, |c, m| c.is_tuple(m)) {
+                if self.is_array_like(given) {
+                    for (index, elem) in elems.iter().enumerate() {
+                        let elem = &hir[elem];
+                        if !elem.is_rest && !matches!(hir[elem.pat].kind, PatKind::Missing) {
+                            let key = self.number_literal(index as f64, false);
+                            // `AccessFlagsAllowMissing`
+                            let allows_missing =
+                                elem.default.is_some() && self.is_object_literal_type(given);
+                            let at = hir[elem.pat].pos;
+                            self.destructured_property(given, key, allows_missing, at, out);
+                        }
+                    }
+                }
                 continue;
             }
+            // `getPropertyTypeForIndexType`: past the end of a tuple there is nothing.
             for (index, elem) in elems.iter().enumerate() {
                 let elem = &hir[elem];
                 if !elem.is_rest

@@ -874,6 +874,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.lexer.swallowed += 1;
             return Ok(());
         }
+        // At the end of the file the error is where the token before ends.
+        if self.lexer.token == T::TEndOfFile {
+            let loc = self.lexer.full_start();
+            self.lexer.ts_error(bun_ast::Range { loc, len: 0 }, 1110);
+            return Ok(());
+        }
         let (range, before) = (self.lexer.range(), self.lexer.prev_error_loc);
         self.lexer.ts_error(range, 1110);
         self.lexer.put_up_with(before)?;
@@ -912,10 +918,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// `parseEntityName`, `parseRightSideOfDot`: after a dot that no word follows.
     #[cold]
     #[inline(never)]
-    fn skip_missing_name_after_dot(&mut self) -> Result<(), Error> {
+    fn skip_missing_name_after_dot<const KEEP: bool>(&mut self) -> Result<(), Error> {
+        let mut reference = TypeId::NONE;
+        let mut jsdoc_dot = None;
         match self.lexer.token {
-            // "A.<T>": the checker objects to the dot.
-            T::TLessThan => {}
+            // "A.<T>": the name ends before the dot, and the type arguments are its own.
+            T::TLessThan => {
+                if KEEP {
+                    reference = self.last_type();
+                }
+                jsdoc_dot = Some(bun_ast::Loc {
+                    start: self.lexer.full_start().start - 1,
+                });
+            }
             // A private name is taken, and the name is said to be missing after it.
             T::TPrivateIdentifier => {
                 let after = bun_ast::Range {
@@ -929,8 +944,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             _ => self.lexer.expect(T::TIdentifier)?,
         }
         // `parseTypeArgumentsOfTypeReference`
-        if !self.lexer.has_newline_before {
-            let _ = self.skip_type_script_type_arguments::<false, false>()?;
+        let has_arguments = !self.lexer.has_newline_before
+            && self.skip_type_script_type_arguments::<false, false>()?;
+        if has_arguments && let Some(loc) = jsdoc_dot {
+            // `checkTypeReferenceNode`
+            self.lexer
+                .ts_grammar_error(bun_ast::Range { loc, len: 1 }, 8020);
+        }
+        if KEEP {
+            self.attach_type_args(reference, has_arguments);
         }
         Ok(())
     }
@@ -2355,10 +2377,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     if !self.lexer.is_identifier_or_keyword() {
                         if self.lexer.tolerant {
-                            self.skip_missing_name_after_dot()?;
-                            if KEEP {
-                                self.clear_last_type();
-                            }
+                            self.skip_missing_name_after_dot::<KEEP>()?;
                             continue;
                         }
                         self.lexer.expect(T::TIdentifier)?;
@@ -3653,6 +3672,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         extends: &mut Vec<TypeId>,
         errors: &mut [Option<(bun_ast::Loc, u32)>; 2],
     ) -> Result<bool, Error> {
+        // `parseHeritageClauses`: no list unless a clause starts here.
+        if self.lexer.token != T::TExtends && !self.lexer.is_contextual_keyword(b"implements") {
+            return Ok(false);
+        }
         let keeps = self.should_keep_types();
         let (mut seen_extends, mut seen_implements) = (false, false);
         // The checker returns after 1172 or 1176.
@@ -4144,7 +4167,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let result: Result<(), Error> = (|| {
             self.lexer.expect(T::TColon)?;
             self.skip_typescript_return_type()?;
-            self.parse_arrow_body(&mut [], &mut data)?;
+            self.parse_arrow_body_with_flags(
+                &mut [],
+                &mut data,
+                bun_ast::expr::EFlags::AfterQuestionAndBeforeColon,
+            )?;
             // The ":" that pairs with the "?"
             self.lexer.expect(T::TColon)?;
             Ok(())

@@ -141,6 +141,8 @@ impl Checker<'_> {
             pass!(check_x_regexp_scanner);
         }
         pass!(check_x_typenodes);
+        // It goes by the 2456 that has just been said.
+        pass!(recount_type_arguments_of_circular_aliases);
         // These three put other words in the place of what has been said: of declarations that are not one symbol after all, of what is
         // assigned, of names that are not found.
         pass!(check_x_signatures);
@@ -152,7 +154,11 @@ impl Checker<'_> {
         pass!(check_x_statements);
         pass!(take_back_export_assignments_in_namespaces);
         if has_parse_diagnostics {
-            out.retain(|d| !is_grammar_error(d.code));
+            // `bindNamespaceExportDeclaration` reports 1184 whether or not the file parses.
+            out.retain(|d| {
+                !is_grammar_error(d.code)
+                    || d.code == 1184 && is_before_namespace_export(hir, d.start)
+            });
         }
         if self.is_plain_js(file) {
             out.retain(|d| errors_js::PLAIN_JS_ERRORS.binary_search(&d.code).is_ok());
@@ -160,9 +166,6 @@ impl Checker<'_> {
             // Last: it goes by all that is left. `getDiagnosticsWithPrecedingDirectives`: not by what the parser says.
             self.check_x_comment_directives(file, &mut out);
         }
-        out.append(&mut syntactic);
-        out.sort_unstable();
-        out.dedup();
         let suppressed = &hir.suppressed;
         if !suppressed.is_empty() {
             // 2578 is said once everything has been taken back, and stays.
@@ -173,6 +176,10 @@ impl Checker<'_> {
                         .any(|&(start, end)| (start..end).contains(&d.start))
             });
         }
+        // `GetSyntacticDiagnostics`: no comment directive takes these back.
+        out.append(&mut syntactic);
+        out.sort_unstable();
+        out.dedup();
         out
     }
 
@@ -339,6 +346,7 @@ impl Checker<'_> {
     /// options of `import()`.
     fn check_modules(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let hir = self.hir(file);
+        let unchecked = self.unchecked_module_elements(file);
         for i in 0..hir.specifier_uses.len() {
             let SpecifierUse {
                 spec,
@@ -346,6 +354,9 @@ impl Checker<'_> {
                 kind,
                 mode,
             } = hir.specifier_uses[i];
+            if unchecked.iter().any(|&(_, written)| written == pos) {
+                continue;
+            }
             // `getModeForUsageLocation`: what is said where it is written, or else what the syntax and the file come to.
             let mode = if mode != ResolutionMode::None {
                 mode
@@ -458,17 +469,100 @@ impl Checker<'_> {
                 out.push(Diagnostic { start: prop.pos, code: 2880 });
             }
         }
-        self.check_imported_names(file, out);
+        self.check_imported_names(file, &unchecked, out);
+    }
+
+    /// `checkGrammarModuleElementContext`: the import and export statements that are directly in neither the file nor a namespace, which
+    /// are not checked, and where the specifier of each is written (`u32::MAX`: it has none). Not those whose module is resolved all the
+    /// same: for a name they declare (`resolveAlias`) or for the exports of the file (`getExportsOfModuleWorker`).
+    fn unchecked_module_elements(&self, file: FileId) -> Vec<(StmtId, u32)> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut unchecked = Vec::new();
+        for (i, s) in hir.stmts.iter().enumerate() {
+            if matches!(
+                bound.stmt_parent[i],
+                Parent::None | Parent::File | Parent::Module(_)
+            ) {
+                continue;
+            }
+            let (spec, is_resolved) = match s.kind {
+                StmtKind::Import(x) => (
+                    hir[x].spec,
+                    [hir[x].default, hir[x].namespace]
+                        .into_iter()
+                        .chain(hir[x].named.iter().map(|n| hir[n].local))
+                        .any(|name| name.is_some() && self.is_name_mentioned(file, name)),
+                ),
+                StmtKind::ImportEquals(x) => (
+                    match hir[x].target {
+                        ImportEqualsTarget::Require(spec) => spec,
+                        ImportEqualsTarget::Entity(_) => Atom::NONE,
+                    },
+                    self.is_name_mentioned(file, hir[x].name),
+                ),
+                StmtKind::ExportNamed(x) => (hir[x].spec, false),
+                StmtKind::ExportStar { spec, alias, .. } => (
+                    spec,
+                    alias.is_none() && self.files().module(file).is_module(),
+                ),
+                _ => continue,
+            };
+            if is_resolved {
+                continue;
+            }
+            // The first specifier written after the start of the statement is its own.
+            let written = hir
+                .specifier_uses
+                .iter()
+                .filter(|u| u.pos >= s.pos)
+                .min_by_key(|u| u.pos)
+                .filter(|u| spec.is_some() && u.spec == spec)
+                .map_or(u32::MAX, |u| u.pos);
+            unchecked.push((StmtId(i as u32), written));
+        }
+        unchecked
+    }
+
+    /// Whether `name` is written somewhere in the file where it may stand for an alias: as an identifier, or first in an entity name.
+    fn is_name_mentioned(&self, file: FileId, name: Atom) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let is_first = |names: IdList<Atom>| !names.is_empty() && hir.id_at(names, 0) == name;
+        hir.exprs.iter().zip(&bound.expr_parent).any(|(e, parent)| {
+            matches!(e.kind, ExprKind::Ident(n) if n == name) && !matches!(parent, Parent::None)
+        }) || hir.types.iter().any(|t| match t.kind {
+            TypeNodeKind::Ref { name: names, .. } | TypeNodeKind::Typeof { name: names, .. } => {
+                is_first(names)
+            }
+            _ => false,
+        }) || hir
+            .import_equals
+            .iter()
+            .any(|i| matches!(i.target, ImportEqualsTarget::Entity(names) if is_first(names)))
+            || hir
+                .exports
+                .iter()
+                .any(|x| x.spec.is_none() && x.items.iter().any(|s| hir[s].local == name))
     }
 
     /// What is imported by name has to be exported: 2305 2459 2460 2614 2724, 2595 2597 2616 of a module that is `export =`, and 1192 2613
     /// for `default`. What is exported by name has to be there. `getExternalModuleMember`, `getTargetOfModuleDefault`,
-    /// `getTargetOfExportSpecifier`.
-    fn check_imported_names(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    /// `getTargetOfExportSpecifier`. `unchecked`: `unchecked_module_elements`.
+    fn check_imported_names(
+        &mut self,
+        file: FileId,
+        unchecked: &[(StmtId, u32)],
+        out: &mut Vec<Diagnostic>,
+    ) {
         let hir = self.hir(file);
         // `getEmitSyntaxForModuleSpecifierExpression` for the specifier of an import or export declaration.
         let usage = self.files().module(file).default_mode;
-        for import in &hir.imports {
+        for (i, import) in hir.imports.iter().enumerate() {
+            if unchecked
+                .iter()
+                .any(|&(s, _)| matches!(hir[s].kind, StmtKind::Import(x) if x.idx() == i))
+            {
+                continue;
+            }
             let mode = self.files().mode_of_import(file, import.mode);
             let Some((module, target)) = self.module_to_import_from(file, import.spec, mode) else {
                 continue;
@@ -505,6 +599,12 @@ impl Checker<'_> {
         for (x, export) in hir.exports.iter().enumerate() {
             if export.spec.is_none() {
                 self.check_exported_names_are_there(file, x, out);
+                continue;
+            }
+            if unchecked
+                .iter()
+                .any(|&(s, _)| matches!(hir[s].kind, StmtKind::ExportNamed(id) if id.idx() == x))
+            {
                 continue;
             }
             let mode = self.files().mode_of_import(file, export.mode);
@@ -880,6 +980,11 @@ impl Checker<'_> {
             return;
         }
         if found.is_some() {
+            return;
+        }
+        // `GetResolutionDiagnostic`, `needAllowArbitraryExtensions`
+        if module.arbitrary_extension_imports.contains(&(spec, mode)) {
+            out.push(Diagnostic { start, code: 6263 });
             return;
         }
         // The specifier resolves to JavaScript that is not in the program.
@@ -1312,7 +1417,7 @@ impl Checker<'_> {
                 }
                 // What `this.name` or `this[key]` is known by where the constructor assigns to it, and `getTypeOfSymbol` of the
                 // declaration: the type as it is declared, where `this` is still `this`.
-                let (key, ty) = match self.member_name(file, member.key) {
+                let (key, ty) = match self.declared_member_name(file, member.key) {
                     Some(name) => {
                         let sym = self.files().sym(file, self.bound(file).class_symbol[c]);
                         let instance = self.declared_type(sym);
@@ -1617,10 +1722,14 @@ impl Checker<'_> {
                 &hir.text,
                 import.name_pos as usize + self.files().atoms.bytes(import.name).len(),
             );
-            if hir.text.get(equals) != Some(&b'=') {
+            let start = if hir.text.get(equals) == Some(&b'=') {
+                skip_trivia(&hir.text, equals + 1)
+            } else if hir.early_errors.contains(&(equals as u32, 1005)) {
+                // `parseExpected`: an `=` that is left out takes no room.
+                equals
+            } else {
                 continue;
-            }
-            let start = skip_trivia(&hir.text, equals + 1);
+            };
             if !hir
                 .text
                 .get(start..)
@@ -1629,6 +1738,12 @@ impl Checker<'_> {
                 continue;
             }
             let start = start as u32;
+            // `resolveEntityName`, `NodeIsMissing`: `parseIdentifier` takes no reserved word (1359), and the name is left out.
+            if hir.early_errors.contains(&(start, 1359))
+                && is_syntactic_early_error(hir, start, 1359)
+            {
+                continue;
+            }
             let before = out.len();
             self.check_entity_name(
                 file,
@@ -2015,6 +2130,54 @@ impl Checker<'_> {
             Some(2314)
         } else {
             Some(2707)
+        }
+    }
+
+    /// `getDeclaredTypeOfTypeAlias`: an alias that circularly references itself (2456) never gets its type parameters, so
+    /// `getTypeFromTypeAliasReference` takes it for one that is not generic: 2315 with type arguments, nothing without.
+    fn recount_type_arguments_of_circular_aliases(&self, file: FileId, out: &mut Vec<Diagnostic>) {
+        if !out.iter().any(|d| d.code == 2456) {
+            return;
+        }
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut circular: Vec<Sym> = Vec::new();
+        for (a, alias) in hir.aliases.iter().enumerate() {
+            let said = Diagnostic {
+                start: alias.name_pos,
+                code: 2456,
+            };
+            if !alias.type_params.is_empty()
+                && bound.alias_symbol[a].is_some()
+                && out.contains(&said)
+            {
+                circular.push(self.files().sym(file, bound.alias_symbol[a]));
+            }
+        }
+        if circular.is_empty() {
+            return;
+        }
+        for (i, node) in hir.types.iter().enumerate() {
+            let TypeNodeKind::Ref { name, args } = node.kind else {
+                continue;
+            };
+            if bound.type_scope[i].is_none() {
+                continue;
+            }
+            let names: Vec<Atom> = hir.ids(name).collect();
+            let found = self
+                .files()
+                .resolve_entity(file, bound.type_scope[i], &names, SymFlags::TYPE)
+                .and_then(|sym| self.files().resolve_alias_as(sym, SymFlags::TYPE));
+            if !found.is_some_and(|sym| circular.contains(&sym)) {
+                continue;
+            }
+            out.retain(|d| d.start != node.pos || !matches!(d.code, 2314 | 2707));
+            if !args.is_empty() {
+                out.push(Diagnostic {
+                    start: node.pos,
+                    code: 2315,
+                });
+            }
         }
     }
 
@@ -2590,6 +2753,22 @@ fn is_grammar_error(code: u32) -> bool {
                 // `checkContextualIdentifier`, `checkPrivateIdentifier` (binder)
                 | 1212..=1214 | 1262 | 1359 | 18012
         )
+}
+
+/// Whether only modifiers are written from `start` to an `export as namespace` statement, whose `pos` is at `export`.
+fn is_before_namespace_export(hir: &hir::File, start: u32) -> bool {
+    hir.stmts.iter().any(|s| {
+        matches!(s.kind, StmtKind::ExportAsNamespace(_))
+            && start < s.pos
+            && hir
+                .text
+                .get(start as usize..s.pos as usize)
+                .is_some_and(|between| {
+                    between
+                        .iter()
+                        .all(|c| c.is_ascii_alphabetic() || c.is_ascii_whitespace())
+                })
+    })
 }
 
 /// Names that come with a version of the standard library: what is missing then is the library, not a letter. The keys of

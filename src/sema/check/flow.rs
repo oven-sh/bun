@@ -4041,6 +4041,9 @@ impl<'p> Checker<'p> {
         if element == TypeId::NEVER {
             return self.array_of(TypeId::ANY);
         }
+        // An object literal is no subtype of one that lacks a property it has (`propertiesRelatedTo`): as alternatives to one another
+        // they get each other's properties first. None is fresh in the array.
+        let element = self.regular_object(element);
         let element = if self.is_union(element) {
             self.union_reduced(&self.parts(element).to_vec())
         } else {
@@ -4185,7 +4188,12 @@ impl<'p> Checker<'p> {
             _ => self.type_of_expr(file, value),
         };
         let added = self.base_type_of_literal_type(added);
-        let added = self.regular_object(added);
+        // `getRegularTypeOfObjectLiteral`: it stays the type of an object literal, and is widened with the others once the array is final.
+        let added = if self.is_object_literal_type(added) {
+            added
+        } else {
+            self.regular_object(added)
+        };
         if self
             .parts(added)
             .iter()

@@ -118,6 +118,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(expr)
     }
 
+    /// The decorators of a missing declaration or of a `this` parameter. They stay in TypeScript's tree, and `checkDecorators` never
+    /// looks at them. Each becomes a statement of the list being parsed. `end`: where what comes after them starts.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn note_stray_decorators(&mut self, decorators: &[Expr], end: bun_ast::Loc) {
+        if !self.lexer.tolerant || self.lexer.is_log_disabled || !self.keeps_type_syntax() {
+            return;
+        }
+        for decorator in decorators {
+            self.mark_type_syntax(decorator.loc, crate::sema::Mark::StrayDecorator, end);
+            self.stray_decorators.push(*decorator);
+        }
+    }
+
     /// Parse a standard (TC39) decorator expression following the `@` token.
     ///
     /// DecoratorExpression:
@@ -713,7 +727,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<Stmt, Error> {
         let p = self;
         p.lexer.expect(T::TEnum)?;
-        let name_loc = p.lexer.loc();
+        // `createMissingIdentifier`: a missing name is where the previous token ends.
+        let name_loc = if p.lexer.tolerant && p.lexer.token != T::TIdentifier {
+            p.lexer.full_start()
+        } else {
+            p.lexer.loc()
+        };
         // `parseIdentifier`: anything else stays, and the name is missing.
         let name_text: &'a [u8] = if p.lexer.token == T::TIdentifier || !p.lexer.tolerant {
             p.lexer.identifier

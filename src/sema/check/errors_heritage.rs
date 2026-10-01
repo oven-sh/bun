@@ -133,8 +133,9 @@ impl Checker<'_> {
         let mut shape = Shape::default();
         for prop in &members.shape().props {
             // `propertiesRelatedTo` passes over `prototype`. A static `#name` is neither inherited nor asked for
-            // (`isStaticPrivateIdentifierProperty`).
-            if prop.name == known::prototype
+            // (`isStaticPrivateIdentifierProperty`). What `createUnionOrIntersectionProperty` makes of several is no
+            // `SymbolFlagsPrototype`.
+            if prop.name == known::prototype && !matches!(prop.source, PropSource::Intersected(..))
                 || self.files().atoms.bytes(prop.name).first() == Some(&b'#')
             {
                 continue;

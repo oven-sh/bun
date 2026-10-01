@@ -1721,11 +1721,16 @@ impl<'p> Checker<'p> {
             },
             TypeNodeKind::StringLit(value) => self.string_literal(value, false),
             TypeNodeKind::NumberLit(n) => self.number_literal(hir.numbers[n as usize], false),
-            TypeNodeKind::BigIntLit { text, negative } => self.intern(TypeData::BigIntLit {
-                text,
-                negative,
-                fresh: false,
-            }),
+            TypeNodeKind::BigIntLit { text, negative } => {
+                // `NewPseudoBigInt`: zero has no sign.
+                let digits = self.files().atoms.bytes(text);
+                let negative = negative && !digits.iter().all(|&c| c == b'0' || c == b'n');
+                self.intern(TypeData::BigIntLit {
+                    text,
+                    negative,
+                    fresh: false,
+                })
+            }
             TypeNodeKind::BoolLit(value) => self.bool_literal(value, false),
             TypeNodeKind::UniqueSymbol => TypeId::SYMBOL,
             // `getTypeFromArrayOrTupleTypeNode`: an array or a tuple type that is first made here is made from a type node

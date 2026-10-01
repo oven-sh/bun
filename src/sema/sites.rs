@@ -275,6 +275,17 @@ pub fn for_each_site(
                 let ty = type_at(c, e);
                 emit(c, call.close_pos, SiteKind::CallResult, ty);
             }
+            // The callee of `import.defer(..)` is a meta property, of the error type (`checkMetaProperty`). `import(..)` is no site.
+            ExprKind::ImportCall(specifier) => {
+                let Some(&(_, close_pos)) =
+                    hir.deferred_import_calls.iter().find(|d| d.0 == specifier)
+                else {
+                    continue;
+                };
+                emit(c, close_pos, SiteKind::Callee, TypeId::ANY);
+                let ty = type_at(c, e);
+                emit(c, close_pos, SiteKind::CallResult, ty);
+            }
             ExprKind::New(_) => {
                 let ty = type_at(c, e);
                 emit(c, hir[e].pos, SiteKind::NewResult, ty);
@@ -328,6 +339,9 @@ pub fn for_each_site(
             && let Some(ty) = type_of_parameter_property(c, file, p, name)
         {
             ty
+        } else if let Some(exported) = c.p.files.required_module_exports(file, pat) {
+            // `getTypeOfAlias`: the name is an alias of the `"module.exports"` export, the `require` call is still the module.
+            c.type_of_symbol(exported)
         } else {
             match value_declaration(c, file, pat) {
                 // `getTypeOfVariableOrParameterOrProperty` hands the first to ask what it worked out, whatever it kept.

@@ -19,6 +19,7 @@
 //! removes the errors the other passes reported there.
 
 use super::errors::Diagnostic;
+use super::errors_x_properties_jsx::end_of_brackets;
 use super::*;
 use crate::bind::{Decl, MemberOwner, Parent, PatParent};
 use crate::resolve::{ModuleKind, ScriptTarget};
@@ -84,6 +85,19 @@ fn await_after_for(text: &[u8], at: u32) -> Option<u32> {
     }
     let next = skip_trivia(text, at as usize + 3);
     is_word_at(text, next, b"await").then_some(next as u32)
+}
+
+/// Where the `;` is that is all there is to the `then` statement of the `if` at `at`. An empty statement may come without its place.
+fn empty_then_statement(text: &[u8], at: u32) -> Option<u32> {
+    if !is_word_at(text, at as usize, b"if") {
+        return None;
+    }
+    let open = skip_trivia(text, at as usize + 2);
+    if text.get(open) != Some(&b'(') {
+        return None;
+    }
+    let next = skip_trivia(text, end_of_brackets(text, open)?);
+    (text.get(next) == Some(&b';')).then_some(next as u32)
 }
 
 /// Where the list of declarations of the variable statement at `at` starts: past `export` and `declare`.
@@ -232,6 +246,11 @@ fn refused_in_ambient_block(hir: &File, list: IdList<StmtId>, refused: &mut Vec<
                 | StmtKind::Continue(_)
                 | StmtKind::Labeled { .. }
         );
+        // An import or an export whose specifier is not a string is kept as an empty statement.
+        let is_asked_about = is_asked_about
+            && !(matches!(hir[s].kind, StmtKind::Empty)
+                && (is_word_at(&hir.text, hir[s].pos as usize, b"import")
+                    || is_word_at(&hir.text, hir[s].pos as usize, b"export")));
         if is_asked_about && !std::mem::replace(&mut is_said, true) {
             refused.push(s);
         }
@@ -474,12 +493,16 @@ impl Checker<'_> {
     /// To be called after all the other passes: see the top of the file.
     pub(super) fn check_x_statements(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let hir = self.hir(file);
-        if !matches!(hir.kind, FileKind::Ts | FileKind::Tsx) || hir.has_errors {
+        if hir.kind == FileKind::Json || hir.has_errors {
             return;
         }
         // `hasParseDiagnostics`: what is only a matter of grammar is not said of a file that does not parse.
+        // The parser's own 18016 sets the flag. Any other is `checkGrammarObjectLiteralExpression`'s.
         let is_refused_by_the_parser = hir.has_parse_diagnostics
-            || hir.early_errors.iter().any(|e| is_said_by_the_parser(e.1));
+            || hir
+                .early_errors
+                .iter()
+                .any(|e| e.1 != 18016 && is_said_by_the_parser(e.1));
         let parses = hir.syntax_errors == 0 && !is_refused_by_the_parser;
         if is_refused_by_the_parser {
             // These are noted while parsing, but they are the checker's to say.
@@ -513,15 +536,26 @@ impl Checker<'_> {
     ) -> Vec<StmtId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut refused = Vec::new();
+        // `NodeFlagsAmbient` is on every node of a declaration file.
+        let is_declaration_file = hir.kind == FileKind::Declaration;
+        if is_declaration_file {
+            refused_in_ambient_block(hir, hir.body, &mut refused);
+        }
         for (i, module) in hir.modules.iter().enumerate() {
-            if module.flags.contains(Flags::AMBIENT) && bound.module_symbol[i].is_some() {
+            if (is_declaration_file || module.flags.contains(Flags::AMBIENT))
+                && bound.module_symbol[i].is_some()
+            {
                 refused_in_ambient_block(hir, module.body, &mut refused);
             }
         }
         for &s in &refused {
             let start = hir[s].pos;
             out.retain(|d| {
-                d.start != start || !matches!(d.code, 1104 | 1105 | 1107 | 1114 | 1115 | 1116)
+                d.start != start
+                    || !matches!(
+                        d.code,
+                        1104 | 1105 | 1107 | 1108 | 1114 | 1115 | 1116 | 18041
+                    )
             });
             out.push(Diagnostic { start, code: 1036 });
         }
@@ -586,14 +620,16 @@ impl Checker<'_> {
                     }
                 }
                 // `checkIfStatement`. Other statements of which nothing is kept are empty as well: it has to be written that way.
-                StmtKind::If { yes, .. }
-                    if matches!(hir[yes].kind, StmtKind::Empty)
-                        && text.get(hir[yes].pos as usize) == Some(&b';') =>
-                {
-                    out.push(Diagnostic {
-                        start: hir[yes].pos,
-                        code: 1313,
-                    });
+                StmtKind::If { yes, .. } if matches!(hir[yes].kind, StmtKind::Empty) => {
+                    let written = hir[yes].pos;
+                    let start = if written > pos && text.get(written as usize) == Some(&b';') {
+                        Some(written)
+                    } else {
+                        empty_then_statement(text, pos)
+                    };
+                    if let Some(start) = start {
+                        out.push(Diagnostic { start, code: 1313 });
+                    }
                 }
                 StmtKind::ForIn { left, expr, .. } => {
                     // `checkForInStatement`: a literal is a pattern, unless it is in parentheses.
@@ -954,7 +990,8 @@ impl Checker<'_> {
         } else {
             Objection::Options
         };
-        let parsed_again = if is_module {
+        // `parseSourceFileWorker`: a declaration file is not parsed again.
+        let parsed_again = if is_module && self.hir(file).kind != FileKind::Declaration {
             self.statements_parsed_again_for_await(file)
         } else {
             Vec::new()
@@ -1528,8 +1565,12 @@ impl Checker<'_> {
         for (i, x) in hir.var_decls.iter().enumerate() {
             consider(hir[x.pat].pos, Parent::Stmt(bound.var_stmt[i]));
         }
+        // A member starts at its modifiers.
         for (i, x) in hir.members.iter().enumerate() {
-            consider(x.pos, Parent::MemberInit(MemberId(i as u32)));
+            consider(
+                super::errors_js::start_of_member(&hir.text, x),
+                Parent::MemberInit(MemberId(i as u32)),
+            );
         }
         for (i, x) in hir.props.iter().enumerate() {
             consider(x.pos, Parent::Prop(PropId(i as u32)));

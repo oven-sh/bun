@@ -162,6 +162,7 @@ impl Checker<'_> {
                 return;
             }
             self.report_call_resolution(file, e, c, &call_sigs, false, resolved, out);
+            self.check_assertion_target(file, e, c, resolved.sig, out);
             return;
         }
         if self.is_any(apparent) {
@@ -234,6 +235,53 @@ impl Checker<'_> {
             start: self.start_of(file, data.callee),
             code: 2351,
         });
+    }
+
+    /// `checkCallExpression`: 2776 and 2775, of a call that is a statement and asserts something.
+    fn check_assertion_target(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        c: CallId,
+        sig: Option<SigId>,
+        out: &mut Vec<Diagnostic>,
+    ) {
+        let hir = self.hir(file);
+        let data = hir[c];
+        let Some(sig) = sig else { return };
+        if data.chain == Chain::Start
+            || is_parenthesized(hir, e)
+            || !matches!(self.bound(file).expr_parent[e.idx()], Parent::Stmt(s) if s.is_some() && matches!(hir[s].kind, StmtKind::Expr(_)))
+            || !self.sig_predicate(sig).is_some_and(|p| p.asserts)
+        {
+            return;
+        }
+        let code = if !is_dotted_name(hir, data.callee) {
+            2776
+        } else if !self.has_effects_signature(file, data.callee) {
+            2775
+        } else {
+            return;
+        };
+        out.push(Diagnostic {
+            start: self.start_of(file, data.callee),
+            code,
+        });
+    }
+
+    /// `getEffectsSignature`, of a call that is a statement and resolves to a signature that asserts: whether there is one.
+    fn has_effects_signature(&mut self, file: FileId, callee: ExprId) -> bool {
+        let Some(declared) = self.explicit_type(file, callee) else {
+            return false;
+        };
+        let apparent = self.apparent_type(declared);
+        let sigs = self.signatures(apparent, false);
+        sigs.iter().any(|&sig| {
+            // `hasTypePredicateOrNeverReturnType`
+            self.sig_predicate(sig).is_some()
+                || matches!(self.sig_decl(sig), Some((f, func, _)) if self.hir(f)[func].ret.is_some())
+                    && self.sig_return(sig) == TypeId::NEVER
+        })
     }
 
     /// `resolveCallExpression`, where what is called is `super`.
@@ -1467,6 +1515,19 @@ impl Checker<'_> {
 /// Whether `e` is written in parentheses of its own.
 fn is_parenthesized(hir: &hir::File, e: ExprId) -> bool {
     hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_ok()
+}
+
+/// `IsDottedName`
+fn is_dotted_name(hir: &hir::File, e: ExprId) -> bool {
+    match hir[e].kind {
+        ExprKind::Ident(_)
+        | ExprKind::This
+        | ExprKind::Super
+        | ExprKind::NewTarget
+        | ExprKind::ImportMeta => true,
+        ExprKind::Dot { obj, .. } => is_dotted_name(hir, obj),
+        _ => false,
+    }
 }
 
 // ───────────────────────────── what a rest parameter collects ─────────────────────────────

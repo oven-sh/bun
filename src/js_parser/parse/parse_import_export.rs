@@ -17,6 +17,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         level: Level,
     ) -> Result<Expr, Error> {
         let p = self;
+        let mut is_deferred = false;
         // Parse an "import.meta" expression
         if p.lexer.token == T::TDot {
             p.esm_import_keyword = js_lexer::range_of_identifier(p.source, loc);
@@ -30,6 +31,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Ok(expr);
                 }
                 // `import.defer(..)` is an import call.
+                is_deferred = true;
             } else {
                 p.lexer.expected_string(b"\"meta\"")?;
             }
@@ -77,7 +79,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if p.lexer.tolerant {
-            return p.parse_import_call_tolerant(loc);
+            return p.parse_import_call_tolerant(loc, is_deferred);
         }
 
         // allow "in" inside call arguments;
@@ -194,9 +196,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// `checkGrammarImportCallExpression` objects to them. Arguments after the second are dropped.
     #[cold]
     #[inline(never)]
-    fn parse_import_call_tolerant(&mut self, loc: bun_ast::Loc) -> Result<Expr, Error> {
+    fn parse_import_call_tolerant(
+        &mut self,
+        loc: bun_ast::Loc,
+        is_deferred: bool,
+    ) -> Result<Expr, Error> {
         let p = self;
         let args = p.parse_call_args()?;
+        if is_deferred {
+            p.mark_type_syntax(loc, crate::sema::Mark::DeferredImportClose, args.loc);
+        }
         let specifier = match args.list.first() {
             Some(first) => *first,
             None => p.new_expr(E::Missing {}, args.loc),

@@ -45,7 +45,7 @@ impl Checker<'_> {
         }
     }
 
-    /// 1202 1203 1218, 1323 1324 1325 18060
+    /// 1202 1203 1218 1392, 1323 1324 1325 18060
     fn check_module_syntax(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let kind = self.p.files.options.module;
@@ -67,6 +67,16 @@ impl Checker<'_> {
                         out.push(Diagnostic {
                             start: s.pos,
                             code: 1202,
+                        });
+                    }
+                    // `checkImportEqualsDeclaration`
+                    if matches!(import.target, ImportEqualsTarget::Entity(_))
+                        && import.flags.contains(Flags::TYPE_ONLY)
+                        && matches!(bound.stmt_parent[i], Parent::File | Parent::Module(_))
+                    {
+                        out.push(Diagnostic {
+                            start: s.pos,
+                            code: 1392,
                         });
                     }
                 }

@@ -14,6 +14,8 @@ enum ExpandoFunction {
 pub(super) struct Binder<'f> {
     f: &'f File,
     options: BindOptions,
+    /// What spells a number as a name, if the caller has it.
+    atoms: Option<&'f Interner>,
     b: Bound,
     tables: Vec<FxHashMap<Atom, SymbolId>>,
     scope: ScopeId,
@@ -66,7 +68,7 @@ pub(super) struct Binder<'f> {
 }
 
 impl<'f> Binder<'f> {
-    pub(super) fn run(f: &'f File, options: BindOptions) -> Bound {
+    pub(super) fn run(f: &'f File, options: BindOptions, atoms: Option<&'f Interner>) -> Bound {
         let mut b = Bound::default();
         b.expr_symbol = vec![SymbolId::NONE; f.exprs.len()];
         b.expr_parent = vec![Parent::None; f.exprs.len()];
@@ -118,6 +120,7 @@ impl<'f> Binder<'f> {
         let mut this = Binder {
             f,
             options,
+            atoms,
             b,
             tables: Vec::new(),
             scope: ScopeId::NONE,
@@ -946,7 +949,39 @@ impl<'f> Binder<'f> {
                 }
             }
         }
+        if is_module {
+            self.bind_commonjs_type_exports(symbol);
+        }
         self.pop_scope();
+    }
+
+    /// `bindCommonJSTypeExports`: the types and namespaces `module` exports next to `export =` are exports of the `export =` symbol
+    /// as well, which is a namespace then.
+    fn bind_commonjs_type_exports(&mut self, module: SymbolId) {
+        let exports = &self.tables[self.b.symbols[module.idx()].exports.idx()];
+        let Some(&equals) = exports.get(&known::export_equals) else {
+            return;
+        };
+        let promoted: Vec<(Atom, SymbolId)> = exports
+            .iter()
+            .filter(|&(&name, &symbol)| {
+                name != known::export_equals
+                    && self.b.symbols[symbol.idx()]
+                        .flags
+                        .intersects(SymFlags::TYPE | SymFlags::NAMESPACE)
+            })
+            .map(|(&name, &symbol)| (name, symbol))
+            .collect();
+        if promoted.is_empty() {
+            return;
+        }
+        if self.b.symbols[equals.idx()].exports.is_none() {
+            let table = self.new_table();
+            self.b.symbols[equals.idx()].exports = table;
+        }
+        let table = self.b.symbols[equals.idx()].exports;
+        self.tables[table.idx()].extend(promoted);
+        self.b.symbols[equals.idx()].flags |= SymFlags::NAMESPACE_MODULE;
     }
 
     /// `hasExportDeclarations`
@@ -2330,6 +2365,10 @@ impl<'f> Binder<'f> {
             self.labels,
         ) = saved;
         self.pop_scope();
+        // `IsAmbientModule`
+        if !matches!(decl.name, ModuleName::Ident(_)) {
+            self.bind_commonjs_type_exports(symbol);
+        }
         let _ = stmt;
     }
 
@@ -3393,11 +3432,14 @@ impl<'f> Binder<'f> {
             }
         }
         // `bind`, `KindCallExpression`: a call in an optional chain is a call expression too.
-        if matches!(self.f[id].kind, ExprKind::Call(_))
-            && assignment_declaration_kind(self.f, id)
-                == JsDeclarationKind::ObjectDefinePropertyValue
-        {
-            self.expando_assignments.push((id, self.scope));
+        if matches!(self.f[id].kind, ExprKind::Call(_)) {
+            match assignment_declaration_kind(self.f, id) {
+                JsDeclarationKind::ObjectDefinePropertyValue => {
+                    self.expando_assignments.push((id, self.scope));
+                }
+                JsDeclarationKind::ObjectDefinePropertyExports => self.define_property_export(id),
+                _ => {}
+            }
         }
         match self.f[id].kind {
             ExprKind::Missing
@@ -3590,15 +3632,23 @@ impl<'f> Binder<'f> {
                             },
                             Decl::ModuleExports(id),
                         )),
-                        JsDeclarationKind::ExportsProperty(name) if name.is_some() => Some((
-                            name,
-                            if is_alias {
-                                SymFlags::ALIAS
-                            } else {
-                                SymFlags::FUNCTION_SCOPED_VARIABLE
-                            },
-                            Decl::ExportsProperty(id),
-                        )),
+                        JsDeclarationKind::ExportsProperty(name) => {
+                            let name = match self.f[target].kind {
+                                ExprKind::Index { index, .. } if name.is_none() => {
+                                    self.literal_name(index)
+                                }
+                                _ => name,
+                            };
+                            name.is_some().then_some((
+                                name,
+                                if is_alias {
+                                    SymFlags::ALIAS
+                                } else {
+                                    SymFlags::FUNCTION_SCOPED_VARIABLE
+                                },
+                                Decl::ExportsProperty(id),
+                            ))
+                        }
                         _ => None,
                     };
                     if let Some((name, flags, decl)) = declared {
@@ -3700,6 +3750,35 @@ impl<'f> Binder<'f> {
         self.in_assignment_pattern = around_in_pattern;
         self.scope_change_of = scope_change_of;
         self.is_reached = around_reached;
+    }
+
+    /// `bindExportsOrObjectDefineProperty`, of the call `Object.defineProperty(exports, key, descriptor)`: the file exports a variable
+    /// under the name `key` spells.
+    fn define_property_export(&mut self, call: ExprId) {
+        if self.b.commonjs_indicator.is_none() {
+            return;
+        }
+        let Some((_, key)) = define_property_call(self.f, call) else {
+            return;
+        };
+        let name = self.literal_name(key);
+        if name.is_none() {
+            return;
+        }
+        let file = self.b.file_symbol;
+        let exports = self.b.symbols[file.idx()].exports;
+        let flags = SymFlags::FUNCTION_SCOPED_VARIABLE | SymFlags::EXPORT_ONLY;
+        self.declare_in(exports, name, flags, Decl::ExportsProperty(call), file);
+    }
+
+    /// `getDeclarationName`: the text of the string or numeric literal `key`. `NONE` for a number without an interner to spell it.
+    fn literal_name(&self, key: ExprId) -> Atom {
+        match (self.f[key].kind, self.atoms) {
+            (ExprKind::Number(number), Some(atoms)) => atoms.intern_str(
+                &crate::atom::number_to_string(self.f.numbers[number as usize]),
+            ),
+            _ => string_literal_text(self.f, key),
+        }
     }
 
     /// What comes before the last link of the optional chain `e`, and whether that link is a `?.`.

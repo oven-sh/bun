@@ -199,10 +199,16 @@ pub struct Options {
     pub allow_umd_global_access: bool,
     /// `erasableSyntaxOnly`
     pub erasable_syntax_only: bool,
+    /// `emitDecoratorMetadata`
+    pub emit_decorator_metadata: bool,
     /// `importHelpers`
     pub import_helpers: bool,
     /// `allowArbitraryExtensions`
     pub allow_arbitrary_extensions: bool,
+    /// JavaScript is written next to its source: none of `noEmit`, `emitDeclarationOnly`, `outDir`.
+    pub writes_js_beside_source: bool,
+    /// Declaration files are written next to their source: `GetEmitDeclarations`, and none of `noEmit`, `declarationDir`, `outDir`.
+    pub writes_declarations_beside_source: bool,
     /// `jsxFactory`, `jsxFragmentFactory`, `reactNamespace`, as written. Empty if they are not.
     pub jsx_factory: String,
     pub jsx_fragment_factory: String,
@@ -355,6 +361,7 @@ impl Options {
         options.allow_unreachable_code = flag("allowUnreachableCode");
         options.allow_umd_global_access = flag("allowUmdGlobalAccess");
         options.erasable_syntax_only = flag("erasableSyntaxOnly");
+        options.emit_decorator_metadata = flag("emitDecoratorMetadata");
         options.import_helpers = flag("importHelpers");
         options.allow_arbitrary_extensions = flag("allowArbitraryExtensions");
         options.reports_unreachable_code =
@@ -515,6 +522,11 @@ impl Options {
         options.rewrite_relative_import_extensions = flag("rewriteRelativeImportExtensions");
         options.allow_importing_ts_extensions =
             flag("allowImportingTsExtensions") || options.rewrite_relative_import_extensions;
+        let writes_beside_source = !flag("noEmit") && text("outDir").is_empty();
+        options.writes_js_beside_source = writes_beside_source && !flag("emitDeclarationOnly");
+        options.writes_declarations_beside_source = writes_beside_source
+            && (flag("declaration") || flag("composite"))
+            && text("declarationDir").is_empty();
         options.jsx = match compiler
             .get("jsx")
             .and_then(Json::as_str)
@@ -631,6 +643,9 @@ struct Look<'a> {
     /// `resolved.resolvedUsingTsExtension`. Starts as false and is set where a file is found. The search returns the first file it
     /// finds, so the cell is set at most once.
     using_ts_extension: &'a Cell<bool>,
+    /// `resolved.extension` is `.d.css.ts`, `.d.json.ts` or the like, which `GetResolutionDiagnostic` takes `allowArbitraryExtensions` for.
+    /// Set like `using_ts_extension`.
+    arbitrary_extension: &'a Cell<bool>,
 }
 
 impl Look<'_> {
@@ -806,9 +821,21 @@ impl<'h> Resolver<'h> {
         from: &str,
         mode: ResolutionMode,
     ) -> Option<(String, bool)> {
-        let using_ts_extension = Cell::new(false);
-        let found = self.resolve_with(spec, from, self.look(mode, true, &using_ts_extension))?;
-        Some((found, using_ts_extension.get()))
+        self.resolve_module_and_extension(spec, from, mode)
+            .map(|resolved| (resolved.0, resolved.1))
+    }
+
+    /// The same, and whether `Extension` of the result is one that takes `allowArbitraryExtensions` (`GetResolutionDiagnostic`).
+    pub fn resolve_module_and_extension(
+        &self,
+        spec: &str,
+        from: &str,
+        mode: ResolutionMode,
+    ) -> Option<(String, bool, bool)> {
+        let (using_ts_extension, arbitrary_extension) = (Cell::new(false), Cell::new(false));
+        let look = self.look(mode, true, &using_ts_extension, &arbitrary_extension);
+        let found = self.resolve_with(spec, from, look)?;
+        Some((found, using_ts_extension.get(), arbitrary_extension.get()))
     }
 
     /// `newResolutionState`. `is_module`: the name is a module specifier. Otherwise it is the name in a `/// <reference types>`, which
@@ -818,6 +845,7 @@ impl<'h> Resolver<'h> {
         mode: ResolutionMode,
         is_module: bool,
         using_ts_extension: &'a Cell<bool>,
+        arbitrary_extension: &'a Cell<bool>,
     ) -> Look<'a> {
         let like_node = self.options.resolves_like_node;
         Look {
@@ -830,6 +858,7 @@ impl<'h> Resolver<'h> {
             depth: 0,
             ending_from_config: false,
             using_ts_extension,
+            arbitrary_extension,
         }
     }
 
@@ -993,7 +1022,7 @@ impl<'h> Resolver<'h> {
     ) -> Option<String> {
         // `ResolvedTypeReferenceDirective` has no `ResolvedUsingTsExtension`.
         let ignored = Cell::new(false);
-        let look = self.look(mode, false, &ignored);
+        let look = self.look(mode, false, &ignored, &ignored);
         let has_roots = self.options.type_roots.is_some();
         // First where types are kept, wherever the reference is written.
         let primary = if has_roots {
@@ -1247,7 +1276,9 @@ impl<'h> Resolver<'h> {
             // `./a.css` is declared by `a.d.css.ts`.
             _ => {
                 return if look.declarations {
-                    self.try_file(&format!("{stem}.d{written}.ts"))
+                    let found = self.try_file(&format!("{stem}.d{written}.ts"))?;
+                    look.arbitrary_extension.set(true);
+                    Some(found)
                 } else {
                     None
                 };
@@ -1273,6 +1304,8 @@ impl<'h> Resolver<'h> {
             );
             look.using_ts_extension
                 .set(!look.ending_from_config && is_ts_extension);
+            // `.d.json.ts`
+            look.arbitrary_extension.set(written == ".json");
             return Some(found);
         }
         if look.js {

@@ -43,6 +43,14 @@ pub(crate) struct Builder<'a> {
     pub(crate) tolerant: bool,
     /// How many classes what is being lowered is written in.
     pub(crate) classes_around: u32,
+    /// `TypeSyntax::ambient_statements`, sorted by start.
+    pub(crate) ambient_statements: Vec<(i32, i32, bun_ast::Stmt)>,
+    /// `TypeSyntax::ambient_initializers`, sorted by the start of the binding.
+    pub(crate) ambient_initializers: Vec<(i32, bun_ast::Expr)>,
+    /// Empty statements that the lowering still has to turn into what the parser read there.
+    pub(crate) pending_statements: Vec<(StmtId, bun_ast::Stmt)>,
+    /// Variables whose initializer the lowering still has to fill in.
+    pub(crate) pending_initializers: Vec<(VarDeclId, bun_ast::Expr)>,
 }
 
 /// What modifiers are written on, as far as it matters to which are allowed.
@@ -264,6 +272,10 @@ impl<'a> Builder<'a> {
             member_decorators: Vec::new(),
             tolerant: true,
             classes_around: 0,
+            ambient_statements: Vec::new(),
+            ambient_initializers: Vec::new(),
+            pending_statements: Vec::new(),
+            pending_initializers: Vec::new(),
         }
     }
 
@@ -595,6 +607,19 @@ impl<'a> Builder<'a> {
             .ok()
     }
 
+    /// The `B` of `namespace A.B { }`, from the dot at `offset` (`parseModuleOrNamespaceDeclaration`).
+    pub(crate) fn nested_module_at(&mut self, offset: u32) -> Option<StmtId> {
+        self.depth = 0;
+        self.start_statement(false);
+        self.seek(offset)
+            .and_then(|()| self.expect(T::TDot))
+            .and_then(|()| {
+                let pos = self.pos();
+                self.parse_module(pos, Flags::EXPORT)
+            })
+            .ok()
+    }
+
     /// Before a statement that is not part of another: nothing has been made of its modifiers yet. One that was given up on leaves
     /// all this as it was where it was.
     fn start_statement(&mut self, in_ambient_block: bool) {
@@ -619,11 +644,11 @@ impl<'a> Builder<'a> {
             .ok()
     }
 
-    /// A whole declaration file.
-    pub(crate) fn declaration_file(&mut self) {
+    /// A whole declaration file. `tolerant`: the caller reports the parser's syntax errors. Otherwise they are not read, so a syntax
+    /// error has to fail here.
+    pub(crate) fn declaration_file(&mut self, tolerant: bool) {
         self.file.kind = FileKind::Declaration;
-        // The parser's errors in a declaration file are not read, so a syntax error has to fail here.
-        self.tolerant = false;
+        self.tolerant = tolerant;
         self.scan_references();
         let mut stmts = Vec::new();
         let result = self.seek(0).and_then(|()| {
@@ -631,9 +656,18 @@ impl<'a> Builder<'a> {
                 self.next()?;
             }
             while self.tok() != T::TEndOfFile {
+                // `abortParsingListOrMoveToNextToken`: the parser has reported it (1128).
+                if tolerant && self.tok() == T::TCloseBrace {
+                    self.next()?;
+                    continue;
+                }
                 self.depth = 0;
                 self.start_statement(false);
+                let start = self.pos();
                 stmts.push(self.parse_statement(Flags::AMBIENT)?);
+                if self.pos() == start {
+                    return Err(Error::SyntaxError);
+                }
             }
             Ok(())
         });
@@ -643,6 +677,21 @@ impl<'a> Builder<'a> {
         }
         self.file.body = self.file.list(&stmts);
         self.file.parens.sort_unstable_by_key(|p| p.0.0);
+    }
+
+    /// Forgets all that was read, to read the file again.
+    pub(crate) fn start_over(&mut self) {
+        self.file = hir::File {
+            source_len: self.file.source_len,
+            ..Default::default()
+        };
+        self.pending.clear();
+        self.pending_statements.clear();
+        self.pending_initializers.clear();
+        self.modifiers.clear();
+        self.header_modifiers.clear();
+        self.member_decorators.clear();
+        self.in_abstract_class = false;
     }
 
     /// `processCommentDirective`: `@ts-ignore` and `@ts-expect-error` at the start of a `//` comment, or of the last line of a `/* */`
@@ -2687,7 +2736,7 @@ impl<'a> Builder<'a> {
     }
 
     /// A statement that is not a declaration. The checker refuses it in an ambient context (1036). One that cannot be read here is
-    /// skipped and becomes an empty statement.
+    /// skipped and becomes an empty statement, which the lowering replaces if the parser kept the statement.
     fn parse_other_statement(&mut self, pos: u32) -> R<StmtId> {
         if matches!(self.tok(), T::TCloseBrace | T::TEndOfFile) {
             return Err(Error::SyntaxError);
@@ -2714,8 +2763,26 @@ impl<'a> Builder<'a> {
             }
             self.lexer.restore(&snapshot);
         }
-        self.skip_statement()?;
-        Ok(self.file.stmt(StmtKind::Empty, pos))
+        let parsed = self.ambient_statement_at(pos);
+        // In a declaration file this is what notices a syntax error.
+        if parsed.is_none() || !self.tolerant {
+            self.skip_statement()?;
+        }
+        let statement = self.file.stmt(StmtKind::Empty, pos);
+        if let Some((end, parsed)) = parsed {
+            self.seek(end)?;
+            self.pending_statements.push((statement, parsed));
+        }
+        Ok(statement)
+    }
+
+    /// The statement the parser read at `pos` in an ambient context, and where the token after it starts. The last of several attempts.
+    fn ambient_statement_at(&self, pos: u32) -> Option<(u32, bun_ast::Stmt)> {
+        let after = self
+            .ambient_statements
+            .partition_point(|statement| statement.0 <= pos as i32);
+        let &(start, end, statement) = self.ambient_statements.get(after.checked_sub(1)?)?;
+        (start == pos as i32 && end > start).then_some((end as u32, statement))
     }
 
     /// Skips a statement that is not a declaration.
@@ -2801,6 +2868,7 @@ impl<'a> Builder<'a> {
     fn parse_var(&mut self, pos: u32, kind: VarKind, flags: Flags) -> R<StmtId> {
         self.next()?;
         let mut decls = Vec::new();
+        let mut parsed_initializers = Vec::new();
         // `parseDelimitedList(PCVariableDeclarations, parseVariableDeclaration)`
         loop {
             if self.tolerant
@@ -2826,6 +2894,13 @@ impl<'a> Builder<'a> {
             } else {
                 ExprId::NONE
             };
+            // `parse_initializer` skipped it.
+            if init.is_some()
+                && matches!(self.file[init].kind, ExprKind::Missing)
+                && let Some(parsed) = self.ambient_initializer_of(self.file[pat].pos)
+            {
+                parsed_initializers.push((decls.len(), parsed));
+            }
             decls.push(VarDecl {
                 pat,
                 ty,
@@ -2849,7 +2924,21 @@ impl<'a> Builder<'a> {
         }
         self.semicolon()?;
         let decls = self.file.add_var_decls(&decls);
+        for (index, initializer) in parsed_initializers {
+            self.pending_initializers
+                .push((decls.at(index), initializer));
+        }
         Ok(self.file.stmt(StmtKind::Var(decls), pos))
+    }
+
+    /// The initializer the parser read in an ambient context for the variable whose binding starts at `binding`. The last of several
+    /// attempts.
+    fn ambient_initializer_of(&self, binding: u32) -> Option<bun_ast::Expr> {
+        let after = self
+            .ambient_initializers
+            .partition_point(|initializer| initializer.0 <= binding as i32);
+        let &(start, initializer) = self.ambient_initializers.get(after.checked_sub(1)?)?;
+        (start == binding as i32).then_some(initializer)
     }
 
     fn parse_function(&mut self, pos: u32, mut flags: Flags) -> R<StmtId> {
@@ -2870,6 +2959,8 @@ impl<'a> Builder<'a> {
                 return Err(Error::SyntaxError);
             }
             self.body_if_any(func, true)?;
+            // `parseFunctionBlockOrSemicolon`: a `;` after the block is a statement of its own.
+            return Ok(self.file.stmt(StmtKind::Fn(func), pos));
         }
         let can_parse_semicolon = self.lexer.has_newline_before
             || matches!(self.tok(), T::TSemicolon | T::TCloseBrace | T::TEndOfFile);

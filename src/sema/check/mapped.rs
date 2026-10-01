@@ -2315,6 +2315,9 @@ impl<'p> Checker<'p> {
                 }
             }
         }
+        for text in &mut new_texts {
+            combine_surrogate_pairs(text);
+        }
         if new_types.is_empty() {
             let value = self.files().atoms.intern(&new_texts[0]);
             return self.string_literal(value, false);
@@ -2342,21 +2345,26 @@ impl<'p> Checker<'p> {
 
     /// `applyStringMapping`
     fn map_text(&self, kind: StringMappingKind, value: Atom) -> Atom {
-        let text = self.files().atoms.text(value).into_owned();
-        let mut chars = text.chars();
-        let mapped = match kind {
-            StringMappingKind::Uppercase => text.to_uppercase(),
-            StringMappingKind::Lowercase => text.to_lowercase(),
-            StringMappingKind::Capitalize => match chars.next() {
-                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-                None => text,
-            },
-            StringMappingKind::Uncapitalize => match chars.next() {
-                Some(first) => first.to_lowercase().collect::<String>() + chars.as_str(),
-                None => text,
-            },
-        };
-        self.files().atoms.intern_str(&mapped)
+        let mut mapped: Vec<u8> = Vec::new();
+        // A lone surrogate, three bytes that are no UTF-8, has no case.
+        for (i, chunk) in self.files().atoms.bytes(value).utf8_chunks().enumerate() {
+            let text = chunk.valid();
+            let mut chars = text.chars();
+            let text = match (kind, chars.next()) {
+                (StringMappingKind::Uppercase, _) => text.to_uppercase(),
+                (StringMappingKind::Lowercase, _) => text.to_lowercase(),
+                (StringMappingKind::Capitalize, Some(first)) if i == 0 => {
+                    first.to_uppercase().collect::<String>() + chars.as_str()
+                }
+                (StringMappingKind::Uncapitalize, Some(first)) if i == 0 => {
+                    first.to_lowercase().collect::<String>() + chars.as_str()
+                }
+                _ => text.to_owned(),
+            };
+            mapped.extend_from_slice(text.as_bytes());
+            mapped.extend_from_slice(chunk.invalid());
+        }
+        self.files().atoms.intern(&mapped)
     }
 
     /// `getStringMappingType`
@@ -2403,5 +2411,31 @@ impl<'p> Checker<'p> {
             }
             _ => ty,
         }
+    }
+}
+
+/// `CombineSurrogatePairs`: a lone high surrogate right before a lone low one makes one character with it. Each is three bytes
+/// (`EncodeJSStringRune`).
+fn combine_surrogate_pairs(text: &mut Vec<u8>) {
+    let mut at = 0;
+    while at + 6 <= text.len() {
+        let [
+            0xED,
+            h1 @ 0xA0..=0xAF,
+            h2 @ 0x80..=0xBF,
+            0xED,
+            l1 @ 0xB0..=0xBF,
+            l2 @ 0x80..=0xBF,
+        ] = text[at..at + 6]
+        else {
+            at += 1;
+            continue;
+        };
+        let high = u32::from(h1 & 0x0F) << 6 | u32::from(h2 & 0x3F);
+        let low = u32::from(l1 & 0x0F) << 6 | u32::from(l2 & 0x3F);
+        let ch =
+            char::from_u32(0x10000 + (high << 10 | low)).unwrap_or(char::REPLACEMENT_CHARACTER);
+        text.splice(at..at + 6, ch.encode_utf8(&mut [0; 4]).bytes());
+        at += 4;
     }
 }

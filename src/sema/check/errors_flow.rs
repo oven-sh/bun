@@ -36,13 +36,14 @@ fn start_of_statement(hir: &hir::File, s: StmtId) -> u32 {
 }
 
 /// Where the return type `node` starts as it is written. Neither the parentheses around a type are kept nor a `|` or a `&` before
-/// its only member; what comes before a return type is a `:`, which none of these can be mistaken for.
+/// its only member, nor the `!` of a JSDocNonNullableType; what comes before a return type is a `:`, which none of these can be
+/// mistaken for.
 fn start_of_return_type(hir: &hir::File, node: TypeNodeId) -> u32 {
     let text = &hir.text[..];
     let mut at = (hir[node].pos as usize).min(text.len());
     loop {
         let before = text[..at].trim_ascii_end().len();
-        if before == 0 || !matches!(text[before - 1], b'(' | b'|' | b'&') {
+        if before == 0 || !matches!(text[before - 1], b'(' | b'|' | b'&' | b'!') {
             return at as u32;
         }
         at = before - 1;
@@ -79,6 +80,10 @@ impl Checker<'_> {
             }
         }
         if hir.kind == FileKind::Declaration {
+            // `checkBreakOrContinueStatement`, `checkLabeledStatement`: a statement is checked wherever it is written.
+            if !hir.has_errors {
+                self.check_jumps_and_labels(file, out);
+            }
             return;
         }
         let options = &self.p.files.options;

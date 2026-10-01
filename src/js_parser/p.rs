@@ -191,6 +191,9 @@ pub(crate) struct ParserSnapshot<'a> {
     symbols_len: usize,
     allocated_names_len: usize,
     import_records_len: usize,
+    await_was_refused: bool,
+    reparses_rest_of_file: bool,
+    stray_decorators_len: usize,
 }
 
 pub(crate) type NeedsJSXType = bool;
@@ -264,6 +267,12 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) latest_return_had_semicolon: bool,
     pub(crate) has_import_meta: bool,
     pub(crate) has_es_module_syntax: bool,
+    /// Tolerant mode: a list refused `await` as a name in the top-level statement being parsed.
+    pub(crate) await_was_refused: bool,
+    /// Tolerant mode: the loop of `reparseTopLevelAwait` goes on to the end of the file.
+    pub(crate) reparses_rest_of_file: bool,
+    /// Tolerant mode: what `note_stray_decorators` kept, until the list of statements being parsed takes it.
+    pub(crate) stray_decorators: Vec<Expr>,
     pub(crate) top_level_await_keyword: bun_ast::Range,
     pub(crate) fn_or_arrow_data_parse: FnOrArrowDataParse,
     pub(crate) fn_or_arrow_data_visit: FnOrArrowDataVisit,
@@ -8383,6 +8392,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             symbols_len: self.symbols.len(),
             allocated_names_len: self.allocated_names.len(),
             import_records_len: self.import_records.len(),
+            await_was_refused: self.await_was_refused,
+            reparses_rest_of_file: self.reparses_rest_of_file,
+            stray_decorators_len: self.stray_decorators.len(),
         }
     }
 
@@ -8441,6 +8453,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         self.allocated_names.truncate(snapshot.allocated_names_len);
         self.import_records.truncate(snapshot.import_records_len);
+        self.await_was_refused = snapshot.await_was_refused;
+        self.reparses_rest_of_file = snapshot.reparses_rest_of_file;
+        self.stray_decorators
+            .truncate(snapshot.stray_decorators_len);
     }
 
     /// When not transpiling we dont use the renamer, so our solution is to generate really
@@ -9859,6 +9875,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             latest_return_had_semicolon: false,
             has_import_meta: false,
             has_es_module_syntax: false,
+            await_was_refused: false,
+            reparses_rest_of_file: false,
+            stray_decorators: Vec::new(),
             top_level_await_keyword: bun_ast::Range::NONE,
             fn_or_arrow_data_parse,
             fn_or_arrow_data_visit: FnOrArrowDataVisit::default(),

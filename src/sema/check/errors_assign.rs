@@ -1124,6 +1124,19 @@ impl Checker<'_> {
                 let Some(name) = self.member_name(file, prop.key) else {
                     return false;
                 };
+                // `checkObjectLiteral`: a property has the type of its initializer, the error type included.
+                if let Some((
+                    Prop {
+                        source: PropSource::Literal(of, written),
+                        ..
+                    },
+                    _,
+                )) = self.prop_of(given, name)
+                {
+                    let written = self.hir(of)[written];
+                    return matches!(written.kind, PropKind::Init | PropKind::Shorthand)
+                        && self.is_expression_in_error(of, written.value);
+                }
                 let key = self.string_literal(name, false);
                 return self.type_of_property(given, name).is_none()
                     && self.indexed_access_if_any(given, key, true).is_none();
@@ -1230,6 +1243,14 @@ impl Checker<'_> {
             }
             ExprKind::Binary {
                 op: BinOp::Or | BinOp::And | BinOp::Nullish,
+                left,
+                right,
+            } => {
+                self.is_expression_in_error(file, left) || self.is_expression_in_error(file, right)
+            }
+            // `checkBinaryLikeExpression`: `+` with an operand that is `any` gives the error type if either operand has it.
+            ExprKind::Binary {
+                op: BinOp::Add,
                 left,
                 right,
             } => {
@@ -1898,7 +1919,11 @@ impl Checker<'_> {
         let fits = self.compare_if_certain(|c| c.is_assignable(source, target));
         let is_too_complex = std::mem::take(&mut self.relation_too_complex) && !self.timed_out();
         match fits {
-            Some(true) => return true,
+            Some(true) => {
+                if !self.is_refused_by_hosting_alias(file, written, e, source, target) {
+                    return true;
+                }
+            }
             // Cut short for another reason than complexity: the result is unknown. tsgo's own depth limit (2321) is among those.
             None if !is_too_complex => return true,
             _ => {}
@@ -1909,7 +1934,9 @@ impl Checker<'_> {
         // A type parameter where none is in scope is something the resolver did not get to the bottom of.
         if e.is_some()
             && (self.has_type_variables(source)
-                || !is_uninstantiated && self.has_type_variables(target))
+                || !is_uninstantiated
+                    && self.has_type_variables(target)
+                    && !self.is_reference_with_unbound_this(target))
             && !self.is_in_generic_context(file, e)
         {
             return true;
@@ -1933,6 +1960,150 @@ impl Checker<'_> {
             self.report_not_assignable_as(source, target, at, head, named_otherwise, out);
         }
         false
+    }
+
+    /// `combineValueAndTypeSymbols`: the declared type of the combined symbol, whose members keep the `this` type of the interface.
+    fn is_reference_with_unbound_this(&self, ty: TypeId) -> bool {
+        let TypeData::Ref { target, args } = self.data(ty) else {
+            return false;
+        };
+        let Some((&this, rest)) = args.split_last() else {
+            return false;
+        };
+        matches!(*self.data(this), TypeData::ThisParam(of) if of == *target)
+            && !rest.iter().any(|&arg| self.has_type_variables(arg))
+    }
+
+    /// The alias probe of `structuredTypeRelatedToWorker`, where `target` and the variable `e` are both annotated with instantiations
+    /// of one `hosting_alias`: whether its variances say that `source` is not related to `target`.
+    fn is_refused_by_hosting_alias(
+        &mut self,
+        file: FileId,
+        written: Option<(FileId, TypeNodeId)>,
+        e: ExprId,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        if written.is_none() || e.is_none() {
+            return false;
+        }
+        let Some((alias, targets)) = self.hosting_alias(written, target) else {
+            return false;
+        };
+        let given = self.annotation_of_reference(file, e);
+        let Some((same, sources)) = self.hosting_alias(given, source) else {
+            return false;
+        };
+        same == alias
+            && self.compare_if_certain(|c| {
+                c.alias_arguments_related(alias, &sources, &targets) == Some(false)
+            }) == Some(true)
+    }
+
+    /// `getTypeFromTypeAliasReference`: `Type.alias` of the object or conditional type `ty`, written at `written` as `A<..>`, where
+    /// the body of the generic alias `A` is a reference to another generic alias. That reference is instantiated under `A`
+    /// (`getAliasSymbolForTypeNode`), and `alias_of` only knows the innermost alias.
+    fn hosting_alias(
+        &mut self,
+        written: Option<(FileId, TypeNodeId)>,
+        ty: TypeId,
+    ) -> Option<(Sym, Vec<TypeId>)> {
+        use crate::bind::ScopeKind;
+        let (file, node) = written?;
+        if !matches!(
+            self.data(ty),
+            TypeData::Anon { .. } | TypeData::Fns { .. } | TypeData::Cond { .. }
+        ) {
+            return None;
+        }
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let TypeNodeKind::Ref { name, args } = hir[node].kind else {
+            return None;
+        };
+        let scope = bound.type_scope[node.idx()];
+        if args.is_empty() || scope.is_none() {
+            return None;
+        }
+        // Narrowed, it is no longer what is written.
+        if self.type_from_node(file, node) != ty {
+            return None;
+        }
+        let names: Vec<Atom> = hir.ids(name).collect();
+        let host = self
+            .files()
+            .resolve_entity(file, scope, &names, SymFlags::TYPE)
+            .and_then(|s| self.files().resolve_alias_if_needed(s))?;
+        let (of, alias) = self.generic_alias_declaration(host)?;
+        let (hir, bound) = (self.hir(of), self.bound(of));
+        let body = hir[alias].ty;
+        if body.is_none() {
+            return None;
+        }
+        let TypeNodeKind::Ref {
+            name: hosted,
+            args: hosted_args,
+        } = hir[body].kind
+        else {
+            return None;
+        };
+        let scope = bound.type_scope[body.idx()];
+        if hosted_args.is_empty() || scope.is_none() {
+            return None;
+        }
+        let names: Vec<Atom> = hir.ids(hosted).collect();
+        let hosted = self
+            .files()
+            .resolve_entity(of, scope, &names, SymFlags::TYPE)
+            .and_then(|s| self.files().resolve_alias_if_needed(s))?;
+        self.generic_alias_declaration(hosted)?;
+        // `getConditionalType`, `getObjectTypeInstantiation`: only an instantiation of the body of the hosted alias gets the alias.
+        if self.alias_of(ty)?.0 != hosted {
+            return None;
+        }
+        // `instantiateMappedType`: an instantiation of a homomorphic mapped type keeps the alias of the mapped type.
+        if let Some((mapped_in, mapped, _)) = self.mapped_origin(ty) {
+            let param = self.type_param(mapped_in, self.mapped_decl(mapped_in, mapped).param);
+            if let Some(constraint) = self.constraint_of_type_param(param)
+                && matches!(self.data(constraint), TypeData::Keyof(_))
+            {
+                return None;
+            }
+        }
+        // `isLocalTypeAlias`: an alias declared in a function does not host a reference to a top-level alias.
+        let mut around = bound.alias_scope[alias.idx()];
+        while around.is_some() {
+            let s = &bound.scopes[around.idx()];
+            if matches!(s.kind, ScopeKind::Fn(_)) {
+                return None;
+            }
+            around = s.parent;
+        }
+        let params = self.type_params_of_symbol(host);
+        let args = self.types_from_nodes(file, args);
+        if args.len() > params.len() {
+            return None;
+        }
+        Some((host, self.fill_type_args(&params, &args)))
+    }
+
+    /// The declaration of `sym`, if it is a type alias with type parameters and no class or interface as well.
+    fn generic_alias_declaration(&self, sym: Sym) -> Option<(FileId, AliasId)> {
+        use crate::bind::Decl;
+        let flags = self.files().flags(sym);
+        if !flags.contains(SymFlags::TYPE_ALIAS)
+            || flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE)
+        {
+            return None;
+        }
+        self.files()
+            .decls(sym)
+            .into_iter()
+            .find_map(|(file, decl)| match decl {
+                Decl::Alias(alias) if !self.hir(file)[alias].type_params.is_empty() => {
+                    Some((file, alias))
+                }
+                _ => None,
+            })
     }
 
     /// Where the type of the variable or parameter that `e` names is written.

@@ -1109,6 +1109,21 @@ impl<'a> Lexer<'a> {
             .add_range_error_fmt(Some(self.source), r, format_args!("TG{code}"));
     }
 
+    /// `NodeFlagsJavaScriptFile`. The type checker has JavaScript parsed as TypeScript with JSX. Always false outside tolerant mode.
+    #[inline]
+    pub(crate) fn is_javascript_file(&self) -> bool {
+        self.tolerant && self.has_javascript_extension()
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn has_javascript_extension(&self) -> bool {
+        let path = self.source.path.text;
+        [&b".js"[..], b".jsx", b".mjs", b".cjs"]
+            .iter()
+            .any(|extension| path.ends_with(extension))
+    }
+
     /// `TokenFullStart`, `nodePos()`: where the previous token ends, before the whitespace and comments that precede the
     /// current token. Tolerant mode only.
     #[cold]
@@ -2959,6 +2974,10 @@ impl<'a> Lexer<'a> {
 
     pub(crate) fn to_utf8_e_string(&mut self) -> Result<js_ast::E::String, Error> {
         let mut res = self.to_e_string()?;
+        if self.tolerant && !res.is_utf8() {
+            let text = utf16_to_wtf8(res.slice16());
+            return Ok(js_ast::E::String::init(self.arena.alloc_slice_copy(&text)));
+        }
         res.to_utf8(self.arena)?;
         Ok(res)
     }
@@ -4010,6 +4029,9 @@ impl<'a> Lexer<'a> {
                 // Store bigints as text to avoid precision loss;
                 if is_big_integer_literal {
                     self.identifier = text;
+                    if self.tolerant {
+                        self.normalize_big_int();
+                    }
                 } else if is_invalid_legacy_octal_literal {
                     match bun_core::wtf::parse_double(text) {
                         Ok(num) => {
@@ -4194,6 +4216,42 @@ impl<'a> Lexer<'a> {
         Ok(())
     }
 
+    /// `ParsePseudoBigInt`: the type checker knows a bigint literal by its digits in base 10, without leading zeros. `identifier` has
+    /// neither separators nor the `n`.
+    #[cold]
+    #[inline(never)]
+    fn normalize_big_int(&mut self) {
+        let text = self.identifier;
+        let radix: u32 = match text.get(1) {
+            Some(b'x' | b'X') => 16,
+            Some(b'b' | b'B') => 2,
+            Some(b'o' | b'O') => 8,
+            _ => {
+                let zeros = text.iter().take_while(|&&digit| digit == b'0').count();
+                self.identifier = &text[zeros.min(text.len().saturating_sub(1))..];
+                return;
+            }
+        };
+        // Base 1e9, least significant first.
+        let mut limbs: Vec<u32> = vec![0];
+        for &digit in &text[2..] {
+            let mut carry = u64::from(char::from(digit).to_digit(radix).unwrap_or(0));
+            for limb in limbs.iter_mut() {
+                let value = u64::from(*limb) * u64::from(radix) + carry;
+                *limb = (value % 1_000_000_000) as u32;
+                carry = value / 1_000_000_000;
+            }
+            if carry > 0 {
+                limbs.push(carry as u32);
+            }
+        }
+        let mut decimal = limbs[limbs.len() - 1].to_string();
+        for limb in limbs[..limbs.len() - 1].iter().rev() {
+            decimal.push_str(&format!("{limb:09}"));
+        }
+        self.identifier = self.arena.alloc_slice_copy(decimal.as_bytes());
+    }
+
     /// Makes the character at `pos` the current one.
     #[inline]
     fn move_to(&mut self, pos: usize) {
@@ -4284,6 +4342,7 @@ impl<'a> Lexer<'a> {
             if at(pos) == b'n' {
                 digits.splice(0..0, text[start..start + 2].iter().copied());
                 self.identifier = self.arena.alloc_slice_copy(&digits);
+                self.normalize_big_int();
                 self.token = T::TBigIntegerLiteral;
                 pos += 1;
             } else {
@@ -4356,6 +4415,7 @@ impl<'a> Lexer<'a> {
         if fixed_part_end == pos && at(pos) == b'n' {
             // `scanBigIntSuffix`
             self.identifier = self.arena.alloc_slice_copy(&digits);
+            self.normalize_big_int();
             self.token = T::TBigIntegerLiteral;
             pos += 1;
         }
@@ -4399,6 +4459,27 @@ pub(crate) fn is_whitespace(codepoint: CodePoint) -> bool {
     // ECMAScript `WhiteSpace`: TAB VT FF SP ZWNBSP + Unicode Zs.
     matches!(codepoint, 0x0009 | 0x000B | 0x000C | 0x0020 | 0xFEFF)
         || strings::is_unicode_space_separator(codepoint as u32)
+}
+
+/// `EncodeJSStringRune`: UTF-8, with a lone surrogate as the three bytes UTF-8 would have for it if it had any. The type checker
+/// tells such strings apart.
+#[cold]
+pub(crate) fn utf16_to_wtf8(units: &[u16]) -> Vec<u8> {
+    let mut text = Vec::with_capacity(units.len());
+    for unit in char::decode_utf16(units.iter().copied()) {
+        match unit {
+            Ok(ch) => text.extend_from_slice(ch.encode_utf8(&mut [0; 4]).as_bytes()),
+            Err(lone) => {
+                let unit = lone.unpaired_surrogate();
+                text.extend_from_slice(&[
+                    0xED,
+                    0x80 | (unit >> 6 & 0x3F) as u8,
+                    0x80 | (unit & 0x3F) as u8,
+                ]);
+            }
+        }
+    }
+    text
 }
 
 /// Where the escape starts that `text` ends in the middle of.

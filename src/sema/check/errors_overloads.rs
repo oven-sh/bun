@@ -205,6 +205,13 @@ impl Checker<'_> {
         out: &mut Vec<Diagnostic>,
     ) {
         let hir = self.hir(file);
+        if hir.is_js
+            && !group.iter().any(|&i| {
+                functions[i].is_some_and(|(f, _)| self.is_js_function_symbol_checked(file, f))
+            })
+        {
+            return;
+        }
         let starts_at_previous_end = |i: usize| match (functions[i - 1], functions[i]) {
             (Some((_, previous)), Some((_, start))) => !follows_skipped_token(hir, previous, start),
             _ => true,
@@ -262,6 +269,18 @@ impl Checker<'_> {
             }));
         }
         self.check_overload_group(file, &declarations, 2393, out);
+    }
+
+    /// `checkFunctionOrMethodDeclaration`: the function `f` of a JavaScript file is looked at as an export (`symbol.Parent != nil`),
+    /// or from a declaration of it in a file that is not JavaScript.
+    fn is_js_function_symbol_checked(&self, file: FileId, f: FnId) -> bool {
+        self.hir(file)[f].flags.contains(Flags::EXPORT)
+            || self
+                .all_declarations_of_function(file, f, 0)
+                .is_some_and(|all| {
+                    all.iter()
+                        .any(|&(of, decl)| matches!(decl, Decl::Fn(_)) && !self.hir(of).is_js)
+                })
     }
 
     /// Every declaration of the symbol of the function `f`, if it has more than the `here` that are written next to `f`: in other
@@ -410,6 +429,12 @@ impl Checker<'_> {
         // `reportImplementationExpectedError`
         let mut report = |i: usize| {
             let member = &hir[members.at(i)];
+            // `NodeIsMissing(name)`: nothing is written where the name would be, not even `""` or `[""]`.
+            if matches!(member.key, PropKey::Name(known::empty))
+                && !matches!(hir.text.get(member.pos as usize), Some(b'"' | b'\'' | b'['))
+            {
+                return;
+            }
             // `subsequentNode.Pos() == node.End()`
             if i + 1 < members.len() && starts_at_previous_end(i + 1) {
                 let next = &hir[members.at(i + 1)];

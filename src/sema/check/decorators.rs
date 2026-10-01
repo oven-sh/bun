@@ -412,6 +412,10 @@ impl Checker<'_> {
 
     pub(super) fn check_decorators(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
+        // Those of a missing declaration or of a `this` parameter: `checkDecorators` never looks at them.
+        for &(start, end) in &hir.stray_decorators {
+            out.retain(|d| d.start < start || d.start >= end);
+        }
         let mut refused: Vec<DecoratorOwner> = Vec::new();
         for i in 0..hir.decorators.len() {
             let (owner, e) = hir.decorators[i];

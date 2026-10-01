@@ -12,7 +12,7 @@
 //! * `getVerbatimModuleSyntaxErrorMessage`, from `checkAliasSymbol`, `checkExportAssignment` and `checkGrammarImportCallExpression`: 1286 1295
 //! * `checkGrammarModifiers`, of `export`: 1287, of `default`: 1319; `reportObviousModifierErrors`: 1184
 //! * `checkGrammarModuleElementContext`: 1231 1232 1233 1234 1235 1258 1473 1474
-//! * `getTypeFromImportTypeNode`: 1339 1340
+//! * `getTypeFromImportTypeNode`: 1339 1340; `checkGrammarImportClause`: 18060
 //! * `reportFlowControlError`: 2563
 //!
 //! All of TypeScript 7.0.2's checker.go, flow.go, grammarchecks.go, binder.go and parser/references.go. Only
@@ -65,6 +65,9 @@ struct Cx<'a> {
     /// The start and the type (`getTypeFromImportAttributes`) of the attributes of each import or export declaration. The `&self`
     /// passes collect them, and `check_import_attribute_types` relates them, which needs `&mut self`.
     attribute_types: std::cell::RefCell<Vec<(u32, AttributesType)>>,
+    /// The imported names that are no export of their module, and where `esm_syntax_code` goes if they stand for something after all.
+    /// `check_members_of_export_equals` asks the type of the `export =` value, which needs `&mut self`.
+    members_of_export_equals: std::cell::RefCell<Vec<(Sym, u32)>>,
 }
 
 /// What `getTypeFromImportAttributes` is computed from.
@@ -194,6 +197,7 @@ impl Checker<'_> {
                 1295
             },
             attribute_types: Default::default(),
+            members_of_export_equals: Default::default(),
             uses,
         };
         let top = Around {
@@ -218,6 +222,7 @@ impl Checker<'_> {
         self.xm_static_blocks(&cx, out);
         self.xm_import_calls_and_types(&cx, out);
         self.check_import_attribute_types(&cx, out);
+        self.check_members_of_export_equals(&cx, out);
     }
 
     /// `reportFlowControlError`: reports 2563 at the first token of the function body, namespace body or file that contains a reference
@@ -1008,7 +1013,7 @@ impl Checker<'_> {
                             | 2835
                             | 2846
                             | 2876
-                            ..=2878 | 2882 | 5097 | 6137 | 6142 | 7016
+                            ..=2878 | 2882 | 5097 | 6137 | 6142 | 6263 | 7016
                     )
             });
         }
@@ -1071,6 +1076,26 @@ impl Checker<'_> {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
         let import = hir[i];
         if self.xm_is_in_place(cx, pos, import.spec, false, around, out) {
+            // `checkGrammarImportClause`, of `import defer * as ns`. A default name (18058) and named imports (18059) come first.
+            let mut is_clause_refused = false;
+            if cx.grammar
+                && import.namespace.is_some()
+                && import.default.is_none()
+                && !import.type_only
+                && !matches!(
+                    self.p.files.options.module,
+                    ModuleKind::EsNext | ModuleKind::Preserve
+                )
+            {
+                let clause = skip_trivia(cx.text, word_end(cx.text, pos as usize));
+                if word_at(cx.text, clause) == b"defer" {
+                    is_clause_refused = true;
+                    out.push(Diagnostic {
+                        start: clause as u32,
+                        code: 18060,
+                    });
+                }
+            }
             let is_missing = self.xm_module_is_missing(
                 cx,
                 pos,
@@ -1080,6 +1105,7 @@ impl Checker<'_> {
             );
             // `checkImportBinding`, `checkAliasSymbol`: of the names that stand for something.
             if !is_missing
+                && !is_clause_refused
                 && cx.verbatim_commonjs
                 && !cx.is_js
                 && around.module.is_none()
@@ -1105,13 +1131,46 @@ impl Checker<'_> {
                     });
                 }
                 for s in import.named.iter() {
-                    if !hir[s].type_only && is_resolved(hir[s].local) {
+                    if hir[s].type_only {
+                        continue;
+                    }
+                    if is_resolved(hir[s].local) {
                         out.push(Diagnostic {
                             start: hir[s].imported_pos,
                             code: cx.esm_syntax_code,
                         });
+                    } else if let Some(id) = bound.lookup(locals, hir[s].local) {
+                        cx.members_of_export_equals
+                            .borrow_mut()
+                            .push((files.sym(cx.file, id), hir[s].imported_pos));
                     }
                 }
+            }
+            // 1543: `isOnlyImportableAsDefault`, `hasTypeJsonImportAttribute`
+            if !import.type_only
+                && !is_clause_refused
+                && (ModuleKind::Node18..=ModuleKind::NodeNext).contains(&files.options.module)
+                && let Some(written) = cx.specifier(pos, import.spec)
+                && written.kind != SpecifierKind::SideEffect
+                && let Some(module) = files.module_of_specifier_as(
+                    cx.file,
+                    import.spec,
+                    files.mode_of_import(cx.file, import.mode),
+                )
+                && files.is_only_importable_as_default(cx.file, module)
+                && !self
+                    .xm_attributes_after(cx, written.pos, false, |_| {})
+                    .is_some_and(|(attributes, _)| {
+                        attributes
+                            .entries
+                            .iter()
+                            .any(|&(name, value)| name == b"type" && value == Some(&b"json"[..]))
+                    })
+            {
+                out.push(Diagnostic {
+                    start: written.pos,
+                    code: 1543,
+                });
             }
         } else {
             let is_used = [import.default, import.namespace]
@@ -1652,6 +1711,18 @@ impl Checker<'_> {
         }
     }
 
+    /// `getExternalModuleMember`: a property of the value a module is with `export =` is what the imported name stands for.
+    fn check_members_of_export_equals(&mut self, cx: &Cx<'_>, out: &mut Vec<Diagnostic>) {
+        for (sym, start) in cx.members_of_export_equals.take() {
+            if self.imported_property_of_export_equals(sym).is_some() {
+                out.push(Diagnostic {
+                    start,
+                    code: cx.esm_syntax_code,
+                });
+            }
+        }
+    }
+
     /// `checkGrammarImportCallExpression`, `checkImportType`, `getTypeFromImportTypeNode`
     fn xm_import_calls_and_types(&self, cx: &Cx<'_>, out: &mut Vec<Diagnostic>) {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
@@ -1726,6 +1797,8 @@ impl Checker<'_> {
             if let StmtKind::Class(c) = s.kind
                 && hir[c].name.is_none()
                 && !hir[c].flags.contains(Flags::DEFAULT)
+                // `default` without `export` (1029) is a modifier all the same.
+                && find_modifier(cx.text, statement_start(cx.text, s.pos), b"default").is_none()
             {
                 out.push(Diagnostic {
                     start: class_declaration_start(hir, s.pos, c),

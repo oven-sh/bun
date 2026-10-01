@@ -434,6 +434,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     } else {
                         p.skip_type_script_type_with_opts::<false>(Level::Lowest, opts, None)?;
                     }
+                    if matches!(
+                        p.lexer.token,
+                        T::TQuestionDot
+                            | T::TOpenParen
+                            | T::TOpenBracket
+                            | T::TExclamation
+                            | T::TNoSubstitutionTemplateLiteral
+                            | T::TTemplateHead
+                    ) {
+                        p.parse_rest_of_implemented(start.loc)?;
+                    }
                 }
                 count += 1;
                 if p.lexer.token == T::TComma {
@@ -469,6 +480,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         p.lexer.list_contexts = saved_clauses;
         Ok(extends)
+    }
+
+    /// `parseExpressionWithTypeArguments` after `implements`, from where the expression no longer reads as a type (2500).
+    #[cold]
+    #[inline(never)]
+    fn parse_rest_of_implemented(&mut self, start: bun_ast::Loc) -> Result<(), Error> {
+        let scope_index = self.scopes_in_order.len();
+        let mut value = self.new_expr(E::Missing {}, start);
+        self.parse_suffix(&mut value, Level::New, None, EFlags::None)?;
+        self.skip_type_script_type_arguments::<false, false>()?;
+        self.discard_scopes_up_to(scope_index);
+        Ok(())
     }
 
     pub(crate) fn parse_template_parts(
@@ -1169,7 +1192,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             loc: this_parameter,
                             len: 4,
                         },
-                        b"TS2730",
+                        b"TC2730",
                     );
                 }
 
@@ -1182,7 +1205,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 let args_slice: &'a mut [G::Arg] = args.into_bump_slice_mut();
                 let has_arrow_token = p.lexer.token == T::TEqualsGreaterThan;
-                let mut arrow = p.parse_arrow_body(args_slice, &mut arrow_data)?;
+                let body_flags = if opts.is_after_question_and_before_colon {
+                    EFlags::AfterQuestionAndBeforeColon
+                } else {
+                    EFlags::None
+                };
+                let mut arrow =
+                    p.parse_arrow_body_with_flags(args_slice, &mut arrow_data, body_flags)?;
                 arrow.is_async = opts.is_async;
                 arrow.has_rest_arg = spread_range.len > 0;
                 p.pop_scope();
@@ -2593,6 +2622,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ListKind::BlockStatements
         };
         let saved_contexts = p.enter_list(list);
+        // Those kept before this list was entered are for the list around it.
+        let stray_decorators_base = p.stray_decorators.len();
 
         loop {
             for comment in p.lexer.comments_to_preserve_before.iter() {
@@ -2611,14 +2642,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.expected(eend)?;
                     break;
                 }
+                // The loop of `reparseTopLevelAwait` calls `parseStatement` whatever the token is.
+                let is_reparsing = eend == T::TEndOfFile && p.reparses_rest_of_file;
                 // `parseToplevelStatement`
-                if eend == T::TEndOfFile {
+                if eend == T::TEndOfFile && !is_reparsing {
                     p.lexer.await_name_seen = false;
+                    p.await_was_refused = false;
                 }
-                match p.classify_list_token(list)? {
-                    ListStep::Element => {}
-                    ListStep::Skipped => continue,
-                    ListStep::Over => break,
+                if !is_reparsing {
+                    match p.classify_list_token(list)? {
+                        ListStep::Element => {}
+                        ListStep::Skipped => continue,
+                        ListStep::Over => break,
+                    }
                 }
             }
 
@@ -2627,6 +2663,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let outer_modifiers_base = p.begin_statement();
             let mut stmt = p.parse_stmt(&mut current_opts)?;
             let syntax = p.end_statement(outer_modifiers_base);
+            if Self::IS_TYPESCRIPT_ENABLED && opts.is_typescript_declare {
+                p.note_ambient_statement(stmt_start, &stmt);
+            }
+            if p.reparses_rest_of_file && eend == T::TEndOfFile && p.lexer.loc() == stmt_start {
+                p.lexer.next()?;
+            }
+            if p.stray_decorators.len() > stray_decorators_base {
+                p.push_stray_decorators(stray_decorators_base, &mut stmts);
+            }
 
             // Skip TypeScript types entirely
             if Self::IS_TYPESCRIPT_ENABLED {
@@ -2707,6 +2752,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.lexer.list_contexts = saved_contexts;
         Ok(stmts)
+    }
+
+    /// Makes statements of what `note_stray_decorators` kept, from `base` on, while the last statement was parsed.
+    #[cold]
+    #[inline(never)]
+    fn push_stray_decorators(&mut self, base: usize, stmts: &mut StmtList<'a>) {
+        for decorator in self.stray_decorators.split_off(base) {
+            stmts.push(self.s(
+                S::SExpr {
+                    value: decorator,
+                    ..Default::default()
+                },
+                decorator.loc,
+            ));
+        }
     }
 
     /// The "}" of a block of statements, where `parse_stmts_up_to` stopped. `parseBlock`
@@ -3034,7 +3094,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             needs_async_loc: async_range.loc,
                             ..Default::default()
                         };
-                        let arrow_body = p.parse_arrow_body(args, &mut data)?;
+                        let arrow_body = p.parse_arrow_body_with_flags(args, &mut data, flags)?;
                         p.pop_scope();
                         return Ok(p.new_expr(arrow_body, async_range.loc));
                     }
@@ -3072,13 +3132,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 ..Default::default()
                             };
                             // Pop the scope on the error path too.
-                            let mut arrow_body = match p.parse_arrow_body(args, &mut data) {
-                                Ok(body) => body,
-                                Err(e) => {
-                                    p.pop_scope();
-                                    return Err(e);
-                                }
-                            };
+                            let mut arrow_body =
+                                match p.parse_arrow_body_with_flags(args, &mut data, flags) {
+                                    Ok(body) => body,
+                                    Err(e) => {
+                                        p.pop_scope();
+                                        return Err(e);
+                                    }
+                                };
                             arrow_body.is_async = true;
                             p.pop_scope();
                             return Ok(p.new_expr(arrow_body, async_range.loc));

@@ -15,6 +15,7 @@ impl Checker<'_> {
         self.check_computed_names(file, out);
         self.check_object_literal_names(file, out);
         self.check_exports(file, out);
+        self.check_ambient_export_assignments(file, out);
         self.check_type_only_names_used_as_values(file, out);
     }
 
@@ -428,6 +429,31 @@ impl Checker<'_> {
         }
     }
 
+    /// `checkExportAssignment`: 2714, what `export =` or `export default` names in an ambient context is an entity name.
+    fn check_ambient_export_assignments(&self, file: FileId, out: &mut Vec<Diagnostic>) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let is_declaration_file = hir.kind == FileKind::Declaration;
+        for (i, s) in hir.stmts.iter().enumerate() {
+            let (StmtKind::ExportAssign(e) | StmtKind::ExportDefault(e)) = s.kind else {
+                continue;
+            };
+            // In a block or in a namespace it is out of place, and no more is said of it.
+            let is_ambient = match bound.stmt_parent[i] {
+                Parent::File => is_declaration_file,
+                Parent::Module(m) if !matches!(hir[m].name, ModuleName::Ident(_)) => {
+                    is_declaration_file || hir[m].flags.contains(Flags::AMBIENT)
+                }
+                _ => continue,
+            };
+            if is_ambient && e.is_some() && !is_entity_name_expression(self, file, e) {
+                out.push(Diagnostic {
+                    start: self.start_of(file, e),
+                    code: 2714,
+                });
+            }
+        }
+    }
+
     /// The declarations of the name `default` among the statements of `body`, in the order the binder declares them.
     fn default_exports(&self, file: FileId, body: IdList<StmtId>) -> Vec<DefaultExport> {
         const ALIAS: u8 = 1;
@@ -726,7 +752,8 @@ impl Checker<'_> {
     fn check_type_only_names_used_as_values(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if hir.kind == FileKind::Declaration
-            || hir.imports.is_empty() && hir.import_equals.is_empty()
+            // In JavaScript `const a = require("m")` declares an alias too.
+            || hir.imports.is_empty() && hir.import_equals.is_empty() && !hir.is_js
         {
             return;
         }

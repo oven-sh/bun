@@ -52,6 +52,10 @@ pub(crate) enum Mark {
     IncompleteTemplate,
     /// From a token that `abort_list_or_skip` skipped, to the token after it.
     SkippedToken,
+    /// From the `import` of `import.defer(..)`, to its `)`.
+    DeferredImportClose,
+    /// From a decorator that decorates nothing (`note_stray_decorators`), to where what comes after the decorators starts.
+    StrayDecorator,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -129,6 +133,17 @@ pub(crate) fn early_error(text: &[u8], at: &[u8]) -> Option<(u32, i32)> {
     }
     if text == b"Class constructor cannot be an async function" {
         return Some((1089, -6));
+    }
+    // `checkMethodDeclaration`: only of the word. The string is a name like any other.
+    if text == b"Class constructor cannot be a generator function" {
+        return Some((
+            if at.starts_with(b"constructor") {
+                1368
+            } else {
+                0
+            },
+            0,
+        ));
     }
     // `await` and `yield` as names: what is wrong with them depends on which it is.
     if text == b"Cannot use \"yield\" or \"await\" here." {
@@ -493,6 +508,10 @@ pub(crate) struct TypeSyntax {
     pub(crate) statement_modifiers: Vec<ts::Modifier>,
     /// Where the modifiers of the current statement start in `statement_modifiers`.
     pub(crate) statement_modifiers_base: usize,
+    /// Statements other than declarations that were parsed in an ambient context: (start, start of the next token, statement).
+    pub(crate) ambient_statements: Vec<(i32, i32, bun_ast::Stmt)>,
+    /// Initializers of variables declared in an ambient context: (start of the binding, initializer).
+    pub(crate) ambient_initializers: Vec<(i32, Expr)>,
 }
 
 impl TypeSyntax {
@@ -520,6 +539,8 @@ impl TypeSyntax {
             last_statement: ts::StatementId::NONE,
             statement_modifiers: Vec::new(),
             statement_modifiers_base: 0,
+            ambient_statements: Vec::new(),
+            ambient_initializers: Vec::new(),
         }
     }
 }
@@ -540,6 +561,46 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> crate::P<'a, TYPESCRIPT,
     pub(crate) fn mark_type_syntax(&mut self, from: bun_ast::Loc, what: Mark, to: bun_ast::Loc) {
         if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
             syntax.marks.push((from.start, what, to.start));
+        }
+    }
+
+    /// `stmt` starts at `start` and was parsed in an ambient context, and the lexer is at what follows. The caller drops it, but
+    /// TypeScript checks it like any other (`checkGrammarStatementInAmbientContext`, `checkAmbientInitializer`).
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn note_ambient_statement(&mut self, start: bun_ast::Loc, stmt: &bun_ast::Stmt) {
+        use bun_ast::stmt::Data;
+        let end = self.lexer.loc().start;
+        let Some(syntax) = &mut self.type_syntax else {
+            return;
+        };
+        match &stmt.data {
+            Data::SLocal(local) => {
+                for decl in local.decls.iter() {
+                    if let Some(value) = decl.value {
+                        syntax
+                            .ambient_initializers
+                            .push((decl.binding.loc.start, value));
+                    }
+                }
+            }
+            Data::SBlock(_)
+            | Data::SBreak(_)
+            | Data::SContinue(_)
+            | Data::SDoWhile(_)
+            | Data::SExpr(_)
+            | Data::SForIn(_)
+            | Data::SForOf(_)
+            | Data::SFor(_)
+            | Data::SIf(_)
+            | Data::SLabel(_)
+            | Data::SReturn(_)
+            | Data::SSwitch(_)
+            | Data::SThrow(_)
+            | Data::STry(_)
+            | Data::SWhile(_)
+            | Data::SWith(_) => syntax.ambient_statements.push((start.start, end, *stmt)),
+            _ => {}
         }
     }
 

@@ -3335,6 +3335,54 @@ impl<'p> Checker<'p> {
         None
     }
 
+    /// The alias probe of `structuredTypeRelatedToWorker` under the assignable relation, for two instantiations of the generic
+    /// alias `alias` that are known by their type arguments only. `None`: the variances do not settle it.
+    pub(super) fn alias_arguments_related(
+        &mut self,
+        alias: Sym,
+        sources: &[TypeId],
+        targets: &[TypeId],
+    ) -> Option<bool> {
+        let variances = self.variances_of(alias);
+        // Being measured.
+        if variances.is_empty() {
+            return None;
+        }
+        let mut r = self
+            .free_relaters
+            .pop()
+            .unwrap_or_else(|| Relater::new(Relation::Assignable, self.cycles));
+        r.relation = Relation::Assignable;
+        r.top_source = TypeId::NEVER;
+        r.top_target = TypeId::NEVER;
+        r.relation_count = 2_000_000;
+        r.cycles = self.cycles;
+        r.steps = 0;
+        let mut variance_check_failed = false;
+        let result = self.relate_variances(
+            &mut r,
+            sources,
+            targets,
+            &variances,
+            STATE_NONE,
+            &mut variance_check_failed,
+        );
+        let overflow = r.overflow;
+        r.maybe_keys.clear();
+        r.maybe_keys_set.clear();
+        r.source_stack.clear();
+        r.target_stack.clear();
+        r.expanding = 0;
+        r.overflow = false;
+        r.hit_cached_overflow = false;
+        self.free_relaters.push(r);
+        if overflow {
+            self.relation_gave_up = true;
+            return None;
+        }
+        result.map(Ternary::holds)
+    }
+
     /// `structuredTypeRelatedToWorker`
     fn structured_type_related_to_worker(
         &mut self,

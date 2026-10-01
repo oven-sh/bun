@@ -1,13 +1,13 @@
 //! Every file of the program, and what its symbols are once the files are put together: which file an import means,
 //! which declarations in different files are one symbol, what an alias stands for.
 
-use crate::atom::{Atom, Interner, known};
+use crate::atom::{Atom, Interner, known, number_to_string};
 use crate::bind::{self, Bound, Decl, ScopeId, ScopeKind, SymFlags, Symbol, SymbolId};
 use crate::hir::{self, *};
-use crate::json::Json;
+use crate::json::{Expression, Json, PropertyName};
 use crate::resolve::{
     Host, JsxEmit, ModuleDetection, ModuleKind, Options, Resolver, ScriptTarget, is_javascript,
-    is_relative, join, lib_name, parent_dir,
+    is_relative, join, known_extension, lib_name, parent_dir,
 };
 use crate::util::{FxHashMap, FxHashSet, ShardedMap};
 use std::sync::Mutex;
@@ -57,6 +57,9 @@ pub struct Module {
     /// `ResolvedUsingTsExtension`: the specifiers that resolve through a TypeScript extension written in the specifier itself, with the
     /// mode they are resolved in.
     pub ts_extension_imports: Vec<(Atom, ResolutionMode)>,
+    /// `GetResolutionDiagnostic`: the specifiers that resolve to a `.d.css.ts` file or the like without `allowArbitraryExtensions`, with
+    /// the mode they are resolved in. They lead to no file (6263).
+    pub arbitrary_extension_imports: Vec<(Atom, ResolutionMode)>,
     /// The relative specifiers without an extension, when modules are resolved like Node does, which wants one of `import`; and
     /// whether there is a file that could be meant.
     pub extensionless_imports: Vec<(Atom, bool)>,
@@ -208,6 +211,60 @@ fn json_to_hir(text: &[u8], atoms: &Interner) -> hir::File {
         };
         f.expr(kind, 0)
     }
+    // The same for a file with syntax errors, as TypeScript's parser recovers from them.
+    fn expression(f: &mut hir::File, e: &Expression, atoms: &Interner) -> ExprId {
+        let kind = match e {
+            Expression::Null => ExprKind::Null,
+            Expression::Bool(true) => ExprKind::True,
+            Expression::Bool(false) => ExprKind::False,
+            Expression::Number(n) => ExprKind::Number(f.number(*n)),
+            Expression::String(s) => ExprKind::String(atoms.intern_str(s)),
+            Expression::Identifier(name) => ExprKind::Ident(atoms.intern_str(name)),
+            Expression::Missing => ExprKind::Missing,
+            Expression::Array(items) => {
+                let items: Vec<ExprId> = items.iter().map(|i| expression(f, i, atoms)).collect();
+                ExprKind::Array(f.list(&items))
+            }
+            Expression::Object(properties) => {
+                let props: Vec<Prop> = properties
+                    .iter()
+                    .map(|p| {
+                        let key = match &p.name {
+                            PropertyName::Name(name)
+                            | PropertyName::Computed(Expression::String(name)) => {
+                                PropKey::Name(atoms.intern_str(name))
+                            }
+                            PropertyName::Computed(Expression::Number(n))
+                                if !n.is_sign_negative() =>
+                            {
+                                PropKey::Name(atoms.intern_str(&number_to_string(*n)))
+                            }
+                            PropertyName::Computed(name) => {
+                                PropKey::Computed(expression(f, name, atoms))
+                            }
+                        };
+                        let (kind, value) = match (&p.initializer, key) {
+                            (Some(initializer), _) => {
+                                (PropKind::Init, expression(f, initializer, atoms))
+                            }
+                            (None, PropKey::Name(name)) => {
+                                (PropKind::Shorthand, f.expr(ExprKind::Ident(name), 0))
+                            }
+                            (None, _) => (PropKind::Init, f.expr(ExprKind::Missing, 0)),
+                        };
+                        Prop {
+                            kind,
+                            key,
+                            value,
+                            pos: 0,
+                        }
+                    })
+                    .collect();
+                ExprKind::Object(f.add_props(&props))
+            }
+        };
+        f.expr(kind, 0)
+    }
     let mut f = hir::File {
         kind: FileKind::Json,
         has_module_syntax: true,
@@ -225,7 +282,15 @@ fn json_to_hir(text: &[u8], atoms: &Interner) -> hir::File {
             let stmt = f.stmt(StmtKind::ExportAssign(e), 0);
             f.body = f.list(&[stmt]);
         }
-        None => f.has_errors = true,
+        None => match Expression::parse(text) {
+            Some(recovered) => {
+                let e = expression(&mut f, &recovered, atoms);
+                let stmt = f.stmt(StmtKind::ExportAssign(e), 0);
+                f.body = f.list(&[stmt]);
+                f.has_parse_diagnostics = true;
+            }
+            None => f.has_errors = true,
+        },
     }
     f
 }
@@ -374,6 +439,66 @@ fn automatic_type_directives(host: &dyn Host, options: &Options) -> Vec<String> 
         }
     }
     all
+}
+
+/// `verifyEmitFilePath` of `verifyCompilerOptions`: 5055 for an output file that is an input file, 5056 for one that two input files
+/// are written to. Only output that is written next to its source is looked at. A `.map` file collides only if what it maps does.
+fn output_path_errors(
+    options: &Options,
+    modules: &[Module],
+    by_path: &FxHashMap<String, FileId>,
+) -> Vec<u32> {
+    let mut errors = Vec::new();
+    if !options.writes_js_beside_source && !options.writes_declarations_beside_source {
+        return errors;
+    }
+    let mut seen: FxHashSet<String> = FxHashSet::default();
+    let mut verify = |output: String| {
+        if by_path.contains_key(&output) {
+            errors.push(5055);
+        }
+        if !seen.insert(output) {
+            errors.push(5056);
+        }
+    };
+    for module in modules {
+        let path = module.path.as_str();
+        // `sourceFileMayBeEmitted`: without `outDir` a JSON file is not.
+        if module.is_lib
+            || matches!(module.hir.kind, FileKind::Declaration | FileKind::Json)
+            || path.contains("/node_modules/")
+        {
+            continue;
+        }
+        let is_one_of = |extensions: [&str; 2]| extensions.iter().any(|e| path.ends_with(e));
+        // `RemoveFileExtension`
+        let stem = &path[..path.len() - known_extension(path).len()];
+        if options.writes_js_beside_source {
+            // `GetOutputExtension`
+            let extension = if options.jsx == JsxEmit::Preserve && is_one_of([".jsx", ".tsx"]) {
+                ".jsx"
+            } else if is_one_of([".mts", ".mjs"]) {
+                ".mjs"
+            } else if is_one_of([".cts", ".cjs"]) {
+                ".cjs"
+            } else {
+                ".js"
+            };
+            verify(format!("{stem}{extension}"));
+        }
+        if options.writes_declarations_beside_source {
+            // `GetDeclarationEmitExtensionForPath`
+            let extension = if is_one_of([".mjs", ".mts"]) {
+                ".d.mts"
+            } else if is_one_of([".cjs", ".cts"]) {
+                ".d.cts"
+            } else {
+                ".d.ts"
+            };
+            verify(format!("{stem}{extension}"));
+        }
+    }
+    errors
 }
 
 /// `GetSymbolNameForPrivateIdentifier`: `#x` is a name of the class that declares it and of no other. From here on it is spelled
@@ -621,6 +746,7 @@ impl Files {
 
         drop(resolver);
         let modules: Vec<Module> = modules.into_iter().map(Option::unwrap).collect();
+        program_errors.extend(output_path_errors(&options, &modules, &by_path));
         let has_type_only_stars = modules
             .iter()
             .any(|m| m.bound.export_star_type_only.contains(&true));
@@ -704,19 +830,21 @@ impl Files {
         // `GetEmitScriptTarget`: no target is the latest.
         let is_before =
             |target: ScriptTarget| options.target != ScriptTarget::None && options.target < target;
-        let bound = bind::bind(
+        let bound = bind::bind_with_atoms(
             &hir,
             bind::BindOptions {
                 emit_standard_class_fields: options.emit_standard_class_fields,
                 before_es2020: is_before(ScriptTarget::ES2020),
                 before_es2017: is_before(ScriptTarget::ES2017),
             },
+            atoms,
         );
         rename_private_names(&mut hir, &bound, atoms, id);
         let mut imports = Vec::new();
         let (mut untyped_imports, mut jsx_imports, mut untyped_package_imports) =
             (Vec::new(), Vec::new(), Vec::new());
         let mut ts_extension_imports = Vec::new();
+        let mut arbitrary_extension_imports = Vec::new();
         let mut extensionless_imports = Vec::new();
         // `resolveImportsAndModuleAugmentations`: with `importHelpers`, a file that can be emitted with helpers imports `tslib`.
         if options.import_helpers
@@ -815,8 +943,8 @@ impl Files {
                 count += 1;
             }
             for (i, &mode) in modes[..count].iter().enumerate() {
-                match resolver.resolve_module_name(&text, path, mode) {
-                    Some((found, _)) if is_javascript(&found) => {
+                match resolver.resolve_module_and_extension(&text, path, mode) {
+                    Some((found, _, _)) if is_javascript(&found) => {
                         untyped_imports.push((spec, mode));
                         let is_jsx = found.ends_with(".jsx");
                         if is_jsx {
@@ -838,7 +966,14 @@ impl Files {
                             ));
                         }
                     }
-                    Some((found, using_ts_extension)) => {
+                    // `needAllowArbitraryExtensions`: the file is refused, even if it is in the program for another reason.
+                    Some((_, _, true))
+                        if hir.kind != FileKind::Declaration
+                            && !options.allow_arbitrary_extensions =>
+                    {
+                        arbitrary_extension_imports.push((spec, mode));
+                    }
+                    Some((found, using_ts_extension, _)) => {
                         if using_ts_extension {
                             ts_extension_imports.push((spec, mode));
                         }
@@ -907,6 +1042,7 @@ impl Files {
             jsx_imports,
             untyped_package_imports,
             ts_extension_imports,
+            arbitrary_extension_imports,
             extensionless_imports,
             missing_references,
             is_esm,
@@ -1757,6 +1893,14 @@ impl Files {
     /// `module`, or what it says it is with `export =`.
     pub fn module_value(&self, module: Sym) -> Sym {
         match self.export(module, known::export_equals) {
+            // `resolveSymbolEx`: only what is nothing but an alias (`IsNonLocalAlias`) is followed.
+            Some(equals)
+                if self
+                    .flags(equals)
+                    .intersects(SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE) =>
+            {
+                equals
+            }
             Some(equals) => self.resolve_alias(equals).unwrap_or(equals),
             None => module,
         }
@@ -1870,6 +2014,15 @@ impl Files {
         self.module_exports_export(value).unwrap_or(value)
     }
 
+    /// `getTargetOfImportEqualsDeclaration`: the `"module.exports"` export that `pat`, the `x` of `const x = require(..)`, stands for.
+    pub fn required_module_exports(&self, file: FileId, pat: PatId) -> Option<Sym> {
+        let (spec, None) = self.bound(file).required_by(self.hir(file), pat)? else {
+            return None;
+        };
+        let module = self.module_of_specifier_as(file, spec, ResolutionMode::Require)?;
+        self.module_exports_export(self.module_value(module))
+    }
+
     /// `getTargetOfModuleDefault`: what `default` of `module` is to an import or export declaration in `file`. A default that is made up
     /// goes before one that is declared.
     pub fn default_of_module(&self, file: FileId, module: Sym) -> Option<Sym> {
@@ -1895,13 +2048,22 @@ impl Files {
 
     /// What importing `name` from `module` gives.
     pub fn module_export(&self, module: Sym, name: Atom) -> Option<Sym> {
-        if let Some(found) = self.export(module, name) {
-            return Some(found);
+        let value = self.module_value(module);
+        let mut visited = FxHashSet::default();
+        if value == module {
+            return self.module_export_inner(module, name, &mut visited);
         }
         // `getExportsOfModuleWorker`: what it says it is with `export =` exports for it, with the `export *` of that and none of its own.
         // That is not its `default`: whether it has one is up to `canHaveSyntheticDefault`.
-        let mut visited = FxHashSet::default();
-        self.module_export_inner(self.module_value(module), name, &mut visited)
+        // Of what the module exports besides, only what is a type or a namespace and no value counts.
+        self.module_export_inner(value, name, &mut visited)
+            .or_else(|| {
+                let own = self.export(module, name)?;
+                let flags = self.symbol_flags(own);
+                (flags.intersects(SymFlags::TYPE | SymFlags::NAMESPACE)
+                    && !flags.intersects(SymFlags::VALUE))
+                .then_some(own)
+            })
     }
 
     /// `visit` of `getExportsOfModuleWorker`: what `module` exports itself, or passes on with `export *`. An `export =` of what is

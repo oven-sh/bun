@@ -84,8 +84,10 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         suppressed,
         with_bodies,
         after_skipped,
+        stray_decorators,
         specifier_uses,
         import_options,
+        deferred_import_calls,
         import_attributes,
         has_parse_diagnostics,
         checker_errors,
@@ -165,6 +167,15 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
             after_skipped.len()
         );
     }
+    if !stray_decorators.is_empty() {
+        put!(
+            d,
+            0,
+            "",
+            "stray_decorators[{}]: {stray_decorators:?}",
+            stray_decorators.len()
+        );
+    }
     if *has_parse_diagnostics {
         put!(d, 0, "", "has_parse_diagnostics");
     }
@@ -185,6 +196,9 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
     for &(spec, options) in import_options {
         d.expr(1, "spec", spec);
         d.expr(1, "options", options);
+    }
+    for &(_, close_pos) in deferred_import_calls {
+        put!(d, 0, "", "deferred_import_call close_pos={close_pos}");
     }
 
     put!(d, 0, "", "suppressed[{}]:", suppressed.len());

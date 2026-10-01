@@ -546,8 +546,13 @@ struct Circles {
 impl Checker<'_> {
     pub(super) fn check_x_typenodes(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // Declaration files are not gone into (`skipLibCheck`), and their text is not kept.
-        if hir.kind == FileKind::Declaration || hir.text.is_empty() {
+        // The text of the default library is not kept.
+        if hir.text.is_empty() {
+            return;
+        }
+        // Of a declaration file only `checkGrammarIndexSignature` is gone into.
+        if hir.kind == FileKind::Declaration {
+            self.check_keys_of_index_signatures(file, out);
             return;
         }
         self.check_private_names_of_both_kinds(file, out);
@@ -2794,7 +2799,8 @@ impl Checker<'_> {
         let sym = self
             .files()
             .resolve_entity(file, scope, &names[..name.len()], SymFlags::TYPE)?;
-        self.files().resolve_alias_if_needed(sym)
+        // `resolveEntityName`: a symbol that is a type itself is not resolved further.
+        self.files().resolve_alias_as(sym, SymFlags::TYPE)
     }
 
     /// The type alias `node` names, if that is all it does and the alias takes no type arguments; and what it is declared as.

@@ -700,16 +700,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `reparseTopLevelAwait` parses a top-level statement that uses `await` as a name again, with no list of statements open.
         if self.fn_or_arrow_data_parse.is_top_level && self.is_await_keyword() {
             self.lexer.await_name_seen = true;
+            self.await_was_refused = true;
             // `parse_for_sema` parses a script again, with `await` as a name, if it sees this.
             self.top_level_await_keyword = self.lexer.range();
         }
         if self.lexer.await_name_seen {
             open &= !(1 << ListKind::SourceElements as u32);
         }
-        ALL_LISTS.iter().any(|&kind| {
+        let found = ALL_LISTS.iter().any(|&kind| {
             open & 1 << kind as u32 != 0
                 && (self.is_list_element(kind, true) || self.is_list_terminator(kind))
-        })
+        });
+        // The first parse ended its statement at this token. This one goes past it, into the next statement.
+        if !found
+            && open != self.lexer.list_contexts
+            && !self.await_was_refused
+            && self.is_list_element(ListKind::SourceElements, true)
+        {
+            self.reparses_rest_of_file = true;
+        }
+        found
     }
 
     /// `await` where it is no name (`isIdentifier`): in an [Await] context, which the top level of a module is when TypeScript parses

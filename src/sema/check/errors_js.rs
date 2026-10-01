@@ -188,6 +188,7 @@ fn typescript_modifier(word: &[u8]) -> Option<Flags> {
         b"abstract" => Flags::ABSTRACT,
         b"declare" => Flags::AMBIENT,
         b"override" => Flags::OVERRIDE,
+        b"const" => Flags::CONST,
         _ => return None,
     })
 }
@@ -214,6 +215,10 @@ fn modifiers_around(text: &[u8], at: u32, flags: Flags) -> Vec<(u32, bool)> {
         let Some(only_typescript) = is_modifier(word) else {
             break;
         };
+        // `tryParseModifier`: no flag is kept for `const`, which is a name unless what it modifies is on its line.
+        if word == b"const" && text[end..i].contains(&b'\n') {
+            break;
+        }
         i = end - word.len();
         found.push((i as u32, only_typescript));
     }
@@ -231,10 +236,50 @@ fn modifiers_around(text: &[u8], at: u32, flags: Flags) -> Vec<(u32, bool)> {
         }) {
             break;
         }
+        if word == b"const" && text[i + word.len()..next].contains(&b'\n') {
+            break;
+        }
         found.push((i as u32, only_typescript));
         i = next;
     }
     found
+}
+
+/// Where the class member `member` starts: at its first modifier, or at its name.
+pub(super) fn start_of_member(text: &[u8], member: &Member) -> u32 {
+    if member.pos as usize > text.len() {
+        return member.pos;
+    }
+    modifiers_around(text, member.pos, member.flags | Flags::CONST)
+        .first()
+        .map_or(member.pos, |m| m.0)
+}
+
+/// `IsModifier`, of the word before the name of a parameter (`name`) or before its `...`. `start`: where the parameter starts.
+fn has_parameter_modifier(text: &[u8], start: u32, name: u32) -> bool {
+    let mut end = skip_trivia_back(text, (name as usize).min(text.len()));
+    if text[..end].ends_with(b"...") {
+        end = skip_trivia_back(text, end - 3);
+    }
+    let word = word_before(text, end);
+    let word_start = end - word.len();
+    word_start >= start as usize
+        && matches!(
+            word,
+            b"public"
+                | b"private"
+                | b"protected"
+                | b"readonly"
+                | b"override"
+                | b"static"
+                | b"declare"
+                | b"async"
+                | b"abstract"
+                | b"accessor"
+                | b"export"
+        )
+        // The end of a decorator: `@a.static`.
+        && !matches!(text[..word_start].last(), Some(b'.' | b'@'))
 }
 
 impl Checker<'_> {
@@ -354,7 +399,9 @@ impl Checker<'_> {
                     | Flags::PROTECTED
                     | Flags::READONLY
                     | Flags::OVERRIDE,
-            ) {
+            ) || param.pat.is_some()
+                && has_parameter_modifier(text, param.pos, hir[param.pat].pos)
+            {
                 say(param.pos, 8012);
             }
         }
@@ -382,7 +429,7 @@ impl Checker<'_> {
                     continue;
                 }
                 (FnKind::Decl, FnOwner::Stmt(s)) => (hir[s].pos, func.flags),
-                (_, FnOwner::Member(m)) => (hir[m].pos, hir[m].flags),
+                (_, FnOwner::Member(m)) => (hir[m].pos, hir[m].flags | Flags::CONST),
                 _ => (func.pos, Flags::empty()),
             };
             let modifiers = modifiers_around(text, at, flags);
@@ -415,7 +462,9 @@ impl Checker<'_> {
                 if member.ty.is_some() {
                     say(hir[member.ty].pos, 8010);
                 }
-                for (at, only_typescript) in modifiers_around(text, member.pos, member.flags) {
+                for (at, only_typescript) in
+                    modifiers_around(text, member.pos, member.flags | Flags::CONST)
+                {
                     if only_typescript {
                         say(at, 8009);
                     }

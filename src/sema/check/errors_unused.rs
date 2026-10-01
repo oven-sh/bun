@@ -124,6 +124,7 @@ impl Checker<'_> {
             |s| matches!(s.kind, StmtKind::Return(e) if e.is_some() && u.is_in_unchecked_return(e)),
         );
         u.note_references();
+        self.note_jsdoc_links(file, &mut u);
         if parameters {
             u.merge_type_parameters();
             u.collect_ambient_type_scopes();
@@ -176,6 +177,50 @@ impl Checker<'_> {
             // `getJsxFactoryEntity`: a fragment is made with both.
             if is_fragment {
                 u.note_name(scope, factory, SymFlags::VALUE, VALUE);
+            }
+        }
+    }
+
+    /// `checkJSDocComment`: the name of each `{@link name}` in the JSDoc of a statement, a member or a parameter is resolved,
+    /// which is a use of what it starts with.
+    fn note_jsdoc_links(&self, file: FileId, u: &mut Unused) {
+        let atoms = &self.p.files.atoms;
+        let text: &[u8] = &self.hir(file).text;
+        let all = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE;
+        let mut from = 0;
+        while let Some(tag) = find_bytes(text, from, b"@link") {
+            from = tag + 1;
+            let Some(open) = text[..tag].windows(3).rposition(|w| w == b"/**") else {
+                continue;
+            };
+            let Some(close) = find_bytes(text, open + 2, b"*/") else {
+                return;
+            };
+            if close < tag {
+                continue;
+            }
+            from = close + 2;
+            let scope = u.scope_of_jsdoc(open, close + 2);
+            if scope.is_none() {
+                continue;
+            }
+            for names in jsdoc_link_names(&text[open + 3..close]) {
+                let Some(first) = atoms.lookup(names[0]) else {
+                    continue;
+                };
+                // `resolveJSDocMemberName`: a qualified name that is no entity name is a member of what its left side names.
+                if names.len() > 1 {
+                    u.note_name(scope, first, SymFlags::NAMESPACE, NAMESPACE);
+                    let names: Vec<Atom> = names.iter().map(|name| atoms.intern(name)).collect();
+                    if (2..=names.len()).rev().any(|n| {
+                        self.files()
+                            .resolve_entity(file, scope, &names[..n], all)
+                            .is_some()
+                    }) {
+                        continue;
+                    }
+                }
+                u.note_name(scope, first, all, ALL);
             }
         }
     }
@@ -542,6 +587,135 @@ impl Checker<'_> {
     }
 }
 
+/// Where `needle` first occurs in `text` at or after `from`.
+fn find_bytes(text: &[u8], from: usize, needle: &[u8]) -> Option<usize> {
+    let (&first, rest) = needle.split_first()?;
+    let mut at = from;
+    loop {
+        at += text.get(at..)?.iter().position(|&c| c == first)?;
+        if text[at + 1..].starts_with(rest) {
+            return Some(at);
+        }
+        at += 1;
+    }
+}
+
+/// `SkipTrivia`: where the first token at or after `at` starts.
+fn skip_trivia(text: &[u8], mut at: usize) -> usize {
+    loop {
+        at += match text.get(at..).unwrap_or(&[]) {
+            [c, ..] if c.is_ascii_whitespace() => 1,
+            [b'/', b'/', rest @ ..] => {
+                let end = rest.iter().position(|&c| c == b'\n' || c == b'\r');
+                2 + end.unwrap_or(rest.len())
+            }
+            [b'/', b'*', rest @ ..] => {
+                let end = rest.windows(2).position(|w| w == b"*/");
+                2 + end.map_or(rest.len(), |end| end + 2)
+            }
+            _ => return at,
+        };
+    }
+}
+
+/// The last byte of the token before the comment that starts at `open`, if the two are on one line, whatever comments are between
+/// them. `GetLeadingCommentRanges` collects a comment only after a line break or at the start of the text.
+fn byte_before_comment(text: &[u8], mut open: usize) -> Option<u8> {
+    loop {
+        let before = text[..open].trim_ascii_end();
+        if text[before.len()..open]
+            .iter()
+            .any(|&c| c == b'\n' || c == b'\r')
+        {
+            return None;
+        }
+        let &last = before.last()?;
+        let comment = before
+            .strip_suffix(b"*/")
+            .and_then(|rest| rest.windows(2).rposition(|w| w == b"/*"));
+        match comment {
+            Some(comment) => open = comment,
+            None => return Some(last),
+        }
+    }
+}
+
+/// The identifier at `at`, which may be none. `ScanJSDocToken` takes a `-` for a part of one.
+fn identifier_at(text: &[u8], at: usize, is_jsdoc_token: bool) -> &[u8] {
+    let rest = text.get(at..).unwrap_or(&[]);
+    let is_start = |c: u8| c.is_ascii_alphabetic() || matches!(c, b'_' | b'$') || c >= 0x80;
+    if !rest.first().is_some_and(|&c| is_start(c)) {
+        return &[];
+    }
+    let is_part = |c: u8| is_start(c) || c.is_ascii_digit() || is_jsdoc_token && c == b'-';
+    let len = rest.iter().position(|&c| !is_part(c));
+    &rest[..len.unwrap_or(rest.len())]
+}
+
+/// `parseJSDocLink`, `parseJSDocLinkName`: the names of each `{@link a.b}`, `{@linkcode a.b}` and `{@linkplain a.b}` in the text of
+/// a JSDoc comment. A missing name is empty.
+fn jsdoc_link_names(comment: &[u8]) -> Vec<Vec<&[u8]>> {
+    let skip_spaces = |mut at: usize| {
+        while comment.get(at).is_some_and(|c| c.is_ascii_whitespace()) {
+            at += 1;
+        }
+        at
+    };
+    let mut links = Vec::new();
+    // `jsdocStateSavingBackticks`, `inFencedCodeBlock`, `backtickCount`
+    let (mut in_backticks, mut in_fence, mut backticks) = (false, false, 0u32);
+    let mut i = 0;
+    while let Some(&c) = comment.get(i) {
+        if c != b'`' && backticks > 0 {
+            in_fence ^= backticks >= 3;
+            backticks = 0;
+        }
+        i += 1;
+        match c {
+            b'\n' | b'\r' => in_backticks = false,
+            b'`' => {
+                backticks += 1;
+                in_backticks = !in_backticks;
+            }
+            b'{' if !in_backticks && !in_fence && comment.get(i) == Some(&b'@') => {
+                let tag = identifier_at(comment, i + 1, true);
+                if !matches!(tag, b"link" | b"linkcode" | b"linkplain") {
+                    continue;
+                }
+                i = skip_spaces(i + 1 + tag.len());
+                let first = identifier_at(comment, i, true);
+                if !first.is_empty() {
+                    i += first.len();
+                    let mut names = vec![first];
+                    // After the dots, `a#b` is read like `a.b`.
+                    let mut dots = true;
+                    loop {
+                        let mut at = skip_spaces(i);
+                        match comment.get(at) {
+                            Some(b'.') if dots => at = skip_spaces(at + 1),
+                            Some(b'#') if !identifier_at(comment, at + 1, false).is_empty() => {
+                                dots = false;
+                                at += 1;
+                            }
+                            _ => break,
+                        }
+                        let name = identifier_at(comment, at, false);
+                        names.push(name);
+                        i = at + name.len();
+                    }
+                    links.push(names);
+                }
+                // The rest of the link is text.
+                let rest = &comment[i..];
+                let end = rest.iter().position(|c| matches!(c, b'}' | b'\n' | b'\r'));
+                i += end.unwrap_or(rest.len());
+            }
+            _ => {}
+        }
+    }
+    links
+}
+
 /// Whether `e` is written in parentheses of its own.
 fn is_parenthesized(hir: &hir::File, e: ExprId) -> bool {
     hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_ok()
@@ -853,6 +1027,144 @@ impl Unused<'_> {
             found.is_some()
         });
         scope
+    }
+
+    /// Where the names in the JSDoc comment `open..end` are resolved from: the scope of the statement, member or parameter it is
+    /// attached to (`withJSDoc`), which are the nodes `checkSourceElement` is given. `NONE` if it is attached to none.
+    fn scope_of_jsdoc(&self, open: usize, end: usize) -> ScopeId {
+        const MODIFIERS: [&[u8]; 15] = [
+            b"abstract",
+            b"accessor",
+            b"async",
+            b"const",
+            b"declare",
+            b"default",
+            b"export",
+            b"get",
+            b"override",
+            b"private",
+            b"protected",
+            b"public",
+            b"readonly",
+            b"set",
+            b"static",
+        ];
+        let (hir, bound) = (self.hir, self.bound);
+        let text: &[u8] = &hir.text;
+        let first = skip_trivia(text, end);
+        if hir.is_in_with(first as u32) {
+            return ScopeId::NONE;
+        }
+        // `GetJSDocCommentRanges`: a parameter has the comments on the line of the token before it as well.
+        let before = byte_before_comment(text, open);
+        let is_leading = before.is_none();
+        let scope_of_parameter = |p: ParamId| {
+            let f = bound.param_fn[p.idx()];
+            if f.is_some() && (is_leading || matches!(before, Some(b'(' | b','))) {
+                bound.fns[f.idx()].scope
+            } else {
+                ScopeId::NONE
+            }
+        };
+        if text.get(first) == Some(&b'@') {
+            let at = skip_trivia(text, first + 1) as u32;
+            let is_first = |d: &&(DecoratorOwner, ExprId)| d.1.is_some() && hir[d.1].pos == at;
+            return match hir.decorators.iter().find(is_first) {
+                Some(&(DecoratorOwner::Class(class), _))
+                    if is_leading
+                        && matches!(bound.class_owner[class.idx()], ClassOwner::Stmt(_)) =>
+                {
+                    bound.class_scope[class.idx()]
+                }
+                Some(&(DecoratorOwner::Member(m), _)) if is_leading => self.scope_of_member(m),
+                Some(&(DecoratorOwner::Param(p), _)) => scope_of_parameter(p),
+                _ => ScopeId::NONE,
+            };
+        }
+        // What is kept is where the keyword or the name is, which comes after the modifiers.
+        let mut last = first;
+        loop {
+            let word = identifier_at(text, last, false);
+            let len = if MODIFIERS.iter().any(|modifier| *modifier == word) {
+                word.len()
+            } else if text.get(last) == Some(&b'*') {
+                1
+            } else {
+                break;
+            };
+            last = skip_trivia(text, last + len);
+        }
+        let is_host = |pos: u32| (first..=last).contains(&(pos as usize));
+        if is_leading {
+            if let Some(s) = (0..hir.stmts.len()).find(|&i| {
+                is_host(hir.stmts[i].pos) && !matches!(bound.stmt_parent[i], Parent::None)
+            }) {
+                return self.scope_of_statement(StmtId(s as u32));
+            }
+            if let Some(m) = hir.members.iter().position(|m| is_host(m.pos)) {
+                return self.scope_of_member(MemberId(m as u32));
+            }
+            if let Some(m) = hir.enum_members.iter().position(|m| is_host(m.pos)) {
+                return self.scope_of_kind(ScopeKind::Enum(bound.enum_member_owner[m]));
+            }
+        }
+        match hir.params.iter().position(|p| is_host(p.pos)) {
+            Some(p) => scope_of_parameter(ParamId(p as u32)),
+            None => ScopeId::NONE,
+        }
+    }
+
+    fn scope_of_kind(&self, kind: ScopeKind) -> ScopeId {
+        let found = self.bound.scopes.iter().position(|s| s.kind == kind);
+        found.map_or(ScopeId::NONE, |i| ScopeId(i as u32))
+    }
+
+    /// The scope of the declaration `s` is. Of another statement, that of the innermost function or namespace around it.
+    fn scope_of_statement(&self, mut s: StmtId) -> ScopeId {
+        let (hir, bound) = (self.hir, self.bound);
+        match hir[s].kind {
+            StmtKind::Fn(f) => return bound.fns[f.idx()].scope,
+            StmtKind::Class(class) => return bound.class_scope[class.idx()],
+            StmtKind::Interface(id) => return self.scope_of_kind(ScopeKind::Interface(id)),
+            StmtKind::TypeAlias(alias) => return bound.alias_scope[alias.idx()],
+            StmtKind::Enum(e) => return self.scope_of_kind(ScopeKind::Enum(e)),
+            StmtKind::Module(m) => return self.scope_of_kind(ScopeKind::Module(m)),
+            _ => {}
+        }
+        loop {
+            match bound.stmt_parent[s.idx()] {
+                Parent::Stmt(outer) if outer.is_some() => s = outer,
+                Parent::Case(case) if bound.case_stmt[case.idx()].is_some() => {
+                    s = bound.case_stmt[case.idx()]
+                }
+                Parent::FnBody(f) => return bound.fns[f.idx()].scope,
+                Parent::Module(m) => return self.scope_of_kind(ScopeKind::Module(m)),
+                Parent::File => return ScopeId(0),
+                _ => return ScopeId::NONE,
+            }
+        }
+    }
+
+    /// `GetHostSignatureFromJSDoc`: the scope of the signature `m` is, or has for a type if it is a property signature. Failing
+    /// that, the scope `m` is declared in.
+    fn scope_of_member(&self, m: MemberId) -> ScopeId {
+        let (hir, bound) = (self.hir, self.bound);
+        let (member, owner) = (&hir[m], bound.member_owner[m.idx()]);
+        if member.func.is_some() {
+            return bound.fns[member.func.idx()].scope;
+        }
+        if !matches!(owner, MemberOwner::Class(_))
+            && member.ty.is_some()
+            && let TypeNodeKind::Fn(f) = hir[member.ty].kind
+        {
+            return bound.fns[f.idx()].scope;
+        }
+        match owner {
+            MemberOwner::Class(class) => bound.class_scope[class.idx()],
+            MemberOwner::Interface(id) => self.scope_of_kind(ScopeKind::Interface(id)),
+            MemberOwner::TypeLiteral(t) => bound.type_scope[t.idx()],
+            MemberOwner::None => ScopeId::NONE,
+        }
     }
 
     /// `Resolve` with `isUse`. What the name means, if that is declared in the file.

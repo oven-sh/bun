@@ -1,6 +1,7 @@
 //! The grammar of properties, of what is ambient, and of a few things next to them; and what JSX has to say beyond its attributes.
 //!
 //! * 1166, and 18006 1276 1169 1246 1170 1247: `checkGrammarProperty`, `checkGrammarForInvalidDynamicName`
+//! * 1165 1168, and 1169 1170 of methods: `checkGrammarMethod`
 //! * 1039 1254: `checkAmbientInitializer`
 //! * 1255, and 1263 1264: `checkGrammarProperty`, `checkGrammarVariableDeclaration`; with 1162, `checkGrammarObjectLiteralExpression`
 //!   and `checkGrammarMethod`
@@ -19,6 +20,7 @@
 //! `declare`, `type`, a bracket, a brace) is read off the text.
 
 use super::errors::Diagnostic;
+use super::errors_small::has_parameter_list_error;
 use super::*;
 use crate::atom::Interner;
 use crate::bind::{ClassOwner, Decl, MemberOwner, Parent};
@@ -27,20 +29,24 @@ use crate::resolve::JsxEmit;
 impl Checker<'_> {
     pub(super) fn check_x_properties_jsx(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let hir = self.hir(file);
-        // The text of a declaration file is not kept.
-        if hir.text.is_empty() || !matches!(hir.kind, FileKind::Ts | FileKind::Tsx) {
+        // The text of the default library is not kept.
+        if hir.text.is_empty() || hir.kind == FileKind::Json {
             return;
         }
         let elements = jsx_elements(hir, self.bound(file));
-        self.check_jsx_spread_children(file, &elements, out);
-        self.check_jsx_fragment_factories(file, &elements, out);
-        self.check_jsx_class_props_property(file, &elements, out);
-        self.check_jsx_name_containers(file, out);
+        // A declaration file has no JSX.
+        if hir.kind != FileKind::Declaration {
+            self.check_jsx_spread_children(file, &elements, out);
+            self.check_jsx_fragment_factories(file, &elements, out);
+            self.check_jsx_class_props_property(file, &elements, out);
+            self.check_jsx_name_containers(file, out);
+        }
         // `grammarErrorOnNode` and the like: nothing is said of the grammar of a file that does not parse.
         if has_parse_diagnostics(hir) {
             return;
         }
         self.check_grammar_of_property_declarations(file, out);
+        self.check_grammar_of_method_names(file, out);
         self.check_grammar_of_ambient_or_definite_variables(file, out);
         self.check_grammar_of_object_literals(file, out);
         self.check_declare_on_imports(file, out);
@@ -137,7 +143,9 @@ impl Checker<'_> {
             }
             MemberOwner::None => return,
         }
-        if member.flags.contains(Flags::AMBIENT) {
+        // `NodeFlagsAmbient` is on every node of a declaration file.
+        let is_ambient = member.flags.contains(Flags::AMBIENT) || hir.kind == FileKind::Declaration;
+        if is_ambient {
             self.check_initializer_in_ambient_context(
                 file,
                 member.init,
@@ -152,10 +160,7 @@ impl Checker<'_> {
                 1263
             } else if member.ty.is_none() {
                 1264
-            } else if member
-                .flags
-                .intersects(Flags::AMBIENT | Flags::STATIC | Flags::ABSTRACT)
-            {
+            } else if is_ambient || member.flags.intersects(Flags::STATIC | Flags::ABSTRACT) {
                 1255
             } else {
                 return;
@@ -163,6 +168,45 @@ impl Checker<'_> {
             if let Some(start) = postfix_token(text, name, b'!') {
                 out.push(Diagnostic { start, code });
             }
+        }
+    }
+
+    /// `checkGrammarMethod`, of the name of a method: 1165 1168, 1169 1170.
+    fn check_grammar_of_method_names(&self, file: FileId, out: &mut Vec<Diagnostic>) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        for i in 0..hir.members.len() {
+            let member = &hir.members[i];
+            if member.kind != MemberKind::Method || member.func.is_none() {
+                continue;
+            }
+            let func = &hir[member.func];
+            let is_ambient =
+                member.flags.contains(Flags::AMBIENT) || hir.kind == FileKind::Declaration;
+            let has_body = !matches!(func.body, FnBody::None)
+                || func
+                    .flags
+                    .intersects(Flags::BODY_DROPPED | Flags::MISSING_BODY);
+            let code = match bound.member_owner[i] {
+                MemberOwner::Class(_) if is_ambient => 1165,
+                MemberOwner::Class(_) if !has_body => 1168,
+                MemberOwner::Class(_) | MemberOwner::None => continue,
+                MemberOwner::Interface(_) => 1169,
+                MemberOwner::TypeLiteral(_) => 1170,
+            };
+            let m = MemberId(i as u32);
+            let name = start_of_member_name(hir, m);
+            if !is_invalid_dynamic_name(hir, &self.files().atoms, member.key, name) {
+                continue;
+            }
+            // `checkGrammarFunctionLikeDeclaration` comes first, then `checkGrammarForGenerator`: 1221 1222.
+            if are_modifiers_refused(hir, bound, m, name, out)
+                || has_empty_type_parameter_list(hir, func)
+                || has_parameter_list_error(hir, func)
+                || matches!(code, 1165 | 1168) && func.flags.contains(Flags::GENERATOR)
+            {
+                continue;
+            }
+            out.push(Diagnostic { start: name, code });
         }
     }
 
@@ -284,10 +328,12 @@ impl Checker<'_> {
         out: &mut Vec<Diagnostic>,
     ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
+        // `NodeFlagsAmbient` is on every node of a declaration file.
+        let is_declaration_file = hir.kind == FileKind::Declaration;
         for i in 0..hir.var_decls.len() {
             let d = &hir.var_decls[i];
             let statement = bound.var_stmt[i];
-            if !d.flags.intersects(Flags::AMBIENT | Flags::DEFINITE)
+            if !(is_declaration_file || d.flags.intersects(Flags::AMBIENT | Flags::DEFINITE))
                 || statement.is_none()
                 || !matches!(hir[statement].kind, StmtKind::Var(_))
             {
@@ -310,7 +356,7 @@ impl Checker<'_> {
                 _ => None,
             };
             let is_in_loop_head = matches!(around, Some(StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. }) if left == statement);
-            let is_ambient = d.flags.contains(Flags::AMBIENT);
+            let is_ambient = is_declaration_file || d.flags.contains(Flags::AMBIENT);
             if !is_in_loop_head {
                 if is_ambient {
                     self.check_initializer_in_ambient_context(
@@ -916,6 +962,10 @@ impl Checker<'_> {
         if hir.is_js {
             return false;
         }
+        // `getJsxType`: the error type without a `JSX.Element`. `checkJsxFragment` makes `anyType` of it.
+        if let ExprKind::Jsx(j) = hir[e].kind {
+            return hir[j].tag.is_some() && self.jsx_type(file, known::Element).is_none();
+        }
         // `getResolvedSymbol`: the identifier the parser creates for a missing expression resolves to `unknownSymbol`.
         matches!(hir[e].kind, ExprKind::Missing) || self.is_callee_in_error(file, e)
     }
@@ -1451,6 +1501,14 @@ fn are_modifiers_refused(
     said.iter().any(|d| (start..name).contains(&d.start))
 }
 
+/// `checkGrammarTypeParameterList`: 1098, `<>` before the parameters of `func`.
+fn has_empty_type_parameter_list(hir: &File, func: &Func) -> bool {
+    func.type_params.is_empty()
+        && trim_trivia_end(upto(&hir.text, func.anchor))
+            .strip_suffix(b">")
+            .is_some_and(|before| trim_trivia_end(before).ends_with(b"<"))
+}
+
 // ───────────────────────────── the text ─────────────────────────────
 
 fn upto(text: &[u8], pos: u32) -> &[u8] {
@@ -1685,7 +1743,7 @@ fn end_of_quoted(text: &[u8], start: usize) -> Option<usize> {
 }
 
 /// Past the bracket that closes the one at `open`.
-fn end_of_brackets(text: &[u8], open: usize) -> Option<usize> {
+pub(super) fn end_of_brackets(text: &[u8], open: usize) -> Option<usize> {
     let (mut depth, mut i) = (0u32, open);
     loop {
         match *text.get(i)? {

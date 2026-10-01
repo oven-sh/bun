@@ -8,7 +8,7 @@
 
 use super::errors::Diagnostic;
 use super::*;
-use crate::bind::{ClassOwner, Decl, PatParent, ScopeId, SymbolId};
+use crate::bind::{ClassOwner, Decl, PatParent, ScopeId, ScopeKind, SymbolId};
 
 const FUNCTION_SCOPED_VARIABLE: u32 = 1 << 0;
 const BLOCK_SCOPED_VARIABLE: u32 = 1 << 1;
@@ -76,8 +76,10 @@ impl Checker<'_> {
         self.check_refused_merges(file, out);
         self.check_duplicate_umd_globals(file, out);
         self.check_duplicate_members(file, out);
+        self.check_static_property_name_conflicts(file, out);
         self.check_exported_twice(file, out);
         self.check_redeclared_exports(file, out);
+        self.check_redeclared_namespace_exports(file, out);
         let hir = self.hir(file);
         let lists = hir
             .fns
@@ -1213,6 +1215,67 @@ impl Checker<'_> {
         }
     }
 
+    /// 2484 of `checkAliasSymbol`, for `export { a }` in the body of a namespace or of an ambient module.
+    fn check_redeclared_namespace_exports(&self, file: FileId, out: &mut Vec<Diagnostic>) {
+        let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
+        // `declareSymbolEx`: a second specifier for the name is refused, and is a symbol of its own.
+        let mut declared: Vec<(SymbolId, Atom)> = Vec::new();
+        for (x, export) in hir.exports.iter().enumerate() {
+            let scope = bound.export_scope[x];
+            if export.spec.is_some() || scope.is_none() {
+                continue;
+            }
+            let container = bound.scopes[scope.idx()].symbol;
+            if container.is_none()
+                || !matches!(bound.scopes[scope.idx()].kind, ScopeKind::Module(_))
+            {
+                continue;
+            }
+            for spec in export.items.iter() {
+                let exported = hir[spec].exported;
+                if declared.contains(&(container, exported)) {
+                    continue;
+                }
+                declared.push((container, exported));
+                // `export { "a" }` stands for nothing.
+                if matches!(
+                    hir.text.get(hir[spec].local_pos as usize),
+                    Some(b'"' | b'\'')
+                ) {
+                    continue;
+                }
+                let Some(symbol) = files.export(files.sym(file, container), exported) else {
+                    continue;
+                };
+                let own = files.flags(symbol);
+                let mut excluded = SymFlags::empty();
+                for meaning in [SymFlags::VALUE, SymFlags::TYPE, SymFlags::NAMESPACE] {
+                    if own.intersects(meaning) {
+                        excluded |= meaning;
+                    }
+                }
+                if excluded.is_empty() {
+                    continue;
+                }
+                let all = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE | SymFlags::ALIAS;
+                let Some(found) = files.resolve_name(file, scope, hir[spec].local, all) else {
+                    continue;
+                };
+                let target = if found == symbol {
+                    Some(found)
+                } else {
+                    files.resolve_alias_if_needed(found)
+                };
+                if target.is_some_and(|target| files.flags(target).intersects(excluded)) {
+                    out.push(Diagnostic {
+                        start: export_specifier_start(hir, spec),
+                        code: 2484,
+                    });
+                }
+            }
+        }
+    }
+
     /// Of the members of each class, interface and type literal.
     fn check_duplicate_members(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let hir = self.hir(file);
@@ -1227,6 +1290,39 @@ impl Checker<'_> {
         for t in 0..hir.types.len() {
             if let TypeNodeKind::Object(members) = hir.types[t].kind {
                 self.check_members_of(file, members, true, out);
+            }
+        }
+    }
+
+    /// `checkClassForStaticPropertyNameConflicts`: 2699
+    fn check_static_property_name_conflicts(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+        let hir = self.hir(file);
+        if self.files().options.use_define_for_class_fields || hir.kind == FileKind::Declaration {
+            return;
+        }
+        for c in 0..hir.classes.len() {
+            if hir.classes[c].flags.contains(Flags::AMBIENT) {
+                continue;
+            }
+            for m in hir.classes[c].members.iter() {
+                let member = &hir[m];
+                if !member.flags.contains(Flags::STATIC)
+                    || !matches!(member.key, PropKey::Name(_) | PropKey::Computed(_))
+                {
+                    continue;
+                }
+                // `getEffectivePropertyNameForPropertyNameNode`
+                if let Some(name) = self.member_name(file, member.key)
+                    && matches!(
+                        self.files().atoms.bytes(name),
+                        b"name" | b"length" | b"caller" | b"arguments"
+                    )
+                {
+                    out.push(Diagnostic {
+                        start: member.pos,
+                        code: 2699,
+                    });
+                }
             }
         }
     }

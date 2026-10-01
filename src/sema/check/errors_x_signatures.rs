@@ -1818,6 +1818,9 @@ impl Checker<'_> {
                         _ => {}
                     }
                 }
+            } else {
+                // `SymbolFlagsTypeParameterExcludes`: two of one list that have the same name are one symbol.
+                lists.push((file, params));
             }
             for tp in params.iter() {
                 let decl = &hir[tp];

@@ -2944,6 +2944,14 @@ impl Pass<'_, '_> {
             self.report(name_pos, if is_shadowed { 18014 } else { 18013 });
             return;
         }
+        // 1111, through `grammarErrorOnNode`.
+        if !classes.is_empty() && self.c.is_plain_js(self.file) && !has_parse_diagnostics(hir) {
+            self.report(name_pos, 1111);
+        }
+        // `isJSLiteralType(leftType)`: a property missing from a JS literal type is `any`, and nothing is said of it.
+        if self.c.is_js_literal_type(left) {
+            return;
+        }
         // `reportNonexistentProperty`, `getSuggestedSymbolForNonexistentProperty`
         let atoms = &self.c.files().atoms;
         let text = written_private_name(atoms.bytes(name));

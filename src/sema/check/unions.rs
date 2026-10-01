@@ -937,6 +937,7 @@ impl<'p> Checker<'p> {
             }
         });
         if size >= 100_000 {
+            self.union_too_complex = true;
             return TypeId::ANY;
         }
         // `getCrossProductIntersections`

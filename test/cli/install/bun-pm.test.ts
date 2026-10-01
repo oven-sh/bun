@@ -1251,3 +1251,31 @@ describe.concurrent.skipIf(isWindows)("cache directory setting longer than the p
     expect(await exists(join(String(dir), "node_modules", ".cache"))).toBeTrue();
   });
 });
+
+// `bun pm ls --all` printed each resolution through a 512-byte buffer, so one long tarball URL
+// (a pre-signed URL, for example) aborted the listing.
+test("bun pm ls --all prints a resolution longer than 512 bytes", async () => {
+  const url = `http://127.0.0.1:9/${Buffer.alloc(600, "u").toString()}.tgz`;
+  using dir = tempDir("pm-ls-long-resolution", {
+    "package.json": JSON.stringify({ name: "root", version: "1.0.0", dependencies: { dep: url } }),
+    "bun.lock": JSON.stringify({
+      lockfileVersion: 1,
+      configVersion: 1,
+      workspaces: { "": { name: "root", dependencies: { dep: url } } },
+      packages: { dep: [`dep@${url}`, {}] },
+    }),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "pm", "ls", "--all"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toContain(`└── dep@${url}\n`);
+  expect(exitCode).toBe(0);
+});

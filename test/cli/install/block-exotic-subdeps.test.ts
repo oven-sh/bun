@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -16,6 +16,11 @@ import { pathToFileURL } from "node:url";
 // Each test spawns `bun install` in its own tempDir. Point the install cache
 // at a per-test subdir so concurrent tests don't race on the shared cache
 // and so leftover state from unrelated runs can't affect resolution.
+// A local-tarball parent's resolution prints with the platform path separator.
+function tarballParent(name: string): string {
+  return isWindows ? `${name}@.\\${name}.tgz` : `${name}@./${name}.tgz`;
+}
+
 function envForDir(dir: string): NodeJS.Dict<string> {
   return { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") };
 }
@@ -711,7 +716,7 @@ blockExoticSubdeps = true
     });
 
     const { stderr, exitCode } = await install(String(dir));
-    expect(stderr).toContain("parent@./parent.tgz depends on inner@file:./inner.tgz via local_tarball source");
+    expect(stderr).toContain(`${tarballParent("parent")} depends on inner@file:./inner.tgz via local_tarball source`);
     expect(exitCode).toBe(1);
   });
 
@@ -759,7 +764,7 @@ blockExoticSubdeps = true
       using dir = await project(`[install]\nblockExoticSubdeps = true\n`);
 
       const { stderr, exitCode } = await install(String(dir));
-      expect(stderr).toContain(`evil@./evil.tgz depends on loot@${url} via git source (package name: private-thing)`);
+      expect(stderr).toContain(`${tarballParent("evil")} depends on loot@${url} via git source (package name: private-thing)`);
       expect(exitCode).toBe(1);
     });
 

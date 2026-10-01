@@ -635,24 +635,32 @@ describe("udpSocket()", () => {
         "-e",
         `
         const trace = [];
+        const firstData = Promise.withResolvers();
         const server = await Bun.udpSocket({
           port: 0,
           hostname: "127.0.0.1",
           socket: {
             data(socket, buf) {
               trace.push("data:" + socket.closed);
-              if (trace.length === 1) socket.close();
+              if (trace.length === 1) {
+                socket.close();
+                firstData.resolve();
+              }
             },
           },
         });
         const client = await Bun.udpSocket({ port: 0, hostname: "127.0.0.1" });
         const payload = [];
         for (let i = 0; i < 32; i++) payload.push("x", server.port, "127.0.0.1");
-        // One sendmmsg syscall: on loopback the whole burst lands in the
-        // kernel recv queue before the event loop polls, so recvmmsg yields a
-        // multi-packet batch and on_data iterates more than once.
+        // One sendmmsg syscall. On Linux the whole burst is in the kernel
+        // recv queue when it returns, so recvmmsg yields a multi-packet batch
+        // and on_data iterates more than once.
         client.sendMany(payload);
-        // Let the event loop drain any additional recvmmsg rounds.
+        // macOS delivers loopback datagrams from a kernel thread, after the
+        // send returns. Wait for the first one, not for a number of loop turns.
+        await firstData.promise;
+        // on_data dispatches a batch in one call. A datagram that it hands to
+        // the closed socket is in the trace before these turns end.
         for (let i = 0; i < 8; i++) await new Promise(r => setImmediate(r));
         client.close();
         console.log(JSON.stringify(trace));

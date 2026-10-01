@@ -4445,6 +4445,7 @@ impl DuplexUpgradeContext {
         if this.is_open.get() {
             if let Some(tls) = this.tls_this_ptr() {
                 crate::dispatch::fold(tls.handle_error(err_value));
+                return;
             }
         } else if let Some(tls) = this.tls.replace(None) {
             // Pre-open error (e.g. the duplex emitted non-Buffer data
@@ -4474,7 +4475,13 @@ impl DuplexUpgradeContext {
                 sys::SystemErrno::ECONNREFUSED as c_int,
                 0,
             ));
+            return;
         }
+        // The socket has closed: uncaught, like what a transport method throws in node.
+        let vm = this.vm;
+        let _ = vm
+            .as_mut()
+            .uncaught_exception(vm.global(), err_value, false);
     }
 
     fn on_timeout(this: bun_ptr::ThisPtr<Self>) {
@@ -4526,7 +4533,7 @@ impl DuplexUpgradeContext {
                 // The transport closed while this task was queued: an engine
                 // started now could never handshake, and nothing would free it.
                 if this.upgrade.pending_close.replace(false) {
-                    Self::on_close(this);
+                    this.upgrade.finish_close();
                     return;
                 }
                 log!(

@@ -12,8 +12,8 @@ if [ ! -x /workspace/tools/valgrind/bin/valgrind ]; then
   echo "$D  /workspace/tools/dl/valgrind.tar.gz" | sha256sum -c -
   mkdir -p /workspace/tools/valgrind && tar -xzf /workspace/tools/dl/valgrind.tar.gz -C /workspace/tools/valgrind --strip-components=2
 fi
-cp /workspace/notes/lint/tools/bin/vg /workspace/notes/lint/tools/bin/lk /workspace/notes/lint/tools/bin/save-notes /workspace/notes/lint/tools/bin/autopush /workspace/tools/
-chmod +x /workspace/tools/vg /workspace/tools/lk /workspace/tools/save-notes /workspace/tools/autopush
+cp /workspace/notes/lint/tools/bin/* /workspace/tools/
+chmod +x /workspace/tools/vg /workspace/tools/lk /workspace/tools/save-notes /workspace/tools/autopush /workspace/tools/memwatch
 R=/workspace/notes/lint/benchroot
 if [ ! -f "$R/bench/snippets/transpiler-typescript.mjs" ]; then
   mkdir -p "$R/node_modules/typescript/lib"

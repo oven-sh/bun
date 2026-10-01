@@ -1,10 +1,6 @@
 #!/bin/sh
-# Runs at most two heavy commands (build, cargo, test) at a time on this machine, for every worktree.
+# Runs ONE heavy command (build, cargo, test) at a time on this machine, for every worktree.
+# The machine has 32 GB for everything: two builds at a time end it. Job counts are capped for the same reason.
 # usage: /workspace/tools/lk <command> [args...]
-exec 8>/workspace/tools/heavy.1.lock
-if flock -n 8; then exec "$@"; fi
-exec 8>&-
-exec 9>/workspace/tools/heavy.2.lock
-if flock -n 9; then exec "$@"; fi
-exec 9>&-
-exec flock /workspace/tools/heavy.$(( $$ % 2 + 1 )).lock "$@"
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-6}"
+exec flock /workspace/tools/heavy.lock "$@"

@@ -1,13 +1,19 @@
 #!/bin/sh
-# Pushes every unit branch and the notes every 5 minutes, so that a restart of the machine loses little.
+# Every 5 minutes: commits the work of the typecheck worktree (its fixers do not commit), pushes every unit
+# branch, and saves the notes. A restart of the machine then loses little.
 while true; do
+  d=/workspace/wt/typecheck
+  if [ -d "$d" ] && [ "$(git -C "$d" branch --show-current 2>/dev/null)" = "robobun/abbc0c92/lint-typecheck" ] && [ ! -e "$(git -C "$d" rev-parse --git-dir)/index.lock" ]; then
+    git -C "$d" add -A src/typecheck Cargo.lock >/dev/null 2>&1
+    git -C "$d" diff --cached --quiet || git -C "$d" commit -q -m "typecheck: compile the port, work in progress" >/dev/null 2>&1
+  fi
   for u in parser typecheck cli conformance; do
     d=/workspace/wt/$u
     [ -d "$d" ] || continue
     b=$(git -C "$d" branch --show-current 2>/dev/null)
     [ "$b" = "robobun/abbc0c92/lint-$u" ] || continue
     if [ -n "$(git -C "$d" log --oneline "origin/$b..HEAD" 2>/dev/null | head -1)" ]; then
-      git -C "$d" push -q origin "HEAD:$b" >/dev/null 2>&1 && echo "$(date +%H:%M) pushed $u" >> /workspace/tools/autopush.log
+      git -C "$d" push -q origin "HEAD:$b" >/dev/null 2>&1 && echo "$(date +%m-%d_%H:%M) pushed $u" >> /workspace/tools/autopush.log
     fi
   done
   /workspace/tools/save-notes "autosave" >/dev/null 2>&1

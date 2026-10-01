@@ -1,0 +1,16 @@
+#!/bin/sh
+# The container has a hard limit of 32 GB and is removed when it is reached. This loop ends the largest
+# compiler, linker or test process before that happens, and logs it.
+LIMIT_KB=$((25 * 1024 * 1024))
+while true; do
+  anon=$(awk '$1=="anon"{a=$2} $1=="shmem"{s=$2} END{printf "%d", (a+s)/1024}' /sys/fs/cgroup/memory.stat 2>/dev/null)
+  if [ -n "$anon" ] && [ "$anon" -gt "$LIMIT_KB" ]; then
+    victim=$(ps -eo pid,rss,comm --sort=-rss | awk '$3 ~ /^(rustc|clang|clang\+\+|ld\.lld|lld|cargo|bun-debug|bun|node|ninja|cc1plus)/ {print $1" "$2" "$3; exit}')
+    if [ -n "$victim" ]; then
+      echo "$(date +%m-%d_%H:%M:%S) anon=${anon}kB kill $victim" >> /workspace/tools/memwatch.log
+      kill -9 "${victim%% *}" 2>/dev/null
+    fi
+    sleep 5
+  fi
+  sleep 2
+done

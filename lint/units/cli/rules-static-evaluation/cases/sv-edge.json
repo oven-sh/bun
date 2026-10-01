@@ -1,0 +1,12 @@
+["undefin\\u0065d; N\\u0061N; `a${1}b`; \"\\ud83d\\ude00\".length; \"é\".length; \"😀\"[0]; \"😀\".length; (1, \"x\"); String.raw`a\\u0041${1+1}\\n`; Infinity; -Infinity;",
+ "var Infinity; Infinity; -Infinity; NaN;",
+ "function f(undefined) {} undefined; void 0;",
+ "String.raw`\\d+${'x'}\\.`; String?.raw`a`; (0, String.raw)`a`; String.raw`a${x}`; String[`raw`]`q`; var r = String.raw; r`a`;",
+ "'a' + 'b' + 1 + 2; 1 + 2 + 'a'; `${1}${2n}${null}`; 'x'.length + 1; `a`.length; 'abc'[0 + 1]; 'abc'['1']; 'abc'[1.0]; 'abc'['01']; 'abc'[-0]; 'abc'[true]; 'abc'[4294967294]; 'abc'[4294967295]; 'abc'[1e21];",
+ "/a/.source + 'b'; `${/a\\/b/g}`; /[/]/.source; /a/yg.flags; /a/dgimsuvy.flags; /a/v.unicodeSets; /a/.test; /a/.exec('a'); /(?<n>a)\\k<n>/.source;",
+ "null?.x; null?.[x]; null?.x.y.z; (null?.x).y; undefined?.x?.y; (void 0)?.x; null?.(); null?.x(); 'a'?.length; ''?.length?.x; null?.x + 1; typeof null?.x;",
+ "x = 1; x = 'a' + 'b'; (x = 1, 2); x ||= 1; x ??= 1; x += 1; [x] = [1]; ({x} = {x: 1});",
+ "1 as any; (1 + 2)!; <number>3; 4 satisfies number; ('a' as string) + 'b'; -(1 as number); (null as any)?.x; `${1 as any}`;",
+ "0n == 0; 0n == ''; 0n == '0x0'; 1n == '1.0'; 1n == ' 1 '; 1n < '2'; 1n < 'a'; 'a' < 1n; 2n > '1e1'; 1n == '340282366920938463463374607431768211456'; 170141183460469231731687303715884105727n + 1n; -170141183460469231731687303715884105727n - 2n; 2n ** 127n; 2n ** 126n; (-2n) ** 127n; 1n << 126n; 1n << 127n; -1n >> 200n; 5n >> -1n; 1n << -200n; 0n ** 0n; 0n << 1000n;",
+ "+'0x1fffffffffffffffffffffffffffff'; +'0x20000000000001'; +'0x20000000000003'; +'0x3fffffffffffff'; +'0b' ; +'0x'; +'0X1F'; +'0O17'; +'0B101'; +'1e'; +'e1'; +'.'; +'+'; +'-'; +'1.e1'; +'.1e-1'; +'00012'; +'1e+3'; +'1E3'; +'Infinityx'; +'+Infinity'; +'- 1'; +'1,2'; +'\\u20281\\u2029'; +'\\u00a0\\ufeff\\u3000'; +'\\u180e1'; +'\\v1\\f'; +'1.7976931348623159e308'; +'4.9e-324'; +'2.4e-324'; +'123456789012345678901234567890';"
+]

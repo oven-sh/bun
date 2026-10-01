@@ -1,0 +1,8 @@
+["String.raw`\\d+${'x'}\\.`; (0, String.raw)`a`; String.raw`a${x}`; String[`raw`]`q`; String['ra' + 'w']`z${1}`; (String.raw)`p`; (String).raw`s`; foo.raw`a`; String.raw`${null}${undefined}${1n}${/a/g}`; String.raw``; String.raw`\\u{`;",
+ "var r = String.raw; r`a`;",
+ "function String() {} String.raw`a`;",
+ "/a/.source + 'b'; `${/a\\/b/g}`; /[/]/.source; /a/yg.flags; /a/dgimsuy.flags; /a/v.unicodeSets; /a/.test; /a/.exec('a'); /(?<n>a)\\k<n>/.source; /a/i.ignoreCase; /a/.ignoreCase; /a/m.multiline; /a/s.dotAll; /a/u.unicode; /a/y.sticky; /a/d.hasIndices; /a/g['global']; /a/g[`flags`]; !/a/.global; typeof /a/.source; /a/.lastIndex + 1; /\\u{1F600}/u.source; /é/.source;",
+ "'é😀'.length; 'é😀'[1]; 'é😀'[2]; '\\ud83d'.length; '\\u{1F600}'.length; `\\u{1F600}`[1]; 'a\\\nb'.length; '\\0'.length; '\\x41' + '\\101'; `line1\nline2`.length; `a\\\nb`.length;",
+ "1 < 2 < 3; 3 > 2 > 1; 1 == 1 == 1; 'b' > 'a' > 0; null + 1 + '1'; 1 + + '1'; 1 - - 1; - - 1; !!'0'; !!''; !!NaN; !!-0; !!0n; !!1n; +!!'a'; -true; -null; -undefined; -''; -'a'; ~~'12.9'; ~~-12.9; 2 ** 3 ** 2; (-2) ** 2; 7 % -3; -7 % 3; 5.5 % 2; Infinity % 2; 2 % Infinity; 0 * -1; 0 / -1; -0 + 0; -0 - 0; 1 / (-0 + -0);",
+ "0.1 * 3; 0.1 + 0.7; 1e21 + 1; 1e21 + ''; 1e-7 + ''; 123456789012345680000 + ''; 1.5e300 * 1.5e300 + ''; -1e-7 + ''; (0.1 + 0.2) + ''; 100 + ''; 1e5 + ''; 0.000001 + ''; 0.0000001 + ''; 123.456 + ''; -0 + ''; NaN + ''; -Infinity + ''; 4.35 + ''; 5e-324 + ''; 1.7976931348623157e308 + ''; 9007199254740993 + ''; 0.1 + 0.2 + '';"
+]

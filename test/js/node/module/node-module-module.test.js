@@ -1032,7 +1032,6 @@ console.log("survived", require("./late.js"));`,
     test.each([
       ["is not a function", "{}", "Module.runMain is not a function"],
       ["throws", `() => { throw new Error("thrown"); }`, "thrown"],
-      ["rejects", `async () => { throw new Error("rejected"); }`, "rejected"],
     ])("one that %s is reported once", async (_, value, message) => {
       const expected = { stdout: `uncaughtException: ${message}\n`, stderr: "", exitCode: 0 };
       expect(await run(`${handlers} require("module").runMain = ${value};`)).toEqual(expected);

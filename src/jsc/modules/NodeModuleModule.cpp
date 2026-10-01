@@ -836,22 +836,13 @@ extern "C" JSC::EncodedJSValue NodeModuleModule__callOverriddenRunMain(Zig::Glob
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue overrideHandler = global->m_moduleRunMainFunction.get(global);
     auto callData = JSC::getCallData(overrideHandler);
-    JSValue result;
     if (callData.type == JSC::CallData::Type::None) {
         throwTypeError(global, scope, "Module.runMain is not a function"_s);
-    } else {
-        MarkedArgumentBuffer args;
-        args.append(argv1);
-        result = JSC::profiledCall(global, JSC::ProfilingReason::API, overrideHandler, callData, global, args);
+        return {};
     }
-
-    if (auto* exception = scope.exception()) [[unlikely]] {
-        // Reported like what the entry point itself throws. A termination stays pending.
-        if (!scope.tryClearException())
-            RELEASE_AND_RETURN(scope, {});
-        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSPromise::rejectedPromise(global, exception->value())));
-    }
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(result));
+    MarkedArgumentBuffer args;
+    args.append(argv1);
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::profiledCall(global, JSC::ProfilingReason::API, overrideHandler, callData, global, args)));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(setModuleRunMain,

@@ -31,8 +31,7 @@ bun_jsc::jsc_abi_extern! {
 /// `src/jsc/bindings/JSBakeResponse.h`
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum SSRKind {
-    Regular = 0,
+pub(crate) enum SSRKind {
     Redirect = 1,
     Render = 2,
 }
@@ -201,7 +200,7 @@ fn construct_render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
             ..Default::default()
         },
         crate::webcore::Body::new(crate::webcore::BodyValue::Empty),
-        BunString::empty(),
+        BunString::EMPTY,
         false,
     ));
 

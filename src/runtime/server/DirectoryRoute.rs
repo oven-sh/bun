@@ -29,7 +29,7 @@ struct StatCacheEntry {
 }
 
 #[derive(bun_ptr::CellRefCounted)]
-pub struct DirectoryRoute {
+pub(crate) struct DirectoryRoute {
     ref_count: Cell<u32>,
     server: Cell<Option<AnyServer>>,
     root_fd: Cell<Fd>,
@@ -42,11 +42,11 @@ pub struct DirectoryRoute {
 
 impl DirectoryRoute {
     #[inline]
-    pub fn set_server(&self, server: Option<AnyServer>) {
+    pub(crate) fn set_server(&self, server: Option<AnyServer>) {
         self.server.set(server);
     }
 
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         size_of::<DirectoryRoute>()
             + self.url_prefix.len()
             + self.stat_cache.len() * size_of::<Cell<StatCacheEntry>>()
@@ -54,7 +54,7 @@ impl DirectoryRoute {
     }
 
     /// Open `root` and construct the route. `url_prefix` must end in `/`.
-    pub fn create(
+    pub(crate) fn create(
         global: &JSGlobalObject,
         root: &[u8],
         url_prefix: &[u8],
@@ -95,11 +95,15 @@ impl DirectoryRoute {
         }))
     }
 
-    pub fn on_head_request(this: ThisPtr<DirectoryRoute>, req: AnyRequest, resp: AnyResponse) {
+    pub(crate) fn on_head_request(
+        this: ThisPtr<DirectoryRoute>,
+        req: AnyRequest,
+        resp: AnyResponse,
+    ) {
         Self::on(this, req, resp, Method::HEAD);
     }
 
-    pub fn on_request(this: ThisPtr<DirectoryRoute>, req: AnyRequest, resp: AnyResponse) {
+    pub(crate) fn on_request(this: ThisPtr<DirectoryRoute>, req: AnyRequest, resp: AnyResponse) {
         let method = Method::find(req.method()).unwrap_or(Method::GET);
         Self::on(this, req, resp, method);
     }
@@ -157,21 +161,16 @@ impl DirectoryRoute {
 
         let mut etag_buf = [0u8; 40];
         let etag = format_weak_etag(&mut etag_buf, size, last_modified_ms);
+        let last_modified_ms = (last_modified_ms > 0).then_some(last_modified_ms);
 
         let range = if method == Method::GET || method == Method::HEAD {
-            RangeRequest::from_request(&req, size)
+            RangeRequest::from_request(&req, size, Some(etag), last_modified_ms)
         } else {
             RangeRequest::Result::None
         };
 
-        let status_code = status_for_preconditions(
-            &req,
-            method,
-            200,
-            Some(etag),
-            (last_modified_ms > 0).then_some(last_modified_ms),
-            range,
-        );
+        let status_code =
+            status_for_preconditions(&req, method, 200, Some(etag), last_modified_ms, range);
 
         req.set_yield(false);
         write_any_status(resp, status_code);
@@ -385,7 +384,6 @@ impl Drop for ResponseGuard {
     fn drop(&mut self) {
         if let Some(route) = self.route.take() {
             route.on_response_complete(self.resp);
-            route.deref();
         }
     }
 }

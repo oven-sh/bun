@@ -28,7 +28,7 @@
 
 use core::cell::Cell;
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering, fence};
 
 use crate::{Futex, WaitGroup};
 use bun_core::Output;
@@ -288,7 +288,7 @@ impl ThreadPool {
 
     pub fn wake_for_idle_events(&self) {
         // Wake all the threads to check for idle events.
-        self.idle_event.wake(Event::NOTIFIED, u32::MAX);
+        self.idle_event.wake_all();
     }
 }
 
@@ -895,18 +895,15 @@ impl ThreadPool {
                     }
                 };
             } else {
-                if let Some(current) = NonNull::new(Thread::current()) {
-                    // `current` is the calling worker's own stack-local
-                    // `Thread`; BackRef invariant (pointee outlives holder)
-                    // holds for the `&self` `drain_idle_events` call.
-                    bun_ptr::BackRef::from(current).drain_idle_events();
-                }
-
                 if stats_enabled() {
                     self.stats.sleeps.fetch_add(1, Ordering::Relaxed);
                 }
 
-                self.idle_event.wait();
+                // `current` is the calling worker's own stack-local `Thread`;
+                // BackRef invariant (pointee outlives holder) holds for the
+                // `&self` `drain_idle_events` calls in `Event::wait`.
+                let current = NonNull::new(Thread::current()).map(bun_ptr::BackRef::from);
+                self.idle_event.wait(current.as_deref());
                 sync = self.sync.load(Ordering::Relaxed);
             }
         }
@@ -994,7 +991,7 @@ impl ThreadPool {
         // — pointee outlives holder — covers the `join_event.wait()` and
         // `.next` reads below.
         let thread = bun_ptr::BackRef::from(thread);
-        thread.join_event.wait();
+        thread.join_event.wait(None);
 
         // After receiving the shutdown signal, shutdown the next thread in the pool.
         // We have to do that without touching the thread pool itself since its memory is invalidated by now.
@@ -1012,7 +1009,7 @@ impl ThreadPool {
         // Wait for the thread pool to be shutdown() then for all threads to enter a joinable state
         let mut sync = self.sync.load(Ordering::Relaxed);
         if !(sync.state() == SyncState::Shutdown && sync.spawned() == 0) {
-            self.join_event.wait();
+            self.join_event.wait(None);
             sync = self.sync.load(Ordering::Relaxed);
         }
 
@@ -1216,7 +1213,7 @@ impl Thread {
                     // `shutdown()` raced `wake_for_idle_events()`: the bundler
                     // pushes per-worker `deinit_task`s into `idle_queue`, wakes
                     // us, then immediately drops the (CLI-owned) pool — and
-                    // `wait()` observes `Shutdown` before we loop back to
+                    // `wait()` observes `Shutdown` before it gets to
                     // `drain_idle_events`. Run them once on the way out so the
                     // worker thread tears down its own `Worker`/`WorkerData`
                     // (whose `ThreadLocalArena` is mimalloc thread-local and
@@ -1258,17 +1255,21 @@ impl Thread {
         }
     }
 
-    pub(crate) fn drain_idle_events(&self) {
+    /// Returns how many it ran.
+    pub(crate) fn drain_idle_events(&self) -> usize {
         let Ok(mut consumer) = self.idle_queue.try_acquire_consumer() else {
-            return;
+            return 0;
         };
+        let mut ran = 0;
         while let Some(node) = consumer.pop() {
             // SAFETY: node points to the `node` field of a Task.
             let task = unsafe { Task::from_node(node) };
             // SAFETY: `task` was dequeued from this thread's idle queue; it is a
             // live scheduled `Task` whose `callback` was set by the producer.
             unsafe { ((*task).callback)(task) };
+            ran += 1;
         }
+        ran
     }
 
     /// Try to dequeue a Node/Task from the ThreadPool.
@@ -1342,6 +1343,7 @@ impl Thread {
 /// An event which stores 1 semaphore token and is multi-threaded safe.
 /// The event can be shutdown(), waking up all wait()ing threads and
 /// making subsequent wait()'s return immediately.
+/// `wake_all()` sends every waiter back through its idle queue without posting a token.
 struct Event {
     state: AtomicU32,
 }
@@ -1355,24 +1357,37 @@ impl Default for Event {
 }
 
 impl Event {
+    // The low two bits of `state`.
     const EMPTY: u32 = 0;
     const WAITING: u32 = 1;
     const NOTIFIED: u32 = 2;
     const SHUTDOWN: u32 = 3;
+    const STATE_MASK: u32 = 0b11;
+    /// The rest of `state` counts `wake_all()` calls, so one that lands between a waiter's
+    /// last look at its idle queue and its futex wait changes the word the waiter sleeps on.
+    const EPOCH_ONE: u32 = 0b100;
 
     /// Wait for and consume a notification
-    /// or wait for the event to be shutdown entirely
+    /// or wait for the event to be shutdown entirely.
+    ///
+    /// `worker` has its idle queue drained before each sleep: `wake_all()` wakes every
+    /// waiter without handing out a notification, so they all come back here.
     #[inline(never)]
-    fn wait(&self) {
+    fn wait(&self, worker: Option<&Thread>) {
         let mut acquire_with: u32 = Self::EMPTY;
-        let mut state = self.state.load(Ordering::Relaxed);
+        let mut word = self.state.load(Ordering::Relaxed);
+        let mut is_idle: bool = false;
         let mut has_swept: bool = false;
 
         loop {
+            let epoch = word & !Self::STATE_MASK;
+            let state = word & Self::STATE_MASK;
+
             // If we're shutdown then exit early.
             // Acquire barrier to ensure operations before the shutdown() are seen after the wait().
             // Shutdown is rare so it's better to have an Acquire barrier here instead of on CAS failure + load which are common.
             if state == Self::SHUTDOWN {
+                fence(Ordering::Acquire);
                 return;
             }
 
@@ -1380,13 +1395,13 @@ impl Event {
             // Acquire barrier to ensure operations before the notify() appear after the wait().
             if state == Self::NOTIFIED {
                 match self.state.compare_exchange_weak(
-                    state,
-                    acquire_with,
+                    word,
+                    epoch | acquire_with,
                     Ordering::Acquire,
                     Ordering::Relaxed,
                 ) {
                     Ok(_) => return,
-                    Err(cur) => state = cur,
+                    Err(cur) => word = cur,
                 }
                 continue;
             }
@@ -1394,8 +1409,8 @@ impl Event {
             // There is no notification to consume, we should wait on the event by ensuring its WAITING.
             if state != Self::WAITING {
                 match self.state.compare_exchange_weak(
-                    state,
-                    Self::WAITING,
+                    word,
+                    epoch | Self::WAITING,
                     Ordering::Relaxed,
                     Ordering::Relaxed,
                 ) {
@@ -1403,9 +1418,19 @@ impl Event {
                         // fall through to futex wait
                     }
                     Err(cur) => {
-                        state = cur;
+                        word = cur;
                         continue;
                     }
+                }
+            }
+
+            if let Some(worker) = worker {
+                // A `wake_all()` from here on changes the word the futex wait below expects. The
+                // fence puts the idle tasks of the one whose epoch `word` has in the queue.
+                fence(Ordering::Acquire);
+                if worker.drain_idle_events() != 0 {
+                    // What the tasks freed is there for the fallback sweep below to give back.
+                    has_swept = false;
                 }
             }
 
@@ -1416,19 +1441,31 @@ impl Event {
             // Acquiring to WAITING will make the next notify() or shutdown() wake a sleeping futex thread
             // who will either exit on SHUTDOWN or acquire with WAITING again, ensuring all threads are awoken.
             // This unfortunately results in the last notify() or shutdown() doing an extra futex wake but that's fine.
-            // Sweep only when the wait TIMED OUT: genuinely idle for 100ms, not parking
-            // between tasks (that cost ~13% of vite preview rps). `has_swept` is a local,
-            // reset when notify() returns; a racing notify() stays NOTIFIED, never lost.
-            let timeout_ns: Option<u64> = if !has_swept {
+            // Idle only once a wait TIMED OUT: 100ms without work, not parking between tasks
+            // (sweeping on every park cost ~13% of vite preview rps). The locals are reset when
+            // notify() returns; a racing notify() stays NOTIFIED, never lost.
+            //
+            // An idle thread hands its heaps to mimalloc's scavenger for the wait that has no
+            // timeout: one sweep never takes the free blocks of a large page that was just
+            // allocated from, and the scavenger comes back for them while this thread sleeps.
+            // SAFETY: nothing allocates or frees on this thread until `mi_on_thread_idle_end` below.
+            let handed_off = is_idle && unsafe { bun_alloc::mimalloc::mi_on_thread_idle_start() };
+            if is_idle && !handed_off && !has_swept {
+                // No scavenger to hand off to.
+                has_swept = true;
+                bun_alloc::mimalloc::mi_on_thread_idle();
+            }
+            let timeout_ns: Option<u64> = if !is_idle {
                 Some(100_000_000) // 100ms
             } else {
                 None
             };
-            if Futex::wait(&self.state, Self::WAITING, timeout_ns).is_err() {
-                has_swept = true;
-                bun_alloc::mimalloc::mi_on_thread_idle();
+            let timed_out = Futex::wait(&self.state, epoch | Self::WAITING, timeout_ns).is_err();
+            if handed_off {
+                bun_alloc::mimalloc::mi_on_thread_idle_end();
             }
-            state = self.state.load(Ordering::Relaxed);
+            is_idle |= timed_out;
+            word = self.state.load(Ordering::Relaxed);
             acquire_with = Self::WAITING;
         }
     }
@@ -1436,37 +1473,45 @@ impl Event {
     /// Post a notification to the event if it doesn't have one already
     /// then wake up a waiting thread if there is one as well.
     fn notify(&self) {
-        self.wake(Self::NOTIFIED, 1);
+        let mut word = self.state.load(Ordering::Relaxed);
+        loop {
+            if word & Self::STATE_MASK == Self::SHUTDOWN {
+                return;
+            }
+            // Release barrier to ensure any operations before this happen before the wait() in the other threads.
+            match self.state.compare_exchange_weak(
+                word,
+                (word & !Self::STATE_MASK) | Self::NOTIFIED,
+                Ordering::Release,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(cur) => word = cur,
+            }
+        }
+        // Nobody is parked unless the state was WAITING. A waiter can also be parked while it is
+        // EMPTY or NOTIFIED (a consumer that never parked took a notification and put EMPTY
+        // back); the next notify() re-arms and wakes it.
+        if word & Self::STATE_MASK == Self::WAITING {
+            Futex::wake(&self.state, 1);
+        }
     }
 
     /// Marks the event as shutdown, making all future wait()'s return immediately.
     /// Then wakes up any threads currently waiting on the Event.
     fn shutdown(&self) {
-        self.wake(Self::SHUTDOWN, u32::MAX);
+        // SHUTDOWN is every state bit. It happens once, so it wakes whatever the state was:
+        // a waiter parked under EMPTY or NOTIFIED (see `notify`) has no later wake to count on.
+        self.state.fetch_or(Self::SHUTDOWN, Ordering::Release);
+        Futex::wake(&self.state, u32::MAX);
     }
 
-    fn wake(&self, release_with: u32, wake_threads: u32) {
-        // Update the Event to notify it with the new `release_with` state (either NOTIFIED or SHUTDOWN).
-        // Release barrier to ensure any operations before this are this to happen before the wait() in the other threads.
-        let state = self.state.swap(release_with, Ordering::Release);
-
-        // Normally we only wake futex sleepers when the prior state was WAITING,
-        // which avoids a syscall when there is definitely nobody parked.
-        //
-        // That optimization is unsound for the one-shot "wake everyone" paths
-        // (`shutdown`, `wake_for_idle_events`, both `wake_threads == u32::MAX`).
-        // A worker can be genuinely parked in `Futex::wait(WAITING)` while
-        // `state` is transiently EMPTY or NOTIFIED: a concurrent consumer that
-        // took a notification without ever parking clears `state` back to EMPTY
-        // via the `acquire_with == EMPTY` path (see `wait`). For a normal
-        // single `notify()` that is fine, because a later `notify()` re-arms and
-        // wakes the sleeper. A teardown wake happens once, so a skipped wake
-        // here strands the parked worker: only its first wait has a timeout (the
-        // 100ms idle sweep), later waits are indefinite. Always wake in that
-        // case; the extra syscall is negligible once at teardown.
-        if state == Self::WAITING || wake_threads == u32::MAX {
-            Futex::wake(&self.state, wake_threads);
-        }
+    /// Wakes every waiter to look at its idle queue. Posts no notification: each of them
+    /// goes back to waiting.
+    fn wake_all(&self) {
+        // Release: pairs with the fence in `wait`.
+        self.state.fetch_add(Self::EPOCH_ONE, Ordering::Release);
+        Futex::wake(&self.state, u32::MAX);
     }
 }
 

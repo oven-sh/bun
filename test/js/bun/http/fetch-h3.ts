@@ -8,8 +8,8 @@
  * by swapping the function reference.
  *
  * Discovery: `CURL_HTTP3` env, then `curl-h3`, then plain `curl` if it
- * advertises `HTTP3` in `--version`. CI provisions `curl-h3` via
- * scripts/bootstrap.{sh,ps1}; locally `brew install curl` works.
+ * advertises `HTTP3` in `--version`. CI's images have `curl-h3` (the `curlH3`
+ * tool of scripts/build/ci-images/spec.ts); locally `brew install curl` works.
  */
 import { which } from "bun";
 import { tls } from "harness";

@@ -254,6 +254,7 @@ impl<C: CompletionStruct> BundleThread<C> {
             }
 
             if has_bundled {
+                crate::bundle_v2::dispatch::__bun_jsc_destroy_bytecode_cache_vm();
                 bun_alloc::mimalloc::mi_collect(false);
                 has_bundled = false;
             }

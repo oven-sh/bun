@@ -9,6 +9,16 @@ test("highlighter", () => {
   expect(highlighter("`can do ${123} ${'123'} ${`123`}`123").length).toBeLessThan(150);
 });
 
+// https://github.com/oven-sh/bun/issues/40637
+// The number scan used to stop at the first `_` or `n`, so only the leading
+// digits of `1_000` or `1000n` were colored.
+test.each(["1_000", "1_000_000.123_456", "0x1_F", "0X1_F", "0b1010_0001", "1_000n", "1000n", "0xF_Fn", "0XF_Fn"])(
+  "highlighter colors the whole numeric literal %p",
+  input => {
+    expect(highlighter(input)).toContain(`\x1b[33m${input}\x1b[0m`);
+  },
+);
+
 // https://github.com/oven-sh/bun/issues/31434
 // A trailing backslash inside an unterminated `${` interpolation used to run
 // the scanner past the end of the input (OOB read / crash).

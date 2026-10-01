@@ -82,7 +82,7 @@ fn nn(p: Option<*mut ExecutionEntry>) -> Option<NonNull<ExecutionEntry>> {
 
 bun_core::declare_scope!(jest, visible);
 
-pub struct Execution {
+pub(crate) struct Execution {
     pub(crate) groups: Box<[ConcurrentGroup]>,
     // was `pub(self)`; widened so `RefDataValue::sequence` can
     // split-borrow `groups`/`sequences` without re-entering `sequences_mut`.
@@ -102,7 +102,7 @@ pub struct Execution {
     pub(crate) on_stack_entry_data: core::cell::Cell<Option<super::bun_test::EntryData>>,
 }
 
-pub struct ConcurrentGroup {
+pub(crate) struct ConcurrentGroup {
     pub(crate) sequence_start: usize,
     pub(crate) sequence_end: usize,
     /// Index of the next sequence that has not been started yet
@@ -146,13 +146,13 @@ impl ConcurrentGroup {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ExpectAssertions {
+pub(crate) enum ExpectAssertions {
     NotSet,
     AtLeastOne,
     Exact(u32),
 }
 
-pub struct ExecutionSequence {
+pub(crate) struct ExecutionSequence {
     pub(crate) first_entry: Option<NonNull<ExecutionEntry>>,
     /// Index into ExecutionSequence.entries() for the entry that is not started or currently running
     pub(crate) active_entry: Option<NonNull<ExecutionEntry>>,
@@ -201,7 +201,7 @@ impl ExecutionSequence {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr, strum::FromRepr)]
 #[repr(u8)]
 pub enum Result {
     #[default]
@@ -222,7 +222,7 @@ pub enum Result {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Basic {
+pub(crate) enum Basic {
     Pending,
     Pass,
     Fail,
@@ -231,7 +231,7 @@ pub enum Basic {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum PendingIs {
+pub(crate) enum PendingIs {
     PendingIsPass,
     PendingIsFail,
 }
@@ -707,7 +707,7 @@ impl Execution {
         }
     }
 
-    /// Drop any captured junit failure so the next retry/repeat starts fresh.
+    /// Drop any captured failure so the next retry/repeat starts fresh.
     /// Kept out of `reset_sequence` so within-attempt errors (e.g. a throwing
     /// afterEach after the test body already threw) accumulate instead of
     /// clobbering the primary failure.
@@ -717,9 +717,7 @@ impl Execution {
         if let Some(reporter) = unsafe { (*buntest.as_ptr()).reporter } {
             // SAFETY: `reporter` is a `NonNull<CommandLineReporter>` with write
             // provenance (see BunTest docs); single-threaded, no other borrow.
-            if let Some(junit) = unsafe { (*reporter.as_ptr()).reporters.junit.as_deref_mut() } {
-                junit.last_failure = None;
-            }
+            unsafe { (*reporter.as_ptr()).test_failure = None };
         }
     }
 

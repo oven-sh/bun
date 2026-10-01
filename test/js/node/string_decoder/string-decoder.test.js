@@ -549,8 +549,10 @@ it(
 // bits, and a length that wraps to 0 slips past the string limit. The gate
 // matches the 2**32 Buffer case in buffer.test.js, so a runner that cannot
 // reserve 4 GiB fails the allocation instead of the decode.
-it.skipIf(totalmem() < 10 * 1024 ** 3)("text() on a 2**32-byte buffer throws instead of wrapping its length", async () => {
-  const src = `
+it.skipIf(totalmem() < 10 * 1024 ** 3)(
+  "text() on a 2**32-byte buffer throws instead of wrapping its length",
+  async () => {
+    const src = `
     const { StringDecoder } = require("string_decoder");
     // allocUnsafe is lazily committed and a rejected decode never reads it.
     const buf = Buffer.allocUnsafe(2 ** 32);
@@ -561,16 +563,17 @@ it.skipIf(totalmem() < 10 * 1024 ** 3)("text() on a 2**32-byte buffer throws ins
       console.log(e.code);
     }
   `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", src],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout, stderr).toBe("ERR_STRING_TOO_LONG\n");
-  expect(exitCode, stderr).toBe(0);
-});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout, stderr).toBe("ERR_STRING_TOO_LONG\n");
+    expect(exitCode, stderr).toBe(0);
+  },
+);
 
 // StringDecoder.prototype.text(buf, offset) takes the offset as an int32 and
 // previously validated it with `offset > byteLength` where byteLength is

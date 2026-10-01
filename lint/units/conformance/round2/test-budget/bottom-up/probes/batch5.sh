@@ -36,4 +36,7 @@ for k in 1 2; do
 done
 echo "### $(date -u +%FT%TZ) debug build, the leak check and the exception checks"
 one knobs2 K2-dbg-leak-validate env BUN_DEBUG_QUIET_LOGS=1 $validate $leak $(lsan knobs2) $DBG test $T
+echo "### $(date -u +%FT%TZ) the type check of the notes on the tree with the final form of the test file"
+sed 's#if grep "/test/cli/lint/" "$tmp/out.txt"; then exit 1; fi#if grep -E "(^|/)test/cli/lint/" "$tmp/out.txt"; then exit 1; fi#' /workspace/notes/lint/units/conformance/round2/typecheck.sh > $out/typecheck.sh
+bash $out/typecheck.sh $B/final 2>&1 | tail -5
 echo "### $(date -u +%FT%TZ) done; $(state)"

@@ -215,8 +215,11 @@ const asksToPersist = (path: string, fields = "Connection: keep-alive\r\n", vers
   `${method} ${path} HTTP/${version}\r\nHost: x\r\n${fields}\r\n`;
 /** An HTTP/1.0 request that does not ask for a persistent connection: the server closes it after the response. */
 const last = "GET /last HTTP/1.0\r\nHost: x\r\n\r\n";
-/** A request for the same write as one whose response must close the connection. No answer to it must arrive. */
-const probe = asksToPersist("/probe");
+/**
+ * A request for the same write as one whose response must close the connection. No answer to it must arrive.
+ * It does not ask for a persistent connection: if the server answers it, the connection closes behind that answer.
+ */
+const probe = "GET /probe HTTP/1.0\r\nHost: x\r\n\r\n";
 
 const persists = "Connection: keep-alive\r\nKeep-Alive: timeout=5\r\n";
 const closes = "Connection: close\r\n";
@@ -259,8 +262,7 @@ describe("an HTTP/1.0 request with Connection: keep-alive", () => {
     const requests: [name: string, request: string][] = [
       ["Connection: keep-alive", asksToPersist("/1")],
       ["Connection: Keep-Alive, TE", asksToPersist("/1", "Connection: Keep-Alive, TE\r\n")],
-      ["Connection: keep-alive, close", asksToPersist("/1", "Connection: keep-alive, close\r\n")],
-      ["two Connection fields", asksToPersist("/1", "Connection: close\r\nConnection: keep-alive\r\n")],
+      ["two Connection fields", asksToPersist("/1", "Connection: TE\r\nConnection: keep-alive\r\n")],
       ["Proxy-Connection: keep-alive", asksToPersist("/1", "Proxy-Connection: keep-alive\r\n")],
       ["a TE: chunked field", asksToPersist("/1", "Connection: keep-alive\r\nTE: chunked\r\n")],
       ["no Host field", "GET /1 HTTP/1.0\r\nConnection: keep-alive\r\n\r\n"],
@@ -555,6 +557,7 @@ describe("an HTTP/1.0 request with Connection: keep-alive", () => {
     const requests = [asksToPersist("/1"), asksToPersist("/2"), asksToPersist("/3"), last];
     const limit = { prepare: (server: http.Server) => (server.maxRequestsPerSocket = 2) };
 
+    // Node.js counts only HTTP/1.1 requests for maxRequestsPerSocket, so the limit does not close this connection.
     test("the request does not count for maxRequestsPerSocket", async () => {
       const out = await exchange(withLength, requests, limit);
       assert.deepStrictEqual(
@@ -765,7 +768,7 @@ describe("res.shouldKeepAlive is the verdict of the parser on the request", () =
       ...items.flatMap(item => ["Connection", "connection", "Proxy-Connection"].map(name => `${name}: ${item}\r\n`)),
       ...pairs.map(pair => pair.join("\r\n") + "\r\n"),
     ];
-    test(`HTTP/${version}: the same as llhttp in this runtime, for ${fields.length} request heads`, async () => {
+    test(`HTTP/${version}: as llhttp in this runtime for ${fields.length} request heads (in Bun a close item wins)`, async () => {
       const seen: Record<string, unknown> = {};
       const wanted: Record<string, unknown> = {};
       const server = await listen((req, res) => {
@@ -776,7 +779,10 @@ describe("res.shouldKeepAlive is the verdict of the parser on the request", () =
       try {
         for (const [i, field] of fields.entries()) {
           const head = `GET /${i} HTTP/${version}\r\nHost: x\r\n${field}\r\n`;
-          wanted[field] = llhttp(head);
+          // RFC 9112 9.6: in Bun a close item closes the connection, also beside a keep-alive item. llhttp reads
+          // the close item only for HTTP/1.1, so its HTTP/1.1 verdict says if the head has one.
+          const closeItem = inBun && llhttp(head.replace(" HTTP/1.0\r\n", " HTTP/1.1\r\n")) === false;
+          wanted[field] = closeItem ? false : llhttp(head);
           const peer = await server.connect();
           await converse(peer, [head]).finally(() => peer.destroy());
         }
@@ -792,7 +798,8 @@ describe("res.shouldKeepAlive is the verdict of the parser on the request", () =
     ["1.1", "Connection: close\r\n", false],
     ["1.0", "", false],
     ["1.0", "Connection: keep-alive\r\n", true],
-    ["1.0", "Connection: keep-alive, close\r\n", true],
+    // llhttp does not read the close item of an HTTP/1.0 request. In Bun that item wins (RFC 9112 9.6).
+    ["1.0", "Connection: keep-alive, close\r\n", !inBun],
   ];
   for (const [version, fields, shouldKeepAlive] of verdicts) {
     test(`HTTP/${version} ${JSON.stringify(fields)}: the Connection header of the response follows it`, async () => {
@@ -1057,6 +1064,33 @@ describe("Node.js keeps the connection open, and Bun does not yet", () => {
 });
 
 describe("rules that only Bun has", () => {
+  // RFC 9112 9.6: the server closes the connection behind the response to a request that has a close item.
+  // Node.js keeps it open for an HTTP/1.0 request that also has a keep-alive item: llhttp reads the close
+  // item only for HTTP/1.1.
+  for (const fields of [
+    "Connection: close, keep-alive",
+    "Connection: keep-alive, close",
+    "Connection: Keep-Alive,Close",
+    "Connection: close\r\nConnection: keep-alive",
+    "Connection: keep-alive\r\nConnection: close",
+    "Connection: close\r\nProxy-Connection: keep-alive",
+    "Connection: keep-alive\r\nProxy-Connection: close",
+    "Proxy-Connection: close\r\nConnection: keep-alive",
+    "Proxy-Connection: keep-alive\r\nConnection: close",
+    "Proxy-Connection: close, keep-alive",
+    "Proxy-Connection: keep-alive, close",
+  ]) {
+    bunOnly(`a close item wins over a keep-alive item: ${JSON.stringify(fields)}`, async () => {
+      const seen: boolean[] = [];
+      const listener: Listener = (req, res) => {
+        seen.push(res.shouldKeepAlive);
+        withLength(req, res);
+      };
+      const out = await closesBehind(listener, asksToPersist("/1", fields + "\r\n"));
+      assert.deepStrictEqual({ seen, out }, { seen: [false], out: [ok("/1", closes), "end"] });
+    });
+  }
+
   // RFC 9112 6.1: the server closes the connection behind the response to an HTTP/1.0 request that has a
   // Transfer-Encoding field. Node.js keeps it open: llhttp does not read that field for its verdict.
   for (const [name, coding, body] of [
@@ -1117,7 +1151,10 @@ describe("rules that only Bun has", () => {
           first ??= res;
           res.shouldKeepAlive = false;
           res.setHeader("Content-Length", body.length);
-          res.end(body);
+          // Two writes: Windows takes a first write of any size, also for a client that does not read. It
+          // refuses the next write.
+          res.write(body.subarray(0, -1));
+          res.end(body.subarray(-1));
         };
         const server = secure
           ? https.createServer({ key: fixture("agent1-key.pem"), cert: fixture("agent1-cert.pem") }, listener)
@@ -1137,16 +1174,13 @@ describe("rules that only Bun has", () => {
           : connect(port, "127.0.0.1");
         try {
           await once(socket, secure ? "secureConnect" : "connect");
-          // The client reads nothing, so most of the body waits in the server.
+          // The client reads nothing, so the end of the body waits in the server.
           socket.pause();
           socket.write(asksToPersist("/1"));
           await ping();
-          // If the kernel took the whole body (Windows does, from one write to a TCP socket), nothing waits: the
-          // server has sent the response and closed the connection. A request on it now gets a reset.
-          if (first!.writableLength > 0) {
-            socket.write(asksToPersist("/2"));
-            await ping();
-          }
+          assert.ok(first!.writableLength > 0, "no byte of the first response waits in the server");
+          socket.write(asksToPersist("/2"));
+          await ping();
           const chunks: Buffer[] = [];
           socket.on("data", chunk => chunks.push(chunk));
           socket.resume();

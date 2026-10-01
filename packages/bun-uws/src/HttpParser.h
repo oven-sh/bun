@@ -1284,12 +1284,9 @@ struct HttpResponseData;
                 req->bf.add(h->key);
             }
             if constexpr (IsNodeHttp) {
-                /* llhttp_should_keep_alive: HTTP/1.0 persists only with a keep-alive item, also beside a close item.
-                 * https://github.com/nodejs/llhttp/blob/v9.4.2/src/native/http.c#L156-L170
-                 * Not with a Transfer-Encoding field, also an empty one (RFC 9112 6.1). llhttp keeps that connection open. */
-                if (req->isAncient()
-                        ? !req->hasConnectionToken("keep-alive") || req->getHeader("transfer-encoding").data() != nullptr
-                        : req->hasConnectionClose(true)) {
+                /* llhttp_should_keep_alive (https://github.com/nodejs/llhttp/blob/v9.4.2/src/native/http.c#L156-L170). Not llhttp, for HTTP/1.0: a close item wins (RFC 9112 9.6), and a Transfer-Encoding field closes (RFC 9112 6.1, below). */
+                if (req->hasConnectionClose(true)
+                        || (req->isAncient() && (!req->hasConnectionToken("keep-alive") || req->getHeader("transfer-encoding").data() != nullptr))) {
                     sawConnectionClose = true;
                 }
             } else if (req->isAncient() || req->hasConnectionClose(false)) {
@@ -1351,8 +1348,8 @@ struct HttpResponseData;
              * MUST treat the message as if the framing is faulty and close the connection
              * after processing the message. Bun.serve rejects such a request outright,
              * consistent with the TE+CL and non-chunked TE rejections below. node:http
-             * follows llhttp, which dispatches the request (the verdict above closes
-             * the connection after the response). */
+             * follows llhttp, which dispatches the request (the HTTP/1.0 request already
+             * marks the connection for close: the verdict above reads Transfer-Encoding). */
             if (!IsNodeHttp && req->ancientHttp && transferEncoding.has) [[unlikely]] {
                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING);
             }

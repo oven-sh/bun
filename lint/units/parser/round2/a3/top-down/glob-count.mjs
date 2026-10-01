@@ -1,0 +1,12 @@
+import { Glob } from "bun";
+import { statSync, lstatSync } from "node:fs";
+const root = process.argv[2];
+const t0 = performance.now();
+const all = [];
+for (const dir of ["test", "src/js"]) for (const file of new Glob("**/*.{ts,tsx,mts,cts}").scanSync({ cwd: root + "/" + dir, onlyFiles: true })) all.push(dir + "/" + file);
+const scanMs = Math.round(performance.now() - t0);
+const files = all.filter(f => !f.includes("/node_modules/")).sort();
+let bytes = 0; for (const f of files) bytes += statSync(root + "/" + f).size;
+const count = re => files.filter(f => re.test(f)).length;
+console.log(JSON.stringify({ all: all.length, inNodeModules: all.length - files.length, files: files.length, bytes, tsOnly: count(/\.ts$/), tsx: count(/\.tsx$/), dts: count(/\.d\.ts$/), mts: count(/\.mts$/), cts: count(/\.cts$/), underTest: count(/^test\//), underSrcJs: count(/^src\/js\//), scanMs, symlinks: files.filter(f => lstatSync(root + "/" + f).isSymbolicLink()).length }));
+await Bun.write("/tmp/a3-td/glob-files.txt", files.join("\n") + "\n");

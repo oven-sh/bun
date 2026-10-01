@@ -433,7 +433,12 @@ impl<'p, 'a> Context<'p, 'a> {
 
     /// Where the text in the place of `expr` starts, every `(` and `<T>` around it included.
     fn full_start(&mut self, expr: &Expr) -> Loc {
-        match self.around(expr, false).iter().rev().find(|piece| piece.opens()) {
+        match self
+            .around(expr, false)
+            .iter()
+            .rev()
+            .find(|piece| piece.opens())
+        {
             Some(piece) => loc_at(piece.op),
             None => self.own_start(expr),
         }
@@ -449,7 +454,8 @@ impl<'p, 'a> Context<'p, 'a> {
 
     /// `full_start` of `first`, the first operand of a node whose first token is at `own` and whose own token is at `token`. What is found is kept for the nodes of the chain inside that node: a long chain is gone down once.
     fn chain_start(&mut self, first: &Expr, own: Loc, token: Option<u32>) -> Loc {
-        if let (Some(token), Some((below, upto, start))) = (token, self.chain_starts.get(&own.start))
+        if let (Some(token), Some((below, upto, start))) =
+            (token, self.chain_starts.get(&own.start))
             && *below < token
             && token <= *upto
         {
@@ -457,7 +463,12 @@ impl<'p, 'a> Context<'p, 'a> {
         }
         let mut expr = first;
         let (below, start) = loop {
-            if let Some(piece) = self.around(expr, false).iter().rev().find(|piece| piece.opens()) {
+            if let Some(piece) = self
+                .around(expr, false)
+                .iter()
+                .rev()
+                .find(|piece| piece.opens())
+            {
                 // A node without a token of its own is not told from the nodes inside it: nothing is kept then.
                 let below = match first_operand(expr) {
                     Some(_) => own_token(expr),
@@ -491,12 +502,7 @@ impl<'p, 'a> Context<'p, 'a> {
             return expr.loc;
         };
         let mut at = named as usize;
-        while at > 0
-            && matches!(
-                self.text().get(at - 1),
-                Some(b' ' | b'\t' | b'\n' | b'\r')
-            )
-        {
+        while at > 0 && matches!(self.text().get(at - 1), Some(b' ' | b'\t' | b'\n' | b'\r')) {
             at -= 1;
         }
         if at > 0 && self.text().get(at - 1) == Some(&b'@') {
@@ -600,9 +606,10 @@ impl<'p, 'a> Context<'p, 'a> {
                     (text.t == T::TNoSubstitutionTemplateLiteral).then_some(text.end)
                 }
             },
-            ExprData::EJsxElement(element) => {
-                tokens::jsx_end(self.text(), usize::try_from(element.close_tag_loc.start).ok()?)
-            }
+            ExprData::EJsxElement(element) => tokens::jsx_end(
+                self.text(),
+                usize::try_from(element.close_tag_loc.start).ok()?,
+            ),
             ExprData::ERegExp(reg_exp) => {
                 offset_of(expr.loc)?.checked_add(u32::try_from(reg_exp.value.slice().len()).ok()?)
             }

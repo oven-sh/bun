@@ -1,0 +1,16 @@
+--- a/src/js_parser/parse/parse_entry.rs	2026-10-01 13:15:00.421381725 +0000
++++ b/src/js_parser/parse/parse_entry.rs	2026-10-01 13:15:00.484468942 +0000
+@@ -1007,6 +1007,13 @@
+         // SAFETY: `init_p!` only yields after `init` succeeded.
+         let p: &mut P<'_, TS, false> = unsafe { __p.assume_init_mut() };
+ 
++        // With debug assertions and this variable, the parse pass is the one of a lint parse: a test compares what the visit pass then prints.
++        #[cfg(debug_assertions)]
++        if bun_core::getenv_z(bun_core::zstr!("BUN_DEBUG_TEST_LINT_PARSE_THEN_VISIT")).is_some() {
++            p.starts_for_parse_only = Some(crate::p::StartsForParseOnly::for_lint());
++            p.start_syntax_errors(orig_error_count);
++        }
++
+         if p.options.features.hot_module_reloading {
+             debug_assert!(!p.options.tree_shaking);
+         }

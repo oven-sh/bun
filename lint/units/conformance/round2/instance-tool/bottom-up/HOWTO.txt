@@ -1,0 +1,29 @@
+The prototype of E5 (one line for each instance), as run on 2026-10-01 against 3110ce85cf. H is test/cli/lint/conformance.
+Nothing here is committed to the worktree: these files are what ran in a scratch clone.
+
+Files
+  command.ts                H/runner/command.ts, new: what sweep.ts and instances.ts share (the words of a command line,
+                            checkOf, openCases, the selectors, runOnCorpus). Written for the binding of
+                            ../../runner-corpus-binding/top-down (listCases, caseBaseName, openCorpus of runner/corpus.ts).
+  instances.ts              H/instances.ts, new: the command
+  replay-check-fixture.ts   H/fixtures/, new: a check module that replays the oracle
+  empty-check-fixture.ts    H/fixtures/, new: a check module that reports nothing
+  e5.patch                  H/runner/run.ts (FirstDifference, RunResult.first, resultLine), H/runner/index.ts (exports),
+                            H/sweep.ts (its parse loop, checkOf, matcher, select, the opening of the corpus and the run
+                            leave it for runner/command.ts: 725 lines to 585), conformance.test.ts (3 tests in
+                            describe("run"), describe("instances.ts") with 5 tests)
+  apply.sh                  lays all of it over a tree with the top-down binding
+  compare-sweep.sh          sweep.ts of two trees on 43 command lines: text, exit code, report (paths of /tmp/instance-tool-1a)
+  mutate-check.ts           a check that replays the oracle and changes it by the name of the instance
+  parity.ts                 the lines of instances.ts against the report of sweep.ts, instance by instance
+
+Reproduce
+  bash ../../scratch.sh /tmp/x/repo && bash ../../runner-corpus-binding/top-down/apply.sh /tmp/x/repo && bash apply.sh /tmp/x/repo
+  cd /tmp/x/repo && USE_SYSTEM_BUN=1 /workspace/tools/lk bun test test/cli/lint/conformance.test.ts        113 pass, 0 fail
+  the same with the debug build of the worktree and the leak check of CI, -t "instances.ts|a fail names|the line of an instance|a long line is cut"
+                                                                                                         8 pass; a spawn test 9 to 14 s
+  bun H/instances.ts --check H/fixtures/replay-check-fixture.ts --no-files compiler/ conformance/         14,915 lines: pass 12,797, skip 2,118; exit 0; 9 s
+  RUNNER=H/runner bun H/instances.ts --check mutate-check.ts --no-files compiler/ conformance/ > lines.txt
+  RUNNER=H/runner bun H/sweep.ts --check mutate-check.ts --no-files --report report.json
+  bun parity.ts lines.txt report.json      12,797 of 12,797 instances: the same outcome; 4,255 two-sided differences with the
+                                           line number of the sweep's reason and the lines of its diff

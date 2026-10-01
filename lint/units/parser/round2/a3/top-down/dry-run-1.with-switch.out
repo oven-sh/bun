@@ -1,0 +1,11 @@
+bun test v1.4.3 (be1ebe529)
+
+lint-parse-visit.test.ts:
+(pass) a lint parse, visited and printed > is the normal transpile of every TypeScript file under test/ and src/js, shard 1 [144104.78ms]
+(pass) a lint parse, visited and printed > is the normal transpile of every TypeScript file under test/ and src/js, shard 0 [151064.44ms]
+lint parse, visited and printed: 6437 results of 3206 files equal (42 of them with experimental decorators, 3206 minified), 17 rejected by both, 0 changed while read
+
+ 2 pass
+ 0 fail
+ 10 expect() calls
+Ran 2 tests across 1 file. [157.09s]

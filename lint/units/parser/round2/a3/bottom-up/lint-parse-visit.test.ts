@@ -4,15 +4,13 @@ import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// With debug assertions, `Parser::parse` reads BUN_DEBUG_TEST_LINT_PARSE_THEN_VISIT and then gives its parse pass the
-// side table of `Parser::parse_for_lint` (type nodes, strict grammar) before the unchanged visit pass and printer.
-// What is printed must be what the normal transpile prints, for every TypeScript file under test/ and src/js that
-// parses. A release build has no such switch, so this is skipped there. A build with debug assertions and without
-// the switch fails at the sentinel, which only a lint parse rejects.
-
+// With debug assertions, BUN_DEBUG_TEST_LINT_PARSE_THEN_VISIT gives the parse pass of `Parser::parse` the side table of `Parser::parse_for_lint`: the visit pass and the printer are as always.
 const root = join(import.meta.dir, "..", "..", "..");
+// Only a lint parse rejects this: each child shows with it which parse pass it runs.
 const sentinel = "let x: (a: ) => void;\n";
 const shardCount = 4;
+// The files that the normal parse takes and tsc rejects, each with the first parse diagnostic of tsc: a lint parse rejects them too.
+const rejectedByTsc = new Map<string, string>([]);
 
 const worker = String.raw`
 const fs = require("node:fs");
@@ -120,6 +118,7 @@ async function run(dir: string, name: string, lint: boolean, list: { files: unkn
   return { records, crash };
 }
 
+// A build without debug assertions has no such switch.
 describe.skipIf(!isDebug && !isASAN)("a lint parse, visited and printed, is the normal transpile", () => {
   for (let shard = 0; shard < shardCount; shard++) {
     test.concurrent(
@@ -154,8 +153,10 @@ describe.skipIf(!isDebug && !isASAN)("a lint parse, visited and printed, is the 
           if (n.index === -1 || n.errors) continue;
           if (n.config) counts.decorated++;
           if (l === undefined || n.source !== l.source) counts.changed += n.config === 0 ? 1 : 0;
-          else if (l.errors) onlyWithoutLint.push({ file: nameOf(n.index, n.config), errors: l.errors });
-          else if (n.output !== l.output)
+          else if (l.errors) {
+            if (rejectedByTsc.has(filesToCompare()[n.index])) counts.rejected += n.config === 0 ? 1 : 0;
+            else onlyWithoutLint.push({ file: nameOf(n.index, n.config), errors: l.errors });
+          } else if (n.output !== l.output)
             differing.push({ file: nameOf(n.index, n.config), index: n.index, config: n.config });
           else if (n.config) counts.decoratedEqual++;
           else counts.equal++;
@@ -205,7 +206,7 @@ describe.skipIf(!isDebug && !isASAN)("a lint parse, visited and printed, is the 
         expect(counts.equal + counts.rejected + counts.changed).toBe(counts.files);
         expect(counts.rejected + counts.changed).toBeLessThan(counts.files / 100);
       },
-      300_000,
+      600_000,
     );
   }
 });

@@ -1,0 +1,54 @@
+verdict	tsc parse diagnostics	source	normal	lint	tsc tree	production	mutation	context
+by statement count	none	"class C { @d m(): asserts is is  { return x; } }"	"class C {\n}\n"	"import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 1, \"m\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  [(_dec$2 = [\n    d\n  ], \"m\")]() {\n    return x;\n  }\n}\n"	1 statement(s), class with 1 member(s), method body=true, heritage=undefined	predicate	del 3 A	ret
+by statement count	none	"class C implements class {} {}"	"class C {\n}\n"	"class C {\n}\n{}\n"	1 statement(s), class with 0 member(s), heritage=class {}	junk	null	heritage
+by statement count	none	"class C implements keyof { a: A } {}"	"class C {\n}\n"	"class C {\n  a;\n}\n{}\n"	2 statement(s), class with 1 member(s), heritage=keyof	operator	null	heritage
+by statement count	none	"class C implements readonly { a: A } {}"	"class C {\n}\n"	"class C {\n  a;\n}\n{}\n"	2 statement(s), class with 1 member(s), heritage=readonly	operator	null	heritage
+by statement count	none	"function f(): asserts is is  { return x; }"	""	"function f() {\n  return x;\n}\n"	function body=true type=asserts is is	predicate	del 3 A	fnret
+lint reads as tsc	none	"f< this.a.b>(x);"	call	comparison	BinaryExpression	query	del 0 typeof	targ
+lint reads as tsc	none	"f< this.a>(x);"	call	comparison	BinaryExpression	query	del 0 typeof	targ
+lint reads as tsc	none	"f<('x').\nA>(x);"	call	comparison	BinaryExpression	import-type	del 0 import	targ
+lint reads as tsc	none	"f<('x').A.B<C, D>>(x);"	call	comparison	BinaryExpression	import-type	del 0 import	targ
+lint reads as tsc	none	"f<('x').A.B>(x);"	call	comparison	BinaryExpression	import-type	del 0 import	targ
+lint reads as tsc	none	"f<('x').A<B>>(x);"	call	comparison	BinaryExpression	import-type	del 0 import	targ
+lint reads as tsc	none	"f<('x').A>(x);"	call	comparison	BinaryExpression	import-type	del 0 import	targ
+lint reads as tsc	none	"f<('x').default>(x);"	call	comparison	BinaryExpression	import-type	del 0 import	targ
+lint reads as tsc	none	"f<('x').new>(x);"	call	comparison	BinaryExpression	import-type	del 0 import	targ
+lint reads as tsc	none	"f<('x')\n.A>(x);"	call	comparison	BinaryExpression	import-type	del 0 import	targ
+lint reads as tsc	none	"f<(A).B>(x);"	call	comparison	BinaryExpression	parenthesized	null	targ
+lint reads as tsc	none	"f<{ [ + b]: A }>(x);"	comparison	call	call with type arguments	type-literal	del 2 a	targ
+lint reads as tsc	none	"f<{ [a + b]: A }>(x);"	comparison	call	call with type arguments	type-literal	null	targ
+lint reads as tsc	none	"f<{ [a as B]: A }>(x);"	comparison	call	call with type arguments	type-literal	null	targ
+lint reads as tsc	none	"f<{ [k `a${string}`]: A }>(x);"	comparison	call	call with type arguments	type-literal	del 3 :	targ
+lint reads as tsc	none	"f<{ [k = 1]: A }>(x);"	comparison	call	call with type arguments	type-literal	null	targ
+lint reads as tsc	none	"f<{ [K in T]: V, }>(x);"	call	comparison	BinaryExpression	mapped	null	targ
+lint reads as tsc	none	"f<{ 1n: A }>(x);"	comparison	call	call with type arguments	type-literal	null	targ
+lint reads as tsc	none	"f<{ a: A = 1 }>(x);"	comparison	call	call with type arguments	type-literal	null	targ
+lint reads as tsc	none	"f<A!.B>(x);"	call	comparison	BinaryExpression	jsdoc	null	targ
+lint reads as tsc	none	"f<import('x' | 'y')>(x);"	comparison	call	call with type arguments	import-type	null	targ
+lint reads as tsc	none	"f<import('x', { a: { b: 'c' } })>(x);"	call	comparison	BinaryExpression	import-type	null	targ
+lint reads as tsc	none	"f<import('x', { with: { 'resolution-mode': 'import' } },)>(x);"	call	comparison	BinaryExpression	import-type	null	targ
+lint reads as tsc	none	"f<import(`x`)>(x);"	comparison	call	call with type arguments	import-type	null	targ
+lint reads as tsc	none	"f<import(A.B)>(x);"	comparison	call	call with type arguments	import-type	null	targ
+lint reads as tsc	none	"f<import(AB)>(x);"	comparison	call	call with type arguments	import-type	del 3 .	targ
+lint reads as tsc	none	"f<import(x)>(x);"	comparison	call	call with type arguments	import-type	null	targ
+lint reads as tsc	none	"f<this.a>(x);"	call	comparison	BinaryExpression	this-type	null	targ
+lint reads as tsc	TS1477	"f< a<B>.c>(x);"	call	comparison	BinaryExpression	query	del 0 typeof	targ
+lint reads as tsc	TS1477	"f<A<>.C>(x);"	call	comparison	BinaryExpression	reference	del 2 B	targ
+lint reads as tsc	TS1477	"f<A<B>.C>(x);"	call	comparison	BinaryExpression	reference	null	targ
+lint reads as tsc	TS1477	"f<typeof a<>.c>(x);"	call	comparison	BinaryExpression	query	del 3 B	targ
+lint reads as tsc	TS1477	"f<typeof a<B>.c>(x);"	call	comparison	BinaryExpression	query	null	targ
+normal reads as tsc	TS1005	"f<import('x', {})>(x);"	call	comparison	call with type arguments	import-type	null	targ
+normal reads as tsc	TS1110	"f<(keyof )[B]>(x);"	call	comparison	call with type arguments	indexed	del 2 A	targ
+normal reads as tsc	TS1110	"f<[, B | C]>(x);"	call	comparison	call with type arguments	tuple	del 1 A	targ
+normal reads as tsc	TS1110	"f<[, B]>(x);"	call	comparison	call with type arguments	tuple	del 1 A	targ
+normal reads as tsc	TS1110	"f<[,]>(x);"	call	comparison	call with type arguments	tuple	null	targ
+normal reads as tsc	TS1110	"f<[A,,]>(x);"	call	comparison	call with type arguments	tuple	del 4 B	targ
+normal reads as tsc	TS1110	"f<[A,,B]>(x);"	call	comparison	call with type arguments	tuple	null	targ
+normal reads as tsc	TS1110	"f<[keyof ]>(x);"	call	comparison	call with type arguments	tuple	del 2 A	targ
+normal reads as tsc	TS1110	"f<[keyof]>(x);"	call	comparison	call with type arguments	tuple	null	targ
+normal reads as tsc	TS1110	"f<[readonly]>(x);"	call	comparison	call with type arguments	tuple	null	targ
+normal reads as tsc	TS1110	"f<keyof  | B>(x);"	call	comparison	call with type arguments	operator	del 1 A	targ
+normal reads as tsc	TS1110	"f<keyof .B>(x);"	call	comparison	call with type arguments	operator	del 1 A	targ
+normal reads as tsc	TS1110	"f<keyof.A>(x);"	call	comparison	call with type arguments	contextual	null	targ
+normal reads as tsc	TS1110	"f<readonly.A>(x);"	call	comparison	call with type arguments	contextual	null	targ
+normal reads as tsc	TS1110,TS1110	"f<[,,B]>(x);"	call	comparison	call with type arguments	tuple	del 1 A	targ

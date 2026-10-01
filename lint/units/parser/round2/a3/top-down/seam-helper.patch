@@ -1,0 +1,39 @@
+--- a/src/js_parser/parse/parse_entry.rs	2026-10-01 13:15:00.421381725 +0000
++++ c/src/js_parser/parse/parse_entry.rs	2026-10-01 13:20:19.559041559 +0000
+@@ -140,6 +140,13 @@
+     }
+ }
+ 
++/// What makes a parse pass the one of a lint parse: the side table, and where the table of the codes starts in the log.
++#[cold]
++fn start_lint_parse_pass<const TS: bool>(p: &mut P<'_, TS, false>, orig_error_count: u32) {
++    p.starts_for_parse_only = Some(crate::p::StartsForParseOnly::for_lint());
++    p.start_syntax_errors(orig_error_count);
++}
++
+ /// `tspath.IsDeclarationFileName`: the base name ends in `.d.ts`, `.d.cts` or `.d.mts`, or in `.ts` after a `.d.`.
+ fn is_declaration_file_name(file_name: &[u8]) -> bool {
+     let base = bun_paths::resolve_path::basename(file_name);
+@@ -565,8 +572,7 @@
+             bump, log, source, define, lexer, options);
+         // SAFETY: `init_p!` only yields after `init` succeeded.
+         let p: &mut P<'_, TS, false> = unsafe { __p.assume_init_mut() };
+-        p.starts_for_parse_only = Some(crate::p::StartsForParseOnly::for_lint());
+-        p.start_syntax_errors(orig_error_count);
++        start_lint_parse_pass(p, orig_error_count);
+         let parsed: Result<_, Error> = 'parse: {
+             if p.lexer.token == js_lexer::T::THashbang
+                 && let Err(err) = p.lexer.next()
+@@ -1007,6 +1013,12 @@
+         // SAFETY: `init_p!` only yields after `init` succeeded.
+         let p: &mut P<'_, TS, false> = unsafe { __p.assume_init_mut() };
+ 
++        // With debug assertions and this variable, the parse pass is the one of a lint parse: a test compares what the visit pass then prints.
++        #[cfg(debug_assertions)]
++        if bun_core::getenv_z(bun_core::zstr!("BUN_DEBUG_TEST_LINT_PARSE_THEN_VISIT")).is_some() {
++            start_lint_parse_pass(p, orig_error_count);
++        }
++
+         if p.options.features.hot_module_reloading {
+             debug_assert!(!p.options.tree_shaking);
+         }

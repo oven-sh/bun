@@ -1,0 +1,49 @@
+bun test v1.4.3 (be1ebe529)
+
+lint-parse-visit.test.ts:
+167 | 
+168 |       // A child that died names the file it was in: the visit pass panics on a scope that the parse pass did not record.
+169 |       expect([normal.crash, lint.crash].filter(Boolean)).toEqual([]);
+170 |       // Each child proves its own mode.
+171 |       const [n, l] = [normal.records.get("-1 0"), lint.records.get("-1 0")];
+172 |       expect({ normal: n?.out !== undefined, lint: l?.errors !== undefined }).toEqual({ normal: true, lint: true });
+                                                                                    ^
+error: expect(received).toEqual(expected)
+
+  {
+-   "lint": true,
++   "lint": false,
+    "normal": true,
+  }
+
+- Expected  - 1
++ Received  + 1
+
+      at <anonymous> (/tmp/a3-td/t/lint-parse-visit.test.ts:172:79)
+(fail) a lint parse, visited and printed > is the normal transpile of every TypeScript file under test/ and src/js, shard 1 [78715.88ms]
+167 | 
+168 |       // A child that died names the file it was in: the visit pass panics on a scope that the parse pass did not record.
+169 |       expect([normal.crash, lint.crash].filter(Boolean)).toEqual([]);
+170 |       // Each child proves its own mode.
+171 |       const [n, l] = [normal.records.get("-1 0"), lint.records.get("-1 0")];
+172 |       expect({ normal: n?.out !== undefined, lint: l?.errors !== undefined }).toEqual({ normal: true, lint: true });
+                                                                                    ^
+error: expect(received).toEqual(expected)
+
+  {
+-   "lint": true,
++   "lint": false,
+    "normal": true,
+  }
+
+- Expected  - 1
++ Received  + 1
+
+      at <anonymous> (/tmp/a3-td/t/lint-parse-visit.test.ts:172:79)
+(fail) a lint parse, visited and printed > is the normal transpile of every TypeScript file under test/ and src/js, shard 0 [86549.86ms]
+lint parse, visited and printed: 6437 results of 3206 files equal (42 of them with experimental decorators, 3206 minified), 17 rejected by both, 0 changed while read
+
+ 0 pass
+ 2 fail
+ 6 expect() calls
+Ran 2 tests across 1 file. [92.32s]

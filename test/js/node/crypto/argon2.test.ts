@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import nodeCrypto from "node:crypto";
 
 // Not yet in @types/node 25.
@@ -419,6 +419,50 @@ describe("crypto.argon2", () => {
     expect(JSON.parse(stdout.trim())).toEqual({
       syncMemory: "Argon2 derivation failed",
       syncTagLength: "Argon2 derivation failed",
+      withinLimit: 32,
+      asyncMemory: "Argon2 derivation failed",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(!isASAN)("a memory cost the allocator refuses is a catchable error, not an abort", async () => {
+    // No synthetic limit here: ASAN's per-allocation cap makes the real
+    // allocation of the block matrix return null.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const crypto = require("node:crypto");
+        const base = { message: "pw", nonce: "saltsalt", parallelism: 1, tagLength: 32, memory: 8, passes: 1 };
+        const results = {};
+        try {
+          crypto.argon2Sync("argon2id", { ...base, memory: 64 * 1024 });
+          results.syncMemory = "no error";
+        } catch (e) {
+          results.syncMemory = e.message;
+        }
+        results.withinLimit = crypto.argon2Sync("argon2id", base).length;
+        crypto.argon2("argon2id", { ...base, memory: 64 * 1024 }, (err) => {
+          results.asyncMemory = err === null ? "no error" : err.message;
+          console.log(JSON.stringify(results));
+        });
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1", "max_allocation_size_mb=32"]
+          .filter(Boolean)
+          .join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(JSON.parse(stdout.trim())).toEqual({
+      syncMemory: "Argon2 derivation failed",
       withinLimit: 32,
       asyncMemory: "Argon2 derivation failed",
     });

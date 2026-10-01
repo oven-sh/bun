@@ -1,0 +1,136 @@
+--- a/src/argon2.rs
++++ b/src/argon2.rs
+@@ -97,7 +97,7 @@ pub fn encoded_len(
+ /// ```
+ pub fn hash_encoded(pwd: &[u8], salt: &[u8], config: &Config) -> Result<String> {
+     let context = Context::new(config.clone(), pwd, salt)?;
+-    let hash = run(&context);
++    let hash = run(&context)?;
+     let encoded = encoding::encode_string(&context, &hash);
+     Ok(encoded)
+ }
+@@ -141,7 +141,7 @@ pub fn hash_encoded(pwd: &[u8], salt: &[u8], config: &Config) -> Result<String>
+ /// ```
+ pub fn hash_raw(pwd: &[u8], salt: &[u8], config: &Config) -> Result<Vec<u8>> {
+     let context = Context::new(config.clone(), pwd, salt)?;
+-    let hash = run(&context);
++    let hash = run(&context)?;
+     Ok(hash)
+ }
+ 
+@@ -220,12 +220,12 @@ pub fn verify_raw(pwd: &[u8], salt: &[u8], hash: &[u8], config: &Config) -> Resu
+         ..config.clone()
+     };
+     let context = Context::new(config, pwd, salt)?;
+-    let calculated_hash = run(&context);
++    let calculated_hash = run(&context)?;
+     Ok(constant_time_eq(hash, &calculated_hash))
+ }
+ 
+-fn run(context: &Context) -> Vec<u8> {
+-    let mut memory = Memory::new(context.config.lanes, context.lane_length);
++fn run(context: &Context) -> Result<Vec<u8>> {
++    let mut memory = Memory::new(context.config.lanes, context.lane_length)?;
+     core::initialize(context, &mut memory);
+     // SAFETY: `memory` is constructed from `context`.
+     unsafe { core::fill_memory_blocks(context, &mut memory) };
+--- a/src/core.rs
++++ b/src/core.rs
+@@ -11,7 +11,9 @@
+ use crate::block::Block;
+ use crate::common;
+ use crate::context::Context;
++use crate::error::Error;
+ use crate::memory::{Memory, UnsafeBlocks};
++use crate::result::Result;
+ use crate::variant::Variant;
+ use crate::version::Version;
+ use blake2b_simd::Params;
+@@ -48,16 +50,20 @@ pub unsafe fn fill_memory_blocks(context: &Context, memory: &mut Memory) {
+ }
+ 
+ /// Calculates the final hash and returns it.
+-pub fn finalize(context: &Context, memory: &Memory) -> Vec<u8> {
++pub fn finalize(context: &Context, memory: &Memory) -> Result<Vec<u8>> {
+     let mut blockhash = memory[context.lane_length - 1].clone();
+     for l in 1..context.config.lanes {
+         let last_block_in_lane = l * context.lane_length + (context.lane_length - 1);
+         blockhash ^= &memory[last_block_in_lane];
+     }
+ 
+-    let mut hash = vec![0u8; context.config.hash_length as usize];
++    let hash_length = context.config.hash_length as usize;
++    let mut hash = Vec::new();
++    hash.try_reserve_exact(hash_length)
++        .map_err(|_| Error::MemoryAllocationFailed)?;
++    hash.resize(hash_length, 0u8);
+     hprime(hash.as_mut_slice(), blockhash.as_u8());
+-    hash
++    Ok(hash)
+ }
+ 
+ fn blake2b(out: &mut [u8], input: &[&[u8]]) {
+--- a/src/error.rs
++++ b/src/error.rs
+@@ -58,6 +58,9 @@ pub enum Error {
+     /// The memory cost is too large (maximum 2GiB on 32-bit or 4TiB on 64-bit).
+     MemoryTooMuch,
+ 
++    /// The memory matrix or the output could not be allocated.
++    MemoryAllocationFailed,
++
+     /// The number of lanes (parallelism) is too small (minimum is 1).
+     LanesTooFew,
+ 
+@@ -91,6 +94,7 @@ impl Error {
+             Error::TimeTooLarge => "Time cost is too large",
+             Error::MemoryTooLittle => "Memory cost is too small",
+             Error::MemoryTooMuch => "Memory cost is too large",
++            Error::MemoryAllocationFailed => "Memory allocation failed",
+             Error::LanesTooFew => "Too few lanes",
+             Error::LanesTooMany => "Too many lanes",
+             Error::IncorrectType => "There is no such type of Argon2",
+--- a/src/memory.rs
++++ b/src/memory.rs
+@@ -9,6 +9,8 @@
+ #![warn(unsafe_op_in_unsafe_fn)]
+ 
+ use crate::block::Block;
++use crate::error::Error;
++use crate::result::Result;
+ use std::fmt;
+ use std::fmt::Debug;
+ use std::marker::PhantomData;
+@@ -29,12 +31,20 @@ pub struct Memory {
+ 
+ impl Memory {
+     /// Creates a new memory matrix.
+-    pub fn new(lanes: u32, lane_length: u32) -> Memory {
++    ///
++    /// Returns `Error::MemoryAllocationFailed` when the block matrix cannot be
++    /// allocated, instead of aborting the process.
++    pub fn new(lanes: u32, lane_length: u32) -> Result<Memory> {
+         let rows = lanes as usize;
+         let cols = lane_length as usize;
+         let total = rows * cols;
+-        let blocks = vec![Block::zero(); total].into_boxed_slice();
+-        Memory { rows, cols, blocks }
++        let mut blocks = Vec::new();
++        blocks
++            .try_reserve_exact(total)
++            .map_err(|_| Error::MemoryAllocationFailed)?;
++        blocks.resize_with(total, Block::zero);
++        let blocks = blocks.into_boxed_slice();
++        Ok(Memory { rows, cols, blocks })
+     }
+ 
+     /// Returns a pointer to the flat array of blocks useful for parallel disjoint access.
+@@ -158,7 +168,7 @@ mod tests {
+     fn new_returns_correct_instance() {
+         let lanes = 4;
+         let lane_length = 128;
+-        let memory = Memory::new(lanes, lane_length);
++        let memory = Memory::new(lanes, lane_length).unwrap();
+         assert_eq!(memory.rows, lanes as usize);
+         assert_eq!(memory.cols, lane_length as usize);
+         assert_eq!(memory.blocks.len(), 512);

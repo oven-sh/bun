@@ -19,47 +19,46 @@ enum class AArch64CPUFeature : uint8_t {
 
 #if CPU(X86_64)
 
-#if OS(WINDOWS)
-
-#include <windows.h>
-
-#endif
+#include <cpuid.h>
 
 static uint8_t x86_cpu_features()
 {
     uint8_t features = 0;
 
-#if OS(WINDOWS)
-    if (IsProcessorFeaturePresent(PF_SSE4_2_INSTRUCTIONS_AVAILABLE))
+    // Not __builtin_cpu_supports (a constructor before main), not IsProcessorFeaturePresent (false on Windows Server 2019).
+    unsigned eax = 0, ebx = 0, ecx = 0, edx = 0;
+    if (!__get_cpuid(1, &eax, &ebx, &ecx, &edx))
+        return features;
+
+    if (ecx & bit_SSE4_2)
         features |= 1 << static_cast<uint8_t>(X86CPUFeature::sse42);
-
-    if (IsProcessorFeaturePresent(PF_AVX_INSTRUCTIONS_AVAILABLE))
-        features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx);
-
-    if (IsProcessorFeaturePresent(PF_AVX2_INSTRUCTIONS_AVAILABLE))
-        features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx2);
-
-    if (IsProcessorFeaturePresent(PF_AVX512F_INSTRUCTIONS_AVAILABLE))
-        features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx512);
-
-#else
-
-#if __has_builtin(__builtin_cpu_supports)
-    __builtin_cpu_init();
-
-    if (__builtin_cpu_supports("sse4.2"))
-        features |= 1 << static_cast<uint8_t>(X86CPUFeature::sse42);
-    if (__builtin_cpu_supports("popcnt"))
+    if (ecx & bit_POPCNT)
         features |= 1 << static_cast<uint8_t>(X86CPUFeature::popcnt);
-    if (__builtin_cpu_supports("avx"))
-        features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx);
-    if (__builtin_cpu_supports("avx2"))
-        features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx2);
-    if (__builtin_cpu_supports("avx512f"))
-        features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx512);
-#endif
 
+    // AVX needs the OS to save the YMM state (XCR0 bits 1 and 2), AVX-512 the ZMM state too (bits 5 to 7).
+    uint64_t xcr0 = 0;
+    if ((ecx & bit_OSXSAVE) && (ecx & bit_AVX)) {
+        unsigned lo = 0, hi = 0;
+        __asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
+        xcr0 = (static_cast<uint64_t>(hi) << 32) | lo;
+    }
+    const bool avxState = (xcr0 & 0x6) == 0x6;
+#if OS(DARWIN)
+    // Darwin turns on the ZMM state at a process's first AVX-512 instruction, so XCR0 does not show it yet.
+    const bool avx512State = avxState;
+#else
+    const bool avx512State = avxState && (xcr0 & 0xe0) == 0xe0;
 #endif
+    if (avxState) {
+        features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx);
+        unsigned eax7 = 0, ebx7 = 0, ecx7 = 0, edx7 = 0;
+        if (__get_cpuid_count(7, 0, &eax7, &ebx7, &ecx7, &edx7)) {
+            if (ebx7 & bit_AVX2)
+                features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx2);
+            if ((ebx7 & bit_AVX512F) && avx512State)
+                features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx512);
+        }
+    }
 
     return features;
 }

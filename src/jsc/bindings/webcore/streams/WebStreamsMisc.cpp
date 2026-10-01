@@ -19,7 +19,6 @@
 #include <JavaScriptCore/JSGenericTypedArrayViewInlines.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSTypedArrays.h>
-#include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/TypedArrayType.h>
 #include <cmath>
 
@@ -96,10 +95,16 @@ static size_t incompleteTrailingUTF8(std::span<const uint8_t> data)
 
 JSC::JSString* streamingUTF8Decode(JSGlobalObject* globalObject, std::span<const uint8_t> chunk, StreamingUTF8DecodeState& state, bool flush)
 {
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     WTF::Vector<uint8_t> joinedStorage;
     std::span<const uint8_t> joined = chunk;
     if (unsigned pendingLen = state.pendingLen()) {
-        joinedStorage.reserveInitialCapacity(pendingLen + chunk.size());
+        // Script picks the chunk length, and reserveInitialCapacity CRASH()es past INT32_MAX bytes.
+        if (!joinedStorage.tryReserveInitialCapacity(pendingLen + chunk.size())) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return nullptr;
+        }
         joinedStorage.append(std::span<const uint8_t> { state.pending, pendingLen });
         joinedStorage.append(chunk);
         joined = joinedStorage.span();
@@ -126,8 +131,6 @@ JSC::JSString* streamingUTF8Decode(JSGlobalObject* globalObject, std::span<const
     if (toDecode.empty())
         return nullptr;
 
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     if (exceedsStringLimit(toDecode.size())) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return nullptr;
@@ -396,25 +399,35 @@ JSValue invokeOptionalMethod(JSGlobalObject* globalObject, JSObject* object, con
     RELEASE_AND_RETURN(scope, JSC::call(globalObject, method, object, args, "method is not a function"_s));
 }
 
-bool errorCodeIs(JSGlobalObject* globalObject, JSValue error, ASCIILiteral code)
+JSPromise* invokeCallbackReturningPromise(JSGlobalObject* globalObject, JSObject* callback, JSValue thisValue, const MarkedArgumentBuffer& args)
 {
-    auto& vm = getVM(globalObject);
-    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    if (!error || !error.isObject())
-        return false;
-    JSValue codeValue = asObject(error)->getIfPropertyExists(globalObject, WebCore::builtinNames(vm).codePublicName());
-    if (catchScope.exception()) [[unlikely]] {
-        catchScope.clearExceptionExceptTermination();
-        return false;
-    }
-    if (!codeValue || !codeValue.isString())
-        return false;
-    String codeString = asString(codeValue)->value(globalObject);
-    if (catchScope.exception()) [[unlikely]] {
-        catchScope.clearExceptionExceptTermination();
-        return false;
-    }
-    return codeString == StringView(code);
+    return promiseFromSteps(globalObject, [&] -> JSPromise* {
+        auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+        auto callData = JSC::getCallData(callback);
+        ASSERT(callData.type != JSC::CallData::Type::None);
+        JSValue result = JSC::call(globalObject, callback, callData, thisValue, args);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
+    });
+}
+
+JSPromise* invokeCallbackReturningPromiseFast(JSGlobalObject* globalObject, JSObject* callback, JSValue thisValue, const MarkedArgumentBuffer& args)
+{
+    return promiseFromSteps(globalObject, [&] -> JSPromise* {
+        auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+        auto callData = JSC::getCallData(callback);
+        ASSERT(callData.type != JSC::CallData::Type::None);
+        JSValue result = JSC::call(globalObject, callback, callData, thisValue, args);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (!result.isObject()) [[likely]]
+            return nullptr;
+        // A vanilla JSPromise with an unpatched .then needs no wrapper: callers use
+        // performPromiseThenWithContext (internal reactions), so skipping promiseResolvedWith's
+        // thenable adoption is unobservable. Subclasses / patched .then fall through.
+        if (auto* resultPromise = dynamicDowncast<JSC::JSPromise>(result); resultPromise && resultPromise->isThenFastAndNonObservable())
+            return resultPromise;
+        RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
+    });
 }
 
 // Shared [bound-convention] wrapper: target(contextCell, ...callArgs).
@@ -558,18 +571,6 @@ JSPromise* webStreamClosedPromise(JSGlobalObject* globalObject, JSWritableStream
     }
     stream->m_closedPromise.set(vm, stream, promise);
     return promise;
-}
-
-// The ONE sanctioned completion-record catch: the spec's "interpreting X as a completion
-// record" sites only. Empty return = a VM termination the caller must propagate.
-JSValue takeAbruptCompletion(JSGlobalObject*, TopExceptionScope& catchScope)
-{
-    const JSC::Exception* exception = catchScope.exception();
-    ASSERT(exception);
-    JSValue thrown = exception->value();
-    if (!catchScope.clearExceptionExceptTermination()) [[unlikely]]
-        return {};
-    return thrown;
 }
 
 } // namespace WebStreams

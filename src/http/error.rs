@@ -63,6 +63,8 @@ pub enum Error {
     UnsupportedTransferEncoding,
     #[error("RequestBodyNotReusable")]
     RequestBodyNotReusable,
+    #[error("RequestBodyLengthMismatch")]
+    RequestBodyLengthMismatch,
     #[error("UnsupportedRedirectProtocol")]
     UnsupportedRedirectProtocol,
     #[error("RedirectURLTooLong")]
@@ -97,6 +99,10 @@ pub enum Error {
     InvalidCRL,
     #[error("UnsupportedProxyProtocol")]
     UnsupportedProxyProtocol,
+    #[error("ProxyConnectFailed")]
+    ProxyConnectFailed,
+    #[error("TLSHandshakeFailed")]
+    TLSHandshakeFailed,
     #[error(transparent)]
     Cert(#[from] CertError),
     #[error(transparent)]
@@ -240,8 +246,6 @@ pub enum CertError {
     SUITE_B_LOS_NOT_ALLOWED,
     #[error("SUITE_B_CANNOT_SIGN_P_384_WITH_P_256")]
     SUITE_B_CANNOT_SIGN_P_384_WITH_P_256,
-    #[error("HOSTNAME_MISMATCH")]
-    HOSTNAME_MISMATCH,
     #[error("EMAIL_MISMATCH")]
     EMAIL_MISMATCH,
     #[error("IP_ADDRESS_MISMATCH")]
@@ -291,6 +295,7 @@ impl Error {
             Self::InvalidContentLength => "InvalidContentLength",
             Self::UnsupportedTransferEncoding => "UnsupportedTransferEncoding",
             Self::RequestBodyNotReusable => "RequestBodyNotReusable",
+            Self::RequestBodyLengthMismatch => "RequestBodyLengthMismatch",
             Self::UnsupportedRedirectProtocol => "UnsupportedRedirectProtocol",
             Self::RedirectURLTooLong => "RedirectURLTooLong",
             Self::RedirectURLInvalid => "RedirectURLInvalid",
@@ -308,6 +313,8 @@ impl Error {
             Self::FailedToOpenSocket => "FailedToOpenSocket",
             Self::InvalidCRL => "InvalidCRL",
             Self::UnsupportedProxyProtocol => "UnsupportedProxyProtocol",
+            Self::ProxyConnectFailed => "ProxyConnectFailed",
+            Self::TLSHandshakeFailed => "TLSHandshakeFailed",
             Self::Cert(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
             Self::Hpack(e) => <&'static str>::from(e),

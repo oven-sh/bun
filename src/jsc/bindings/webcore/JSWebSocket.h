@@ -30,7 +30,6 @@ namespace WebCore {
 class JSWebSocket : public JSEventTarget {
 public:
     using Base = JSEventTarget;
-    using DOMWrapped = WebSocket;
     static JSWebSocket* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<WebSocket>&& impl)
     {
         JSWebSocket* ptr = new (NotNull, JSC::allocateCell<JSWebSocket>(globalObject->vm())) JSWebSocket(structure, *globalObject, WTF::move(impl));
@@ -46,7 +45,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
     }
 
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
@@ -80,11 +79,6 @@ inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, WebSocket*)
 {
     static NeverDestroyed<JSWebSocketOwner> owner;
     return &owner.get();
-}
-
-inline void* wrapperKey(WebSocket* wrappableObject)
-{
-    return wrappableObject;
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, WebSocket&);

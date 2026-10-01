@@ -54,6 +54,73 @@ describe("bundler", async () => {
         },
         run: { stdout: '{"hello":"world"}' },
       });
+      // The Temporal reference is a real unbound symbol: a user binding named
+      // Temporal in the same bundle gets renamed instead of capturing the
+      // `Temporal.*.from` calls the TOML module compiles to.
+      itBundled("bun/loader-toml-datetime-shadowed-temporal-global", {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+        import cfg from './config.toml';
+        var Temporal = "shadowed";
+        console.write(Temporal + " " + cfg.ld.toString());
+      `,
+          "/config.toml": `ld = 1979-05-27`,
+        },
+        run: { stdout: "shadowed 1979-05-27" },
+      });
+      // The realistic collision: another module in the chunk imports a
+      // Temporal polyfill binding. The import gets renamed and the TOML
+      // module's calls still resolve to the native global.
+      itBundled("bun/loader-toml-datetime-imported-temporal-binding", {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+        import { Temporal } from './polyfill.js';
+        import cfg from './config.toml';
+        console.write(Temporal.tag + " " + (cfg.ld instanceof globalThis.Temporal.PlainDate) + " " + cfg.ld.toString());
+      `,
+          "/polyfill.js": `export const Temporal = { tag: "polyfill" };`,
+          "/config.toml": `ld = 1979-05-27`,
+        },
+        run: { stdout: "polyfill true 1979-05-27" },
+      });
+      itBundled("bun/loader-toml-datetime-no-bundle", {
+        target,
+        bundling: false,
+        entryPoints: ["/config.toml"],
+        files: {
+          "/config.toml": `d = 1979-05-27\n[t]\nat = 1979-05-27T00:32:00-07:00`,
+        },
+        run: true,
+        onAfterBundle(api) {
+          const code = api.readFile("/out.js");
+          expect(code).toContain('Temporal.PlainDate.from("1979-05-27")');
+          expect(code).toContain('Temporal.Instant.from("1979-05-27T00:32:00-07:00")');
+        },
+      });
+      // TOML date/time values bundle as Temporal construction calls; the
+      // bundled module yields the same values Bun.TOML.parse returns.
+      itBundled("bun/loader-toml-datetime", {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+        import cfg, { lt } from './config.toml';
+        console.write(JSON.stringify([
+          cfg.odt instanceof Temporal.Instant, cfg.odt.toString(),
+          cfg.ldt instanceof Temporal.PlainDateTime, cfg.ldt.toString(),
+          cfg.ld instanceof Temporal.PlainDate, cfg.ld.toString(),
+          lt instanceof Temporal.PlainTime, lt.toString(),
+          cfg.tbl.arr[0].toString(),
+        ]));
+      `,
+          "/config.toml": `odt = 1979-05-27T00:32:00-07:00\nldt = 1979-05-27 07:32\nld = 1979-05-27\nlt = 07:32:00.500\n[tbl]\narr = [ 07:32:00 ]`,
+        },
+        run: {
+          stdout:
+            '[true,"1979-05-27T07:32:00Z",true,"1979-05-27T07:32:00",true,"1979-05-27",true,"07:32:00.5","07:32:00"]',
+        },
+      });
       itBundled("bun/loader-text-file", {
         target,
         files: {
@@ -78,7 +145,7 @@ describe("bundler", async () => {
         },
         run: {
           stdout:
-            '[{"hello":{"@to":"world","b":"there","#text":"hi"}},{"greeting":{"@__proto__":"1","to":["world","you"]}},{"@__proto__":"1","to":["world","you"]}]',
+            '[{"hello":{"@to":"world","#text":"hi ","b":"there"}},{"greeting":{"@__proto__":"1","to":["world","you"]}},{"@__proto__":"1","to":["world","you"]}]',
         },
       });
     });
@@ -340,9 +407,12 @@ describe("bundler", async () => {
     },
   });
 
-  const moon = await Bun.file(
-    fileURLToPath(import.meta.resolve("../js/bun/util/text-loader-fixture-text-file.backslashes.txt")),
-  ).text();
+  // (a Windows checkout may have given the fixture CRLF line endings; the harness compares LF-normalized output)
+  const moon = (
+    await Bun.file(
+      fileURLToPath(import.meta.resolve("../js/bun/util/text-loader-fixture-text-file.backslashes.txt")),
+    ).text()
+  ).replaceAll("\r\n", "\n");
 
   // https://github.com/oven-sh/bun/issues/3449
   itBundled("bun/loader-text-file-#3449", {
@@ -420,6 +490,26 @@ describe("bundler", async () => {
       },
     });
   }
+
+  // `import addon from "./addon.node"` prints as `__require("./addon-[hash].node")`
+  // in ESM output, so the chunk has to define the runtime helper.
+  itBundled("bun/loader-napi-esm-runtime-require", {
+    target: "bun",
+    format: "esm",
+    outdir: "/out",
+    files: {
+      "/entry.ts": /* js */ `
+        import addon from "./addon.node";
+        export default addon;
+      `,
+      "/addon.node": "not a real addon",
+    },
+    onAfterBundle(api) {
+      const js = api.readFile("/out/entry.js");
+      expect(js).toContain("var __require = import.meta.require;");
+      expect(js).toMatch(/__require\("\.\/addon-[a-z0-9]+\.node"\)/);
+    },
+  });
 
   describe("handles empty files", () => {
     for (const target of ["bun", "node", "browser"] as const) {

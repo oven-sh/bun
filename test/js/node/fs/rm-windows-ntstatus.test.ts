@@ -20,31 +20,31 @@ import path from "node:path";
 test.skipIf(!isWindows)("translateNtStatusToE maps delete-related NTSTATUS codes to errno", () => {
   // Existing explicit mappings must keep working.
   expect(translateNtStatusToE(0x00000000)).toBe("SUCCESS"); // STATUS_SUCCESS
-  expect(translateNtStatusToE(0xc0000022)).toBe("PERM"); // STATUS_ACCESS_DENIED
-  expect(translateNtStatusToE(0xc00000ba)).toBe("ISDIR"); // STATUS_FILE_IS_A_DIRECTORY
-  expect(translateNtStatusToE(0xc0000034)).toBe("NOENT"); // STATUS_OBJECT_NAME_NOT_FOUND
-  expect(translateNtStatusToE(0xc0000101)).toBe("NOTEMPTY"); // STATUS_DIRECTORY_NOT_EMPTY
-  expect(translateNtStatusToE(0xc0000056)).toBe("BUSY"); // STATUS_DELETE_PENDING
-  expect(translateNtStatusToE(0xc0000043)).toBe("BUSY"); // STATUS_SHARING_VIOLATION
+  expect(translateNtStatusToE(0xc0000022)).toBe("EPERM"); // STATUS_ACCESS_DENIED
+  expect(translateNtStatusToE(0xc00000ba)).toBe("EISDIR"); // STATUS_FILE_IS_A_DIRECTORY
+  expect(translateNtStatusToE(0xc0000034)).toBe("ENOENT"); // STATUS_OBJECT_NAME_NOT_FOUND
+  expect(translateNtStatusToE(0xc0000101)).toBe("ENOTEMPTY"); // STATUS_DIRECTORY_NOT_EMPTY
+  expect(translateNtStatusToE(0xc0000056)).toBe("EBUSY"); // STATUS_DELETE_PENDING
+  expect(translateNtStatusToE(0xc0000043)).toBe("EBUSY"); // STATUS_SHARING_VIOLATION
 
   // STATUS_CANNOT_DELETE: FILE_ATTRIBUTE_READONLY on a filesystem that rejected
   // FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE (e.g. FAT32), or a memory-mapped
   // section exists. libuv maps the equivalent Win32 error (ERROR_ACCESS_DENIED)
   // to EPERM, so fs.rm should surface EPERM, not EFAULT.
-  expect(translateNtStatusToE(0xc0000121)).toBe("PERM");
+  expect(translateNtStatusToE(0xc0000121)).toBe("EPERM");
 
   // Status codes not in the explicit table: fall through RtlNtStatusToDosError
   // to the libuv Win32->errno table. None of these should be UNKNOWN.
   // STATUS_DISK_FULL -> ERROR_DISK_FULL -> ENOSPC
-  expect(translateNtStatusToE(0xc000007f)).toBe("NOSPC");
+  expect(translateNtStatusToE(0xc000007f)).toBe("ENOSPC");
   // STATUS_NO_SUCH_FILE -> ERROR_FILE_NOT_FOUND -> ENOENT
-  expect(translateNtStatusToE(0xc000000f)).toBe("NOENT");
+  expect(translateNtStatusToE(0xc000000f)).toBe("ENOENT");
   // STATUS_TOO_MANY_OPENED_FILES -> ERROR_TOO_MANY_OPEN_FILES -> EMFILE
-  expect(translateNtStatusToE(0xc000011f)).toBe("MFILE");
+  expect(translateNtStatusToE(0xc000011f)).toBe("EMFILE");
   // STATUS_NOT_SUPPORTED -> ERROR_NOT_SUPPORTED -> ENOTSUP
-  expect(translateNtStatusToE(0xc00000bb)).toBe("NOTSUP");
+  expect(translateNtStatusToE(0xc00000bb)).toBe("ENOTSUP");
   // STATUS_MEDIA_WRITE_PROTECTED -> ERROR_WRITE_PROTECT -> EROFS
-  expect(translateNtStatusToE(0xc00000a2)).toBe("ROFS");
+  expect(translateNtStatusToE(0xc00000a2)).toBe("EROFS");
 
   // RtlNtStatusToDosError collapses STATUS_NOT_IMPLEMENTED,
   // STATUS_INVALID_DEVICE_REQUEST and STATUS_ILLEGAL_FUNCTION to
@@ -53,14 +53,14 @@ test.skipIf(!isWindows)("translateNtStatusToE maps delete-related NTSTATUS codes
   // driver did not implement the request, not that the target is a
   // directory; mapping to ISDIR would livelock recursive fs.rm by flipping
   // treat_as_dir. They must surface as NOTSUP.
-  expect(translateNtStatusToE(0xc0000002)).toBe("NOTSUP"); // STATUS_NOT_IMPLEMENTED
-  expect(translateNtStatusToE(0xc0000010)).toBe("NOTSUP"); // STATUS_INVALID_DEVICE_REQUEST
-  expect(translateNtStatusToE(0xc00000af)).toBe("NOTSUP"); // STATUS_ILLEGAL_FUNCTION
+  expect(translateNtStatusToE(0xc0000002)).toBe("ENOTSUP"); // STATUS_NOT_IMPLEMENTED
+  expect(translateNtStatusToE(0xc0000010)).toBe("ENOTSUP"); // STATUS_INVALID_DEVICE_REQUEST
+  expect(translateNtStatusToE(0xc00000af)).toBe("ENOTSUP"); // STATUS_ILLEGAL_FUNCTION
 
   // A status that RtlNtStatusToDosError does not recognise maps to
-  // ERROR_MR_MID_NOT_FOUND, which has no errno, so we still get UNKNOWN
-  // (not a panic).
-  expect(translateNtStatusToE(0xcfffffff)).toBe("UNKNOWN");
+  // ERROR_MR_MID_NOT_FOUND, which has no errno, so we still get E::UNKNOWN
+  // (not a panic). It prints with SystemErrno's spelling, like every variant.
+  expect(translateNtStatusToE(0xcfffffff)).toBe("EUNKNOWN");
 });
 
 test.skipIf(isWindows)("translateNtStatusToE is a no-op off Windows", () => {

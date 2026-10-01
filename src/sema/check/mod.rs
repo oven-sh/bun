@@ -664,6 +664,21 @@ impl<'p> Checker<'p> {
                     self.hir(file)[node].pos
                 );
             }
+            for query in &self.stack {
+                let at = match *query {
+                    Query::Expr(file, e) | Query::Call(file, e) => {
+                        Some((file, self.hir(file)[e].pos))
+                    }
+                    Query::LiteralProp(file, p) => {
+                        let value = self.hir(file)[p].value;
+                        value.is_some().then(|| (file, self.hir(file)[value].pos))
+                    }
+                    _ => None,
+                };
+                if let Some((file, pos)) = at {
+                    eprintln!("  {query:?} {}:{pos}", self.files().module(file).path);
+                }
+            }
             panic!(
                 "out of time: {:?}\n{}",
                 &self.stack,

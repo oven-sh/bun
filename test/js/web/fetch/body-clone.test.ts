@@ -982,7 +982,7 @@ describe("new Request() throws when the input Request's body is disturbed or loc
     expect(await promise).toBe("TypeError: Body is disturbed or locked");
   });
 
-  test("server.fetch(usedRequest) throws instead of sending an empty body", async () => {
+  test("server.fetch(usedRequest) rejects instead of sending an empty body", async () => {
     await using server = Bun.serve({
       port: 0,
       async fetch(req) {
@@ -991,7 +991,16 @@ describe("new Request() throws when the input Request's body is disturbed or loc
     });
     const used = new Request(server.url, { method: "POST", body: "once" });
     await used.text();
-    expectUnusable(() => server.fetch(used) as unknown as Request);
+    // Every bad argument to server.fetch() rejects the returned promise.
+    const promise = server.fetch(used);
+    expect(promise).toBeInstanceOf(Promise);
+    const error = await promise.then(
+      () => null,
+      e => e,
+    );
+    expect(error).toBeInstanceOf(TypeError);
+    expect(error.message).toBe("Body is disturbed or locked");
+    expect(error.code).toBe("ERR_BODY_ALREADY_USED");
 
     const unread = new Request(server.url, { method: "POST", body: "twice" });
     expect(await (await server.fetch(unread)).text()).toBe('"twice"');

@@ -1,0 +1,57 @@
+# dir /tmp/pbb1b/base-tree HEAD  dirty: []
+== base dev
+size_of  P<'static, true, false>                      3888
+size_of  P<'static, false, false>                     3888
+size_of  P<'static, true, true>                       3888
+size_of  P<'static, false, true>                      3888
+align_of P<'static, true, false>                      8
+size_of  Lexer<'static>                               336
+size_of  LexerSnapshot<'static>                       240
+size_of  bun_ast::Msg                                 152
+size_of  bun_ast::Expr                                16
+size_of  bun_ast::Stmt                                16
+size_of  bun_ast::Binding                             16
+size_of  E::Arrow                                     32
+size_of  G::Decl                                      32
+size_of  G::Arg                                       88
+size_of  G::Fn                                        88
+size_of  G::Property                                  112
+size_of  G::Class                                     88
+size_of  G::FnBody                                    16
+size_of  E::Function                                  88
+size_of  bun_ast::ts::Metadata                        24
+size_of  bun_ast::Metadata                            8
+size_of  bun_ast::Data                                120
+size_of  bun_ast::Log                                 72
+size_of  bun_ast::Symbol                              48
+size_of  StartsForParseOnly                           168
+size_of  Option<Box<StartsForParseOnly>>              8
+size_of  ParserOptions<'static>                       392
+== base release
+size_of  P<'static, true, false>                      3808
+size_of  P<'static, false, false>                     3808
+size_of  P<'static, true, true>                       3808
+size_of  P<'static, false, true>                      3808
+align_of P<'static, true, false>                      8
+size_of  Lexer<'static>                               336
+size_of  LexerSnapshot<'static>                       240
+size_of  bun_ast::Msg                                 152
+size_of  bun_ast::Expr                                16
+size_of  bun_ast::Stmt                                16
+size_of  bun_ast::Binding                             16
+size_of  E::Arrow                                     32
+size_of  G::Decl                                      32
+size_of  G::Arg                                       88
+size_of  G::Fn                                        88
+size_of  G::Property                                  112
+size_of  G::Class                                     88
+size_of  G::FnBody                                    16
+size_of  E::Function                                  88
+size_of  bun_ast::ts::Metadata                        24
+size_of  bun_ast::Metadata                            8
+size_of  bun_ast::Data                                120
+size_of  bun_ast::Log                                 72
+size_of  bun_ast::Symbol                              48
+size_of  StartsForParseOnly                           168
+size_of  Option<Box<StartsForParseOnly>>              8
+size_of  ParserOptions<'static>                       384

@@ -313,6 +313,8 @@ class Driver {
 	enter(node, role, kind, flags) {
 		const a = this.a;
 		a.currentNode = node;
+		// constructor-super reads whether the node of a segment event is the update of a `for`.
+		if (role && role.r === "ForUpdate") node.isForUpdate = true;
 		if (a.codePath) a.preprocess(role);
 		a.processCodePathToEnter(kind, node, flags && flags.pdValue);
 		this.probe("enter", node, kind);

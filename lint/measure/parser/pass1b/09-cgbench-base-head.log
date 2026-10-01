@@ -1,0 +1,23 @@
+# dir /workspace/wt/parser HEAD be1ebe5295 dirty: []
+cgbench base rc=0 87s
+cgbench head rc=0 104s
+bun-types: program  Ir 494,830,961 -> 529,085,681 (+34,254,720)  Bc 94,907,118 -> 100,399,504 (+5,492,386)  Bi 5,506,201 -> 5,227,239 (-278,962)
+bun-types: matched /bun_js_parser|bun_ast/ 223 symbols  Ir 331,266,670 -> 364,867,300 (+33,600,630)  Bc 46,594,583 -> 52,011,503 (+5,416,920)  Bi 4,923,603 -> 4,643,723 (-279,880)
+typescript-lib: program  Ir 1,649,245,906 -> 1,811,727,142 (+162,481,236)  Bc 330,701,877 -> 356,671,211 (+25,969,334)  Bi 16,604,913 -> 16,214,082 (-390,831)
+typescript-lib: matched /bun_js_parser|bun_ast/ 357 symbols  Ir 1,145,299,777 -> 1,307,722,420 (+162,422,643)  Bc 167,000,043 -> 192,994,103 (+25,994,060)  Bi 15,652,825 -> 15,264,243 (-388,582)
+src-js: program  Ir 7,488,497,353 -> 7,511,994,344 (+23,496,991)  Bc 1,120,533,278 -> 1,125,256,623 (+4,723,345)  Bi 73,793,010 -> 73,720,793 (-72,217)
+src-js: matched /bun_js_parser|bun_ast/ 396 symbols  Ir 5,065,668,337 -> 5,084,147,027 (+18,478,690)  Bc 565,356,671 -> 569,333,111 (+3,976,440)  Bi 57,402,482 -> 57,317,882 (-84,600)
+tsx: program  Ir 2,094,513,776 -> 2,145,056,550 (+50,542,774)  Bc 333,948,498 -> 342,991,430 (+9,042,932)  Bi 19,577,883 -> 19,089,284 (-488,599)
+tsx: matched /bun_js_parser|bun_ast/ 330 symbols  Ir 1,366,367,615 -> 1,411,703,605 (+45,335,990)  Bc 156,419,646 -> 164,667,646 (+8,248,000)  Bi 15,337,062 -> 14,837,062 (-500,000)
+js-control: program  Ir 5,117,879,038 -> 5,113,741,607 (-4,137,431)  Bc 706,344,757 -> 706,283,862 (-60,895)  Bi 53,858,942 -> 53,859,764 (+822)
+js-control: matched /bun_js_parser|bun_ast/ 235 symbols  Ir 3,315,551,372 -> 3,313,003,842 (-2,547,530)  Bc 343,415,262 -> 343,578,782 (+163,520)  Bi 42,778,342 -> 42,778,342 (+0)
+base bun-types {"events": ["Ir", "Bc", "Bcm", "Bi", "Bim"], "total": {"Ir": 494830961, "Bc": 94907118, "Bi": 5506201}, "match": "bun_js_parser", "matched_symbols": 122, "matched": {"Ir": 314408729, "Bc": 44553098, "Bi": 4499191}}
+base typescript-lib {"events": ["Ir", "Bc", "Bcm", "Bi", "Bim"], "total": {"Ir": 1649245906, "Bc": 330701877, "Bi": 16604913}, "match": "bun_js_parser", "matched_symbols": 209, "matched": {"Ir": 1107093907, "Bc": 160906955, "Bi": 14325784}}
+base src-js {"events": ["Ir", "Bc", "Bcm", "Bi", "Bim"], "total": {"Ir": 7488497353, "Bc": 1120533278, "Bi": 73793010}, "match": "bun_js_parser", "matched_symbols": 246, "matched": {"Ir": 4441234076, "Bc": 512392086, "Bi": 47404830}}
+base tsx {"events": ["Ir", "Bc", "Bcm", "Bi", "Bim"], "total": {"Ir": 2094513776, "Bc": 333948498, "Bi": 19577883}, "match": "bun_js_parser", "matched_symbols": 203, "matched": {"Ir": 1177413167, "Bc": 137557479, "Bi": 12922990}}
+base js-control {"events": ["Ir", "Bc", "Bcm", "Bi", "Bim"], "total": {"Ir": 5117879038, "Bc": 706344757, "Bi": 53858942}, "match": "bun_js_parser", "matched_symbols": 162, "matched": {"Ir": 2904091413, "Bc": 312264098, "Bi": 35874170}}
+head bun-types {"events": ["Ir", "Bc", "Bcm", "Bi", "Bim"], "total": {"Ir": 529085681, "Bc": 100399504, "Bi": 5227239}, "match": "bun_js_parser", "matched_symbols": 147, "matched": {"Ir": 347721739, "Bc": 49935878, "Bi": 4213711}}
+head typescript-lib {"events": ["Ir", "Bc", "Bcm", "Bi", "Bim"], "total": {"Ir": 1811727142, "Bc": 356671211, "Bi": 16214082}, "match": "bun_js_parser", "matched_symbols": 117, "matched": {"Ir": 1268655359, "Bc": 186797938, "Bi": 13927111}}
+head src-js {"events": ["Ir", "Bc", "Bcm", "Bi", "Bim"], "total": {"Ir": 7511994344, "Bc": 1125256623, "Bi": 73720793}, "match": "bun_js_parser", "matched_symbols": 274, "matched": {"Ir": 4460500966, "Bc": 516436866, "Bi": 47318050}}
+head tsx {"events": ["Ir", "Bc", "Bcm", "Bi", "Bim"], "total": {"Ir": 2145056550, "Bc": 342991430, "Bi": 19089284}, "match": "bun_js_parser", "matched_symbols": 220, "matched": {"Ir": 1223895157, "Bc": 145849479, "Bi": 12414990}}
+head js-control {"events": ["Ir", "Bc", "Bcm", "Bi", "Bim"], "total": {"Ir": 5113741607, "Bc": 706283862, "Bi": 53859764}, "match": "bun_js_parser", "matched_symbols": 161, "matched": {"Ir": 2901946283, "Bc": 312467438, "Bi": 35874170}}

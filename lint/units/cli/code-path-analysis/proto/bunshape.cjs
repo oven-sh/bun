@@ -27,9 +27,13 @@ function stmtsUpTo(body) {
 			}
 		}
 		if (!skip) out.push(s);
+		else dropped.add(n);
 	}
 	return out;
 }
+
+// The statements that Bun's tree does not hold: the harness takes them out of what ESLint saw.
+const dropped = new Set();
 
 function fnBody(block) {
 	return { stmts: stmtsUpTo(block.body), src: block };
@@ -394,4 +398,4 @@ function stmt(n) {
 	}
 }
 
-module.exports = { program: ast => ({ stmts: stmtsUpTo(ast.body), src: ast }) };
+module.exports = { program: ast => ({ stmts: stmtsUpTo(ast.body), src: ast }), dropped };

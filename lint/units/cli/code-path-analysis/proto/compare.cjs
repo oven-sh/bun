@@ -19,7 +19,7 @@ const PROBE = new Set([
 	"WithStatement", "ExportNamedDeclaration", "ExportDefaultDeclaration", "ExportAllDeclaration", "SwitchCase",
 	"FunctionExpression", "ArrowFunctionExpression", "FunctionDeclaration", "CallExpression", "NewExpression", "ThisExpression",
 	"Super", "Program", "PropertyDefinition", "MethodDefinition", "StaticBlock", "YieldExpression", "AwaitExpression",
-	"EmptyStatement", "ClassExpression", "ConditionalExpression", "LogicalExpression", "AssignmentExpression", "MemberExpression",
+	"ClassExpression", "ConditionalExpression", "LogicalExpression", "AssignmentExpression", "MemberExpression",
 ]);
 const id = s => s.id + (s.reachable ? "" : "!");
 
@@ -77,12 +77,22 @@ function real(linter, source, languageOptions) {
 	return { out, ast, fatal: messages.find(m => m.fatal) };
 }
 
-// The driver on the same tree in Bun's shape.
+// The driver on the same tree in Bun's shape. ESLint runs the analysis of the whole file first and hands the events to
+// the rules afterwards (SourceCode#traverse collects steps): a rule reads the finished graph. So the steps are kept
+// here and written out when the walk has ended.
 function driven(ast, options) {
+	const steps = [];
+	const emit = (name, args) => steps.push([name, args]);
+	const probe = (when, node) => {
+		const src = node.src;
+		if (src && src.type && PROBE.has(src.type) && !node.noProbe) steps.push([when, [src]]);
+	};
+	const driver = new Driver(emit, probe, options);
+	driver.program(bunshape.program(ast));
 	const out = [];
 	const stack = [];
 	let current = null;
-	const emit = (name, [a, b, c]) => {
+	for (const [name, [a, b]] of steps) {
 		switch (name) {
 			case "onCodePathStart":
 				stack.push(current);
@@ -112,16 +122,14 @@ function driven(ast, options) {
 			case "onCodePathSegmentLoop":
 				out.push(`loop ${id(a)} ${id(b)}`);
 				break;
+			case "enter":
+			case "exit":
+				out.push(`${name} ${key(a)} [${[...current].map(id)}]`);
+				break;
 			default:
 				throw new Error(name);
 		}
-	};
-	const probe = (when, node) => {
-		const src = node.src;
-		if (src && src.type && PROBE.has(src.type) && !node.noProbe) out.push(`${when} ${key(src)} [${[...current].map(id)}]`);
-	};
-	const driver = new Driver(emit, probe, options);
-	driver.program(bunshape.program(ast));
+	}
 	return out;
 }
 
@@ -195,6 +203,11 @@ function main() {
 			failed++;
 			console.log("FAILED", file, e.stack.split("\n").slice(0, 4).join(" | "));
 			continue;
+		}
+		if (bunshape.dropped.size) {
+			const gone = new Set([...bunshape.dropped].flatMap(n => [`enter ${key(n)} `, `exit ${key(n)} `]));
+			r.out = r.out.filter(x => !(x.startsWith("e") && gone.has(x.slice(0, x.indexOf("[")))));
+			bunshape.dropped.clear();
 		}
 		paths += r.out.filter(x => x.startsWith("pathend")).length;
 		events += r.out.length;

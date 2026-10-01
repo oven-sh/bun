@@ -1,0 +1,44 @@
+RESEARCH OF D3, "rules-expressions", the pass that starts from the code: six rules on expression shape. Nothing here is in the tree.
+no-cond-assign, no-constant-binary-expression, no-constant-condition, no-dupe-else-if, no-extra-boolean-cast, no-unsafe-optional-chaining.
+This directory is shared with the other pass of the same research (oracle/cross.cjs, answers/cross-*.jsonl and probe/ are its files).
+
+The oracle is ESLint at the pin of src/lint/UPSTREAM_PORTED (/workspace/ref/eslint) and the parser of typescript-eslint
+(/workspace/ref/tseslint): sh ../tools/eslint-oracle-setup.sh restores both.
+
+oracle/extract.cjs    node extract.cjs <rule>   ESLint's own cases of the rule that run with its DEFAULT options and ESLint's parser:
+                      { base (the languageOptions of the RuleTester), valid, invalid, skipped }. -> cases/upstream-<rule>.json
+                      (../round2-oracle/proto-1b/extract.cjs is the general one; it leaves out 5 cases of no-extra-boolean-cast whose
+                      option names the default value.)
+oracle/oracle.cjs     node oracle.cjs <rule> [cases.json] [--all-recommended]   ESLint at the pin, one JSON line per case:
+                      { kind, code, type, jsx?, skip?, fatal?, reports: ["line:column-endLine:endColumn message"] }.
+oracle/ts.cjs         node ts.cjs <rule[,rule]> <cases.json | code...>   the same with @typescript-eslint/parser; a list is
+                      [{ code, ext: "ts" | "tsx" }], the format of ../round2-oracle/proto-1b/cases.
+oracle/bun-parse.cjs  node bun-parse.cjs <list> [--ts]   which cases the `bun --lint` of the build rejects, and which rules of the build report.
+oracle/probe-all.cjs  node probe-all.cjs <list>...   /tmp/rx/probe (probe/, Parser::parse_for_lint) over lists: PARSE_ERROR and UNMATCHED
+                      (a wrapper record whose operand the walk does not reach).
+oracle/proto-bunshape.cjs      PROTOTYPE. Five of the rules (all but no-dupe-else-if) the way the Rust modules are to do them: the
+                      source becomes a tree of the shape of Bun's parse pass (no ChainExpression but optional_chain, no parentheses
+                      node but wrapper records, comma binaries, patterns as literals, loc = first own token), the rules run top-down
+                      with no parent and no end of a node, a name is global when the file declares it nowhere. TypeScript cases go
+                      through typescript-estree, with the parentheses of the tree of tsc. Each list is compared with ESLint for all
+                      five rules:  node proto-bunshape.cjs [--show] <list>...
+oracle/proto-dupe-else-if.cjs  PROTOTYPE. no-dupe-else-if from the tokens between `if (` and its `)` and the kinds of the nodes alone:
+                      node proto-dupe-else-if.cjs [list...]   |   node proto-dupe-else-if.cjs --random <count> [seed]
+
+cases/upstream-<rule>.json   extract.cjs.            answers/upstream-<rule>.jsonl, .all-recommended.jsonl   oracle.cjs over them.
+cases/edge-<rule>.json       JavaScript cases written here, where Bun's tree is not ESTree (parentheses at the start of a node,
+cases/edge2-no-constant-condition.json   chains, sequences, templates, holes, spread, loops with yield, names that a file declares).
+                             answers/edge-<rule>.jsonl   oracle.cjs over them.
+cases/ts-<rule>.json         TypeScript cases: as, satisfies, !, <T> and parentheses at every place a rule looks.
+                             answers/ts-<rule>.txt   ts.cjs over them.
+
+Results (2026-10-01, be1ebe5295):
+- ESLint's own cases with the defaults (valid + invalid, without the ones that set globals): no-cond-assign 18+7,
+  no-constant-binary-expression 50+233, no-constant-condition 145+135, no-dupe-else-if 34+55, no-extra-boolean-cast 28+218
+  (and one with a TypeScript parser), no-unsafe-optional-chaining 58+64. `bun --lint` of the build and Parser::parse_for_lint
+  parse every one of them.
+- proto-bunshape.cjs: 1034 upstream cases, 1020 edge cases, 349 TypeScript cases and the 3202 cases of the eleven fixtures of
+  the tree: every answer is ESLint's except where a file declares the name in another scope (the approximation of names) and,
+  in TypeScript, `declare function`, `import type` and a name declared inside a namespace.
+- proto-dupe-else-if.cjs: 89 upstream, 113 edge and 10457 generated chains that parse (7916 with a report): every answer is ESLint's.
+- probe-all.cjs: 2403 cases, 1284 wrapper records, no UNMATCHED.

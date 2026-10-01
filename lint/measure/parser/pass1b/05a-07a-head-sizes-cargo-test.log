@@ -1,0 +1,66 @@
+# dir /workspace/wt/parser HEAD be1ebe5295 dirty: []
+### size probe head 2026-10-01T07:27:56Z
+== head dev
+size_of  P<'static, true, false>                      3888
+size_of  P<'static, false, false>                     3888
+size_of  P<'static, true, true>                       3888
+size_of  P<'static, false, true>                      3888
+align_of P<'static, true, false>                      8
+size_of  Lexer<'static>                               336
+size_of  LexerSnapshot<'static>                       240
+size_of  bun_ast::Msg                                 152
+size_of  bun_ast::Expr                                16
+size_of  bun_ast::Stmt                                16
+size_of  bun_ast::Binding                             16
+size_of  E::Arrow                                     32
+size_of  G::Decl                                      32
+size_of  G::Arg                                       80
+size_of  G::Fn                                        76
+size_of  G::Property                                  104
+size_of  G::Class                                     88
+size_of  G::FnBody                                    16
+size_of  E::Function                                  76
+size_of  bun_ast::ts::Metadata                        16
+size_of  bun_ast::Metadata                            8
+size_of  bun_ast::Data                                120
+size_of  bun_ast::Log                                 72
+size_of  bun_ast::Symbol                              48
+size_of  StartsForParseOnly                           600
+size_of  Option<Box<StartsForParseOnly>>              8
+size_of  ParserOptions<'static>                       392
+== head release
+size_of  P<'static, true, false>                      3808
+size_of  P<'static, false, false>                     3808
+size_of  P<'static, true, true>                       3808
+size_of  P<'static, false, true>                      3808
+align_of P<'static, true, false>                      8
+size_of  Lexer<'static>                               336
+size_of  LexerSnapshot<'static>                       240
+size_of  bun_ast::Msg                                 152
+size_of  bun_ast::Expr                                16
+size_of  bun_ast::Stmt                                16
+size_of  bun_ast::Binding                             16
+size_of  E::Arrow                                     32
+size_of  G::Decl                                      32
+size_of  G::Arg                                       80
+size_of  G::Fn                                        76
+size_of  G::Property                                  104
+size_of  G::Class                                     88
+size_of  G::FnBody                                    16
+size_of  E::Function                                  76
+size_of  bun_ast::ts::Metadata                        16
+size_of  bun_ast::Metadata                            8
+size_of  bun_ast::Data                                120
+size_of  bun_ast::Log                                 72
+size_of  bun_ast::Symbol                              48
+size_of  StartsForParseOnly                           600
+size_of  Option<Box<StartsForParseOnly>>              8
+size_of  ParserOptions<'static>                       384
+### cargo test 2026-10-01T07:29:32Z
+cargo test rc=0 160s
+test type_sink_tests::a_return_type_is_a_type_or_a_predicate ... ok
+test type_sink_tests::a_token_that_starts_no_type_is_an_error ... ok
+test type_sink_tests::a_type_is_the_nodes_that_tsc_builds ... ok
+
+test result: ok. 70 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.44s
+

@@ -45,7 +45,8 @@ for (const [index, file] of files) {
 fs.closeSync(out);
 `;
 
-type Record = { index: number; config: number; code?: string; errors?: string[] };
+/** One result line of a child: what `transformSync` gave for the file at `index` of the list, or for the sentinel at -1. */
+type Line = { index: number; config: number; code?: string; errors?: string[] };
 
 function lines(buffer: Buffer): Buffer[] {
   const result: Buffer[] = [];
@@ -141,7 +142,7 @@ describe.skipIf(!isDebug && !isASAN)("a lint parse, visited and printed", () => 
               else counts.equal++;
               continue;
             }
-            const [n, l]: Record[] = [JSON.parse(a.toString()), JSON.parse(b.toString())];
+            const [n, l]: Line[] = [JSON.parse(a.toString()), JSON.parse(b.toString())];
             if (n.index === -1) {
               sentinels.push({ normal: n.code ?? n.errors, lint: l.code ?? l.errors });
             } else if (n.code !== undefined && l.code !== undefined) {
@@ -172,6 +173,8 @@ describe.skipIf(!isDebug && !isASAN)("a lint parse, visited and printed", () => 
           ` ${counts.rejectedByBoth} rejected by both, ${crashed.length} crashed`,
       );
 
+      // A child that died names the file it was in: the visit pass panics on a scope that the parse pass did not record.
+      expect(crashed).toEqual([]);
       // Each child proves its own mode: a parse without lint takes the sentinel, a lint parse reports TS1110.
       expect(sentinels).toEqual(
         Array.from({ length: shardCount }, () => ({
@@ -179,8 +182,7 @@ describe.skipIf(!isDebug && !isASAN)("a lint parse, visited and printed", () => 
           lint: expect.arrayContaining(["TS1110: Type expected."]),
         })),
       );
-      expect({ crashed, differing, onlyWithoutLint, onlyWithLint }).toEqual({
-        crashed: [],
+      expect({ differing, onlyWithoutLint, onlyWithLint }).toEqual({
         differing: [],
         onlyWithoutLint: [],
         onlyWithLint: [],

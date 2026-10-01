@@ -17,3 +17,4 @@ END   08-check-clippy-fmt rc=1 wall=2074s lockwait=1870s run=204s 2026-10-01T09:
 START 08b-clippy-keep-going 2026-10-01T09:20:12Z load=603.23 638.10 680.81 dir=/workspace/wt/parser cmd: /tmp/pbb1b/s8b.sh
 START 09-cgbench-base-head 2026-10-01T09:24:20Z load=527.64 595.78 655.11 dir=/workspace/wt/parser cmd: /tmp/pbb1b/s9.sh
 END   08b-clippy-keep-going rc=0 wall=1888s lockwait=1823s run=65s 2026-10-01T09:51:41Z load=793.26 836.19 822.64
+END   09-cgbench-base-head rc=0 wall=1837s lockwait=1640s run=197s 2026-10-01T09:54:57Z load=688.70 776.03 802.97

@@ -435,16 +435,12 @@ impl PackageJSON {
                 return None;
             }
         };
-        // Reshaped for borrowck — `mem::take` the contents (leaving
-        // `Contents::Empty` behind) so `entry` stays whole for the close-guard.
-        // Immediately convert to owned `Box<[u8]>`: `use_shared_buffer = false`
-        // above guarantees `Contents::Owned`/`Empty`, so the match is exhaustive
-        // in practice (the catch-all copy is unreachable but defensive).
-        let entry_contents: Box<[u8]> = match core::mem::take(&mut entry.contents) {
-            crate::cache::Contents::Owned(v) => v.into_boxed_slice(),
-            crate::cache::Contents::Empty => Box::default(),
-            other => Box::from(other.as_slice()),
-        };
+        // `mem::take` the contents (leaving `Contents::Empty` behind) so
+        // `entry` stays whole for the close-guard. `use_shared_buffer = false`
+        // above guarantees `Contents::Owned`/`Empty`, so `into_vec` moves.
+        let entry_contents: Box<[u8]> = core::mem::take(&mut entry.contents)
+            .into_vec()
+            .into_boxed_slice();
         let _close_guard = scopeguard::guard(entry, |mut e| {
             let _ = e.close_fd();
         });

@@ -887,4 +887,10 @@ export const resolverInternals = {
   packageJsonParseCount: $newRustFunction("resolver/resolver.rs", "jsPackageJsonParseCount", 0) as () => number,
   /** Total tsconfig parses performed (reuse skips these). */
   tsconfigParseCount: $newRustFunction("resolver/resolver.rs", "jsTsconfigParseCount", 0) as () => number,
+  /**
+   * Bust `dir` and recompute its directory info under a scratch log, as a
+   * watcher or router reload does. Returns the log's message texts, one per
+   * line.
+   */
+  dirInfoDiagnostics: $newRustFunction("resolver/resolver.rs", "jsDirInfoDiagnostics", 1) as (dir: string) => string,
 };

@@ -197,3 +197,68 @@ test("dir cache busts don't re-intern unchanged package.json/tsconfig.json", asy
   });
   expect(exitCode).toBe(0);
 });
+
+// A reused outcome must still report what its parse logged. A watcher or
+// router reload busts the directory and recomputes it under a fresh log, so a
+// skipped re-parse would silently drop the diagnostics of an unchanged (but
+// still broken or warning-bearing) package.json or tsconfig.json.
+test("a recompute served from the interner reports the parse diagnostics", async () => {
+  const pkgWarn = JSON.stringify({ name: "dir-cache-bust-diagnostics", type: 123 });
+  const tsWarn = JSON.stringify({ compilerOptions: { importsNotUsedAsValues: "bogus" } });
+  using dir = tempDir("dir-cache-bust-diagnostics", {
+    "package.json": JSON.stringify({ name: "dir-cache-bust-diagnostics" }),
+    "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+    "main.mjs": `
+      import { resolverInternals } from "bun:internal-for-testing";
+      import { writeFileSync } from "node:fs";
+      import { join } from "node:path";
+      const here = import.meta.dir;
+      const diagnostics = () => resolverInternals.dirInfoDiagnostics(here).split("\\n").filter(Boolean).sort();
+      const parses = () => resolverInternals.packageJsonParseCount() + resolverInternals.tsconfigParseCount();
+      const out = {};
+      out.clean = diagnostics();
+      writeFileSync(join(here, "package.json"), ${JSON.stringify(pkgWarn)});
+      writeFileSync(join(here, "tsconfig.json"), ${JSON.stringify(tsWarn)});
+      out.first = diagnostics();
+      const p0 = parses();
+      out.second = diagnostics();
+      out.third = diagnostics();
+      out.reparsed = parses() - p0;
+
+      writeFileSync(join(here, "package.json"), "{ this is not json !!");
+      writeFileSync(join(here, "tsconfig.json"), "{ this is not json !!");
+      out.brokenFirst = diagnostics();
+      const p1 = parses();
+      out.brokenSecond = diagnostics();
+      out.brokenReparsed = parses() - p1;
+      console.log(JSON.stringify(out));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  const out = JSON.parse(stdout);
+  const warnings = ['Invalid value "bogus" for "importsNotUsedAsValues"', 'The value for "type" must be a string'];
+  expect(out.brokenFirst).toHaveLength(2);
+  expect(out).toEqual({
+    clean: [],
+    first: warnings,
+    // Served from the interner (no re-parse), reported all the same.
+    second: warnings,
+    third: warnings,
+    reparsed: 0,
+    // Same for the negative cache: the parse errors of unchanged broken files.
+    brokenFirst: out.brokenFirst,
+    brokenSecond: out.brokenFirst,
+    brokenReparsed: 0,
+  });
+  expect(exitCode).toBe(0);
+});

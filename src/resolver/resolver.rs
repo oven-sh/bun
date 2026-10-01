@@ -332,6 +332,38 @@ enum InternedPackageJsonState {
 struct InternedPackageJson {
     shape: PackageJsonParseShape,
     state: InternedPackageJsonState,
+    /// What the parse logged (at `Level::Verbose`, so any log level can be
+    /// served). Replayed on every reuse: a recompute that skips the parse
+    /// still reports what the parse would have.
+    diagnostics: Vec<Msg>,
+}
+
+/// A `Log` that records everything a parse emits, for [`replay_diagnostics`].
+fn capture_log() -> bun_ast::Log {
+    let mut log = bun_ast::Log::init();
+    log.level = bun_ast::Level::Verbose;
+    log
+}
+
+/// Deep copies of `log`'s messages, safe to keep past the parsed source.
+fn captured_diagnostics(log: &bun_ast::Log) -> Vec<Msg> {
+    log.msgs.iter().map(Msg::clone).collect()
+}
+
+/// Add `msgs` to `into` as if the parse had logged them there: filtered by
+/// `into.level` like `Log::add_warning` / `add_error`, with the counters kept.
+fn replay_diagnostics(msgs: &[Msg], into: &mut bun_ast::Log) {
+    for msg in msgs {
+        if !msg.kind.should_print(into.level) {
+            continue;
+        }
+        match msg.kind {
+            bun_ast::Kind::Err => into.errors += 1,
+            bun_ast::Kind::Warn => into.warnings += 1,
+            _ => {}
+        }
+        into.add_msg(msg.clone());
+    }
 }
 
 // SAFETY: the `Parsed` pointer targets an append-only arena slot; it crosses
@@ -373,15 +405,30 @@ fn set_package_json_slot(
     path: &'static [u8],
     shape: PackageJsonParseShape,
     state: InternedPackageJsonState,
+    diagnostics: Vec<Msg>,
 ) {
     match interner.by_path.get_mut(path) {
         Some(slots) => match slots.iter_mut().find(|slot| slot.shape == shape) {
-            Some(slot) => slot.state = state,
-            None => slots.push(InternedPackageJson { shape, state }),
+            Some(slot) => {
+                slot.state = state;
+                slot.diagnostics = diagnostics;
+            }
+            None => slots.push(InternedPackageJson {
+                shape,
+                state,
+                diagnostics,
+            }),
         },
         None => interner
             .by_path
-            .put_static_key(path, vec![InternedPackageJson { shape, state }])
+            .put_static_key(
+                path,
+                vec![InternedPackageJson {
+                    shape,
+                    state,
+                    diagnostics,
+                }],
+            )
             .expect("unreachable"),
     }
 }
@@ -392,6 +439,7 @@ fn set_package_json_slot(
 fn intern_package_json(
     pkg: PackageJSON,
     shape: PackageJsonParseShape,
+    diagnostics: Vec<Msg>,
 ) -> core::ptr::NonNull<PackageJSON> {
     // The path was interned into `dirname_store`, so it is genuinely `'static`.
     let path: &'static [u8] = pkg.source.path.text;
@@ -433,7 +481,13 @@ fn intern_package_json(
     // `Vec` realloc. Derive from `&mut **last` so the returned pointer
     // carries mut-provenance.
     let ptr = core::ptr::NonNull::from(&mut **interner.arena.last_mut().unwrap());
-    set_package_json_slot(interner, path, shape, InternedPackageJsonState::Parsed(ptr));
+    set_package_json_slot(
+        interner,
+        path,
+        shape,
+        InternedPackageJsonState::Parsed(ptr),
+        diagnostics,
+    );
     ptr
 }
 
@@ -443,6 +497,7 @@ fn intern_unparseable_package_json(
     path: &'static [u8],
     shape: PackageJsonParseShape,
     contents: Box<[u8]>,
+    diagnostics: Vec<Msg>,
 ) {
     let mut guard = PACKAGE_JSON_INTERNER.lock();
     set_package_json_slot(
@@ -450,6 +505,7 @@ fn intern_unparseable_package_json(
         path,
         shape,
         InternedPackageJsonState::Unparseable(contents),
+        diagnostics,
     );
 }
 
@@ -469,6 +525,8 @@ struct InternedTsconfig {
     /// config (the root read fine but its JSONC failed to parse); recording
     /// that outcome lets a bust over unchanged bytes skip the re-parse.
     ptr: Option<core::ptr::NonNull<TSConfigJSON>>,
+    /// What the chain walk logged; see `InternedPackageJson::diagnostics`.
+    diagnostics: Vec<Msg>,
 }
 
 // SAFETY: same contract as `InternedPackageJson` — append-only arena slot
@@ -508,6 +566,7 @@ fn intern_tsconfig(
     root_path: &[u8],
     chain: Vec<TsconfigChainLink>,
     merged: Option<*mut TSConfigJSON>,
+    diagnostics: Vec<Msg>,
 ) -> Option<core::ptr::NonNull<TSConfigJSON>> {
     let mut guard = TSCONFIG_INTERNER.lock();
     let interner = &mut *guard;
@@ -533,11 +592,16 @@ fn intern_tsconfig(
         // mut-provenance via `&mut **last`.
         core::ptr::NonNull::from(&mut **interner.arena.last_mut().unwrap())
     });
+    let record = InternedTsconfig {
+        chain,
+        ptr,
+        diagnostics,
+    };
     match interner.by_path.get_mut(root_path) {
-        Some(slot) => *slot = InternedTsconfig { chain, ptr },
+        Some(slot) => *slot = record,
         None => interner
             .by_path
-            .put(root_path, InternedTsconfig { chain, ptr })
+            .put(root_path, record)
             .expect("unreachable"),
     }
     ptr
@@ -560,6 +624,7 @@ fn reuse_interned_package_json(
     shape: PackageJsonParseShape,
     contents: &[u8],
     package_id: Option<Install::PackageID>,
+    log: &mut bun_ast::Log,
 ) -> PackageJsonReuse {
     let mut guard = PACKAGE_JSON_INTERNER.lock();
     let Some(slot) = guard
@@ -569,7 +634,7 @@ fn reuse_interned_package_json(
     else {
         return PackageJsonReuse::Miss;
     };
-    match &slot.state {
+    let outcome = match &slot.state {
         InternedPackageJsonState::Parsed(ptr) => {
             let mut cached_ptr = *ptr;
             // SAFETY: ARENA — arena slots are never freed or moved.
@@ -587,16 +652,17 @@ fn reuse_interned_package_json(
                     unsafe { cached_ptr.as_mut() }.package_manager_package_id = id;
                 }
             }
-            PackageJsonReuse::Hit(Some(cached_ptr))
+            Some(cached_ptr)
         }
         InternedPackageJsonState::Unparseable(recorded) => {
-            if strings::eql(recorded, contents) {
-                PackageJsonReuse::Hit(None)
-            } else {
-                PackageJsonReuse::Miss
+            if !strings::eql(recorded, contents) {
+                return PackageJsonReuse::Miss;
             }
+            None
         }
-    }
+    };
+    replay_diagnostics(&slot.diagnostics, log);
+    PackageJsonReuse::Hit(outcome)
 }
 
 // `bun_core::declare_scope!` emits the per-scope `static ScopedLogger`; the
@@ -4290,7 +4356,8 @@ impl<'a> Resolver<'a> {
     /// Reuse the interned outcome for `root_path` when its recorded extends
     /// chain is unchanged on disk. Outer `None` means the caller must
     /// re-parse; the inner value is the recorded merge (`None` = the chain
-    /// produced no config last time).
+    /// produced no config last time). A hit replays what the recorded walk
+    /// logged, so the caller's log reads as if the chain had been parsed.
     fn reuse_interned_tsconfig(
         &mut self,
         root_path: &[u8],
@@ -4315,7 +4382,11 @@ impl<'a> Resolver<'a> {
         // path while the files were being read.
         let guard = TSCONFIG_INTERNER.lock();
         let slot = guard.by_path.get(root_path)?;
-        (slot.chain == chain).then_some(slot.ptr)
+        if slot.chain != chain {
+            return None;
+        }
+        replay_diagnostics(&slot.diagnostics, self.log_mut());
+        Some(slot.ptr)
     }
 
     /// Read `path` for the tsconfig reuse check. `None` on any error — the
@@ -4452,7 +4523,13 @@ impl<'a> Resolver<'a> {
         else {
             return Ok(None);
         };
-        match reuse_interned_package_json(package_json_path, shape, &contents, package_id) {
+        match reuse_interned_package_json(
+            package_json_path,
+            shape,
+            &contents,
+            package_id,
+            self.log_mut(),
+        ) {
             PackageJsonReuse::Hit(outcome) => return Ok(outcome),
             PackageJsonReuse::Miss => {}
         }
@@ -4466,30 +4543,42 @@ impl<'a> Resolver<'a> {
         } else {
             IncludeScripts::IgnoreScripts
         };
-        let pkg = if ALLOW_DEPENDENCIES {
-            PackageJSON::parse_with_contents::<{ IncludeDependencies::Local }>(
-                self,
-                package_json_path,
-                contents,
-                package_id,
-                include_scripts,
-            )
-        } else {
-            PackageJSON::parse_with_contents::<{ IncludeDependencies::None }>(
-                self,
-                package_json_path,
-                contents,
-                package_id,
-                include_scripts,
-            )
+        // The parse logs into `parse_log` so its messages can be kept with the
+        // interned outcome; they reach the real log through `replay_diagnostics`.
+        let mut parse_log = capture_log();
+        let pkg = {
+            // SAFETY: `self` outlives the guard, and `parse_log` is declared
+            // before it, so it drops (and restores the previous log) first.
+            let _scope = unsafe {
+                Self::scoped_log(core::ptr::from_mut(self), NonNull::from(&mut parse_log))
+            };
+            if ALLOW_DEPENDENCIES {
+                PackageJSON::parse_with_contents::<{ IncludeDependencies::Local }>(
+                    self,
+                    package_json_path,
+                    contents,
+                    package_id,
+                    include_scripts,
+                )
+            } else {
+                PackageJSON::parse_with_contents::<{ IncludeDependencies::None }>(
+                    self,
+                    package_json_path,
+                    contents,
+                    package_id,
+                    include_scripts,
+                )
+            }
         };
+        let diagnostics = captured_diagnostics(&parse_log);
+        replay_diagnostics(&diagnostics, self.log_mut());
         let pkg = match pkg {
             Ok(pkg) => pkg,
             Err(contents) => {
                 // The file read fine but produced no `PackageJSON`; record the
                 // bytes so the next bust over an unchanged file skips the
                 // re-parse too.
-                intern_unparseable_package_json(package_json_path, shape, contents);
+                intern_unparseable_package_json(package_json_path, shape, contents, diagnostics);
                 return Ok(None);
             }
         };
@@ -4497,7 +4586,7 @@ impl<'a> Resolver<'a> {
         // NOTE: the DirInfo cache holds `&'static` refs. PORTING.md
         // §Forbidden bars `Box::leak`; intern into the process-lifetime arena
         // owned alongside the DirInfo singleton instead.
-        Ok(Some(intern_package_json(pkg, shape)))
+        Ok(Some(intern_package_json(pkg, shape, diagnostics)))
     }
 
     fn dir_info_cached(&mut self, path: &[u8]) -> crate::CrateResult<Option<DirInfoRef>> {
@@ -6835,6 +6924,16 @@ impl<'a> Resolver<'a> {
                 if let Some(cached) = self.reuse_interned_tsconfig(tsconfigpath) {
                     info.tsconfig_json = cached;
                 } else {
+                    // The walk logs into `parse_log` so its messages can be
+                    // kept with the interned outcome; they reach the real log
+                    // through `replay_diagnostics` once the guard restores it.
+                    let mut parse_log = capture_log();
+                    // SAFETY: `self` outlives the guard, and `parse_log` is
+                    // declared before it, so it drops (and restores the
+                    // previous log) first.
+                    let log_scope = unsafe {
+                        Self::scoped_log(core::ptr::from_mut(self), NonNull::from(&mut parse_log))
+                    };
                     // Every file the merge below reads, in walk order.
                     let mut chain: Vec<TsconfigChainLink> = Vec::new();
                     let parsed_tsconfig: Option<*mut TSConfigJSON> = match self.parse_tsconfig(
@@ -7000,16 +7099,27 @@ impl<'a> Resolver<'a> {
                         }
                         // Interned into the process-lifetime arena (deduped against
                         // the previous merge for this path); outlives the resolver.
-                        info.tsconfig_json =
-                            intern_tsconfig(tsconfigpath, chain, Some(merged_config));
+                        info.tsconfig_json = intern_tsconfig(
+                            tsconfigpath,
+                            chain,
+                            Some(merged_config),
+                            captured_diagnostics(&parse_log),
+                        );
                     } else if !chain.is_empty() {
                         // The root read fine but produced no config; record
                         // that outcome so the next bust over unchanged bytes
                         // skips the re-parse. (An unreadable root leaves the
                         // chain empty and keeps its per-recompute error
                         // reporting.)
-                        info.tsconfig_json = intern_tsconfig(tsconfigpath, chain, None);
+                        info.tsconfig_json = intern_tsconfig(
+                            tsconfigpath,
+                            chain,
+                            None,
+                            captured_diagnostics(&parse_log),
+                        );
                     }
+                    drop(log_scope);
+                    replay_diagnostics(&parse_log.msgs, self.log_mut());
                 }
                 info.enclosing_tsconfig_json = info.tsconfig_json();
             }

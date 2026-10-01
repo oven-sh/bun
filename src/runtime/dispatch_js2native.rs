@@ -130,4 +130,39 @@ pub(crate) fn resolver_resolver_js_tsconfig_parse_count(
     ))
 }
 
+/// Bust `dir` and recompute its `DirInfo` under a scratch log, as a watcher
+/// or router reload does; returns the log's message texts, one per line. Lets
+/// a test check that a recompute served from the interner reports what a
+/// parse would.
+pub(crate) fn resolver_resolver_js_dir_info_diagnostics(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let dir = frame.argument(0).to_utf8(global)?;
+    let dir = bun_paths::strings::paths::without_trailing_slash_windows_path(dir.slice());
+    let vm_ptr = global.bun_vm_ptr();
+    let mut log = bun_ast::Log::init();
+    // SAFETY: `vm_ptr` is the live VM for this global; the resolver outlives
+    // this call. The guard is declared after `log`, so it drops first.
+    let restore = unsafe {
+        bun_resolver::Resolver::scoped_log(
+            core::ptr::addr_of_mut!((*vm_ptr).transpiler.resolver),
+            core::ptr::NonNull::from(&mut log),
+        )
+    };
+    {
+        // SAFETY: JS thread; no other borrow of the VM is live across this block.
+        let resolver = unsafe { &mut (*vm_ptr).transpiler.resolver };
+        let _ = resolver.bust_dir_cache(dir);
+        let _ = resolver.read_dir_info(dir);
+    }
+    drop(restore);
+    let mut lines: Vec<u8> = Vec::new();
+    for msg in &log.msgs {
+        lines.extend_from_slice(&msg.data.text);
+        lines.push(b'\n');
+    }
+    bun_jsc::bun_string_jsc::create_utf8_for_js(global, &lines)
+}
+
 // ported from: generated_js2native.rs

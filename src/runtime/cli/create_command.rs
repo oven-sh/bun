@@ -122,8 +122,6 @@ fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClien
             ),
             ..Default::default()
         },
-        #[cfg(not(windows))]
-        windows: (),
         ..Default::default()
     });
 }
@@ -1149,8 +1147,6 @@ impl CreateCommand {
                     ),
                     ..Default::default()
                 },
-                #[cfg(not(windows))]
-                windows: (),
                 ..Default::default()
             })?;
             let _ = process?;
@@ -1273,8 +1269,6 @@ impl CreateCommand {
                         ),
                         ..Default::default()
                     },
-                    #[cfg(not(windows))]
-                    windows: (),
                     ..Default::default()
                 })?;
             }
@@ -2470,8 +2464,6 @@ impl GitHandler {
                         loop_: win_loop,
                         ..Default::default()
                     },
-                    #[cfg(not(windows))]
-                    windows: (),
                     ..Default::default()
                 })?;
             }

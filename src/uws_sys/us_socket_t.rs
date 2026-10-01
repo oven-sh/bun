@@ -213,11 +213,8 @@ impl us_socket_t {
     /// Install a socket-level SNI resolver on an already-adopted server-side
     /// TLS socket (there is no listen socket to hang it off). Must run before
     /// the handshake is driven.
-    pub fn on_server_name(
-        &mut self,
-        cb: extern "C" fn(*mut us_socket_t, *const core::ffi::c_char, *mut c_int) -> *mut SslCtx,
-    ) {
-        c::us_socket_on_server_name(self, cb);
+    pub fn on_server_name(&mut self) {
+        c::us_socket_on_server_name(self);
     }
 
     /// Node-compat `_handle` shape: `SSL*` for TLS sockets, fd-as-pointer for
@@ -376,13 +373,6 @@ impl us_socket_t {
         );
         rc
     }
-    #[cfg(windows)]
-    pub fn write_fd(&mut self, _data: &[u8], _file_descriptor: Fd) -> i32 {
-        // A `compile_error!` here would brick the windows build even with no
-        // callers (it is evaluated at item definition), so use a runtime trap
-        // instead; no current Windows call site.
-        unreachable!("us_socket_t::write_fd is not implemented on Windows")
-    }
 
     pub fn write2(&mut self, first: &[u8], second: &[u8]) -> i32 {
         let rc = unsafe {
@@ -519,14 +509,7 @@ mod c {
             ctx: *mut SslCtx,
             error: c_int,
         );
-        pub(super) safe fn us_socket_on_server_name(
-            s: &mut us_socket_t,
-            cb: extern "C" fn(
-                *mut us_socket_t,
-                *const core::ffi::c_char,
-                *mut c_int,
-            ) -> *mut SslCtx,
-        );
+        pub(super) safe fn us_socket_on_server_name(s: &mut us_socket_t);
         pub(super) safe fn us_socket_keepalive(
             s: &mut us_socket_t,
             enable: c_int,

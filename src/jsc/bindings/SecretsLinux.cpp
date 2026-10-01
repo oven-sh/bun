@@ -299,7 +299,7 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
     gboolean result = framework->secret_password_store_sync(
         get_bun_schema(),
         nullptr, // Let libsecret handle collection creation automatically
-        labelUtf8.data(),
+        labelUtf8.legacyCStringPointer(),
         password.data(),
         nullptr, // cancellable
         &gerror,

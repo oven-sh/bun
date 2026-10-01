@@ -253,6 +253,40 @@ describe("Intl.Segmenter", () => {
       th: seg("th", "word", "สวัสดีครับ"),
     }).toMatchSnapshot();
   });
+
+  // containing(i) must return the segment that iteration yields for i, at every
+  // UTF-16 offset. The lead surrogate of a code point that starts a segment
+  // used to come back as the previous segment merged with this one.
+  // https://github.com/oven-sh/bun/issues/44386
+  describe("containing() agrees with iteration at every code unit", () => {
+    const inputs = [
+      "a\u{1F600}",
+      "ab\u{1F600}cd",
+      "a\u{1F469}\u200D\u{1F4BB}",
+      "x \u{1F600}y",
+      "Hello, world! \u{1F44D}\u{1F3FD} x",
+      "a\u{1F1EF}\u{1F1F5}b",
+      "Hi. \u{1F44D} Bye.",
+      "\u{1F600}",
+      "x\ud83d",
+      "\udc00x",
+      "abc",
+    ];
+    test.each(["grapheme", "word", "sentence"] as const)("%s", granularity => {
+      for (const input of inputs) {
+        const segments = new Intl.Segmenter("en", { granularity }).segment(input);
+        const expected = [...segments].map(({ segment, index, isWordLike }) => ({ segment, index, isWordLike }));
+        for (let i = 0; i < input.length; i++) {
+          const want = expected.find(s => s.index <= i && i < s.index + s.segment.length)!;
+          const { segment, index, isWordLike, input: got } = segments.containing(i)!;
+          expect({ input, i, segment, index, isWordLike }).toEqual({ input, i, ...want });
+          expect(got).toBe(input);
+        }
+        expect(segments.containing(-1)).toBeUndefined();
+        expect(segments.containing(input.length)).toBeUndefined();
+      }
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

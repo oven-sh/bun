@@ -3293,6 +3293,10 @@ ServerResponse.prototype._writeRaw = function (chunk, encoding, callback) {
     // `socket` getter here would drop the bytes into a FakeSocket.
     return OutgoingMessagePrototype._writeRaw.$apply(this, arguments);
   }
+  if (typeof encoding === "function") {
+    callback = encoding;
+    encoding = null;
+  }
   const queued = this[kPipelinedQueuedState];
   if (queued !== undefined) {
     // Queued pipelined response: like Node.js (which buffers to outputData

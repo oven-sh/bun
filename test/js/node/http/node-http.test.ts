@@ -7303,6 +7303,10 @@ describe("a 1xx response is sent by the call that writes it", () => {
       for (const { name, write } of writersWithCallback) {
         events.push([name, "returned", write!(res, (...args) => events.push([name, "called back", args]))]);
       }
+      // _writeRaw() takes the callback in the place of the encoding too.
+      const withoutEncoding = "_writeRaw(chunk, callback)";
+      const called = (...args: unknown[]) => events.push([withoutEncoding, "called back", args]);
+      events.push([withoutEncoding, "returned", (res as any)._writeRaw(processingWire, called)]);
       setImmediate(() => res.end("done"));
     });
     expect(events).toEqual([
@@ -7311,13 +7315,16 @@ describe("a 1xx response is sent by the call that writes it", () => {
       ["writeEarlyHints()", "returned", undefined],
       ["writeInformation()", "returned", true],
       ["_writeRaw()", "returned", true],
+      ["_writeRaw(chunk, callback)", "returned", true],
       ["writeContinue()", "called back", [null]],
       ["writeProcessing()", "called back", [null]],
       ["writeEarlyHints()", "called back", [null]],
       ["writeInformation()", "called back", [null]],
       ["_writeRaw()", "called back", [null]],
+      ["_writeRaw(chunk, callback)", "called back", [null]],
     ]);
-    expect(wire).toStartWith(writersWithCallback.map(writer => writer.wire).join("") + "HTTP/1.1 200 OK\r\n");
+    const all1xx = writersWithCallback.map(writer => writer.wire).join("") + processingWire;
+    expect(wire).toStartWith(all1xx + "HTTP/1.1 200 OK\r\n");
     expect(wire).toEndWith("\r\n\r\ndone");
   });
 

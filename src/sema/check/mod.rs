@@ -73,6 +73,14 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 pub use call::ResolvedCall;
 pub use shape::Members;
 
+/// What trying a candidate for a call came to, if none of the arguments waits for the others.
+struct Trial {
+    candidate: SigId,
+    result: SigId,
+    /// `what_only_holds_for_now` at the end of it.
+    held: (u64, u64),
+}
+
 /// An answer that holds while the question at `depth` on the stack is the one numbered `serial`.
 #[derive(Copy, Clone)]
 struct Held {
@@ -433,6 +441,7 @@ impl Program {
             shapes_for_now: Vec::new(),
             serials: Vec::new(),
             held_for_now: FxHashMap::default(),
+            trials: FxHashMap::default(),
             explains: false,
             notes: Default::default(),
             timed_out: false,
@@ -650,6 +659,8 @@ pub struct Checker<'p> {
     serials: Vec<u64>,
     /// The types of properties of object literals that only hold for now: see `hold_for_now`.
     held_for_now: FxHashMap<(FileId, PropId), Held>,
+    /// The last candidate tried for a call that is being resolved: see `instantiate_for_call_as`.
+    trials: FxHashMap<(FileId, ExprId), Trial>,
     /// What is noted of errors is kept: somebody is going to read it.
     explains: bool,
     notes: std::cell::RefCell<Vec<explain::Note>>,

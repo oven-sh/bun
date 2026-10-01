@@ -3297,6 +3297,19 @@ impl<'p> Checker<'p> {
             return sig;
         }
 
+        // The candidate that was chosen was tried just now. If no argument waits for the others, there is nothing more to find out.
+        if !settled {
+            match self.trials.remove(&(file, call)) {
+                Some(trial)
+                    if !skip_sensitive
+                        && trial.candidate == sig
+                        && trial.held == self.what_only_holds_for_now() =>
+                {
+                    return trial.result;
+                }
+                _ => {}
+            }
+        }
         let mut inference = Inference::for_params(&type_params, Some(sig));
         // `chooseOverload`, `inferSignatureInstantiationForOverloadFailure`: `InferenceFlagsAnyDefault` depends on the file that contains
         // the call, not on the file that declares `sig`.
@@ -3463,14 +3476,18 @@ impl<'p> Checker<'p> {
         // that returns a function waits too, so that what stands to its left has had its say. It is a plain argument for all
         // that: nothing is settled for its sake. While candidates are tried it is held against each of them, and does not wait.
         let mut put_off: SmallVec<[bool; 8]> = smallvec![false; args.len()];
-        if !skip_sensitive {
-            for (i, &arg) in args.iter().enumerate() {
-                if let Arg::Expr(e) = arg
-                    && !is_sensitive[i]
-                    && let Some(param) = self.context_of_arg_at(&params, i, Some(args.len()))
-                    && self.has_type_variables(param)
-                    && self.is_call_of_generic_function_returning_function(file, e)
-                {
+        // Whether anything would wait if this were not a trial.
+        let mut anything_waits = settled || is_sensitive.contains(&true);
+        for (i, &arg) in args.iter().enumerate() {
+            if let Arg::Expr(e) = arg
+                && !is_sensitive[i]
+                && !(skip_sensitive && anything_waits)
+                && let Some(param) = self.context_of_arg_at(&params, i, Some(args.len()))
+                && self.has_type_variables(param)
+                && self.is_call_of_generic_function_returning_function(file, e)
+            {
+                anything_waits = true;
+                if !skip_sensitive {
                     is_sensitive[i] = true;
                     put_off[i] = true;
                 }
@@ -3821,7 +3838,18 @@ impl<'p> Checker<'p> {
             Some(mapper) => mapper,
             None => self.inference_mapper(&inference),
         };
+        let candidate = sig;
         let sig = self.instantiate_sig(sig, mapper);
+        if skip_sensitive && !anything_waits && inferred_type_params.is_empty() {
+            self.trials.insert(
+                (file, call),
+                Trial {
+                    candidate,
+                    result: sig,
+                    held: self.what_only_holds_for_now(),
+                },
+            );
+        }
         // `getSignatureInstantiation`, with `inferredTypeParameters`
         if !inferred_type_params.is_empty() {
             let ret = self.sig_return(sig);

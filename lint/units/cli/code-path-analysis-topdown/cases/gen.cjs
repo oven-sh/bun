@@ -7,6 +7,8 @@ const count = Number(process.argv[2]);
 let seed = Number(process.argv[3]) >>> 0;
 const out = process.argv[4];
 const TS = process.argv.includes("--ts");
+// Without the declarations that leave no statement in Bun's tree (their names are Identifier nodes for ESLint).
+const NO_DECL = process.argv.includes("--no-decl");
 function rnd() {
 	// mulberry32
 	seed |= 0;
@@ -154,7 +156,7 @@ function stmt(depth, ctx) {
 			}
 			return `class K${labelCount++}${ext ? ` extends ${pick(ids)}` : ""} { ${members.join(" ")} }`;
 		},
-		() => (TS ? pick([`interface I${labelCount++} {}`, `type T${labelCount++} = number;`, `declare const dc${labelCount++}: number;`, `enum En${labelCount++} { A, B = 1 }`, `declare function df${labelCount++}(): void;`, "var tv: string;"]) : ";"),
+		() => (TS && NO_DECL ? "var tv: string;" : TS ? pick([`interface I${labelCount++} {}`, `type T${labelCount++} = number;`, `declare const dc${labelCount++}: number;`, `enum En${labelCount++} { A, B = 1 }`, `declare function df${labelCount++}(): void;`, "var tv: string;"]) : ";"),
 	];
 	return pick(kinds)();
 }

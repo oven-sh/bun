@@ -12,12 +12,35 @@ const { Linter } = require(path.join(R, "lib/linter"));
 const { isAnySegmentReachable } = require(path.join(R, "lib/rules/utils/code-path-utils"));
 const args = process.argv.slice(2);
 const opt = name => (args.includes(name) ? args[args.indexOf(name) + 1] : null);
-const stats = { calls: 0, unreachableCalls: 0, containsTrue: 0, consecutiveTrue: 0, containsMismatch: 0, consecutiveMismatch: 0, reports: 0, sourcesWithReports: 0 };
+const stats = { calls: 0, unreachableCalls: 0, containsTrue: 0, consecutiveTrue: 0, containsMismatch: 0, consecutiveMismatch: 0, siblingButTokenBetween: 0, tokenRuleChecked: 0, tokenRuleMismatch: 0, reports: 0, sourcesWithReports: 0 };
 const mismatches = [];
 
 function isInside(node, ancestor) {
 	for (let n = node.parent; n; n = n.parent) if (n === ancestor) return true;
 	return false;
+}
+// Whether the last token of `parent` is the last token of its child `node`.
+function isTail(node, parent) {
+	switch (parent.type) {
+		case "IfStatement":
+			return parent.alternate ? parent.alternate === node : parent.consequent === node;
+		case "WhileStatement":
+		case "ForStatement":
+		case "ForInStatement":
+		case "ForOfStatement":
+		case "LabeledStatement":
+		case "WithStatement":
+			return parent.body === node;
+		case "TryStatement":
+			return parent.finalizer ? parent.finalizer === node : parent.handler === node;
+		case "CatchClause":
+			return parent.body === node;
+		case "ExportNamedDeclaration":
+		case "ExportDefaultDeclaration":
+			return parent.declaration === node;
+		default:
+			return false;
+	}
 }
 function listOf(node) {
 	const p = node.parent;
@@ -50,17 +73,44 @@ const rule = {
 			}
 			if (c) return;
 			const k = isConsecutive(node);
+			// The statement whose last token is the last token of endNode: endNode, or one that endNode is the tail of.
+			let top = endNode;
+			while (!listOf(top) && top.parent && isTail(top, top.parent)) top = top.parent;
 			const list = listOf(node);
-			const sibling = Boolean(list && list === listOf(endNode) && list.indexOf(node) === list.indexOf(endNode) + 1);
+			const sibling = Boolean(list && list === listOf(top) && list.indexOf(node) === list.indexOf(top) + 1);
 			const before = sourceCode.getTokenBefore(node);
 			const noTokenBetween = Boolean(before && before.range[1] <= endNode.range[1]);
 			const structuralConsecutive = sibling && noTokenBetween;
 			if (k) stats.consecutiveTrue++;
+			if (sibling && !noTokenBetween) stats.siblingButTokenBetween++;
+			// As Bun's lists are: an empty statement is in no list. Whether one stands between is read from two tokens.
+			if (list && list === listOf(top) && node.type !== "PropertyDefinition") {
+				const at = list.indexOf(top);
+				const to = list.indexOf(node);
+				if (to > at && list.slice(at + 1, to).every(n => n.type === "EmptyStatement")) {
+					const q = before;
+					const p2 = sourceCode.getTokenBefore(q);
+					let inner = endNode;
+					for (;;) {
+						const t = inner.type;
+						const next = t === "IfStatement" ? inner.alternate || inner.consequent
+							: /^(?:While|For|ForIn|ForOf|Labeled|With)Statement$/u.test(t) ? inner.body
+							: /^Export(?:Named|Default)Declaration$/u.test(t) && inner.declaration && /Declaration$/u.test(inner.declaration.type) ? inner.declaration : null;
+						if (!next) break;
+						inner = next;
+					}
+					const canOwn = /^(?:Expression|Return|Throw|Break|Continue|Debugger|DoWhile|Empty)Statement$|^VariableDeclaration$|^Export(?:Named|All|Default)Declaration$|^ImportDeclaration$/u.test(inner.type);
+					const stray = q.value === ";" && q.type === "Punctuator" && ((p2.value === ";" && p2.type === "Punctuator") || !canOwn);
+					stats.tokenRuleChecked++;
+					if (!stray !== k) {
+						stats.tokenRuleMismatch++;
+						mismatches.push(["tokenRule", k, node.type, endNode.type, inner.type, p2.value, q.value, sourceCode.text.slice(top.range[0], node.range[1]).slice(0, 200)]);
+					}
+				}
+			}
 			if (k !== structuralConsecutive) {
 				stats.consecutiveMismatch++;
-				const common = (() => { let a = endNode; const up = new Set(); for (let n = node; n; n = n.parent) up.add(n); while (a && !up.has(a)) a = a.parent; return a; })();
-				const chain = []; for (let n = endNode.parent; n && n !== common; n = n.parent) chain.push(n.type);
-				mismatches.push(["consecutive", k, node.type, endNode.type, sibling, noTokenBetween, `parents of end: ${chain.join("<")} | common ${common && common.type}`, sourceCode.text.slice(endNode.parent.range[0], node.range[1]).slice(0, 260)]);
+				mismatches.push(["consecutive", k, node.type, endNode.type, top.type, sibling, noTokenBetween, sourceCode.text.slice(top.range[0], node.range[1]).slice(0, 260)]);
 			}
 		}
 		function reportIfUnreachable(node) {

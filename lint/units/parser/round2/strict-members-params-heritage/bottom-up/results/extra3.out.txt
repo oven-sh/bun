@@ -1,0 +1,297 @@
+## asides in the type grammar
+"let x: a.<T>;" [ts]
+   tsc parses; checker @8+1 TS8020 JSDoc types can only be used inside documentation comments.
+   go  parses
+   bun accepts
+   lint parses
+"let x: a.;" [ts]
+   tsc @9+1 TS1003 Identifier expected.
+   go  @9+1 TS1003 Identifier expected.
+   bun @9+1 Expected identifier but found ";"
+   lint @9+1 Expected identifier but found ";"  => TS1003 @9+1 Identifier expected.
+"let x: B<const>;" [ts]
+   tsc @9+5 TS1005 '>' expected.
+   tsc @14+1 TS1134 Variable declaration expected.
+   tsc @15+1 TS1109 Expression expected.
+   go  @9+5 TS1005 '>' expected.
+   go  @14+1 TS1134 Variable declaration expected.
+   go  @15+1 TS1109 Expression expected.
+   bun accepts
+   lint parses
+"let x: B<extends>;" [ts]
+   tsc @9+7 TS1005 '>' expected.
+   tsc @16+1 TS1110 Type expected.
+   tsc @17+1 TS1109 Expression expected.
+   go  @9+7 TS1005 '>' expected.
+   go  @16+1 TS1110 Type expected.
+   go  @17+1 TS1109 Expression expected.
+   bun accepts
+   lint parses
+"let x: export;" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+   lint parses
+"let x: class;" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+   lint parses
+"let x: super;" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+   lint parses
+"let x: !;" [ts]
+   tsc @8+1 TS1110 Type expected.
+   go  @8+1 TS1110 Type expected.
+   bun @7+1 Unexpected !
+   lint @7+1 Unexpected !  => TS1110 @7+1 Type expected.
+"let x: !T;" [ts]
+   tsc parses; checker @7+2 TS17020 '!' at the start of a type is not valid TypeScript syntax. Did you mean to write 'T'?
+   go  parses
+   bun @7+1 Unexpected !
+   bun @8+1 Expected ";" but found "T"
+   lint @7+1 Unexpected !  => TS1110 @7+1 Type expected.
+"type X = (a: ) => void;" [ts]
+   tsc @13+1 TS1110 Type expected.
+   go  @13+1 TS1110 Type expected.
+   bun accepts
+   lint @13+1 Unexpected )  => TS1110 @13+1 Type expected.
+"type X = { a A };" [ts]
+   tsc @11+1 TS1131 Property or signature expected.
+   tsc @15+1 TS1128 Declaration or statement expected.
+   go  @11+1 TS1131 Property or signature expected.
+   go  @15+1 TS1128 Declaration or statement expected.
+   bun accepts
+   lint parses
+"interface I { a A }" [ts]
+   tsc @14+1 TS1131 Property or signature expected.
+   tsc @18+1 TS1128 Declaration or statement expected.
+   go  @14+1 TS1131 Property or signature expected.
+   go  @18+1 TS1128 Declaration or statement expected.
+   bun accepts
+   lint parses
+"interface I { a: }" [ts]
+   tsc @17+1 TS1110 Type expected.
+   go  @17+1 TS1110 Type expected.
+   bun @17+1 Unexpected }
+   lint @17+1 Unexpected }  => TS1110 @17+1 Type expected.
+"type X = A | () => void;" [ts]
+   tsc @12+11 TS1385 Function type notation must be parenthesized when used in a union type.
+   go  @12+11 TS1385 Function type notation must be parenthesized when used in a union type.
+   bun accepts
+   lint parses
+"interface I extends A<B | > {}" [ts]
+   tsc @26+1 TS1110 Type expected.
+   go  @26+1 TS1110 Type expected.
+   bun @26+1 Unexpected >
+   lint @26+1 Unexpected >  => TS1110 @26+1 Type expected.
+## js files
+"class C extends !B {}" [js]
+   tsc @16+1 TS1109 Expression expected.
+   tsc @19+1 TS1005 ';' expected.
+   go  @16+1 TS1109 Expression expected.
+   go  @19+1 TS1005 ';' expected.
+   bun accepts
+   lint parses
+"class C extends {}.a {}" [js]
+   tsc @18+1 TS1128 Declaration or statement expected.
+   tsc @19+1 TS1434 Unexpected keyword or identifier.
+   go  @18+1 TS1128 Declaration or statement expected.
+   go  @19+1 TS1434 Unexpected keyword or identifier.
+   bun accepts
+   lint parses
+"class C extends await B {}" [js]
+   tsc @22+1 TS1005 ',' expected.
+   go  @22+1 TS1005 ',' expected.
+   bun accepts
+   lint @22+1 "await" can only be used inside an "async" function  => no code  (3 messages)
+"class C { static static x }" [js]
+   tsc @17+6 TS1434 Unexpected keyword or identifier.
+   go  @17+6 TS1434 Unexpected keyword or identifier.
+   bun @24+1 Expected ";" but found "x"
+   lint @24+1 Expected ";" but found "x"  => TS1005 @24+1 ';' expected.
+"class C { get [a]() {} set [b](v) {} *[c]() {} }" [js]
+   tsc parses
+   go  parses
+   bun accepts
+   lint parses
+"function f({ class }) {}" [js]
+   tsc @19+1 TS1005 ':' expected.
+   go  @19+1 TS1005 ':' expected.
+   bun accepts
+   lint parses
+"class C { @!a x }" [js]
+   tsc @11+1 TS1109 Expression expected.
+   tsc @12+1 TS1434 Unexpected keyword or identifier.
+   go  @11+1 TS1109 Expression expected.
+   go  @12+1 TS1434 Unexpected keyword or identifier.
+   bun @10+1 Expected identifier but found "@"
+   bun @12+1 Expected ";" but found "a"
+   lint @10+1 Expected identifier but found "@"  => TS1003 @10+1 Identifier expected.  (2 messages)
+## declaration files
+"declare class C { get a?(): number; }" [dts]
+   tsc @23+1 TS1005 '(' expected.
+   tsc @24+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @34+1 TS1005 '=>' expected.
+   go  @23+1 TS1005 '(' expected.
+   go  @24+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @34+1 TS1005 '=>' expected.
+   bun accepts
+   lint parses
+"class C { get a?(): number; constructor(public\n a); }" [dts]
+   tsc @15+1 TS1005 '(' expected.
+   tsc @16+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @26+1 TS1005 '=>' expected.
+   go  @15+1 TS1005 '(' expected.
+   go  @16+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @26+1 TS1005 '=>' expected.
+   bun accepts
+   lint parses
+"class C extends !B {}" [dts]
+   tsc @16+1 TS1109 Expression expected.
+   tsc @19+1 TS1005 ';' expected.
+   go  @16+1 TS1109 Expression expected.
+   go  @19+1 TS1005 ';' expected.
+   bun accepts
+   lint parses
+"function f({ class }): void;" [dts]
+   tsc @19+1 TS1005 ':' expected.
+   go  @19+1 TS1005 ':' expected.
+   bun accepts
+   lint parses
+"declare function f({ class }): void;" [ts]
+   tsc @27+1 TS1005 ':' expected.
+   go  @27+1 TS1005 ':' expected.
+   bun accepts
+   lint parses
+"class C { m({ class }): void; m(a) {} }" [ts]
+   tsc @20+1 TS1005 ':' expected.
+   go  @20+1 TS1005 ':' expected.
+   bun accepts
+   lint parses
+"declare const { class }: T;" [ts]
+   tsc @22+1 TS1005 ':' expected.
+   go  @22+1 TS1005 ':' expected.
+   bun accepts
+   lint parses
+"namespace N { export function f({ class }) {} }" [ts]
+   tsc @40+1 TS1005 ':' expected.
+   go  @40+1 TS1005 ':' expected.
+   bun accepts
+   lint parses
+## valid forms that must stay accepted
+"class C { get a() { return 1 } set a(v) {} m?() {} x?: number; y!: number; constructor(public a: number, private readonly b = 1, protected c?: string) {} }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+   lint parses
+"class C { [k: string]: any; static [k: number]: string; readonly [k: symbol]: number; get [a]() { return 1 } *[b]() {} }" [ts]
+   tsc parses; checker also TS2411
+   go  parses
+   bun accepts
+   lint parses
+"class C extends B<T> implements I<T>, a.J {}" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+   lint parses
+"class C extends (a, b) {}" [ts]
+   tsc parses; checker also TS2695
+   go  parses
+   bun accepts
+   lint parses
+"class C extends class {} {}" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+   lint parses
+"class C extends {} {}" [ts]
+   tsc parses; checker also TS2507
+   go  parses
+   bun accepts
+   lint parses
+"class C extends { a: 1 }.a {}" [ts]
+   tsc parses; checker also TS2507
+   go  parses
+   bun accepts
+   lint parses
+"class C extends new B<T>() {}" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+   lint parses
+"class C extends import.meta.B {}" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+   lint parses
+"class C extends `t` {}" [ts]
+   tsc parses; checker also TS2507
+   go  parses
+   bun accepts
+   lint parses
+"class C extends /re/ {}" [ts]
+   tsc parses; checker also TS2507
+   go  parses
+   bun accepts
+   lint parses
+"class C extends async function () {} {}" [ts]
+   tsc parses; checker also TS2507 TS2697
+   go  parses
+   bun accepts
+   lint parses
+"class C extends this.B {}" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+   lint parses
+"class C extends B!.D {}" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+   lint parses
+"class C extends B?.D {}" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+   lint parses
+"class C implements I[0], (J), new K, 'a', 1, null, this, { a: 1 }, [L], import('m').N {}" [ts]
+   tsc parses; checker also TS2500
+   go  parses
+   bun accepts
+   lint parses
+"function* g() { class C extends (yield B) {} }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+   lint parses
+"async function f() { class C extends (await B) {} }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+   lint parses
+"function f({ class: c, if: i = 1, static, let, yield, await }) {}" [ts]
+   tsc parses; checker @34+6 TS1212 Identifier expected. 'static' is a reserved word in strict mode.
+   tsc parses; checker @42+3 TS1212 Identifier expected. 'let' is a reserved word in strict mode.
+   tsc parses; checker @47+5 TS1212 Identifier expected. 'yield' is a reserved word in strict mode.
+   go  parses
+   bun accepts
+   lint parses
+"class C { constructor(public\n = 1, private\n: number, readonly\n) {} }" [ts]
+   tsc parses; checker @22+6 TS1213 Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+   tsc parses; checker @35+7 TS1213 Identifier expected. 'private' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+   go  parses
+   bun accepts
+   lint parses
+"class C { 'constructor'?() {} }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+   lint parses
+"class C { @dec() m() {} @a.b @(c) x; m2(@d p) {} }" [ts]
+   tsc parses; checker @40+1 TS1206 Decorators are not valid here.
+   go  parses
+   bun accepts
+   lint parses

@@ -1,0 +1,910 @@
+## parseModifiers: order, repeats, place (checker)
+"class C { public public x; }" [ts]  ||  tsc parses; checker @17+6 TS1028 Accessibility modifier already seen.  ||  bun accepts  ||  lint parses
+"class C { public private x; }" [ts]  ||  tsc parses; checker @17+7 TS1028 Accessibility modifier already seen.  ||  bun accepts  ||  lint parses
+"class C { static static x; }" [ts]  ||  tsc @17+6 TS1434 Unexpected keyword or identifier.  ||  bun @24+1 Expected ";" but found "x"  ||  lint @24+1 Expected ";" but found "x"  => TS1005 @24+1 ';' expected.
+"class C { readonly readonly x; }" [ts]  ||  tsc parses; checker @19+8 TS1030 'readonly' modifier already seen.  ||  bun accepts  ||  lint parses
+"class C { declare declare x; }" [ts]  ||  tsc parses; checker @18+7 TS1030 'declare' modifier already seen.  ||  bun accepts  ||  lint parses
+"abstract class C { abstract abstract x; }" [ts]  ||  tsc parses; checker @28+8 TS1030 'abstract' modifier already seen.  ||  bun @37+1 Expected ";" but found "x"  ||  lint @37+1 Expected ";" but found "x"  => TS1005 @37+1 ';' expected.
+"class C { accessor accessor x; }" [ts]  ||  tsc parses; checker @19+8 TS1030 'accessor' modifier already seen.  ||  bun @28+1 Expected ";" but found "x"  ||  lint @28+1 Expected ";" but found "x"  => TS1005 @28+1 ';' expected.
+"class C { override override x; }" [ts]  ||  tsc parses; checker @19+8 TS1030 'override' modifier already seen.  ||  bun accepts  ||  lint parses
+"class C { async async m() {} }" [ts]  ||  tsc parses; checker @16+5 TS1030 'async' modifier already seen.  ||  bun @22+1 Expected "(" but found "m" / @23+1 Expected identifier but found "("  ||  lint @22+1 Expected "(" but found "m"  => TS1005 @22+1 '(' expected.  (2 messages)
+"class C { static public x; }" [ts]  ||  tsc parses; checker @17+6 TS1029 'public' modifier must precede 'static' modifier.  ||  bun accepts  ||  lint parses
+"class C { readonly public x; }" [ts]  ||  tsc parses; checker @19+6 TS1029 'public' modifier must precede 'readonly' modifier.  ||  bun accepts  ||  lint parses
+"class C { readonly static x; }" [ts]  ||  tsc parses; checker @19+6 TS1029 'static' modifier must precede 'readonly' modifier.  ||  bun accepts  ||  lint parses
+"class C { async public m() {} }" [ts]  ||  tsc parses; checker @16+6 TS1029 'public' modifier must precede 'async' modifier.  ||  bun accepts  ||  lint parses
+"class C { async static m() {} }" [ts]  ||  tsc parses; checker @16+6 TS1029 'static' modifier must precede 'async' modifier.  ||  bun @23+1 Expected "(" but found "m" / @24+1 Expected identifier but found "("  ||  lint @23+1 Expected "(" but found "m"  => TS1005 @23+1 '(' expected.  (2 messages)
+"class C { override public x; }" [ts]  ||  tsc parses; checker @19+6 TS1029 'public' modifier must precede 'override' modifier.  ||  bun accepts  ||  lint parses
+"class C { readonly override x; }" [ts]  ||  tsc parses; checker @19+8 TS1029 'override' modifier must precede 'readonly' modifier.  ||  bun accepts  ||  lint parses
+"class C { accessor static x; }" [ts]  ||  tsc parses; checker @19+6 TS1029 'static' modifier must precede 'accessor' modifier.  ||  bun @26+1 Expected ";" but found "x"  ||  lint @26+1 Expected ";" but found "x"  => TS1005 @26+1 ';' expected.
+"class C { accessor readonly x; }" [ts]  ||  tsc parses; checker @19+8 TS1243 'readonly' modifier cannot be used with 'accessor' modifier.  ||  bun @28+1 Expected ";" but found "x"  ||  lint @28+1 Expected ";" but found "x"  => TS1005 @28+1 ';' expected.
+"class C { readonly accessor x; }" [ts]  ||  tsc parses; checker @19+8 TS1243 'accessor' modifier cannot be used with 'readonly' modifier.  ||  bun accepts  ||  lint parses
+"class C { accessor public x; }" [ts]  ||  tsc parses; checker @19+6 TS1029 'public' modifier must precede 'accessor' modifier.  ||  bun @26+1 Expected ";" but found "x"  ||  lint @26+1 Expected ";" but found "x"  => TS1005 @26+1 ';' expected.
+"class C { accessor declare x; }" [ts]  ||  tsc parses; checker @19+7 TS1243 'declare' modifier cannot be used with 'accessor' modifier.  ||  bun @27+1 Expected ";" but found "x"  ||  lint @27+1 Expected ";" but found "x"  => TS1005 @27+1 ';' expected.
+"class C { declare accessor x; }" [ts]  ||  tsc parses; checker @18+8 TS1243 'accessor' modifier cannot be used with 'declare' modifier.  ||  bun accepts  ||  lint parses
+"class C { accessor override x; }" [ts]  ||  tsc parses; checker @19+8 TS1029 'override' modifier must precede 'accessor' modifier.  ||  bun @28+1 Expected ";" but found "x"  ||  lint @28+1 Expected ";" but found "x"  => TS1005 @28+1 ';' expected.
+"abstract class C { abstract static x; }" [ts]  ||  tsc parses; checker @28+6 TS1243 'static' modifier cannot be used with 'abstract' modifier.  ||  bun accepts  ||  lint parses
+"abstract class C { static abstract x; }" [ts]  ||  tsc parses; checker @26+8 TS1243 'static' modifier cannot be used with 'abstract' modifier.  ||  bun accepts  ||  lint parses
+"abstract class C { abstract private x; }" [ts]  ||  tsc parses; checker @28+7 TS1243 'private' modifier cannot be used with 'abstract' modifier.  ||  bun accepts  ||  lint parses
+"abstract class C { private abstract x; }" [ts]  ||  tsc parses; checker @27+8 TS1243 'private' modifier cannot be used with 'abstract' modifier.  ||  bun accepts  ||  lint parses
+"abstract class C { abstract public x; }" [ts]  ||  tsc parses; checker @28+6 TS1029 'public' modifier must precede 'abstract' modifier.  ||  bun accepts  ||  lint parses
+"abstract class C { abstract override x; }" [ts]  ||  tsc parses; checker also TS4112  ||  bun accepts  ||  lint parses
+"abstract class C { abstract accessor x; }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"abstract class C { abstract async m(); }" [ts]  ||  tsc parses; checker @28+5 TS1243 'async' modifier cannot be used with 'abstract' modifier.  ||  bun accepts  ||  lint parses
+"abstract class C { async abstract m(); }" [ts]  ||  tsc parses; checker @19+5 TS1243 'async' modifier cannot be used with 'abstract' modifier.  ||  bun accepts  ||  lint parses
+"class C { abstract x; }" [ts]  ||  tsc parses; checker @10+8 TS1253 Abstract properties can only appear within an abstract class.  ||  bun accepts  ||  lint parses
+"class C { abstract m(); }" [ts]  ||  tsc parses; checker @10+8 TS1244 Abstract methods can only appear within an abstract class.  ||  bun accepts  ||  lint parses
+"abstract class C { abstract m() {} }" [ts]  ||  tsc parses; checker @28+1 TS1245 Method 'm' cannot have an implementation because it is marked abstract.  ||  bun accepts  ||  lint parses
+"abstract class C { abstract get a() { return 1 } }" [ts]  ||  tsc parses; checker @32+1 TS1318 An abstract accessor cannot have an implementation.  ||  bun accepts  ||  lint parses
+"abstract class C { abstract x = 1; }" [ts]  ||  tsc parses; checker @28+1 TS1267 Property 'x' cannot have an initializer because it is marked abstract.  ||  bun accepts  ||  lint parses
+"abstract class C { abstract #x; }" [ts]  ||  tsc parses; checker @19+8 TS18019 'abstract' modifier cannot be used with a private identifier.  ||  bun accepts  ||  lint parses
+"class C { declare m() {} }" [ts]  ||  tsc parses; checker @10+7 TS1031 'declare' modifier cannot appear on class elements of this kind.  ||  bun accepts  ||  lint parses
+"class C { declare get a() { return 1 } }" [ts]  ||  tsc parses; checker @10+7 TS1031 'declare' modifier cannot appear on class elements of this kind.  ||  bun accepts  ||  lint parses
+"class C { declare #x; }" [ts]  ||  tsc parses; checker @10+7 TS18019 'declare' modifier cannot be used with a private identifier.  ||  bun accepts  ||  lint parses
+"class C { declare x = 1; }" [ts]  ||  tsc parses; checker @22+1 TS1039 Initializers are not allowed in ambient contexts.  ||  bun accepts  ||  lint parses
+"class C { declare async m() {} }" [ts]  ||  tsc parses; checker @10+7 TS1031 'declare' modifier cannot appear on class elements of this kind.  ||  bun accepts  ||  lint parses
+"class C { async declare m() {} }" [ts]  ||  tsc parses; checker @16+7 TS1040 'async' modifier cannot be used in an ambient context.  ||  bun accepts  ||  lint parses
+"class C { declare override x; }" [ts]  ||  tsc parses; checker @18+8 TS1243 'override' modifier cannot be used with 'declare' modifier.  ||  bun accepts  ||  lint parses
+"class C { override declare x; }" [ts]  ||  tsc parses; checker @19+7 TS1040 'override' modifier cannot be used in an ambient context.  ||  bun accepts  ||  lint parses
+"class C { public #x; }" [ts]  ||  tsc parses; checker @10+6 TS18010 An accessibility modifier cannot be used with a private identifier.  ||  bun accepts  ||  lint parses
+"class C { private #x; }" [ts]  ||  tsc parses; checker @10+7 TS18010 An accessibility modifier cannot be used with a private identifier.  ||  bun accepts  ||  lint parses
+"class C { export x; }" [ts]  ||  tsc parses; checker @10+6 TS1031 'export' modifier cannot appear on class elements of this kind.  ||  bun @17+1 Expected ";" but found "x"  ||  lint @17+1 Expected ";" but found "x"  => TS1005 @17+1 ';' expected.
+"class C { export m() {} }" [ts]  ||  tsc parses; checker @10+6 TS1031 'export' modifier cannot appear on class elements of this kind.  ||  bun @17+1 Expected ";" but found "m" / @18+1 Expected identifier but found "("  ||  lint @17+1 Expected ";" but found "m"  => TS1005 @17+1 ';' expected.  (4 messages)
+"class C { default x; }" [ts]  ||  tsc @10+7 TS1434 Unexpected keyword or identifier.  ||  bun @18+1 Expected ";" but found "x"  ||  lint @18+1 Expected ";" but found "x"  => TS1005 @18+1 ';' expected.
+"class C { const x = 1; }" [ts]  ||  tsc parses; checker @16+1 TS1248 A class member cannot have the 'const' keyword.  ||  bun @16+1 Expected ";" but found "x" / @18+1 Expected identifier but found "="  ||  lint @16+1 Expected ";" but found "x"  => TS1005 @16+1 ';' expected.  (2 messages)
+"class C { const\n x = 1; }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { in x; }" [ts]  ||  tsc parses; checker @10+2 TS1274 'in' modifier can only appear on a type parameter of a class, interface or type alias  ||  bun @13+1 Expected ";" but found "x"  ||  lint @13+1 Expected ";" but found "x"  => TS1005 @13+1 ';' expected.
+"class C { out x; }" [ts]  ||  tsc parses; checker @10+3 TS1274 'out' modifier can only appear on a type parameter of a class, interface or type alias  ||  bun @14+1 Expected ";" but found "x"  ||  lint @14+1 Expected ";" but found "x"  => TS1005 @14+1 ';' expected.
+"class C { async x; }" [ts]  ||  tsc parses; checker @10+5 TS1042 'async' modifier cannot be used here.  ||  bun @17+1 Expected "(" but found ";" / @19+1 Expected identifier but found "}"  ||  lint @17+1 Expected "(" but found ";"  => TS1005 @17+1 '(' expected.  (3 messages)
+"class C { async get a() { return 1 } }" [ts]  ||  tsc parses; checker @10+5 TS1042 'async' modifier cannot be used here.  ||  bun @20+1 Expected "(" but found "a" / @21+1 Expected identifier but found "("  ||  lint @20+1 Expected "(" but found "a"  => TS1005 @20+1 '(' expected.  (2 messages)
+"class C { async constructor() {} }" [ts]  ||  tsc parses; checker @10+5 TS1089 'async' modifier cannot appear on a constructor declaration.  ||  bun @16+11 Class constructor cannot be an async function  ||  lint @16+11 Class constructor cannot be an async function  => no code
+"class C { static constructor() {} }" [ts]  ||  tsc parses; checker @10+6 TS1089 'static' modifier cannot appear on a constructor declaration.  ||  bun accepts  ||  lint parses
+"class C { override constructor() {} }" [ts]  ||  tsc parses; checker @10+8 TS1089 'override' modifier cannot appear on a constructor declaration.  ||  bun accepts  ||  lint parses
+"class C { public constructor() {} }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { readonly m() {} }" [ts]  ||  tsc parses; checker @10+8 TS1024 'readonly' modifier can only appear on a property declaration or index signature.  ||  bun accepts  ||  lint parses
+"class C { readonly get a() { return 1 } }" [ts]  ||  tsc parses; checker @10+8 TS1024 'readonly' modifier can only appear on a property declaration or index signature.  ||  bun accepts  ||  lint parses
+"class C { accessor m() {} }" [ts]  ||  tsc parses; checker @10+8 TS1275 'accessor' modifier can only appear on a property declaration.  ||  bun @19+1 auto-accessor properties cannot have a method body  ||  lint @19+1 auto-accessor properties cannot have a method body  => no code
+"class C { accessor get a() { return 1 } }" [ts]  ||  tsc parses; checker @10+8 TS1275 'accessor' modifier can only appear on a property declaration.  ||  bun @23+1 Expected ";" but found "a" / @24+1 Expected identifier but found "("  ||  lint @23+1 Expected ";" but found "a"  => TS1005 @23+1 ';' expected.  (5 messages)
+"class C { accessor constructor() {} }" [ts]  ||  tsc parses; checker @10+8 TS1275 'accessor' modifier can only appear on a property declaration.  ||  bun @19+11 auto-accessor properties cannot have a method body  ||  lint @19+11 auto-accessor properties cannot have a method body  => no code
+"class C { public static {} }" [ts]  ||  tsc parses; checker @10+6 TS1184 Modifiers cannot appear here.  ||  bun accepts  ||  lint parses
+"class C { @dec static {} }" [ts]  ||  tsc parses; checker @10+1 TS1206 Decorators are not valid here.  ||  bun accepts  ||  lint parses
+"class C { async static {} }" [ts]  ||  tsc parses; checker @10+5 TS1184 Modifiers cannot appear here.  ||  bun accepts  ||  lint parses
+"class C { static static {} }" [ts]  ||  tsc parses; checker @10+6 TS1184 Modifiers cannot appear here.  ||  bun accepts  ||  lint parses
+"class C { readonly [k: string]: any; }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { public [k: string]: any; }" [ts]  ||  tsc parses; checker @10+6 TS1071 'public' modifier cannot appear on an index signature.  ||  bun accepts  ||  lint parses
+"class C { static [k: string]: any; }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { declare [k: string]: any; }" [ts]  ||  tsc parses; checker @10+7 TS1071 'declare' modifier cannot appear on an index signature.  ||  bun accepts  ||  lint parses
+"class C { abstract [k: string]: any; }" [ts]  ||  tsc parses; checker @10+8 TS1071 'abstract' modifier cannot appear on an index signature.  ||  bun accepts  ||  lint parses
+"class C { async [k: string]: any; }" [ts]  ||  tsc parses; checker @10+5 TS1071 'async' modifier cannot appear on an index signature.  ||  bun accepts  ||  lint parses
+"class C { @dec [k: string]: any; }" [ts]  ||  tsc parses; checker @10+1 TS1206 Decorators are not valid here.  ||  bun accepts  ||  lint parses
+"class C { accessor [k: string]: any; }" [ts]  ||  tsc parses; checker @10+8 TS1071 'accessor' modifier cannot appear on an index signature.  ||  bun accepts  ||  lint parses
+"class C { override [k: string]: any; }" [ts]  ||  tsc parses; checker @10+8 TS1071 'override' modifier cannot appear on an index signature.  ||  bun accepts  ||  lint parses
+## parseModifiers: a line break or a token that follows no modifier
+"class C { public\n x }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { private\n x = 1 }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { protected\n x: number }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { readonly\n x }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { override\n x }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { static\n x }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { declare\n x }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { abstract\n x }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { accessor\n x }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { async\n m() {} }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { get\n a() { return 1 } }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { set\n a(v) {} }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { public static\n x }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { static public\n x }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { public\n static x }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { public }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { public; static; readonly = 1; declare() {} abstract<T>() {} override?: number; accessor!: number; async: any }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { public ...x }" [ts]  ||  tsc @16+0 TS1146 Declaration expected. (+1)  ||  bun @17+3 Expected ";" but found "..."  ||  lint @17+3 Expected ";" but found "..."  => TS1005 @17+3 ';' expected.
+"class C { public {} }" [ts]  ||  tsc @16+0 TS1146 Declaration expected. (+2)  ||  bun @17+1 Expected ";" but found "{" / @20+1 Unexpected }  ||  lint @17+1 Expected ";" but found "{"  => TS1005 @17+1 ';' expected.  (2 messages)
+"class C { public * g() {} }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { public 1() {} }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { public 'a'() {} }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { public 1n() {} }" [ts]  ||  tsc parses  ||  bun @17+2 Expected ";" but found "1n" / @19+1 Expected identifier but found "("  ||  lint @17+2 Expected ";" but found "1n"  => TS1005 @17+2 ';' expected.  (4 messages)
+"class C { public #p }" [ts]  ||  tsc parses; checker @10+6 TS18010 An accessibility modifier cannot be used with a private identifier.  ||  bun accepts  ||  lint parses
+"class C { public [a] }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { get 1n() { return 1 } }" [ts]  ||  tsc parses  ||  bun @14+2 Expected ";" but found "1n" / @16+1 Expected identifier but found "("  ||  lint @14+2 Expected ";" but found "1n"  => TS1005 @14+2 ';' expected.  (5 messages)
+"class C { set 1n(v) {} }" [ts]  ||  tsc parses  ||  bun @14+2 Expected ";" but found "1n" / @16+1 Expected identifier but found "("  ||  lint @14+2 Expected ";" but found "1n"  => TS1005 @14+2 ';' expected.  (4 messages)
+"class C { static 1n = 1 }" [ts]  ||  tsc parses; checker @17+2 TS1539 A 'bigint' literal cannot be used as a property name.  ||  bun @17+2 Expected ";" but found "1n" / @20+1 Expected identifier but found "="  ||  lint @17+2 Expected ";" but found "1n"  => TS1005 @17+2 ';' expected.  (2 messages)
+"class C { async 1n() {} }" [ts]  ||  tsc parses  ||  bun @16+2 Expected ";" but found "1n" / @18+1 Expected identifier but found "("  ||  lint @16+2 Expected ";" but found "1n"  => TS1005 @16+2 ';' expected.  (4 messages)
+"class C { get *g() {} }" [ts]  ||  tsc @10+3 TS1434 Unexpected keyword or identifier.  ||  bun @14+1 Expected ";" but found "*"  ||  lint @14+1 Expected ";" but found "*"  => TS1005 @14+1 ';' expected.
+"class C { set *g() {} }" [ts]  ||  tsc @10+3 TS1434 Unexpected keyword or identifier.  ||  bun @14+1 Expected ";" but found "*"  ||  lint @14+1 Expected ";" but found "*"  => TS1005 @14+1 ';' expected.
+"class C { static *g() {} }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { async *g() {} }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { * async g() {} }" [ts]  ||  tsc @18+1 TS1005 '(' expected.  ||  bun @18+1 Expected "(" but found "g" / @19+1 Expected identifier but found "("  ||  lint @18+1 Expected "(" but found "g"  => TS1005 @18+1 '(' expected.  (2 messages)
+"class C { * get a() {} }" [ts]  ||  tsc @16+1 TS1005 '(' expected.  ||  bun @16+1 Expected "(" but found "a" / @17+1 Expected identifier but found "("  ||  lint @16+1 Expected "(" but found "a"  => TS1005 @16+1 '(' expected.  (2 messages)
+"class C { * * g() {} }" [ts]  ||  tsc @12+1 TS1003 Identifier expected.  ||  bun @12+1 Unexpected *  ||  lint @12+1 Unexpected *  => no code
+"class C { get get a() { return 1 } }" [ts]  ||  tsc @18+1 TS1005 '(' expected.  ||  bun @18+1 Expected "(" but found "a" / @19+1 Expected identifier but found "("  ||  lint @18+1 Expected "(" but found "a"  => TS1005 @18+1 '(' expected.  (3 messages)
+"class C { get set a() { return 1 } }" [ts]  ||  tsc @18+1 TS1005 '(' expected.  ||  bun @18+1 Expected "(" but found "a" / @19+1 Expected identifier but found "("  ||  lint @18+1 Expected "(" but found "a"  => TS1005 @18+1 '(' expected.  (3 messages)
+"class C { get static a() { return 1 } }" [ts]  ||  tsc @21+1 TS1005 '(' expected.  ||  bun @21+1 Expected "(" but found "a" / @22+1 Expected identifier but found "("  ||  lint @21+1 Expected "(" but found "a"  => TS1005 @21+1 '(' expected.  (3 messages)
+"class C { get public a() { return 1 } }" [ts]  ||  tsc @21+1 TS1005 '(' expected.  ||  bun @21+1 Expected "(" but found "a" / @22+1 Expected identifier but found "("  ||  lint @21+1 Expected "(" but found "a"  => TS1005 @21+1 '(' expected.  (3 messages)
+"class C { get async a() { return 1 } }" [ts]  ||  tsc @20+1 TS1005 '(' expected.  ||  bun @20+1 Expected "(" but found "a" / @21+1 Expected identifier but found "("  ||  lint @20+1 Expected "(" but found "a"  => TS1005 @20+1 '(' expected.  (3 messages)
+"class C { static get static a() { return 1 } }" [ts]  ||  tsc @28+1 TS1005 '(' expected.  ||  bun @28+1 Expected "(" but found "a" / @29+1 Expected identifier but found "("  ||  lint @28+1 Expected "(" but found "a"  => TS1005 @28+1 '(' expected.  (3 messages)
+## parseClassElement: what starts no member, Declaration expected
+"class C { @dec }" [ts]  ||  tsc @14+0 TS1146 Declaration expected.  ||  bun @15+1 Expected identifier but found "}" / @16+0 Expected "}" but found end of file  ||  lint @15+1 Expected identifier but found "}"  => TS1003 @15+1 Identifier expected.  (2 messages)
+"class C { @dec ; }" [ts]  ||  tsc @14+0 TS1146 Declaration expected.  ||  bun @15+1 Expected identifier but found ";" / @18+0 Expected "}" but found end of file  ||  lint @15+1 Expected identifier but found ";"  => TS1003 @15+1 Identifier expected.  (2 messages)
+"class C { @dec @dec2 }" [ts]  ||  tsc @20+0 TS1146 Declaration expected.  ||  bun @21+1 Expected identifier but found "}" / @22+0 Expected "}" but found end of file  ||  lint @21+1 Expected identifier but found "}"  => TS1003 @21+1 Identifier expected.  (2 messages)
+"class C { public @dec x }" [ts]  ||  tsc @17+1 TS1436 Decorators must precede the name and all keywords of property declarations.  ||  bun @17+1 Expected ";" but found "@" / @22+1 Expected ";" but found "x"  ||  lint @17+1 Expected ";" but found "@"  => TS1005 @17+1 ';' expected.  (2 messages)
+"class C { @dec public x }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { public @dec }" [ts]  ||  tsc @17+1 TS1436 Decorators must precede the name and all keywords of property declarations. (+1)  ||  bun @17+1 Expected ";" but found "@"  ||  lint @17+1 Expected ";" but found "@"  => TS1005 @17+1 ';' expected.
+"class C { static @dec x }" [ts]  ||  tsc @17+1 TS1436 Decorators must precede the name and all keywords of property declarations.  ||  bun @17+1 Expected ";" but found "@" / @22+1 Expected ";" but found "x"  ||  lint @17+1 Expected ";" but found "@"  => TS1005 @17+1 ';' expected.  (2 messages)
+"class C { + }" [ts]  ||  tsc @10+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected. (+1)  ||  bun @10+1 Expected identifier but found "+" / @13+0 Expected "}" but found end of file  ||  lint @10+1 Expected identifier but found "+"  => TS1003 @10+1 Identifier expected.  (2 messages)
+"class C { = 1 }" [ts]  ||  tsc @10+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.  ||  bun @10+1 Expected identifier but found "="  ||  lint @10+1 Expected identifier but found "="  => TS1003 @10+1 Identifier expected.
+"class C { ( }" [ts]  ||  tsc @10+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected. (+1)  ||  bun @10+1 Expected identifier but found "(" / @13+0 Expected "}" but found end of file  ||  lint @10+1 Expected identifier but found "("  => TS1003 @10+1 Identifier expected.  (2 messages)
+"class C { ? }" [ts]  ||  tsc @10+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.  ||  bun @10+1 Expected identifier but found "?" / @13+0 Expected "}" but found end of file  ||  lint @10+1 Expected identifier but found "?"  => TS1003 @10+1 Identifier expected.  (2 messages)
+"class C { ! }" [ts]  ||  tsc @10+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected. (+1)  ||  bun @10+1 Expected identifier but found "!" / @13+0 Expected "}" but found end of file  ||  lint @10+1 Expected identifier but found "!"  => TS1003 @10+1 Identifier expected.  (2 messages)
+"class C { . }" [ts]  ||  tsc @10+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.  ||  bun @10+1 Expected identifier but found "." / @13+0 Expected "}" but found end of file  ||  lint @10+1 Expected identifier but found "."  => TS1003 @10+1 Identifier expected.  (2 messages)
+"class C { , }" [ts]  ||  tsc @10+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.  ||  bun @10+1 Expected identifier but found "," / @13+0 Expected "}" but found end of file  ||  lint @10+1 Expected identifier but found ","  => TS1003 @10+1 Identifier expected.  (2 messages)
+"class C { => }" [ts]  ||  tsc @10+2 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.  ||  bun @10+2 Expected identifier but found "=>" / @14+0 Expected "}" but found end of file  ||  lint @10+2 Expected identifier but found "=>"  => TS1003 @10+2 Identifier expected.  (2 messages)
+"class C { < }" [ts]  ||  tsc @10+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected. (+1)  ||  bun @10+1 Expected identifier but found "<" / @13+0 Expected "}" but found end of file  ||  lint @10+1 Expected identifier but found "<"  => TS1003 @10+1 Identifier expected.  (2 messages)
+"class C { ... }" [ts]  ||  tsc @10+3 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.  ||  bun @10+3 Expected identifier but found "..." / @15+0 Expected "}" but found end of file  ||  lint @10+3 Expected identifier but found "..."  => TS1003 @10+3 Identifier expected.  (2 messages)
+"class C { var x; }" [ts]  ||  tsc @10+3 TS1068 Unexpected token. A constructor, method, accessor, or property was expected. (+1)  ||  bun @14+1 Expected ";" but found "x"  ||  lint @14+1 Expected ";" but found "x"  => TS1005 @14+1 ';' expected.
+"class C { let x; }" [ts]  ||  tsc @10+3 TS1068 Unexpected token. A constructor, method, accessor, or property was expected. (+1)  ||  bun @14+1 Expected ";" but found "x"  ||  lint @14+1 Expected ";" but found "x"  => TS1005 @14+1 ';' expected.
+"class C { function f() {} }" [ts]  ||  tsc @10+8 TS1068 Unexpected token. A constructor, method, accessor, or property was expected. (+1)  ||  bun @19+1 Expected ";" but found "f" / @20+1 Expected identifier but found "("  ||  lint @19+1 Expected ";" but found "f"  => TS1005 @19+1 ';' expected.  (4 messages)
+"class C { class D {} }" [ts]  ||  tsc @10+5 TS1068 Unexpected token. A constructor, method, accessor, or property was expected. (+1)  ||  bun @16+1 Expected ";" but found "D" / @18+1 Expected identifier but found "{"  ||  lint @16+1 Expected ";" but found "D"  => TS1005 @16+1 ';' expected.  (2 messages)
+"class C { if (x) {} }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { return; }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { x y }" [ts]  ||  tsc @10+1 TS1434 Unexpected keyword or identifier.  ||  bun @12+1 Expected ";" but found "y"  ||  lint @12+1 Expected ";" but found "y"  => TS1005 @12+1 ';' expected.
+"class C { x; y z }" [ts]  ||  tsc @13+1 TS1434 Unexpected keyword or identifier.  ||  bun @15+1 Expected ";" but found "z"  ||  lint @15+1 Expected ";" but found "z"  => TS1005 @15+1 ';' expected.
+"class C { 1 2 }" [ts]  ||  tsc @12+1 TS1005 ';' expected.  ||  bun @12+1 Expected ";" but found "2"  ||  lint @12+1 Expected ";" but found "2"  => TS1005 @12+1 ';' expected.
+"class C { 'a' b }" [ts]  ||  tsc @14+1 TS1005 ';' expected.  ||  bun @14+1 Expected ";" but found "b"  ||  lint @14+1 Expected ";" but found "b"  => TS1005 @14+1 ';' expected.
+"class C { [a] b }" [ts]  ||  tsc @14+1 TS1005 ';' expected.  ||  bun @14+1 Expected ";" but found "b"  ||  lint @14+1 Expected ";" but found "b"  => TS1005 @14+1 ';' expected.
+"class C { #a b }" [ts]  ||  tsc @13+1 TS1005 ';' expected.  ||  bun @13+1 Expected ";" but found "b"  ||  lint @13+1 Expected ";" but found "b"  => TS1005 @13+1 ';' expected.
+"class C { static static x }" [ts]  ||  tsc @17+6 TS1434 Unexpected keyword or identifier.  ||  bun @24+1 Expected ";" but found "x"  ||  lint @24+1 Expected ";" but found "x"  => TS1005 @24+1 ';' expected.
+"class C { typ x }" [ts]  ||  tsc @10+3 TS1435 Unknown keyword or identifier. Did you mean 'type'?  ||  bun @14+1 Expected ";" but found "x"  ||  lint @14+1 Expected ";" but found "x"  => TS1005 @14+1 ';' expected.
+"class C { functio f() {} }" [ts]  ||  tsc @10+7 TS1435 Unknown keyword or identifier. Did you mean 'function'?  ||  bun @18+1 Expected ";" but found "f" / @19+1 Expected identifier but found "("  ||  lint @18+1 Expected ";" but found "f"  => TS1005 @18+1 ';' expected.  (4 messages)
+"class C { declare }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { type x }" [ts]  ||  tsc @10+4 TS1068 Unexpected token. A constructor, method, accessor, or property was expected. (+1)  ||  bun @15+1 Expected ";" but found "x"  ||  lint @15+1 Expected ";" but found "x"  => TS1005 @15+1 ';' expected.
+"class C { interface x }" [ts]  ||  tsc @10+9 TS1068 Unexpected token. A constructor, method, accessor, or property was expected. (+1)  ||  bun @20+1 Expected ";" but found "x"  ||  lint @20+1 Expected ";" but found "x"  => TS1005 @20+1 ';' expected.
+"class C { x is y }" [ts]  ||  tsc @10+1 TS1434 Unexpected keyword or identifier. (+2)  ||  bun @12+2 Expected ";" but found "is"  ||  lint @12+2 Expected ";" but found "is"  => TS1005 @12+2 ';' expected.
+## parsePropertyDeclaration and parseSemicolonAfterPropertyName
+"class C { x! }" [ts]  ||  tsc parses; checker @11+1 TS1264 Declarations with definite assignment assertions must also have type annotations.  ||  bun accepts  ||  lint parses
+"class C { x!: number }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { x!: number = 1 }" [ts]  ||  tsc parses; checker @11+1 TS1263 Declarations with initializers cannot also have definite assignment assertions.  ||  bun accepts  ||  lint parses
+"class C { x! = 1 }" [ts]  ||  tsc parses; checker @11+1 TS1263 Declarations with initializers cannot also have definite assignment assertions.  ||  bun accepts  ||  lint parses
+"class C { static x!: number }" [ts]  ||  tsc parses; checker @18+1 TS1255 A definite assignment assertion '!' is not permitted in this context.  ||  bun accepts  ||  lint parses
+"class C { x\n!: number }" [ts]  ||  tsc @12+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected. (+2)  ||  bun @12+1 Expected identifier but found "!" / @15+6 Expected ";" but found "number"  ||  lint @12+1 Expected identifier but found "!"  => TS1003 @12+1 Identifier expected.  (2 messages)
+"class C { x?!: number }" [ts]  ||  tsc @10+1 TS1434 Unexpected keyword or identifier. (+2)  ||  bun @12+1 Expected ";" but found "!" / @13+1 Expected identifier but found ":"  ||  lint @12+1 Expected ";" but found "!"  => TS1005 @12+1 ';' expected.  (2 messages)
+"class C { x!?: number }" [ts]  ||  tsc @10+1 TS1434 Unexpected keyword or identifier. (+2)  ||  bun @12+1 Expected ";" but found "?" / @13+1 Expected identifier but found ":"  ||  lint @12+1 Expected ";" but found "?"  => TS1005 @12+1 ';' expected.  (2 messages)
+"class C { x?? }" [ts]  ||  tsc @10+1 TS1434 Unexpected keyword or identifier. (+2)  ||  bun @11+2 Expected ";" but found "??"  ||  lint @11+2 Expected ";" but found "??"  => TS1005 @11+2 ';' expected.
+"class C { x?: number }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { x? }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { x? = 1 }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { accessor x?: number }" [ts]  ||  tsc parses; checker @20+1 TS1276 An 'accessor' property cannot be declared optional.  ||  bun accepts  ||  lint parses
+"class C { accessor x!: number }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { x!() {} }" [ts]  ||  tsc @12+1 TS1441 Cannot start a function call in a type annotation. (+2)  ||  bun accepts  ||  lint parses
+"class C { x!<T>() {} }" [ts]  ||  tsc @10+1 TS1434 Unexpected keyword or identifier. (+2)  ||  bun @12+1 Expected ";" but found "<" / @14+1 Expected ";" but found ">"  ||  lint @12+1 Expected ";" but found "<"  => TS1005 @12+1 ';' expected.  (5 messages)
+"class C { x?() {} }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { x?<T>(): void }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { x: number() }" [ts]  ||  tsc @19+1 TS1441 Cannot start a function call in a type annotation. (+1)  ||  bun @19+1 Expected ";" but found "(" / @20+1 Expected identifier but found ")"  ||  lint @19+1 Expected ";" but found "("  => TS1005 @19+1 ';' expected.  (3 messages)
+"class C { x = 1() }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { x() }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { x: number = }" [ts]  ||  tsc @22+1 TS1109 Expression expected.  ||  bun @22+1 Unexpected }  ||  lint @22+1 Unexpected }  => TS1109 @22+1 Expression expected.
+"class C { x = }" [ts]  ||  tsc @14+1 TS1109 Expression expected.  ||  bun @14+1 Unexpected }  ||  lint @14+1 Unexpected }  => TS1109 @14+1 Expression expected.
+"class C { x: }" [ts]  ||  tsc @13+1 TS1110 Type expected.  ||  bun @13+1 Unexpected }  ||  lint @13+1 Unexpected }  => TS1110 @13+1 Type expected.
+"class C { x: number y }" [ts]  ||  tsc @20+1 TS1442 Expected '=' for property initializer.  ||  bun @20+1 Expected ";" but found "y"  ||  lint @20+1 Expected ";" but found "y"  => TS1005 @20+1 ';' expected.
+"class C { x = 1 y }" [ts]  ||  tsc @16+1 TS1005 ';' expected.  ||  bun @16+1 Expected ";" but found "y"  ||  lint @16+1 Expected ";" but found "y"  => TS1005 @16+1 ';' expected.
+"class C { x = 1, y = 2 }" [ts]  ||  tsc @15+1 TS1005 ';' expected.  ||  bun @15+1 Expected ";" but found ","  ||  lint @15+1 Expected ";" but found ","  => TS1005 @15+1 ';' expected.
+"class C { x, y }" [ts]  ||  tsc @10+1 TS1434 Unexpected keyword or identifier. (+1)  ||  bun @11+1 Expected ";" but found ","  ||  lint @11+1 Expected ";" but found ","  => TS1005 @11+1 ';' expected.
+"class C { x: number, y: string }" [ts]  ||  tsc @19+1 TS1442 Expected '=' for property initializer.  ||  bun @19+1 Expected ";" but found ","  ||  lint @19+1 Expected ";" but found ","  => TS1005 @19+1 ';' expected.
+"class C { x = yield }" [ts]  ||  tsc parses; checker @14+5 TS1213 Identifier expected. 'yield' is a reserved word in strict mode. Class definitions are automatically in strict mode.  ||  bun scan accepts; transform @14+5 "yield" is a reserved word and cannot be used in strict mode  ||  lint parses
+"class C { x = await 1 }" [ts]  ||  tsc parses; checker @14+5 TS1308 'await' expressions are only allowed within async functions and at the top levels of modules.  ||  bun accepts  ||  lint @20+1 "await" can only be used inside an "async" function  => no code
+"async function f() { class C { x = await 1 } }" [ts]  ||  tsc parses; checker @35+5 TS1308 'await' expressions are only allowed within async functions and at the top levels of modules.  ||  bun accepts  ||  lint parses
+"function* g() { class C { x = yield 1 } }" [ts]  ||  tsc parses; checker @30+5 TS1163 A 'yield' expression is only allowed in a generator body.  ||  bun accepts  ||  lint parses
+"class C { x = 1 in y }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { [a, b] = 1 }" [ts]  ||  tsc @17+1 TS1005 ';' expected.  ||  bun @17+1 Expected ";" but found "="  ||  lint @17+1 Expected ";" but found "="  => TS1005 @17+1 ';' expected.
+"class C { [a, b]() {} }" [ts]  ||  tsc @16+1 TS1005 ';' expected. (+2)  ||  bun @16+1 Expected ";" but found "(" / @17+1 Expected identifier but found ")"  ||  lint @16+1 Expected ";" but found "("  => TS1005 @16+1 ';' expected.  (3 messages)
+"class C { [a = 1] }" [ts]  ||  tsc parses; checker @10+7 TS1166 A computed property name in a class property declaration must have a simple literal type or a 'unique symbol' type.  ||  bun accepts  ||  lint parses
+"class C { [] }" [ts]  ||  tsc parses; checker @10+2 TS1096 An index signature must have exactly one parameter.  ||  bun accepts  ||  lint parses
+"class C { []: number }" [ts]  ||  tsc parses; checker @10+10 TS1096 An index signature must have exactly one parameter.  ||  bun accepts  ||  lint parses
+"class C { [...a]: number }" [ts]  ||  tsc parses; checker @11+3 TS1017 An index signature cannot have a rest parameter.  ||  bun accepts  ||  lint parses
+"class C { [a?]: number }" [ts]  ||  tsc parses; checker @12+1 TS1019 An index signature parameter cannot have a question mark.  ||  bun accepts  ||  lint parses
+"class C { [a?: string]: number }" [ts]  ||  tsc parses; checker @12+1 TS1019 An index signature parameter cannot have a question mark.  ||  bun accepts  ||  lint parses
+"class C { [public a: string]: number }" [ts]  ||  tsc parses; checker @18+1 TS1018 An index signature parameter cannot have an accessibility modifier.  ||  bun @18+1 Expected "]" but found "a" / @27+1 Expected ";" but found "]"  ||  lint @18+1 Expected "]" but found "a"  => TS1005 @18+1 ']' expected.  (3 messages)
+"class C { [a: string, b: number]: any }" [ts]  ||  tsc parses; checker @11+1 TS1096 An index signature must have exactly one parameter.  ||  bun accepts  ||  lint parses
+"class C { [a: string,]: any }" [ts]  ||  tsc parses; checker @20+1 TS1025 An index signature cannot have a trailing comma.  ||  bun accepts  ||  lint parses
+"class C { [a: string] }" [ts]  ||  tsc parses; checker @10+11 TS1021 An index signature must have a type annotation.  ||  bun accepts  ||  lint parses
+"class C { [a: string]: }" [ts]  ||  tsc @23+1 TS1110 Type expected.  ||  bun @23+1 Unexpected }  ||  lint @23+1 Unexpected }  => TS1110 @23+1 Type expected.
+"class C { [a: string]: any = 1 }" [ts]  ||  tsc @27+1 TS1005 ';' expected.  ||  bun @27+1 Expected ";" but found "="  ||  lint @27+1 Expected ";" but found "="  => TS1005 @27+1 ';' expected.
+"class C { [a: string]?: any }" [ts]  ||  tsc @21+1 TS1005 ';' expected. (+1)  ||  bun @21+1 Expected ";" but found "?" / @22+1 Expected identifier but found ":"  ||  lint @21+1 Expected ";" but found "?"  => TS1005 @21+1 ';' expected.  (2 messages)
+"class C { [a: string]!: any }" [ts]  ||  tsc @21+1 TS1005 ';' expected. (+2)  ||  bun @21+1 Expected ";" but found "!" / @22+1 Expected identifier but found ":"  ||  lint @21+1 Expected ";" but found "!"  => TS1005 @21+1 ';' expected.  (2 messages)
+"class C { [a: string](): any }" [ts]  ||  tsc @21+1 TS1005 ';' expected. (+1)  ||  bun @21+1 Expected ";" but found "(" / @22+1 Expected identifier but found ")"  ||  lint @21+1 Expected ";" but found "("  => TS1005 @21+1 ';' expected.  (3 messages)
+"class C { [a: string]: any, [b: number]: any }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { [a = 1: string]: any }" [ts]  ||  tsc @16+1 TS1005 ']' expected. (+2)  ||  bun @16+1 Expected "]" but found ":" / @18+6 Expected ";" but found "string"  ||  lint @16+1 Expected "]" but found ":"  => TS1005 @16+1 ']' expected.  (4 messages)
+"class C { [a: string = 1]: any }" [ts]  ||  tsc parses; checker @11+1 TS1020 An index signature parameter cannot have an initializer.  ||  bun accepts  ||  lint parses
+"class C { [k!: string]: any }" [ts]  ||  tsc @13+1 TS1005 ']' expected. (+2)  ||  bun accepts  ||  lint parses
+"class C { [(k): string]: any }" [ts]  ||  tsc @14+1 TS1005 ']' expected. (+2)  ||  bun @14+1 Expected "]" but found ":" / @16+6 Expected ";" but found "string"  ||  lint @14+1 Expected "]" but found ":"  => TS1005 @14+1 ']' expected.  (4 messages)
+"class C { [k as any: string]: any }" [ts]  ||  tsc @19+1 TS1005 ']' expected. (+2)  ||  bun accepts  ||  lint parses
+"class C { [<T>k: string]: any }" [ts]  ||  tsc @15+1 TS1005 ']' expected. (+2)  ||  bun @15+1 Expected "]" but found ":" / @17+6 Expected ";" but found "string"  ||  lint @15+1 Expected "]" but found ":"  => TS1005 @15+1 ']' expected.  (4 messages)
+"class C { [k<T>: string]: any }" [ts]  ||  tsc @15+1 TS1005 ']' expected. (+2)  ||  bun accepts  ||  lint parses
+"class C { get [k: string]: any }" [ts]  ||  tsc @16+1 TS1005 ']' expected. (+2)  ||  bun accepts  ||  lint parses
+"class C { set [k: string]: any }" [ts]  ||  tsc @16+1 TS1005 ']' expected. (+2)  ||  bun accepts  ||  lint parses
+"class C { * [k: string]: any }" [ts]  ||  tsc @14+1 TS1005 ']' expected. (+2)  ||  bun accepts  ||  lint parses
+"class C { async [k: string]: any }" [ts]  ||  tsc parses; checker @10+5 TS1071 'async' modifier cannot appear on an index signature.  ||  bun accepts  ||  lint parses
+"class C { static * [k: string]: any }" [ts]  ||  tsc @21+1 TS1005 ']' expected. (+2)  ||  bun accepts  ||  lint parses
+"class C { static get [k: string]: any }" [ts]  ||  tsc @23+1 TS1005 ']' expected. (+2)  ||  bun accepts  ||  lint parses
+"class C { get []: any }" [ts]  ||  tsc @15+1 TS1109 Expression expected. (+1)  ||  bun accepts  ||  lint parses
+"class C { * [...a]: any }" [ts]  ||  tsc @13+3 TS1109 Expression expected. (+2)  ||  bun accepts  ||  lint parses
+"class C { [this: string]: any }" [ts]  ||  tsc @15+1 TS1005 ']' expected. (+2)  ||  bun @15+1 Expected "]" but found ":" / @17+6 Expected ";" but found "string"  ||  lint @15+1 Expected "]" but found ":"  => TS1005 @15+1 ']' expected.  (4 messages)
+"class C { [await: string]: any }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { [yield: string]: any }" [ts]  ||  tsc parses; checker @11+5 TS1213 Identifier expected. 'yield' is a reserved word in strict mode. Class definitions are automatically in strict mode.  ||  bun accepts  ||  lint parses
+"class C { [k: string]\n: any }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+## parseMethodDeclaration, accessors, constructors
+"class C { m }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { m( }" [ts]  ||  tsc @13+1 TS1138 Parameter declaration expected.  ||  bun @13+1 Expected identifier but found "}" / @14+0 Expected ")" but found end of file  ||  lint @13+1 Expected identifier but found "}"  => TS1003 @13+1 Identifier expected.  (2 messages)
+"class C { m() }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { m();\n m() {} }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { m() => 1 }" [ts]  ||  tsc @14+2 TS1144 '{' or ';' expected.  ||  bun @14+2 Expected ";" but found "=>"  ||  lint @14+2 Expected ";" but found "=>"  => TS1005 @14+2 ';' expected.
+"class C { m(): }" [ts]  ||  tsc @15+1 TS1110 Type expected.  ||  bun @15+1 Unexpected }  ||  lint @15+1 Unexpected }  => TS1110 @15+1 Type expected.
+"class C { m<>() {} }" [ts]  ||  tsc parses; checker @11+2 TS1098 Type parameter list cannot be empty.  ||  bun @12+1 Expected identifier but found ">" / @13+1 Expected ">" but found "("  ||  lint parses
+"class C { m<T,>() {} }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { *m(); }" [ts]  ||  tsc parses; checker @10+1 TS1222 An overload signature cannot be declared as a generator.  ||  bun accepts  ||  lint parses
+"class C { async m(); }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { get a() }" [ts]  ||  tsc parses; checker @16+1 TS1005 '{' expected.  ||  bun accepts  ||  lint parses
+"class C { get a(); }" [ts]  ||  tsc parses; checker @17+1 TS1005 '{' expected.  ||  bun accepts  ||  lint parses
+"class C { set a(v) }" [ts]  ||  tsc parses; checker @17+1 TS1005 '{' expected.  ||  bun accepts  ||  lint parses
+"class C { get a }" [ts]  ||  tsc @16+1 TS1005 '(' expected.  ||  bun @16+1 Expected "(" but found "}" / @17+0 Expected identifier but found end of file  ||  lint @16+1 Expected "(" but found "}"  => TS1005 @16+1 '(' expected.  (2 messages)
+"class C { get a = 1 }" [ts]  ||  tsc @16+1 TS1005 '(' expected.  ||  bun @16+1 Expected "(" but found "=" / @18+1 Expected identifier but found "1"  ||  lint @16+1 Expected "(" but found "="  => TS1005 @16+1 '(' expected.  (4 messages)
+"class C { get a: number }" [ts]  ||  tsc @15+1 TS1005 '(' expected.  ||  bun @15+1 Expected "(" but found ":" / @24+1 Expected ")" but found "}"  ||  lint @15+1 Expected "(" but found ":"  => TS1005 @15+1 '(' expected.  (3 messages)
+"class C { get a<T>() { return 1 } }" [ts]  ||  tsc parses; checker @14+1 TS1094 An accessor cannot have type parameters.  ||  bun accepts  ||  lint parses
+"class C { set a<T>(v) {} }" [ts]  ||  tsc parses; checker @14+1 TS1094 An accessor cannot have type parameters.  ||  bun accepts  ||  lint parses
+"class C { get a(x) { return 1 } }" [ts]  ||  tsc parses; checker @14+1 TS1054 A 'get' accessor cannot have parameters.  ||  bun @16+1 Getter a must have zero arguments  ||  lint @16+1 Getter a must have zero arguments  => no code
+"class C { get a(this: C) { return 1 } }" [ts]  ||  tsc parses; checker also TS2784  ||  bun accepts  ||  lint parses
+"class C { get a(this: C, x) { return 1 } }" [ts]  ||  tsc parses; checker @14+1 TS1054 A 'get' accessor cannot have parameters.  ||  bun @25+1 Getter a must have zero arguments  ||  lint @25+1 Getter a must have zero arguments  => no code
+"class C { set a() {} }" [ts]  ||  tsc parses; checker @14+1 TS1049 A 'set' accessor must have exactly one parameter.  ||  bun @15+0 Setter a must have exactly 1 argument (there are 0)  ||  lint @15+0 Setter a must have exactly 1 argument (there are 0)  => no code
+"class C { set a(x, y) {} }" [ts]  ||  tsc parses; checker @14+1 TS1049 A 'set' accessor must have exactly one parameter.  ||  bun @19+1 Setter a must have exactly 1 argument (there are 2)  ||  lint @19+1 Setter a must have exactly 1 argument (there are 2)  => no code
+"class C { set a(this: C, x) {} }" [ts]  ||  tsc parses; checker also TS2784  ||  bun accepts  ||  lint parses
+"class C { set a(...x) {} }" [ts]  ||  tsc parses; checker @16+3 TS1053 A 'set' accessor cannot have rest parameter.  ||  bun accepts  ||  lint parses
+"class C { set a(x?) {} }" [ts]  ||  tsc parses; checker @17+1 TS1051 A 'set' accessor cannot have an optional parameter.  ||  bun accepts  ||  lint parses
+"class C { set a(x = 1) {} }" [ts]  ||  tsc parses; checker @14+1 TS1052 A 'set' accessor parameter cannot have an initializer.  ||  bun accepts  ||  lint parses
+"class C { set a(x): void {} }" [ts]  ||  tsc parses; checker @14+1 TS1095 A 'set' accessor cannot have a return type annotation.  ||  bun accepts  ||  lint parses
+"class C { get a?() { return 1 } }" [ts]  ||  tsc @15+1 TS1005 '(' expected. (+2)  ||  bun accepts  ||  lint parses
+"class C { set a?(v) {} }" [ts]  ||  tsc @15+1 TS1005 '(' expected. (+2)  ||  bun accepts  ||  lint parses
+"class C { get a!() { return 1 } }" [ts]  ||  tsc @15+1 TS1005 '(' expected. (+2)  ||  bun @15+1 Expected "(" but found "!" / @16+1 Expected identifier but found "("  ||  lint @15+1 Expected "(" but found "!"  => TS1005 @15+1 '(' expected.  (3 messages)
+"class C { static get a?() { return 1 } }" [ts]  ||  tsc @22+1 TS1005 '(' expected. (+2)  ||  bun accepts  ||  lint parses
+"class C { get #a?() { return 1 } }" [ts]  ||  tsc @16+1 TS1005 '(' expected. (+2)  ||  bun accepts  ||  lint parses
+"class C { get [a]?() { return 1 } }" [ts]  ||  tsc @17+1 TS1005 '(' expected. (+2)  ||  bun accepts  ||  lint parses
+"class C { get 'a'?() { return 1 } }" [ts]  ||  tsc @17+1 TS1005 '(' expected. (+2)  ||  bun accepts  ||  lint parses
+"class C { constructor }" [ts]  ||  tsc @22+1 TS1005 '(' expected.  ||  bun @10+11 Invalid field name  ||  lint @10+11 Invalid field name  => no code
+"class C { constructor; }" [ts]  ||  tsc @21+1 TS1005 '(' expected.  ||  bun @10+11 Invalid field name  ||  lint @10+11 Invalid field name  => no code
+"class C { constructor = 1 }" [ts]  ||  tsc @22+1 TS1005 '(' expected.  ||  bun @10+11 Invalid field name  ||  lint @10+11 Invalid field name  => no code
+"class C { constructor: number }" [ts]  ||  tsc @21+1 TS1005 '(' expected.  ||  bun @10+11 Invalid field name  ||  lint @10+11 Invalid field name  => no code
+"class C { constructor?() {} }" [ts]  ||  tsc @21+1 TS1005 '(' expected. (+2)  ||  bun accepts  ||  lint parses
+"class C { constructor!() {} }" [ts]  ||  tsc @21+1 TS1005 '(' expected. (+2)  ||  bun accepts  ||  lint parses
+"class C { constructor?: number }" [ts]  ||  tsc @21+1 TS1005 '(' expected. (+1)  ||  bun @10+11 Invalid field name  ||  lint @10+11 Invalid field name  => no code
+"class C { constructor<T>() {} }" [ts]  ||  tsc parses; checker @22+1 TS1092 Type parameters cannot appear on a constructor declaration.  ||  bun accepts  ||  lint parses
+"class C { constructor(): void {} }" [ts]  ||  tsc parses; checker @25+4 TS1093 Type annotation cannot appear on a constructor declaration.  ||  bun accepts  ||  lint parses
+"class C { constructor(): C; constructor() {} }" [ts]  ||  tsc parses; checker @25+1 TS1093 Type annotation cannot appear on a constructor declaration.  ||  bun accepts  ||  lint parses
+"class C { constructor();\n constructor() {} }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { 'constructor' }" [ts]  ||  tsc parses; checker @10+13 TS18006 Classes may not have a field named 'constructor'.  ||  bun @10+13 Invalid field name  ||  lint @10+13 Invalid field name  => no code
+"class C { 'constructor' = 1 }" [ts]  ||  tsc parses; checker @10+13 TS18006 Classes may not have a field named 'constructor'.  ||  bun @10+13 Invalid field name  ||  lint @10+13 Invalid field name  => no code
+"class C { 'constructor'() {} }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { 'constructor'?() {} }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { 'constructor'!() {} }" [ts]  ||  tsc @24+1 TS1441 Cannot start a function call in a type annotation. (+2)  ||  bun accepts  ||  lint parses
+"class C { 'constructor'<T>() {} }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { \"constructor\": number }" [ts]  ||  tsc parses; checker @10+13 TS18006 Classes may not have a field named 'constructor'.  ||  bun @10+13 Invalid field name  ||  lint @10+13 Invalid field name  => no code
+"class C { static constructor }" [ts]  ||  tsc @29+1 TS1005 '(' expected.  ||  bun @17+11 Invalid field name  ||  lint @17+11 Invalid field name  => no code
+"class C { static 'constructor'() {} }" [ts]  ||  tsc parses; checker @10+6 TS1089 'static' modifier cannot appear on a constructor declaration.  ||  bun accepts  ||  lint parses
+"class C { get constructor() { return 1 } }" [ts]  ||  tsc parses; checker @14+11 TS1341 Class constructor may not be an accessor.  ||  bun @14+11 Class constructor cannot be a getter  ||  lint @14+11 Class constructor cannot be a getter  => no code
+"class C { set constructor(v) {} }" [ts]  ||  tsc parses; checker @14+11 TS1341 Class constructor may not be an accessor.  ||  bun @14+11 Class constructor cannot be a setter  ||  lint @14+11 Class constructor cannot be a setter  => no code
+"class C { *constructor() {} }" [ts]  ||  tsc parses; checker @11+11 TS1368 Class constructor may not be a generator.  ||  bun @11+11 Class constructor cannot be a generator function  ||  lint @11+11 Class constructor cannot be a generator function  => no code
+"class C { async constructor() {} }" [ts]  ||  tsc parses; checker @10+5 TS1089 'async' modifier cannot appear on a constructor declaration.  ||  bun @16+11 Class constructor cannot be an async function  ||  lint @16+11 Class constructor cannot be an async function  => no code
+"class C { async *constructor() {} }" [ts]  ||  tsc parses; checker @17+11 TS1368 Class constructor may not be a generator.  ||  bun @17+11 Class constructor cannot be an async function  ||  lint @17+11 Class constructor cannot be an async function  => no code
+"class C { get 'constructor'() { return 1 } }" [ts]  ||  tsc parses  ||  bun @14+13 Class constructor cannot be a getter  ||  lint @14+13 Class constructor cannot be a getter  => no code
+"class C { constructor() {} constructor() {} }" [ts]  ||  tsc parses; checker also TS2392  ||  bun accepts  ||  lint parses
+"class C { #constructor }" [ts]  ||  tsc parses; checker @10+12 TS18012 '#constructor' is a reserved word.  ||  bun @10+12 Invalid field name "#constructor"  ||  lint @10+12 Invalid field name "#constructor"  => no code
+"class C { #constructor() {} }" [ts]  ||  tsc parses; checker @10+12 TS18012 '#constructor' is a reserved word.  ||  bun @10+12 Invalid method name "#constructor"  ||  lint @10+12 Invalid method name "#constructor"  => no code
+"class C { static prototype }" [ts]  ||  tsc parses; checker also TS2699  ||  bun @17+9 Invalid field name  ||  lint @17+9 Invalid field name  => no code
+"class C { static prototype() {} }" [ts]  ||  tsc parses; checker also TS2699  ||  bun @17+9 Invalid static method name "prototype"  ||  lint @17+9 Invalid static method name "prototype"  => no code
+"class C { static 'prototype' = 1 }" [ts]  ||  tsc parses; checker also TS2699  ||  bun @17+11 Invalid field name  ||  lint @17+11 Invalid field name  => no code
+"class C { static get prototype() { return 1 } }" [ts]  ||  tsc parses; checker also TS2699  ||  bun @21+9 Invalid static method name "prototype"  ||  lint @21+9 Invalid static method name "prototype"  => no code
+"class C { prototype }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { @dec constructor() {} }" [ts]  ||  tsc parses; checker @10+1 TS1206 Decorators are not valid here.  ||  bun @10+0 TypeScript does not allow decorators on class constructors  ||  lint @10+0 TypeScript does not allow decorators on class constructors  => no code
+"class C { @dec get a() { return 1 } @dec set a(v) {} }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { @dec m(); m() {} }" [ts]  ||  tsc parses; checker @10+1 TS1249 A decorator can only decorate a method implementation, not an overload.  ||  bun accepts  ||  lint parses
+"class C { m(): void\n n(): void {} }" [ts]  ||  tsc parses; checker also TS2389  ||  bun accepts  ||  lint parses
+"class C { m()\n {} }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { static { await 1 } }" [ts]  ||  tsc parses; checker @19+7 TS18037 'await' expression cannot be used inside a class static block.  ||  bun @19+5 The keyword "await" cannot be used here / @25+1 Expected ";" but found "1"  ||  lint @19+5 The keyword "await" cannot be used here  => no code  (2 messages)
+"class C { static { return } }" [ts]  ||  tsc parses; checker @19+6 TS18041 A 'return' statement cannot be used inside a class static block.  ||  bun @19+6 A return statement cannot be used here  ||  lint @19+6 A return statement cannot be used here  => no code
+"class C { static { yield } }" [ts]  ||  tsc parses; checker @19+5 TS1213 Identifier expected. 'yield' is a reserved word in strict mode. Class definitions are automatically in strict mode.  ||  bun scan accepts; transform @19+5 "yield" is a reserved word and cannot be used in strict mode  ||  lint parses
+"class C { static { arguments } }" [ts]  ||  tsc parses  ||  bun scan accepts; transform @19+9 Cannot access "arguments" here  ||  lint parses
+"class C { static {} {} }" [ts]  ||  tsc @20+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected. (+1)  ||  bun @20+1 Expected identifier but found "{"  ||  lint @20+1 Expected identifier but found "{"  => TS1003 @20+1 Identifier expected.
+"class C { static\n{} }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { static async {} }" [ts]  ||  tsc @22+0 TS1146 Declaration expected. (+2)  ||  bun @23+1 Expected ";" but found "{" / @26+1 Unexpected }  ||  lint @23+1 Expected ";" but found "{"  => TS1005 @23+1 ';' expected.  (2 messages)
+## parseParameter and parseParameters
+"function f(this) {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"function f(this: T) {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"function f(a, this: T) {}" [ts]  ||  tsc parses; checker also TS2680  ||  bun accepts  ||  lint parses
+"function f(this: T, this: U) {}" [ts]  ||  tsc parses; checker also TS2680  ||  bun accepts  ||  lint parses
+"function f(this?: T) {}" [ts]  ||  tsc @15+1 TS1005 ',' expected.  ||  bun @15+1 Expected ")" but found "?" / @19+1 Expected ";" but found ")"  ||  lint @15+1 Expected ")" but found "?"  => TS1005 @15+1 ')' expected.  (2 messages)
+"function f(this = 1) {}" [ts]  ||  tsc @16+1 TS1005 ',' expected. (+1)  ||  bun @16+1 Expected ")" but found "=" / @18+1 Expected ";" but found "1"  ||  lint @16+1 Expected ")" but found "="  => TS1005 @16+1 ')' expected.  (3 messages)
+"function f(...this) {}" [ts]  ||  tsc @14+4 TS1359 Identifier expected. 'this' is a reserved word that cannot be used here.  ||  bun @14+4 Expected identifier but found "this"  ||  lint @14+4 Expected identifier but found "this"  => TS1359 @14+4 Identifier expected. 'this' is a reserved word that cannot be used here.
+"function f(public this) {}" [ts]  ||  tsc @11+6 TS1433 Neither decorators nor modifiers may be applied to 'this' parameters.  ||  bun @18+4 Expected ")" but found "this" / @22+1 Expected ";" but found ")"  ||  lint @18+4 Expected ")" but found "this"  => TS1005 @18+4 ')' expected.  (2 messages)
+"function f(readonly this: T) {}" [ts]  ||  tsc @11+8 TS1433 Neither decorators nor modifiers may be applied to 'this' parameters.  ||  bun @20+4 Expected ")" but found "this" / @27+1 Expected ";" but found ")"  ||  lint @20+4 Expected ")" but found "this"  => TS1005 @20+4 ')' expected.  (2 messages)
+"class C { m(@dec this) {} }" [ts]  ||  tsc @12+4 TS1433 Neither decorators nor modifiers may be applied to 'this' parameters.  ||  bun @17+4 Expected identifier but found "this"  ||  lint @17+4 Expected identifier but found "this"  => TS1359 @17+4 Identifier expected. 'this' is a reserved word that cannot be used here.
+"class C { m(@dec this: C) {} }" [ts]  ||  tsc @12+4 TS1433 Neither decorators nor modifiers may be applied to 'this' parameters.  ||  bun @17+4 Expected identifier but found "this"  ||  lint @17+4 Expected identifier but found "this"  => TS1359 @17+4 Identifier expected. 'this' is a reserved word that cannot be used here.
+"class C { constructor(public this) {} }" [ts]  ||  tsc @22+6 TS1433 Neither decorators nor modifiers may be applied to 'this' parameters.  ||  bun @29+4 Expected ")" but found "this" / @33+1 Expected ";" but found ")"  ||  lint @29+4 Expected ")" but found "this"  => TS1005 @29+4 ')' expected.  (3 messages)
+"function f(this,) {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"const a = (this) => 1;" [ts]  ||  tsc parses; checker also TS2730  ||  bun @11+0 Invalid binding pattern  ||  lint @11+0 Invalid binding pattern  => no code
+"const a = (this: T) => 1;" [ts]  ||  tsc parses; checker also TS2730  ||  bun @11+0 Invalid binding pattern  ||  lint @11+0 Invalid binding pattern  => no code
+"const a = function (this: T) {};" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"function f(...a, b) {}" [ts]  ||  tsc parses; checker @11+3 TS1014 A rest parameter must be last in a parameter list.  ||  bun @15+1 Expected ")" but found "," / @17+1 Expected ")" but found "b"  ||  lint @15+1 Expected ")" but found ","  => TS1005 @15+1 ')' expected.  (3 messages)
+"function f(...a,) {}" [ts]  ||  tsc parses; checker @15+1 TS1013 A rest parameter or binding pattern may not have a trailing comma.  ||  bun @15+1 Expected ")" but found ","  ||  lint @15+1 Expected ")" but found ","  => TS1005 @15+1 ')' expected.
+"function f(...a = 1) {}" [ts]  ||  tsc parses; checker @14+1 TS1048 A rest parameter cannot have an initializer.  ||  bun @16+1 Expected ")" but found "=" / @18+1 Expected ";" but found "1"  ||  lint @16+1 Expected ")" but found "="  => TS1005 @16+1 ')' expected.  (3 messages)
+"function f(...a?) {}" [ts]  ||  tsc parses; checker @15+1 TS1047 A rest parameter cannot be optional.  ||  bun accepts  ||  lint parses
+"function f(...a?: T[]) {}" [ts]  ||  tsc parses; checker @15+1 TS1047 A rest parameter cannot be optional.  ||  bun accepts  ||  lint parses
+"function f(...a: T[] = []) {}" [ts]  ||  tsc parses; checker @14+1 TS1048 A rest parameter cannot have an initializer.  ||  bun @21+1 Expected ")" but found "=" / @23+1 Expected ";" but found "["  ||  lint @21+1 Expected ")" but found "="  => TS1005 @21+1 ')' expected.  (3 messages)
+"function f(......a) {}" [ts]  ||  tsc @14+3 TS1003 Identifier expected.  ||  bun @14+3 Expected identifier but found "..." / @17+1 Expected ")" but found "a"  ||  lint @14+3 Expected identifier but found "..."  => TS1003 @14+3 Identifier expected.  (3 messages)
+"function f(... ...a) {}" [ts]  ||  tsc @15+3 TS1003 Identifier expected.  ||  bun @15+3 Expected identifier but found "..." / @18+1 Expected ")" but found "a"  ||  lint @15+3 Expected identifier but found "..."  => TS1003 @15+3 Identifier expected.  (3 messages)
+"function f(...{ a }) {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"function f(...[a]) {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"declare function f(...a, b);" [ts]  ||  tsc parses; checker @19+3 TS1014 A rest parameter must be last in a parameter list.  ||  bun @25+1 Expected ")" but found "b" / @26+1 Expected ";" but found ")"  ||  lint @25+1 Expected ")" but found "b"  => TS1005 @25+1 ')' expected.  (2 messages)
+"declare function f(...a,);" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"declare class C { m(...a,); }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { m(...a,); m(...a) {} }" [ts]  ||  tsc parses; checker @16+1 TS1013 A rest parameter or binding pattern may not have a trailing comma.  ||  bun accepts  ||  lint parses
+"class C { m(...a,) {} }" [ts]  ||  tsc parses; checker @16+1 TS1013 A rest parameter or binding pattern may not have a trailing comma.  ||  bun @16+1 Expected ")" but found ","  ||  lint @16+1 Expected ")" but found ","  => TS1005 @16+1 ')' expected.
+"function f(a?, b) {}" [ts]  ||  tsc parses; checker @15+1 TS1016 A required parameter cannot follow an optional parameter.  ||  bun accepts  ||  lint parses
+"function f(a? = 1) {}" [ts]  ||  tsc parses; checker @11+1 TS1015 Parameter cannot have question mark and initializer.  ||  bun accepts  ||  lint parses
+"function f(a?: number = 1) {}" [ts]  ||  tsc parses; checker @11+1 TS1015 Parameter cannot have question mark and initializer.  ||  bun accepts  ||  lint parses
+"function f(a = 1?) {}" [ts]  ||  tsc @17+1 TS1109 Expression expected.  ||  bun @17+1 Unexpected )  ||  lint @17+1 Unexpected )  => TS1109 @17+1 Expression expected.
+"function f(a: number?) {}" [ts]  ||  tsc parses; checker @14+7 TS17019 '?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'number'?  ||  bun @20+1 Expected ")" but found "?" / @21+1 Expected ";" but found ")"  ||  lint @20+1 Expected ")" but found "?"  => TS1005 @20+1 ')' expected.  (2 messages)
+"function f(a!) {}" [ts]  ||  tsc @12+1 TS1005 ',' expected.  ||  bun @12+1 Expected ")" but found "!" / @13+1 Expected ";" but found ")"  ||  lint @12+1 Expected ")" but found "!"  => TS1005 @12+1 ')' expected.  (2 messages)
+"function f(a!: number) {}" [ts]  ||  tsc @12+1 TS1005 ',' expected. (+1)  ||  bun @12+1 Expected ")" but found "!" / @21+1 Expected ";" but found ")"  ||  lint @12+1 Expected ")" but found "!"  => TS1005 @12+1 ')' expected.  (2 messages)
+"function f(a?!) {}" [ts]  ||  tsc @13+1 TS1005 ',' expected.  ||  bun @13+1 Expected ")" but found "!" / @14+1 Expected ";" but found ")"  ||  lint @13+1 Expected ")" but found "!"  => TS1005 @13+1 ')' expected.  (2 messages)
+"function f(a??) {}" [ts]  ||  tsc @12+2 TS1005 ',' expected. (+1)  ||  bun @12+2 Expected ")" but found "??" / @14+1 Expected ";" but found ")"  ||  lint @12+2 Expected ")" but found "??"  => TS1005 @12+2 ')' expected.  (2 messages)
+"function f(a = 1: number) {}" [ts]  ||  tsc @16+1 TS1005 ',' expected.  ||  bun @16+1 Expected ")" but found ":" / @18+6 Expected ";" but found "number"  ||  lint @16+1 Expected ")" but found ":"  => TS1005 @16+1 ')' expected.  (3 messages)
+"function f(a: number = 1 = 2) {}" [ts]  ||  tsc parses; checker also TS2364  ||  bun scan accepts; transform @23+0 Invalid assignment target  ||  lint parses
+"function f(a, a) {}" [ts]  ||  tsc parses  ||  bun scan accepts; transform @14+1 "a" cannot be bound multiple times in the same parameter list  ||  lint parses
+"function f(a,, b) {}" [ts]  ||  tsc @13+1 TS1138 Parameter declaration expected.  ||  bun @13+1 Expected identifier but found "," / @15+1 Expected ")" but found "b"  ||  lint @13+1 Expected identifier but found ","  => TS1003 @13+1 Identifier expected.  (3 messages)
+"function f(, a) {}" [ts]  ||  tsc @11+1 TS1138 Parameter declaration expected.  ||  bun @11+1 Expected identifier but found "," / @13+1 Expected ")" but found "a"  ||  lint @11+1 Expected identifier but found ","  => TS1003 @11+1 Identifier expected.  (3 messages)
+"function f(a,) {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"function f(a b) {}" [ts]  ||  tsc @13+1 TS1005 ',' expected.  ||  bun @13+1 Expected ")" but found "b" / @14+1 Expected ";" but found ")"  ||  lint @13+1 Expected ")" but found "b"  => TS1005 @13+1 ')' expected.  (2 messages)
+"function f(a; b) {}" [ts]  ||  tsc @12+1 TS1005 ',' expected.  ||  bun @12+1 Expected ")" but found ";" / @14+1 Expected ";" but found "b"  ||  lint @12+1 Expected ")" but found ";"  => TS1005 @12+1 ')' expected.  (3 messages)
+"function f(a {}" [ts]  ||  tsc @13+1 TS1005 ',' expected. (+1)  ||  bun @13+1 Expected ")" but found "{" / @14+1 Unexpected }  ||  lint @13+1 Expected ")" but found "{"  => TS1005 @13+1 ')' expected.  (2 messages)
+"function f(1) {}" [ts]  ||  tsc @11+1 TS1003 Identifier expected.  ||  bun @11+1 Expected identifier but found "1"  ||  lint @11+1 Expected identifier but found "1"  => TS1003 @11+1 Identifier expected.
+"function f('a') {}" [ts]  ||  tsc @11+3 TS1003 Identifier expected.  ||  bun @11+3 Expected identifier but found "'a'"  ||  lint @11+3 Expected identifier but found "'a'"  => TS1003 @11+3 Identifier expected.
+"function f(a.b) {}" [ts]  ||  tsc @12+1 TS1005 ',' expected.  ||  bun @12+1 Expected ")" but found "." / @13+1 Expected ";" but found "b"  ||  lint @12+1 Expected ")" but found "."  => TS1005 @12+1 ')' expected.  (3 messages)
+"function f(#a) {}" [ts]  ||  tsc @11+2 TS18009 Private identifiers cannot be used as parameters.  ||  bun @11+2 Expected identifier but found "#a"  ||  lint @11+2 Expected identifier but found "#a"  => TS1003 @11+2 Identifier expected.
+"function f(class) {}" [ts]  ||  tsc @11+5 TS1390 'class' is not allowed as a parameter name. (+1)  ||  bun @11+5 Expected identifier but found "class"  ||  lint @11+5 Expected identifier but found "class"  => TS1359 @11+5 Identifier expected. 'class' is a reserved word that cannot be used here.
+"function f(if) {}" [ts]  ||  tsc @11+2 TS1390 'if' is not allowed as a parameter name. (+1)  ||  bun @11+2 Expected identifier but found "if"  ||  lint @11+2 Expected identifier but found "if"  => TS1359 @11+2 Identifier expected. 'if' is a reserved word that cannot be used here.
+"function f(enum) {}" [ts]  ||  tsc @11+4 TS1390 'enum' is not allowed as a parameter name. (+1)  ||  bun @11+4 Expected identifier but found "enum"  ||  lint @11+4 Expected identifier but found "enum"  => TS1359 @11+4 Identifier expected. 'enum' is a reserved word that cannot be used here.
+"function f(null) {}" [ts]  ||  tsc @11+4 TS1359 Identifier expected. 'null' is a reserved word that cannot be used here.  ||  bun @11+4 Expected identifier but found "null"  ||  lint @11+4 Expected identifier but found "null"  => TS1359 @11+4 Identifier expected. 'null' is a reserved word that cannot be used here.
+"function f(void) {}" [ts]  ||  tsc @11+4 TS1359 Identifier expected. 'void' is a reserved word that cannot be used here.  ||  bun @11+4 Expected identifier but found "void"  ||  lint @11+4 Expected identifier but found "void"  => TS1359 @11+4 Identifier expected. 'void' is a reserved word that cannot be used here.
+"function f(static) {}" [ts]  ||  tsc parses; checker @11+6 TS1212 Identifier expected. 'static' is a reserved word in strict mode.  ||  bun accepts  ||  lint parses
+"function f(public) {}" [ts]  ||  tsc parses; checker @11+6 TS1212 Identifier expected. 'public' is a reserved word in strict mode.  ||  bun accepts  ||  lint parses
+"function f(let) {}" [ts]  ||  tsc parses; checker @11+3 TS1212 Identifier expected. 'let' is a reserved word in strict mode.  ||  bun accepts  ||  lint parses
+"function f(yield) {}" [ts]  ||  tsc parses; checker @11+5 TS1212 Identifier expected. 'yield' is a reserved word in strict mode.  ||  bun accepts  ||  lint parses
+"function f(await) {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"async function f(await) {}" [ts]  ||  tsc parses; checker @17+5 TS1359 Identifier expected. 'await' is a reserved word that cannot be used here.  ||  bun @17+5 Cannot use "yield" or "await" here.  ||  lint @17+5 Cannot use "yield" or "await" here.  => no code
+"function* g(yield) {}" [ts]  ||  tsc parses; checker @12+5 TS1212 Identifier expected. 'yield' is a reserved word in strict mode.  ||  bun @12+5 Cannot use "yield" or "await" here.  ||  lint @12+5 Cannot use "yield" or "await" here.  => no code
+"function f(async) {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"function f(of) {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"function f(type) {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"function f(@dec a) {}" [ts]  ||  tsc parses; checker @11+1 TS1206 Decorators are not valid here.  ||  bun @11+1 Expected identifier but found "@" / @12+3 Expected ")" but found "dec"  ||  lint @11+1 Expected identifier but found "@"  => TS1003 @11+1 Identifier expected.  (4 messages)
+"function f(public a) {}" [ts]  ||  tsc parses; checker also TS2369  ||  bun accepts  ||  lint parses
+"function f(private a: number) {}" [ts]  ||  tsc parses; checker also TS2369  ||  bun accepts  ||  lint parses
+"function f(readonly a) {}" [ts]  ||  tsc parses; checker also TS2369  ||  bun accepts  ||  lint parses
+"function f(override a) {}" [ts]  ||  tsc parses; checker also TS2369  ||  bun accepts  ||  lint parses
+"function f(public\n a) {}" [ts]  ||  tsc @19+1 TS1005 ',' expected.  ||  bun @19+1 Expected ")" but found "a" / @20+1 Expected ";" but found ")"  ||  lint @19+1 Expected ")" but found "a"  => TS1005 @19+1 ')' expected.  (2 messages)
+"function f(static a) {}" [ts]  ||  tsc parses; checker @11+6 TS1090 'static' modifier cannot appear on a parameter.  ||  bun @18+1 Expected ")" but found "a" / @19+1 Expected ";" but found ")"  ||  lint @18+1 Expected ")" but found "a"  => TS1005 @18+1 ')' expected.  (2 messages)
+"function f(declare a) {}" [ts]  ||  tsc parses; checker @11+7 TS1090 'declare' modifier cannot appear on a parameter.  ||  bun @19+1 Expected ")" but found "a" / @20+1 Expected ";" but found ")"  ||  lint @19+1 Expected ")" but found "a"  => TS1005 @19+1 ')' expected.  (2 messages)
+"function f(abstract a) {}" [ts]  ||  tsc parses; checker @11+8 TS1242 'abstract' modifier can only appear on a class, method, or property declaration.  ||  bun @20+1 Expected ")" but found "a" / @21+1 Expected ";" but found ")"  ||  lint @20+1 Expected ")" but found "a"  => TS1005 @20+1 ')' expected.  (2 messages)
+"function f(async a) {}" [ts]  ||  tsc parses; checker @11+5 TS1090 'async' modifier cannot appear on a parameter.  ||  bun @17+1 Expected ")" but found "a" / @18+1 Expected ";" but found ")"  ||  lint @17+1 Expected ")" but found "a"  => TS1005 @17+1 ')' expected.  (2 messages)
+"function f(export a) {}" [ts]  ||  tsc parses; checker @11+6 TS1090 'export' modifier cannot appear on a parameter.  ||  bun @11+6 Expected identifier but found "export" / @18+1 Expected ")" but found "a"  ||  lint @11+6 Expected identifier but found "export"  => TS1359 @11+6 Identifier expected. 'export' is a reserved word that cannot be used here.  (3 messages)
+"function f(accessor a) {}" [ts]  ||  tsc parses; checker @11+8 TS1275 'accessor' modifier can only appear on a property declaration.  ||  bun @20+1 Expected ")" but found "a" / @21+1 Expected ";" but found ")"  ||  lint @20+1 Expected ")" but found "a"  => TS1005 @20+1 ')' expected.  (2 messages)
+"function f(const a) {}" [ts]  ||  tsc @11+5 TS1359 Identifier expected. 'const' is a reserved word that cannot be used here. (+1)  ||  bun @11+5 Expected identifier but found "const" / @17+1 Expected ")" but found "a"  ||  lint @11+5 Expected identifier but found "const"  => TS1359 @11+5 Identifier expected. 'const' is a reserved word that cannot be used here.  (3 messages)
+"function f(in a) {}" [ts]  ||  tsc parses; checker @11+2 TS1274 'in' modifier can only appear on a type parameter of a class, interface or type alias  ||  bun @11+2 Expected identifier but found "in" / @14+1 Expected ")" but found "a"  ||  lint @11+2 Expected identifier but found "in"  => TS1359 @11+2 Identifier expected. 'in' is a reserved word that cannot be used here.  (3 messages)
+"function f(out a) {}" [ts]  ||  tsc parses; checker @11+3 TS1274 'out' modifier can only appear on a type parameter of a class, interface or type alias  ||  bun @15+1 Expected ")" but found "a" / @16+1 Expected ";" but found ")"  ||  lint @15+1 Expected ")" but found "a"  => TS1005 @15+1 ')' expected.  (2 messages)
+"function f(default a) {}" [ts]  ||  tsc @11+7 TS1359 Identifier expected. 'default' is a reserved word that cannot be used here. (+1)  ||  bun @11+7 Expected identifier but found "default" / @19+1 Expected ")" but found "a"  ||  lint @11+7 Expected identifier but found "default"  => TS1359 @11+7 Identifier expected. 'default' is a reserved word that cannot be used here.  (3 messages)
+"function f(public public a) {}" [ts]  ||  tsc parses; checker @18+6 TS1028 Accessibility modifier already seen.  ||  bun accepts  ||  lint parses
+"function f(public private a) {}" [ts]  ||  tsc parses; checker @18+7 TS1028 Accessibility modifier already seen.  ||  bun accepts  ||  lint parses
+"function f(readonly public a) {}" [ts]  ||  tsc parses; checker @20+6 TS1029 'public' modifier must precede 'readonly' modifier.  ||  bun accepts  ||  lint parses
+"function f(public readonly a) {}" [ts]  ||  tsc parses; checker also TS2369  ||  bun accepts  ||  lint parses
+"function f(public {a}) {}" [ts]  ||  tsc parses; checker @11+10 TS1187 A parameter property may not be declared using a binding pattern.  ||  bun @18+1 Expected ")" but found "{" / @19+1 Expected ";" but found "a"  ||  lint @18+1 Expected ")" but found "{"  => TS1005 @18+1 ')' expected.  (3 messages)
+"function f(public [a]) {}" [ts]  ||  tsc parses; checker @11+10 TS1187 A parameter property may not be declared using a binding pattern.  ||  bun @18+1 Expected ")" but found "[" / @19+1 Expected ";" but found "a"  ||  lint @18+1 Expected ")" but found "["  => TS1005 @18+1 ')' expected.  (3 messages)
+"function f(public ...a) {}" [ts]  ||  tsc parses; checker @11+11 TS1317 A parameter property cannot be declared using a rest parameter.  ||  bun @18+3 Expected ")" but found "..." / @21+1 Expected ";" but found "a"  ||  lint @18+3 Expected ")" but found "..."  => TS1005 @18+3 ')' expected.  (3 messages)
+"function f(...public a) {}" [ts]  ||  tsc @21+1 TS1005 ',' expected.  ||  bun @21+1 Expected ")" but found "a" / @22+1 Expected ";" but found ")"  ||  lint @21+1 Expected ")" but found "a"  => TS1005 @21+1 ')' expected.  (2 messages)
+"function f(public a?) {}" [ts]  ||  tsc parses; checker also TS2369  ||  bun accepts  ||  lint parses
+"function f(public = 1) {}" [ts]  ||  tsc parses; checker @11+6 TS1212 Identifier expected. 'public' is a reserved word in strict mode.  ||  bun accepts  ||  lint parses
+"function f(public: number) {}" [ts]  ||  tsc parses; checker @11+6 TS1212 Identifier expected. 'public' is a reserved word in strict mode.  ||  bun accepts  ||  lint parses
+"function f(public, private) {}" [ts]  ||  tsc parses; checker @11+6 TS1212 Identifier expected. 'public' is a reserved word in strict mode.  ||  bun accepts  ||  lint parses
+"function f(readonly) {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"function f(readonly: number, override?: string) {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { constructor(public a) {} }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { constructor(public\n a) {} }" [ts]  ||  tsc @30+1 TS1005 ',' expected.  ||  bun accepts  ||  lint parses
+"class C { constructor(readonly\n a) {} }" [ts]  ||  tsc @32+1 TS1005 ',' expected.  ||  bun accepts  ||  lint parses
+"class C { constructor(public readonly\n a) {} }" [ts]  ||  tsc @39+1 TS1005 ',' expected.  ||  bun accepts  ||  lint parses
+"class C { constructor(public public a) {} }" [ts]  ||  tsc parses; checker @29+6 TS1028 Accessibility modifier already seen.  ||  bun accepts  ||  lint parses
+"class C { constructor(public private a) {} }" [ts]  ||  tsc parses; checker @29+7 TS1028 Accessibility modifier already seen.  ||  bun accepts  ||  lint parses
+"class C { constructor(readonly readonly a) {} }" [ts]  ||  tsc parses; checker @31+8 TS1030 'readonly' modifier already seen.  ||  bun accepts  ||  lint parses
+"class C { constructor(readonly public a) {} }" [ts]  ||  tsc parses; checker @31+6 TS1029 'public' modifier must precede 'readonly' modifier.  ||  bun accepts  ||  lint parses
+"class C { constructor(override readonly a) {} }" [ts]  ||  tsc parses; checker also TS4112  ||  bun accepts  ||  lint parses
+"class C { constructor(readonly override a) {} }" [ts]  ||  tsc parses; checker @31+8 TS1029 'override' modifier must precede 'readonly' modifier.  ||  bun accepts  ||  lint parses
+"class C { constructor(static a) {} }" [ts]  ||  tsc parses; checker @22+6 TS1090 'static' modifier cannot appear on a parameter.  ||  bun @29+1 Expected ")" but found "a" / @30+1 Expected ";" but found ")"  ||  lint @29+1 Expected ")" but found "a"  => TS1005 @29+1 ')' expected.  (3 messages)
+"class C { constructor(declare a) {} }" [ts]  ||  tsc parses; checker @22+7 TS1090 'declare' modifier cannot appear on a parameter.  ||  bun @30+1 Expected ")" but found "a" / @31+1 Expected ";" but found ")"  ||  lint @30+1 Expected ")" but found "a"  => TS1005 @30+1 ')' expected.  (3 messages)
+"class C { constructor(abstract a) {} }" [ts]  ||  tsc parses; checker @22+8 TS1242 'abstract' modifier can only appear on a class, method, or property declaration.  ||  bun @31+1 Expected ")" but found "a" / @32+1 Expected ";" but found ")"  ||  lint @31+1 Expected ")" but found "a"  => TS1005 @31+1 ')' expected.  (3 messages)
+"class C { constructor(async a) {} }" [ts]  ||  tsc parses; checker @22+5 TS1090 'async' modifier cannot appear on a parameter.  ||  bun @28+1 Expected ")" but found "a" / @29+1 Expected ";" but found ")"  ||  lint @28+1 Expected ")" but found "a"  => TS1005 @28+1 ')' expected.  (3 messages)
+"class C { constructor(export a) {} }" [ts]  ||  tsc parses; checker @22+6 TS1090 'export' modifier cannot appear on a parameter.  ||  bun @22+6 Expected identifier but found "export" / @29+1 Expected ")" but found "a"  ||  lint @22+6 Expected identifier but found "export"  => TS1359 @22+6 Identifier expected. 'export' is a reserved word that cannot be used here.  (4 messages)
+"class C { constructor(accessor a) {} }" [ts]  ||  tsc parses; checker @22+8 TS1275 'accessor' modifier can only appear on a property declaration.  ||  bun @31+1 Expected ")" but found "a" / @32+1 Expected ";" but found ")"  ||  lint @31+1 Expected ")" but found "a"  => TS1005 @31+1 ')' expected.  (3 messages)
+"class C { constructor(const a) {} }" [ts]  ||  tsc @22+5 TS1359 Identifier expected. 'const' is a reserved word that cannot be used here. (+1)  ||  bun @22+5 Expected identifier but found "const" / @28+1 Expected ")" but found "a"  ||  lint @22+5 Expected identifier but found "const"  => TS1359 @22+5 Identifier expected. 'const' is a reserved word that cannot be used here.  (4 messages)
+"class C { constructor(public {a}) {} }" [ts]  ||  tsc parses; checker @22+10 TS1187 A parameter property may not be declared using a binding pattern.  ||  bun @29+1 Expected identifier but found "{" / @31+1 Expected ")" but found "}"  ||  lint @29+1 Expected identifier but found "{"  => TS1003 @29+1 Identifier expected.  (4 messages)
+"class C { constructor(public [a]) {} }" [ts]  ||  tsc parses; checker @22+10 TS1187 A parameter property may not be declared using a binding pattern.  ||  bun @29+1 Expected identifier but found "[" / @31+1 Expected ")" but found "]"  ||  lint @29+1 Expected identifier but found "["  => TS1003 @29+1 Identifier expected.  (4 messages)
+"class C { constructor(public ...a) {} }" [ts]  ||  tsc parses; checker @22+11 TS1317 A parameter property cannot be declared using a rest parameter.  ||  bun @29+3 Expected ")" but found "..." / @32+1 Expected ";" but found "a"  ||  lint @29+3 Expected ")" but found "..."  => TS1005 @29+3 ')' expected.  (4 messages)
+"class C { constructor(...public a) {} }" [ts]  ||  tsc @32+1 TS1005 ',' expected.  ||  bun accepts  ||  lint parses
+"class C { constructor(public a?) {} }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { constructor(public a!) {} }" [ts]  ||  tsc @30+1 TS1005 ',' expected.  ||  bun @30+1 Expected ")" but found "!" / @31+1 Expected ";" but found ")"  ||  lint @30+1 Expected ")" but found "!"  => TS1005 @30+1 ')' expected.  (3 messages)
+"class C { constructor(public a = 1) {} }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { constructor(public) {} }" [ts]  ||  tsc parses; checker @22+6 TS1213 Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode.  ||  bun accepts  ||  lint parses
+"class C { constructor(public = 1) {} }" [ts]  ||  tsc parses; checker @22+6 TS1213 Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode.  ||  bun accepts  ||  lint parses
+"class C { constructor(public: number) {} }" [ts]  ||  tsc parses; checker @22+6 TS1213 Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode.  ||  bun accepts  ||  lint parses
+"class C { constructor(public, private) {} }" [ts]  ||  tsc parses; checker @22+6 TS1213 Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode.  ||  bun accepts  ||  lint parses
+"class C { constructor(public?: number) {} }" [ts]  ||  tsc parses; checker @22+6 TS1213 Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode.  ||  bun accepts  ||  lint parses
+"class C { constructor(@dec public a) {} }" [ts]  ||  tsc parses; checker @22+1 TS1206 Decorators are not valid here.  ||  bun accepts  ||  lint parses
+"class C { constructor(public @dec a) {} }" [ts]  ||  tsc @29+1 TS1005 ',' expected.  ||  bun @29+1 Expected ")" but found "@" / @30+3 Expected ";" but found "dec"  ||  lint @29+1 Expected ")" but found "@"  => TS1005 @29+1 ')' expected.  (4 messages)
+"class C { constructor(public a); constructor(a) {} }" [ts]  ||  tsc parses; checker also TS2369  ||  bun accepts  ||  lint parses
+"class C { m(public a) {} }" [ts]  ||  tsc parses; checker also TS2369  ||  bun accepts  ||  lint parses
+"class C { m(public\n a) {} }" [ts]  ||  tsc @20+1 TS1005 ',' expected.  ||  bun @20+1 Expected ")" but found "a" / @21+1 Expected ";" but found ")"  ||  lint @20+1 Expected ")" but found "a"  => TS1005 @20+1 ')' expected.  (3 messages)
+"class C { set s(public a) {} }" [ts]  ||  tsc parses; checker also TS2369  ||  bun accepts  ||  lint parses
+"declare class C { constructor(public a); }" [ts]  ||  tsc parses; checker also TS2369  ||  bun accepts  ||  lint parses
+"const o = { m(public a) {} };" [ts]  ||  tsc parses; checker also TS2369  ||  bun accepts  ||  lint parses
+"const a = (public a) => 1;" [ts]  ||  tsc parses; checker also TS2369  ||  bun @18+1 Expected ")" but found "a" / @19+1 Expected ";" but found ")"  ||  lint @18+1 Expected ")" but found "a"  => TS1005 @18+1 ')' expected.  (3 messages)
+"const a = (public) => 1;" [ts]  ||  tsc parses; checker @11+6 TS1212 Identifier expected. 'public' is a reserved word in strict mode.  ||  bun accepts  ||  lint parses
+"const a = (readonly a: number) => 1;" [ts]  ||  tsc parses; checker also TS2369  ||  bun @20+1 Expected ")" but found "a" / @21+1 Expected ";" but found ":"  ||  lint @20+1 Expected ")" but found "a"  => TS1005 @20+1 ')' expected.  (4 messages)
+"const a = function (public a) {};" [ts]  ||  tsc parses; checker also TS2369  ||  bun accepts  ||  lint parses
+"type F = (public a: number) => void;" [ts]  ||  tsc parses; checker also TS2369  ||  bun accepts  ||  lint parses
+"type F = new (public a: number) => C;" [ts]  ||  tsc parses; checker also TS2369  ||  bun accepts  ||  lint parses
+"interface I { m(public a): void }" [ts]  ||  tsc parses; checker also TS2369  ||  bun accepts  ||  lint parses
+"interface I { new (public a): I }" [ts]  ||  tsc parses; checker also TS2369  ||  bun accepts  ||  lint parses
+"interface I { (public a): void }" [ts]  ||  tsc parses; checker also TS2369  ||  bun accepts  ||  lint parses
+"type F = (this: T, a) => void;" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"type F = (a, this: T) => void;" [ts]  ||  tsc parses; checker also TS2680  ||  bun accepts  ||  lint parses
+"type F = (...a, b) => void;" [ts]  ||  tsc parses; checker @10+3 TS1014 A rest parameter must be last in a parameter list.  ||  bun accepts  ||  lint parses
+"type F = (a?, b) => void;" [ts]  ||  tsc parses; checker @14+1 TS1016 A required parameter cannot follow an optional parameter.  ||  bun accepts  ||  lint parses
+"type F = (a = 1) => void;" [ts]  ||  tsc parses; checker also TS2371  ||  bun accepts  ||  lint parses
+"type F = (...this) => void;" [ts]  ||  tsc @13+4 TS1359 Identifier expected. 'this' is a reserved word that cannot be used here.  ||  bun accepts  ||  lint parses
+"type F = (@dec a) => void;" [ts]  ||  tsc @10+1 TS1110 Type expected. (+2)  ||  bun @10+1 Unexpected @ / @11+3 Expected ";" but found "dec"  ||  lint @10+1 Unexpected @  => TS1110 @10+1 Type expected.  (4 messages)
+## binding patterns of a parameter
+"function f({ a }) {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"function f({ a, }) {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"function f({ a: b }) {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"function f({ a = 1 }) {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"function f({ a: b = 1 }) {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"function f({ ...a }) {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"function f({ ...a, }) {}" [ts]  ||  tsc parses; checker @17+1 TS1013 A rest parameter or binding pattern may not have a trailing comma.  ||  bun @17+1 Unexpected "," after rest pattern  ||  lint @17+1 Unexpected "," after rest pattern  => no code
+"function f({ ...a, b }) {}" [ts]  ||  tsc parses; checker also TS2462  ||  bun @17+1 Unexpected "," after rest pattern  ||  lint @17+1 Unexpected "," after rest pattern  => no code
+"function f({ ...{ a } }) {}" [ts]  ||  tsc @16+1 TS1003 Identifier expected.  ||  bun @16+1 Expected identifier but found "{" / @18+1 Expected "}" but found "a"  ||  lint @16+1 Expected identifier but found "{"  => TS1003 @16+1 Identifier expected.  (4 messages)
+"function f({ ...[a] }) {}" [ts]  ||  tsc @20+1 TS1005 ':' expected.  ||  bun @16+1 Expected identifier but found "[" / @17+1 Expected "}" but found "a"  ||  lint @16+1 Expected identifier but found "["  => TS1003 @16+1 Identifier expected.  (4 messages)
+"function f({ ...a = 1 }) {}" [ts]  ||  tsc parses; checker @18+1 TS1186 A rest element cannot have an initializer.  ||  bun @18+1 Expected "}" but found "=" / @20+1 Expected ")" but found "1"  ||  lint @18+1 Expected "}" but found "="  => TS1005 @18+1 '}' expected.  (3 messages)
+"function f({ ...a.b }) {}" [ts]  ||  tsc @17+1 TS1005 ',' expected.  ||  bun @17+1 Expected "}" but found "." / @18+1 Expected ")" but found "b"  ||  lint @17+1 Expected "}" but found "."  => TS1005 @17+1 '}' expected.  (3 messages)
+"function f({ a.b }) {}" [ts]  ||  tsc @14+1 TS1005 ',' expected.  ||  bun @14+1 Expected "}" but found "." / @15+1 Expected ")" but found "b"  ||  lint @14+1 Expected "}" but found "."  => TS1005 @14+1 '}' expected.  (3 messages)
+"function f({ 'a' }) {}" [ts]  ||  tsc @17+1 TS1005 ':' expected.  ||  bun @17+1 Expected ":" but found "}" / @18+1 Expected identifier but found ")"  ||  lint @17+1 Expected ":" but found "}"  => TS1005 @17+1 ':' expected.  (4 messages)
+"function f({ 1 }) {}" [ts]  ||  tsc @15+1 TS1005 ':' expected.  ||  bun @15+1 Expected ":" but found "}" / @16+1 Expected identifier but found ")"  ||  lint @15+1 Expected ":" but found "}"  => TS1005 @15+1 ':' expected.  (4 messages)
+"function f({ [a] }) {}" [ts]  ||  tsc @17+1 TS1005 ':' expected.  ||  bun @17+1 Expected ":" but found "}" / @18+1 Expected identifier but found ")"  ||  lint @17+1 Expected ":" but found "}"  => TS1005 @17+1 ':' expected.  (4 messages)
+"function f({ 'a': b, 1: c, [d]: e, 2n: g }) {}" [ts]  ||  tsc parses; checker also TS2538  ||  bun accepts  ||  lint parses
+"function f({ class }) {}" [ts]  ||  tsc @19+1 TS1005 ':' expected.  ||  bun accepts  ||  lint parses
+"function f({ if }) {}" [ts]  ||  tsc @16+1 TS1005 ':' expected.  ||  bun accepts  ||  lint parses
+"function f({ export, default: d }) {}" [ts]  ||  tsc @19+1 TS1005 ':' expected.  ||  bun accepts  ||  lint parses
+"function f({ this }) {}" [ts]  ||  tsc @18+1 TS1005 ':' expected.  ||  bun accepts  ||  lint parses
+"function f({ null }) {}" [ts]  ||  tsc @18+1 TS1005 ':' expected.  ||  bun accepts  ||  lint parses
+"function f({ new }) {}" [ts]  ||  tsc @17+1 TS1005 ':' expected.  ||  bun accepts  ||  lint parses
+"function f({ static }) {}" [ts]  ||  tsc parses; checker @13+6 TS1212 Identifier expected. 'static' is a reserved word in strict mode.  ||  bun accepts  ||  lint parses
+"function f({ let }) {}" [ts]  ||  tsc parses; checker @13+3 TS1212 Identifier expected. 'let' is a reserved word in strict mode.  ||  bun accepts  ||  lint parses
+"function f({ yield }) {}" [ts]  ||  tsc parses; checker @13+5 TS1212 Identifier expected. 'yield' is a reserved word in strict mode.  ||  bun accepts  ||  lint parses
+"function f({ await }) {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"async function f({ await }) {}" [ts]  ||  tsc parses; checker @19+5 TS1359 Identifier expected. 'await' is a reserved word that cannot be used here.  ||  bun accepts  ||  lint parses
+"function* g({ yield }) {}" [ts]  ||  tsc parses; checker @14+5 TS1212 Identifier expected. 'yield' is a reserved word in strict mode.  ||  bun accepts  ||  lint parses
+"function f({ class: c }) {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"function f({ class = 1 }) {}" [ts]  ||  tsc @19+1 TS1005 ':' expected.  ||  bun accepts  ||  lint parses
+"function f({ a: class }) {}" [ts]  ||  tsc @16+5 TS1359 Identifier expected. 'class' is a reserved word that cannot be used here. (+1)  ||  bun @16+5 Expected identifier but found "class"  ||  lint @16+5 Expected identifier but found "class"  => TS1359 @16+5 Identifier expected. 'class' is a reserved word that cannot be used here.
+"function f({ a: 1 }) {}" [ts]  ||  tsc @16+1 TS1003 Identifier expected. (+1)  ||  bun @16+1 Expected identifier but found "1"  ||  lint @16+1 Expected identifier but found "1"  => TS1003 @16+1 Identifier expected.
+"function f({ a: b.c }) {}" [ts]  ||  tsc @17+1 TS1005 ',' expected.  ||  bun @17+1 Expected "}" but found "." / @18+1 Expected ")" but found "c"  ||  lint @17+1 Expected "}" but found "."  => TS1005 @17+1 '}' expected.  (3 messages)
+"function f({ a: (b) }) {}" [ts]  ||  tsc @16+1 TS1003 Identifier expected. (+2)  ||  bun @16+1 Expected identifier but found "(" / @17+1 Expected "}" but found "b"  ||  lint @16+1 Expected identifier but found "("  => TS1003 @16+1 Identifier expected.  (3 messages)
+"function f({ a b }) {}" [ts]  ||  tsc @15+1 TS1005 ',' expected.  ||  bun @15+1 Expected "}" but found "b" / @17+1 Expected ")" but found "}"  ||  lint @15+1 Expected "}" but found "b"  => TS1005 @15+1 '}' expected.  (3 messages)
+"function f({ a; b }) {}" [ts]  ||  tsc @14+1 TS1005 ',' expected.  ||  bun @14+1 Expected "}" but found ";" / @16+1 Expected ")" but found "b"  ||  lint @14+1 Expected "}" but found ";"  => TS1005 @14+1 '}' expected.  (3 messages)
+"function f({ , a }) {}" [ts]  ||  tsc @13+1 TS1180 Property destructuring pattern expected.  ||  bun @13+1 Expected identifier but found ","  ||  lint @13+1 Expected identifier but found ","  => TS1003 @13+1 Identifier expected.
+"function f({ a,, b }) {}" [ts]  ||  tsc @15+1 TS1180 Property destructuring pattern expected.  ||  bun @15+1 Expected identifier but found ","  ||  lint @15+1 Expected identifier but found ","  => TS1003 @15+1 Identifier expected.
+"function f({ a() {} }) {}" [ts]  ||  tsc @14+1 TS1005 ',' expected. (+2)  ||  bun @14+1 Expected ":" but found "(" / @15+1 Expected identifier but found ")"  ||  lint @14+1 Expected ":" but found "("  => TS1005 @14+1 ':' expected.  (5 messages)
+"function f({ get a() {} }) {}" [ts]  ||  tsc @17+1 TS1005 ',' expected. (+2)  ||  bun @17+1 Expected "}" but found "a" / @18+1 Expected ")" but found "("  ||  lint @17+1 Expected "}" but found "a"  => TS1005 @17+1 '}' expected.  (4 messages)
+"function f({ #a }) {}" [ts]  ||  tsc @16+1 TS1005 ':' expected.  ||  bun @13+2 Expected identifier but found "#a" / @17+1 Expected "}" but found ")"  ||  lint @13+2 Expected identifier but found "#a"  => TS1003 @13+2 Identifier expected.  (4 messages)
+"function f({ #a: b }) {}" [ts]  ||  tsc parses  ||  bun @13+2 Expected identifier but found "#a" / @17+1 Expected "}" but found "b"  ||  lint @13+2 Expected identifier but found "#a"  => TS1003 @13+2 Identifier expected.  (4 messages)
+"function f({ a: #b }) {}" [ts]  ||  tsc @16+2 TS18016 Private identifiers are not allowed outside class bodies.  ||  bun @16+2 Expected identifier but found "#b"  ||  lint @16+2 Expected identifier but found "#b"  => TS1003 @16+2 Identifier expected.
+"function f({ a }: ) {}" [ts]  ||  tsc @18+1 TS1110 Type expected.  ||  bun @18+1 Unexpected )  ||  lint @18+1 Unexpected )  => TS1110 @18+1 Type expected.
+"function f({ a }?) {}" [ts]  ||  tsc parses; checker also TS2463  ||  bun accepts  ||  lint parses
+"function f({ a }?: T) {}" [ts]  ||  tsc parses; checker also TS2463  ||  bun accepts  ||  lint parses
+"function f({ a }!) {}" [ts]  ||  tsc @16+1 TS1005 ',' expected.  ||  bun @16+1 Expected ")" but found "!" / @17+1 Expected ";" but found ")"  ||  lint @16+1 Expected ")" but found "!"  => TS1005 @16+1 ')' expected.  (2 messages)
+"function f([a]) {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"function f([a,]) {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"function f([, a, , b, ,]) {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"function f([a = 1]) {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"function f([...a]) {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"function f([...a,]) {}" [ts]  ||  tsc parses; checker @16+1 TS1013 A rest parameter or binding pattern may not have a trailing comma.  ||  bun @16+1 Unexpected "," after rest pattern  ||  lint @16+1 Unexpected "," after rest pattern  => no code
+"function f([...a, b]) {}" [ts]  ||  tsc parses; checker also TS2462  ||  bun @16+1 Unexpected "," after rest pattern  ||  lint @16+1 Unexpected "," after rest pattern  => no code
+"function f([...a = 1]) {}" [ts]  ||  tsc parses; checker @17+1 TS1186 A rest element cannot have an initializer.  ||  bun @17+1 Expected "]" but found "=" / @19+1 Expected ")" but found "1"  ||  lint @17+1 Expected "]" but found "="  => TS1005 @17+1 ']' expected.  (4 messages)
+"function f([...[a]]) {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"function f([...{ a }]) {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"function f([... ...a]) {}" [ts]  ||  tsc @16+3 TS1003 Identifier expected.  ||  bun @16+3 Expected identifier but found "..." / @19+1 Expected "]" but found "a"  ||  lint @16+3 Expected identifier but found "..."  => TS1003 @16+3 Identifier expected.  (4 messages)
+"function f([a.b]) {}" [ts]  ||  tsc @13+1 TS1005 ',' expected.  ||  bun @13+1 Expected "]" but found "." / @14+1 Expected ")" but found "b"  ||  lint @13+1 Expected "]" but found "."  => TS1005 @13+1 ']' expected.  (4 messages)
+"function f([1]) {}" [ts]  ||  tsc @12+1 TS1181 Array element destructuring pattern expected. (+2)  ||  bun @12+1 Expected identifier but found "1"  ||  lint @12+1 Expected identifier but found "1"  => TS1003 @12+1 Identifier expected.
+"function f([class]) {}" [ts]  ||  tsc @12+5 TS1181 Array element destructuring pattern expected. (+2)  ||  bun @12+5 Expected identifier but found "class"  ||  lint @12+5 Expected identifier but found "class"  => TS1359 @12+5 Identifier expected. 'class' is a reserved word that cannot be used here.
+"function f([this]) {}" [ts]  ||  tsc @12+4 TS1181 Array element destructuring pattern expected. (+2)  ||  bun @12+4 Expected identifier but found "this"  ||  lint @12+4 Expected identifier but found "this"  => TS1359 @12+4 Identifier expected. 'this' is a reserved word that cannot be used here.
+"function f([a b]) {}" [ts]  ||  tsc @14+1 TS1005 ',' expected.  ||  bun @14+1 Expected "]" but found "b" / @15+1 Expected ")" but found "]"  ||  lint @14+1 Expected "]" but found "b"  => TS1005 @14+1 ']' expected.  (3 messages)
+"function f([a; b]) {}" [ts]  ||  tsc @13+1 TS1005 ',' expected.  ||  bun @13+1 Expected "]" but found ";" / @15+1 Expected ")" but found "b"  ||  lint @13+1 Expected "]" but found ";"  => TS1005 @13+1 ']' expected.  (4 messages)
+"function f([a: b]) {}" [ts]  ||  tsc @13+1 TS1005 ',' expected.  ||  bun @13+1 Expected "]" but found ":" / @15+1 Expected ")" but found "b"  ||  lint @13+1 Expected "]" but found ":"  => TS1005 @13+1 ']' expected.  (4 messages)
+"function f([a?]) {}" [ts]  ||  tsc @13+1 TS1005 ',' expected. (+2)  ||  bun @13+1 Expected "]" but found "?" / @14+1 Expected ")" but found "]"  ||  lint @13+1 Expected "]" but found "?"  => TS1005 @13+1 ']' expected.  (3 messages)
+"function f([a!]) {}" [ts]  ||  tsc @13+1 TS1005 ',' expected. (+2)  ||  bun @13+1 Expected "]" but found "!" / @14+1 Expected ")" but found "]"  ||  lint @13+1 Expected "]" but found "!"  => TS1005 @13+1 ']' expected.  (3 messages)
+"function f([#a]) {}" [ts]  ||  tsc @12+2 TS18016 Private identifiers are not allowed outside class bodies.  ||  bun @12+2 Expected identifier but found "#a"  ||  lint @12+2 Expected identifier but found "#a"  => TS1003 @12+2 Identifier expected.
+"function f([(a)]) {}" [ts]  ||  tsc @12+1 TS1181 Array element destructuring pattern expected. (+2)  ||  bun @12+1 Expected identifier but found "(" / @13+1 Expected "]" but found "a"  ||  lint @12+1 Expected identifier but found "("  => TS1003 @12+1 Identifier expected.  (4 messages)
+"function f([a]?) {}" [ts]  ||  tsc parses; checker also TS2463  ||  bun accepts  ||  lint parses
+"let { class } = x;" [ts]  ||  tsc @12+1 TS1005 ':' expected.  ||  bun accepts  ||  lint parses
+"let { export: e, if: i } = x;" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"let [class] = x;" [ts]  ||  tsc @5+5 TS1181 Array element destructuring pattern expected. (+2)  ||  bun @5+5 Expected identifier but found "class"  ||  lint @5+5 Expected identifier but found "class"  => TS1359 @5+5 Identifier expected. 'class' is a reserved word that cannot be used here.
+"let { a: { class } } = x;" [ts]  ||  tsc @17+1 TS1005 ':' expected.  ||  bun accepts  ||  lint parses
+"const a = ({ class }) => 1;" [ts]  ||  tsc @19+1 TS1005 ':' expected.  ||  bun @19+1 Expected ":" but found "}" / @20+1 Unexpected )  ||  lint @19+1 Expected ":" but found "}"  => TS1005 @19+1 ':' expected.  (2 messages)
+"const a = ([class]) => 1;" [ts]  ||  tsc @17+1 TS1005 '{' expected. (+1)  ||  bun @17+1 Expected "{" but found "]" / @18+1 Expected identifier but found ")"  ||  lint @17+1 Expected "{" but found "]"  => TS1005 @17+1 '{' expected.  (4 messages)
+"try {} catch ({ class }) {}" [ts]  ||  tsc @22+1 TS1005 ':' expected.  ||  bun accepts  ||  lint parses
+## parseHeritageClauses, parseHeritageClause, parseExpressionWithTypeArguments
+"class C extends {}" [ts]  ||  tsc parses; checker @15+0 TS1097 'extends' list cannot be empty.  ||  bun @18+0 Expected "{" but found end of file  ||  lint @18+0 Expected "{" but found end of file  => TS1005 @18+0 '{' expected.
+"class C extends {} {}" [ts]  ||  tsc parses; checker also TS2507  ||  bun accepts  ||  lint parses
+"class C extends {}, B {}" [ts]  ||  tsc parses; checker @20+1 TS1174 Classes can only extend a single class.  ||  bun @18+1 Expected "{" but found "," / @22+1 Expected ";" but found "{"  ||  lint @18+1 Expected "{" but found ","  => TS1005 @18+1 '{' expected.  (2 messages)
+"class C extends {} implements I {}" [ts]  ||  tsc parses; checker also TS2507  ||  bun accepts  ||  lint parses
+"class C extends {} extends B {}" [ts]  ||  tsc parses; checker @19+7 TS1172 'extends' clause already seen.  ||  bun @19+7 Expected "{" but found "extends" / @29+1 Expected ";" but found "{"  ||  lint @19+7 Expected "{" but found "extends"  => TS1005 @19+7 '{' expected.  (2 messages)
+"class C extends { a: 1 } {}" [ts]  ||  tsc parses; checker also TS2507  ||  bun accepts  ||  lint parses
+"class C extends { a: 1 }.a {}" [ts]  ||  tsc parses; checker also TS2507  ||  bun accepts  ||  lint parses
+"class C extends {}.a {}" [ts]  ||  tsc @18+1 TS1128 Declaration or statement expected. (+1)  ||  bun accepts  ||  lint parses
+"class C extends {}() {}" [ts]  ||  tsc @21+1 TS1005 '=>' expected.  ||  bun accepts  ||  lint parses
+"class C extends {}[a] {}" [ts]  ||  tsc @22+1 TS1005 ';' expected.  ||  bun accepts  ||  lint parses
+"class C extends" [ts]  ||  tsc @15+0 TS1005 '{' expected.  ||  bun @15+0 Unexpected end of file  ||  lint @15+0 Unexpected end of file  => TS1109 @15+0 Expression expected.
+"class C extends ;" [ts]  ||  tsc @16+1 TS1109 Expression expected. (+1)  ||  bun @16+1 Unexpected ;  ||  lint @16+1 Unexpected ;  => TS1109 @16+1 Expression expected.
+"class C extends B" [ts]  ||  tsc @17+0 TS1005 '{' expected.  ||  bun @17+0 Expected "{" but found end of file  ||  lint @17+0 Expected "{" but found end of file  => TS1005 @17+0 '{' expected.
+"class C extends B;" [ts]  ||  tsc @17+1 TS1005 ',' expected. (+1)  ||  bun @17+1 Expected "{" but found ";" / @18+0 Expected "}" but found end of file  ||  lint @17+1 Expected "{" but found ";"  => TS1005 @17+1 '{' expected.  (2 messages)
+"class C extends B, D {}" [ts]  ||  tsc parses; checker @19+1 TS1174 Classes can only extend a single class.  ||  bun @17+1 Expected "{" but found "," / @21+1 Expected ";" but found "{"  ||  lint @17+1 Expected "{" but found ","  => TS1005 @17+1 '{' expected.  (2 messages)
+"class C extends B, {}" [ts]  ||  tsc parses; checker @17+1 TS1009 Trailing comma not allowed.  ||  bun @17+1 Expected "{" but found "," / @19+1 Expected identifier but found "{"  ||  lint @17+1 Expected "{" but found ","  => TS1005 @17+1 '{' expected.  (3 messages)
+"class C extends B, {} {}" [ts]  ||  tsc parses; checker @19+1 TS1174 Classes can only extend a single class.  ||  bun @17+1 Expected "{" but found "," / @19+1 Expected identifier but found "{"  ||  lint @17+1 Expected "{" but found ","  => TS1005 @17+1 '{' expected.  (3 messages)
+"class C extends B, {" [ts]  ||  tsc @20+0 TS1005 '}' expected.  ||  bun @17+1 Expected "{" but found "," / @19+1 Expected identifier but found "{"  ||  lint @17+1 Expected "{" but found ","  => TS1005 @17+1 '{' expected.  (3 messages)
+"class C extends B extends D {}" [ts]  ||  tsc parses; checker @18+7 TS1172 'extends' clause already seen.  ||  bun @18+7 Expected "{" but found "extends" / @28+1 Expected ";" but found "{"  ||  lint @18+7 Expected "{" but found "extends"  => TS1005 @18+7 '{' expected.  (2 messages)
+"class C extends B implements I extends D {}" [ts]  ||  tsc parses; checker @31+7 TS1172 'extends' clause already seen.  ||  bun @41+1 Expected "?" but found "{" / @42+1 Unexpected }  ||  lint @31+7 Expected "{" but found "extends"  => TS1005 @31+7 '{' expected.  (2 messages)
+"class C implements I extends B {}" [ts]  ||  tsc parses; checker @21+7 TS1173 'extends' clause must precede 'implements' clause.  ||  bun @31+1 Expected "?" but found "{" / @32+1 Unexpected }  ||  lint @21+7 Expected "{" but found "extends"  => TS1005 @21+7 '{' expected.  (2 messages)
+"class C implements I implements J {}" [ts]  ||  tsc parses; checker @21+10 TS1175 'implements' clause already seen.  ||  bun @21+10 Expected "{" but found "implements" / @34+1 Expected ";" but found "{"  ||  lint @21+10 Expected "{" but found "implements"  => TS1005 @21+10 '{' expected.  (2 messages)
+"class C implements {}" [ts]  ||  tsc parses; checker @18+0 TS1097 'implements' list cannot be empty.  ||  bun @21+0 Expected "{" but found end of file  ||  lint @21+0 Expected "{" but found end of file  => TS1005 @21+0 '{' expected.
+"class C implements I, {}" [ts]  ||  tsc parses; checker @20+1 TS1009 Trailing comma not allowed.  ||  bun @24+0 Expected "{" but found end of file  ||  lint @24+0 Expected "{" but found end of file  => TS1005 @24+0 '{' expected.
+"class C implements" [ts]  ||  tsc @18+0 TS1005 '{' expected.  ||  bun @18+0 Unexpected end of file  ||  lint @18+0 Unexpected end of file  => TS1109 @18+0 Expression expected.
+"class C implements I," [ts]  ||  tsc @21+0 TS1005 '{' expected.  ||  bun @21+0 Unexpected end of file  ||  lint @21+0 Unexpected end of file  => TS1109 @21+0 Expression expected.
+"class C extends B, implements I {}" [ts]  ||  tsc parses; checker @17+1 TS1009 Trailing comma not allowed.  ||  bun @17+1 Expected "{" but found "," / @30+1 Expected ";" but found "I"  ||  lint @17+1 Expected "{" but found ","  => TS1005 @17+1 '{' expected.  (4 messages)
+"class C extends implements I {}" [ts]  ||  tsc parses; checker @15+0 TS1097 'extends' list cannot be empty.  ||  bun @27+1 Expected "{" but found "I" / @29+1 Expected identifier but found "{"  ||  lint @27+1 Expected "{" but found "I"  => TS1005 @27+1 '{' expected.  (3 messages)
+"class C extends extends B {}" [ts]  ||  tsc parses; checker @15+0 TS1097 'extends' list cannot be empty.  ||  bun @16+7 Unexpected extends  ||  lint @16+7 Unexpected extends  => TS1109 @16+7 Expression expected.
+"class C extends B implements {}" [ts]  ||  tsc parses; checker @28+0 TS1097 'implements' list cannot be empty.  ||  bun @31+0 Expected "{" but found end of file  ||  lint @31+0 Expected "{" but found end of file  => TS1005 @31+0 '{' expected.
+"class C extends B implements implements I {}" [ts]  ||  tsc parses; checker @28+0 TS1097 'implements' list cannot be empty.  ||  bun @40+1 Expected "{" but found "I" / @42+1 Expected identifier but found "{"  ||  lint @40+1 Expected "{" but found "I"  => TS1005 @40+1 '{' expected.  (3 messages)
+"class C extends B,, D {}" [ts]  ||  tsc @18+1 TS1109 Expression expected.  ||  bun @17+1 Expected "{" but found "," / @18+1 Expected identifier but found ","  ||  lint @17+1 Expected "{" but found ","  => TS1005 @17+1 '{' expected.  (3 messages)
+"class C extends , B {}" [ts]  ||  tsc @16+1 TS1109 Expression expected.  ||  bun @16+1 Unexpected ,  ||  lint @16+1 Unexpected ,  => TS1109 @16+1 Expression expected.
+"class C extends B D {}" [ts]  ||  tsc @18+1 TS1005 ',' expected.  ||  bun @18+1 Expected "{" but found "D" / @20+1 Expected identifier but found "{"  ||  lint @18+1 Expected "{" but found "D"  => TS1005 @18+1 '{' expected.  (3 messages)
+"class C extends B.D {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C extends B.D<T> {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C extends B<T>.D {}" [ts]  ||  tsc @17+3 TS1477 An instantiation expression cannot be followed by a property access.  ||  bun accepts  ||  lint parses
+"class C extends B<T><U> {}" [ts]  ||  tsc @20+1 TS1005 ',' expected.  ||  bun @20+1 Expected "{" but found "<" / @22+1 Expected ";" but found ">"  ||  lint @20+1 Expected "{" but found "<"  => TS1005 @20+1 '{' expected.  (4 messages)
+"class C extends B<> {}" [ts]  ||  tsc parses; checker @17+2 TS1099 Type argument list cannot be empty.  ||  bun @18+1 Unexpected >  ||  lint parses
+"class C extends B<T,> {}" [ts]  ||  tsc parses; checker @19+1 TS1009 Trailing comma not allowed.  ||  bun @20+1 Unexpected >  ||  lint parses
+"class C extends B<T {}" [ts]  ||  tsc @20+1 TS1005 '>' expected.  ||  bun @20+1 Expected ">" but found "{"  ||  lint @20+1 Expected ">" but found "{"  => TS1005 @20+1 '>' expected.
+"class C extends B?.D {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C extends B! {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C extends B!.D {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C extends B<T>! {}" [ts]  ||  tsc @20+1 TS1005 ',' expected.  ||  bun @20+1 Expected "{" but found "!" / @22+1 Expected identifier but found "{"  ||  lint @20+1 Expected "{" but found "!"  => TS1005 @20+1 '{' expected.  (3 messages)
+"class C extends B as any {}" [ts]  ||  tsc @18+2 TS1005 ',' expected. (+1)  ||  bun @18+2 Expected "{" but found "as" / @25+1 Expected ";" but found "{"  ||  lint @18+2 Expected "{" but found "as"  => TS1005 @18+2 '{' expected.  (2 messages)
+"class C extends (B as any) {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C extends <any>B {}" [ts]  ||  tsc @16+1 TS1109 Expression expected. (+1)  ||  bun accepts  ||  lint parses
+"class C extends B satisfies X {}" [ts]  ||  tsc @18+9 TS1005 ',' expected. (+1)  ||  bun @18+9 Expected "{" but found "satisfies" / @30+1 Expected ";" but found "{"  ||  lint @18+9 Expected "{" but found "satisfies"  => TS1005 @18+9 '{' expected.  (2 messages)
+"class C extends B() {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C extends B()<T> {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C extends B<T>() {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C extends B`t` {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C extends B<T>`t` {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C extends B[0] {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C extends new B {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C extends new B() {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C extends new B<T>() {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C extends new B<T> {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C extends class {} {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C extends class D extends E {} {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C extends function () {} {}" [ts]  ||  tsc parses; checker also TS2507  ||  bun accepts  ||  lint parses
+"class C extends async function () {} {}" [ts]  ||  tsc parses; checker also TS2507 TS2697  ||  bun accepts  ||  lint parses
+"class C extends async () => {} {}" [ts]  ||  tsc @25+2 TS1005 ',' expected.  ||  bun @25+2 Unexpected =>  ||  lint @25+2 Unexpected =>  => no code
+"class C extends () => {} {}" [ts]  ||  tsc @17+1 TS1109 Expression expected. (+1)  ||  bun @17+1 Unexpected )  ||  lint @17+1 Unexpected )  => TS1109 @17+1 Expression expected.
+"class C extends a => a {}" [ts]  ||  tsc @18+2 TS1005 ',' expected.  ||  bun @18+2 Expected "{" but found "=>" / @23+1 Expected ";" but found "{"  ||  lint @18+2 Expected "{" but found "=>"  => TS1005 @18+2 '{' expected.  (2 messages)
+"class C extends (a) {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C extends (a, b) {}" [ts]  ||  tsc parses; checker also TS2695  ||  bun accepts  ||  lint parses
+"class C extends [] {}" [ts]  ||  tsc parses; checker also TS2507  ||  bun accepts  ||  lint parses
+"class C extends [B][0] {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C extends `t` {}" [ts]  ||  tsc parses; checker also TS2507  ||  bun accepts  ||  lint parses
+"class C extends /re/ {}" [ts]  ||  tsc parses; checker also TS2507  ||  bun accepts  ||  lint parses
+"class C extends 1 {}" [ts]  ||  tsc parses; checker also TS2507  ||  bun accepts  ||  lint parses
+"class C extends 1n {}" [ts]  ||  tsc parses; checker also TS2507  ||  bun accepts  ||  lint parses
+"class C extends 'a' {}" [ts]  ||  tsc parses; checker also TS2507  ||  bun accepts  ||  lint parses
+"class C extends null {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C extends undefined {}" [ts]  ||  tsc parses; checker also TS2507  ||  bun accepts  ||  lint parses
+"class C extends true {}" [ts]  ||  tsc parses; checker also TS2507  ||  bun accepts  ||  lint parses
+"class C extends this {}" [ts]  ||  tsc parses; checker also TS2507  ||  bun accepts  ||  lint parses
+"class C extends this.B {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C extends super {}" [ts]  ||  tsc @22+1 TS1034 'super' must be followed by an argument list or member access.  ||  bun @16+5 Unexpected "super"  ||  lint @16+5 Unexpected "super"  => no code
+"class C extends super.B {}" [ts]  ||  tsc parses; checker also TS2660  ||  bun @16+5 Unexpected "super"  ||  lint @16+5 Unexpected "super"  => no code
+"class C extends super() {}" [ts]  ||  tsc parses; checker also TS2337 TS2507  ||  bun @16+5 Unexpected "super"  ||  lint @16+5 Unexpected "super"  => no code
+"class C extends import('a') {}" [ts]  ||  tsc parses; checker also TS2711  ||  bun accepts  ||  lint parses
+"class C extends import.meta {}" [ts]  ||  tsc parses; checker also TS2507  ||  bun accepts  ||  lint parses
+"class C extends import.meta.B {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C extends import {}" [ts]  ||  tsc @16+6 TS1109 Expression expected. (+1)  ||  bun @23+1 Expected "(" but found "{" / @24+1 Unexpected }  ||  lint @23+1 Expected "(" but found "{"  => TS1005 @23+1 '(' expected.  (2 messages)
+"class C extends new.target {}" [ts]  ||  tsc parses; checker @16+10 TS17013 Meta-property 'new.target' is only allowed in the body of a function declaration, function expression, or constructor.  ||  bun accepts  ||  lint parses
+"class C extends !B {}" [ts]  ||  tsc @16+1 TS1109 Expression expected. (+1)  ||  bun accepts  ||  lint parses
+"class C extends -B {}" [ts]  ||  tsc @16+1 TS1109 Expression expected. (+1)  ||  bun accepts  ||  lint parses
+"class C extends +B {}" [ts]  ||  tsc @16+1 TS1109 Expression expected. (+1)  ||  bun accepts  ||  lint parses
+"class C extends ~B {}" [ts]  ||  tsc @16+1 TS1109 Expression expected. (+1)  ||  bun accepts  ||  lint parses
+"class C extends typeof B {}" [ts]  ||  tsc @16+6 TS1109 Expression expected. (+1)  ||  bun accepts  ||  lint parses
+"class C extends void B {}" [ts]  ||  tsc @16+4 TS1109 Expression expected. (+1)  ||  bun accepts  ||  lint parses
+"class C extends delete B {}" [ts]  ||  tsc @16+6 TS1109 Expression expected. (+1)  ||  bun accepts  ||  lint parses
+"class C extends ++B {}" [ts]  ||  tsc @16+2 TS1109 Expression expected. (+1)  ||  bun accepts  ||  lint parses
+"class C extends --B {}" [ts]  ||  tsc @16+2 TS1109 Expression expected. (+1)  ||  bun accepts  ||  lint parses
+"class C extends B++ {}" [ts]  ||  tsc @17+2 TS1005 ',' expected.  ||  bun @17+2 Expected "{" but found "++" / @20+1 Expected identifier but found "{"  ||  lint @17+2 Expected "{" but found "++"  => TS1005 @17+2 '{' expected.  (3 messages)
+"class C extends await B {}" [ts]  ||  tsc @22+1 TS1005 ',' expected.  ||  bun accepts  ||  lint @22+1 "await" can only be used inside an "async" function  => no code  (3 messages)
+"class C extends yield {}" [ts]  ||  tsc parses; checker @16+5 TS1213 Identifier expected. 'yield' is a reserved word in strict mode. Class definitions are automatically in strict mode.  ||  bun scan accepts; transform @16+5 "yield" is a reserved word and cannot be used in strict mode  ||  lint parses
+"class C extends yield B {}" [ts]  ||  tsc @22+1 TS1005 ',' expected.  ||  bun @16+5 Cannot use "yield" outside a generator function / @22+1 Expected "{" but found "B"  ||  lint @16+5 Cannot use "yield" outside a generator function  => no code  (4 messages)
+"async function f() { class C extends await B {} }" [ts]  ||  tsc @37+5 TS1109 Expression expected. (+1)  ||  bun accepts  ||  lint parses
+"function* g() { class C extends yield {} }" [ts]  ||  tsc @32+5 TS1109 Expression expected.  ||  bun @32+5 Cannot use a "yield" here without parentheses / @41+1 Expected "{" but found "}"  ||  lint @32+5 Cannot use a "yield" here without parentheses  => no code  (3 messages)
+"function* g() { class C extends yield B {} }" [ts]  ||  tsc @32+5 TS1109 Expression expected. (+1)  ||  bun @32+5 Cannot use a "yield" here without parentheses  ||  lint @32+5 Cannot use a "yield" here without parentheses  => no code
+"function* g() { class C extends (yield B) {} }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"export class C extends await B {}" [ts]  ||  tsc @23+5 TS1109 Expression expected. (+1)  ||  bun accepts  ||  lint @29+1 "await" can only be used inside an "async" function  => no code  (3 messages)
+"class C extends B + D {}" [ts]  ||  tsc @18+1 TS1005 ',' expected. (+1)  ||  bun @18+1 Expected "{" but found "+" / @22+1 Expected ";" but found "{"  ||  lint @18+1 Expected "{" but found "+"  => TS1005 @18+1 '{' expected.  (2 messages)
+"class C extends B = D {}" [ts]  ||  tsc @18+1 TS1005 ',' expected.  ||  bun @18+1 Expected "{" but found "=" / @22+1 Expected ";" but found "{"  ||  lint @18+1 Expected "{" but found "="  => TS1005 @18+1 '{' expected.  (2 messages)
+"class C extends B ? D : E {}" [ts]  ||  tsc @18+1 TS1005 ',' expected. (+1)  ||  bun @18+1 Expected "{" but found "?" / @26+1 Expected ";" but found "{"  ||  lint @18+1 Expected "{" but found "?"  => TS1005 @18+1 '{' expected.  (2 messages)
+"class C extends B || D {}" [ts]  ||  tsc @18+2 TS1005 ',' expected. (+1)  ||  bun @18+2 Expected "{" but found "||" / @23+1 Expected ";" but found "{"  ||  lint @18+2 Expected "{" but found "||"  => TS1005 @18+2 '{' expected.  (2 messages)
+"class C extends B ?? D {}" [ts]  ||  tsc @18+2 TS1005 ',' expected. (+1)  ||  bun @18+2 Expected "{" but found "??" / @23+1 Expected ";" but found "{"  ||  lint @18+2 Expected "{" but found "??"  => TS1005 @18+2 '{' expected.  (2 messages)
+"class C extends B in D {}" [ts]  ||  tsc @18+2 TS1005 ',' expected. (+1)  ||  bun @18+2 Expected "{" but found "in" / @23+1 Expected ";" but found "{"  ||  lint @18+2 Expected "{" but found "in"  => TS1005 @18+2 '{' expected.  (2 messages)
+"class C extends B instanceof D {}" [ts]  ||  tsc @18+10 TS1005 ',' expected. (+1)  ||  bun @18+10 Expected "{" but found "instanceof" / @31+1 Expected ";" but found "{"  ||  lint @18+10 Expected "{" but found "instanceof"  => TS1005 @18+10 '{' expected.  (2 messages)
+"class C extends @dec class {} {}" [ts]  ||  tsc @16+1 TS1109 Expression expected.  ||  bun accepts  ||  lint parses
+"class C extends #p {}" [ts]  ||  tsc @16+2 TS1109 Expression expected. (+1)  ||  bun @16+2 Unexpected #p  ||  lint @16+2 Unexpected #p  => no code
+"class C extends B.#p {}" [ts]  ||  tsc parses  ||  bun @18+2 Expected identifier but found "#p" / @22+1 Expected "{" but found "}"  ||  lint @18+2 Expected identifier but found "#p"  => TS1003 @18+2 Identifier expected.  (3 messages)
+"class C extends let {}" [ts]  ||  tsc parses; checker @16+3 TS1213 Identifier expected. 'let' is a reserved word in strict mode. Class definitions are automatically in strict mode.  ||  bun scan accepts; transform @16+3 "let" is a reserved word and cannot be used in strict mode  ||  lint parses
+"class C extends static {}" [ts]  ||  tsc parses; checker @16+6 TS1213 Identifier expected. 'static' is a reserved word in strict mode. Class definitions are automatically in strict mode.  ||  bun scan accepts; transform @16+6 "static" is a reserved word and cannot be used in strict mode  ||  lint parses
+"class C extends async {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C extends implements {}" [ts]  ||  tsc parses; checker @15+0 TS1097 'extends' list cannot be empty.  ||  bun scan accepts; transform @16+10 "implements" is a reserved word and cannot be used in strict mode  ||  lint parses
+"class C extends implements implements I {}" [ts]  ||  tsc parses; checker @15+0 TS1097 'extends' list cannot be empty.  ||  bun scan accepts; transform @16+10 "implements" is a reserved word and cannot be used in strict mode  ||  lint parses
+"class C extends public {}" [ts]  ||  tsc parses; checker @16+6 TS1213 Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode.  ||  bun scan accepts; transform @16+6 "public" is a reserved word and cannot be used in strict mode  ||  lint parses
+"class C extends if {}" [ts]  ||  tsc @16+2 TS1109 Expression expected. (+2)  ||  bun @16+2 Unexpected if  ||  lint @16+2 Unexpected if  => TS1109 @16+2 Expression expected.
+"class C extends var {}" [ts]  ||  tsc @16+3 TS1109 Expression expected.  ||  bun @16+3 Unexpected var  ||  lint @16+3 Unexpected var  => TS1109 @16+3 Expression expected.
+"class C extends enum {}" [ts]  ||  tsc @16+4 TS1109 Expression expected. (+1)  ||  bun @16+4 Unexpected enum  ||  lint @16+4 Unexpected enum  => TS1109 @16+4 Expression expected.
+"class C extends = B {}" [ts]  ||  tsc @16+1 TS1109 Expression expected.  ||  bun @16+1 Unexpected =  ||  lint @16+1 Unexpected =  => TS1109 @16+1 Expression expected.
+"class C extends ) {}" [ts]  ||  tsc @16+1 TS1109 Expression expected.  ||  bun @16+1 Unexpected )  ||  lint @16+1 Unexpected )  => TS1109 @16+1 Expression expected.
+"class C extends ... B {}" [ts]  ||  tsc @16+3 TS1109 Expression expected.  ||  bun @16+3 Unexpected ...  ||  lint @16+3 Unexpected ...  => TS1109 @16+3 Expression expected.
+"class implements {}" [ts]  ||  tsc parses; checker @6+10 TS1213 Identifier expected. 'implements' is a reserved word in strict mode. Class definitions are automatically in strict mode.  ||  bun accepts  ||  lint parses
+"class implements implements I {}" [ts]  ||  tsc parses; checker @0+5 TS1211 A class declaration without the 'default' modifier must have a name.  ||  bun accepts  ||  lint parses
+"class implements extends B {}" [ts]  ||  tsc parses; checker @0+5 TS1211 A class declaration without the 'default' modifier must have a name.  ||  bun accepts  ||  lint parses
+"class extends {}" [ts]  ||  tsc parses; checker @0+5 TS1211 A class declaration without the 'default' modifier must have a name.  ||  bun @6+7 Expected identifier but found "extends"  ||  lint @6+7 Expected identifier but found "extends"  => TS1359 @6+7 Identifier expected. 'extends' is a reserved word that cannot be used here.
+"class extends extends B {}" [ts]  ||  tsc parses; checker @0+5 TS1211 A class declaration without the 'default' modifier must have a name.  ||  bun @6+7 Expected identifier but found "extends"  ||  lint @6+7 Expected identifier but found "extends"  => TS1359 @6+7 Identifier expected. 'extends' is a reserved word that cannot be used here.
+"class C implements I {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C implements I<T>, a.J, a.b.K<T, U> {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C implements I() {}" [ts]  ||  tsc parses; checker also TS2500  ||  bun accepts  ||  lint parses
+"class C implements I[0] {}" [ts]  ||  tsc parses; checker also TS2500  ||  bun accepts  ||  lint parses
+"class C implements new I {}" [ts]  ||  tsc parses; checker also TS2500  ||  bun accepts  ||  lint parses
+"class C implements (I) {}" [ts]  ||  tsc parses; checker also TS2500  ||  bun accepts  ||  lint parses
+"class C implements typeof I {}" [ts]  ||  tsc @19+6 TS1109 Expression expected. (+1)  ||  bun accepts  ||  lint parses
+"class C implements keyof I {}" [ts]  ||  tsc @25+1 TS1005 ',' expected.  ||  bun accepts  ||  lint @25+1 Expected "{" but found "I"  => TS1005 @25+1 '{' expected.  (3 messages)
+"class C implements readonly I[] {}" [ts]  ||  tsc @28+1 TS1005 ',' expected. (+1)  ||  bun accepts  ||  lint @28+1 Expected "{" but found "I"  => TS1005 @28+1 '{' expected.  (2 messages)
+"class C implements I[] {}" [ts]  ||  tsc @21+0 TS1011 An element access expression should take an argument.  ||  bun accepts  ||  lint @21+1 Unexpected ]  => TS1109 @21+1 Expression expected.
+"class C implements I | J {}" [ts]  ||  tsc @21+1 TS1005 ',' expected. (+1)  ||  bun accepts  ||  lint @21+1 Expected "{" but found "|"  => TS1005 @21+1 '{' expected.  (2 messages)
+"class C implements I & J {}" [ts]  ||  tsc @21+1 TS1005 ',' expected. (+1)  ||  bun accepts  ||  lint @21+1 Expected "{" but found "&"  => TS1005 @21+1 '{' expected.  (2 messages)
+"class C implements { a: 1 } {}" [ts]  ||  tsc parses; checker also TS2500  ||  bun accepts  ||  lint parses
+"class C implements [I] {}" [ts]  ||  tsc parses; checker also TS2500  ||  bun accepts  ||  lint parses
+"class C implements string {}" [ts]  ||  tsc parses; checker also TS2864  ||  bun accepts  ||  lint parses
+"class C implements void {}" [ts]  ||  tsc @19+4 TS1109 Expression expected.  ||  bun accepts  ||  lint @26+0 Expected "{" but found end of file  => TS1005 @26+0 '{' expected.
+"class C implements null {}" [ts]  ||  tsc parses; checker also TS2500  ||  bun accepts  ||  lint parses
+"class C implements this {}" [ts]  ||  tsc parses; checker also TS2500  ||  bun accepts  ||  lint parses
+"class C implements 'a' {}" [ts]  ||  tsc parses; checker also TS2500  ||  bun accepts  ||  lint parses
+"class C implements 1 {}" [ts]  ||  tsc parses; checker also TS2500  ||  bun accepts  ||  lint parses
+"class C implements () => void {}" [ts]  ||  tsc @20+1 TS1109 Expression expected. (+2)  ||  bun accepts  ||  lint @20+1 Unexpected )  => TS1109 @20+1 Expression expected.
+"class C implements I? {}" [ts]  ||  tsc @20+1 TS1005 ',' expected.  ||  bun @20+1 Expected "{" but found "?" / @22+1 Expected identifier but found "{"  ||  lint @20+1 Expected "{" but found "?"  => TS1005 @20+1 '{' expected.  (3 messages)
+"class C implements I! {}" [ts]  ||  tsc parses; checker also TS2500  ||  bun accepts  ||  lint parses
+"class C implements I<T>! {}" [ts]  ||  tsc @23+1 TS1005 ',' expected.  ||  bun accepts  ||  lint @23+1 Expected "{" but found "!"  => TS1005 @23+1 '{' expected.  (3 messages)
+"class C implements I.J.K {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C implements I?.J {}" [ts]  ||  tsc parses; checker also TS2500  ||  bun accepts  ||  lint parses
+"class C implements I.#p {}" [ts]  ||  tsc parses; checker also TS2500  ||  bun accepts  ||  lint parses
+"class C implements import('a') {}" [ts]  ||  tsc parses; checker also TS2500  ||  bun accepts  ||  lint parses
+"class C implements import('a').I {}" [ts]  ||  tsc parses; checker also TS2500  ||  bun accepts  ||  lint parses
+"class C implements I<> {}" [ts]  ||  tsc parses; checker @20+2 TS1099 Type argument list cannot be empty.  ||  bun @21+1 Unexpected >  ||  lint parses
+"class C implements I<T,> {}" [ts]  ||  tsc parses; checker @22+1 TS1009 Trailing comma not allowed.  ||  bun @23+1 Unexpected >  ||  lint parses
+"class C implements I, {}" [ts]  ||  tsc parses; checker @20+1 TS1009 Trailing comma not allowed.  ||  bun @24+0 Expected "{" but found end of file  ||  lint @24+0 Expected "{" but found end of file  => TS1005 @24+0 '{' expected.
+"class C implements I J {}" [ts]  ||  tsc @21+1 TS1005 ',' expected.  ||  bun @21+1 Expected "{" but found "J" / @23+1 Expected identifier but found "{"  ||  lint @21+1 Expected "{" but found "J"  => TS1005 @21+1 '{' expected.  (3 messages)
+"class C implements !I {}" [ts]  ||  tsc @19+1 TS1109 Expression expected. (+1)  ||  bun accepts  ||  lint parses
+"class C implements I extends B {}" [ts]  ||  tsc parses; checker @21+7 TS1173 'extends' clause must precede 'implements' clause.  ||  bun @31+1 Expected "?" but found "{" / @32+1 Unexpected }  ||  lint @21+7 Expected "{" but found "extends"  => TS1005 @21+7 '{' expected.  (2 messages)
+"class C implements super {}" [ts]  ||  tsc @25+1 TS1034 'super' must be followed by an argument list or member access.  ||  bun @25+1 Unexpected {  ||  lint parses
+"class C implements super<T> {}" [ts]  ||  tsc @24+1 TS1034 'super' must be followed by an argument list or member access.  ||  bun @28+1 Unexpected {  ||  lint parses
+"class C implements class {} {}" [ts]  ||  tsc parses; checker also TS2500  ||  bun accepts  ||  lint parses
+"class C implements function () {} {}" [ts]  ||  tsc parses; checker also TS2500  ||  bun accepts  ||  lint parses
+"class C implements I as J {}" [ts]  ||  tsc @21+2 TS1005 ',' expected. (+1)  ||  bun @21+2 Expected "{" but found "as" / @26+1 Expected ";" but found "{"  ||  lint @21+2 Expected "{" but found "as"  => TS1005 @21+2 '{' expected.  (2 messages)
+"class C implements a.<T> {}" [ts]  ||  tsc @21+1 TS1003 Identifier expected.  ||  bun accepts  ||  lint parses
+"class C implements a. {}" [ts]  ||  tsc @22+1 TS1003 Identifier expected.  ||  bun @22+1 Expected identifier but found "{" / @24+0 Expected "{" but found end of file  ||  lint @22+1 Expected identifier but found "{"  => TS1003 @22+1 Identifier expected.
+"class C implements a.b<T>.c {}" [ts]  ||  tsc @22+3 TS1477 An instantiation expression cannot be followed by a property access.  ||  bun accepts  ||  lint parses
+"const k = class extends B {};" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"const k = class extends !B {};" [ts]  ||  tsc @24+1 TS1109 Expression expected. (+2)  ||  bun accepts  ||  lint parses
+"const k = class extends B, D {};" [ts]  ||  tsc parses; checker @27+1 TS1174 Classes can only extend a single class.  ||  bun @25+1 Expected "{" but found "," / @29+1 Expected ";" but found "{"  ||  lint @25+1 Expected "{" but found ","  => TS1005 @25+1 '{' expected.  (2 messages)
+"const k = class implements I {};" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"const k = class K extends {} {};" [ts]  ||  tsc parses; checker also TS2507  ||  bun accepts  ||  lint parses
+"export default class extends B {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"export default class extends !B {}" [ts]  ||  tsc @29+1 TS1109 Expression expected. (+1)  ||  bun accepts  ||  lint parses
+"declare class C extends !B {}" [ts]  ||  tsc @24+1 TS1109 Expression expected. (+1)  ||  bun accepts  ||  lint parses
+"declare class C extends B, D {}" [ts]  ||  tsc parses; checker @27+1 TS1174 Classes can only extend a single class.  ||  bun @25+1 Expected "{" but found "," / @29+1 Expected ";" but found "{"  ||  lint @25+1 Expected "{" but found ","  => TS1005 @25+1 '{' expected.  (2 messages)
+"declare class C extends B extends D {}" [ts]  ||  tsc parses; checker @26+7 TS1172 'extends' clause already seen.  ||  bun @26+7 Expected "{" but found "extends" / @36+1 Expected ";" but found "{"  ||  lint @26+7 Expected "{" but found "extends"  => TS1005 @26+7 '{' expected.  (2 messages)
+"abstract class C extends B implements I {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"@dec class C extends B {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"interface I extends A {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"interface I extends A, B<T>, c.D {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"interface I extends {}" [ts]  ||  tsc parses; checker @19+0 TS1097 'extends' list cannot be empty.  ||  bun accepts  ||  lint parses
+"interface I extends" [ts]  ||  tsc @19+0 TS1005 '{' expected.  ||  bun @19+0 Unexpected end of file  ||  lint @19+0 Unexpected end of file  => TS1110 @19+0 Type expected.
+"interface I extends A, {}" [ts]  ||  tsc parses; checker @21+1 TS1009 Trailing comma not allowed.  ||  bun accepts  ||  lint parses
+"interface I extends A,, B {}" [ts]  ||  tsc @22+1 TS1109 Expression expected.  ||  bun @22+1 Unexpected ,  ||  lint @22+1 Unexpected ,  => TS1110 @22+1 Type expected.
+"interface I extends A B {}" [ts]  ||  tsc @22+1 TS1005 ',' expected.  ||  bun @22+1 Expected "{" but found "B" / @24+1 Unexpected {  ||  lint @22+1 Expected "{" but found "B"  => TS1005 @22+1 '{' expected.  (2 messages)
+"interface I extends A extends B {}" [ts]  ||  tsc parses; checker @22+7 TS1172 'extends' clause already seen.  ||  bun accepts  ||  lint parses
+"interface I implements A {}" [ts]  ||  tsc parses; checker @12+10 TS1176 Interface declaration cannot have 'implements' clause.  ||  bun accepts  ||  lint parses
+"interface I extends A implements B {}" [ts]  ||  tsc parses; checker @22+10 TS1176 Interface declaration cannot have 'implements' clause.  ||  bun accepts  ||  lint parses
+"interface I extends A() {}" [ts]  ||  tsc parses; checker also TS2499  ||  bun accepts  ||  lint parses
+"interface I extends A[0] {}" [ts]  ||  tsc parses; checker also TS2499  ||  bun accepts  ||  lint parses
+"interface I extends !A {}" [ts]  ||  tsc @20+1 TS1109 Expression expected. (+1)  ||  bun accepts  ||  lint parses
+"interface I extends typeof A {}" [ts]  ||  tsc @20+6 TS1109 Expression expected. (+1)  ||  bun accepts  ||  lint parses
+"interface I extends keyof A {}" [ts]  ||  tsc @26+1 TS1005 ',' expected.  ||  bun accepts  ||  lint parses
+"interface I extends A | B {}" [ts]  ||  tsc @22+1 TS1005 ',' expected. (+1)  ||  bun accepts  ||  lint parses
+"interface I extends A[] {}" [ts]  ||  tsc @22+0 TS1011 An element access expression should take an argument.  ||  bun accepts  ||  lint parses
+"interface I extends string {}" [ts]  ||  tsc parses; checker also TS2840  ||  bun accepts  ||  lint parses
+"interface I extends void {}" [ts]  ||  tsc @20+4 TS1109 Expression expected.  ||  bun accepts  ||  lint parses
+"interface I extends 'a' {}" [ts]  ||  tsc parses; checker also TS2499  ||  bun accepts  ||  lint parses
+"interface I extends { a: 1 } {}" [ts]  ||  tsc parses; checker also TS2499  ||  bun accepts  ||  lint parses
+"interface I extends (A) {}" [ts]  ||  tsc parses; checker also TS2499  ||  bun accepts  ||  lint parses
+"interface I extends new A {}" [ts]  ||  tsc parses; checker also TS2499  ||  bun accepts  ||  lint parses
+"interface I extends A! {}" [ts]  ||  tsc parses; checker also TS2499  ||  bun accepts  ||  lint parses
+"interface I extends A?.B {}" [ts]  ||  tsc parses; checker also TS2499  ||  bun accepts  ||  lint parses
+"interface I extends A.B.C<T> {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"interface I extends A<T>.B {}" [ts]  ||  tsc @21+3 TS1477 An instantiation expression cannot be followed by a property access.  ||  bun accepts  ||  lint parses
+"interface I extends A<> {}" [ts]  ||  tsc parses; checker @21+2 TS1099 Type argument list cannot be empty.  ||  bun @22+1 Unexpected >  ||  lint parses
+"interface I extends A<T,> {}" [ts]  ||  tsc parses; checker @23+1 TS1009 Trailing comma not allowed.  ||  bun @24+1 Unexpected >  ||  lint parses
+"interface I extends import('a').A {}" [ts]  ||  tsc parses; checker also TS2499  ||  bun accepts  ||  lint parses
+"interface I extends this {}" [ts]  ||  tsc parses; checker also TS2499  ||  bun accepts  ||  lint parses
+"interface I extends class {} {}" [ts]  ||  tsc parses; checker also TS2499  ||  bun accepts  ||  lint parses
+"interface I<T> extends A<T> {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"declare class C { } interface I extends C {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+## decorators: parseDecorator, parseDecoratorExpression
+"class C { @dec x }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { @dec() x }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { @a.b.c x }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { @a.b() x }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { @a().b x }" [ts]  ||  tsc parses; checker @11+5 TS1497 Expression must be enclosed in parentheses to be used as a decorator.  ||  bun scan accepts; transform @14+1 A decorator call expression cannot be followed by a property access; wrap the expression in parentheses to use it as a decorator  ||  lint parses
+"class C { @a[0] x }" [ts]  ||  tsc @16+1 TS1005 ';' expected.  ||  bun @16+1 Expected ";" but found "x"  ||  lint @16+1 Expected ";" but found "x"  => TS1005 @16+1 ';' expected.
+"class C { @a['b']() {} }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { @(a) x }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { @(a, b) x }" [ts]  ||  tsc parses; checker also TS2695  ||  bun accepts  ||  lint parses
+"class C { @new A x }" [ts]  ||  tsc parses; checker @11+5 TS1497 Expression must be enclosed in parentheses to be used as a decorator.  ||  bun scan accepts; transform @11+3 Expected identifier but found "new"  ||  lint parses
+"class C { @new A() x }" [ts]  ||  tsc parses; checker @11+7 TS1497 Expression must be enclosed in parentheses to be used as a decorator.  ||  bun scan accepts; transform @11+3 Expected identifier but found "new"  ||  lint parses
+"class C { @class {} x }" [ts]  ||  tsc parses; checker @11+5 TS1240 Unable to resolve signature of property decorator when called as an expression.  ||  bun ?
+  This expression is not callable.  ||  tsc parses; checker @11+5 TS1497 Expression must be enclosed in parentheses to be used as a decorator.  ||  bun scan accepts; transform @11+5 Expected identifier but found "class"  ||  lint parses
+"class C { @function () {} x }" [ts]  ||  tsc parses; checker @10+15 TS1329 'function () {}' accepts too few arguments to be used as a decorator here. Did you mean to call it first and write '@function () {}()'?  ||  bun scan accepts; transform @11+8 Expected identifier but found "function"  ||  lint parses
+"class C { @a<T> x }" [ts]  ||  tsc @12+0 TS1146 Declaration expected. (+1)  ||  bun @12+1 Expected identifier but found "<" / @14+1 Expected ";" but found ">" / transform accepts  ||  lint @12+1 Expected identifier but found "<"  => TS1003 @12+1 Identifier expected.  (2 messages)
+"class C { @a<T>() x }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { @a! x }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { @a!.b x }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { @a?.b x }" [ts]  ||  tsc parses; checker @11+4 TS1497 Expression must be enclosed in parentheses to be used as a decorator.  ||  bun scan accepts; transform @12+2 Optional chaining is not allowed in decorator expressions; wrap the expression in parentheses to use it as a decorator  ||  lint parses
+"class C { @a?.() x }" [ts]  ||  tsc parses; checker @11+5 TS1497 Expression must be enclosed in parentheses to be used as a decorator.  ||  bun scan accepts; transform @12+2 Optional chaining is not allowed in decorator expressions; wrap the expression in parentheses to use it as a decorator / scan accepts; transform @14+1 Expected identifier but found "("  ||  lint parses
+"class C { @a`t` x }" [ts]  ||  tsc parses; checker @11+4 TS1497 Expression must be enclosed in parentheses to be used as a decorator.  ||  bun scan accepts; transform @12+3 Expected identifier but found "`t`"  ||  lint parses
+"class C { @!a x }" [ts]  ||  tsc @11+1 TS1109 Expression expected. (+1)  ||  bun scan accepts; transform @11+1 Expected identifier but found "!"  ||  lint parses
+"class C { @-a x }" [ts]  ||  tsc @11+1 TS1109 Expression expected. (+2)  ||  bun scan accepts; transform @11+1 Expected identifier but found "-"  ||  lint parses
+"class C { @typeof a x }" [ts]  ||  tsc @11+6 TS1109 Expression expected. (+1)  ||  bun scan accepts; transform @11+6 Expected identifier but found "typeof"  ||  lint parses
+"class C { @void a x }" [ts]  ||  tsc @11+4 TS1109 Expression expected. (+1)  ||  bun scan accepts; transform @11+4 Expected identifier but found "void"  ||  lint parses
+"class C { @<T>a x }" [ts]  ||  tsc @11+1 TS1109 Expression expected. (+2)  ||  bun scan accepts; transform @11+1 Expected identifier but found "<"  ||  lint parses
+"class C { @++a x }" [ts]  ||  tsc @11+2 TS1109 Expression expected. (+2)  ||  bun scan accepts; transform @11+2 Expected identifier but found "++"  ||  lint parses
+"class C { @a++ x }" [ts]  ||  tsc @12+0 TS1146 Declaration expected. (+1)  ||  bun @12+2 Expected identifier but found "++"  ||  lint @12+2 Expected identifier but found "++"  => TS1003 @12+2 Identifier expected.
+"class C { @a + b x }" [ts]  ||  tsc @12+0 TS1146 Declaration expected. (+2)  ||  bun @13+1 Expected identifier but found "+" / @17+1 Expected ";" but found "x"  ||  lint @13+1 Expected identifier but found "+"  => TS1003 @13+1 Identifier expected.  (2 messages)
+"class C { @a = b }" [ts]  ||  tsc @12+0 TS1146 Declaration expected.  ||  bun @13+1 Expected identifier but found "="  ||  lint @13+1 Expected identifier but found "="  => TS1003 @13+1 Identifier expected.
+"class C { @await a x }" [ts]  ||  tsc @17+1 TS1434 Unexpected keyword or identifier.  ||  bun scan accepts; transform @19+1 Expected ";" but found "x"  ||  lint @19+1 Expected ";" but found "x"  => TS1005 @19+1 ';' expected.
+"class C { @yield x }" [ts]  ||  tsc parses; checker @11+5 TS1213 Identifier expected. 'yield' is a reserved word in strict mode. Class definitions are automatically in strict mode.  ||  bun @11+5 Cannot use "yield" outside a generator function  ||  lint @11+5 Cannot use "yield" outside a generator function  => no code
+"async function f() { class C { @await a x } }" [ts]  ||  tsc @32+5 TS1109 Expression expected. (+1)  ||  bun scan accepts; transform @40+1 Expected ";" but found "x"  ||  lint parses
+"async function f() { class C { @await x } }" [ts]  ||  tsc @32+5 TS1109 Expression expected.  ||  bun @40+1 Expected identifier but found "}" / @43+0 Expected "}" but found end of file / transform accepts  ||  lint @40+1 Expected identifier but found "}"  => TS1003 @40+1 Identifier expected.  (2 messages)
+"class C { @this.a x }" [ts]  ||  tsc parses; checker @11+6 TS1497 Expression must be enclosed in parentheses to be used as a decorator.  ||  bun scan accepts; transform @11+4 Expected identifier but found "this"  ||  lint parses
+"class C { @super.a x }" [ts]  ||  tsc parses; checker @11+7 TS1497 Expression must be enclosed in parentheses to be used as a decorator.  ||  bun @11+5 Unexpected "super"  ||  lint @11+5 Unexpected "super"  => no code
+"class C { @1 x }" [ts]  ||  tsc parses; checker @11+1 TS1497 Expression must be enclosed in parentheses to be used as a decorator.  ||  bun scan accepts; transform @11+1 Expected identifier but found "1"  ||  lint parses
+"class C { @'a' x }" [ts]  ||  tsc parses; checker @11+3 TS1497 Expression must be enclosed in parentheses to be used as a decorator.  ||  bun scan accepts; transform @11+3 Expected identifier but found "'a'"  ||  lint parses
+"class C { @[a] x }" [ts]  ||  tsc parses; checker @11+3 TS1497 Expression must be enclosed in parentheses to be used as a decorator.  ||  bun scan accepts; transform @11+1 Expected identifier but found "["  ||  lint parses
+"class C { @{} x }" [ts]  ||  tsc parses; checker @11+2 TS1497 Expression must be enclosed in parentheses to be used as a decorator.  ||  bun scan accepts; transform @11+1 Expected identifier but found "{"  ||  lint parses
+"class C { @#p x }" [ts]  ||  tsc parses; checker @11+2 TS1451 Private identifiers are only allowed in class bodies and may only be used as part of a class member declaration, property access, or on the left-hand-side of an 'in' expression  ||  bun @11+2 Unexpected #p  ||  lint @11+2 Unexpected #p  => no code
+"class C { @a.#p x }" [ts]  ||  tsc parses  ||  bun scan accepts; transform @13+2 Private name "#p" must be declared in an enclosing class  ||  lint parses
+"class C { @ x }" [ts]  ||  tsc @13+0 TS1146 Declaration expected.  ||  bun @14+1 Expected identifier but found "}" / @15+0 Expected "}" but found end of file  ||  lint @14+1 Expected identifier but found "}"  => TS1003 @14+1 Identifier expected.  (2 messages)
+"class C { @@a x }" [ts]  ||  tsc @13+0 TS1109 Expression expected.  ||  bun @14+1 Expected "class" but found "x"  ||  lint @14+1 Expected "class" but found "x"  => TS1005 @14+1 'class' expected.
+"class C { @a @b x }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { @a\n@b\nx }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { @a\nx }" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { @import('a') x }" [ts]  ||  tsc parses; checker @11+11 TS1497 Expression must be enclosed in parentheses to be used as a decorator.  ||  bun scan accepts; transform @11+6 Expected identifier but found "import"  ||  lint parses
+"class C { @import.meta x }" [ts]  ||  tsc parses; checker @11+11 TS1497 Expression must be enclosed in parentheses to be used as a decorator.  ||  bun scan accepts; transform @11+6 Expected identifier but found "import"  ||  lint parses
+"@dec class C {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"@!dec class C {}" [ts]  ||  tsc @1+1 TS1109 Expression expected. (+1)  ||  bun scan accepts; transform @1+1 Expected identifier but found "!"  ||  lint parses
+"@dec export class C {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"export @dec class C {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"@dec export default class {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"export default @dec class {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"@a export @b class C {}" [ts]  ||  tsc parses; checker @10+2 TS8038 Decorators may not appear after 'export' or 'export default' if they also appear before 'export'.  ||  bun @10+1 Expected "class" but found "@"  ||  lint @10+1 Expected "class" but found "@"  => TS1005 @10+1 'class' expected.
+"@dec abstract class C {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"@dec declare class C {}" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"@dec function f() {}" [ts]  ||  tsc parses; checker @0+1 TS1206 Decorators are not valid here.  ||  bun @5+8 Expected "class" but found "function"  ||  lint @5+8 Expected "class" but found "function"  => TS1005 @5+8 'class' expected.
+"@dec let x;" [ts]  ||  tsc parses; checker @0+1 TS1206 Decorators are not valid here.  ||  bun @5+3 Expected "class" but found "let"  ||  lint @5+3 Expected "class" but found "let"  => TS1005 @5+3 'class' expected.
+"@dec interface I {}" [ts]  ||  tsc parses; checker @0+1 TS1206 Decorators are not valid here.  ||  bun @5+9 Expected "class" but found "interface"  ||  lint @5+9 Expected "class" but found "interface"  => TS1005 @5+9 'class' expected.
+"@dec enum E {}" [ts]  ||  tsc parses; checker @0+1 TS1206 Decorators are not valid here.  ||  bun @5+4 Expected "class" but found "enum"  ||  lint @5+4 Expected "class" but found "enum"  => TS1005 @5+4 'class' expected.
+"@dec type T = 1;" [ts]  ||  tsc parses; checker @0+1 TS1206 Decorators are not valid here.  ||  bun @5+4 Expected "class" but found "type"  ||  lint @5+4 Expected "class" but found "type"  => TS1005 @5+4 'class' expected.
+"@dec namespace N {}" [ts]  ||  tsc parses; checker @0+1 TS1206 Decorators are not valid here.  ||  bun @5+9 Expected "class" but found "namespace"  ||  lint @5+9 Expected "class" but found "namespace"  => TS1005 @5+9 'class' expected.
+"@dec" [ts]  ||  tsc @4+0 TS1146 Declaration expected.  ||  bun @4+0 Expected "class" but found end of file  ||  lint @4+0 Expected "class" but found end of file  => TS1005 @4+0 'class' expected.
+"const k = @dec class {};" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"const k = @!dec class {};" [ts]  ||  tsc @11+1 TS1109 Expression expected. (+2)  ||  bun scan accepts; transform @11+1 Expected identifier but found "!"  ||  lint parses
+"class C { m(@dec a, @dec() b, @a.b c, @(d) e) {} }" [ts]  ||  tsc parses; checker @12+1 TS1206 Decorators are not valid here.  ||  bun accepts  ||  lint parses
+"class C { m(@!dec a) {} }" [ts]  ||  tsc @13+1 TS1109 Expression expected. (+1)  ||  bun scan accepts; transform @13+1 Expected identifier but found "!"  ||  lint parses
+"class C { m(@dec) {} }" [ts]  ||  tsc @16+1 TS1003 Identifier expected.  ||  bun @16+1 Expected identifier but found ")" / @18+1 Expected ")" but found "{"  ||  lint @16+1 Expected identifier but found ")"  => TS1003 @16+1 Identifier expected.  (3 messages)
+"class C { m(@dec ...a) {} }" [ts]  ||  tsc parses; checker @12+1 TS1206 Decorators are not valid here.  ||  bun accepts  ||  lint parses
+"class C { m(...@dec a) {} }" [ts]  ||  tsc @15+1 TS1003 Identifier expected.  ||  bun @15+1 Expected identifier but found "@" / @16+3 Expected ")" but found "dec"  ||  lint @15+1 Expected identifier but found "@"  => TS1003 @15+1 Identifier expected.  (5 messages)
+"class C { m(@dec { a }) {} }" [ts]  ||  tsc parses; checker @12+1 TS1206 Decorators are not valid here.  ||  bun accepts  ||  lint parses
+"class C { m(@dec @dec2 a) {} }" [ts]  ||  tsc parses; checker @12+1 TS1206 Decorators are not valid here.  ||  bun accepts  ||  lint parses
+"class C { constructor(@dec a) {} }" [ts]  ||  tsc parses; checker @22+1 TS1206 Decorators are not valid here.  ||  bun accepts  ||  lint parses
+"function f(@dec a) {}" [ts]  ||  tsc parses; checker @11+1 TS1206 Decorators are not valid here.  ||  bun @11+1 Expected identifier but found "@" / @12+3 Expected ")" but found "dec"  ||  lint @11+1 Expected identifier but found "@"  => TS1003 @11+1 Identifier expected.  (4 messages)
+"const o = { m(@dec a) {} };" [ts]  ||  tsc parses; checker @14+1 TS1206 Decorators are not valid here.  ||  bun @14+1 Expected identifier but found "@" / @15+3 Expected ")" but found "dec"  ||  lint @14+1 Expected identifier but found "@"  => TS1003 @14+1 Identifier expected.  (4 messages)
+"const a = (@dec a) => 1;" [ts]  ||  tsc @15+0 TS1109 Expression expected. (+2)  ||  bun @16+1 Expected "class" but found "a"  ||  lint @16+1 Expected "class" but found "a"  => TS1005 @16+1 'class' expected.
+"const o = { @dec m() {} };" [ts]  ||  tsc @12+1 TS1136 Property assignment expected. (+2)  ||  bun @12+1 Expected identifier but found "@" / @17+1 Expected "}" but found "m"  ||  lint @12+1 Expected identifier but found "@"  => TS1003 @12+1 Identifier expected.  (4 messages)
+"const o = { @dec a: 1 };" [ts]  ||  tsc @12+1 TS1136 Property assignment expected. (+2)  ||  bun @12+1 Expected identifier but found "@" / @17+1 Expected "}" but found "a"  ||  lint @12+1 Expected identifier but found "@"  => TS1003 @12+1 Identifier expected.  (4 messages)
+## object literal members with class syntax (parseObjectLiteralElement)
+"const o = { public a: 1 };" [ts]  ||  tsc parses; checker @12+6 TS1042 'public' modifier cannot be used here.  ||  bun @19+1 Expected "}" but found "a" / @20+1 Expected ";" but found ":"  ||  lint @19+1 Expected "}" but found "a"  => TS1005 @19+1 '}' expected.  (3 messages)
+"const o = { static a: 1 };" [ts]  ||  tsc parses; checker @12+6 TS1042 'static' modifier cannot be used here.  ||  bun @19+1 Expected "}" but found "a" / @20+1 Expected ";" but found ":"  ||  lint @19+1 Expected "}" but found "a"  => TS1005 @19+1 '}' expected.  (3 messages)
+"const o = { readonly a: 1 };" [ts]  ||  tsc parses; checker @12+8 TS1042 'readonly' modifier cannot be used here.  ||  bun @21+1 Expected "}" but found "a" / @22+1 Expected ";" but found ":"  ||  lint @21+1 Expected "}" but found "a"  => TS1005 @21+1 '}' expected.  (3 messages)
+"const o = { async a: 1 };" [ts]  ||  tsc parses; checker @12+5 TS1042 'async' modifier cannot be used here.  ||  bun @19+1 Expected "(" but found ":" / @21+1 Expected identifier but found "1"  ||  lint @19+1 Expected "(" but found ":"  => TS1005 @19+1 '(' expected.  (5 messages)
+"const o = { public m() {} };" [ts]  ||  tsc parses; checker @12+6 TS1042 'public' modifier cannot be used here.  ||  bun @19+1 Expected "}" but found "m" / @23+1 Expected ";" but found "{"  ||  lint @19+1 Expected "}" but found "m"  => TS1005 @19+1 '}' expected.  (3 messages)
+"const o = { static m() {} };" [ts]  ||  tsc parses; checker @12+6 TS1042 'static' modifier cannot be used here.  ||  bun @19+1 Expected "}" but found "m" / @23+1 Expected ";" but found "{"  ||  lint @19+1 Expected "}" but found "m"  => TS1005 @19+1 '}' expected.  (3 messages)
+"const o = { declare m() {} };" [ts]  ||  tsc parses; checker @12+7 TS1042 'declare' modifier cannot be used here.  ||  bun @20+1 Expected "}" but found "m" / @24+1 Expected ";" but found "{"  ||  lint @20+1 Expected "}" but found "m"  => TS1005 @20+1 '}' expected.  (3 messages)
+"const o = { a?: 1 };" [ts]  ||  tsc parses; checker @13+1 TS1162 An object member cannot be declared optional.  ||  bun @13+1 Expected "}" but found "?" / @14+1 Expected ";" but found ":"  ||  lint @13+1 Expected "}" but found "?"  => TS1005 @13+1 '}' expected.  (3 messages)
+"const o = { a!: 1 };" [ts]  ||  tsc parses; checker @13+1 TS1255 A definite assignment assertion '!' is not permitted in this context.  ||  bun @13+1 Expected "}" but found "!" / @14+1 Expected ";" but found ":"  ||  lint @13+1 Expected "}" but found "!"  => TS1005 @13+1 '}' expected.  (3 messages)
+"const o = { m?() {} };" [ts]  ||  tsc parses; checker @13+1 TS1162 An object member cannot be declared optional.  ||  bun @13+1 Expected "}" but found "?" / @17+1 Expected ";" but found "{"  ||  lint @13+1 Expected "}" but found "?"  => TS1005 @13+1 '}' expected.  (3 messages)
+"const o = { m!() {} };" [ts]  ||  tsc parses; checker @13+1 TS1255 A definite assignment assertion '!' is not permitted in this context.  ||  bun @13+1 Expected "}" but found "!" / @17+1 Expected ";" but found "{"  ||  lint @13+1 Expected "}" but found "!"  => TS1005 @13+1 '}' expected.  (3 messages)
+"const o = { a? };" [ts]  ||  tsc parses; checker @12+1 TS18004 No value exists in scope for the shorthand property 'a'. Either declare one or provide an initializer.  ||  bun @13+1 Expected "}" but found "?" / @15+1 Unexpected }  ||  lint @13+1 Expected "}" but found "?"  => TS1005 @13+1 '}' expected.  (2 messages)
+"const o = { a! };" [ts]  ||  tsc parses; checker @12+1 TS18004 No value exists in scope for the shorthand property 'a'. Either declare one or provide an initializer.  ||  bun @13+1 Expected "}" but found "!" / @15+1 Unexpected }  ||  lint @13+1 Expected "}" but found "!"  => TS1005 @13+1 '}' expected.  (2 messages)
+"const o = { get a?() { return 1 } };" [ts]  ||  tsc @17+1 TS1005 '(' expected. (+2)  ||  bun @17+1 Expected "(" but found "?" / @18+1 Expected identifier but found "("  ||  lint @17+1 Expected "(" but found "?"  => TS1005 @17+1 '(' expected.  (3 messages)
+"const o = { m(); };" [ts]  ||  tsc parses; checker @15+1 TS1005 '{' expected.  ||  bun @15+1 Expected "{" but found ";" / @18+1 Expected "}" but found ";"  ||  lint @15+1 Expected "{" but found ";"  => TS1005 @15+1 '{' expected.  (2 messages)
+"const o = { m() };" [ts]  ||  tsc parses; checker @14+1 TS1005 '{' expected.  ||  bun @16+1 Expected "{" but found "}" / @18+0 Unexpected end of file  ||  lint @16+1 Expected "{" but found "}"  => TS1005 @16+1 '{' expected.  (2 messages)
+"const o = { m<T>(a: T): T { return a } };" [ts]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"const o = { get a<T>() { return 1 } };" [ts]  ||  tsc parses; checker @16+1 TS1094 An accessor cannot have type parameters.  ||  bun accepts  ||  lint parses
+"const o = { get a(x) { return 1 } };" [ts]  ||  tsc parses; checker @16+1 TS1054 A 'get' accessor cannot have parameters.  ||  bun @18+1 Getter a must have zero arguments  ||  lint @18+1 Getter a must have zero arguments  => no code
+"const o = { set a() {} };" [ts]  ||  tsc parses; checker @16+1 TS1049 A 'set' accessor must have exactly one parameter.  ||  bun @17+0 Setter a must have exactly 1 argument (there are 0)  ||  lint @17+0 Setter a must have exactly 1 argument (there are 0)  => no code
+"const o = { a = 1 };" [ts]  ||  tsc parses; checker @14+1 TS1312 Did you mean to use a ':'? An '=' can only follow a property name when the containing object literal is part of a destructuring pattern.  ||  bun @14+1 Unexpected "="  ||  lint @14+1 Unexpected "="  => no code
+"const o = { [k: string]: 1 };" [ts]  ||  tsc @14+1 TS1005 ']' expected. (+2)  ||  bun @14+1 Expected "]" but found ":" / @16+6 Expected ":" but found "string"  ||  lint @14+1 Expected "]" but found ":"  => TS1005 @14+1 ']' expected.  (3 messages)
+"const o = { constructor() {}, 'constructor': 1 };" [ts]  ||  tsc parses; checker @30+13 TS1119 An object literal cannot have property and accessor with the same name.  ||  bun accepts  ||  lint parses
+"const o = { #a: 1 };" [ts]  ||  tsc parses; checker @12+2 TS18016 Private identifiers are not allowed outside class bodies.  ||  bun @12+2 Expected identifier but found "#a"  ||  lint @12+2 Expected identifier but found "#a"  => TS1003 @12+2 Identifier expected.
+"const o = { a: 1; b: 2 };" [ts]  ||  tsc @16+1 TS1005 ',' expected.  ||  bun @16+1 Expected "}" but found ";" / @18+1 Expected ";" but found "b"  ||  lint @16+1 Expected "}" but found ";"  => TS1005 @16+1 '}' expected.  (3 messages)
+## JavaScript files: the same productions
+"class C { public x }" [js]  ||  tsc parses; checker @10+6 TS8009 The 'public' modifier can only be used in TypeScript files.  ||  bun @17+1 Expected ";" but found "x"  ||  lint @17+1 Expected ";" but found "x"  => TS1005 @17+1 ';' expected.
+"class C { x?: number }" [js]  ||  tsc parses; checker @11+1 TS8009 The '?' modifier can only be used in TypeScript files.  ||  bun @11+1 Expected ";" but found "?" / @12+1 Expected identifier but found ":"  ||  lint @11+1 Expected ";" but found "?"  => TS1005 @11+1 ';' expected.  (2 messages)
+"class C { x! }" [js]  ||  tsc parses  ||  bun @11+1 Expected ";" but found "!"  ||  lint @11+1 Expected ";" but found "!"  => TS1005 @11+1 ';' expected.
+"class C { m(): void {} }" [js]  ||  tsc parses; checker @15+4 TS8010 Type annotations can only be used in TypeScript files.  ||  bun @13+1 Expected "{" but found ":" / @24+0 Expected "}" but found end of file  ||  lint @13+1 Expected "{" but found ":"  => TS1005 @13+1 '{' expected.  (2 messages)
+"class C { constructor(public a) {} }" [js]  ||  tsc parses; checker @22+6 TS8012 Parameter modifiers can only be used in TypeScript files.  ||  bun @29+1 Expected ")" but found "a" / @30+1 Expected "{" but found ")"  ||  lint @29+1 Expected ")" but found "a"  => TS1005 @29+1 ')' expected.  (3 messages)
+"class C { declare x }" [js]  ||  tsc parses; checker @10+7 TS8009 The 'declare' modifier can only be used in TypeScript files.  ||  bun @18+1 Expected ";" but found "x"  ||  lint @18+1 Expected ";" but found "x"  => TS1005 @18+1 ';' expected.
+"class C { abstract x }" [js]  ||  tsc parses; checker @10+8 TS8009 The 'abstract' modifier can only be used in TypeScript files.  ||  bun @19+1 Expected ";" but found "x"  ||  lint @19+1 Expected ";" but found "x"  => TS1005 @19+1 ';' expected.
+"class C { readonly x }" [js]  ||  tsc parses; checker @10+8 TS8009 The 'readonly' modifier can only be used in TypeScript files.  ||  bun @19+1 Expected ";" but found "x"  ||  lint @19+1 Expected ";" but found "x"  => TS1005 @19+1 ';' expected.
+"class C { [k: string]: any }" [js]  ||  tsc parses; checker @14+6 TS8010 Type annotations can only be used in TypeScript files.  ||  bun @12+1 Expected "]" but found ":" / @14+6 Expected ";" but found "string"  ||  lint @12+1 Expected "]" but found ":"  => TS1005 @12+1 ']' expected.  (4 messages)
+"class C { static static x }" [js]  ||  tsc @17+6 TS1434 Unexpected keyword or identifier.  ||  bun @24+1 Expected ";" but found "x"  ||  lint @24+1 Expected ";" but found "x"  => TS1005 @24+1 ';' expected.
+"class C { get a?() { return 1 } }" [js]  ||  tsc @15+1 TS1005 '(' expected. (+2)  ||  bun @15+1 Expected "(" but found "?" / @16+1 Expected identifier but found "("  ||  lint @15+1 Expected "(" but found "?"  => TS1005 @15+1 '(' expected.  (3 messages)
+"class C implements I {}" [js]  ||  tsc parses; checker @8+12 TS8005 'implements' clauses can only be used in TypeScript files.  ||  bun @8+10 Expected "{" but found "implements" / @21+1 Expected ";" but found "{"  ||  lint @8+10 Expected "{" but found "implements"  => TS1005 @8+10 '{' expected.  (2 messages)
+"class C extends B<T> {}" [js]  ||  tsc parses; checker @18+1 TS8011 Type arguments can only be used in TypeScript files.  ||  bun @17+1 Expected "{" but found "<" / @19+1 Expected ";" but found ">"  ||  lint @17+1 Expected "{" but found "<"  => TS1005 @17+1 '{' expected.  (4 messages)
+"class C<T> {}" [js]  ||  tsc parses; checker @8+1 TS8004 Type parameter declarations can only be used in TypeScript files.  ||  bun @7+1 Expected "{" but found "<" / @9+1 Expected ";" but found ">"  ||  lint @7+1 Expected "{" but found "<"  => TS1005 @7+1 '{' expected.  (4 messages)
+"class C extends !B {}" [js]  ||  tsc @16+1 TS1109 Expression expected. (+1)  ||  bun accepts  ||  lint parses
+"class C extends {} {}" [js]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C extends B, D {}" [js]  ||  tsc parses  ||  bun @17+1 Expected "{" but found "," / @21+1 Expected ";" but found "{"  ||  lint @17+1 Expected "{" but found ","  => TS1005 @17+1 '{' expected.  (2 messages)
+"function f(a?) {}" [js]  ||  tsc parses; checker @12+1 TS8009 The '?' modifier can only be used in TypeScript files.  ||  bun @12+1 Expected ")" but found "?" / @13+1 Expected "{" but found ")"  ||  lint @12+1 Expected ")" but found "?"  => TS1005 @12+1 ')' expected.  (3 messages)
+"function f(a: number) {}" [js]  ||  tsc parses; checker @14+6 TS8010 Type annotations can only be used in TypeScript files.  ||  bun @12+1 Expected ")" but found ":" / @14+6 Expected "{" but found "number"  ||  lint @12+1 Expected ")" but found ":"  => TS1005 @12+1 ')' expected.  (3 messages)
+"function f(this) {}" [js]  ||  tsc parses  ||  bun @11+4 Expected identifier but found "this"  ||  lint @11+4 Expected identifier but found "this"  => TS1359 @11+4 Identifier expected. 'this' is a reserved word that cannot be used here.
+"function f(public a) {}" [js]  ||  tsc parses; checker @11+6 TS8012 Parameter modifiers can only be used in TypeScript files.  ||  bun @18+1 Expected ")" but found "a" / @19+1 Expected "{" but found ")"  ||  lint @18+1 Expected ")" but found "a"  => TS1005 @18+1 ')' expected.  (3 messages)
+"function f<T>() {}" [js]  ||  tsc parses; checker @11+1 TS8004 Type parameter declarations can only be used in TypeScript files.  ||  bun @10+1 Expected "(" but found "<" / @12+1 Expected ")" but found ">"  ||  lint @10+1 Expected "(" but found "<"  => TS1005 @10+1 '(' expected.  (4 messages)
+"function f(): void {}" [js]  ||  tsc parses; checker @14+4 TS8010 Type annotations can only be used in TypeScript files.  ||  bun @12+1 Expected "{" but found ":" / @21+0 Unexpected end of file  ||  lint @12+1 Expected "{" but found ":"  => TS1005 @12+1 '{' expected.  (2 messages)
+"function f({ class }) {}" [js]  ||  tsc @19+1 TS1005 ':' expected.  ||  bun accepts  ||  lint parses
+"function f(...a, b) {}" [js]  ||  tsc parses  ||  bun @15+1 Expected ")" but found "," / @17+1 Expected ")" but found "b"  ||  lint @15+1 Expected ")" but found ","  => TS1005 @15+1 ')' expected.  (4 messages)
+"function f(...a,) {}" [js]  ||  tsc parses  ||  bun @15+1 Expected ")" but found ","  ||  lint @15+1 Expected ")" but found ","  => TS1005 @15+1 ')' expected.
+"class C { m(); }" [js]  ||  tsc parses; checker @10+1 TS8017 Signature declarations can only be used in TypeScript files.  ||  bun @13+1 Expected "{" but found ";" / @16+0 Expected "}" but found end of file  ||  lint @13+1 Expected "{" but found ";"  => TS1005 @13+1 '{' expected.  (2 messages)
+"class C { accessor x }" [js]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { @dec x }" [js]  ||  tsc parses  ||  bun @10+1 Expected identifier but found "@" / @15+1 Expected ";" but found "x" / transform accepts  ||  lint @10+1 Expected identifier but found "@"  => TS1003 @10+1 Identifier expected.  (2 messages)
+"class C { static {} }" [js]  ||  tsc parses  ||  bun accepts  ||  lint parses
+"class C { x y }" [js]  ||  tsc @10+1 TS1434 Unexpected keyword or identifier.  ||  bun @12+1 Expected ";" but found "y"  ||  lint @12+1 Expected ";" but found "y"  => TS1005 @12+1 ';' expected.
+"class C { m!() {} }" [js]  ||  tsc @12+1 TS1441 Cannot start a function call in a type annotation. (+2)  ||  bun @11+1 Expected ";" but found "!" / @12+1 Expected identifier but found "("  ||  lint @11+1 Expected ";" but found "!"  => TS1005 @11+1 ';' expected.  (4 messages)
+"class C { constructor?() {} }" [js]  ||  tsc @21+1 TS1005 '(' expected. (+2)  ||  bun @10+11 Invalid field name / @21+1 Expected ";" but found "?"  ||  lint @10+11 Invalid field name  => no code  (6 messages)
+  ||  tsc ?  ||  bun ?

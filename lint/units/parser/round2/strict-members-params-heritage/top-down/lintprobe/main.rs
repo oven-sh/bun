@@ -32,6 +32,52 @@ fn unhex(text: &str) -> Vec<u8> {
     out
 }
 
+/// The source from `at` to the next delimiter: enough to tell which name a key is.
+fn word_at(text: &[u8], at: i32) -> String {
+    let start = (at.max(0) as usize).min(text.len());
+    let mut end = start;
+    while end < text.len()
+        && end - start < 24
+        && !matches!(
+            text[end],
+            b' ' | b'\n' | b'(' | b':' | b';' | b'=' | b'?' | b'!' | b'<' | b'}' | b',' | b']' | b')'
+        )
+    {
+        end += 1;
+    }
+    String::from_utf8_lossy(&text[start..end]).into_owned()
+}
+
+/// The members that the tree keeps of each class statement of the file: `static kind:name;`.
+fn classes(stmts: &[bun_ast::Stmt], text: &[u8]) -> String {
+    let mut out = String::new();
+    for stmt in stmts {
+        let bun_ast::StmtData::SClass(class_stmt) = stmt.data else {
+            continue;
+        };
+        let class = &class_stmt.class;
+        out.push_str(" class{");
+        for property in class.properties.slice() {
+            let kind: &'static str = property.kind.into();
+            let is_static = property.flags.contains(bun_ast::flags::Property::IsStatic);
+            let name = match property.key {
+                Some(key) => word_at(text, key.loc.start),
+                None => "-".to_string(),
+            };
+            out.push_str(if is_static { "static " } else { "" });
+            out.push_str(kind);
+            out.push(':');
+            out.push_str(&name);
+            out.push(';');
+        }
+        out.push('}');
+        if class.extends.is_some() {
+            out.push_str("+extends");
+        }
+    }
+    out
+}
+
 fn describe(log: &Log, errors: &SyntaxErrors) -> String {
     let mut out = String::new();
     let mut shown = 0;
@@ -111,7 +157,7 @@ fn run(index: usize, loader_name: &str, text: &'static [u8]) {
             ));
         }
         format!(
-            "stmts={} ann={} tp={} ret={} this={} kw={} her={}{} erased_stmts={} erased_members={}",
+            "stmts={} ann={} tp={} ret={} this={} kw={} her={}{} erased_stmts={} erased_members={}{}",
             parsed.stmts.len(),
             attached.annotations.len(),
             attached.type_parameters.len(),
@@ -121,7 +167,8 @@ fn run(index: usize, loader_name: &str, text: &'static [u8]) {
             attached.heritage.len(),
             heritage,
             erased.statements.len(),
-            erased.members.len()
+            erased.members.len(),
+            classes(parsed.stmts, text)
         )
     });
     match result {

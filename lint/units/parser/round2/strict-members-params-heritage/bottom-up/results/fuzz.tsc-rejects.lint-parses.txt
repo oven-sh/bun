@@ -1,0 +1,821 @@
+{
+ "member LZ": 58872,
+ "member LY": 2286,
+ "member SL": 58,
+ "member LS": 101,
+ "member LX": 134,
+ "heritage LZ": 18722,
+ "heritage LY": 604,
+ "heritage SL": 71,
+ "heritage LS": 159,
+ "heritage LX": 306,
+ "params LZ": 35592,
+ "params LY": 1271,
+ "params SL": 55,
+ "params LS": 38,
+ "params LX": 352
+}
+## TS1005  (295)
+   "abstract ! class C { abstract x: number; abstract m(): void; protected abstract get a(): number; }"  [ins "!" before class] tsc TS1005@11+5 | lint parses | scan accepts
+   "abstract class C { abstract x: number; abstract m(): void; protected abstract get a? (): number; }"  [ins "?" before (] tsc TS1005@83+1 | lint parses | scan accepts
+   "class C extends implements { override m() {} public override x = 1; }"  [rep B by "implements"] tsc TS1005@45+6 | lint parses | scan accepts
+   "class C { get a? () { return 1 } set a(v) {} static get b() { return 1 } static set b(v) {} }"  [ins "?" before (] tsc TS1005@15+1 | lint parses | scan accepts
+   "class C { get a() { return 1 } set a? (v) {} static get b() { return 1 } static set b(v) {} }"  [ins "?" before (] tsc TS1005@36+1 | lint parses | scan accepts
+   "class C { get a() { return 1 } set a(v) {} static get b? () { return 1 } static set b(v) {} }"  [ins "?" before (] tsc TS1005@55+1 | lint parses | scan accepts
+   "class C { get a() { return 1 } set a(v) {} static get b() { return 1 } static set b? (v) {} }"  [ins "?" before (] tsc TS1005@83+1 | lint parses | scan accepts
+   "class C { constructor? () {} }"  [ins "?" before (] tsc TS1005@21+1 | lint parses | scan accepts
+   "class C { constructor! () {} }"  [ins "!" before (] tsc TS1005@21+1 | lint parses | scan accepts
+   "class C { constructor? (public a: number, private readonly b = 1, protected c?: string) {} }"  [ins "?" before (] tsc TS1005@21+1 | lint parses | scan accepts
+   "class C { constructor! (public a: number, private readonly b = 1, protected c?: string) {} }"  [ins "!" before (] tsc TS1005@21+1 | lint parses | scan accepts
+   "class C { constructor(public \n a: number, private readonly b = 1, protected c?: string) {} }"  [ins "\n" before a] tsc TS1005@31+1 | lint parses | scan accepts
+   "class C { constructor(public a: number, private \n readonly b = 1, protected c?: string) {} }"  [ins "\n" before readonly] tsc TS1005@50+8 | lint parses | scan accepts
+   "class C { constructor(public a: number, private \n b = 1, protected c?: string) {} }"  [rep readonly by "\n"] tsc TS1005@50+1 | lint parses | scan accepts
+   "class C { constructor(public a: number, private readonly \n b = 1, protected c?: string) {} }"  [ins "\n" before b] tsc TS1005@59+1 | lint parses | scan accepts
+   "class C { constructor(public a: number, private readonly b = 1, ... protected c?: string) {} }"  [ins "..." before protected] tsc TS1005@78+1 | lint parses | scan accepts
+   "class C { constructor(public a: number, private readonly b = 1, protected \n c?: string) {} }"  [ins "\n" before c] tsc TS1005@76+1 | lint parses | scan accepts
+   "class C { * [k: string]: any; static [k: number]: string; readonly [k: symbol]: number; }"  [ins "*" before [] tsc TS1005@14+1 | lint parses | scan accepts
+   "class C { get [k: string]: any; static [k: number]: string; readonly [k: symbol]: number; }"  [ins "get" before [] tsc TS1005@16+1 | lint parses | scan accepts
+   "class C { set [k: string]: any; static [k: number]: string; readonly [k: symbol]: number; }"  [ins "set" before [] tsc TS1005@16+1 | lint parses | scan accepts
+   "class C { [k! : string]: any; static [k: number]: string; readonly [k: symbol]: number; }"  [ins "!" before :] tsc TS1005@14+1 | lint parses | scan accepts
+   "class C { [k<T> : string]: any; static [k: number]: string; readonly [k: symbol]: number; }"  [ins "<T>" before :] tsc TS1005@16+1 | lint parses | scan accepts
+   "class C { [k: string]: any; * [k: number]: string; readonly [k: symbol]: number; }"  [rep static by "*"] tsc TS1005@32+1 | lint parses | scan accepts
+   "class C { [k: string]: any; get [k: number]: string; readonly [k: symbol]: number; }"  [rep static by "get"] tsc TS1005@34+1 | lint parses | scan accepts
+   "class C { [k: string]: any; set [k: number]: string; readonly [k: symbol]: number; }"  [rep static by "set"] tsc TS1005@34+1 | lint parses | scan accepts
+   "class C { [k: string]: any; static * [k: number]: string; readonly [k: symbol]: number; }"  [ins "*" before [] tsc TS1005@39+1 | lint parses | scan accepts
+   "class C { [k: string]: any; static get [k: number]: string; readonly [k: symbol]: number; }"  [ins "get" before [] tsc TS1005@41+1 | lint parses | scan accepts
+   "class C { [k: string]: any; static set [k: number]: string; readonly [k: symbol]: number; }"  [ins "set" before [] tsc TS1005@41+1 | lint parses | scan accepts
+   "class C { [k: string]: any; static [k! : number]: string; readonly [k: symbol]: number; }"  [ins "!" before :] tsc TS1005@39+1 | lint parses | scan accepts
+   "class C { [k: string]: any; static [k<T> : number]: string; readonly [k: symbol]: number; }"  [ins "<T>" before :] tsc TS1005@41+1 | lint parses | scan accepts
+   "class C { [k: string]: any; static [k: number]: string; * [k: symbol]: number; }"  [rep readonly by "*"] tsc TS1005@60+1 | lint parses | scan accepts
+   "class C { [k: string]: any; static [k: number]: string; get [k: symbol]: number; }"  [rep readonly by "get"] tsc TS1005@62+1 | lint parses | scan accepts
+   "class C { [k: string]: any; static [k: number]: string; set [k: symbol]: number; }"  [rep readonly by "set"] tsc TS1005@62+1 | lint parses | scan accepts
+   "class C { [k: string]: any; static [k: number]: string; readonly * [k: symbol]: number; }"  [ins "*" before [] tsc TS1005@69+1 | lint parses | scan accepts
+   "class C { [k: string]: any; static [k: number]: string; readonly get [k: symbol]: number; }"  [ins "get" before [] tsc TS1005@71+1 | lint parses | scan accepts
+   "class C { [k: string]: any; static [k: number]: string; readonly set [k: symbol]: number; }"  [ins "set" before [] tsc TS1005@71+1 | lint parses | scan accepts
+   "class C { [k: string]: any; static [k: number]: string; readonly [k! : symbol]: number; }"  [ins "!" before :] tsc TS1005@69+1 | lint parses | scan accepts
+   "class C { [k: string]: any; static [k: number]: string; readonly [k<T> : symbol]: number; }"  [ins "<T>" before :] tsc TS1005@71+1 | lint parses | scan accepts
+   "class C { [a] = 1; [b]() {} static [c]; get [d]? () { return 1 } }"  [ins "?" before (] tsc TS1005@47+1 | lint parses | scan accepts
+   "class C { #p = 1; #m() {} static #s; get #a? () { return 1 } }"  [ins "?" before (] tsc TS1005@43+1 | lint parses | scan accepts
+   "class C { static {} static { ! this.x = 1; } }"  [ins "!" before this] tsc TS1005@38+1 | lint parses | scan accepts
+   "class C { static {} static { void this.x = 1; } }"  [ins "void" before this] tsc TS1005@41+1 | lint parses | scan accepts
+   "class C { static {} static { <T> this.x = 1; } }"  [ins "<T>" before this] tsc TS1005@40+1 | lint parses | scan accepts
+   "class C { static {} static { this*x = 1; } }"  [rep . by "*"] tsc TS1005@36+1 | lint parses | scan accepts
+   "class C { static {} static { this<x = 1; } }"  [rep . by "<"] tsc TS1005@36+1 | lint parses | scan accepts
+   "class C { static {} static { this>x = 1; } }"  [rep . by ">"] tsc TS1005@36+1 | lint parses | scan accepts
+   "class C { static {} static { this<T>x = 1; } }"  [rep . by "<T>"] tsc TS1005@38+1 | lint parses | scan accepts
+   "class C { m<T>(a: T): T { return a } get x?<T>(): void; }"  [ins "get" before x] tsc TS1005@42+1 | lint parses | scan accepts
+   "class C { m<T>(a: T): T { return a } set x?<T>(): void; }"  [ins "set" before x] tsc TS1005@42+1 | lint parses | scan accepts
+   "class C { m<T>(a: T): T { return a } constructor?<T>(): void; }"  [rep x by "constructor"] tsc TS1005@48+1 | lint parses | scan accepts
+   "class C { 1 = 1* 'a' = 2; 2n() {} \"b\"() {} }"  [rep ; by "*"] tsc TS1005@21+1 | lint parses | scan accepts
+   "class C { 1 = 1< 'a' = 2; 2n() {} \"b\"() {} }"  [rep ; by "<"] tsc TS1005@21+1 | lint parses | scan accepts
+   "class C { 1 = 1> 'a' = 2; 2n() {} \"b\"() {} }"  [rep ; by ">"] tsc TS1005@21+1 | lint parses | scan accepts
+   "class C { 1 = 1<T> 'a' = 2; 2n() {} \"b\"() {} }"  [rep ; by "<T>"] tsc TS1005@23+1 | lint parses | scan accepts
+   "class C { m(@dec a, @dec() b: number) {} constructor? (@dec public p) {} }"  [ins "?" before (] tsc TS1005@52+1 | lint parses | scan accepts
+   "class C { m(@dec a, @dec() b: number) {} constructor! (@dec public p) {} }"  [ins "!" before (] tsc TS1005@52+1 | lint parses | scan accepts
+   "class C { m(@dec a, @dec() b: number) {} constructor(@dec ... public p) {} }"  [ins "..." before public] tsc TS1005@69+1 | lint parses | scan accepts
+   "class C { m(@dec a, @dec() b: number) {} constructor(@dec public \n p) {} }"  [ins "\n" before p] tsc TS1005@67+1 | lint parses | scan accepts
+   "declare ! class C { x: number; m(): void; constructor(a: number); static s: string; get g(): number; }"  [ins "!" before class] tsc TS1005@10+5 | lint parses | scan accepts
+   "declare class C { x: number; m(): void; constructor? (a: number); static s: string; get g(): number; }"  [ins "?" before (] tsc TS1005@51+1 | lint parses | scan accepts
+   "declare class C { x: number; m(): void; constructor! (a: number); static s: string; get g(): number; }"  [ins "!" before (] tsc TS1005@51+1 | lint parses | scan accepts
+   "declare class C { x: number; m(): void; constructor(a: number); static s: string; get g? (): number; }"  [ins "?" before (] tsc TS1005@87+1 | lint parses | scan accepts
+   "! k = class { x = 1; m() {} static s; };"  [rep const by "!"] tsc TS1005@4+1 | lint parses | scan accepts
+   "void k = class { x = 1; m() {} static s; };"  [rep const by "void"] tsc TS1005@7+1 | lint parses | scan accepts
+   "<T> k = class { x = 1; m() {} static s; };"  [rep const by "<T>"] tsc TS1005@6+1 | lint parses | scan accepts
+   "class C extends B<const> {}"  [rep T by "const"] tsc TS1005@18+5 | lint parses | scan accepts
+   "class C extends B<extends> {}"  [rep T by "extends"] tsc TS1005@18+7 | lint parses | scan accepts
+   "class C extends a.b.c<const, U> {}"  [rep T by "const"] tsc TS1005@22+5 | lint parses | scan accepts
+   "class C extends a.b.c<extends, U> {}"  [rep T by "extends"] tsc TS1005@22+7 | lint parses | scan accepts
+   "class C extends a.b.c<T, const> {}"  [rep U by "const"] tsc TS1005@25+5 | lint parses | scan accepts
+   "class C extends a.b.c<T, extends> {}"  [rep U by "extends"] tsc TS1005@25+7 | lint parses | scan accepts
+   "class C extends {}() {}"  [rep f by "{}"] tsc TS1005@21+1 | lint parses | scan accepts
+   "class C extends {} (a, b) {}"  [ins "{}" before (] tsc TS1005@26+1 | lint parses | scan accepts
+   "class C extends B implements class, J<T> {}"  [rep I by "class"] tsc TS1005@34+1 | lint parses | scan accepts
+   "class C extends B implements function, J<T> {}"  [rep I by "function"] tsc TS1005@37+1 | lint parses | scan accepts
+   "class C extends B implements I, class<T> {}"  [rep J by "class"] tsc TS1005@43+0 | lint parses | scan @41 Unexpected {
+   "class C extends B implements I, function<T> {}"  [rep J by "function"] tsc TS1005@44+1 | lint parses | scan @44 Unexpected {
+   "class C extends B implements I, J<const> {}"  [rep T by "const"] tsc TS1005@34+5 | lint parses | scan accepts
+   "class C extends B implements I, J<extends> {}"  [rep T by "extends"] tsc TS1005@34+7 | lint parses | scan accepts
+   "class C implements class {}"  [rep I by "class"] tsc TS1005@27+0 | lint parses | scan @25 Unexpected {
+   "class C implements function {}"  [rep I by "function"] tsc TS1005@28+1 | lint parses | scan @28 Unexpected {
+   "class C<T> extends {}<T> implements I<T>, a.J {}"  [rep B by "{}"] tsc TS1005@36+1 | lint parses | scan accepts
+   "class C<T> extends B<const> implements I<T>, a.J {}"  [rep T by "const"] tsc TS1005@21+5 | lint parses | scan accepts
+   "class C<T> extends B<extends> implements I<T>, a.J {}"  [rep T by "extends"] tsc TS1005@21+7 | lint parses | scan accepts
+   "class C<T> extends B<T> implements class<T>, a.J {}"  [rep I by "class"] tsc TS1005@43+1 | lint parses | scan accepts
+   "class C<T> extends B<T> implements function<T>, a.J {}"  [rep I by "function"] tsc TS1005@46+1 | lint parses | scan accepts
+   "class C<T> extends B<T> implements I<const>, a.J {}"  [rep T by "const"] tsc TS1005@37+5 | lint parses | scan accepts
+   "class C<T> extends B<T> implements I<extends>, a.J {}"  [rep T by "extends"] tsc TS1005@37+7 | lint parses | scan accepts
+   "class C<T> extends B<T> implements I<T>, class.J {}"  [rep a by "class"] tsc TS1005@46+1 | lint parses | scan @49 Unexpected {
+   "class C<T> extends B<T> implements I<T>, function.J {}"  [rep a by "function"] tsc TS1005@49+1 | lint parses | scan @52 Unexpected {
+   "class C extends {}[b] {}"  [rep a by "{}"] tsc TS1005@22+1 | lint parses | scan accepts
+   "! k = class extends B {};"  [rep const by "!"] tsc TS1005@4+1 | lint parses | scan accepts
+   "void k = class extends B {};"  [rep const by "void"] tsc TS1005@7+1 | lint parses | scan accepts
+   "<T> k = class extends B {};"  [rep const by "<T>"] tsc TS1005@6+1 | lint parses | scan accepts
+   "! k = class K<T> extends B<T> implements I {};"  [rep const by "!"] tsc TS1005@4+1 | lint parses | scan accepts
+   "void k = class K<T> extends B<T> implements I {};"  [rep const by "void"] tsc TS1005@7+1 | lint parses | scan accepts
+   "<T> k = class K<T> extends B<T> implements I {};"  [rep const by "<T>"] tsc TS1005@6+1 | lint parses | scan accepts
+   "const k = class K<T> extends {}<T> implements I {};"  [rep B by "{}"] tsc TS1005@46+1 | lint parses | scan accepts
+   "const k = class K<T> extends B<const> implements I {};"  [rep T by "const"] tsc TS1005@31+5 | lint parses | scan accepts
+   "const k = class K<T> extends B<extends> implements I {};"  [rep T by "extends"] tsc TS1005@31+7 | lint parses | scan accepts
+   "const k = class K<T> extends B<T> implements class {};"  [rep I by "class"] tsc TS1005@53+1 | lint parses | scan @51 Unexpected {
+   "const k = class K<T> extends B<T> implements function {};"  [rep I by "function"] tsc TS1005@54+1 | lint parses | scan @54 Unexpected {
+   "export class C extends B implements class {}"  [rep I by "class"] tsc TS1005@44+0 | lint parses | scan @42 Unexpected {
+   "export class C extends B implements function {}"  [rep I by "function"] tsc TS1005@45+1 | lint parses | scan @45 Unexpected {
+   "declare ! class C extends B implements I {}"  [ins "!" before class] tsc TS1005@10+5 | lint parses | scan accepts
+   "declare class C extends B implements class {}"  [rep I by "class"] tsc TS1005@45+0 | lint parses | scan @43 Unexpected {
+   "declare class C extends B implements function {}"  [rep I by "function"] tsc TS1005@46+1 | lint parses | scan @46 Unexpected {
+   "abstract ! class C extends B {}"  [ins "!" before class] tsc TS1005@11+5 | lint parses | scan accepts
+   "interface ! I extends A, B<T>, a.C {}"  [ins "!" before I] tsc TS1005@12+1 | lint parses | scan accepts
+   "interface I extends readonly A, B<T>, a.C {}"  [ins "readonly" before A] tsc TS1005@29+1 | lint parses | scan accepts
+   "interface I extends function, B<T>, a.C {}"  [rep A by "function"] tsc TS1005@28+1 | lint parses | scan accepts
+   "interface I extends A, readonly B<T>, a.C {}"  [ins "readonly" before B] tsc TS1005@32+1 | lint parses | scan accepts
+   "interface I extends A, function<T>, a.C {}"  [rep B by "function"] tsc TS1005@34+1 | lint parses | scan accepts
+   "interface I extends A, B<. T>, a.C {}"  [ins "." before T] tsc TS1005@25+1 | lint parses | scan accepts
+   "interface I extends A, B<const>, a.C {}"  [rep T by "const"] tsc TS1005@25+5 | lint parses | scan accepts
+   "interface I extends A, B<extends>, a.C {}"  [rep T by "extends"] tsc TS1005@25+7 | lint parses | scan accepts
+   "interface I extends A, B<T>! , a.C {}"  [ins "!" before ,] tsc TS1005@27+1 | lint parses | scan accepts
+   "interface I extends A, B<T>, readonly a.C {}"  [ins "readonly" before a] tsc TS1005@38+1 | lint parses | scan accepts
+   "interface ! I<T> extends A<T> { x: T }"  [ins "!" before I] tsc TS1005@12+1 | lint parses | scan accepts
+   "interface I<T> extends readonly A<T> { x: T }"  [ins "readonly" before A] tsc TS1005@32+1 | lint parses | scan accepts
+   "interface I<T> extends A<. T> { x: T }"  [ins "." before T] tsc TS1005@25+1 | lint parses | scan @25 Unexpected .
+   "interface I<T> extends A<const> { x: T }"  [rep T by "const"] tsc TS1005@25+5 | lint parses | scan accepts
+   "interface I<T> extends A<extends> { x: T }"  [rep T by "extends"] tsc TS1005@25+7 | lint parses | scan accepts
+   "interface I<T> extends A<T> ! { x: T }"  [ins "!" before {] tsc TS1005@28+1 | lint parses | scan accepts
+   "interface I<T> extends A<T> { get x: T }"  [ins "get" before x] tsc TS1005@35+1 | lint parses | scan accepts
+   "interface I<T> extends A<T> { set x: T }"  [ins "set" before x] tsc TS1005@35+1 | lint parses | scan accepts
+   "interface I<T> extends A<T> { default x: T }"  [ins "default" before x] tsc TS1005@38+1 | lint parses | scan accepts
+   "interface I<T> extends A<T> { const x: T }"  [ins "const" before x] tsc TS1005@36+1 | lint parses | scan accepts
+   "interface I<T> extends A<T> { x<T> : T }"  [ins "<T>" before :] tsc TS1005@35+1 | lint parses | scan accepts
+   "function f(a: number, b?: string, c: boolean = true, ...d: any[const ]) {}"  [ins "const" before ]] tsc TS1005@63+5 | lint parses | scan accepts
+   "function f(a: number, b?: string, c: boolean = true, ...d: any[extends ]) {}"  [ins "extends" before ]] tsc TS1005@63+7 | lint parses | scan accepts
+   "function f({ export, b: [c, d = 1], ...e }: T, [x, , y, ...z]: U) {}"  [rep a by "export"] tsc TS1005@19+1 | lint parses | scan accepts
+   "function f({ default, b: [c, d = 1], ...e }: T, [x, , y, ...z]: U) {}"  [rep a by "default"] tsc TS1005@20+1 | lint parses | scan accepts
+   "function f({ const, b: [c, d = 1], ...e }: T, [x, , y, ...z]: U) {}"  [rep a by "const"] tsc TS1005@18+1 | lint parses | scan accepts
+   "function f({ in, b: [c, d = 1], ...e }: T, [x, , y, ...z]: U) {}"  [rep a by "in"] tsc TS1005@15+1 | lint parses | scan accepts
+   "function f({ this, b: [c, d = 1], ...e }: T, [x, , y, ...z]: U) {}"  [rep a by "this"] tsc TS1005@17+1 | lint parses | scan accepts
+   "function f({ extends, b: [c, d = 1], ...e }: T, [x, , y, ...z]: U) {}"  [rep a by "extends"] tsc TS1005@20+1 | lint parses | scan accepts
+   "function f({ new, b: [c, d = 1], ...e }: T, [x, , y, ...z]: U) {}"  [rep a by "new"] tsc TS1005@16+1 | lint parses | scan accepts
+   "function f({ class, b: [c, d = 1], ...e }: T, [x, , y, ...z]: U) {}"  [rep a by "class"] tsc TS1005@18+1 | lint parses | scan accepts
+   "function f({ function, b: [c, d = 1], ...e }: T, [x, , y, ...z]: U) {}"  [rep a by "function"] tsc TS1005@21+1 | lint parses | scan accepts
+   "function f({ var, b: [c, d = 1], ...e }: T, [x, , y, ...z]: U) {}"  [rep a by "var"] tsc TS1005@16+1 | lint parses | scan accepts
+   "function f({ super, b: [c, d = 1], ...e }: T, [x, , y, ...z]: U) {}"  [rep a by "super"] tsc TS1005@18+1 | lint parses | scan accepts
+   "function f({ null, b: [c, d = 1], ...e }: T, [x, , y, ...z]: U) {}"  [rep a by "null"] tsc TS1005@17+1 | lint parses | scan accepts
+   "function f({ void, b: [c, d = 1], ...e }: T, [x, , y, ...z]: U) {}"  [rep a by "void"] tsc TS1005@17+1 | lint parses | scan accepts
+   "! f = function (a, b) {};"  [rep const by "!"] tsc TS1005@4+1 | lint parses | scan accepts
+   "void f = function (a, b) {};"  [rep const by "void"] tsc TS1005@7+1 | lint parses | scan accepts
+   "<T> f = function (a, b) {};"  [rep const by "<T>"] tsc TS1005@6+1 | lint parses | scan accepts
+   "! g = function* n(a) {};"  [rep const by "!"] tsc TS1005@4+1 | lint parses | scan accepts
+   "void g = function* n(a) {};"  [rep const by "void"] tsc TS1005@7+1 | lint parses | scan accepts
+   "<T> g = function* n(a) {};"  [rep const by "<T>"] tsc TS1005@6+1 | lint parses | scan accepts
+   "! o = { m(a, b = 1) {}, get x() { return 1 }, set x(v) {}, async n() {}, *g() {}, [k]() {} };"  [rep const by "!"] tsc TS1005@4+1 | lint parses | scan accepts
+   "void o = { m(a, b = 1) {}, get x() { return 1 }, set x(v) {}, async n() {}, *g() {}, [k]() {} };"  [rep const by "void"] tsc TS1005@7+1 | lint parses | scan accepts
+   "<T> o = { m(a, b = 1) {}, get x() { return 1 }, set x(v) {}, async n() {}, *g() {}, [k]() {} };"  [rep const by "<T>"] tsc TS1005@6+1 | lint parses | scan accepts
+   "declare ! function f(a: number, ...rest: string[]): void;"  [ins "!" before function] tsc TS1005@10+8 | lint parses | scan accepts
+   "declare function f(a: number, ...rest: string[const ]): void;"  [ins "const" before ]] tsc TS1005@46+5 | lint parses | scan accepts
+   "declare function f(a: number, ...rest: string[extends ]): void;"  [ins "extends" before ]] tsc TS1005@46+7 | lint parses | scan accepts
+   "class C { m(a, b?: number, ...c) {} set s? (v: number) {} constructor(a, public b) {} }"  [ins "?" before (] tsc TS1005@41+1 | lint parses | scan accepts
+   "class C { m(a, b?: number, ...c) {} set s(v: number) {} constructor? (a, public b) {} }"  [ins "?" before (] tsc TS1005@67+1 | lint parses | scan accepts
+   "class C { m(a, b?: number, ...c) {} set s(v: number) {} constructor! (a, public b) {} }"  [ins "!" before (] tsc TS1005@67+1 | lint parses | scan accepts
+   "class C { m(a, b?: number, ...c) {} set s(v: number) {} constructor(a, ... public b) {} }"  [ins "..." before public] tsc TS1005@82+1 | lint parses | scan accepts
+   "class C { m(a, b?: number, ...c) {} set s(v: number) {} constructor(a, public \n b) {} }"  [ins "\n" before b] tsc TS1005@80+1 | lint parses | scan accepts
+   "! a = (x, y = 1, ...z) => x;"  [rep const by "!"] tsc TS1005@4+1 | lint parses | scan accepts
+   "void a = (x, y = 1, ...z) => x;"  [rep const by "void"] tsc TS1005@7+1 | lint parses | scan accepts
+   "<T> a = (x, y = 1, ...z) => x;"  [rep const by "<T>"] tsc TS1005@6+1 | lint parses | scan accepts
+   "const a = (x, <T> y = 1, ...z) => x;"  [ins "<T>" before y] tsc TS1005@20+1 | lint parses | scan accepts
+   "const a = (x, y = 1: T , ...z) => x;"  [ins ": T" before ,] tsc TS1005@19+1 | lint parses | scan accepts
+   "const a = (x, y = 1, <T>z) => x;"  [rep ... by "<T>"] tsc TS1005@27+2 | lint parses | scan accepts
+   "! b = async (x: number, y?: string) => x;"  [rep const by "!"] tsc TS1005@4+1 | lint parses | scan accepts
+   "void b = async (x: number, y?: string) => x;"  [rep const by "void"] tsc TS1005@7+1 | lint parses | scan accepts
+   "<T> b = async (x: number, y?: string) => x;"  [rep const by "<T>"] tsc TS1005@6+1 | lint parses | scan accepts
+   "const b = <T> async (x: number, y?: string) => x;"  [ins "<T>" before async] tsc TS1005@22+1 | lint parses | scan accepts
+   "const b = async (<T> x: number, y?: string) => x;"  [ins "<T>" before x] tsc TS1005@22+1 | lint parses | scan accepts
+   "const b = async (x! : number, y?: string) => x;"  [ins "!" before :] tsc TS1005@20+1 | lint parses | scan accepts
+   "const b = async (x<T> : number, y?: string) => x;"  [ins "<T>" before :] tsc TS1005@22+1 | lint parses | scan accepts
+   "const b = async (x= 1 : number, y?: string) => x;"  [ins "= 1" before :] tsc TS1005@22+1 | lint parses | scan accepts
+   "const b = async (x: number, y! ?: string) => x;"  [ins "!" before ?] tsc TS1005@29+1 | lint parses | scan accepts
+   "const b = async (x: number, y!: string) => x;"  [rep ? by "!"] tsc TS1005@29+1 | lint parses | scan accepts
+   "const b = async (x: number, y<T> ?: string) => x;"  [ins "<T>" before ?] tsc TS1005@29+1 | lint parses | scan accepts
+   "const b = async (x: number, y<T>: string) => x;"  [rep ? by "<T>"] tsc TS1005@29+1 | lint parses | scan accepts
+   "const b = async (x: number, y= 1: string) => x;"  [rep ? by "= 1"] tsc TS1005@32+1 | lint parses | scan accepts
+   "! d = <T,>(x: T): T => x;"  [rep const by "!"] tsc TS1005@4+1 | lint parses | scan accepts
+   "void d = <T,>(x: T): T => x;"  [rep const by "void"] tsc TS1005@7+1 | lint parses | scan accepts
+   "<T> d = <T,>(x: T): T => x;"  [rep const by "<T>"] tsc TS1005@6+1 | lint parses | scan accepts
+   "const d = <T> <T,>(x: T): T => x;"  [ins "<T>" before <] tsc TS1005@16+1 | lint parses | scan accepts
+   "const d = <in T,>(x: T): T => x;"  [ins "in" before T] tsc TS1005@14+1 | lint parses | scan @11 The modifier "in" is not valid here
+   "const d = <T!>(x: T): T => x;"  [rep , by "!"] tsc TS1005@16+1 | lint parses | scan accepts
+   "const d = <T<T>>(x: T): T => x;"  [rep , by "<T>"] tsc TS1005@18+1 | lint parses | scan accepts
+   "const d = <T,>(<T> x: T): T => x;"  [ins "<T>" before x] tsc TS1005@12+1 | lint parses | scan accepts
+   "const d = <T,>(x! : T): T => x;"  [ins "!" before :] tsc TS1005@12+1 | lint parses | scan accepts
+   "const d = <T,>(x<T> : T): T => x;"  [ins "<T>" before :] tsc TS1005@12+1 | lint parses | scan accepts
+   "const d = <T,>(x= 1 : T): T => x;"  [ins "= 1" before :] tsc TS1005@20+1 | lint parses | scan accepts
+   "type ! F = (a: number, b?: string, ...c: any[]) => void;"  [ins "!" before F] tsc TS1005@7+1 | lint parses | scan accepts
+   "type F = readonly (a: number, b?: string, ...c: any[]) => void;"  [ins "readonly" before (] tsc TS1005@20+1 | lint parses | scan accepts
+   "type F = (a: number, this?: string, ...c: any[]) => void;"  [rep b by "this"] tsc TS1005@25+1 | lint parses | scan accepts
+   "type F = (a: number, b?: string, ...public c: any[]) => void;"  [ins "public" before c] tsc TS1005@43+1 | lint parses | scan accepts
+   "type F = (a: number, b?: string, ...private c: any[]) => void;"  [ins "private" before c] tsc TS1005@44+1 | lint parses | scan accepts
+   "type F = (a: number, b?: string, ...protected c: any[]) => void;"  [ins "protected" before c] tsc TS1005@46+1 | lint parses | scan accepts
+   "type F = (a: number, b?: string, ...readonly c: any[]) => void;"  [ins "readonly" before c] tsc TS1005@45+1 | lint parses | scan accepts
+   "type F = (a: number, b?: string, ...override c: any[]) => void;"  [ins "override" before c] tsc TS1005@45+1 | lint parses | scan accepts
+   "type F = (a: number, b?: string, ...c: any[const ]) => void;"  [ins "const" before ]] tsc TS1005@43+5 | lint parses | scan accepts
+   "type F = (a: number, b?: string, ...c: any[extends ]) => void;"  [ins "extends" before ]] tsc TS1005@43+7 | lint parses | scan accepts
+   "interface ! I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "!" before I] tsc TS1005@12+1 | lint parses | scan accepts
+   "interface I { default m(a, b?): void; new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "default" before m] tsc TS1005@22+1 | lint parses | scan accepts
+   "interface I { const m(a, b?): void; new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "const" before m] tsc TS1005@20+1 | lint parses | scan accepts
+   "interface I { m(a, this?): void; new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [rep b by "this"] tsc TS1005@23+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; default new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "default" before new] tsc TS1005@38+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; const new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "const" before new] tsc TS1005@36+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get get p(): number; set p(v: number); }"  [dup get] tsc TS1005@69+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; set get p(): number; set p(v: number); }"  [ins "set" before get] tsc TS1005@69+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; default p(): number; set p(v: number); }"  [rep get by "default"] tsc TS1005@69+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; const p(): number; set p(v: number); }"  [rep get by "const"] tsc TS1005@67+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p p(): number; set p(v: number); }"  [dup p] tsc TS1005@67+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get !(): number; set p(v: number); }"  [rep p by "!"] tsc TS1005@65+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get public p(): number; set p(v: number); }"  [ins "public" before p] tsc TS1005@72+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get private p(): number; set p(v: number); }"  [ins "private" before p] tsc TS1005@73+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get protected p(): number; set p(v: number); }"  [ins "protected" before p] tsc TS1005@75+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get readonly p(): number; set p(v: number); }"  [ins "readonly" before p] tsc TS1005@74+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get static p(): number; set p(v: number); }"  [ins "static" before p] tsc TS1005@72+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get abstract p(): number; set p(v: number); }"  [ins "abstract" before p] tsc TS1005@74+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get declare p(): number; set p(v: number); }"  [ins "declare" before p] tsc TS1005@73+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get override p(): number; set p(v: number); }"  [ins "override" before p] tsc TS1005@74+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get accessor p(): number; set p(v: number); }"  [ins "accessor" before p] tsc TS1005@74+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get async p(): number; set p(v: number); }"  [ins "async" before p] tsc TS1005@71+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get set p(): number; set p(v: number); }"  [ins "set" before p] tsc TS1005@69+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get export p(): number; set p(v: number); }"  [ins "export" before p] tsc TS1005@72+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get default p(): number; set p(v: number); }"  [ins "default" before p] tsc TS1005@73+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get const p(): number; set p(v: number); }"  [ins "const" before p] tsc TS1005@71+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get in p(): number; set p(v: number); }"  [ins "in" before p] tsc TS1005@68+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get out p(): number; set p(v: number); }"  [ins "out" before p] tsc TS1005@69+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get this p(): number; set p(v: number); }"  [ins "this" before p] tsc TS1005@70+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get x p(): number; set p(v: number); }"  [ins "x" before p] tsc TS1005@67+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get 1 p(): number; set p(v: number); }"  [ins "1" before p] tsc TS1005@67+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get 's' p(): number; set p(v: number); }"  [ins "'s'" before p] tsc TS1005@69+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get constructor p(): number; set p(v: number); }"  [ins "constructor" before p] tsc TS1005@77+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get extends p(): number; set p(v: number); }"  [ins "extends" before p] tsc TS1005@73+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get implements p(): number; set p(v: number); }"  [ins "implements" before p] tsc TS1005@76+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get new p(): number; set p(v: number); }"  [ins "new" before p] tsc TS1005@69+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get class p(): number; set p(v: number); }"  [ins "class" before p] tsc TS1005@71+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get function p(): number; set p(v: number); }"  [ins "function" before p] tsc TS1005@74+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get var p(): number; set p(v: number); }"  [ins "var" before p] tsc TS1005@69+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get let p(): number; set p(v: number); }"  [ins "let" before p] tsc TS1005@69+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get await p(): number; set p(v: number); }"  [ins "await" before p] tsc TS1005@71+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get yield p(): number; set p(v: number); }"  [ins "yield" before p] tsc TS1005@71+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get super p(): number; set p(v: number); }"  [ins "super" before p] tsc TS1005@71+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get null p(): number; set p(v: number); }"  [ins "null" before p] tsc TS1005@70+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get void p(): number; set p(v: number); }"  [ins "void" before p] tsc TS1005@70+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p; (): number; set p(v: number); }"  [ins ";" before (] tsc TS1005@66+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p, (): number; set p(v: number); }"  [ins "," before (] tsc TS1005@66+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p? (): number; set p(v: number); }"  [ins "?" before (] tsc TS1005@66+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p! (): number; set p(v: number); }"  [ins "!" before (] tsc TS1005@66+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p's' (): number; set p(v: number); }"  [ins "'s'" before (] tsc TS1005@66+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set set p(v: number); }"  [dup set] tsc TS1005@86+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; get set p(v: number); }"  [ins "get" before set] tsc TS1005@86+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; default p(v: number); }"  [rep set by "default"] tsc TS1005@86+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; const p(v: number); }"  [rep set by "const"] tsc TS1005@84+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set p p(v: number); }"  [dup p] tsc TS1005@84+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set !(v: number); }"  [rep p by "!"] tsc TS1005@82+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set public p(v: number); }"  [ins "public" before p] tsc TS1005@89+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set private p(v: number); }"  [ins "private" before p] tsc TS1005@90+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set protected p(v: number); }"  [ins "protected" before p] tsc TS1005@92+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set readonly p(v: number); }"  [ins "readonly" before p] tsc TS1005@91+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set static p(v: number); }"  [ins "static" before p] tsc TS1005@89+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set abstract p(v: number); }"  [ins "abstract" before p] tsc TS1005@91+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set declare p(v: number); }"  [ins "declare" before p] tsc TS1005@90+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set override p(v: number); }"  [ins "override" before p] tsc TS1005@91+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set accessor p(v: number); }"  [ins "accessor" before p] tsc TS1005@91+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set async p(v: number); }"  [ins "async" before p] tsc TS1005@88+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set get p(v: number); }"  [ins "get" before p] tsc TS1005@86+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set export p(v: number); }"  [ins "export" before p] tsc TS1005@89+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set default p(v: number); }"  [ins "default" before p] tsc TS1005@90+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set const p(v: number); }"  [ins "const" before p] tsc TS1005@88+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set in p(v: number); }"  [ins "in" before p] tsc TS1005@85+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set out p(v: number); }"  [ins "out" before p] tsc TS1005@86+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set this p(v: number); }"  [ins "this" before p] tsc TS1005@87+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set x p(v: number); }"  [ins "x" before p] tsc TS1005@84+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set 1 p(v: number); }"  [ins "1" before p] tsc TS1005@84+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set 's' p(v: number); }"  [ins "'s'" before p] tsc TS1005@86+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set constructor p(v: number); }"  [ins "constructor" before p] tsc TS1005@94+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set extends p(v: number); }"  [ins "extends" before p] tsc TS1005@90+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set implements p(v: number); }"  [ins "implements" before p] tsc TS1005@93+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set new p(v: number); }"  [ins "new" before p] tsc TS1005@86+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set class p(v: number); }"  [ins "class" before p] tsc TS1005@88+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set function p(v: number); }"  [ins "function" before p] tsc TS1005@91+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set var p(v: number); }"  [ins "var" before p] tsc TS1005@86+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set let p(v: number); }"  [ins "let" before p] tsc TS1005@86+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set await p(v: number); }"  [ins "await" before p] tsc TS1005@88+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set yield p(v: number); }"  [ins "yield" before p] tsc TS1005@88+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set super p(v: number); }"  [ins "super" before p] tsc TS1005@88+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set null p(v: number); }"  [ins "null" before p] tsc TS1005@87+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set void p(v: number); }"  [ins "void" before p] tsc TS1005@87+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set p; (v: number); }"  [ins ";" before (] tsc TS1005@83+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set p, (v: number); }"  [ins "," before (] tsc TS1005@83+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set p? (v: number); }"  [ins "?" before (] tsc TS1005@83+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set p! (v: number); }"  [ins "!" before (] tsc TS1005@83+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; set p's' (v: number); }"  [ins "'s'" before (] tsc TS1005@83+3 | lint parses | scan accepts
+## TS1131  (225)
+   "interface I<T> extends A<T> { x x: T }"  [dup x] tsc TS1131@30+1 | lint parses | scan accepts
+   "interface I<T> extends A<T> { this x: T }"  [ins "this" before x] tsc TS1131@30+4 | lint parses | scan accepts
+   "interface I<T> extends A<T> { 1 x: T }"  [ins "1" before x] tsc TS1131@30+1 | lint parses | scan accepts
+   "interface I<T> extends A<T> { 's' x: T }"  [ins "'s'" before x] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I<T> extends A<T> { constructor x: T }"  [ins "constructor" before x] tsc TS1131@30+11 | lint parses | scan accepts
+   "interface I<T> extends A<T> { extends x: T }"  [ins "extends" before x] tsc TS1131@30+7 | lint parses | scan accepts
+   "interface I<T> extends A<T> { implements x: T }"  [ins "implements" before x] tsc TS1131@30+10 | lint parses | scan accepts
+   "interface I<T> extends A<T> { new x: T }"  [ins "new" before x] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I<T> extends A<T> { class x: T }"  [ins "class" before x] tsc TS1131@30+5 | lint parses | scan accepts
+   "interface I<T> extends A<T> { function x: T }"  [ins "function" before x] tsc TS1131@30+8 | lint parses | scan accepts
+   "interface I<T> extends A<T> { var x: T }"  [ins "var" before x] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I<T> extends A<T> { let x: T }"  [ins "let" before x] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I<T> extends A<T> { await x: T }"  [ins "await" before x] tsc TS1131@30+5 | lint parses | scan accepts
+   "interface I<T> extends A<T> { yield x: T }"  [ins "yield" before x] tsc TS1131@30+5 | lint parses | scan accepts
+   "interface I<T> extends A<T> { super x: T }"  [ins "super" before x] tsc TS1131@30+5 | lint parses | scan accepts
+   "interface I<T> extends A<T> { null x: T }"  [ins "null" before x] tsc TS1131@30+4 | lint parses | scan accepts
+   "interface I<T> extends A<T> { void x: T }"  [ins "void" before x] tsc TS1131@30+4 | lint parses | scan accepts
+   "interface I<T> extends A<T> { x T }"  [del :] tsc TS1131@30+1 | lint parses | scan accepts
+   "interface I<T> extends A<T> { x! : T }"  [ins "!" before :] tsc TS1131@30+1 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xpublic T }"  [rep : by "public"] tsc TS1131@30+7 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xprivate T }"  [rep : by "private"] tsc TS1131@30+8 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xprotected T }"  [rep : by "protected"] tsc TS1131@30+10 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xreadonly T }"  [rep : by "readonly"] tsc TS1131@30+9 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xstatic T }"  [rep : by "static"] tsc TS1131@30+7 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xabstract T }"  [rep : by "abstract"] tsc TS1131@30+9 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xdeclare T }"  [rep : by "declare"] tsc TS1131@30+8 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xoverride T }"  [rep : by "override"] tsc TS1131@30+9 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xaccessor T }"  [rep : by "accessor"] tsc TS1131@30+9 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xasync T }"  [rep : by "async"] tsc TS1131@30+6 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xget T }"  [rep : by "get"] tsc TS1131@30+4 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xset T }"  [rep : by "set"] tsc TS1131@30+4 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xexport T }"  [rep : by "export"] tsc TS1131@30+7 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xdefault T }"  [rep : by "default"] tsc TS1131@30+8 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xconst T }"  [rep : by "const"] tsc TS1131@30+6 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xin T }"  [rep : by "in"] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xout T }"  [rep : by "out"] tsc TS1131@30+4 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xthis T }"  [rep : by "this"] tsc TS1131@30+5 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xx T }"  [rep : by "x"] tsc TS1131@30+2 | lint parses | scan accepts
+   "interface I<T> extends A<T> { x1 T }"  [rep : by "1"] tsc TS1131@30+2 | lint parses | scan accepts
+   "interface I<T> extends A<T> { x's' : T }"  [ins "'s'" before :] tsc TS1131@30+1 | lint parses | scan accepts
+   "interface I<T> extends A<T> { x's' T }"  [rep : by "'s'"] tsc TS1131@30+1 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xconstructor T }"  [rep : by "constructor"] tsc TS1131@30+12 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xextends T }"  [rep : by "extends"] tsc TS1131@30+8 | lint parses | scan accepts
+   "interface I<T> extends A<T> { ximplements T }"  [rep : by "implements"] tsc TS1131@30+11 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xnew T }"  [rep : by "new"] tsc TS1131@30+4 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xclass T }"  [rep : by "class"] tsc TS1131@30+6 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xfunction T }"  [rep : by "function"] tsc TS1131@30+9 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xvar T }"  [rep : by "var"] tsc TS1131@30+4 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xlet T }"  [rep : by "let"] tsc TS1131@30+4 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xawait T }"  [rep : by "await"] tsc TS1131@30+6 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xyield T }"  [rep : by "yield"] tsc TS1131@30+6 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xsuper T }"  [rep : by "super"] tsc TS1131@30+6 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xnull T }"  [rep : by "null"] tsc TS1131@30+5 | lint parses | scan accepts
+   "interface I<T> extends A<T> { xvoid T }"  [rep : by "void"] tsc TS1131@30+5 | lint parses | scan accepts
+   "interface I { m m(a, b?): void; new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [dup m] tsc TS1131@14+1 | lint parses | scan accepts
+   "interface I { this m(a, b?): void; new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "this" before m] tsc TS1131@14+4 | lint parses | scan accepts
+   "interface I { x m(a, b?): void; new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "x" before m] tsc TS1131@14+1 | lint parses | scan accepts
+   "interface I { 1 m(a, b?): void; new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "1" before m] tsc TS1131@14+1 | lint parses | scan accepts
+   "interface I { 's' m(a, b?): void; new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "'s'" before m] tsc TS1131@14+3 | lint parses | scan accepts
+   "interface I { constructor m(a, b?): void; new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "constructor" before m] tsc TS1131@14+11 | lint parses | scan accepts
+   "interface I { extends m(a, b?): void; new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "extends" before m] tsc TS1131@14+7 | lint parses | scan accepts
+   "interface I { implements m(a, b?): void; new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "implements" before m] tsc TS1131@14+10 | lint parses | scan accepts
+   "interface I { new m(a, b?): void; new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "new" before m] tsc TS1131@14+3 | lint parses | scan accepts
+   "interface I { class m(a, b?): void; new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "class" before m] tsc TS1131@14+5 | lint parses | scan accepts
+   "interface I { function m(a, b?): void; new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "function" before m] tsc TS1131@14+8 | lint parses | scan accepts
+   "interface I { var m(a, b?): void; new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "var" before m] tsc TS1131@14+3 | lint parses | scan accepts
+   "interface I { let m(a, b?): void; new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "let" before m] tsc TS1131@14+3 | lint parses | scan accepts
+   "interface I { await m(a, b?): void; new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "await" before m] tsc TS1131@14+5 | lint parses | scan accepts
+   "interface I { yield m(a, b?): void; new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "yield" before m] tsc TS1131@14+5 | lint parses | scan accepts
+   "interface I { super m(a, b?): void; new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "super" before m] tsc TS1131@14+5 | lint parses | scan accepts
+   "interface I { null m(a, b?): void; new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "null" before m] tsc TS1131@14+4 | lint parses | scan accepts
+   "interface I { void m(a, b?): void; new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "void" before m] tsc TS1131@14+4 | lint parses | scan accepts
+   "interface I { m! (a, b?): void; new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "!" before (] tsc TS1131@14+1 | lint parses | scan accepts
+   "interface I { m's' (a, b?): void; new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "'s'" before (] tsc TS1131@14+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [dup new] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; this new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "this" before new] tsc TS1131@30+4 | lint parses | scan accepts
+   "interface I { m(a, b?): void; x new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "x" before new] tsc TS1131@30+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; 1 new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "1" before new] tsc TS1131@30+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; 's' new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "'s'" before new] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; constructor new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "constructor" before new] tsc TS1131@30+11 | lint parses | scan accepts
+   "interface I { m(a, b?): void; extends new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "extends" before new] tsc TS1131@30+7 | lint parses | scan accepts
+   "interface I { m(a, b?): void; implements new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "implements" before new] tsc TS1131@30+10 | lint parses | scan accepts
+   "interface I { m(a, b?): void; class new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "class" before new] tsc TS1131@30+5 | lint parses | scan accepts
+   "interface I { m(a, b?): void; function new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "function" before new] tsc TS1131@30+8 | lint parses | scan accepts
+   "interface I { m(a, b?): void; var new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "var" before new] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; let new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "let" before new] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; await new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "await" before new] tsc TS1131@30+5 | lint parses | scan accepts
+   "interface I { m(a, b?): void; yield new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "yield" before new] tsc TS1131@30+5 | lint parses | scan accepts
+   "interface I { m(a, b?): void; super new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "super" before new] tsc TS1131@30+5 | lint parses | scan accepts
+   "interface I { m(a, b?): void; null new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "null" before new] tsc TS1131@30+4 | lint parses | scan accepts
+   "interface I { m(a, b?): void; void new (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "void" before new] tsc TS1131@30+4 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new ! (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "!" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new public (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "public" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new private (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "private" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new protected (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "protected" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new readonly (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "readonly" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new static (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "static" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new abstract (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "abstract" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new declare (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "declare" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new override (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "override" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new accessor (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "accessor" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new async (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "async" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new get (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "get" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new set (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "set" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new export (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "export" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new default (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "default" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new const (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "const" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new in (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "in" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new out (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "out" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new this (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "this" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new x (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "x" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new 1 (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "1" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new 's' (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "'s'" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new constructor (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "constructor" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new extends (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "extends" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new implements (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "implements" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new class (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "class" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new function (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "function" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new var (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "var" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new let (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "let" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new await (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "await" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new yield (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "yield" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new super (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "super" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new null (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "null" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new void (x: number): I; (y): void; get p(): number; set p(v: number); }"  [ins "void" before (] tsc TS1131@30+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; p get(): number; set p(v: number); }"  [swap get p] tsc TS1131@61+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; public get p(): number; set p(v: number); }"  [ins "public" before get] tsc TS1131@61+6 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; private get p(): number; set p(v: number); }"  [ins "private" before get] tsc TS1131@61+7 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; protected get p(): number; set p(v: number); }"  [ins "protected" before get] tsc TS1131@61+9 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; readonly get p(): number; set p(v: number); }"  [ins "readonly" before get] tsc TS1131@61+8 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; static get p(): number; set p(v: number); }"  [ins "static" before get] tsc TS1131@61+6 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; abstract get p(): number; set p(v: number); }"  [ins "abstract" before get] tsc TS1131@61+8 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; declare get p(): number; set p(v: number); }"  [ins "declare" before get] tsc TS1131@61+7 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; override get p(): number; set p(v: number); }"  [ins "override" before get] tsc TS1131@61+8 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; accessor get p(): number; set p(v: number); }"  [ins "accessor" before get] tsc TS1131@61+8 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; async get p(): number; set p(v: number); }"  [ins "async" before get] tsc TS1131@61+5 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; export get p(): number; set p(v: number); }"  [ins "export" before get] tsc TS1131@61+6 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; default get p(): number; set p(v: number); }"  [ins "default" before get] tsc TS1131@61+7 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; const get p(): number; set p(v: number); }"  [ins "const" before get] tsc TS1131@61+5 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; in get p(): number; set p(v: number); }"  [ins "in" before get] tsc TS1131@61+2 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; out get p(): number; set p(v: number); }"  [ins "out" before get] tsc TS1131@61+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; this get p(): number; set p(v: number); }"  [ins "this" before get] tsc TS1131@61+4 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; this p(): number; set p(v: number); }"  [rep get by "this"] tsc TS1131@61+4 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; x get p(): number; set p(v: number); }"  [ins "x" before get] tsc TS1131@61+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; x p(): number; set p(v: number); }"  [rep get by "x"] tsc TS1131@61+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; 1 get p(): number; set p(v: number); }"  [ins "1" before get] tsc TS1131@61+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; 1 p(): number; set p(v: number); }"  [rep get by "1"] tsc TS1131@61+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; 's' get p(): number; set p(v: number); }"  [ins "'s'" before get] tsc TS1131@61+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; 's' p(): number; set p(v: number); }"  [rep get by "'s'"] tsc TS1131@61+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; constructor get p(): number; set p(v: number); }"  [ins "constructor" before get] tsc TS1131@61+11 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; constructor p(): number; set p(v: number); }"  [rep get by "constructor"] tsc TS1131@61+11 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; extends get p(): number; set p(v: number); }"  [ins "extends" before get] tsc TS1131@61+7 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; extends p(): number; set p(v: number); }"  [rep get by "extends"] tsc TS1131@61+7 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; implements get p(): number; set p(v: number); }"  [ins "implements" before get] tsc TS1131@61+10 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; implements p(): number; set p(v: number); }"  [rep get by "implements"] tsc TS1131@61+10 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; new get p(): number; set p(v: number); }"  [ins "new" before get] tsc TS1131@61+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; new p(): number; set p(v: number); }"  [rep get by "new"] tsc TS1131@61+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; class get p(): number; set p(v: number); }"  [ins "class" before get] tsc TS1131@61+5 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; class p(): number; set p(v: number); }"  [rep get by "class"] tsc TS1131@61+5 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; function get p(): number; set p(v: number); }"  [ins "function" before get] tsc TS1131@61+8 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; function p(): number; set p(v: number); }"  [rep get by "function"] tsc TS1131@61+8 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; var get p(): number; set p(v: number); }"  [ins "var" before get] tsc TS1131@61+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; var p(): number; set p(v: number); }"  [rep get by "var"] tsc TS1131@61+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; let get p(): number; set p(v: number); }"  [ins "let" before get] tsc TS1131@61+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; let p(): number; set p(v: number); }"  [rep get by "let"] tsc TS1131@61+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; await get p(): number; set p(v: number); }"  [ins "await" before get] tsc TS1131@61+5 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; await p(): number; set p(v: number); }"  [rep get by "await"] tsc TS1131@61+5 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; yield get p(): number; set p(v: number); }"  [ins "yield" before get] tsc TS1131@61+5 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; yield p(): number; set p(v: number); }"  [rep get by "yield"] tsc TS1131@61+5 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; super get p(): number; set p(v: number); }"  [ins "super" before get] tsc TS1131@61+5 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; super p(): number; set p(v: number); }"  [rep get by "super"] tsc TS1131@61+5 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; null get p(): number; set p(v: number); }"  [ins "null" before get] tsc TS1131@61+4 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; null p(): number; set p(v: number); }"  [rep get by "null"] tsc TS1131@61+4 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; void get p(): number; set p(v: number); }"  [ins "void" before get] tsc TS1131@61+4 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; void p(): number; set p(v: number); }"  [rep get by "void"] tsc TS1131@61+4 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; p set(v: number); }"  [swap set p] tsc TS1131@78+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; public set p(v: number); }"  [ins "public" before set] tsc TS1131@78+6 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; private set p(v: number); }"  [ins "private" before set] tsc TS1131@78+7 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; protected set p(v: number); }"  [ins "protected" before set] tsc TS1131@78+9 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; readonly set p(v: number); }"  [ins "readonly" before set] tsc TS1131@78+8 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; static set p(v: number); }"  [ins "static" before set] tsc TS1131@78+6 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; abstract set p(v: number); }"  [ins "abstract" before set] tsc TS1131@78+8 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; declare set p(v: number); }"  [ins "declare" before set] tsc TS1131@78+7 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; override set p(v: number); }"  [ins "override" before set] tsc TS1131@78+8 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; accessor set p(v: number); }"  [ins "accessor" before set] tsc TS1131@78+8 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; async set p(v: number); }"  [ins "async" before set] tsc TS1131@78+5 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; export set p(v: number); }"  [ins "export" before set] tsc TS1131@78+6 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; default set p(v: number); }"  [ins "default" before set] tsc TS1131@78+7 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; const set p(v: number); }"  [ins "const" before set] tsc TS1131@78+5 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; in set p(v: number); }"  [ins "in" before set] tsc TS1131@78+2 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; out set p(v: number); }"  [ins "out" before set] tsc TS1131@78+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; this set p(v: number); }"  [ins "this" before set] tsc TS1131@78+4 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; this p(v: number); }"  [rep set by "this"] tsc TS1131@78+4 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; x set p(v: number); }"  [ins "x" before set] tsc TS1131@78+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; x p(v: number); }"  [rep set by "x"] tsc TS1131@78+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; 1 set p(v: number); }"  [ins "1" before set] tsc TS1131@78+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; 1 p(v: number); }"  [rep set by "1"] tsc TS1131@78+1 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; 's' set p(v: number); }"  [ins "'s'" before set] tsc TS1131@78+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; 's' p(v: number); }"  [rep set by "'s'"] tsc TS1131@78+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; constructor set p(v: number); }"  [ins "constructor" before set] tsc TS1131@78+11 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; constructor p(v: number); }"  [rep set by "constructor"] tsc TS1131@78+11 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; extends set p(v: number); }"  [ins "extends" before set] tsc TS1131@78+7 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; extends p(v: number); }"  [rep set by "extends"] tsc TS1131@78+7 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; implements set p(v: number); }"  [ins "implements" before set] tsc TS1131@78+10 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; implements p(v: number); }"  [rep set by "implements"] tsc TS1131@78+10 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; new set p(v: number); }"  [ins "new" before set] tsc TS1131@78+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; new p(v: number); }"  [rep set by "new"] tsc TS1131@78+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; class set p(v: number); }"  [ins "class" before set] tsc TS1131@78+5 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; class p(v: number); }"  [rep set by "class"] tsc TS1131@78+5 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; function set p(v: number); }"  [ins "function" before set] tsc TS1131@78+8 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; function p(v: number); }"  [rep set by "function"] tsc TS1131@78+8 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; var set p(v: number); }"  [ins "var" before set] tsc TS1131@78+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; var p(v: number); }"  [rep set by "var"] tsc TS1131@78+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; let set p(v: number); }"  [ins "let" before set] tsc TS1131@78+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; let p(v: number); }"  [rep set by "let"] tsc TS1131@78+3 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; await set p(v: number); }"  [ins "await" before set] tsc TS1131@78+5 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; await p(v: number); }"  [rep set by "await"] tsc TS1131@78+5 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; yield set p(v: number); }"  [ins "yield" before set] tsc TS1131@78+5 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; yield p(v: number); }"  [rep set by "yield"] tsc TS1131@78+5 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; super set p(v: number); }"  [ins "super" before set] tsc TS1131@78+5 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; super p(v: number); }"  [rep set by "super"] tsc TS1131@78+5 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; null set p(v: number); }"  [ins "null" before set] tsc TS1131@78+4 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; null p(v: number); }"  [rep set by "null"] tsc TS1131@78+4 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; void set p(v: number); }"  [ins "void" before set] tsc TS1131@78+4 | lint parses | scan accepts
+   "interface I { m(a, b?): void; new (x: number): I; (y): void; get p(): number; void p(v: number); }"  [rep set by "void"] tsc TS1131@78+4 | lint parses | scan accepts
+## TS1109  (201)
+   "class C extends ! B { override m() {} public override x = 1; }"  [ins "!" before B] tsc TS1109@16+1 | lint parses | scan accepts
+   "class C extends void B { override m() {} public override x = 1; }"  [ins "void" before B] tsc TS1109@16+4 | lint parses | scan accepts
+   "class C extends <T> B { override m() {} public override x = 1; }"  [ins "<T>" before B] tsc TS1109@16+1 | lint parses | scan accepts
+   "class C { @! dec x; @dec() m() {} @a @b static s = 1; @dec accessor y; }"  [ins "!" before dec] tsc TS1109@11+1 | lint parses | scan accepts
+   "class C { @void dec x; @dec() m() {} @a @b static s = 1; @dec accessor y; }"  [ins "void" before dec] tsc TS1109@11+4 | lint parses | scan accepts
+   "class C { @<T> dec x; @dec() m() {} @a @b static s = 1; @dec accessor y; }"  [ins "<T>" before dec] tsc TS1109@11+1 | lint parses | scan accepts
+   "class C { @dec x; @! dec() m() {} @a @b static s = 1; @dec accessor y; }"  [ins "!" before dec] tsc TS1109@19+1 | lint parses | scan accepts
+   "class C { @dec x; @void dec() m() {} @a @b static s = 1; @dec accessor y; }"  [ins "void" before dec] tsc TS1109@19+4 | lint parses | scan accepts
+   "class C { @dec x; @<T> dec() m() {} @a @b static s = 1; @dec accessor y; }"  [ins "<T>" before dec] tsc TS1109@19+1 | lint parses | scan accepts
+   "class C { @dec x; @dec() m() {} @! a @b static s = 1; @dec accessor y; }"  [ins "!" before a] tsc TS1109@33+1 | lint parses | scan accepts
+   "class C { @dec x; @dec() m() {} @void a @b static s = 1; @dec accessor y; }"  [ins "void" before a] tsc TS1109@33+4 | lint parses | scan accepts
+   "class C { @dec x; @dec() m() {} @<T> a @b static s = 1; @dec accessor y; }"  [ins "<T>" before a] tsc TS1109@33+1 | lint parses | scan accepts
+   "class C { @dec x; @dec() m() {} @a @! b static s = 1; @dec accessor y; }"  [ins "!" before b] tsc TS1109@36+1 | lint parses | scan accepts
+   "class C { @dec x; @dec() m() {} @a @! static s = 1; @dec accessor y; }"  [rep b by "!"] tsc TS1109@36+1 | lint parses | scan accepts
+   "class C { @dec x; @dec() m() {} @a @void b static s = 1; @dec accessor y; }"  [ins "void" before b] tsc TS1109@36+4 | lint parses | scan accepts
+   "class C { @dec x; @dec() m() {} @a @void static s = 1; @dec accessor y; }"  [rep b by "void"] tsc TS1109@36+4 | lint parses | scan accepts
+   "class C { @dec x; @dec() m() {} @a @<T> b static s = 1; @dec accessor y; }"  [ins "<T>" before b] tsc TS1109@36+1 | lint parses | scan accepts
+   "class C { @dec x; @dec() m() {} @a @<T> static s = 1; @dec accessor y; }"  [rep b by "<T>"] tsc TS1109@36+1 | lint parses | scan accepts
+   "class C { @dec x; @dec() m() {} @a @b static s = 1; @! dec accessor y; }"  [ins "!" before dec] tsc TS1109@53+1 | lint parses | scan accepts
+   "class C { @dec x; @dec() m() {} @a @b static s = 1; @! accessor y; }"  [rep dec by "!"] tsc TS1109@53+1 | lint parses | scan accepts
+   "class C { @dec x; @dec() m() {} @a @b static s = 1; @void dec accessor y; }"  [ins "void" before dec] tsc TS1109@53+4 | lint parses | scan accepts
+   "class C { @dec x; @dec() m() {} @a @b static s = 1; @void accessor y; }"  [rep dec by "void"] tsc TS1109@53+4 | lint parses | scan accepts
+   "class C { @dec x; @dec() m() {} @a @b static s = 1; @<T> dec accessor y; }"  [ins "<T>" before dec] tsc TS1109@53+1 | lint parses | scan accepts
+   "class C { @dec x; @dec() m() {} @a @b static s = 1; @<T> accessor y; }"  [rep dec by "<T>"] tsc TS1109@53+1 | lint parses | scan accepts
+   "class C { m(@! dec a, @dec() b: number) {} constructor(@dec public p) {} }"  [ins "!" before dec] tsc TS1109@13+1 | lint parses | scan accepts
+   "class C { m(@void dec a, @dec() b: number) {} constructor(@dec public p) {} }"  [ins "void" before dec] tsc TS1109@13+4 | lint parses | scan accepts
+   "class C { m(@<T> dec a, @dec() b: number) {} constructor(@dec public p) {} }"  [ins "<T>" before dec] tsc TS1109@13+1 | lint parses | scan accepts
+   "class C { m(@dec a, @! dec() b: number) {} constructor(@dec public p) {} }"  [ins "!" before dec] tsc TS1109@21+1 | lint parses | scan accepts
+   "class C { m(@dec a, @void dec() b: number) {} constructor(@dec public p) {} }"  [ins "void" before dec] tsc TS1109@21+4 | lint parses | scan accepts
+   "class C { m(@dec a, @<T> dec() b: number) {} constructor(@dec public p) {} }"  [ins "<T>" before dec] tsc TS1109@21+1 | lint parses | scan accepts
+   "class C { m(@dec a, @dec() b: number) {} constructor(@! dec public p) {} }"  [ins "!" before dec] tsc TS1109@54+1 | lint parses | scan accepts
+   "class C { m(@dec a, @dec() b: number) {} constructor(@! public p) {} }"  [rep dec by "!"] tsc TS1109@54+1 | lint parses | scan accepts
+   "class C { m(@dec a, @dec() b: number) {} constructor(@void dec public p) {} }"  [ins "void" before dec] tsc TS1109@54+4 | lint parses | scan accepts
+   "class C { m(@dec a, @dec() b: number) {} constructor(@void public p) {} }"  [rep dec by "void"] tsc TS1109@54+4 | lint parses | scan accepts
+   "class C { m(@dec a, @dec() b: number) {} constructor(@<T> dec public p) {} }"  [ins "<T>" before dec] tsc TS1109@54+1 | lint parses | scan accepts
+   "class C { m(@dec a, @dec() b: number) {} constructor(@<T> public p) {} }"  [rep dec by "<T>"] tsc TS1109@54+1 | lint parses | scan accepts
+   "class C extends ! B {}"  [ins "!" before B] tsc TS1109@16+1 | lint parses | scan accepts
+   "class C extends void B {}"  [ins "void" before B] tsc TS1109@16+4 | lint parses | scan accepts
+   "class C extends <T> B {}"  [ins "<T>" before B] tsc TS1109@16+1 | lint parses | scan accepts
+   "class C extends ! B<T> {}"  [ins "!" before B] tsc TS1109@16+1 | lint parses | scan accepts
+   "class C extends implements<T> {}"  [rep B by "implements"] tsc TS1109@26+1 | lint parses | scan accepts
+   "class C extends void B<T> {}"  [ins "void" before B] tsc TS1109@16+4 | lint parses | scan accepts
+   "class C extends <T> B<T> {}"  [ins "<T>" before B] tsc TS1109@16+1 | lint parses | scan accepts
+   "class C extends ! a.b.c<T, U> {}"  [ins "!" before a] tsc TS1109@16+1 | lint parses | scan accepts
+   "class C extends void a.b.c<T, U> {}"  [ins "void" before a] tsc TS1109@16+4 | lint parses | scan accepts
+   "class C extends <T> a.b.c<T, U> {}"  [ins "<T>" before a] tsc TS1109@16+1 | lint parses | scan accepts
+   "class C extends ! f() {}"  [ins "!" before f] tsc TS1109@16+1 | lint parses | scan accepts
+   "class C extends implements() {}"  [rep f by "implements"] tsc TS1109@27+1 | lint parses | scan accepts
+   "class C extends void f() {}"  [ins "void" before f] tsc TS1109@16+4 | lint parses | scan accepts
+   "class C extends <T> f() {}"  [ins "<T>" before f] tsc TS1109@16+1 | lint parses | scan accepts
+   "class C extends ! (a, b) {}"  [ins "!" before (] tsc TS1109@16+1 | lint parses | scan accepts
+   "class C extends void (a, b) {}"  [ins "void" before (] tsc TS1109@16+4 | lint parses | scan accepts
+   "class C extends <T> (a, b) {}"  [ins "<T>" before (] tsc TS1109@16+1 | lint parses | scan accepts
+   "class C extends ! B implements I, J<T> {}"  [ins "!" before B] tsc TS1109@16+1 | lint parses | scan accepts
+   "class C extends void B implements I, J<T> {}"  [ins "void" before B] tsc TS1109@16+4 | lint parses | scan accepts
+   "class C extends <T> B implements I, J<T> {}"  [ins "<T>" before B] tsc TS1109@16+1 | lint parses | scan accepts
+   "class C extends B implements ! I, J<T> {}"  [ins "!" before I] tsc TS1109@29+1 | lint parses | scan accepts
+   "class C extends B implements export, J<T> {}"  [rep I by "export"] tsc TS1109@29+6 | lint parses | scan accepts
+   "class C extends B implements default, J<T> {}"  [rep I by "default"] tsc TS1109@29+7 | lint parses | scan accepts
+   "class C extends B implements const, J<T> {}"  [rep I by "const"] tsc TS1109@29+5 | lint parses | scan accepts
+   "class C extends B implements in, J<T> {}"  [rep I by "in"] tsc TS1109@29+2 | lint parses | scan accepts
+   "class C extends B implements #p, J<T> {}"  [rep I by "#p"] tsc TS1109@29+2 | lint parses | scan accepts
+   "class C extends B implements extends, J<T> {}"  [rep I by "extends"] tsc TS1109@36+1 | lint parses | scan accepts
+   "class C extends B implements var, J<T> {}"  [rep I by "var"] tsc TS1109@29+3 | lint parses | scan accepts
+   "class C extends B implements void I, J<T> {}"  [ins "void" before I] tsc TS1109@29+4 | lint parses | scan accepts
+   "class C extends B implements <T> I, J<T> {}"  [ins "<T>" before I] tsc TS1109@29+1 | lint parses | scan accepts
+   "class C extends B implements I, ! J<T> {}"  [ins "!" before J] tsc TS1109@32+1 | lint parses | scan accepts
+   "class C extends B implements I, export<T> {}"  [rep J by "export"] tsc TS1109@32+6 | lint parses | scan @42 Unexpected {
+   "class C extends B implements I, default<T> {}"  [rep J by "default"] tsc TS1109@32+7 | lint parses | scan @43 Unexpected {
+   "class C extends B implements I, in<T> {}"  [rep J by "in"] tsc TS1109@32+2 | lint parses | scan @38 Unexpected {
+   "class C extends B implements I, #p<T> {}"  [rep J by "#p"] tsc TS1109@32+2 | lint parses | scan @38 Unexpected {
+   "class C extends B implements I, extends<T> {}"  [rep J by "extends"] tsc TS1109@39+1 | lint parses | scan @32 Unexpected extends
+   "class C extends B implements I, implements<T> {}"  [rep J by "implements"] tsc TS1109@42+1 | lint parses | scan accepts
+   "class C extends B implements I, var<T> {}"  [rep J by "var"] tsc TS1109@32+3 | lint parses | scan @39 Unexpected {
+   "class C extends B implements I, void J<T> {}"  [ins "void" before J] tsc TS1109@32+4 | lint parses | scan accepts
+   "class C extends B implements I, <T> J<T> {}"  [ins "<T>" before J] tsc TS1109@32+1 | lint parses | scan accepts
+   "class C implements ! I {}"  [ins "!" before I] tsc TS1109@19+1 | lint parses | scan accepts
+   "class C implements export {}"  [rep I by "export"] tsc TS1109@19+6 | lint parses | scan @26 Unexpected {
+   "class C implements default {}"  [rep I by "default"] tsc TS1109@19+7 | lint parses | scan @27 Unexpected {
+   "class C implements const {}"  [rep I by "const"] tsc TS1109@19+5 | lint parses | scan accepts
+   "class C implements in {}"  [rep I by "in"] tsc TS1109@19+2 | lint parses | scan @22 Unexpected {
+   "class C implements #p {}"  [rep I by "#p"] tsc TS1109@19+2 | lint parses | scan @22 Unexpected {
+   "class C implements var {}"  [rep I by "var"] tsc TS1109@19+3 | lint parses | scan @23 Unexpected {
+   "class C implements void I {}"  [ins "void" before I] tsc TS1109@19+4 | lint parses | scan accepts
+   "class C implements <T> I {}"  [ins "<T>" before I] tsc TS1109@19+1 | lint parses | scan accepts
+   "class C<T> extends ! B<T> implements I<T>, a.J {}"  [ins "!" before B] tsc TS1109@19+1 | lint parses | scan accepts
+   "class C<T> extends implements<T> implements I<T>, a.J {}"  [rep B by "implements"] tsc TS1109@29+1 | lint parses | scan accepts
+   "class C<T> extends void B<T> implements I<T>, a.J {}"  [ins "void" before B] tsc TS1109@19+4 | lint parses | scan accepts
+   "class C<T> extends <T> B<T> implements I<T>, a.J {}"  [ins "<T>" before B] tsc TS1109@19+1 | lint parses | scan accepts
+   "class C<T> extends B<T> implements ! I<T>, a.J {}"  [ins "!" before I] tsc TS1109@35+1 | lint parses | scan accepts
+   "class C<T> extends B<T> implements export<T>, a.J {}"  [rep I by "export"] tsc TS1109@35+6 | lint parses | scan accepts
+   "class C<T> extends B<T> implements default<T>, a.J {}"  [rep I by "default"] tsc TS1109@35+7 | lint parses | scan accepts
+   "class C<T> extends B<T> implements in<T>, a.J {}"  [rep I by "in"] tsc TS1109@35+2 | lint parses | scan accepts
+   "class C<T> extends B<T> implements #p<T>, a.J {}"  [rep I by "#p"] tsc TS1109@35+2 | lint parses | scan accepts
+   "class C<T> extends B<T> implements extends<T>, a.J {}"  [rep I by "extends"] tsc TS1109@42+1 | lint parses | scan @35 Unexpected extends
+   "class C<T> extends B<T> implements implements<T>, a.J {}"  [rep I by "implements"] tsc TS1109@45+1 | lint parses | scan accepts
+   "class C<T> extends B<T> implements var<T>, a.J {}"  [rep I by "var"] tsc TS1109@35+3 | lint parses | scan accepts
+   "class C<T> extends B<T> implements void I<T>, a.J {}"  [ins "void" before I] tsc TS1109@35+4 | lint parses | scan accepts
+   "class C<T> extends B<T> implements <T> I<T>, a.J {}"  [ins "<T>" before I] tsc TS1109@35+1 | lint parses | scan accepts
+   "class C<T> extends B<T> implements {}<T>, a.J {}"  [rep I by "{}"] tsc TS1109@40+1 | lint parses | scan accepts
+   "class C<T> extends B<T> implements I<T>, ! a.J {}"  [ins "!" before a] tsc TS1109@41+1 | lint parses | scan accepts
+   "class C<T> extends B<T> implements I<T>, export.J {}"  [rep a by "export"] tsc TS1109@41+6 | lint parses | scan @50 Unexpected {
+   "class C<T> extends B<T> implements I<T>, default.J {}"  [rep a by "default"] tsc TS1109@41+7 | lint parses | scan @51 Unexpected {
+   "class C<T> extends B<T> implements I<T>, const.J {}"  [rep a by "const"] tsc TS1109@41+5 | lint parses | scan accepts
+   "class C<T> extends B<T> implements I<T>, in.J {}"  [rep a by "in"] tsc TS1109@41+2 | lint parses | scan @46 Unexpected {
+   "class C<T> extends B<T> implements I<T>, #p.J {}"  [rep a by "#p"] tsc TS1109@41+2 | lint parses | scan @46 Unexpected {
+   "class C<T> extends B<T> implements I<T>, extends.J {}"  [rep a by "extends"] tsc TS1109@48+1 | lint parses | scan @51 Unexpected {
+   "class C<T> extends B<T> implements I<T>, var.J {}"  [rep a by "var"] tsc TS1109@41+3 | lint parses | scan @47 Unexpected {
+   "class C<T> extends B<T> implements I<T>, void a.J {}"  [ins "void" before a] tsc TS1109@41+4 | lint parses | scan accepts
+   "class C<T> extends B<T> implements I<T>, void.J {}"  [rep a by "void"] tsc TS1109@41+4 | lint parses | scan accepts
+   "class C<T> extends B<T> implements I<T>, <T> a.J {}"  [ins "<T>" before a] tsc TS1109@41+1 | lint parses | scan accepts
+   "class C extends ! class {} {}"  [ins "!" before class] tsc TS1109@16+1 | lint parses | scan accepts
+   "class C extends ! {} {}"  [rep class by "!"] tsc TS1109@16+1 | lint parses | scan accepts
+   "class C extends @d class {} {}"  [ins "@d" before class] tsc TS1109@16+1 | lint parses | scan accepts
+   "class C extends void class {} {}"  [ins "void" before class] tsc TS1109@16+4 | lint parses | scan accepts
+   "class C extends void {} {}"  [rep class by "void"] tsc TS1109@16+4 | lint parses | scan accepts
+   "class C extends <T> class {} {}"  [ins "<T>" before class] tsc TS1109@16+1 | lint parses | scan accepts
+   "class C extends <T> {} {}"  [rep class by "<T>"] tsc TS1109@16+1 | lint parses | scan accepts
+   "class C extends ! null {}"  [ins "!" before null] tsc TS1109@16+1 | lint parses | scan accepts
+   "class C extends void null {}"  [ins "void" before null] tsc TS1109@16+4 | lint parses | scan accepts
+   "class C extends <T> null {}"  [ins "<T>" before null] tsc TS1109@16+1 | lint parses | scan accepts
+   "class C extends ! a[b] {}"  [ins "!" before a] tsc TS1109@16+1 | lint parses | scan accepts
+   "class C extends ![b] {}"  [rep a by "!"] tsc TS1109@16+1 | lint parses | scan accepts
+   "class C extends void a[b] {}"  [ins "void" before a] tsc TS1109@16+4 | lint parses | scan accepts
+   "class C extends void[b] {}"  [rep a by "void"] tsc TS1109@16+4 | lint parses | scan accepts
+   "class C extends <T> a[b] {}"  [ins "<T>" before a] tsc TS1109@16+1 | lint parses | scan accepts
+   "class C extends <T>[b] {}"  [rep a by "<T>"] tsc TS1109@16+1 | lint parses | scan accepts
+   "const k = class extends ! B {};"  [ins "!" before B] tsc TS1109@24+1 | lint parses | scan accepts
+   "const k = class extends void B {};"  [ins "void" before B] tsc TS1109@24+4 | lint parses | scan accepts
+   "const k = class extends <T> B {};"  [ins "<T>" before B] tsc TS1109@24+1 | lint parses | scan accepts
+   "const k = class K<T> extends ! B<T> implements I {};"  [ins "!" before B] tsc TS1109@29+1 | lint parses | scan accepts
+   "const k = class K<T> extends implements<T> implements I {};"  [rep B by "implements"] tsc TS1109@39+1 | lint parses | scan accepts
+   "const k = class K<T> extends void B<T> implements I {};"  [ins "void" before B] tsc TS1109@29+4 | lint parses | scan accepts
+   "const k = class K<T> extends <T> B<T> implements I {};"  [ins "<T>" before B] tsc TS1109@29+1 | lint parses | scan accepts
+   "const k = class K<T> extends B<T> implements ! I {};"  [ins "!" before I] tsc TS1109@45+1 | lint parses | scan accepts
+   "const k = class K<T> extends B<T> implements export {};"  [rep I by "export"] tsc TS1109@45+6 | lint parses | scan @52 Unexpected {
+   "const k = class K<T> extends B<T> implements default {};"  [rep I by "default"] tsc TS1109@45+7 | lint parses | scan @53 Unexpected {
+   "const k = class K<T> extends B<T> implements const {};"  [rep I by "const"] tsc TS1109@45+5 | lint parses | scan accepts
+   "const k = class K<T> extends B<T> implements in {};"  [rep I by "in"] tsc TS1109@45+2 | lint parses | scan @48 Unexpected {
+   "const k = class K<T> extends B<T> implements #p {};"  [rep I by "#p"] tsc TS1109@45+2 | lint parses | scan @48 Unexpected {
+   "const k = class K<T> extends B<T> implements var {};"  [rep I by "var"] tsc TS1109@45+3 | lint parses | scan @49 Unexpected {
+   "const k = class K<T> extends B<T> implements void I {};"  [ins "void" before I] tsc TS1109@45+4 | lint parses | scan accepts
+   "const k = class K<T> extends B<T> implements <T> I {};"  [ins "<T>" before I] tsc TS1109@45+1 | lint parses | scan accepts
+   "export default class extends ! B {}"  [ins "!" before B] tsc TS1109@29+1 | lint parses | scan accepts
+   "export default class extends void B {}"  [ins "void" before B] tsc TS1109@29+4 | lint parses | scan accepts
+   "export default class extends <T> B {}"  [ins "<T>" before B] tsc TS1109@29+1 | lint parses | scan accepts
+   "export class C extends ! B implements I {}"  [ins "!" before B] tsc TS1109@23+1 | lint parses | scan accepts
+   "export class C extends await implements I {}"  [rep B by "await"] tsc TS1109@23+5 | lint parses | scan @40 Expected "{" but found "I"
+   "export class C extends void B implements I {}"  [ins "void" before B] tsc TS1109@23+4 | lint parses | scan accepts
+   "export class C extends <T> B implements I {}"  [ins "<T>" before B] tsc TS1109@23+1 | lint parses | scan accepts
+   "export class C extends B implements ! I {}"  [ins "!" before I] tsc TS1109@36+1 | lint parses | scan accepts
+   "export class C extends B implements export {}"  [rep I by "export"] tsc TS1109@36+6 | lint parses | scan @43 Unexpected {
+   "export class C extends B implements default {}"  [rep I by "default"] tsc TS1109@36+7 | lint parses | scan @44 Unexpected {
+   "export class C extends B implements const {}"  [rep I by "const"] tsc TS1109@36+5 | lint parses | scan accepts
+   "export class C extends B implements in {}"  [rep I by "in"] tsc TS1109@36+2 | lint parses | scan @39 Unexpected {
+   "export class C extends B implements #p {}"  [rep I by "#p"] tsc TS1109@36+2 | lint parses | scan @39 Unexpected {
+   "export class C extends B implements var {}"  [rep I by "var"] tsc TS1109@36+3 | lint parses | scan @40 Unexpected {
+   "export class C extends B implements void I {}"  [ins "void" before I] tsc TS1109@36+4 | lint parses | scan accepts
+   "export class C extends B implements <T> I {}"  [ins "<T>" before I] tsc TS1109@36+1 | lint parses | scan accepts
+   "declare class C extends ! B implements I {}"  [ins "!" before B] tsc TS1109@24+1 | lint parses | scan accepts
+   "declare class C extends void B implements I {}"  [ins "void" before B] tsc TS1109@24+4 | lint parses | scan accepts
+   "declare class C extends <T> B implements I {}"  [ins "<T>" before B] tsc TS1109@24+1 | lint parses | scan accepts
+   "declare class C extends B implements ! I {}"  [ins "!" before I] tsc TS1109@37+1 | lint parses | scan accepts
+   "declare class C extends B implements export {}"  [rep I by "export"] tsc TS1109@37+6 | lint parses | scan @44 Unexpected {
+   "declare class C extends B implements default {}"  [rep I by "default"] tsc TS1109@37+7 | lint parses | scan @45 Unexpected {
+   "declare class C extends B implements const {}"  [rep I by "const"] tsc TS1109@37+5 | lint parses | scan accepts
+   "declare class C extends B implements in {}"  [rep I by "in"] tsc TS1109@37+2 | lint parses | scan @40 Unexpected {
+   "declare class C extends B implements #p {}"  [rep I by "#p"] tsc TS1109@37+2 | lint parses | scan @40 Unexpected {
+   "declare class C extends B implements var {}"  [rep I by "var"] tsc TS1109@37+3 | lint parses | scan @41 Unexpected {
+   "declare class C extends B implements void I {}"  [ins "void" before I] tsc TS1109@37+4 | lint parses | scan accepts
+   "declare class C extends B implements <T> I {}"  [ins "<T>" before I] tsc TS1109@37+1 | lint parses | scan accepts
+   "abstract class C extends ! B {}"  [ins "!" before B] tsc TS1109@25+1 | lint parses | scan accepts
+   "abstract class C extends void B {}"  [ins "void" before B] tsc TS1109@25+4 | lint parses | scan accepts
+   "abstract class C extends <T> B {}"  [ins "<T>" before B] tsc TS1109@25+1 | lint parses | scan accepts
+   "interface I extends ! A, B<T>, a.C {}"  [ins "!" before A] tsc TS1109@20+1 | lint parses | scan accepts
+   "interface I extends const, B<T>, a.C {}"  [rep A by "const"] tsc TS1109@20+5 | lint parses | scan accepts
+   "interface I extends extends, B<T>, a.C {}"  [rep A by "extends"] tsc TS1109@27+1 | lint parses | scan accepts
+   "interface I extends void A, B<T>, a.C {}"  [ins "void" before A] tsc TS1109@20+4 | lint parses | scan accepts
+   "interface I extends void, B<T>, a.C {}"  [rep A by "void"] tsc TS1109@20+4 | lint parses | scan accepts
+   "interface I extends <T> A, B<T>, a.C {}"  [ins "<T>" before A] tsc TS1109@20+1 | lint parses | scan accepts
+   "interface I extends A, ! B<T>, a.C {}"  [ins "!" before B] tsc TS1109@23+1 | lint parses | scan accepts
+   "interface I extends A, implements<T>, a.C {}"  [rep B by "implements"] tsc TS1109@33+1 | lint parses | scan accepts
+   "interface I extends A, void B<T>, a.C {}"  [ins "void" before B] tsc TS1109@23+4 | lint parses | scan accepts
+   "interface I extends A, <T> B<T>, a.C {}"  [ins "<T>" before B] tsc TS1109@23+1 | lint parses | scan accepts
+   "interface I extends A, B<T>, ! a.C {}"  [ins "!" before a] tsc TS1109@29+1 | lint parses | scan accepts
+   "interface I extends A, B<T>, const.C {}"  [rep a by "const"] tsc TS1109@29+5 | lint parses | scan accepts
+   "interface I extends A, B<T>, void a.C {}"  [ins "void" before a] tsc TS1109@29+4 | lint parses | scan accepts
+   "interface I extends A, B<T>, void.C {}"  [rep a by "void"] tsc TS1109@29+4 | lint parses | scan accepts
+   "interface I extends A, B<T>, <T> a.C {}"  [ins "<T>" before a] tsc TS1109@29+1 | lint parses | scan accepts
+   "interface I<T> extends ! A<T> { x: T }"  [ins "!" before A] tsc TS1109@23+1 | lint parses | scan accepts
+   "interface I<T> extends implements<T> { x: T }"  [rep A by "implements"] tsc TS1109@33+1 | lint parses | scan accepts
+   "interface I<T> extends void A<T> { x: T }"  [ins "void" before A] tsc TS1109@23+4 | lint parses | scan accepts
+   "interface I<T> extends <T> A<T> { x: T }"  [ins "<T>" before A] tsc TS1109@23+1 | lint parses | scan accepts
+   "const a = (<T> x, y = 1, ...z) => x;"  [ins "<T>" before x] tsc TS1109@25+3 | lint parses | scan accepts
+   "const a = (x! , y = 1, ...z) => x;"  [ins "!" before ,] tsc TS1109@23+3 | lint parses | scan accepts
+   "const a = (x<T> , y = 1, ...z) => x;"  [ins "<T>" before ,] tsc TS1109@25+3 | lint parses | scan accepts
+   "const a = (x, y ! = 1, ...z) => x;"  [ins "!" before =] tsc TS1109@23+3 | lint parses | scan accepts
+   "const a = (x, y <T> = 1, ...z) => x;"  [ins "<T>" before =] tsc TS1109@25+3 | lint parses | scan accepts
+   "const a = (x, y = 1, ...<T> z) => x;"  [ins "<T>" before z] tsc TS1109@21+3 | lint parses | scan accepts
+   "const a = (x, y = 1, ...z! ) => x;"  [ins "!" before )] tsc TS1109@21+3 | lint parses | scan accepts
+   "const a = (x, y = 1, ...z<T> ) => x;"  [ins "<T>" before )] tsc TS1109@21+3 | lint parses | scan accepts
+## TS1441  (34)
+   "class C { x = 1; y: number; z?: string; w!() : number; }"  [ins "()" before :] tsc TS1441@42+1 | lint parses | scan accepts
+   "abstract class C { abstract x: number; abstract !(): void; protected abstract get a(): number; }"  [rep m by "!"] tsc TS1441@49+1 | lint parses | scan accepts
+   "abstract class C { abstract x: number; abstract m! (): void; protected abstract get a(): number; }"  [ins "!" before (] tsc TS1441@51+1 | lint parses | scan accepts
+   "abstract class C { abstract x: number; abstract m(): void; protected abstract get !(): number; }"  [rep a by "!"] tsc TS1441@83+1 | lint parses | scan accepts
+   "class C extends B { override !() {} public override x = 1; }"  [rep m by "!"] tsc TS1441@30+1 | lint parses | scan accepts
+   "class C extends B { override m! () {} public override x = 1; }"  [ins "!" before (] tsc TS1441@32+1 | lint parses | scan accepts
+   "class C { m! () {} async am() {} *g() {} async *ag() {} }"  [ins "!" before (] tsc TS1441@13+1 | lint parses | scan accepts
+   "class C { m() {} async !() {} *g() {} async *ag() {} }"  [rep am by "!"] tsc TS1441@24+1 | lint parses | scan accepts
+   "class C { get !() { return 1 } set a(v) {} static get b() { return 1 } static set b(v) {} }"  [rep a by "!"] tsc TS1441@15+1 | lint parses | scan accepts
+   "class C { get a() { return 1 } set !(v) {} static get b() { return 1 } static set b(v) {} }"  [rep a by "!"] tsc TS1441@36+1 | lint parses | scan accepts
+   "class C { get a() { return 1 } set a(v) {} static get !() { return 1 } static set b(v) {} }"  [rep b by "!"] tsc TS1441@55+1 | lint parses | scan accepts
+   "class C { get a() { return 1 } set a(v) {} static get b() { return 1 } static set !(v) {} }"  [rep b by "!"] tsc TS1441@83+1 | lint parses | scan accepts
+   "class C { \"constructor\"! () {} }"  [ins "!" before (] tsc TS1441@25+1 | lint parses | scan accepts
+   "class C { [a] = 1; [b]! () {} static [c]; get [d]() { return 1 } }"  [ins "!" before (] tsc TS1441@24+1 | lint parses | scan accepts
+   "class C { #p = 1; #m! () {} static #s; get #a() { return 1 } }"  [ins "!" before (] tsc TS1441@22+1 | lint parses | scan accepts
+   "class C { #p = 1; #m() {} static #s; get !() { return 1 } }"  [rep #a by "!"] tsc TS1441@42+1 | lint parses | scan accepts
+   "class C { m! (): void; m(a?: number): void {} }"  [ins "!" before (] tsc TS1441@13+1 | lint parses | scan accepts
+   "class C { m(): void; m! (a?: number): void {} }"  [ins "!" before (] tsc TS1441@24+1 | lint parses | scan accepts
+   "class C { 1 = 1; 'a' = 2; 2n! () {} \"b\"() {} }"  [ins "!" before (] tsc TS1441@30+1 | lint parses | scan accepts
+   "class C { 1 = 1; 'a' = 2; 2n() {} \"b\"! () {} }"  [ins "!" before (] tsc TS1441@39+1 | lint parses | scan accepts
+   "class C { @dec x; @dec() m! () {} @a @b static s = 1; @dec accessor y; }"  [ins "!" before (] tsc TS1441@28+1 | lint parses | scan accepts
+   "class C { m! (@dec a, @dec() b: number) {} constructor(@dec public p) {} }"  [ins "!" before (] tsc TS1441@13+1 | lint parses | scan accepts
+   "class C {\n x\n y\n m! () {}\n static\n z = 1\n}"  [ins "!" before (] tsc TS1441@20+1 | lint parses | scan accepts
+   "class C { get = 1; set! () {} static() {} async<T>() {} }"  [ins "!" before (] tsc TS1441@24+1 | lint parses | scan accepts
+   "class C { get = 1; set() {} static! () {} async<T>() {} }"  [ins "!" before (] tsc TS1441@36+1 | lint parses | scan accepts
+   "class C { if! () {} class() {} function() {} new() {} delete; in; typeof; var = 1; }"  [ins "!" before (] tsc TS1441@14+1 | lint parses | scan accepts
+   "class C { if() {} class! () {} function() {} new() {} delete; in; typeof; var = 1; }"  [ins "!" before (] tsc TS1441@25+1 | lint parses | scan accepts
+   "class C { if() {} class() {} function! () {} new() {} delete; in; typeof; var = 1; }"  [ins "!" before (] tsc TS1441@39+1 | lint parses | scan accepts
+   "class C { if() {} class() {} function() {} new! () {} delete; in; typeof; var = 1; }"  [ins "!" before (] tsc TS1441@48+1 | lint parses | scan accepts
+   "declare class C { x: number; m! (): void; constructor(a: number); static s: string; get g(): number; }"  [ins "!" before (] tsc TS1441@32+1 | lint parses | scan accepts
+   "declare class C { x: number; m(): void; constructor(a: number); static s: string; get !(): number; }"  [rep g by "!"] tsc TS1441@87+1 | lint parses | scan accepts
+   "const k = class { x = 1; m! () {} static s; };"  [ins "!" before (] tsc TS1441@28+1 | lint parses | scan accepts
+   "class C { m! (a, b?: number, ...c) {} set s(v: number) {} constructor(a, public b) {} }"  [ins "!" before (] tsc TS1441@13+1 | lint parses | scan accepts
+   "class C { m(a, b?: number, ...c) {} set !(v: number) {} constructor(a, public b) {} }"  [rep s by "!"] tsc TS1441@41+1 | lint parses | scan accepts
+## TS1110  (9)
+   "class C extends B<!> {}"  [rep T by "!"] tsc TS1110@19+1 | lint parses | scan @18 Unexpected !
+   "class C extends a.b.c<!, U> {}"  [rep T by "!"] tsc TS1110@23+1 | lint parses | scan @22 Unexpected !
+   "class C extends a.b.c<T, !> {}"  [rep U by "!"] tsc TS1110@26+1 | lint parses | scan @25 Unexpected !
+   "class C extends B implements I, J<!> {}"  [rep T by "!"] tsc TS1110@35+1 | lint parses | scan @34 Unexpected !
+   "class C<T> extends B<!> implements I<T>, a.J {}"  [rep T by "!"] tsc TS1110@22+1 | lint parses | scan @21 Unexpected !
+   "class C<T> extends B<T> implements I<!>, a.J {}"  [rep T by "!"] tsc TS1110@38+1 | lint parses | scan accepts
+   "const k = class K<T> extends B<!> implements I {};"  [rep T by "!"] tsc TS1110@32+1 | lint parses | scan @31 Unexpected !
+   "interface I extends A, B<!>, a.C {}"  [rep T by "!"] tsc TS1110@26+1 | lint parses | scan accepts
+   "interface I<T> extends A<!> { x: T }"  [rep T by "!"] tsc TS1110@26+1 | lint parses | scan @25 Unexpected !
+## TS1477  (8)
+   "class C { static {} static { this<T> .x = 1; } }"  [ins "<T>" before .] tsc TS1477@33+3 | lint parses | scan accepts
+   "class C extends a<T> .b.c<T, U> {}"  [ins "<T>" before .] tsc TS1477@17+3 | lint parses | scan accepts
+   "class C extends a.b<T> .c<T, U> {}"  [ins "<T>" before .] tsc TS1477@19+3 | lint parses | scan accepts
+   "class C<T> extends B<T> implements I<T>. a.J {}"  [rep , by "."] tsc TS1477@36+3 | lint parses | scan accepts
+   "class C<T> extends B<T> implements I<T>, a<T> .J {}"  [ins "<T>" before .] tsc TS1477@42+3 | lint parses | scan accepts
+   "const k = class K<T> extends B<T> . I {};"  [rep implements by "."] tsc TS1477@30+3 | lint parses | scan accepts
+   "interface I extends A, B<T>. a.C {}"  [rep , by "."] tsc TS1477@24+3 | lint parses | scan accepts
+   "interface I extends A, B<T>, a<T> .C {}"  [ins "<T>" before .] tsc TS1477@30+3 | lint parses | scan accepts
+## TS1034  (6)
+   "class C extends B implements super, J<T> {}"  [rep I by "super"] tsc TS1034@34+1 | lint parses | scan accepts
+   "class C extends B implements I, super<T> {}"  [rep J by "super"] tsc TS1034@37+1 | lint parses | scan @41 Unexpected {
+   "class C implements super {}"  [rep I by "super"] tsc TS1034@25+1 | lint parses | scan @25 Unexpected {
+   "const k = class K<T> extends B<T> implements super {};"  [rep I by "super"] tsc TS1034@51+1 | lint parses | scan @51 Unexpected {
+   "export class C extends B implements super {}"  [rep I by "super"] tsc TS1034@42+1 | lint parses | scan @42 Unexpected {
+   "declare class C extends B implements super {}"  [rep I by "super"] tsc TS1034@43+1 | lint parses | scan @43 Unexpected {
+## TS1003  (6)
+   "class C extends B implements I, J. <T> {}"  [ins "." before <] tsc TS1003@35+1 | lint parses | scan accepts
+   "class C<T> extends B<T> implements I. <T>, a.J {}"  [ins "." before <] tsc TS1003@38+1 | lint parses | scan accepts
+   "class C<T> extends B<T> implements I<T>, a.<T> {}"  [rep J by "<T>"] tsc TS1003@43+1 | lint parses | scan accepts
+   "interface I extends A, B. <T>, a.C {}"  [ins "." before <] tsc TS1003@26+1 | lint parses | scan accepts
+   "interface I extends A, B<T>, a.<T> {}"  [rep C by "<T>"] tsc TS1003@31+1 | lint parses | scan accepts
+   "interface I<T> extends A. <T> { x: T }"  [ins "." before <] tsc TS1003@26+1 | lint parses | scan accepts
+## TS2809  (4)
+   "const f = function (a, b) {}= 1 ;"  [ins "= 1" before ;] tsc TS2809@28+1 | lint parses | scan accepts
+   "const f = function (a, b) {}= 1"  [rep ; by "= 1"] tsc TS2809@28+1 | lint parses | scan accepts
+   "const g = function* n(a) {}= 1 ;"  [ins "= 1" before ;] tsc TS2809@27+1 | lint parses | scan accepts
+   "const g = function* n(a) {}= 1"  [rep ; by "= 1"] tsc TS2809@27+1 | lint parses | scan accepts
+## TS1128  (2)
+   "class C extends {}.b.c<T, U> {}"  [rep a by "{}"] tsc TS1128@18+1 | lint parses | scan accepts
+   "class C<T> extends B<T> implements I<T>, {}.J {}"  [rep a by "{}"] tsc TS1128@43+1 | lint parses | scan accepts
+## TS2754  (1)
+   "class C<T> extends B<T> implements super<T>, a.J {}"  [rep I by "super"] tsc TS2754@40+3 | lint parses | scan accepts
+## TS1359  (1)
+   "type F = (a: number, b?: string, ...this: any[]) => void;"  [rep c by "this"] tsc TS1359@36+4 | lint parses | scan accepts

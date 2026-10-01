@@ -1,0 +1,467 @@
+## await at the top level
+"await foo();" [ts]
+   tsc parses; checker @0+5 TS1375 'await' expressions are only allowed at the top level of a file when that file is a module, but this file has no imports or exports. Consider adding an empty 'export {}' to make this file a module.
+   go  parses
+   bun accepts
+   lint @6+3 "await" can only be used inside an "async" function  => no code  (2 messages)
+"const x = await foo();" [ts]
+   tsc parses; checker @10+5 TS1375 'await' expressions are only allowed at the top level of a file when that file is a module, but this file has no imports or exports. Consider adding an empty 'export {}' to make this file a module.
+   go  parses
+   bun accepts
+   lint @16+3 "await" can only be used inside an "async" function  => no code  (2 messages)
+"export {}; await foo();" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+   lint @17+3 "await" can only be used inside an "async" function  => no code  (2 messages)
+"for await (const a of b) {}" [ts]
+   tsc parses; checker @4+5 TS1431 'for await' loops are only allowed at the top level of a file when that file is a module, but this file has no imports or exports. Consider adding an empty 'export {}' to make this file a module.
+   go  parses
+   bun accepts
+   lint @4+5 Cannot use "await" outside an async function  => no code
+"import x from 'y'; const z = await x();" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+   lint @35+1 "await" can only be used inside an "async" function  => no code  (2 messages)
+"class await {}" [ts]
+   tsc parses
+   go  parses
+   bun @12+1 Cannot use "await" as an identifier here
+   lint parses
+"export class C extends await B {}" [ts]
+   tsc @23+5 TS1109 Expression expected.
+   tsc @31+1 TS1005 ';' expected.
+   go  @23+5 TS1109 Expression expected.
+   go  @31+1 TS1005 ';' expected.
+   bun accepts
+   lint @29+1 "await" can only be used inside an "async" function  => no code  (3 messages)
+## type arguments in heritage
+"class C extends B<!> {}" [ts]
+   tsc @19+1 TS1110 Type expected.
+   go  @19+1 TS1110 Type expected.
+   bun @18+1 Unexpected !
+   lint parses
+"class C extends B<!T> {}" [ts]
+   tsc parses; checker @18+2 TS17020 '!' at the start of a type is not valid TypeScript syntax. Did you mean to write 'T'?
+   go  parses
+   bun @18+1 Unexpected !
+   bun @19+1 Expected ">" but found "T"
+   lint @19+1 Expected ">" but found "T"  => TS1005 @19+1 '>' expected.  (2 messages)
+"let y: B<!>;" [ts]
+   tsc @10+1 TS1110 Type expected.
+   go  @10+1 TS1110 Type expected.
+   bun @9+1 Unexpected !
+   lint parses
+"f<!>(x);" [ts]
+   tsc @3+1 TS1110 Type expected.
+   go  @3+1 TS1110 Type expected.
+   bun accepts
+   lint parses
+"class C extends B<?> {}" [ts]
+   tsc parses; checker @18+1 TS8020 JSDoc types can only be used inside documentation comments.
+   go  @19+1 TS1110 Type expected.
+   bun @18+1 Unexpected ?
+   bun @19+1 Expected identifier but found ">"
+   lint @18+1 Expected ">" but found "?"  => TS1005 @18+1 '>' expected.  (2 messages)
+"class C extends B<,> {}" [ts]
+   tsc @18+1 TS1110 Type expected.
+   go  @18+1 TS1110 Type expected.
+   bun @18+1 Unexpected ,
+   bun @19+1 Unexpected >
+   lint @18+1 Unexpected ,  => TS1110 @18+1 Type expected.
+"class C extends B<T,,U> {}" [ts]
+   tsc @20+1 TS1110 Type expected.
+   go  @20+1 TS1110 Type expected.
+   bun @20+1 Unexpected ,
+   lint @20+1 Unexpected ,  => TS1110 @20+1 Type expected.
+"class C extends B<T U> {}" [ts]
+   tsc @20+1 TS1005 '>' expected.
+   tsc @21+1 TS1005 ',' expected.
+   go  @20+1 TS1005 '>' expected.
+   go  @21+1 TS1005 ',' expected.
+   bun @20+1 Expected ">" but found "U"
+   bun @21+1 Expected identifier but found ">"
+   lint @20+1 Expected ">" but found "U"  => TS1005 @20+1 '>' expected.  (2 messages)
+"class C extends B<T {}" [ts]
+   tsc @20+1 TS1005 '>' expected.
+   go  @20+1 TS1005 '>' expected.
+   bun @20+1 Expected ">" but found "{"
+   lint @20+1 Expected ">" but found "{"  => TS1005 @20+1 '>' expected.
+"class C implements I<!> {}" [ts]
+   tsc @22+1 TS1110 Type expected.
+   go  @22+1 TS1110 Type expected.
+   bun @21+1 Unexpected !
+   lint parses
+"class C implements I<T,,U> {}" [ts]
+   tsc @23+1 TS1110 Type expected.
+   go  @23+1 TS1110 Type expected.
+   bun @23+1 Unexpected ,
+   lint @23+1 Unexpected ,  => TS1110 @23+1 Type expected.
+"interface I extends A<!> {}" [ts]
+   tsc @23+1 TS1110 Type expected.
+   go  @23+1 TS1110 Type expected.
+   bun @22+1 Unexpected !
+   lint parses
+## arrow parameters
+"const a = (x!) => x;" [ts]
+   tsc @15+2 TS1005 ';' expected.
+   go  @15+2 TS1005 ';' expected.
+   bun accepts
+   lint parses
+"const a = (<T>x) => x;" [ts]
+   tsc @17+2 TS1005 ';' expected.
+   go  @17+2 TS1005 ';' expected.
+   bun accepts
+   lint parses
+"const a = (x<T>) => x;" [ts]
+   tsc @17+2 TS1005 ';' expected.
+   go  @17+2 TS1005 ';' expected.
+   bun accepts
+   lint parses
+"const a = (x as any) => x;" [ts]
+   tsc @21+2 TS1005 ';' expected.
+   go  @21+2 TS1005 ';' expected.
+   bun accepts
+   lint parses
+"const a = ((x)) => x;" [ts]
+   tsc @16+2 TS1005 ';' expected.
+   go  @16+2 TS1005 ';' expected.
+   bun accepts
+   lint parses
+"const a = (x = 1: number) => x;" [ts]
+   tsc @16+1 TS1005 ',' expected.
+   go  @16+1 TS1005 ',' expected.
+   bun accepts
+   lint parses
+"const a = (x!: number) => x;" [ts]
+   tsc @13+1 TS1005 ')' expected.
+   tsc @21+1 TS1005 ',' expected.
+   tsc @23+2 TS1005 ';' expected.
+   go  @13+1 TS1005 ')' expected.
+   go  @21+1 TS1005 ',' expected.
+   go  @23+2 TS1005 ';' expected.
+   bun accepts
+   lint parses
+"const a = (x?: number = 1) => x;" [ts]
+   tsc parses; checker @11+1 TS1015 Parameter cannot have question mark and initializer.
+   go  parses
+   bun accepts
+   lint parses
+"const a = (x?) => x;" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+   lint parses
+"const a = (x?, y) => x;" [ts]
+   tsc parses; checker @15+1 TS1016 A required parameter cannot follow an optional parameter.
+   go  parses
+   bun accepts
+   lint parses
+"const a = (...x?) => x;" [ts]
+   tsc parses; checker @15+1 TS1047 A rest parameter cannot be optional.
+   go  parses
+   bun accepts
+   lint parses
+"const a = (...x = 1) => x;" [ts]
+   tsc parses; checker @14+1 TS1048 A rest parameter cannot have an initializer.
+   go  parses
+   bun @16+1 A rest argument cannot have a default initializer
+   lint @16+1 A rest argument cannot have a default initializer  => no code
+"const a = (...x, y) => x;" [ts]
+   tsc parses; checker @11+3 TS1014 A rest parameter must be last in a parameter list.
+   go  parses
+   bun @15+1 Unexpected "," after rest pattern
+   lint @15+1 Unexpected "," after rest pattern  => no code
+"const a = (...x,) => x;" [ts]
+   tsc parses; checker @15+1 TS1013 A rest parameter or binding pattern may not have a trailing comma.
+   go  parses
+   bun @15+1 Unexpected "," after rest pattern
+   lint @15+1 Unexpected "," after rest pattern  => no code
+"const a = (x, ...y: number[]) => x;" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+   lint parses
+"const a = ({ x }!) => x;" [ts]
+   tsc @19+2 TS1005 ';' expected.
+   go  @19+2 TS1005 ';' expected.
+   bun accepts
+   lint parses
+"const a = ([x]!) => x;" [ts]
+   tsc @17+2 TS1005 ';' expected.
+   go  @17+2 TS1005 ';' expected.
+   bun accepts
+   lint parses
+"const a = (x!, y) => x;" [ts]
+   tsc @18+2 TS1005 ';' expected.
+   go  @18+2 TS1005 ';' expected.
+   bun accepts
+   lint parses
+"const a = (x, y!) => x;" [ts]
+   tsc @18+2 TS1005 ';' expected.
+   go  @18+2 TS1005 ';' expected.
+   bun accepts
+   lint parses
+"const a = async (x!) => x;" [ts]
+   tsc @21+2 TS1005 ';' expected.
+   go  @21+2 TS1005 ';' expected.
+   bun accepts
+   lint parses
+"const a = async (<T>x) => x;" [ts]
+   tsc @23+2 TS1005 ';' expected.
+   go  @23+2 TS1005 ';' expected.
+   bun accepts
+   lint parses
+"const a = <T,>(x!) => x;" [ts]
+   tsc @12+1 TS1005 '>' expected.
+   tsc @13+1 TS1134 Variable declaration expected.
+   tsc @19+2 TS1005 ';' expected.
+   go  @12+1 TS1005 '>' expected.
+   go  @13+1 TS1134 Variable declaration expected.
+   go  @19+2 TS1005 ';' expected.
+   bun accepts
+   lint parses
+"const a = (x = y!) => x;" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+   lint parses
+"const a = (x! = 1) => x;" [ts]
+   tsc @19+2 TS1005 ';' expected.
+   go  @19+2 TS1005 ';' expected.
+   bun accepts
+   lint parses
+"const a = ({ x: y! }) => x;" [ts]
+   tsc @22+2 TS1005 ';' expected.
+   go  @22+2 TS1005 ';' expected.
+   bun accepts
+   lint parses
+"const a = ({ x: <T>y }) => x;" [ts]
+   tsc @24+2 TS1005 ';' expected.
+   go  @24+2 TS1005 ';' expected.
+   bun accepts
+   lint parses
+"const a = ([x!]) => x;" [ts]
+   tsc @17+2 TS1005 ';' expected.
+   go  @17+2 TS1005 ';' expected.
+   bun accepts
+   lint parses
+"const a = ({ class }) => x;" [ts]
+   tsc @19+1 TS1005 ':' expected.
+   go  @19+1 TS1005 ':' expected.
+   bun @19+1 Expected ":" but found "}"
+   bun @20+1 Unexpected )
+   lint @19+1 Expected ":" but found "}"  => TS1005 @19+1 ':' expected.  (2 messages)
+"const a = (public x) => x;" [ts]
+   tsc parses; checker also TS2369
+   go  parses
+   bun @18+1 Expected ")" but found "x"
+   bun @19+1 Expected ";" but found ")"
+   lint @18+1 Expected ")" but found "x"  => TS1005 @18+1 ')' expected.  (3 messages)
+"const a = (this) => x;" [ts]
+   tsc parses; checker also TS2730
+   go  parses
+   bun @11+0 Invalid binding pattern
+   lint @11+0 Invalid binding pattern  => no code
+"const a = (a, this: T) => x;" [ts]
+   tsc parses; checker also TS2680 TS2730
+   go  parses
+   bun @14+0 Invalid binding pattern
+   lint @14+0 Invalid binding pattern  => no code
+"const a = (x): => x;" [ts]
+   tsc @13+1 TS1005 ',' expected.
+   tsc @15+2 TS1005 ';' expected.
+   go  @13+1 TS1005 ',' expected.
+   go  @15+2 TS1005 ';' expected.
+   bun accepts
+   lint @13+1 Expected ";" but found ":"  => TS1005 @13+1 ';' expected.  (2 messages)
+"const a = x! => x;" [ts]
+   tsc @13+2 TS1005 ';' expected.
+   go  @13+2 TS1005 ';' expected.
+   bun @13+2 Expected ";" but found "=>"
+   lint @13+2 Expected ";" but found "=>"  => TS1005 @13+2 ';' expected.
+"const a = async x! => x;" [ts]
+   tsc @16+1 TS1005 ',' expected.
+   tsc @19+2 TS1005 ';' expected.
+   go  @16+1 TS1005 ',' expected.
+   go  @19+2 TS1005 ';' expected.
+   bun @16+1 Expected ";" but found "x"
+   bun @19+2 Unexpected =>
+   lint @16+1 Expected ";" but found "x"  => TS1005 @16+1 ';' expected.  (2 messages)
+## type signature parameters
+"type F = (...this) => void;" [ts]
+   tsc @13+4 TS1359 Identifier expected. 'this' is a reserved word that cannot be used here.
+   go  @13+4 TS1359 Identifier expected. 'this' is a reserved word that cannot be used here.
+   bun accepts
+   lint parses
+"type F = (a, this?: string) => void;" [ts]
+   tsc @17+1 TS1005 ',' expected.
+   go  @17+1 TS1005 ',' expected.
+   bun accepts
+   lint parses
+"type F = (...public c: any[]) => void;" [ts]
+   tsc @20+1 TS1005 ',' expected.
+   go  @20+1 TS1005 ',' expected.
+   bun accepts
+   lint parses
+"type F = (public\n c: any) => void;" [ts]
+   tsc @18+1 TS1005 ')' expected.
+   tsc @21+3 TS1434 Unexpected keyword or identifier.
+   tsc @24+1 TS1128 Declaration or statement expected.
+   go  @18+1 TS1005 ')' expected.
+   go  @21+3 TS1434 Unexpected keyword or identifier.
+   go  @24+1 TS1128 Declaration or statement expected.
+   bun @18+1 Expected ")" but found "c"
+   bun @19+1 Expected ";" but found ":"
+   lint @18+1 Expected ")" but found "c"  => TS1005 @18+1 ')' expected.  (4 messages)
+"type F = (a!) => void;" [ts]
+   tsc @14+2 TS1005 ';' expected.
+   tsc @21+1 TS1109 Expression expected.
+   go  @14+2 TS1005 ';' expected.
+   go  @21+1 TS1109 Expression expected.
+   bun @14+2 Expected ";" but found "=>"
+   bun @21+1 Unexpected ;
+   lint @14+2 Expected ";" but found "=>"  => TS1005 @14+2 ';' expected.  (2 messages)
+"type F = ({ class }) => void;" [ts]
+   tsc @21+2 TS1005 ';' expected.
+   tsc @28+1 TS1109 Expression expected.
+   go  @21+2 TS1005 ';' expected.
+   go  @28+1 TS1109 Expression expected.
+   bun @21+2 Expected ";" but found "=>"
+   bun @28+1 Unexpected ;
+   lint @21+2 Expected ";" but found "=>"  => TS1005 @21+2 ';' expected.  (2 messages)
+"type F = (a = 1: number) => void;" [ts]
+   tsc @15+1 TS1005 ',' expected.
+   go  @15+1 TS1005 ',' expected.
+   bun @12+1 Expected ")" but found "="
+   bun @14+1 Expected ";" but found "1"
+   lint @12+1 Expected ")" but found "="  => TS1005 @12+1 ')' expected.  (3 messages)
+"interface I { m(...this): void }" [ts]
+   tsc @19+4 TS1359 Identifier expected. 'this' is a reserved word that cannot be used here.
+   go  @19+4 TS1359 Identifier expected. 'this' is a reserved word that cannot be used here.
+   bun accepts
+   lint parses
+"interface I { m(a, this?): void }" [ts]
+   tsc @23+1 TS1005 ',' expected.
+   go  @23+1 TS1005 ',' expected.
+   bun accepts
+   lint parses
+"interface I { get p?(): number }" [ts]
+   tsc @19+1 TS1005 '(' expected.
+   go  @19+1 TS1005 '(' expected.
+   bun accepts
+   lint parses
+"interface I { get public p(): number }" [ts]
+   tsc @25+1 TS1005 '(' expected.
+   go  @25+1 TS1005 '(' expected.
+   bun accepts
+   lint parses
+"interface I { get get p(): number }" [ts]
+   tsc @22+1 TS1005 '(' expected.
+   go  @22+1 TS1005 '(' expected.
+   bun accepts
+   lint parses
+"interface I { x<T>: T }" [ts]
+   tsc @18+1 TS1005 '(' expected.
+   go  @18+1 TS1005 '(' expected.
+   bun accepts
+   lint parses
+"interface I { const x: T }" [ts]
+   tsc @20+1 TS1005 ';' expected.
+   go  @20+1 TS1005 ';' expected.
+   bun accepts
+   lint parses
+"interface I { default x: T }" [ts]
+   tsc @22+1 TS1005 ';' expected.
+   go  @22+1 TS1005 ';' expected.
+   bun accepts
+   lint parses
+"interface I { x y }" [ts]
+   tsc @14+1 TS1131 Property or signature expected.
+   tsc @18+1 TS1128 Declaration or statement expected.
+   go  @14+1 TS1131 Property or signature expected.
+   go  @18+1 TS1128 Declaration or statement expected.
+   bun accepts
+   lint parses
+"let x: { get p?(): number };" [ts]
+   tsc @14+1 TS1005 '(' expected.
+   go  @14+1 TS1005 '(' expected.
+   bun accepts
+   lint @14+1 Expected "(" but found "?"  => TS1005 @14+1 '(' expected.  (2 messages)
+"let x: { m(...this): void };" [ts]
+   tsc @14+4 TS1359 Identifier expected. 'this' is a reserved word that cannot be used here.
+   go  @14+4 TS1359 Identifier expected. 'this' is a reserved word that cannot be used here.
+   bun accepts
+   lint @14+4 Expected identifier but found "this"  => TS1359 @14+4 Identifier expected. 'this' is a reserved word that cannot be used here.
+"let x: { x y };" [ts]
+   tsc @9+1 TS1131 Property or signature expected.
+   tsc @11+1 TS1005 ',' expected.
+   tsc @13+1 TS1128 Declaration or statement expected.
+   go  @9+1 TS1131 Property or signature expected.
+   go  @11+1 TS1005 ',' expected.
+   go  @13+1 TS1128 Declaration or statement expected.
+   bun accepts
+   lint @9+1 Unexpected x  => TS1131 @9+1 Property or signature expected.
+"declare class C { get a?(): number; m(...this): void; }" [ts]
+   tsc @23+1 TS1005 '(' expected.
+   tsc @24+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @34+1 TS1005 '=>' expected.
+   go  @23+1 TS1005 '(' expected.
+   go  @24+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @34+1 TS1005 '=>' expected.
+   bun @41+4 Expected identifier but found "this"
+   lint @41+4 Expected identifier but found "this"  => TS1359 @41+4 Identifier expected. 'this' is a reserved word that cannot be used here.
+## experimental decorators in a lint parse
+"class C { @!a x }" [ts]
+   tsc @11+1 TS1109 Expression expected.
+   tsc @12+1 TS1434 Unexpected keyword or identifier.
+   go  @11+1 TS1109 Expression expected.
+   go  @12+1 TS1434 Unexpected keyword or identifier.
+   bun scan accepts; transform @11+1 Expected identifier but found "!"
+   lint parses
+"class C { @void a x }" [ts]
+   tsc @11+4 TS1109 Expression expected.
+   tsc @16+1 TS1434 Unexpected keyword or identifier.
+   go  @11+4 TS1109 Expression expected.
+   go  @16+1 TS1434 Unexpected keyword or identifier.
+   bun scan accepts; transform @11+4 Expected identifier but found "void"
+   lint parses
+"class C { @<T>a x }" [ts]
+   tsc @11+1 TS1109 Expression expected.
+   tsc @16+1 TS1005 ';' expected.
+   tsc @18+1 TS1128 Declaration or statement expected.
+   go  @11+1 TS1109 Expression expected.
+   go  @16+1 TS1005 ';' expected.
+   go  @18+1 TS1128 Declaration or statement expected.
+   bun scan accepts; transform @11+1 Expected identifier but found "<"
+   lint parses
+"class C { @a().b x }" [ts]
+   tsc parses; checker @11+5 TS1497 Expression must be enclosed in parentheses to be used as a decorator.
+   go  parses
+   bun scan accepts; transform @14+1 A decorator call expression cannot be followed by a property access; wrap the expression in parentheses to use it as a decorator
+   lint parses
+"class C { @new A x }" [ts]
+   tsc parses; checker @11+5 TS1497 Expression must be enclosed in parentheses to be used as a decorator.
+   go  parses
+   bun scan accepts; transform @11+3 Expected identifier but found "new"
+   lint parses
+"@!dec class C {}" [ts]
+   tsc @1+1 TS1109 Expression expected.
+   tsc @2+0 TS1146 Declaration expected.
+   go  @1+1 TS1109 Expression expected.
+   go  @2+0 TS1146 Declaration expected.
+   bun scan accepts; transform @1+1 Expected identifier but found "!"
+   lint parses
+"class C { m(@!dec a) {} }" [ts]
+   tsc @13+1 TS1109 Expression expected.
+   tsc @18+1 TS1005 ',' expected.
+   go  @13+1 TS1109 Expression expected.
+   go  @18+1 TS1005 ',' expected.
+   bun scan accepts; transform @13+1 Expected identifier but found "!"
+   lint parses
+"class C { @await a x }" [ts]
+   tsc @17+1 TS1434 Unexpected keyword or identifier.
+   go  @17+1 TS1434 Unexpected keyword or identifier.
+   bun scan accepts; transform @19+1 Expected ";" but found "x"
+   lint @19+1 Expected ";" but found "x"  => TS1005 @19+1 ';' expected.

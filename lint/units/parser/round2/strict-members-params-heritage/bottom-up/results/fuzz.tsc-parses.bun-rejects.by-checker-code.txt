@@ -1,0 +1,487 @@
+4317 inputs
+## TS1005 | Expected "…" but found "…"  (1)
+   "const o = { m(a, b = 1) {}, get x() { return 1 }, set x(v) {}, async n() {}, *g() {}, [k]() : {} };" tsc checker TS1005@95+1 | bun @97+1 Expected "{" but found "}"
+## TS1005 | Unexpected "…"  (3)
+   "declare new class C { x: number; m(): void; constructor(a: number); static s: string; get g(): number; }" tsc checker TS1005@101+1 | bun @8+3 Unexpected "new"
+   "declare void class C { x: number; m(): void; constructor(a: number); static s: string; get g(): number; }" tsc checker TS1005@102+1 | bun @8+4 Unexpected "void"
+## TS1009 | Expected "…" but found "…"  (22)
+   "class C extends B , {}" tsc checker TS1009@18+1 | bun @18+1 Expected "{" but found ","
+   "class C extends B<T> , {}" tsc checker TS1009@21+1 | bun @21+1 Expected "{" but found ","
+## TS1009 | Expected "…" but found end of file  (5)
+   "class C extends B implements I, J<T> , {}" tsc checker TS1009@37+1 | bun @41+0 Expected "{" but found end of file
+   "class C implements I , {}" tsc checker TS1009@21+1 | bun @25+0 Expected "{" but found end of file
+## TS1009 | Expected identifier but found "…"  (9)
+   "const k = class { x = 1; m() {} static s; }, ;" tsc checker TS1009@43+1 | bun @45+1 Expected identifier but found ";"
+   "const k = class extends B {}, ;" tsc checker TS1009@28+1 | bun @30+1 Expected identifier but found ";"
+## TS1009 | Expected identifier but found end of file  (9)
+   "const k = class { x = 1; m() {} static s; }," tsc checker TS1009@43+1 | bun @44+0 Expected identifier but found end of file
+   "const k = class extends B {}," tsc checker TS1009@28+1 | bun @29+0 Expected identifier but found end of file
+## TS1009 | Unexpected >  (9)
+   "class C extends B<T, > {}" tsc checker TS1009@19+1 | bun @21+1 Unexpected >
+   "class C extends a.b.c<TU ,> {}" tsc checker TS1009@25+1 | bun @26+1 Unexpected >
+## TS1009 | Unexpected extends  (4)
+   "class C extends B implements I, extends J<T> {}" tsc checker TS1009@30+1 | bun @32+7 Unexpected extends
+   "class C<T> extends B<T> implements I<T>, extends a.J {}" tsc checker TS1009@39+1 | bun @41+7 Unexpected extends
+## TS1013 | Expected "…" but found "…"  (3)
+   "function f(a, b = 1, ...c, ) {}" tsc checker TS1013@25+1 | bun @25+1 Expected ")" but found ","
+   "function f(a: number, b?: string, c: boolean = true, ...d: any[], ) {}" tsc checker TS1013@64+1 | bun @64+1 Expected ")" but found ","
+## TS1013 | Unexpected "…" after rest pattern  (3)
+   "function f({ a, b: [c, d = 1], ...e , }: T, [x, , y, ...z]: U) {}" tsc checker TS1013@36+1 | bun @36+1 Unexpected "," after rest pattern
+   "function f({ a, b: [c, d = 1], ...e }: T, [x, , y, ...z, ]: U) {}" tsc checker TS1013@55+1 | bun @55+1 Unexpected "," after rest pattern
+## TS1014 | A rest argument cannot have a default initializer  (1)
+   "const a = (x, ... y = 1, ...z) => x;" tsc checker TS1014@14+3 | bun @20+1 A rest argument cannot have a default initializer
+## TS1014 | Expected "…" but found "…"  (16)
+   "class C { constructor(... a: number, private readonly b = 1, protected c?: string) {} }" tsc checker TS1014@22+3 | bun @35+1 Expected ")" but found ","
+   "class C { m(@dec ... a, @dec() b: number) {} constructor(@dec public p) {} }" tsc checker TS1014@17+3 | bun @22+1 Expected ")" but found ","
+## TS1014 | Unexpected "…" after rest pattern  (2)
+   "const a = (... x, y = 1, ...z) => x;" tsc checker TS1014@11+3 | bun @16+1 Unexpected "," after rest pattern
+   "const b = async (... x: number, y?: string) => x;" tsc checker TS1014@17+3 | bun @30+1 Unexpected "," after rest pattern
+## TS1015 | Unexpected =  (2)
+   "const a = (x, y ? = 1, ...z) => x;" tsc checker TS1015@14+1 | bun @18+1 Unexpected =
+   "const b = async (x: number, y?= string) => x;" tsc checker TS1015@28+1 | bun @30+1 Unexpected =
+## TS1018 | Expected "…" but found "…"  (20)
+   "class C { [public k: string]: any; static [k: number]: string; readonly [k: symbol]: number; }" tsc checker TS1018@18+1 | bun @18+1 Expected "]" but found "k"
+   "class C { [private k: string]: any; static [k: number]: string; readonly [k: symbol]: number; }" tsc checker TS1018@19+1 | bun @19+1 Expected "]" but found "k"
+## TS1024 | Expected "…" but found "…"  (89)
+   "readonly class C { x; }" tsc checker TS1024@0+8 | bun @9+5 Expected ";" but found "class"
+   "readonly class C { x = 1; y: number; z?: string; w!: number; }" tsc checker TS1024@0+8 | bun @9+5 Expected ";" but found "class"
+## TS1024 | Unexpected readonly  (1)
+   "export readonly class C extends B implements I {}" tsc checker TS1024@7+8 | bun @7+8 Unexpected readonly
+## TS1029 | Expected "…" but found "…"  (96)
+   "class C { accessor public x = 1; private y: number; protected z; readonly r = 1; static s; }" tsc checker TS1029@19+6 | bun @26+1 Expected ";" but found "x"
+   "class C { async public x = 1; private y: number; protected z; readonly r = 1; static s; }" tsc checker TS1029@16+6 | bun @25+1 Expected "(" but found "="
+## TS1029 | Expected identifier but found "…"  (2)
+   "class C { m(default @dec a, @dec() b: number) {} constructor(@dec public p) {} }" tsc checker TS1029@12+7 | bun @12+7 Expected identifier but found "default"
+   "class C { m(@dec a, default @dec() b: number) {} constructor(@dec public p) {} }" tsc checker TS1029@20+7 | bun @20+7 Expected identifier but found "default"
+## TS1029 | Unexpected "…"  (1)
+   "declare export default class extends B {}" tsc checker TS1029@8+6 | bun @8+6 Unexpected "export"
+## TS1030 | Expected "…" but found "…"  (15)
+   "abstract abstract class C { abstract x: number; abstract m(): void; protected abstract get a(): number; }" tsc checker TS1030@9+8 | bun @9+8 Expected ";" but found "abstract"
+   "abstract class C { abstract abstract x: number; abstract m(): void; protected abstract get a(): number; }" tsc checker TS1030@28+8 | bun @37+1 Expected ";" but found "x"
+## TS1030 | Unexpected export  (2)
+   "export export default class extends B {}" tsc checker TS1030@7+6 | bun @7+6 Unexpected export
+   "export export class C extends B implements I {}" tsc checker TS1030@7+6 | bun @7+6 Unexpected export
+## TS1031 | Expected "…" but found "…"  (167)
+   "class C { export x; }" tsc checker TS1031@10+6 | bun @17+1 Expected ";" but found "x"
+   "class C { export x = 1; y: number; z?: string; w!: number; }" tsc checker TS1031@10+6 | bun @17+1 Expected ";" but found "x"
+## TS1031 | Expected "…" but found "…"b"…"  (1)
+   "class C { 1 = 1; 'a' = 2; 2n() {} export \"b\"() {} }" tsc checker TS1031@34+6 | bun @41+3 Expected ";" but found ""b""
+## TS1031 | Expected "…" but found "…"constructor"…"  (1)
+   "class C { export \"constructor\"() {} }" tsc checker TS1031@10+6 | bun @17+13 Expected ";" but found ""constructor""
+## TS1040 | Class constructor cannot be an async function  (1)
+   "declare class C { x: number; m(): void; async constructor(a: number); static s: string; get g(): number; }" tsc checker TS1040@40+5 | bun @46+11 Class constructor cannot be an async function
+## TS1040 | Expected "…" but found "…"  (24)
+   "class C { async declare x: number; declare readonly y; static declare z: string; }" tsc checker TS1040@16+7 | bun @25+1 Expected "(" but found ":"
+   "class C { declare async x: number; declare readonly y; static declare z: string; }" tsc checker TS1040@18+5 | bun @25+1 Expected "(" but found ":"
+## TS1042 | Expected "…" but found "…"  (256)
+   "async class C { x; }" tsc checker TS1042@0+5 | bun @6+5 Expected ";" but found "class"
+   "class C { async x; }" tsc checker TS1042@10+5 | bun @17+1 Expected "(" but found ";"
+## TS1044 | Expected "…" but found "…"  (308)
+   "public class C { x; }" tsc checker TS1044@0+6 | bun @7+5 Expected ";" but found "class"
+   "private class C { x; }" tsc checker TS1044@0+7 | bun @8+5 Expected ";" but found "class"
+## TS1044 | Unexpected private  (1)
+   "export private class C extends B implements I {}" tsc checker TS1044@7+7 | bun @7+7 Unexpected private
+## TS1044 | Unexpected protected  (1)
+   "export protected class C extends B implements I {}" tsc checker TS1044@7+9 | bun @7+9 Unexpected protected
+## TS1044 | Unexpected public  (1)
+   "export public class C extends B implements I {}" tsc checker TS1044@7+6 | bun @7+6 Unexpected public
+## TS1044 | Unexpected static  (1)
+   "export static class C extends B implements I {}" tsc checker TS1044@7+6 | bun @7+6 Unexpected static
+## TS1048 | A rest argument cannot have a default initializer  (1)
+   "const a = (x, y = 1, ...z= 1 ) => x;" tsc checker TS1048@24+1 | bun @25+1 A rest argument cannot have a default initializer
+## TS1048 | Expected "…" but found "…"  (7)
+   "function f(a, b = 1, ...c= 1 ) {}" tsc checker TS1048@24+1 | bun @25+1 Expected ")" but found "="
+   "function f(a: number, b?: string, c: boolean = true, ...d: any= []) {}" tsc checker TS1048@56+1 | bun @62+1 Expected ")" but found "="
+## TS1049 | Class constructor cannot be a setter  (4)
+   "class C { set constructor() {} }" tsc checker TS1049@14+11 | bun @14+11 Class constructor cannot be a setter
+   "class C { set constructor(public a: number, private readonly b = 1, protected c?: string) {} }" tsc checker TS1049@14+11 | bun @14+11 Class constructor cannot be a setter
+## TS1049 | Expected "…" but found "…"  (1)
+   "class C { 1 = 1; 'a' = 2; set 2n() {} \"b\"() {} }" tsc checker TS1049@30+2 | bun @30+2 Expected ";" but found "2n"
+## TS1049 | Setter X must have exactly N argument (there are N)  (39)
+   "class C extends B { set m() {} public override x = 1; }" tsc checker TS1049@24+1 | bun @25+0 Setter m must have exactly 1 argument (there are 0)
+   "class C extends B { override set m() {} public override x = 1; }" tsc checker TS1049@33+1 | bun @34+0 Setter m must have exactly 1 argument (there are 0)
+## TS1054 | Class constructor cannot be a getter  (4)
+   "class C { get constructor(public a: number, private readonly b = 1, protected c?: string) {} }" tsc checker TS1054@14+11 | bun @14+11 Class constructor cannot be a getter
+   "class C { m(@dec a, @dec() b: number) {} get constructor(@dec public p) {} }" tsc checker TS1054@45+11 | bun @45+11 Class constructor cannot be a getter
+## TS1054 | Getter X must have zero arguments  (108)
+   "class C { get a(public ) { return 1 } set a(v) {} static get b() { return 1 } static set b(v) {} }" tsc checker TS1054@14+1 | bun @16+6 Getter a must have zero arguments
+   "class C { get a(private ) { return 1 } set a(v) {} static get b() { return 1 } static set b(v) {} }" tsc checker TS1054@14+1 | bun @16+7 Getter a must have zero arguments
+## TS1071 | Expected "…" but found "…"  (31)
+   "class C { export [k: string]: any; static [k: number]: string; readonly [k: symbol]: number; }" tsc checker TS1071@10+6 | bun @17+1 Expected ";" but found "["
+   "class C { const [k: string]: any; static [k: number]: string; readonly [k: symbol]: number; }" tsc checker TS1071@10+5 | bun @16+1 Expected ";" but found "["
+## TS1089 | Class constructor cannot be an async function  (6)
+   "class C { m() {} async constructor() {} *g() {} async *ag() {} }" tsc checker TS1089@17+5 | bun @23+11 Class constructor cannot be an async function
+   "class C { async constructor() {} }" tsc checker TS1089@10+5 | bun @16+11 Class constructor cannot be an async function
+## TS1090 | Expected "…" but found "…"  (214)
+   "class C { get a() { return 1 } set a(static v) {} static get b() { return 1 } static set b(v) {} }" tsc checker TS1090@37+6 | bun @44+1 Expected ")" but found "v"
+   "class C { get a() { return 1 } set a(declare v) {} static get b() { return 1 } static set b(v) {} }" tsc checker TS1090@37+7 | bun @45+1 Expected ")" but found "v"
+## TS1090 | Expected identifier but found "…"  (47)
+   "class C { get a() { return 1 } set a(export v) {} static get b() { return 1 } static set b(v) {} }" tsc checker TS1090@37+6 | bun @37+6 Expected identifier but found "export"
+   "class C { get a() { return 1 } set a(v) {} static get b() { return 1 } static set b(export v) {} }" tsc checker TS1090@84+6 | bun @84+6 Expected identifier but found "export"
+## TS1090 | Unexpected export  (15)
+   "class C { [export k: string]: any; static [k: number]: string; readonly [k: symbol]: number; }" tsc checker TS1090@11+6 | bun @11+6 Unexpected export
+   "class C { [k: string]: any; static [export k: number]: string; readonly [k: symbol]: number; }" tsc checker TS1090@36+6 | bun @36+6 Unexpected export
+## TS1094 | Getter X must have zero arguments  (1)
+   "class C { get m<T>(a: T): T { return a } x?<T>(): void; }" tsc checker TS1094@14+1 | bun @19+1 Getter m must have zero arguments
+## TS1094 | Setter X must have exactly N argument (there are N)  (1)
+   "class C { get = 1; set() {} static() {} set async<T>() {} }" tsc checker TS1094@44+5 | bun @52+0 Setter async must have exactly 1 argument (there are 0)
+## TS1097 | Expected "…" but found "…"  (42)
+   "class C extends implements B { override m() {} public override x = 1; }" tsc checker TS1097@15+0 | bun @27+1 Expected "{" but found "B"
+   "class C extends implements B {}" tsc checker TS1097@15+0 | bun @27+1 Expected "{" but found "B"
+## TS1097 | Expected "…" but found end of file  (24)
+   "class C extends  {}" tsc checker TS1097@15+0 | bun @19+0 Expected "{" but found end of file
+   "class C extends \n {}" tsc checker TS1097@15+0 | bun @20+0 Expected "{" but found end of file
+## TS1097 | Unexpected extends  (54)
+   "class C extends extends B { override m() {} public override x = 1; }" tsc checker TS1097@15+0 | bun @16+7 Unexpected extends
+   "class C implements extends B { override m() {} public override x = 1; }" tsc checker TS1097@18+0 | bun @19+7 Unexpected extends
+## TS1098 | Expected identifier but found "…"  (17)
+   "class C { mT<>(a: T): T { return a } x?<T>(): void; }" tsc checker TS1098@12+2 | bun @13+1 Expected identifier but found ">"
+   "class C { m<>(a: T): T { return a } x?<T>(): void; }" tsc checker TS1098@11+2 | bun @12+1 Expected identifier but found ">"
+## TS1099 | Unexpected >  (15)
+   "class C extends BT<> {}" tsc checker TS1099@18+2 | bun @19+1 Unexpected >
+   "class C extends B<> {}" tsc checker TS1099@17+2 | bun @18+1 Unexpected >
+## TS1123 | Expected identifier but found "…"  (101)
+   "class C extends B { override m() {const } public override x = 1; }" tsc checker TS1123@39+0 | bun @40+1 Expected identifier but found "}"
+   "class C extends B { override m() {var } public override x = 1; }" tsc checker TS1123@37+0 | bun @38+1 Expected identifier but found "}"
+## TS1155 | "…" has already been declared  (2)
+   "class C { m<T>(a: T): T { const a } x?<T>(): void; }" tsc checker TS1155@32+1 | bun @32+1 "a" has already been declared
+   "function f<T>(a: T): T { const a }" tsc checker TS1155@31+1 | bun @31+1 "a" has already been declared
+## TS1155 | The constant "…" must be initialized  (15)
+   "const k ; class { x = 1; m() {} static s; };" tsc checker TS1155@6+1 | bun @6+1 The constant "k" must be initialized
+   "const k \n class { x = 1; m() {} static s; };" tsc checker TS1155@6+1 | bun @6+1 The constant "k" must be initialized
+## TS1162 | Expected "…" but found "…"  (7)
+   "const o = { m? (a, b = 1) {}, get x() { return 1 }, set x(v) {}, async n() {}, *g() {}, [k]() {} };" tsc checker TS1162@13+1 | bun @13+1 Expected "}" but found "?"
+   "const o = { m(a, b = 1) {}, get ?() { return 1 }, set x(v) {}, async n() {}, *g() {}, [k]() {} };" tsc checker TS1162@32+1 | bun @32+1 Expected "}" but found "?"
+## TS1163 | Cannot use "…" outside a generator function  (57)
+   "class C { x = yield 1; y: number; z?: string; w!: number; }" tsc checker TS1163@14+5 | bun @14+5 Cannot use "yield" outside a generator function
+   "class C { public x = yield 1; private y: number; protected z; readonly r = 1; static s; }" tsc checker TS1163@21+5 | bun @21+5 Cannot use "yield" outside a generator function
+## TS1163 | Expected "…" but found "…"  (58)
+   "yield class C { x; }" tsc checker TS1163@0+5 | bun @6+5 Expected ";" but found "class"
+   "yield class C { x = 1; y: number; z?: string; w!: number; }" tsc checker TS1163@0+5 | bun @6+5 Expected ";" but found "class"
+## TS1166 | Cannot use "…" outside a generator function  (2)
+   "class C { [yield a] = 1; [b]() {} static [c]; get [d]() { return 1 } }" tsc checker TS1166@10+9 | bun @11+5 Cannot use "yield" outside a generator function
+   "class C { [a] = 1; [b]() {} static [yield c]; get [d]() { return 1 } }" tsc checker TS1166@35+9 | bun @36+5 Cannot use "yield" outside a generator function
+## TS1166 | Expected "…" but found "…"  (2)
+   "class C { [#p] = 1; [b]() {} static [c]; get [d]() { return 1 } }" tsc checker TS1166@10+4 | bun @13+1 Expected "in" but found "]"
+   "class C { [a] = 1; [b]() {} static [#p]; get [d]() { return 1 } }" tsc checker TS1166@35+4 | bun @38+1 Expected "in" but found "]"
+## TS1172 | Expected "…" but found "…"  (24)
+   "class C extends B extends {}" tsc checker TS1172@18+7 | bun @18+7 Expected "{" but found "extends"
+   "class C extends B<T> extends {}" tsc checker TS1172@21+7 | bun @21+7 Expected "{" but found "extends"
+## TS1172 | Expected "…" but found end of file  (4)
+   "class C extends B implements I, J<T> extends {}" tsc checker TS1172@37+7 | bun @47+0 Expected "?" but found end of file
+   "class C<T> extends B<T> implements I<T>, a.J extends {}" tsc checker TS1172@45+7 | bun @55+0 Expected "?" but found end of file
+## TS1173 | Expected "…" but found "…"  (1)
+   "const k = class implements K<T> extends B<T> implements I {};" tsc checker TS1173@32+7 | bun @45+10 Expected "?" but found "implements"
+## TS1173 | Expected "…" but found end of file  (1)
+   "class C implements I extends {}" tsc checker TS1173@21+7 | bun @31+0 Expected "?" but found end of file
+## TS1174 | Expected "…" but found "…"  (10)
+   "class C extends a,b.c<T, U> {}" tsc checker TS1174@18+1 | bun @17+1 Expected "{" but found ","
+   "class C extends a.b,c<T, U> {}" tsc checker TS1174@20+1 | bun @19+1 Expected "{" but found ","
+## TS1175 | Expected "…" but found "…"  (12)
+   "class C implements B implements I, J<T> {}" tsc checker TS1175@21+10 | bun @21+10 Expected "{" but found "implements"
+   "class C extends B implements I, J<T> implements {}" tsc checker TS1175@37+10 | bun @37+10 Expected "{" but found "implements"
+## TS1176 | Unexpected extends  (2)
+   "interface I implements extends A, B<T>, a.C {}" tsc checker TS1176@12+10 | bun @23+7 Unexpected extends
+   "interface I<T> implements extends A<T> { x: T }" tsc checker TS1176@15+10 | bun @26+7 Unexpected extends
+## TS1184 | Expected "…" but found "…"  (10)
+   "class C { accessor static {} static { this.x = 1; } }" tsc checker TS1184@10+8 | bun @26+1 Expected ";" but found "{"
+   "class C { export static {} static { this.x = 1; } }" tsc checker TS1184@10+6 | bun @17+6 Expected ";" but found "static"
+## TS1186 | Expected "…" but found "…"  (3)
+   "function f({ a, b: [c, ... d = 1], ...e }: T, [x, , y, ...z]: U) {}" tsc checker TS1186@29+1 | bun @29+1 Expected "]" but found "="
+   "function f({ a, b: [c, d = 1], ...e = 1 }: T, [x, , y, ...z]: U) {}" tsc checker TS1186@36+1 | bun @36+1 Expected "}" but found "="
+## TS1187 | Expected "…" but found "…"  (10)
+   "function f(public { a, b: [c, d = 1], ...e }: T, [x, , y, ...z]: U) {}" tsc checker TS1187@11+36 | bun @18+1 Expected ")" but found "{"
+   "function f(private { a, b: [c, d = 1], ...e }: T, [x, , y, ...z]: U) {}" tsc checker TS1187@11+37 | bun @19+1 Expected ")" but found "{"
+## TS1187 | Expected identifier but found "…"  (5)
+   "class C { constructor(public {}: number, private readonly b = 1, protected c?: string) {} }" tsc checker TS1187@22+17 | bun @29+1 Expected identifier but found "{"
+   "class C { constructor(public a: number, private readonly {} = 1, protected c?: string) {} }" tsc checker TS1187@40+23 | bun @57+1 Expected identifier but found "{"
+## TS1200 | Unexpected newline before "…"  (3)
+   "const a = (x, y = 1, ...z) \n => x;" tsc checker TS1200@29+2 | bun @29+2 Unexpected newline before "=>"
+   "const b = async (x: number, y?: string) \n => x;" tsc checker TS1200@42+2 | bun @42+2 Unexpected newline before "=>"
+## TS1206 | Expected "…" but found "…"  (33)
+   "@d const k = class { x = 1; m() {} static s; };" tsc checker TS1206@0+1 | bun @3+5 Expected "class" but found "const"
+   "@d const k = class extends B {};" tsc checker TS1206@0+1 | bun @3+5 Expected "class" but found "const"
+## TS1206 | Expected identifier but found "…"  (33)
+   "class C { @d #p = 1; #m() {} static #s; get #a() { return 1 } }" tsc checker TS1206@10+1 | bun @13+2 Expected identifier but found "#p"
+   "class C { #p = 1; @d #m() {} static #s; get #a() { return 1 } }" tsc checker TS1206@18+1 | bun @21+2 Expected identifier but found "#m"
+## TS1206 | TypeScript does not allow decorators on class constructors  (6)
+   "class C { @d constructor() {} }" tsc checker TS1206@10+1 | bun @10+0 TypeScript does not allow decorators on class constructors
+   "class C { @d constructor(public a: number, private readonly b = 1, protected c?: string) {} }" tsc checker TS1206@10+1 | bun @10+0 TypeScript does not allow decorators on class constructors
+## TS1206 | Unexpected @  (5)
+   "interface I { m(@d a, b?): void; new (x: number): I; (y): void; get p(): number; set p(v: number); }" tsc checker TS1206@16+1 | bun @16+1 Unexpected @
+   "interface I { m(a, @d b?): void; new (x: number): I; (y): void; get p(): number; set p(v: number); }" tsc checker TS1206@19+1 | bun @19+1 Unexpected @
+## TS1211 | Expected "…" but found "…"  (46)
+   "class implements C { x; }" tsc checker TS1211@0+5 | bun @17+1 Expected "{" but found "C"
+   "class implements C { x = 1; y: number; z?: string; w!: number; }" tsc checker TS1211@0+5 | bun @17+1 Expected "{" but found "C"
+## TS1211 | Expected identifier but found "…"  (195)
+   "class  { x; }" tsc checker TS1211@0+5 | bun @7+1 Expected identifier but found "{"
+   "class extends C { x; }" tsc checker TS1211@0+5 | bun @6+7 Expected identifier but found "extends"
+## TS1211 | Unexpected accessor  (1)
+   "export accessor class extends B {}" tsc checker TS1211@0+6 | bun @7+8 Unexpected accessor
+## TS1211 | Unexpected export  (1)
+   "export export class extends B {}" tsc checker TS1211@0+6 | bun @7+6 Unexpected export
+## TS1211 | Unexpected private  (1)
+   "export private class extends B {}" tsc checker TS1211@0+6 | bun @7+7 Unexpected private
+## TS1211 | Unexpected protected  (1)
+   "export protected class extends B {}" tsc checker TS1211@0+6 | bun @7+9 Unexpected protected
+## TS1211 | Unexpected public  (1)
+   "export public class extends B {}" tsc checker TS1211@0+6 | bun @7+6 Unexpected public
+## TS1211 | Unexpected readonly  (1)
+   "export readonly class extends B {}" tsc checker TS1211@0+6 | bun @7+8 Unexpected readonly
+## TS1211 | Unexpected static  (1)
+   "export static class extends B {}" tsc checker TS1211@0+6 | bun @7+6 Unexpected static
+## TS1212 | An generator function expression cannot be named "…"  (1)
+   "const g = function* yield(a) {};" tsc checker TS1212@20+5 | bun @20+5 An generator function expression cannot be named "yield"
+## TS1212 | Cannot use "…" as an identifier here  (9)
+   "const let = class { x = 1; m() {} static s; };" tsc checker TS1212@6+3 | bun @6+3 Cannot use "let" as an identifier here
+   "const let = class extends B {};" tsc checker TS1212@6+3 | bun @6+3 Cannot use "let" as an identifier here
+## TS1212 | Cannot use "…" or "…" here.  (3)
+   "function* g(yield) {}" tsc checker TS1212@12+5 | bun @12+5 Cannot use "yield" or "await" here.
+   "const g = function* n(yield) {};" tsc checker TS1212@22+5 | bun @22+5 Cannot use "yield" or "await" here.
+## TS1213 | Cannot use "…" or "…" here.  (2)
+   "class C { m() {} async am() {} *g(yield ) {} async *ag() {} }" tsc checker TS1213@34+5 | bun @34+5 Cannot use "yield" or "await" here.
+   "class C { m() {} async am() {} *g() {} async *ag(yield ) {} }" tsc checker TS1213@49+5 | bun @49+5 Cannot use "yield" or "await" here.
+## TS1213 | Cannot use "…" outside a generator function  (7)
+   "class C { @yield x; @dec() m() {} @a @b static s = 1; @dec accessor y; }" tsc checker TS1213@11+5 | bun @11+5 Cannot use "yield" outside a generator function
+   "class C { @dec x; @dec() m() {} @a @yield static s = 1; @dec accessor y; }" tsc checker TS1213@36+5 | bun @36+5 Cannot use "yield" outside a generator function
+## TS1213 | Expected "…" but found "…"  (1)
+   "const k = class implements<T> extends B<T> implements I {};" tsc checker TS1213@16+10 | bun @30+7 Expected "(" but found "extends"
+## TS1213 | Expected "…" but found end of file  (1)
+   "class C extends class implements {} {}" tsc checker TS1213@22+10 | bun @38+0 Expected "{" but found end of file
+## TS1213 | Unexpected =  (1)
+   "const k = class implements { x = 1; m() {} static s; };" tsc checker TS1213@16+10 | bun @31+1 Unexpected =
+## TS1221 | Class constructor cannot be a generator function  (1)
+   "declare class C { x: number; m(): void; * constructor(a: number); static s: string; get g(): number; }" tsc checker TS1221@40+1 | bun @42+11 Class constructor cannot be a generator function
+## TS1239 | Unexpected "…"  (1)
+   "class C { m(@dec a, @super() b: number) {} constructor(@dec public p) {} }" tsc checker TS1239@21+7 | bun @21+5 Unexpected "super"
+## TS1241 | Unexpected "…"  (1)
+   "class C { @dec x; @super() m() {} @a @b static s = 1; @dec accessor y; }" tsc checker TS1241@19+7 | bun @19+5 Unexpected "super"
+## TS1242 | Expected "…" but found "…"  (97)
+   "class C { get a() { return 1 } set a(abstract v) {} static get b() { return 1 } static set b(v) {} }" tsc checker TS1242@37+8 | bun @46+1 Expected ")" but found "v"
+   "class C { get a() { return 1 } set a(v) {} static get b() { return 1 } static set b(abstract v) {} }" tsc checker TS1242@84+8 | bun @93+1 Expected ")" but found "v"
+## TS1243 | Expected "…" but found "…"  (28)
+   "class C { public x = 1; private y: number; protected z; accessor readonly r = 1; static s; }" tsc checker TS1243@65+8 | bun @74+1 Expected ";" but found "r"
+   "class C { accessor readonly a = 1; public static b; private static readonly c: number = 1; }" tsc checker TS1243@19+8 | bun @28+1 Expected ";" but found "a"
+## TS1244 | Expected "…" but found "…"  (1)
+   "class C { 1 = 1; 'a' = 2; abstract 2n() {} \"b\"() {} }" tsc checker TS1244@26+8 | bun @35+2 Expected ";" but found "2n"
+## TS1248 | Expected "…" but found "…"  (178)
+   "class C { const x; }" tsc checker TS1248@16+1 | bun @16+1 Expected ";" but found "x"
+   "class C { const x = 1; y: number; z?: string; w!: number; }" tsc checker TS1248@16+1 | bun @16+1 Expected ";" but found "x"
+## TS1248 | Expected "…" but found "…"b"…"  (1)
+   "class C { 1 = 1; 'a' = 2; 2n() {} const \"b\"() {} }" tsc checker TS1248@40+3 | bun @40+3 Expected ";" but found ""b""
+## TS1248 | Expected "…" but found "…"constructor"…"  (1)
+   "class C { const \"constructor\"() {} }" tsc checker TS1248@10+26 | bun @16+13 Expected ";" but found ""constructor""
+## TS1249 | auto-accessor properties cannot have a method body  (2)
+   "class C { @dec x; @dec() m() {} @a @b static s = 1; @dec accessor y() ; }" tsc checker TS1249@52+1 | bun @66+1 auto-accessor properties cannot have a method body
+   "class C { @dec x; @dec() m() {} @a @b static s = 1; @dec accessor y() }" tsc checker TS1249@52+1 | bun @66+1 auto-accessor properties cannot have a method body
+## TS1253 | Expected "…" but found "…"  (3)
+   "class C { accessor abstract x = 1; static accessor y; }" tsc checker TS1253@19+8 | bun @28+1 Expected ";" but found "x"
+   "class C { accessor x = 1; static accessor abstract y; }" tsc checker TS1253@42+8 | bun @51+1 Expected ";" but found "y"
+## TS1255 | Expected "…" but found "…"  (7)
+   "const o = { m! (a, b = 1) {}, get x() { return 1 }, set x(v) {}, async n() {}, *g() {}, [k]() {} };" tsc checker TS1255@13+1 | bun @13+1 Expected "}" but found "!"
+   "const o = { m(a, b = 1) {}, get !() { return 1 }, set x(v) {}, async n() {}, *g() {}, [k]() {} };" tsc checker TS1255@32+1 | bun @32+1 Expected "}" but found "!"
+## TS1262 | Cannot use "…" as an identifier here  (2)
+   "export default class await extends B {}" tsc checker TS1262@21+5 | bun @27+7 Cannot use "await" as an identifier here
+   "export class await extends B implements I {}" tsc checker TS1262@13+5 | bun @19+7 Cannot use "await" as an identifier here
+## TS1263 | Expected "…" but found "…"  (9)
+   "const k ! = class { x = 1; m() {} static s; };" tsc checker TS1263@8+1 | bun @10+1 Expected ":" but found "="
+   "const k ! = class extends B {};" tsc checker TS1263@8+1 | bun @10+1 Expected ":" but found "="
+## TS1264 | Expected "…" but found "…"  (5)
+   "class C { declare ! x: number; declare readonly y; static declare z: string; }" tsc checker TS1264@18+1 | bun @20+1 Expected ";" but found "x"
+   "class C { declare x: number; declare ! readonly y; static declare z: string; }" tsc checker TS1264@37+1 | bun @39+8 Expected ";" but found "readonly"
+## TS1268 | Unexpected *  (3)
+   "class C { [k: *]: any; static [k: number]: string; readonly [k: symbol]: number; }" tsc checker TS1268@11+1 | bun @14+1 Unexpected *
+   "class C { [k: string]: any; static [k: *]: string; readonly [k: symbol]: number; }" tsc checker TS1268@36+1 | bun @39+1 Unexpected *
+## TS1273 | Expected "…" but found "…"  (80)
+   "class C { m<public T>(a: T): T { return a } x?<T>(): void; }" tsc checker TS1273@12+6 | bun @19+1 Expected ">" but found "T"
+   "class C { m<private T>(a: T): T { return a } x?<T>(): void; }" tsc checker TS1273@12+7 | bun @20+1 Expected ">" but found "T"
+## TS1274 | Expected "…" but found "…"  (440)
+   "class C { in x; }" tsc checker TS1274@10+2 | bun @13+1 Expected ";" but found "x"
+   "class C { out x; }" tsc checker TS1274@10+3 | bun @14+1 Expected ";" but found "x"
+## TS1274 | Expected "…" but found "…"b"…"  (2)
+   "class C { 1 = 1; 'a' = 2; 2n() {} in \"b\"() {} }" tsc checker TS1274@34+2 | bun @37+3 Expected ";" but found ""b""
+   "class C { 1 = 1; 'a' = 2; 2n() {} out \"b\"() {} }" tsc checker TS1274@34+3 | bun @38+3 Expected ";" but found ""b""
+## TS1274 | Expected "…" but found "…"constructor"…"  (2)
+   "class C { in \"constructor\"() {} }" tsc checker TS1274@10+2 | bun @13+13 Expected ";" but found ""constructor""
+   "class C { out \"constructor\"() {} }" tsc checker TS1274@10+3 | bun @14+13 Expected ";" but found ""constructor""
+## TS1274 | Expected identifier but found "…"  (45)
+   "class C { get a() { return 1 } set a(in v) {} static get b() { return 1 } static set b(v) {} }" tsc checker TS1274@37+2 | bun @37+2 Expected identifier but found "in"
+   "class C { get a() { return 1 } set a(v) {} static get b() { return 1 } static set b(in v) {} }" tsc checker TS1274@84+2 | bun @84+2 Expected identifier but found "in"
+## TS1274 | The modifier "…" is not valid here  (9)
+   "class C { m<in T>(a: T): T { return a } x?<T>(): void; }" tsc checker TS1274@12+2 | bun @12+2 The modifier "in" is not valid here
+   "class C { m<out T>(a: T): T { return a } x?<T>(): void; }" tsc checker TS1274@12+3 | bun @12+3 The modifier "out" is not valid here
+## TS1274 | Unexpected in  (15)
+   "class C { [in k: string]: any; static [k: number]: string; readonly [k: symbol]: number; }" tsc checker TS1274@11+2 | bun @11+2 Unexpected in
+   "class C { [k: string]: any; static [in k: number]: string; readonly [k: symbol]: number; }" tsc checker TS1274@36+2 | bun @36+2 Unexpected in
+## TS1275 | Expected "…" but found "…"  (166)
+   "accessor class C { x; }" tsc checker TS1275@0+8 | bun @9+5 Expected ";" but found "class"
+   "accessor class C { x = 1; y: number; z?: string; w!: number; }" tsc checker TS1275@0+8 | bun @9+5 Expected ";" but found "class"
+## TS1275 | Unexpected *  (3)
+   "class C { m() {} async am() {} accessor *g() {} async *ag() {} }" tsc checker TS1275@31+8 | bun @40+1 Unexpected *
+   "class C { m() {} async am() {} *g() {} accessor *ag() {} }" tsc checker TS1275@39+8 | bun @48+1 Unexpected *
+## TS1275 | Unexpected accessor  (1)
+   "export accessor class C extends B implements I {}" tsc checker TS1275@7+8 | bun @7+8 Unexpected accessor
+## TS1275 | auto-accessor properties cannot have a method body  (44)
+   "abstract class C { abstract x: number; accessor m(): void; protected abstract get a(): number; }" tsc checker TS1275@39+8 | bun @48+1 auto-accessor properties cannot have a method body
+   "abstract class C { abstract x: number; abstract accessor m(): void; protected abstract get a(): number; }" tsc checker TS1275@48+8 | bun @57+1 auto-accessor properties cannot have a method body
+## TS1277 | The modifier "…" is not valid here  (1)
+   "interface I<const T> extends A<T> { x: T }" tsc checker TS1277@12+5 | bun @12+5 The modifier "const" is not valid here
+## TS1308 | "…" can only be used inside an "…" function  (21)
+   "class C { get a() { await 1 } set a(v) {} static get b() { return 1 } static set b(v) {} }" tsc checker TS1308@20+5 | bun @26+1 "await" can only be used inside an "async" function
+   "class C { get a() { return await 1 } set a(v) {} static get b() { return 1 } static set b(v) {} }" tsc checker TS1308@27+5 | bun @33+1 "await" can only be used inside an "async" function
+## TS1317 | Expected "…" but found "…"  (36)
+   "class C { constructor(public ... a: number, private readonly b = 1, protected c?: string) {} }" tsc checker TS1317@22+20 | bun @29+3 Expected ")" but found "..."
+   "class C { constructor(public a: number, private ... b = 1, protected c?: string) {} }" tsc checker TS1317@40+17 | bun @48+3 Expected ")" but found "..."
+## TS1341 | Class constructor cannot be a getter  (5)
+   "abstract class C { abstract x: number; abstract m(): void; protected abstract get constructor(): number; }" tsc checker TS1341@82+11 | bun @82+11 Class constructor cannot be a getter
+   "class C { get constructor() { return 1 } set a(v) {} static get b() { return 1 } static set b(v) {} }" tsc checker TS1341@14+11 | bun @14+11 Class constructor cannot be a getter
+## TS1341 | Class constructor cannot be a setter  (4)
+   "class C { get a() { return 1 } set constructor(v) {} static get b() { return 1 } static set b(v) {} }" tsc checker TS1341@35+11 | bun @35+11 Class constructor cannot be a setter
+   "class C { m(@dec a, @dec() b: number) {} set constructor(@dec public p) {} }" tsc checker TS1341@45+11 | bun @45+11 Class constructor cannot be a setter
+## TS1344 | Cannot use a declaration in a single-statement context  (4)
+   "abstract : class C { abstract x: number; abstract m(): void; protected abstract get a(): number; }" tsc checker TS1344@0+8 | bun @11+0 Cannot use a declaration in a single-statement context
+   "declare : class C { x: number; m(): void; constructor(a: number); static s: string; get g(): number; }" tsc checker TS1344@0+7 | bun @10+0 Cannot use a declaration in a single-statement context
+## TS1359 | Cannot use "…" or "…" here.  (4)
+   "class C { m() {} async am(await ) {} *g() {} async *ag() {} }" tsc checker TS1359@26+5 | bun @26+5 Cannot use "yield" or "await" here.
+   "class C { m() {} async am() {} *g() {} async *ag(await ) {} }" tsc checker TS1359@49+5 | bun @49+5 Cannot use "yield" or "await" here.
+## TS1359 | Unexpected :  (1)
+   "const b = async (await: number, y?: string) => x;" tsc checker TS1359@17+5 | bun @22+1 Unexpected :
+## TS1359 | Unexpected ?  (1)
+   "const b = async (x: number, await?: string) => x;" tsc checker TS1359@28+5 | bun @33+1 Unexpected ?
+## TS1368 | Class constructor cannot be a generator function  (5)
+   "class C { m() {} async am() {} *constructor() {} async *ag() {} }" tsc checker TS1368@32+11 | bun @32+11 Class constructor cannot be a generator function
+   "class C { * constructor() {} }" tsc checker TS1368@12+11 | bun @12+11 Class constructor cannot be a generator function
+## TS1368 | Class constructor cannot be an async function  (1)
+   "class C { m() {} async am() {} *g() {} async *constructor() {} }" tsc checker TS1368@46+11 | bun @46+11 Class constructor cannot be an async function
+## TS1375 | Unexpected "…"  (2)
+   "declare await class C { x: number; m(): void; constructor(a: number); static s: string; get g(): number; }" tsc checker TS1375@8+5 | bun @8+5 Unexpected "await"
+   "declare await class C extends B implements I {}" tsc checker TS1375@8+5 | bun @8+5 Unexpected "await"
+## TS1451 | Expected "…" but found "…"  (61)
+   "class C { x = #p; y: number; z?: string; w!: number; }" tsc checker TS1451@14+2 | bun @16+1 Expected "in" but found ";"
+   "class C { public x = #p; private y: number; protected z; readonly r = 1; static s; }" tsc checker TS1451@21+2 | bun @23+1 Expected "in" but found ";"
+## TS1451 | Unexpected #p  (12)
+   "class C { @#p x; @dec() m() {} @a @b static s = 1; @dec accessor y; }" tsc checker TS1451@11+2 | bun @11+2 Unexpected #p
+   "class C { @dec x; @#p() m() {} @a @b static s = 1; @dec accessor y; }" tsc checker TS1451@19+2 | bun @19+2 Unexpected #p
+## TS17013 | Unexpected b  (1)
+   "class C extends new.b.c<T, U> {}" tsc checker TS17013@16+5 | bun @20+1 Unexpected b
+## TS17013 | Unexpected x  (1)
+   "class C { static {} static { new.x = 1; } }" tsc checker TS17013@29+5 | bun @33+1 Unexpected x
+## TS17019 | Expected "…" but found "…"  (72)
+   "class C { x = 1; y: number? ; z?: string; w!: number; }" tsc checker TS17019@20+7 | bun @26+1 Expected ";" but found "?"
+   "class C { x = 1; y: number; z?: string? ; w!: number; }" tsc checker TS17019@32+7 | bun @38+1 Expected ";" but found "?"
+## TS17019 | Unexpected ?  (5)
+   "interface I<T> extends A<T> { x: T ? }" tsc checker TS17019@33+3 | bun @35+1 Unexpected ?
+   "interface I { m(a, b?): void? ; new (x: number): I; (y): void; get p(): number; set p(v: number); }" tsc checker TS17019@24+5 | bun @28+1 Unexpected ?
+## TS17020 | Expected "…" but found "…"  (10)
+   "const d = <T,>(x: T): ? T => x;" tsc checker TS17020@22+3 | bun @20+1 Expected "=>" but found ":"
+   "const d = <T,>(x: T): ! T => x;" tsc checker TS17020@22+3 | bun @20+1 Expected "=>" but found ":"
+## TS17020 | Unexpected !  (69)
+   "class C { x = 1; y: ! number; z?: string; w!: number; }" tsc checker TS17020@20+8 | bun @20+1 Unexpected !
+   "class C { x = 1; y: number; z?: ! string; w!: number; }" tsc checker TS17020@32+8 | bun @32+1 Unexpected !
+## TS17020 | Unexpected ?  (75)
+   "class C { x = 1; y: ? number; z?: string; w!: number; }" tsc checker TS17020@20+8 | bun @20+1 Unexpected ?
+   "class C { x = 1; y: number; z:? string; w!: number; }" tsc checker TS17020@30+8 | bun @30+1 Unexpected ?
+## TS18016 | Expected identifier but found "…"  (6)
+   "const o = { #p(a, b = 1) {}, get x() { return 1 }, set x(v) {}, async n() {}, *g() {}, [k]() {} };" tsc checker TS18016@12+2 | bun @12+2 Expected identifier but found "#p"
+   "const o = { m(a, b = 1) {}, get #p() { return 1 }, set x(v) {}, async n() {}, *g() {}, [k]() {} };" tsc checker TS18016@32+2 | bun @32+2 Expected identifier but found "#p"
+## TS18016 | Unexpected #p  (25)
+   "function f(a, b = #p, ...c) {}" tsc checker TS18016@18+2 | bun @18+2 Unexpected #p
+   "function f(a, b = 1, ...c) {#p }" tsc checker TS18016@28+2 | bun @28+2 Unexpected #p
+## TS18037 | The keyword "…" cannot be used here  (1)
+   "class C { static {} static { this.x = await 1; } }" tsc checker TS18037@38+7 | bun @38+5 The keyword "await" cannot be used here
+## TS8020 | Expected "…" but found "…"  (7)
+   "const d = <T,>(x: T): * => x;" tsc checker TS8020@22+1 | bun @20+1 Expected "=>" but found ":"
+   "type F = (a: ?, b?: string, ...c: any[]) => void;" tsc checker TS8020@13+1 | bun @11+1 Expected ")" but found ":"
+## TS8020 | Unexpected *  (64)
+   "class C { x = 1; y: *; z?: string; w!: number; }" tsc checker TS8020@20+1 | bun @20+1 Unexpected *
+   "class C { x = 1; y: number; z?: *; w!: number; }" tsc checker TS8020@32+1 | bun @32+1 Unexpected *
+## TS8020 | Unexpected ?  (34)
+   "class C { static readonly a = 1; public static b; private static readonly c: ? = 1; }" tsc checker TS8020@77+1 | bun @77+1 Unexpected ?
+   "class C { constructor(public a: ?, private readonly b = 1, protected c?: string) {} }" tsc checker TS8020@32+1 | bun @32+1 Unexpected ?
+## TS9999 | Expected identifier but found "…"  (1)
+   "class C { m(@dec a, @dec() b: number) {} constructor(default @dec public p) {} }" tsc checker TS9999@0+0 | bun @53+7 Expected identifier but found "default"
+## valid | "…" has already been declared  (4)
+   "class C { #p = 1; #p() {} static #s; get #a() { return 1 } }" | bun @18+2 "#p" has already been declared
+   "class C { #p = 1; #m() {} static #s; get #p() { return 1 } }" | bun @41+2 "#p" has already been declared
+## valid | Cannot use "…" as an identifier here  (44)
+   "class await { x; }" | bun @12+1 Cannot use "await" as an identifier here
+   "class await { x = 1; y: number; z?: string; w!: number; }" | bun @12+1 Cannot use "await" as an identifier here
+## valid | Cannot use "…" or "…" here.  (8)
+   "const await = class { x = 1; m() {} static s; };" | bun @6+5 Cannot use "yield" or "await" here.
+   "const await = class extends B {};" | bun @6+5 Cannot use "yield" or "await" here.
+## valid | Cannot use "…" outside a generator function  (1)
+   "declare class C extends yield implements I {}" | bun @24+5 Cannot use "yield" outside a generator function
+## valid | Class constructor cannot be a generator function  (1)
+   "class C { * \"constructor\"() {} }" | bun @12+13 Class constructor cannot be a generator function
+## valid | Class constructor cannot be a getter  (1)
+   "class C { get \"constructor\"() {} }" | bun @14+13 Class constructor cannot be a getter
+## valid | Expected "…" but found "…"  (23)
+   "class C { declare ? x: number; declare readonly y; static declare z: string; }" | bun @20+1 Expected ";" but found "x"
+   "class C { declare x: number; declare ? readonly y; static declare z: string; }" | bun @39+8 Expected ";" but found "readonly"
+## valid | Expected "…" but found end of file  (3)
+   "class C extends await {}" | bun @24+0 Expected "{" but found end of file
+   "class C extends await<T> {}" | bun @27+0 Expected "{" but found end of file
+## valid | Expected identifier but found "…"  (4)
+   "class C { @await x; @dec() m() {} @a @b static s = 1; @dec accessor y; }" | bun @18+1 Expected identifier but found ";"
+   "class C extends a.#p.c<T, U> {}" | bun @18+2 Expected identifier but found "#p"
+## valid | Unexpected "…"  (25)
+   "class C { get a() { declare return 1 } set a(v) {} static get b() { return 1 } static set b(v) {} }" | bun @28+6 Unexpected "return"
+   "class C { get a() { declare 1 } set a(v) {} static get b() { return 1 } static set b(v) {} }" | bun @28+1 Unexpected "1"
+## valid | Unexpected )  (1)
+   "const a = (x, y = 1, ...await) => x;" | bun @29+1 Unexpected )
+## valid | Unexpected ,  (2)
+   "const a = (await, y = 1, ...z) => x;" | bun @16+1 Unexpected ,
+   "const a = (x, y = await, ...z) => x;" | bun @23+1 Unexpected ,
+## valid | Unexpected .  (1)
+   "class C extends await.b.c<T, U> {}" | bun @21+1 Unexpected .
+## valid | Unexpected :  (1)
+   "const d = <T,>(await: T): T => x;" | bun @20+1 Unexpected :
+## valid | Unexpected ;  (14)
+   "class C { x = await; y: number; z?: string; w!: number; }" | bun @19+1 Unexpected ;
+   "class C { public x = await; private y: number; protected z; readonly r = 1; static s; }" | bun @26+1 Unexpected ;
+## valid | Unexpected =  (1)
+   "const a = (x, await = 1, ...z) => x;" | bun @20+1 Unexpected =
+## valid | Unexpected ]  (5)
+   "class C { [await] = 1; [b]() {} static [c]; get [d]() { return 1 } }" | bun @16+1 Unexpected ]
+   "class C { [a] = 1; [await]() {} static [c]; get [d]() { return 1 } }" | bun @25+1 Unexpected ]
+## valid | Unexpected extends  (5)
+   "class C { m(): void; m(a?: number): extends {} }" | bun @36+7 Unexpected extends
+   "class C { m<T>(a: T): extends { return a } x?<T>(): void; }" | bun @22+7 Unexpected extends
+## valid | Unexpected }  (41)
+   "class C { m() {declare } async am() {} *g() {} async *ag() {} }" | bun @23+1 Unexpected }
+   "class C { m() {} async am() {declare } *g() {} async *ag() {} }" | bun @37+1 Unexpected }
+## valid(semantic) | "…" has already been declared  (2)
+   "class C { #p = 1; #m() {} static #p; get #a() { return 1 } }" | bun @33+2 "#p" has already been declared
+   "class C { #p = 1; #m() {} static #s; get #a() { return 1 } #p }" | bun @59+2 "#p" has already been declared
+## valid(semantic) | Cannot use "…" as an identifier here  (2)
+   "class await extends B { override m() {} public override x = 1; }" | bun @12+7 Cannot use "await" as an identifier here
+   "class await extends (a, b) {}" | bun @12+7 Cannot use "await" as an identifier here
+## valid(semantic) | Cannot use "…" or "…" here.  (1)
+   "const await = { m(a, b = 1) {}, get x() { return 1 }, set x(v) {}, async n() {}, *g() {}, [k]() {} };" | bun @6+5 Cannot use "yield" or "await" here.
+## valid(semantic) | Expected "…" but found "…"  (31)
+   "class C extends await { override m() {} public override x = 1; }" | bun @33+1 Expected "}" but found "m"
+   "class C { 1 = 1; 'a' = 2; override 2n() {} \"b\"() {} }" | bun @35+2 Expected ";" but found "2n"
+## valid(semantic) | Invalid binding pattern  (3)
+   "const a = (this, y = 1, ...z) => x;" | bun @11+0 Invalid binding pattern
+   "const b = async (this: number, y?: string) => x;" | bun @17+0 Invalid binding pattern
+## valid(semantic) | Setter X must have exactly N argument (there are N)  (4)
+   "class C { get a() { return 1 } set a(this) {} static get b() { return 1 } static set b(v) {} }" | bun @36+0 Setter a must have exactly 1 argument (there are 0)
+   "class C { get a() { return 1 } set a(v) {} static get b() { return 1 } static set b(this) {} }" | bun @83+0 Setter b must have exactly 1 argument (there are 0)
+## valid(semantic) | Unexpected "…"  (7)
+   "class C extends super.b.c<T, U> {}" | bun @16+5 Unexpected "super"
+   "class C extends super() {}" | bun @16+5 Unexpected "super"
+## valid(semantic) | Unexpected "…" after rest pattern  (5)
+   "function f({ ... a, b: [c, d = 1], ...e }: T, [x, , y, ...z]: U) {}" | bun @18+1 Unexpected "," after rest pattern
+   "function f({ a, b: [... c, d = 1], ...e }: T, [x, , y, ...z]: U) {}" | bun @25+1 Unexpected "," after rest pattern
+## valid(semantic) | Unexpected )  (5)
+   "class C { @dec x; @await() m() {} @a @b static s = 1; @dec accessor y; }" | bun @25+1 Unexpected )
+   "class C { @dec x; @dec(await ) m() {} @a @b static s = 1; @dec accessor y; }" | bun @29+1 Unexpected )
+## valid(semantic) | Unexpected ,  (1)
+   "class C extends (await, b) {}" | bun @22+1 Unexpected ,
+## valid(semantic) | Unexpected ;  (1)
+   "class C extends B { override m() {} public override x = await; }" | bun @61+1 Unexpected ;
+## valid(semantic) | Unexpected ]  (1)
+   "const o = { m(a, b = 1) {}, get x() { return 1 }, set x(v) {}, async n() {}, *g() {}, [await]() {} };" | bun @92+1 Unexpected ]
+## valid(semantic) | Unexpected }  (6)
+   "class C extends B { override m() {declare } public override x = 1; }" | bun @42+1 Unexpected }
+   "const o = { m(a, b = 1) {declare }, get x() { return 1 }, set x(v) {}, async n() {}, *g() {}, [k]() {} };" | bun @33+1 Unexpected }

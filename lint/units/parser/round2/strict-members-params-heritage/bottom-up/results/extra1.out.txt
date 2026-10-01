@@ -1,0 +1,582 @@
+## ranges
+"() {}" [ts]
+   tsc @3+1 TS1005 '=>' expected.
+   go  @3+1 TS1005 '=>' expected.
+   bun @3+1 Expected "=>" but found "{"
+   lint @3+1 Expected "=>" but found "{"  => TS1005 @3+1 '=>' expected.
+".a {}" [ts]
+   tsc @0+1 TS1128 Declaration or statement expected.
+   tsc @1+1 TS1434 Unexpected keyword or identifier.
+   go  @0+1 TS1128 Declaration or statement expected.
+   go  @1+1 TS1434 Unexpected keyword or identifier.
+   bun @0+1 Unexpected .
+   lint @0+1 Unexpected .  => TS1128 @0+1 Declaration or statement expected.
+"[a] {}" [ts]
+   tsc @4+1 TS1005 ';' expected.
+   go  @4+1 TS1005 ';' expected.
+   bun @4+1 Expected ";" but found "{"
+   bun @5+1 Unexpected }
+   lint @4+1 Expected ";" but found "{"  => TS1005 @4+1 ';' expected.  (2 messages)
+"class C { get a?<T>() { return 1 } }" [ts]
+   tsc @15+1 TS1005 '(' expected.
+   tsc @16+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @22+1 TS1005 '=>' expected.
+   go  @15+1 TS1005 '(' expected.
+   go  @16+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @22+1 TS1005 '=>' expected.
+   bun accepts
+   lint parses
+"class C { get a ? () { return 1 } }" [ts]
+   tsc @16+1 TS1005 '(' expected.
+   tsc @18+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @21+1 TS1005 '=>' expected.
+   go  @16+1 TS1005 '(' expected.
+   go  @18+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @21+1 TS1005 '=>' expected.
+   bun accepts
+   lint parses
+"class C { get a /*c*/ ? /*d*/ () { return 1 } }" [ts]
+   tsc @22+1 TS1005 '(' expected.
+   tsc @30+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @33+1 TS1005 '=>' expected.
+   go  @22+1 TS1005 '(' expected.
+   go  @30+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @33+1 TS1005 '=>' expected.
+   bun accepts
+   lint parses
+"class C { constructor ? () {} }" [ts]
+   tsc @22+1 TS1005 '(' expected.
+   tsc @24+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @27+1 TS1005 '=>' expected.
+   go  @22+1 TS1005 '(' expected.
+   go  @24+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @27+1 TS1005 '=>' expected.
+   bun accepts
+   lint parses
+"class C { constructor?<T>() {} }" [ts]
+   tsc @21+1 TS1005 '(' expected.
+   tsc @22+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @28+1 TS1005 '=>' expected.
+   go  @21+1 TS1005 '(' expected.
+   go  @22+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @28+1 TS1005 '=>' expected.
+   bun accepts
+   lint parses
+"class C { static constructor?() {} }" [ts]
+   tsc @28+1 TS1005 '(' expected.
+   tsc @29+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @32+1 TS1005 '=>' expected.
+   go  @28+1 TS1005 '(' expected.
+   go  @29+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @32+1 TS1005 '=>' expected.
+   bun accepts
+   lint parses
+"class C { constructor?(); constructor() {} }" [ts]
+   tsc @21+1 TS1005 '(' expected.
+   tsc @22+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @23+1 TS1109 Expression expected.
+   go  @21+1 TS1005 '(' expected.
+   go  @22+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @23+1 TS1109 Expression expected.
+   bun accepts
+   lint parses
+"class C { get a?(): number; }" [ts]
+   tsc @15+1 TS1005 '(' expected.
+   tsc @16+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @26+1 TS1005 '=>' expected.
+   go  @15+1 TS1005 '(' expected.
+   go  @16+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @26+1 TS1005 '=>' expected.
+   bun accepts
+   lint parses
+"declare class C { get a?(): number; }" [ts]
+   tsc @23+1 TS1005 '(' expected.
+   tsc @24+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @34+1 TS1005 '=>' expected.
+   go  @23+1 TS1005 '(' expected.
+   go  @24+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @34+1 TS1005 '=>' expected.
+   bun accepts
+   lint parses
+"class C { m ! () {} }" [ts]
+   tsc @14+1 TS1441 Cannot start a function call in a type annotation.
+   tsc @15+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @17+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @14+1 TS1441 Cannot start a function call in a type annotation.
+   go  @15+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @17+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun accepts
+   lint parses
+"class C { m! /*c*/ () {} }" [ts]
+   tsc @19+1 TS1441 Cannot start a function call in a type annotation.
+   tsc @20+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @22+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @19+1 TS1441 Cannot start a function call in a type annotation.
+   go  @20+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @22+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun accepts
+   lint parses
+"class C { m!(): void; m() {} }" [ts]
+   tsc @12+1 TS1441 Cannot start a function call in a type annotation.
+   tsc @13+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @14+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @12+1 TS1441 Cannot start a function call in a type annotation.
+   go  @13+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @14+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun accepts
+   lint parses
+"class C { static m!() {} }" [ts]
+   tsc @19+1 TS1441 Cannot start a function call in a type annotation.
+   tsc @20+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @22+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @19+1 TS1441 Cannot start a function call in a type annotation.
+   go  @20+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @22+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun accepts
+   lint parses
+"class C { async m!() {} }" [ts]
+   tsc @18+1 TS1441 Cannot start a function call in a type annotation.
+   tsc @19+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @21+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @18+1 TS1441 Cannot start a function call in a type annotation.
+   go  @19+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @21+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun @17+1 Expected "(" but found "!"
+   bun @18+1 Expected identifier but found "("
+   lint @17+1 Expected "(" but found "!"  => TS1005 @17+1 '(' expected.  (2 messages)
+"class C { *m!() {} }" [ts]
+   tsc @12+1 TS1005 '(' expected.
+   tsc @14+1 TS1109 Expression expected.
+   tsc @16+1 TS1005 ';' expected.
+   go  @12+1 TS1005 '(' expected.
+   go  @14+1 TS1109 Expression expected.
+   go  @16+1 TS1005 ';' expected.
+   bun @12+1 Expected "(" but found "!"
+   bun @13+1 Expected identifier but found "("
+   lint @12+1 Expected "(" but found "!"  => TS1005 @12+1 '(' expected.  (2 messages)
+"class C { [m]!() {} }" [ts]
+   tsc @14+1 TS1441 Cannot start a function call in a type annotation.
+   tsc @15+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @17+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @14+1 TS1441 Cannot start a function call in a type annotation.
+   go  @15+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @17+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun accepts
+   lint parses
+"class C { accessor m!() {} }" [ts]
+   tsc @21+1 TS1441 Cannot start a function call in a type annotation.
+   tsc @22+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @24+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @21+1 TS1441 Cannot start a function call in a type annotation.
+   go  @22+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @24+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun @19+1 auto-accessor properties cannot have a method body
+   lint @19+1 auto-accessor properties cannot have a method body  => no code
+"class C { 'constructor'!() {} }" [ts]
+   tsc @24+1 TS1441 Cannot start a function call in a type annotation.
+   tsc @25+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @27+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @24+1 TS1441 Cannot start a function call in a type annotation.
+   go  @25+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @27+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun accepts
+   lint parses
+"function f(  public this) {}" [ts]
+   tsc @11+8 TS1433 Neither decorators nor modifiers may be applied to 'this' parameters.
+   go  @11+8 TS1433 Neither decorators nor modifiers may be applied to 'this' parameters.
+   bun @20+4 Expected ")" but found "this"
+   bun @24+1 Expected ";" but found ")"
+   lint @20+4 Expected ")" but found "this"  => TS1005 @20+4 ')' expected.  (2 messages)
+"function f(/*c*/ public /*d*/ readonly this) {}" [ts]
+   tsc @11+12 TS1433 Neither decorators nor modifiers may be applied to 'this' parameters.
+   go  @11+12 TS1433 Neither decorators nor modifiers may be applied to 'this' parameters.
+   bun @39+4 Expected ")" but found "this"
+   bun @43+1 Expected ";" but found ")"
+   lint @39+4 Expected ")" but found "this"  => TS1005 @39+4 ')' expected.  (2 messages)
+"class C { m(@dec /*c*/ this) {} }" [ts]
+   tsc @12+4 TS1433 Neither decorators nor modifiers may be applied to 'this' parameters.
+   go  @12+4 TS1433 Neither decorators nor modifiers may be applied to 'this' parameters.
+   bun @23+4 Expected identifier but found "this"
+   lint @23+4 Expected identifier but found "this"  => TS1359 @23+4 Identifier expected. 'this' is a reserved word that cannot be used here.
+"class C { constructor(public /*c*/\n a) {} }" [ts]
+   tsc @36+1 TS1005 ',' expected.
+   go  @36+1 TS1005 ',' expected.
+   bun accepts
+   lint parses
+"class C { constructor(public\n readonly a) {} }" [ts]
+   tsc @30+8 TS1005 ',' expected.
+   go  @30+8 TS1005 ',' expected.
+   bun accepts
+   lint parses
+"class C { constructor(public readonly\n a, private\n b) {} }" [ts]
+   tsc @39+1 TS1005 ',' expected.
+   tsc @51+1 TS1005 ',' expected.
+   go  @39+1 TS1005 ',' expected.
+   go  @51+1 TS1005 ',' expected.
+   bun accepts
+   lint parses
+"class C { constructor(public\n) {} }" [ts]
+   tsc parses; checker @22+6 TS1213 Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+   go  parses
+   bun accepts
+   lint parses
+"class C { constructor(public\n, a) {} }" [ts]
+   tsc parses; checker @22+6 TS1213 Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+   go  parses
+   bun accepts
+   lint parses
+"class C { constructor(public\n = 1) {} }" [ts]
+   tsc parses; checker @22+6 TS1213 Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+   go  parses
+   bun accepts
+   lint parses
+"class C { constructor(public\n: number) {} }" [ts]
+   tsc parses; checker @22+6 TS1213 Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+   go  parses
+   bun accepts
+   lint parses
+"class C { constructor(...public readonly a) {} }" [ts]
+   tsc @32+8 TS1005 ',' expected.
+   go  @32+8 TS1005 ',' expected.
+   bun accepts
+   lint parses
+"class C { constructor(... public a: number) {} }" [ts]
+   tsc @33+1 TS1005 ',' expected.
+   go  @33+1 TS1005 ',' expected.
+   bun accepts
+   lint parses
+"class C { constructor(@dec ...public a) {} }" [ts]
+   tsc @37+1 TS1005 ',' expected.
+   go  @37+1 TS1005 ',' expected.
+   bun accepts
+   lint parses
+"class C { constructor(...public) {} }" [ts]
+   tsc parses; checker @25+6 TS1213 Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+   go  parses
+   bun accepts
+   lint parses
+"class C { constructor(public a); constructor(public\n a) {} }" [ts]
+   tsc @53+1 TS1005 ',' expected.
+   go  @53+1 TS1005 ',' expected.
+   bun accepts
+   lint parses
+"function f({ class /*c*/ , a }) {}" [ts]
+   tsc @25+1 TS1005 ':' expected.
+   go  @25+1 TS1005 ':' expected.
+   bun accepts
+   lint parses
+"function f({ class\n}) {}" [ts]
+   tsc @19+1 TS1005 ':' expected.
+   go  @19+1 TS1005 ':' expected.
+   bun accepts
+   lint parses
+"function f({ a, class }) {}" [ts]
+   tsc @22+1 TS1005 ':' expected.
+   go  @22+1 TS1005 ':' expected.
+   bun accepts
+   lint parses
+"function f({ cl\\u0061ss }) {}" [ts]
+   tsc @24+1 TS1005 ':' expected.
+   go  @24+1 TS1005 ':' expected.
+   bun accepts
+   lint parses
+"function f({ a: { if } }) {}" [ts]
+   tsc @21+1 TS1005 ':' expected.
+   go  @21+1 TS1005 ':' expected.
+   bun accepts
+   lint parses
+"function f([{ if }]) {}" [ts]
+   tsc @17+1 TS1005 ':' expected.
+   go  @17+1 TS1005 ':' expected.
+   bun accepts
+   lint parses
+"var { class } = x, { if } = y;" [ts]
+   tsc @12+1 TS1005 ':' expected.
+   tsc @24+1 TS1005 ':' expected.
+   go  @12+1 TS1005 ':' expected.
+   go  @24+1 TS1005 ':' expected.
+   bun accepts
+   lint parses
+"for (const { class } of x) {}" [ts]
+   tsc @19+1 TS1005 ':' expected.
+   go  @19+1 TS1005 ':' expected.
+   bun accepts
+   lint parses
+"({ class } = x);" [ts]
+   tsc @9+1 TS1005 ':' expected.
+   go  @9+1 TS1005 ':' expected.
+   bun @9+1 Expected ":" but found "}"
+   bun @11+1 Unexpected =
+   lint @9+1 Expected ":" but found "}"  => TS1005 @9+1 ':' expected.  (2 messages)
+"({ class }) => 1;" [ts]
+   tsc @9+1 TS1005 ':' expected.
+   go  @9+1 TS1005 ':' expected.
+   bun @9+1 Expected ":" but found "}"
+   bun @10+1 Unexpected )
+   lint @9+1 Expected ":" but found "}"  => TS1005 @9+1 ':' expected.  (2 messages)
+"class C extends /*c*/ ! /*d*/ B {}" [ts]
+   tsc @22+1 TS1109 Expression expected.
+   tsc @32+1 TS1005 ';' expected.
+   go  @22+1 TS1109 Expression expected.
+   go  @32+1 TS1005 ';' expected.
+   bun accepts
+   lint parses
+"class C extends typeof B<T> {}" [ts]
+   tsc @16+6 TS1109 Expression expected.
+   go  @16+6 TS1109 Expression expected.
+   bun accepts
+   lint parses
+"class C extends <T>(B) {}" [ts]
+   tsc @16+1 TS1109 Expression expected.
+   tsc @23+1 TS1005 '=>' expected.
+   go  @16+1 TS1109 Expression expected.
+   go  @23+1 TS1005 '=>' expected.
+   bun accepts
+   lint parses
+"class C extends <div/> {}" [tsx]
+   tsc @16+1 TS1109 Expression expected.
+   tsc @23+1 TS1005 ';' expected.
+   go  @16+1 TS1109 Expression expected.
+   go  @23+1 TS1005 ';' expected.
+   bun accepts
+   lint parses
+"class C extends B implements !I, J {}" [ts]
+   tsc @29+1 TS1109 Expression expected.
+   tsc @35+1 TS1005 ';' expected.
+   go  @29+1 TS1109 Expression expected.
+   go  @35+1 TS1005 ';' expected.
+   bun accepts
+   lint parses
+"class C extends B implements I, !J {}" [ts]
+   tsc @32+1 TS1109 Expression expected.
+   tsc @35+1 TS1005 ';' expected.
+   go  @32+1 TS1109 Expression expected.
+   go  @35+1 TS1005 ';' expected.
+   bun accepts
+   lint parses
+"class C extends B, !D {}" [ts]
+   tsc @19+1 TS1109 Expression expected.
+   tsc @22+1 TS1005 ';' expected.
+   go  @19+1 TS1109 Expression expected.
+   go  @22+1 TS1005 ';' expected.
+   bun @17+1 Expected "{" but found ","
+   bun @19+1 Expected identifier but found "!"
+   lint @17+1 Expected "{" but found ","  => TS1005 @17+1 '{' expected.  (3 messages)
+"class C extends {} implements {} {}" [ts]
+   tsc parses; checker also TS2507 TS2500
+   go  parses
+   bun accepts
+   lint parses
+"class C extends { } { }" [ts]
+   tsc parses; checker also TS2507
+   go  parses
+   bun accepts
+   lint parses
+"class C extends {}\n{}" [ts]
+   tsc parses; checker also TS2507
+   go  parses
+   bun accepts
+   lint parses
+"class C extends {} , {} {}" [ts]
+   tsc parses; checker @21+1 TS1174 Classes can only extend a single class.
+   tsc checker also TS2507
+   go  parses
+   bun @19+1 Expected "{" but found ","
+   bun @21+1 Expected identifier but found "{"
+   lint @19+1 Expected "{" but found ","  => TS1005 @19+1 '{' expected.  (3 messages)
+"class C extends {} extends {} {}" [ts]
+   tsc parses; checker @19+7 TS1172 'extends' clause already seen.
+   tsc checker also TS2507
+   go  parses
+   bun @19+7 Expected "{" but found "extends"
+   bun @27+1 Expected identifier but found "{"
+   lint @19+7 Expected "{" but found "extends"  => TS1005 @19+7 '{' expected.  (3 messages)
+"class C implements {} {}" [ts]
+   tsc parses; checker also TS2500
+   go  parses
+   bun accepts
+   lint parses
+"class C implements {}, I {}" [ts]
+   tsc parses; checker also TS2500
+   go  parses
+   bun accepts
+   lint parses
+"class C implements I, {} {}" [ts]
+   tsc parses; checker also TS2500
+   go  parses
+   bun accepts
+   lint parses
+"const k = class extends {} {};" [ts]
+   tsc parses; checker also TS2507
+   go  parses
+   bun accepts
+   lint parses
+"const k = class extends {};" [ts]
+   tsc parses; checker @23+0 TS1097 'extends' list cannot be empty.
+   go  parses
+   bun @26+1 Expected "{" but found ";"
+   bun @27+0 Expected "}" but found end of file
+   lint @26+1 Expected "{" but found ";"  => TS1005 @26+1 '{' expected.  (2 messages)
+"class C extends import<T>('a') {}" [ts]
+   tsc parses; checker @16+14 TS1326 This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments.
+   tsc checker also TS2711
+   go  parses
+   bun @22+1 Expected "(" but found "<"
+   bun @31+1 Expected ")" but found "{"
+   lint @22+1 Expected "(" but found "<"  => TS1005 @22+1 '(' expected.  (4 messages)
+"class C extends yield\n{}" [ts]
+   tsc parses; checker @16+5 TS1213 Identifier expected. 'yield' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+   go  parses
+   bun scan accepts; transform @16+5 "yield" is a reserved word and cannot be used in strict mode
+   lint parses
+"class C extends async\n{}" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+   lint parses
+"class C extends await\n{}" [ts]
+   tsc parses
+   go  parses
+   bun @24+0 Expected "{" but found end of file
+   lint parses
+"class C extends await {}" [ts]
+   tsc parses
+   go  parses
+   bun @24+0 Expected "{" but found end of file
+   lint parses
+"export {}; class C extends await B {}" [ts]
+   tsc @27+5 TS1109 Expression expected.
+   go  @27+5 TS1109 Expression expected.
+   bun accepts
+   lint @33+1 "await" can only be used inside an "async" function  => no code  (3 messages)
+"export {}; class C extends await {}" [ts]
+   tsc @27+5 TS1109 Expression expected.
+   go  @27+5 TS1109 Expression expected.
+   bun @35+0 Expected "{" but found end of file
+   lint parses
+"class C { [k!: string]: any; }" [ts]
+   tsc @13+1 TS1005 ']' expected.
+   tsc @21+1 TS1442 Expected '=' for property initializer.
+   tsc @22+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @13+1 TS1005 ']' expected.
+   go  @21+1 TS1442 Expected '=' for property initializer.
+   go  @22+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun accepts
+   lint parses
+"class C { [k! /*c*/ : string]: any; }" [ts]
+   tsc @20+1 TS1005 ']' expected.
+   tsc @28+1 TS1442 Expected '=' for property initializer.
+   tsc @29+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @20+1 TS1005 ']' expected.
+   go  @28+1 TS1442 Expected '=' for property initializer.
+   go  @29+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun accepts
+   lint parses
+"class C { static [k as any: string]: any; }" [ts]
+   tsc @26+1 TS1005 ']' expected.
+   tsc @34+1 TS1442 Expected '=' for property initializer.
+   tsc @35+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @26+1 TS1005 ']' expected.
+   go  @34+1 TS1442 Expected '=' for property initializer.
+   go  @35+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun accepts
+   lint parses
+"class C { readonly get [k: string]: any; }" [ts]
+   tsc @25+1 TS1005 ']' expected.
+   tsc @33+1 TS1005 '{' expected.
+   tsc @34+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @25+1 TS1005 ']' expected.
+   go  @33+1 TS1005 '{' expected.
+   go  @34+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun accepts
+   lint parses
+"class C { @dec get [k: string]: any; }" [ts]
+   tsc @21+1 TS1005 ']' expected.
+   tsc @29+1 TS1005 '{' expected.
+   tsc @30+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @21+1 TS1005 ']' expected.
+   go  @29+1 TS1005 '{' expected.
+   go  @30+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun accepts
+   lint parses
+"class C { get\n[k: string]: any; }" [ts]
+   tsc @16+1 TS1005 ']' expected.
+   tsc @24+1 TS1005 '{' expected.
+   tsc @25+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @16+1 TS1005 ']' expected.
+   go  @24+1 TS1005 '{' expected.
+   go  @25+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun accepts
+   lint parses
+"class C { get [k: string, l: number]: any; }" [ts]
+   tsc @16+1 TS1005 ']' expected.
+   tsc @24+1 TS1005 '{' expected.
+   tsc @35+1 TS1442 Expected '=' for property initializer.
+   go  @16+1 TS1005 ']' expected.
+   go  @24+1 TS1005 '{' expected.
+   go  @35+1 TS1442 Expected '=' for property initializer.
+   bun accepts
+   lint parses
+"class C { get [k?: string]: any; }" [ts]
+   tsc @17+1 TS1109 Expression expected.
+   tsc @26+1 TS1005 '(' expected.
+   go  @17+1 TS1109 Expression expected.
+   go  @26+1 TS1005 '(' expected.
+   bun accepts
+   lint parses
+"class C { get [k, l]: any; }" [ts]
+   tsc @20+1 TS1005 '(' expected.
+   go  @20+1 TS1005 '(' expected.
+   bun accepts
+   lint parses
+"class C { * [k: string](): any {} }" [ts]
+   tsc @14+1 TS1005 ']' expected.
+   tsc @22+1 TS1144 '{' or ';' expected.
+   tsc @23+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @14+1 TS1005 ']' expected.
+   go  @22+1 TS1144 '{' or ';' expected.
+   go  @23+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun @23+1 Expected ";" but found "("
+   bun @24+1 Expected identifier but found ")"
+   lint @23+1 Expected ";" but found "("  => TS1005 @23+1 ';' expected.  (4 messages)
+"class C { async * [k: string]: any; }" [ts]
+   tsc @20+1 TS1005 ']' expected.
+   tsc @28+1 TS1144 '{' or ';' expected.
+   tsc @29+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @20+1 TS1005 ']' expected.
+   go  @28+1 TS1144 '{' or ';' expected.
+   go  @29+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun accepts
+   lint parses
+"class C { accessor [k: string]: any; }" [ts]
+   tsc parses; checker @10+8 TS1071 'accessor' modifier cannot appear on an index signature.
+   go  parses
+   bun accepts
+   lint parses
+"class C { abstract get [k: string]: any; }" [ts]
+   tsc @25+1 TS1005 ']' expected.
+   tsc @33+1 TS1005 '{' expected.
+   tsc @34+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @25+1 TS1005 ']' expected.
+   go  @33+1 TS1005 '{' expected.
+   go  @34+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun accepts
+   lint parses
+"class C { declare get [k: string]: any; }" [ts]
+   tsc @24+1 TS1005 ']' expected.
+   tsc @32+1 TS1005 '{' expected.
+   tsc @33+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @24+1 TS1005 ']' expected.
+   go  @32+1 TS1005 '{' expected.
+   go  @33+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun accepts
+   lint parses
+"declare class C { get [k: string]: any; }" [ts]
+   tsc @24+1 TS1005 ']' expected.
+   tsc @32+1 TS1005 '{' expected.
+   tsc @33+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @24+1 TS1005 ']' expected.
+   go  @32+1 TS1005 '{' expected.
+   go  @33+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun accepts
+   lint parses

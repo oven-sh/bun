@@ -11,6 +11,10 @@ pub(crate) struct PendingWrites {
     bytes: JsCell<StreamBuffer>,
     /// `shutdown()` ran over queued bytes. The FIN follows the last of them.
     fin_deferred: Cell<bool>,
+    /// A send reads the bytes right now.
+    lent: Cell<bool>,
+    /// `release()` ran under that send.
+    release_waits: Cell<bool>,
 }
 
 impl PendingWrites {
@@ -46,9 +50,23 @@ impl PendingWrites {
         }
     }
 
+    /// Lends the queued bytes to `send`, which can close the socket from inside. A `release()` under
+    /// `send` waits. The second result is true then, and the caller releases after the send.
+    #[inline]
+    pub(crate) fn lend<R>(&self, send: impl FnOnce(&[u8]) -> R) -> (R, bool) {
+        let nested = self.lent.replace(true);
+        let result = send(self.bytes.get().slice());
+        self.lent.set(nested);
+        (result, !nested && self.release_waits.replace(false))
+    }
+
     /// Drops the bytes that the socket did not take, and returns their count.
     #[inline]
     pub(crate) fn release(&self) -> usize {
+        if self.lent.get() {
+            self.release_waits.set(true);
+            return 0;
+        }
         let dropped = self.len();
         self.bytes.set(StreamBuffer::default());
         self.fin_deferred.set(false);

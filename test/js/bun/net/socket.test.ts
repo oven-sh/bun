@@ -6300,8 +6300,10 @@ describe.concurrent.each(["tcp", "tls"] as const)("%s shutdown() after end(data)
   const TAIL = 4 * 1024 * 1024;
 
   it("sends the FIN after the queued tail", async () => {
-    const bytes = randomFillSync(Buffer.allocUnsafe(16 * STEP + TAIL));
+    const step = randomFillSync(Buffer.allocUnsafe(STEP));
+    const tail = randomFillSync(Buffer.allocUnsafe(TAIL));
     const received = Promise.withResolvers<void>();
+    let filled = 0;
     let got = 0;
     let mismatchAt = -1;
     using server = Bun.listen({
@@ -6310,7 +6312,17 @@ describe.concurrent.each(["tcp", "tls"] as const)("%s shutdown() after end(data)
       tls: transport === "tls" ? { key: tls.key, cert: tls.cert } : undefined,
       socket: {
         data(_, chunk) {
-          if (mismatchAt === -1 && !chunk.equals(bytes.subarray(got, got + chunk.byteLength))) mismatchAt = got;
+          // The stream is `step` again and again up to `filled` (only the last write is short), then `tail`.
+          for (let offset = 0; mismatchAt === -1 && offset < chunk.byteLength; ) {
+            const at = got + offset;
+            const source =
+              at < filled ? step.subarray(at % STEP, (at % STEP) + filled - at) : tail.subarray(at - filled);
+            const length = Math.min(source.byteLength, chunk.byteLength - offset);
+            if (length === 0 || !chunk.subarray(offset, offset + length).equals(source.subarray(0, length))) {
+              mismatchAt = at;
+            }
+            offset += length;
+          }
           got += chunk.byteLength;
         },
         close: () => received.resolve(),
@@ -6318,7 +6330,6 @@ describe.concurrent.each(["tcp", "tls"] as const)("%s shutdown() after end(data)
       },
     });
     const closed = Promise.withResolvers<void>();
-    let sent = 0;
     let kernelFull = false;
     let endReturned = -2;
     await Bun.connect({
@@ -6329,13 +6340,12 @@ describe.concurrent.each(["tcp", "tls"] as const)("%s shutdown() after end(data)
         open(s) {
           // write() fills the kernel first, so end() has to queue its chunk: Windows takes a first send of any size whole.
           let took = STEP;
-          while (took === STEP && sent + STEP + TAIL <= bytes.length) {
-            took = s.write(bytes.subarray(sent, sent + STEP));
-            sent += Math.max(took, 0);
+          while (took === STEP && filled < 64 * STEP) {
+            took = s.write(step);
+            filled += Math.max(took, 0);
           }
           kernelFull = took !== STEP;
-          endReturned = s.end(bytes.subarray(sent, sent + TAIL));
-          sent += TAIL;
+          endReturned = s.end(tail);
           s.shutdown();
         },
         data() {},
@@ -6347,7 +6357,7 @@ describe.concurrent.each(["tcp", "tls"] as const)("%s shutdown() after end(data)
     expect({ kernelFull, endReturned, got, mismatchAt }).toEqual({
       kernelFull: true,
       endReturned: TAIL,
-      got: sent,
+      got: filled + TAIL,
       mismatchAt: -1,
     });
   });
@@ -6400,12 +6410,15 @@ it("a close by the peer frees a queued end(data) tail and keeps bytesWritten", a
   });
 });
 
-it("close() on a TLS socket frees a queued end(data) tail when the deferred close completes", async () => {
+it("close() on a TLS socket frees a queued end(data) tail at once, while the close waits for the peer", async () => {
   const STEP = 1024 * 1024;
   const TAIL = 8 * 1024 * 1024;
-  const closeCalled = Promise.withResolvers<Socket>();
+  const closeCalled = Promise.withResolvers<void>();
   const closed = Promise.withResolvers<void>();
   let kernelFull = false;
+  let closeHandlerRan = false;
+  let queued = { tailHeld: false, closeHandlerRan: true };
+  let afterCloseCall = { tailHeld: true, closeHandlerRan: true };
   using server = Bun.listen({
     hostname: "127.0.0.1",
     port: 0,
@@ -6422,10 +6435,15 @@ it("close() on a TLS socket frees a queued end(data) tail when the deferred clos
         }
         kernelFull = took !== STEP;
         s.end(Buffer.alloc(TAIL, 120));
+        queued = { tailHeld: estimateShallowMemoryUsageOf(s) > TAIL / 2, closeHandlerRan };
         s.close();
-        closeCalled.resolve(s);
+        afterCloseCall = { tailHeld: estimateShallowMemoryUsageOf(s) > 64 * 1024, closeHandlerRan };
+        closeCalled.resolve();
       },
-      close: () => closed.resolve(),
+      close() {
+        closeHandlerRan = true;
+        closed.resolve();
+      },
       error() {},
     },
   });
@@ -6433,15 +6451,13 @@ it("close() on a TLS socket frees a queued end(data) tail when the deferred clos
   peer.on("error", () => {});
   peer.pause();
   peer.on("secureConnect", () => peer.write("request\n"));
-  const socket = await closeCalled.promise;
-  const heldWhileCloseWaits = estimateShallowMemoryUsageOf(socket) > TAIL / 2;
+  await closeCalled.promise;
   peer.destroy();
   await closed.promise;
-  const heldAfterClose = estimateShallowMemoryUsageOf(socket) > 64 * 1024;
-  expect({ kernelFull, heldWhileCloseWaits, heldAfterClose }).toEqual({
+  expect({ kernelFull, queued, afterCloseCall }).toEqual({
     kernelFull: true,
-    heldWhileCloseWaits: true,
-    heldAfterClose: false,
+    queued: { tailHeld: true, closeHandlerRan: false },
+    afterCloseCall: { tailHeld: false, closeHandlerRan: false },
   });
 });
 

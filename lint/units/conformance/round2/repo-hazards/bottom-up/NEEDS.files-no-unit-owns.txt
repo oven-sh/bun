@@ -88,7 +88,7 @@ Why. The formatter of CI does not take the corpus today: `bun run prettier` (`pa
 files of `test/cli/lint`). `conformance.test.ts` keeps that true: it fails when a name of the corpus is one that
 CI takes for a test, and those names include the names of the glob. The line is for the editor:
 `.vscode/settings.json:5` formats a file when it is saved, with prettier for TypeScript (lines 64 to 69), and
-the extension reads the `.prettierignore` of the root only.
+the extension reads the `.prettierignore` of the root (its documented default; not measured).
 
 Until then: a case that someone opens and saves in an editor is rewritten, and `sync.sh --check` shows it.
 The unit's own duty: `format.yml` rewrites `test/cli/lint/conformance.test.ts` when it is not formatted.
@@ -164,9 +164,10 @@ To: integrator. For information, no file to change.
   (`scripts/runner.node.ts:1315-1337`, `:2817-2836`) and marks a new file that fails with "(new)" (`:3018`).
   Those five files lose that. No test is left out: the runner finds its tests on disk (`:728`, `:2683-2684`).
 - 339 of the first 500 places are taken by files before `test/`. When the files below `src/` of this work
-  grow by 155 more, `conformance.test.ts` itself is past place 500, with or without the corpus.
-- The path filters of the workflows are not touched by this: a filter looks at the first 300 files of the
-  diff, and every path that a filter of `rust-lints.yml` or `source-lints.yml` names sorts before `test/cli`.
+  grow by 156 more, `conformance.test.ts` itself is past place 500, with or without the corpus.
+- The path filters of the workflows are not touched by this. GitHub's documentation says that a filter sees
+  the first 300 files of a diff (not measured). This pull request matches the filters of `rust-lints.yml:8-15`
+  and `source-lints.yml:37-60` with files below `src/`, which are files 5 to 339.
 - `comment-cop.yml:92-94` reads the same list from GitHub, and `src/` sorts before `test/`: it sees every
   file below `src/` as long as the pull request has fewer than 3,000 files before `test/`.
 
@@ -207,8 +208,9 @@ are checked as any other file.
 What such a check would find in the corpus, which is copied byte for byte (line test of `comment-cop.yml`,
 each file read as a wholly added file):
 
-- a run of two or more comment lines: 8,199 of the 12,445 case files (10,553 runs; in most of them the run is
-  the directives of the case, such as `// @target: es2015`), and 3 of the 4 files of `lib` (578 runs).
+- a run of two or more comment lines: 8,199 of the 12,445 case files (10,553 runs; in 5,854 of the files
+  every run is the directives of the case, such as `// @target: es2015`), and 3 of the 4 files of `lib` (578
+  runs).
 - `TODO`, `FIXME` or `XXX`: 29 case files (39, 5 and 4 places; none has `HACK`), 2 files of `lib`, 19
   baselines of TypeScript and 9 of typescript-go.
 - `#` and three or more digits: 547 case files.
@@ -239,7 +241,8 @@ No Windows machine and no macOS machine was available. A green run on Linux says
 - Line endings. The image sets `core.autocrlf` false (`spec.ts:1374`), `format.yml:30` sets it true after the
   checkout. `corpus/** -text` of the unit's `.gitattributes` keeps the corpus as it is (proved on Linux with
   `git -c core.autocrlf=true add --renormalize`).
-- Time. 22,186 more files in every checkout, and 394 more directories and 22,230 more names in every walk of
-  `test/` by the runner, in each of about 150 jobs of a build. Not measured on Windows.
+- Time. Against `main` the directory is 22,230 files in 397 directories: that much more in every checkout,
+  and in every walk of `test/` by the runner, in each of about 150 jobs of a build. On Linux the walk and the
+  rule on all of them take a tenth of a second in a release build. Not measured on Windows.
 - That the test ran: `.claude/docs/landing-prs.md:66`. Look for `test/cli/lint/conformance.test.ts` in the
   log of one shard of every platform.

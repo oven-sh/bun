@@ -855,6 +855,225 @@ it("a client and a server TLSSocket connected through a synchronous in-memory du
   });
 });
 
+describe("large writes and reads of a TLSSocket over a Duplex transport", () => {
+  // The TLS engine behind a Duplex kept its ciphertext in two BoringSSL memory
+  // BIOs. A memory BIO moves every byte that is still unread to its front after
+  // each read, so both directions cost quadratic time in what was queued: a
+  // write was copied out 64 KiB at a time, and a chunk from the transport was
+  // taken out one TLS record at a time.
+  const pattern = Buffer.from(Array.from({ length: 251 }, (_, i) => i));
+
+  // A client and a server TLSSocket joined in memory. `wire` sees every chunk
+  // of ciphertext the named side writes and returns what to deliver to the peer.
+  function connectedPair(wire: (from: "client" | "server", chunk: Buffer) => Buffer | null = (_, chunk) => chunk) {
+    const makeSide = (name: "client" | "server", peer: () => Duplex) =>
+      new Duplex({
+        read() {},
+        write(chunk: Buffer, _encoding, callback) {
+          const forwarded = wire(name, chunk);
+          if (forwarded !== null) peer().push(forwarded);
+          callback();
+        },
+        final(callback) {
+          peer().push(null);
+          callback();
+        },
+      });
+    const clientSide: Duplex = makeSide("client", () => serverSide);
+    const serverSide: Duplex = makeSide("server", () => clientSide);
+    const server = new TLSSocket(serverSide, { isServer: true, secureContext: tls.createSecureContext(COMMON_CERT_) });
+    server.on("error", () => {});
+    server.on("end", () => server.end());
+    const client = tls.connect({ socket: clientSide, rejectUnauthorized: false });
+    return { client, server, clientSide };
+  }
+
+  // Resolves with the next `length` bytes `socket` emits.
+  function receive(socket: TLSSocket, length: number) {
+    const { promise, resolve, reject } = Promise.withResolvers<Buffer>();
+    const chunks: Buffer[] = [];
+    let received = 0;
+    const onData = (chunk: Buffer) => {
+      chunks.push(chunk);
+      received += chunk.length;
+      if (received < length) return;
+      socket.off("data", onData);
+      socket.off("error", reject);
+      resolve(Buffer.concat(chunks));
+    };
+    socket.on("data", onData);
+    socket.once("error", reject);
+    return promise;
+  }
+
+  it("one write() reaches the transport in at most two chunks, like node", async () => {
+    const payload = Buffer.alloc(1024 * 1024, pattern);
+    const transportWrites: number[] = [];
+    let recording = false;
+    const { client, server } = connectedPair((from, chunk) => {
+      if (recording && from === "client") transportWrites.push(chunk.length);
+      return chunk;
+    });
+    await once(client, "secureConnect");
+
+    const received = receive(server, payload.length);
+    recording = true;
+    client.write(payload);
+    const plaintext = await received;
+    recording = false;
+    client.end();
+    await once(client, "close");
+
+    expect(plaintext.equals(payload)).toBe(true);
+    // 64 KiB pieces made this 17 writes. Node gives the transport 2 chunks.
+    expect(transportWrites.length).toBeLessThanOrEqual(2);
+  });
+
+  it("one large chunk from the transport costs the same CPU per byte as small chunks", async () => {
+    const payload = Buffer.alloc(8 * 1024 * 1024, pattern);
+    let held: Buffer[] | null = null;
+    const { client, server, clientSide } = connectedPair((from, chunk) => {
+      if (held === null || from === "client") return chunk;
+      held.push(chunk);
+      return null;
+    });
+    await once(client, "secureConnect");
+
+    // The CPU time this process takes to decrypt `payload`, with its ciphertext
+    // handed to the client's transport in pieces of `pieceSize` bytes.
+    async function cpuTimeToReceive(pieceSize: number) {
+      held = [];
+      await new Promise<void>((resolve, reject) => server.write(payload, error => (error ? reject(error) : resolve())));
+      const ciphertext = Buffer.concat(held);
+      held = null;
+
+      const received = receive(client, payload.length);
+      const before = process.cpuUsage();
+      for (let offset = 0; offset < ciphertext.length; offset += pieceSize) {
+        clientSide.push(ciphertext.subarray(offset, offset + pieceSize));
+      }
+      const plaintext = await received;
+      const { user, system } = process.cpuUsage(before);
+      expect(plaintext.equals(payload)).toBe(true);
+      return user + system;
+    }
+
+    // The best of two runs each, interleaved, so that a busy machine does not
+    // decide the ratio.
+    let small = Infinity;
+    let large = Infinity;
+    for (let run = 0; run < 2; run++) {
+      small = Math.min(small, await cpuTimeToReceive(64 * 1024));
+      large = Math.min(large, await cpuTimeToReceive(Infinity));
+    }
+    client.end();
+    await once(client, "close");
+
+    // About 1 when the cost is linear. With the memory BIO it was 36 or more.
+    expect(large / small).toBeLessThan(4);
+  });
+
+  it("writes made from 'data' and from the transport's write() keep both streams in order", async () => {
+    // Both writes are made while the engine is handing ciphertext to the
+    // transport or plaintext to the socket, and each is larger than one pass of
+    // either. A TLS record that leaves out of order fails the connection.
+    const fromServer = Buffer.alloc(320 * 1024, pattern);
+    const fromData = Buffer.alloc(200 * 1024, pattern.subarray(7));
+    const fromTransportWrite = Buffer.alloc(150 * 1024, pattern.subarray(13));
+
+    let writeFromTransport = false;
+    const { client, server } = connectedPair((from, chunk) => {
+      if (from === "client" && writeFromTransport) {
+        writeFromTransport = false;
+        client.write(fromTransportWrite);
+      }
+      return chunk;
+    });
+    await once(client, "secureConnect");
+
+    server.once("data", () => server.write(fromServer));
+    const atServer = receive(server, 2 + fromData.length + fromTransportWrite.length);
+
+    const chunks: Buffer[] = [];
+    let depth = 0;
+    let nestedDataEvents = 0;
+    let received = 0;
+    let repliedFromData = false;
+    const allAtClient = Promise.withResolvers<void>();
+    client.on("data", (chunk: Buffer) => {
+      depth++;
+      if (depth > 1) nestedDataEvents++;
+      chunks.push(chunk);
+      received += chunk.length;
+      if (!repliedFromData) {
+        repliedFromData = true;
+        writeFromTransport = true;
+        client.write(fromData);
+      }
+      if (received >= fromServer.length) allAtClient.resolve();
+      depth--;
+    });
+    client.on("error", allAtClient.reject);
+    client.write("go");
+
+    const [serverGot] = await Promise.all([atServer, allAtClient.promise]);
+    client.end();
+    await once(client, "close");
+
+    expect({
+      nestedDataEvents,
+      clientGotAll: Buffer.concat(chunks).equals(fromServer),
+      serverGotAll: serverGot.equals(Buffer.concat([Buffer.from("go"), fromData, fromTransportWrite])),
+    }).toEqual({ nestedDataEvents: 0, clientGotAll: true, serverGotAll: true });
+  });
+
+  it("ciphertext that arrives while an earlier chunk is partly decrypted is read in order", async () => {
+    // The first chunk ends inside a TLS record. The rest arrives in small
+    // pieces from inside each 'data' event, so it queues behind bytes the
+    // engine has not read yet, after it has read part of the first chunk. The
+    // engine's queue is a ring: the record that was cut comes back in two reads.
+    const payload = Buffer.alloc(1024 * 1024, pattern);
+    let held: Buffer[] | null = null;
+    const { client, server, clientSide } = connectedPair((from, chunk) => {
+      if (held === null || from === "client") return chunk;
+      held.push(chunk);
+      return null;
+    });
+    await once(client, "secureConnect");
+
+    held = [];
+    await new Promise<void>((resolve, reject) => server.write(payload, error => (error ? reject(error) : resolve())));
+    const wire = Buffer.concat(held);
+    held = null;
+
+    // The middle of the last record that starts in the first two thirds.
+    let cut = 0;
+    for (let offset = 0; offset < (wire.length * 2) / 3; ) {
+      const recordLength = 5 + wire.readUInt16BE(offset + 3);
+      cut = offset + (recordLength >> 1);
+      offset += recordLength;
+    }
+    const pieces: Buffer[] = [];
+    for (let offset = cut; offset < wire.length; offset += 7001) pieces.push(wire.subarray(offset, offset + 7001));
+
+    const received = receive(client, payload.length);
+    let next = 0;
+    client.on("data", () => {
+      for (let pushed = 0; pushed < 4 && next < pieces.length; pushed++) clientSide.push(pieces[next++]);
+    });
+    clientSide.push(wire.subarray(0, cut));
+    while (next < pieces.length) clientSide.push(pieces[next++]);
+    const plaintext = await received;
+    client.end();
+    await once(client, "close");
+
+    expect({ length: plaintext.length, intact: plaintext.equals(payload) }).toEqual({
+      length: payload.length,
+      intact: true,
+    });
+  });
+});
+
 it("the last 'data' event fires before the close_notify reply is written to a duplex transport (tls.connect({ socket }))", async () => {
   // The peer's last application data and its close_notify reach the engine in
   // one chunk. The engine used to answer the close_notify before it emitted

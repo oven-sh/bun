@@ -1117,6 +1117,63 @@ test("HTTPS over HTTP proxy preserves TLS record order with large bodies", async
   }
 });
 
+// The tunnel's TLS engine queued the ciphertext of a request body in a
+// BoringSSL memory BIO. That buffer never shrinks, so a pooled tunnel kept an
+// allocation the size of the largest body it ever sent. ASAN keeps freed
+// memory resident, so RSS shows nothing there.
+test.skipIf(isASAN)("a pooled HTTPS proxy tunnel does not keep the memory of a large request body", async () => {
+  using origin = Bun.serve({
+    port: 0,
+    tls: tlsCert,
+    async fetch(req) {
+      let received = 0;
+      for await (const chunk of req.body!) received += chunk.byteLength;
+      return new Response(String(received));
+    },
+  });
+  const MiB = 1024 * 1024;
+  const bodySize = 64 * MiB;
+  const bound = bodySize / 2;
+  const fixture = `
+    const url = ${JSON.stringify(origin.url.href)};
+    const proxy = ${JSON.stringify(httpProxyServer.url)};
+    async function post(size) {
+      const res = await fetch(url, { method: "POST", body: Buffer.alloc(size, "a"), proxy, tls: { rejectUnauthorized: false } });
+      const received = await res.text();
+      if (received !== String(size)) throw new Error("the origin received " + received + " of " + size + " bytes");
+    }
+    // The first request opens the tunnel. Every later one reuses it.
+    await post(1024);
+    Bun.gc(true);
+    const before = process.memoryUsage.rss();
+    await post(${bodySize});
+    // Small requests on the same tunnel, until the upload's memory is released.
+    let retained = Infinity;
+    for (let attempt = 0; attempt < 100 && retained > ${bound}; attempt++) {
+      await post(1024);
+      Bun.gc(true);
+      retained = Math.min(retained, process.memoryUsage.rss() - before);
+    }
+    console.log(JSON.stringify({ retainedMiB: Math.round(retained / ${MiB}) }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: { ...bunEnv, ...proxyFreeEnv },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) console.error("stderr:", stderr);
+  const connects = httpProxyServer.log.filter(line => line === `CONNECT localhost:${origin.port}`).length;
+
+  // One CONNECT: every request went through the same tunnel, which is still
+  // pooled when the child reads its RSS. The memory BIO kept more than the body.
+  expect(stdout).toStartWith("{");
+  expect(connects).toBe(1);
+  expect(JSON.parse(stdout).retainedMiB).toBeLessThan(bound / MiB);
+  expect(exitCode).toBe(0);
+});
+
 test("HTTPS origin close-delimited body via HTTP proxy does not ECONNRESET", async () => {
   // Inline raw HTTPS origin: 200 + no Content-Length then close
   const originServer = tls.createServer(

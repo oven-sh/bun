@@ -813,6 +813,11 @@ pub struct BIO {
     pub num_write: usize,
 }
 
+/// `#define BIO_CTRL_FLUSH 11` — the `cmd` of `BIO_flush`.
+pub const BIO_CTRL_FLUSH: c_int = 11;
+/// `#define BIO_TYPE_SOURCE_SINK 0x0400` — OR-ed into the type of a BIO that ends a chain.
+pub const BIO_TYPE_SOURCE_SINK: c_int = 0x0400;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Additional opaque handles
 // ═══════════════════════════════════════════════════════════════════════════
@@ -970,6 +975,33 @@ unsafe extern "C" {
     pub safe fn BIO_s_mem() -> *const BIO_METHOD;
     pub fn BIO_new_mem_buf(buf: *const c_void, len: ossl_ssize_t) -> *mut BIO;
     pub fn BIO_set_mem_eof_return(bio: *mut BIO, eof_value: c_int) -> c_int;
+
+    // ── Custom BIOs ──────────────────────────────────────────────────────
+    // A method made by `BIO_meth_new` is opaque: set its hooks with
+    // `BIO_meth_set_*`, never through the fields of `BIO_METHOD` above.
+    pub safe fn BIO_get_new_index() -> c_int;
+    pub fn BIO_meth_new(r#type: c_int, name: *const c_char) -> *mut BIO_METHOD;
+    pub fn BIO_meth_set_create(
+        method: *mut BIO_METHOD,
+        create_func: Option<unsafe extern "C" fn(*mut BIO) -> c_int>,
+    ) -> c_int;
+    pub fn BIO_meth_set_write(
+        method: *mut BIO_METHOD,
+        write_func: Option<unsafe extern "C" fn(*mut BIO, *const c_char, c_int) -> c_int>,
+    ) -> c_int;
+    pub fn BIO_meth_set_read(
+        method: *mut BIO_METHOD,
+        read_func: Option<unsafe extern "C" fn(*mut BIO, *mut c_char, c_int) -> c_int>,
+    ) -> c_int;
+    pub fn BIO_meth_set_ctrl(
+        method: *mut BIO_METHOD,
+        ctrl_func: Option<unsafe extern "C" fn(*mut BIO, c_int, c_long, *mut c_void) -> c_long>,
+    ) -> c_int;
+    pub fn BIO_set_data(bio: *mut BIO, ptr: *mut c_void);
+    pub fn BIO_get_data(bio: *mut BIO) -> *mut c_void;
+    pub fn BIO_set_init(bio: *mut BIO, init: c_int);
+    pub fn BIO_set_retry_read(bio: *mut BIO);
+    pub fn BIO_clear_retry_flags(bio: *mut BIO);
 
     // ── RAND ─────────────────────────────────────────────────────────────
     /// Fills `buf[0..len]` from BoringSSL's thread-local CTR-DRBG and returns 1.

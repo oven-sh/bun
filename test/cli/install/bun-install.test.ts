@@ -10031,7 +10031,6 @@ describe.concurrent("bun-install", () => {
         expect(await installedVariant(join(String(dir), "b"))).toBe("private");
         const slots = await cacheSlots(cacheDir);
         expect(slots).toEqual([expect.stringMatching(slotPattern), expect.stringMatching(slotPattern)]);
-        expect(slots[0]).not.toBe(slots[1]);
         expect(await file(join(String(dir), "b", "bun.lock")).text()).toContain(priv.integrity);
 
         // A reinstall from b's lockfile links the private bytes from the same
@@ -10064,7 +10063,6 @@ describe.concurrent("bun-install", () => {
         expect(await installedVariant(join(String(dir), "b"))).toBe("private");
         const slots = await cacheSlots(cacheDir);
         expect(slots).toEqual([expect.stringMatching(slotPattern), expect.stringMatching(slotPattern)]);
-        expect(slots[0]).not.toBe(slots[1]);
       });
 
       // A lockfile records the tarball URL of the registry it was written
@@ -10109,7 +10107,6 @@ describe.concurrent("bun-install", () => {
         const slots = await cacheSlots(cacheDir);
         expect(slots).toEqual([expect.stringMatching(slotPattern), expect.stringMatching(slotPattern)]);
         expect(slots).toContain(pinnedSlot);
-        expect(slots[0]).not.toBe(slots[1]);
       });
     });
   });

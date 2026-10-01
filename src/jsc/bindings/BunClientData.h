@@ -303,7 +303,7 @@ public:
     void reconcileWeakReferencesAtGCEnd(JSC::VM&, JSC::CollectionScope) final;
 
     JSC::DecoderStringTable* decoderStringTable() final { return m_decoderStringTable.get(); }
-    void setDecoderStringTable(std::span<const uint8_t>);
+    void setDecoderStringTable(JSC::VM&, std::span<const uint8_t>);
 
     // The executable's pre-resolved module graph for this VM, created on first use over decoderStringTable() from the
     // standalone module graph; null when there is none (or it does not validate).

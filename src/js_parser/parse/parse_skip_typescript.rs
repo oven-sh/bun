@@ -9,6 +9,7 @@ use crate::typescript;
 use crate::typescript::SkipTypeOptions;
 use crate::typescript::identifier::{Kind as TsIdentKind, kind_for_identifier};
 use bun_ast::op::Level;
+use bun_ast::sound_types::{self, DeclKind, ObjectTypeShape, SoundType, mask};
 use bun_ast::ts::Metadata;
 
 // Re-export so the parser-side type alias used in this file matches the
@@ -55,6 +56,43 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Some(&mut result),
         )?;
         Ok(result)
+    }
+
+    /// `skip_type_script_type` that also evaluates the type. Sound types must be enabled.
+    pub(crate) fn skip_type_script_type_sound(
+        &mut self,
+        level: Level,
+        metadata: Option<&mut Metadata>,
+    ) -> Result<SoundType, Error> {
+        self.skip_type_script_type_sound_with_opts(level, SkipTypeOptionsBitset::empty(), metadata)
+    }
+
+    pub(crate) fn skip_typescript_return_type_sound(
+        &mut self,
+        metadata: Option<&mut Metadata>,
+    ) -> Result<SoundType, Error> {
+        self.skip_type_script_type_sound_with_opts(
+            Level::Lowest,
+            SkipTypeOptionsBitset::only(SkipTypeOptions::IsReturnType),
+            metadata,
+        )
+    }
+
+    fn skip_type_script_type_sound_with_opts(
+        &mut self,
+        level: Level,
+        opts: SkipTypeOptionsBitset,
+        metadata: Option<&mut Metadata>,
+    ) -> Result<SoundType, Error> {
+        debug_assert!(self.sound_types_enabled());
+        let mut ty = SoundType::TOP;
+        match metadata {
+            Some(metadata) => {
+                self.skip_type_script_type_impl::<true, true>(level, opts, Some(metadata), &mut ty)?
+            }
+            None => self.skip_type_script_type_impl::<false, true>(level, opts, None, &mut ty)?,
+        }
+        Ok(ty)
     }
 
     pub(crate) fn skip_type_script_binding(&mut self) -> Result<(), Error> {
@@ -209,9 +247,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// let x = (y: any): asserts y is (y) => {};
     /// ```
     ///
-    pub(crate) fn skip_type_script_paren_or_fn_type<const GET_METADATA: bool>(
+    pub(crate) fn skip_type_script_paren_or_fn_type<const GET_METADATA: bool, const SOUND: bool>(
         &mut self,
         result: Option<&mut Metadata>,
+        sound: &mut SoundType,
     ) -> Result<(), Error> {
         self.mark_type_script_only();
 
@@ -220,13 +259,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if GET_METADATA {
                 *result.expect("infallible: GET_METADATA implies Some") = Metadata::MFunction;
             }
+            if SOUND {
+                *sound = SoundType::from_mask(mask::FUNCTION);
+            }
         } else {
             self.lexer.expect(T::TOpenParen)?;
             if GET_METADATA {
-                *result.expect("infallible: GET_METADATA implies Some") =
-                    self.skip_type_script_type_with_metadata(Level::Lowest)?;
+                let result = result.expect("infallible: GET_METADATA implies Some");
+                *result = Metadata::DEFAULT;
+                self.skip_type_script_type_impl::<true, SOUND>(
+                    Level::Lowest,
+                    SkipTypeOptionsBitset::empty(),
+                    Some(result),
+                    sound,
+                )?;
             } else {
-                self.skip_type_script_type(Level::Lowest)?;
+                self.skip_type_script_type_impl::<false, SOUND>(
+                    Level::Lowest,
+                    SkipTypeOptionsBitset::empty(),
+                    None,
+                    sound,
+                )?;
             }
             self.lexer.expect(T::TCloseParen)?;
         }
@@ -236,13 +289,43 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // Rust cannot express a const-generic-dependent param type on stable; we use
     // `Option<&mut Metadata>` and require callers to pass `Some` iff `GET_METADATA == true`.
     // The const generic is kept so `if GET_METADATA { ... }` branches monomorphize away.
+    #[inline]
     pub(crate) fn skip_type_script_type_with_opts<const GET_METADATA: bool>(
         &mut self,
         level: Level,
         opts: SkipTypeOptionsBitset,
+        result: Option<&mut Metadata>,
+    ) -> Result<(), Error> {
+        self.skip_type_script_type_impl::<GET_METADATA, false>(
+            level,
+            opts,
+            result,
+            &mut SoundType::default(),
+        )
+    }
+
+    /// `sound` is only written when `SOUND`, which requires sound types to be enabled.
+    fn skip_type_script_type_impl<const GET_METADATA: bool, const SOUND: bool>(
+        &mut self,
+        level: Level,
+        opts: SkipTypeOptionsBitset,
         mut result: Option<&mut Metadata>,
+        sound: &mut SoundType,
     ) -> Result<(), Error> {
         self.mark_type_script_only();
+
+        macro_rules! sound_mask {
+            ($mask:expr) => {
+                if SOUND {
+                    *sound = SoundType::from_mask($mask);
+                }
+            };
+        }
+        if SOUND {
+            *sound = SoundType::TOP;
+        }
+        // A bare `Name` that a following `.Member` would qualify.
+        let mut sound_name: Option<&'a [u8]> = None;
 
         // Deeply nested types ("[[[[...", "A<A<A<...", ...) recurse through this
         // function, so bound it the same way `parse_expr_common` bounds expression
@@ -255,6 +338,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             match self.lexer.token {
                 T::TNumericLiteral => {
                     self.lexer.next()?;
+                    sound_mask!(mask::NUMBER);
                     if GET_METADATA {
                         **result
                             .as_mut()
@@ -263,6 +347,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 T::TBigIntegerLiteral => {
                     self.lexer.next()?;
+                    sound_mask!(mask::BIGINT);
                     if GET_METADATA {
                         **result
                             .as_mut()
@@ -271,6 +356,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 T::TStringLiteral | T::TNoSubstitutionTemplateLiteral => {
                     self.lexer.next()?;
+                    sound_mask!(mask::STRING);
                     if GET_METADATA {
                         **result
                             .as_mut()
@@ -279,6 +365,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 T::TTrue | T::TFalse => {
                     self.lexer.next()?;
+                    sound_mask!(mask::BOOLEAN);
                     if GET_METADATA {
                         **result
                             .as_mut()
@@ -287,6 +374,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 T::TNull => {
                     self.lexer.next()?;
+                    sound_mask!(mask::NULL);
                     if GET_METADATA {
                         **result
                             .as_mut()
@@ -321,6 +409,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if self.lexer.is_contextual_keyword(b"is") && !self.lexer.has_newline_before {
                         self.lexer.next()?;
                         self.skip_type_script_type(Level::Lowest)?;
+                        sound_mask!(mask::BOOLEAN);
                         return Ok(());
                     }
 
@@ -337,6 +426,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     if self.lexer.token == T::TBigIntegerLiteral {
                         self.lexer.next()?;
+                        sound_mask!(mask::BIGINT);
                         if GET_METADATA {
                             **result
                                 .as_mut()
@@ -345,6 +435,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     } else {
                         self.lexer.expect(T::TNumericLiteral)?;
+                        sound_mask!(mask::NUMBER);
                         if GET_METADATA {
                             **result
                                 .as_mut()
@@ -404,24 +495,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let _ = self.skip_type_script_type_parameters(
                         TypeParameterFlag::ALLOW_CONST_MODIFIER,
                     )?;
-                    self.skip_type_script_paren_or_fn_type::<GET_METADATA>(result.as_deref_mut())?;
+                    self.skip_type_script_paren_or_fn_type::<GET_METADATA, false>(
+                        result.as_deref_mut(),
+                        &mut SoundType::default(),
+                    )?;
+                    sound_mask!(mask::FUNCTION);
                 }
                 T::TLessThan => {
                     // "<T>() => Foo<T>"
                     let _ = self.skip_type_script_type_parameters(
                         TypeParameterFlag::ALLOW_CONST_MODIFIER,
                     )?;
-                    self.skip_type_script_paren_or_fn_type::<GET_METADATA>(result.as_deref_mut())?;
+                    self.skip_type_script_paren_or_fn_type::<GET_METADATA, false>(
+                        result.as_deref_mut(),
+                        &mut SoundType::default(),
+                    )?;
+                    sound_mask!(mask::FUNCTION);
                 }
                 T::TOpenParen => {
                     // "(number | string)"
-                    self.skip_type_script_paren_or_fn_type::<GET_METADATA>(result.as_deref_mut())?;
+                    self.skip_type_script_paren_or_fn_type::<GET_METADATA, SOUND>(
+                        result.as_deref_mut(),
+                        sound,
+                    )?;
                 }
                 T::TIdentifier => {
                     let kind =
                         kind_for_identifier(self.lexer.identifier).unwrap_or(TsIdentKind::Normal);
 
                     let mut check_type_parameters = true;
+                    let mut sound_is_asserts = false;
 
                     match kind {
                         TsIdentKind::PrefixKeyof => {
@@ -445,6 +548,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 self.skip_type_script_type(Level::Prefix)?;
                             }
 
+                            sound_mask!(mask::PROPERTY_KEY);
                             if GET_METADATA {
                                 **result
                                     .as_mut()
@@ -463,7 +567,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 || (!opts.contains(SkipTypeOptions::IsIndexSignature)
                                     && !opts.contains(SkipTypeOptions::AllowTupleLabels))
                             {
-                                self.skip_type_script_type(Level::Prefix)?;
+                                self.skip_type_script_type_impl::<false, SOUND>(
+                                    Level::Prefix,
+                                    SkipTypeOptionsBitset::empty(),
+                                    None,
+                                    sound,
+                                )?;
                             }
 
                             // assume array or tuple literal
@@ -507,6 +616,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // "let foo: unique symbol"
                             if self.lexer.is_contextual_keyword(b"symbol") {
                                 self.lexer.next()?;
+                                sound_mask!(mask::SYMBOL);
                                 break;
                             }
                         }
@@ -520,6 +630,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         TsIdentKind::Asserts => {
                             self.lexer.next()?;
+                            sound_is_asserts = true;
 
                             // "function assert(x: boolean): asserts x"
                             // "function assert(x: boolean): asserts x is boolean"
@@ -534,6 +645,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         TsIdentKind::PrimitiveAny => {
                             self.lexer.next()?;
                             check_type_parameters = false;
+                            if SOUND {
+                                *sound = SoundType::ANY;
+                            }
                             if GET_METADATA {
                                 **result
                                     .as_mut()
@@ -554,6 +668,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         TsIdentKind::PrimitiveUnknown => {
                             self.lexer.next()?;
                             check_type_parameters = false;
+                            if SOUND {
+                                *sound = SoundType::ANY;
+                            }
                             if GET_METADATA {
                                 **result
                                     .as_mut()
@@ -564,6 +681,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         TsIdentKind::PrimitiveUndefined => {
                             self.lexer.next()?;
                             check_type_parameters = false;
+                            sound_mask!(mask::UNDEFINED);
                             if GET_METADATA {
                                 **result
                                     .as_mut()
@@ -574,6 +692,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         TsIdentKind::PrimitiveObject => {
                             self.lexer.next()?;
                             check_type_parameters = false;
+                            sound_mask!(mask::OBJECT);
                             if GET_METADATA {
                                 **result
                                     .as_mut()
@@ -584,6 +703,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         TsIdentKind::PrimitiveNumber => {
                             self.lexer.next()?;
                             check_type_parameters = false;
+                            sound_mask!(mask::NUMBER);
                             if GET_METADATA {
                                 **result
                                     .as_mut()
@@ -594,6 +714,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         TsIdentKind::PrimitiveString => {
                             self.lexer.next()?;
                             check_type_parameters = false;
+                            sound_mask!(mask::STRING);
                             if GET_METADATA {
                                 **result
                                     .as_mut()
@@ -604,6 +725,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         TsIdentKind::PrimitiveBoolean => {
                             self.lexer.next()?;
                             check_type_parameters = false;
+                            sound_mask!(mask::BOOLEAN);
                             if GET_METADATA {
                                 **result
                                     .as_mut()
@@ -614,6 +736,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         TsIdentKind::PrimitiveBigint => {
                             self.lexer.next()?;
                             check_type_parameters = false;
+                            sound_mask!(mask::BIGINT);
                             if GET_METADATA {
                                 **result
                                     .as_mut()
@@ -624,6 +747,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         TsIdentKind::PrimitiveSymbol => {
                             self.lexer.next()?;
                             check_type_parameters = false;
+                            sound_mask!(mask::SYMBOL);
                             if GET_METADATA {
                                 **result
                                     .as_mut()
@@ -641,6 +765,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     Metadata::MIdentifier(find_result.r#ref);
                             }
 
+                            if SOUND {
+                                sound_name = Some(self.lexer.identifier);
+                            }
                             self.lexer.next()?;
                         }
                     }
@@ -649,12 +776,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if self.lexer.is_contextual_keyword(b"is") && !self.lexer.has_newline_before {
                         self.lexer.next()?;
                         self.skip_type_script_type(Level::Lowest)?;
+                        if SOUND {
+                            *sound = if sound_is_asserts {
+                                SoundType::TOP
+                            } else {
+                                SoundType::from_mask(mask::BOOLEAN)
+                            };
+                        }
                         return Ok(());
                     }
 
                     // "let foo: any \n <number>foo" must not become a single type
+                    let mut sound_arg0 = SoundType::TOP;
                     if check_type_parameters && !self.lexer.has_newline_before {
-                        let _ = self.skip_type_script_type_arguments::<false, false>()?;
+                        if SOUND && sound_name.is_some_and(sound_types::takes_first_type_argument) {
+                            let _ = self
+                                .skip_type_script_type_arguments_impl::<false, false, true>(
+                                    &mut sound_arg0,
+                                )?;
+                        } else {
+                            let _ = self.skip_type_script_type_arguments::<false, false>()?;
+                        }
+                    }
+                    if SOUND && let Some(name) = sound_name {
+                        *sound = self.sound().types.reference(name, sound_arg0);
                     }
                 }
                 T::TTypeof => {
@@ -708,6 +853,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // "[first: number, second: string]"
                     self.lexer.next()?;
 
+                    sound_mask!(mask::ARRAY);
                     if GET_METADATA {
                         **result
                             .as_mut()
@@ -738,7 +884,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.lexer.expect(T::TCloseBracket)?;
                 }
                 T::TOpenBrace => {
-                    self.skip_type_script_object_type()?;
+                    if SOUND {
+                        let mut shape = ObjectTypeShape::default();
+                        self.skip_type_script_object_type_impl::<true>(&mut shape)?;
+                        let base = SoundType::from_mask(shape.type_literal_mask());
+                        *sound = self.sound().types.object(base, shape.members);
+                    } else {
+                        self.skip_type_script_object_type()?;
+                    }
                     if GET_METADATA {
                         **result
                             .as_mut()
@@ -757,6 +910,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             break;
                         }
                     }
+                    sound_mask!(mask::STRING);
                     if GET_METADATA {
                         **result
                             .as_mut()
@@ -796,6 +950,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     self.lexer.next()?;
 
+                    let mut sound_right = SoundType::TOP;
                     if GET_METADATA {
                         let mut left = (**result
                             .as_mut()
@@ -808,16 +963,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             **result
                                 .as_mut()
                                 .expect("infallible: GET_METADATA implies Some") = final_;
-                            self.skip_type_script_type_with_opts::<false>(
+                            self.skip_type_script_type_impl::<false, SOUND>(
                                 Level::BitwiseOr,
                                 opts,
                                 None,
+                                &mut sound_right,
                             )?;
                         } else {
-                            self.skip_type_script_type_with_opts::<GET_METADATA>(
+                            self.skip_type_script_type_impl::<GET_METADATA, SOUND>(
                                 Level::BitwiseOr,
                                 opts,
                                 result.as_deref_mut(),
+                                &mut sound_right,
                             )?;
                             Metadata::merge_union(
                                 result
@@ -827,11 +984,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             );
                         }
                     } else {
-                        self.skip_type_script_type_with_opts::<false>(
+                        self.skip_type_script_type_impl::<false, SOUND>(
                             Level::BitwiseOr,
                             opts,
                             None,
+                            &mut sound_right,
                         )?;
+                    }
+                    if SOUND {
+                        sound_name = None;
+                        *sound = self.sound().types.union(*sound, sound_right);
                     }
                 }
                 T::TAmpersand => {
@@ -841,6 +1003,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     self.lexer.next()?;
 
+                    let mut sound_right = SoundType::TOP;
                     if GET_METADATA {
                         let mut left = (**result
                             .as_mut()
@@ -853,16 +1016,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             **result
                                 .as_mut()
                                 .expect("infallible: GET_METADATA implies Some") = final_;
-                            self.skip_type_script_type_with_opts::<false>(
+                            self.skip_type_script_type_impl::<false, SOUND>(
                                 Level::BitwiseAnd,
                                 opts,
                                 None,
+                                &mut sound_right,
                             )?;
                         } else {
-                            self.skip_type_script_type_with_opts::<GET_METADATA>(
+                            self.skip_type_script_type_impl::<GET_METADATA, SOUND>(
                                 Level::BitwiseAnd,
                                 opts,
                                 result.as_deref_mut(),
+                                &mut sound_right,
                             )?;
                             Metadata::merge_intersection(
                                 result
@@ -872,11 +1037,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             );
                         }
                     } else {
-                        self.skip_type_script_type_with_opts::<false>(
+                        self.skip_type_script_type_impl::<false, SOUND>(
                             Level::BitwiseAnd,
                             opts,
                             None,
+                            &mut sound_right,
                         )?;
+                    }
+                    if SOUND {
+                        sound_name = None;
+                        *sound = self.sound().types.intersect(*sound, sound_right);
                     }
                 }
                 T::TExclamation => {
@@ -895,6 +1065,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.lexer.next()?;
                     if !self.lexer.is_identifier_or_keyword() {
                         self.lexer.expect(T::TIdentifier)?;
+                    }
+
+                    if SOUND {
+                        *sound = match sound_name.take() {
+                            Some(base) => {
+                                let member = self.lexer.identifier;
+                                self.sound().types.qualified(base, member)
+                            }
+                            None => SoundType::TOP,
+                        };
                     }
 
                     if GET_METADATA {
@@ -944,6 +1124,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     self.lexer.expect(T::TCloseBracket)?;
 
+                    if SOUND {
+                        sound_name = None;
+                        *sound = if skipped {
+                            SoundType::TOP
+                        } else {
+                            let element = *sound;
+                            self.sound().types.array(element)
+                        };
+                    }
+
                     if GET_METADATA {
                         let r = result
                             .as_deref_mut()
@@ -969,6 +1159,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     self.lexer.next()?;
+
+                    if SOUND {
+                        sound_name = None;
+                        *sound = SoundType::TOP;
+                    }
 
                     // The type following "extends" is not permitted to be another conditional type
                     let mut extends_type = if GET_METADATA {
@@ -1021,7 +1216,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    #[inline]
     pub(crate) fn skip_type_script_object_type(&mut self) -> Result<(), Error> {
+        self.skip_type_script_object_type_impl::<false>(&mut ObjectTypeShape::default())
+    }
+
+    /// `shape` is only written when `SOUND`.
+    fn skip_type_script_object_type_impl<const SOUND: bool>(
+        &mut self,
+        shape: &mut ObjectTypeShape,
+    ) -> Result<(), Error> {
         self.mark_type_script_only();
 
         self.lexer.expect(T::TOpenBrace)?;
@@ -1035,10 +1239,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Skip over modifiers and the property identifier
             let mut found_key = false;
+            // The last token of the run is the key. A string key is never one
+            // that primitives have; strings have numeric ones.
+            let mut sound_key: &'a [u8] = b"";
+            // The key, if it is one that `object.key` names.
+            let mut sound_member: Option<&'a [u8]> = None;
+            let mut sound_is_optional = false;
             while self.lexer.is_identifier_or_keyword()
                 || self.lexer.token == T::TStringLiteral
                 || self.lexer.token == T::TNumericLiteral
             {
+                if SOUND {
+                    sound_key = match self.lexer.token {
+                        T::TStringLiteral => b"",
+                        T::TNumericLiteral => b"length",
+                        _ => self.lexer.identifier,
+                    };
+                    sound_member = (self.lexer.token != T::TStringLiteral
+                        && self.lexer.token != T::TNumericLiteral)
+                        .then_some(self.lexer.identifier);
+                }
                 self.lexer.next()?;
                 found_key = true;
             }
@@ -1061,6 +1281,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     T::TIn => {
                         self.lexer.next()?;
+                        if SOUND && self.lexer.is_contextual_keyword(b"keyof") {
+                            shape.is_homomorphic_mapped_type = true;
+                        }
                         self.skip_type_script_type(Level::Lowest)?;
                         if self.lexer.is_contextual_keyword(b"as") {
                             // "{ [K in keyof T as `get-${K}`]: T[K] }"
@@ -1072,6 +1295,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 self.lexer.expect(T::TCloseBracket)?;
+                if SOUND {
+                    sound_key = b"";
+                    sound_member = None;
+                }
 
                 // "{ [K in keyof T]+?: T[K] }"
                 // "{ [K in keyof T]-?: T[K] }"
@@ -1090,12 +1317,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if found_key
                 && (self.lexer.token == T::TQuestion || self.lexer.token == T::TExclamation)
             {
+                sound_is_optional = true;
                 self.lexer.next()?;
             }
 
             // Type parameters come right after the optional mark
             let _ =
                 self.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
+
+            if SOUND {
+                if self.lexer.token == T::TOpenParen && (!found_key || sound_key == b"new") {
+                    shape.has_call_signature = true;
+                } else {
+                    shape.add_member(sound_key);
+                }
+            }
 
             match self.lexer.token {
                 T::TColon => {
@@ -1105,7 +1341,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     self.lexer.next()?;
-                    self.skip_type_script_type(Level::Lowest)?;
+                    if SOUND && let Some(member) = sound_member {
+                        let mut ty = self.skip_type_script_type_sound(Level::Lowest, None)?;
+                        let types = &mut self.sound().types;
+                        if sound_is_optional {
+                            ty = types.optional(ty);
+                        }
+                        if !ty.is_top() {
+                            let member = types.intern(member);
+                            shape.members.push((member, ty));
+                        }
+                    } else {
+                        self.skip_type_script_type(Level::Lowest)?;
+                    }
                 }
                 T::TOpenParen => {
                     // Method signature
@@ -1113,7 +1361,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     if self.lexer.token == T::TColon {
                         self.lexer.next()?;
-                        self.skip_typescript_return_type()?;
+                        if SOUND
+                            && !sound_is_optional
+                            && let Some(member) = sound_member
+                        {
+                            let returns = self.skip_typescript_return_type_sound(None)?;
+                            let types = &mut self.sound().types;
+                            let ty = types.function(returns);
+                            let member = types.intern(member);
+                            shape.members.push((member, ty));
+                        } else {
+                            self.skip_typescript_return_type()?;
+                        }
                     }
                 }
                 _ => {
@@ -1261,7 +1520,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // expectIdentifier => Mandatory identifier (e.g. after "type Foo <in ___")
             // !expectIdentifier => Optional identifier (e.g. after "type Foo <out ___" since "out" may be the identifier)
             if expect_identifier || self.lexer.token == T::TIdentifier {
+                if self.sound_types_enabled() && self.lexer.token == T::TIdentifier {
+                    let name = self.lexer.identifier;
+                    self.sound().types.declare_type_parameter(name);
+                }
                 self.lexer.expect(T::TIdentifier)?;
+            } else if self.sound_types_enabled() {
+                self.sound().types.declare_type_parameter(b"out");
             }
 
             // "class Foo<T extends number> {}"
@@ -1304,9 +1569,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // "export type {foo}"
                     // "export type {foo} from 'bar'"
                     let _ = self.parse_export_clause()?;
+                    let mut path = None;
                     if self.lexer.is_contextual_keyword(b"from") {
                         self.lexer.next()?;
-                        let _ = self.parse_path()?;
+                        path = Some(self.parse_path()?.text);
+                    }
+                    if self.sound_types_enabled() {
+                        self.sound_declare_exports(path);
                     }
                     self.lexer.expect_or_insert_semicolon()?;
                     return Ok(());
@@ -1316,14 +1585,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // - export type * as Foo from 'bar';
                     // - export type Foo from 'bar';
                     self.lexer.next()?;
+                    let mut alias = None;
                     if self.lexer.is_contextual_keyword(b"as") {
                         // "export type * as ns from 'path'"
                         self.lexer.next()?;
-                        let _ = self.parse_clause_alias(b"export")?;
+                        alias = Some(self.parse_clause_alias(b"export")?);
                         self.lexer.next()?;
                     }
                     self.lexer.expect_contextual_keyword(b"from")?;
-                    let _ = self.parse_path()?;
+                    let path = self.parse_path()?;
+                    if self.sound_types_enabled() {
+                        self.sound_declare_export_star(path.text, alias);
+                    }
                     self.lexer.expect_or_insert_semicolon()?;
                     return Ok(());
                 }
@@ -1344,7 +1617,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )?;
 
         self.lexer.expect(T::TEquals)?;
-        self.skip_type_script_type(Level::Lowest)?;
+        if self.sound_types_enabled() {
+            let ty = self.skip_type_script_type_sound(Level::Lowest, None)?;
+            self.sound_declare_type(name, DeclKind::Alias, ty, opts.is_export);
+        } else {
+            self.skip_type_script_type(Level::Lowest)?;
+        }
         self.lexer.expect_or_insert_semicolon()?;
         Ok(())
     }
@@ -1388,15 +1666,40 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        self.skip_type_script_object_type()?;
+        if self.sound_types_enabled() {
+            let mut shape = ObjectTypeShape::default();
+            self.skip_type_script_object_type_impl::<true>(&mut shape)?;
+            let base = SoundType::from_mask(shape.interface_mask());
+            let ty = self.sound().types.object(base, shape.members);
+            self.sound_declare_type(name, DeclKind::Interface, ty, opts.is_export);
+        } else {
+            self.skip_type_script_object_type()?;
+        }
         Ok(())
     }
 
+    #[inline]
     pub(crate) fn skip_type_script_type_arguments<
         const IS_INSIDE_JSX_ELEMENT: bool,
         const IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION: bool,
     >(
         &mut self,
+    ) -> Result<bool, Error> {
+        self.skip_type_script_type_arguments_impl::<
+            IS_INSIDE_JSX_ELEMENT,
+            IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION,
+            false,
+        >(&mut SoundType::default())
+    }
+
+    /// `first` is only written when `SOUND`.
+    fn skip_type_script_type_arguments_impl<
+        const IS_INSIDE_JSX_ELEMENT: bool,
+        const IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION: bool,
+        const SOUND: bool,
+    >(
+        &mut self,
+        first: &mut SoundType,
     ) -> Result<bool, Error> {
         self.mark_type_script_only();
         match self.lexer.token {
@@ -1411,8 +1714,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         self.lexer.expect_less_than::<false>()?;
 
+        let mut is_first = true;
         loop {
-            self.skip_type_script_type(Level::Lowest)?;
+            if SOUND && is_first {
+                *first = self.skip_type_script_type_sound(Level::Lowest, None)?;
+            } else {
+                self.skip_type_script_type(Level::Lowest)?;
+            }
+            is_first = false;
             if self.lexer.token != T::TComma {
                 break;
             }
@@ -1558,7 +1867,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         self.lexer.expect(T::TColon)?;
 
-        self.skip_typescript_return_type()?;
+        if self.sound_types_enabled() {
+            let ty = self.skip_typescript_return_type_sound(None)?;
+            self.sound().arrow_return = ty;
+        } else {
+            self.skip_typescript_return_type()?;
+        }
         // Check the token after this and backtrack if it's the wrong one
         if self.lexer.token != T::TEqualsGreaterThan {
             return Err(crate::Error::Backtrack);

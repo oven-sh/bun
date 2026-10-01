@@ -31,10 +31,9 @@ using namespace WebCore;
 
 namespace Zig {
 
-static ImplementationVisibility getImplementationVisibility(JSC::CodeBlock* codeBlock)
+static ImplementationVisibility getImplementationVisibility(JSC::ScriptExecutable* executable)
 {
-
-    if (auto* executable = codeBlock->ownerExecutable()) {
+    if (executable) {
         return executable->implementationVisibility();
     }
 
@@ -53,8 +52,8 @@ bool isImplementationVisibilityPrivate(JSC::StackVisitor& visitor)
             }
         }
 
-        if (auto* codeBlock = visitor->codeBlock()) {
-            return getImplementationVisibility(codeBlock);
+        if (visitor->hasCode()) {
+            return getImplementationVisibility(visitor->ownerExecutable());
         }
 
 #if ENABLE(WEBASSEMBLY)
@@ -84,8 +83,8 @@ bool isImplementationVisibilityPrivate(const JSC::StackFrame& frame)
             }
         }
 
-        if (auto* codeBlock = frame.codeBlock()) {
-            return getImplementationVisibility(codeBlock);
+        if (frame.hasLineAndColumnInfo()) {
+            return getImplementationVisibility(frame.ownerExecutable());
         }
 
         return ImplementationVisibility::Public;
@@ -167,6 +166,13 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
         if (frame.callee() == callerObject) {
             removeCount = i + 1;
             break;
+        }
+        // A frame of compiled code may have no callee: then the realm has one closure of the function.
+        if (!frame.callee() && frame.hasLineAndColumnInfo()) {
+            if (auto* callerFunction = dynamicDowncast<JSC::JSFunction>(callerObject); callerFunction && callerFunction->executable() == frame.ownerExecutable()) {
+                removeCount = i + 1;
+                break;
+            }
         }
         if (!callerName.isEmpty()) {
             WTF::String frameName = Zig::functionName(vm, frame, nullptr);
@@ -273,6 +279,13 @@ ALWAYS_INLINE String JSCStackFrame::retrieveSourceURL()
 
     if (m_isWasmFrame) {
         return String(sourceURLWasmString);
+    }
+
+    if (m_codeBlock && hasBytecodeIndex()) {
+        if (auto function = JSC::AOT::FunctionRef::of(m_codeBlock)) {
+            if (auto position = function.reportedPositionFor(m_bytecodeIndex); position && position->source)
+                return JSC::StaticHeap::nameOfSource(position->source);
+        }
     }
 
     auto url = Zig::sourceURL(m_codeBlock);
@@ -411,7 +424,12 @@ String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame)
         return "[native code]"_s;
     }
 
-    return sourceURL(frame.codeBlock());
+    // Code that was compiled ahead of time may say where it is in the sources the executable was made from.
+    if (auto position = frame.reportedPosition(); position && position->source)
+        return JSC::StaticHeap::nameOfSource(position->source);
+
+    auto* executable = frame.ownerExecutable();
+    return executable ? sourceURL(executable->source()) : String();
 }
 
 String sourceURL(JSC::StackVisitor& visitor)
@@ -444,9 +462,11 @@ String sourceURL(JSC::VM& vm, JSC::JSFunction* function)
 
 String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock)
 {
-    auto codeType = codeBlock->codeType();
+    return functionName(vm, codeBlock->codeType(), codeBlock->ownerExecutable());
+}
 
-    auto* executable = codeBlock->ownerExecutable();
+String functionName(JSC::VM& vm, JSC::CodeType codeType, JSC::ScriptExecutable* executable)
+{
     if (!executable) {
         return String();
     }
@@ -513,12 +533,11 @@ String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* fla
     JSC::JSObject* callee = frame.callee() ? frame.callee()->getObject() : nullptr;
 
     if (frame.hasLineAndColumnInfo()) {
-        auto* codeblock = frame.codeBlock();
-        if (codeblock->isConstructor()) {
+        if (frame.isConstructor()) {
             isConstructor = true;
         }
 
-        auto codeType = codeblock->codeType();
+        auto codeType = frame.codeType();
         switch (codeType) {
         case JSC::CodeType::FunctionCode:
         case JSC::CodeType::EvalCode: {
@@ -531,10 +550,9 @@ String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* fla
             }
             if (callee) {
                 functionName = Zig::functionName(vm, callee);
-
-                if (flags && codeblock->unlinkedCodeBlock()->isBuiltinFunction()) {
-                    *flags |= static_cast<unsigned int>(FunctionNameFlags::Builtin);
-                }
+            }
+            if (flags && frame.isBuiltinFunction()) {
+                *flags |= static_cast<unsigned int>(FunctionNameFlags::Builtin);
             }
             break;
         }
@@ -544,7 +562,7 @@ String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* fla
         }
 
         if (functionName.isEmpty()) {
-            functionName = Zig::functionName(vm, codeblock);
+            functionName = Zig::functionName(vm, codeType, frame.ownerExecutable());
         }
     } else if (callee) {
         functionName = Zig::functionName(vm, callee);

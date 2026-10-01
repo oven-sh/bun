@@ -14,8 +14,9 @@ pub(crate) fn compute_cross_chunk_dependencies(
     c: &mut LinkerContext,
     chunks: &mut [Chunk],
 ) -> Result<(), bun_alloc::AllocError> {
-    if !c.graph.code_splitting {
-        // No need to compute cross-chunk dependencies if there can't be any
+    // No need to compute cross-chunk dependencies if there can't be any. `walk` also computes `Symbol::escapes`,
+    // which `ModuleInfo::bindings` needs.
+    if !c.graph.code_splitting && !c.options.generates_module_info() {
         return Ok(());
     }
 
@@ -78,6 +79,10 @@ pub(crate) fn compute_cross_chunk_dependencies(
         for (idx, chunk) in chunks.iter_mut().enumerate() {
             cross_chunk_dependencies.walk(chunk, idx);
         }
+    }
+
+    if !c.graph.code_splitting {
+        return Ok(());
     }
 
     compute_cross_chunk_dependencies_with_chunk_metas(c, chunks, &mut chunk_metas)
@@ -201,14 +206,18 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                 // the same name should already be marked as all being in a single
                 // chunk. In that case this will overwrite the same value below which
                 // is fine.
-                symbols.assign_chunk_index(&part.declared_symbols, chunk_index as u32);
+                // (Without code splitting a file can be in several chunks, each with a copy of its symbols.)
+                if ctx.graph.code_splitting {
+                    symbols.assign_chunk_index(&part.declared_symbols, chunk_index as u32);
+                }
 
                 let used_refs = part.symbol_uses.keys();
+                let uses = part.symbol_uses.values();
 
                 // Record each symbol used in this part. This will later be matched up
                 // with our map of which chunk a given symbol is declared in to
                 // determine if the symbol needs to be imported from another chunk.
-                'refs: for &ref_ in used_refs {
+                'refs: for (&ref_, use_) in used_refs.iter().zip(uses) {
                     let ref_to_use = {
                         let mut ref_to_use = ref_;
                         let mut symbol = symbols.get_const(ref_to_use).unwrap();
@@ -232,6 +241,10 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                             // The only internal symbol that wrapped CommonJS files export
                             // is the wrapper itself.
                             continue 'refs;
+                        }
+
+                        if use_.is_more_than_called() {
+                            symbols.note_escape(ref_to_use);
                         }
 
                         // If this is an ES6 import from a CommonJS file, it will become a
@@ -264,6 +277,13 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
             }
         }
 
+        // Code run by direct eval can refer to anything that the chunk imports.
+        if crate::linker_context::post_process_js_chunk::chunk_has_direct_eval(ctx, chunk) {
+            for &ref_ in chunk_meta.imports.keys() {
+                symbols.note_visible_from_outside(ref_);
+            }
+        }
+
         // Include the exports if this is an entry point chunk
         if matches!(chunk.content, chunk::Content::Javascript(_)) {
             if chunk.entry_point.is_entry_point() {
@@ -292,6 +312,9 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                         {
                             target_ref = import_data.data.import_ref;
                         }
+
+                        // It is reachable through the entry point's exports.
+                        symbols.note_visible_from_outside(target_ref);
 
                         // If this is an ES6 import from a CommonJS file, it will become a
                         // property access off the namespace symbol instead of a bare

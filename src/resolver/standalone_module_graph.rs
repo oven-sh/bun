@@ -139,6 +139,27 @@ pub trait StandaloneModuleGraph: Send + Sync {
     ) -> Option<(*const [u8], [u32; LINKED_BYTECODE_REGION_COUNT])> {
         None
     }
+    /// Machine code for the executable's functions (`JSC::AOT::Image`, built with `--compile-aot`); empty when it has
+    /// none.
+    fn aot_image(&self) -> &'static [u8] {
+        &[]
+    }
+    /// `bun run --aot`: the program runs under `bun`, next to its sources, and sees their paths.
+    fn preserves_source_paths(&self) -> bool {
+        false
+    }
+    /// With `preserves_source_paths`: the path of the source file of the entry point `name`.
+    fn source_path(&self, _name: &[u8]) -> Option<&'static [u8]> {
+        None
+    }
+    /// The reverse: the name of the entry point whose source file is `source_path`.
+    fn find_by_source_path(&self, _source_path: &[u8]) -> Option<&'static [u8]> {
+        None
+    }
+    /// The file `aot_image` is mapped from and where in that file it starts. `None`: the executable's own file.
+    fn aot_image_file(&self) -> Option<(i32, i64)> {
+        None
+    }
     /// The path of every file, and the path every module's bytecode is keyed on.
     fn for_each_path(&self, _each: &mut dyn FnMut(&'static [u8])) {}
     /// Every module that has bytecode (`BUN_BYTECODE_ORDER_OUT`, `BUN_BYTECODE_DIGEST_OUT`).

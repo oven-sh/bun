@@ -193,6 +193,11 @@ bun build <entry points>
   Prepend arguments to the standalone executable’s <code>execArgv</code>
 </ParamField>
 
+<ParamField path="--compile-aot" type="boolean">
+  Compile JavaScript to machine code when the executable is built. Implies <code>--bytecode</code> and{" "}
+  <code>--format=esm</code>
+</ParamField>
+
 <ParamField path="--compile-jit-policy" type="number" default="1">
   JIT tier-up threshold scale the executable starts with; <code>1</code> is the normal JIT policy. See
   <code>Bun.unsafe.setJITPolicy</code>

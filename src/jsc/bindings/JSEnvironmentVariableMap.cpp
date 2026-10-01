@@ -161,10 +161,21 @@ static void applyTLSRejectEnvValue(JSGlobalObject* globalObject, JSC::JSString* 
     applyTLSRejectFromString(globalObject, view->toString());
 }
 
+// process.env is read far more than it is changed, and has enough properties to be a dictionary from the start; after
+// one delete, one that nothing can cache a read of, or the absence of a variable in. So every change ends with an
+// ordinary structure again. (The next change moves the object to another structure, so what was cached for this one holds.)
+static void settleStructureAfterChange(VM& vm, JSCell* cell)
+{
+    auto* object = asObject(cell);
+    if (object->structure()->isDictionary())
+        object->flattenDictionaryObject(vm);
+}
+
 bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    auto settle = makeScopeExit([&] { settleStructureAfterChange(vm, cell); });
 
     // A write to an object that merely inherits from process.env is that
     // object's: an ordinary set, with the value as given, that changes nothing
@@ -235,6 +246,7 @@ bool JSEnvironmentVariableMap::defineOwnProperty(JSObject* object, JSGlobalObjec
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    auto settle = makeScopeExit([&] { settleStructureAfterChange(vm, object); });
 
     if (descriptor.isAccessorDescriptor()) {
         throwError(globalObject, scope, ErrorCode::ERR_INVALID_OBJECT_DEFINE_PROPERTY, "'process.env' does not accept an accessor(getter/setter) descriptor"_s);
@@ -328,6 +340,7 @@ bool JSEnvironmentVariableMap::deleteProperty(JSCell* cell, JSGlobalObject* glob
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    auto settle = makeScopeExit([&] { settleStructureAfterChange(vm, cell); });
 
     // Node's RealEnvStore::Delete resets Date caches for TZ; without this, delete drops
     // the CustomAccessor and existing Dates keep the old offset. put() handles re-set.
@@ -1105,6 +1118,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 
     RELEASE_AND_RETURN(scope, result);
 #else
+    settleStructureAfterChange(vm, object);
     return object;
 #endif
 }

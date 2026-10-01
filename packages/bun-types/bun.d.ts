@@ -3033,6 +3033,15 @@ declare module "bun" {
     deadCodeElimination?: boolean;
 
     /**
+     * Check TypeScript annotations at runtime with the `$$t` intrinsic.
+     * See {@link BuildConfig.soundTypes}.
+     *
+     * @default false
+     * @experimental
+     */
+    soundTypes?: boolean | "basic" | "full" | "infer";
+
+    /**
      * This does two things:
      * 1. `const` declarations to primitive types (excluding Object/Array) at the top of a scope before any `let` or `var` declarations are inlined into their usages.
      * 2. `let` and `const` declarations only used once are inlined into their usages.
@@ -3568,6 +3577,27 @@ declare module "bun" {
     reactCompilerOutputMode?: "client" | "ssr";
 
     /**
+     * Check TypeScript annotations at runtime.
+     *
+     * Annotations that map to a runtime tag (`number`, `string[]`,
+     * `() => void`, `Foo | null`, ...) are lowered to calls of the `$$t`
+     * intrinsic, which throws a `TypeError` when the value does not have one
+     * of the expected tags. Annotations that cannot be checked are erased.
+     *
+     * - `true` or `"basic"`: parameters, return values, typed variables,
+     *   `as` casts and stores to typed class fields.
+     * - `"full"`: also `!` assertions, reads of typed class fields through
+     *   `this`, and the results of calls to functions in the same file.
+     * - `"infer"`: also what TypeScript infers without an annotation: reads of
+     *   members and elements whose type is a primitive or a typed array, the
+     *   results of typed methods, and variables initialized with those.
+     *
+     * @default false
+     * @experimental
+     */
+    soundTypes?: boolean | "basic" | "full" | "infer";
+
+    /**
      * A map of file paths to their contents for in-memory bundling.
      *
      * Use this to bundle virtual files that don't exist on disk, or override
@@ -3746,6 +3776,27 @@ declare module "bun" {
      * @default false
      */
     autoloadPackageJson?: boolean;
+    /**
+     * Compile the bundle's JavaScript to machine code when the executable is built,
+     * instead of when it runs. Implies `bytecode: true`.
+     *
+     * The executable runs with the JIT off. Code the build cannot see, such as
+     * `eval` and `new Function`, is interpreted.
+     *
+     * Built-in objects are immutable in the executable: assigning to an existing
+     * property of one, such as `Array.prototype.push` or `Math.random`, throws a
+     * `TypeError` in strict mode and does nothing in sloppy mode. `bun:ffi` and the
+     * debugger are not available.
+     *
+     * Requires `format: "esm"` (the default with `aot`), and a `target` that is the
+     * platform and version of Bun that runs the build. Supported on arm64 macOS.
+     * `Bun.build` throws when it cannot compile ahead of time.
+     *
+     * Equivalent CLI flag: `--compile-aot`
+     *
+     * @default false
+     */
+    aot?: boolean;
     /**
      * Profile-guided layout for the executable's bytecode. Requires `bytecode: true`.
      *

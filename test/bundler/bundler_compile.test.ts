@@ -251,6 +251,28 @@ describe("bundler", () => {
       stdout: "value: 99",
     },
     {
+      // The entry point has no `await` of its own. Its dependency is also imported
+      // dynamically and depends on a module with top-level await, so it is wrapped in an
+      // async initializer, and the linker puts `await init_dep()` at the top level of
+      // the chunk. The chunk's module record must say that it is an async module, or
+      // nothing after that statement ever runs.
+      name: "AwaitOfWrappedAsyncDependency",
+      files: {
+        "/entry.ts": `
+          import { value } from "./dep.ts";
+          console.log("body ran:", value);
+          import("./dep.ts").then(({ other }) => console.log(other()));
+        `,
+        "/dep.ts": `
+          import { late } from "./tla.ts";
+          export const value = late;
+          export function other() { return 2; }
+        `,
+        "/tla.ts": `export const late = await Promise.resolve(1);`,
+      },
+      stdout: "body ran: 1\n2",
+    },
+    {
       // Multiple dynamic imports: several separate modules in the graph,
       // each with its own bytecode + ModuleInfo.
       name: "MultipleDynamicImports",

@@ -347,6 +347,7 @@ pub(crate) fn lower_expression(
         Data::EMissing(_) => Err(todo_err("EMissing", loc)),
         Data::ECommonjsExportIdentifier(_) => Err(todo_err("ECommonjsExportIdentifier", loc)),
         Data::ENameOfSymbol(_) => Err(todo_err("ENameOfSymbol", loc)),
+        Data::ETypeCheck(_) => Err(todo_err("ETypeCheck", loc)),
     }
 }
 

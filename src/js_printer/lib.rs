@@ -489,6 +489,9 @@ pub mod analyze_transpiled_module {
         record_kinds: Vec<RecordKind>,
         pub flags: Flags,
         exported_names: HashMap<StringID, ()>,
+        /// Of a chunk: the variables at the top of it, and what the linker knows of each
+        /// (`bun_bundler::prelinked_module_graph::binding_flags`). Only the pre-linked module graph has them.
+        pub bindings: Vec<(StringID, u32)>,
         pub finalized: bool,
     }
 
@@ -509,6 +512,7 @@ pub mod analyze_transpiled_module {
                     ..Flags::default()
                 },
                 exported_names: HashMap::default(),
+                bindings: Vec::new(),
                 finalized: false,
             }
         }
@@ -1399,6 +1403,11 @@ pub struct Options<'a> {
     pub line_offset_tables: Option<&'a SourceMap::line_offset_table::List<bun_alloc::AstAlloc>>,
 
     pub mangled_props: Option<&'a crate::MangledProps>,
+
+    /// The type tags of the file being printed: sorted pairs of an anchor (a byte offset in the source that
+    /// identifies a construct, such as the start of a property name or the brace of a literal) and a type number.
+    /// The number is printed directly before the token, for an engine that understands it (`print_type_tag`).
+    pub type_tags: Option<&'static [(u32, u32)]>,
 }
 
 impl<'a> Options<'a> {
@@ -1454,6 +1463,7 @@ impl<'a> Default for Options<'a> {
             has_dynamic_import_items: false,
             line_offset_tables: None,
             mangled_props: None,
+            type_tags: None,
         }
     }
 }
@@ -2443,6 +2453,27 @@ pub(crate) mod __gated_printer {
         }
 
         #[inline]
+        /// A byte with the value 1, then six characters that each encode six bits of the number, highest first. This is
+        /// not JavaScript syntax: JavaScriptCore applies it to the next token (`Options::useTypeTags()`).
+        pub(crate) fn print_type_tag(&mut self, anchor: bun_ast::Loc) {
+            let Some(tags) = self.options.type_tags else {
+                return;
+            };
+            let Ok(anchor) = u32::try_from(anchor.start) else {
+                return;
+            };
+            let Ok(index) = tags.binary_search_by_key(&anchor, |entry| entry.0) else {
+                return;
+            };
+            const DIGITS: &[u8; 64] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_$";
+            let tag = tags[index].1;
+            let mut text = [1u8; 7];
+            for (i, digit) in text[1..].iter_mut().enumerate() {
+                *digit = DIGITS[(u64::from(tag) >> (6 * (5 - i)) & 63) as usize];
+            }
+            self.print(&text);
+        }
+
         pub(crate) fn add_source_mapping(&mut self, location: bun_ast::Loc) {
             if !GENERATE_SOURCE_MAP {
                 return;
@@ -2540,6 +2571,7 @@ pub(crate) mod __gated_printer {
 
             self.print_space();
 
+            self.print_type_tag(class.body_loc);
             self.add_source_mapping(class.body_loc);
             self.print(b"{");
             self.print_newline();
@@ -3715,6 +3747,7 @@ pub(crate) mod __gated_printer {
                             self.print(b".");
                         }
 
+                        self.print_type_tag(e.name_loc);
                         self.add_source_mapping(e.name_loc);
                         self.print_identifier(&e.name);
                     } else {
@@ -3957,6 +3990,9 @@ pub(crate) mod __gated_printer {
 
                     if wrap {
                         self.print(b"(");
+                    }
+                    if !IS_JSON {
+                        self.print_type_tag(expr.loc);
                     }
                     self.add_source_mapping(expr.loc);
                     self.print(b"{");
@@ -4539,6 +4575,8 @@ pub(crate) mod __gated_printer {
                         self.print(b" */");
                     }
                 }
+                // The visit pass replaces these; an AST printed without one has no checks.
+                ExprData::ETypeCheck(e) => self.print_expr(e.value, level, flags),
                 ExprData::ENameOfSymbol(e) => {
                     let name = self.mangled_prop_name(e.ref_);
                     self.add_source_mapping_for_name(expr.loc, name, e.ref_);
@@ -4851,6 +4889,7 @@ pub(crate) mod __gated_printer {
                 // Vec is not Copy — re-slice instead of move.
                 ts_decorators: bun_alloc::AstAlloc::vec(),
                 ts_metadata: Default::default(),
+                sound_type: Default::default(),
             };
             if !IS_JSON {
                 if item.kind == G::PropertyKind::Spread {
@@ -5278,6 +5317,7 @@ pub(crate) mod __gated_printer {
 
                                         if str.is_utf8() {
                                             self.print_space_before_identifier();
+                                            self.print_type_tag(property.key.loc);
                                             if lexer::is_identifier(str.slice8()) {
                                                 self.print_identifier(str.slice8());
 

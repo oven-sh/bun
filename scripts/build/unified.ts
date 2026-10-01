@@ -51,6 +51,9 @@ const noUnify: readonly string[] = [
   // Heavy single-file TUs that already saturate a core. Bundling them with
   // siblings would serialize work that should run in parallel.
   "src/jsc/bindings/ZigGlobalObject.cpp",
+  // Objects of their own: an executable is linked with one or the other (with or without JavaScriptCore's compilers).
+  "src/jsc/bindings/BunCompilers.cpp",
+  "src/jsc/bindings/BunCompilersRegExpOnly.cpp",
   "src/jsc/bindings/BunObject.cpp",
   "src/jsc/bindings/bindings.cpp",
   "src/jsc/bindings/BunProcess.cpp",

@@ -1742,7 +1742,8 @@ impl TestCommand {
             core::sync::atomic::Ordering::Relaxed,
         );
 
-        if !ctx.test_options.test_worker {
+        // (With `--aot-graph-fd`, this process already printed it before it replaced itself.)
+        if !ctx.test_options.test_worker && ctx.runtime_options.aot_graph_fd.is_none() {
             // print the version so you know its doing stuff if it takes a sec
             let w = Output::writer();
             let colors = Output::enable_ansi_colors_stdout();
@@ -1777,8 +1778,12 @@ impl TestCommand {
         // `exec()` never returns before process exit, so the heap allocation
         // outlives all observers.
         let mut env_loader: Box<DotEnv::Loader> = Box::new(DotEnv::Loader::init());
+        // `bun test --aot`: see `cli::aot`.
+        let aot_graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph> =
+            crate::cli::aot::graph(ctx)?.map(|graph| crate::cli::aot::as_dyn(graph));
         jsc::initialize(jsc::InitializeOptions {
             short_lived_globals: ctx.test_options.isolate,
+            use_aot: aot_graph.is_some_and(|graph| !graph.aot_image().is_empty()),
             ..Default::default()
         });
         bun_http::http_thread::init(&Default::default());
@@ -1929,11 +1934,13 @@ impl TestCommand {
                 debugger: core::mem::take(&mut ctx.runtime_options.debugger),
                 log: core::ptr::NonNull::new(ctx.log),
                 env_loader: core::ptr::NonNull::new(&raw mut *env_loader),
+                graph: aot_graph,
                 smol: ctx.runtime_options.smol,
                 is_main_thread: true,
                 ..Default::default()
             })?
         };
+        vm.transpiler.resolver.standalone_module_graph = aot_graph;
         vm.argv = core::mem::take(&mut ctx.passthrough);
         // Clone (not take): build_worker_argv reads ctx.preloads to forward --preload.
         vm.preload = ctx.preloads.clone();
@@ -2323,6 +2330,11 @@ impl TestCommand {
 
         let mut coverage_options: CodeCoverageOptions = ctx.test_options.coverage.clone();
         let mut ran_parallel = false;
+
+        if ctx.runtime_options.aot && aot_graph.is_none() && !test_files.is_empty() {
+            let entry_points: Vec<&[u8]> = test_files.iter().map(|file| file.as_bytes()).collect();
+            crate::cli::aot::exec_build(ctx, &entry_points, true);
+        }
 
         if !test_files.is_empty() {
             // Randomize the order of test files if --randomize flag is set
@@ -2920,7 +2932,12 @@ impl TestCommand {
             }
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
-            let promise = vm.load_entry_point_for_test_runner(file_path)?;
+            // `bun test --aot`: the file was compiled, and is in the graph under another name.
+            let promise = vm.load_entry_point_for_test_runner(
+                vm.standalone_module_graph
+                    .and_then(|graph| graph.find_by_source_path(file_path))
+                    .unwrap_or(file_path),
+            )?;
             // Only count the file once, not once per repeat
             if repeat_index == 0 {
                 reporter.summary().files += 1;

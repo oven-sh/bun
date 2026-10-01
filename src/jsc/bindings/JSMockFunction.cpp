@@ -1532,6 +1532,13 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
     bool hasValue = object->getPropertySlot(globalObject, propertyKey, slot);
     RETURN_IF_EXCEPTION(scope, {});
 
+    // Ahead-of-time compiled code calls the built-in it names without looking it up, so a spy would be seen by some callers only.
+    // (The bit: it is the realm that made the property read-only, JSObject::makePropertiesImmutable(), and not Object.freeze().)
+    if (hasValue && slot.slotBase() == object && object->structure()->inheritorsMayOverrideReadOnlyProperties() && (slot.attributes() & PropertyAttribute::ReadOnly) && (slot.attributes() & PropertyAttribute::DontDelete)) {
+        throwTypeError(globalObject, scope, makeString("Cannot spy on `"_s, String(propertyKey.uid()), "`: built-in objects are immutable in ahead-of-time compiled programs"_s));
+        return {};
+    }
+
     // easymode: regular property or missing property
     if (!hasValue || slot.isValue()) {
         JSValue value = jsUndefined();

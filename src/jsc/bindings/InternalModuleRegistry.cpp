@@ -23,6 +23,7 @@
 #include <JavaScriptCore/CachedTypes.h>
 #include <JavaScriptCore/CodeCache.h>
 #include <JavaScriptCore/ParserError.h>
+#include <JavaScriptCore/StaticHeap.h>
 
 // A `bun build --compile` executable may carry ahead-of-time bytecode for the internal modules the app uses
 // (StandaloneModuleGraph, Flags::HAS_BUILTIN_BYTECODE); those bytes live in the executable for the life of the process.
@@ -109,22 +110,29 @@ JSC::JSValue generateInternalModule(JSC::JSGlobalObject* globalObject, JSC::VM& 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     const auto& m = internalModuleRecord(id);
     String moduleName = internalModuleString(m.nameOffset, m.nameLength);
-    SourceCode source = makeInternalModuleSource(internalModuleSource(id), moduleName, internalModuleString(m.urlOffset, m.urlLength));
-    maybeAddCodeCoverage(vm, source);
-
-    UnlinkedFunctionExecutable* executable = nullptr;
     const uint8_t* cachedBytes = nullptr;
     size_t cachedSize = 0;
     uint32_t cachedEntryOffset = 0;
-    if (Bun__standaloneInternalModuleBytecode(::bunVM(globalObject), id, &cachedBytes, &cachedSize, &cachedEntryOffset)) {
+    bool hasBytecode = Bun__standaloneInternalModuleBytecode(::bunVM(globalObject), id, &cachedBytes, &cachedSize, &cachedEntryOffset);
+    // What the executable's build made ahead of time may have the function itself, with nothing left to decode.
+    FunctionExecutable* linked = hasBytecode
+        ? JSC::StaticHeap::builtinFunctionFor(globalObject, cachedEntryOffset, bun_internal_modules_header.sourceStamp, internalModuleSource(id), SourceOrigin(WTF::URL(internalModuleString(m.urlOffset, m.urlLength))), moduleName)
+        : nullptr;
+    SourceCode source = linked ? SourceCode { Ref { *linked->source().provider() } } : makeInternalModuleSource(internalModuleSource(id), moduleName, internalModuleString(m.urlOffset, m.urlLength));
+    maybeAddCodeCoverage(vm, source);
+
+    UnlinkedFunctionExecutable* executable = nullptr;
+    if (linked)
+        s_internalModulesFromBytecode.fetch_add(1, std::memory_order_relaxed);
+    else if (hasBytecode) {
         executable = JSC::decodeBuiltinFunction(vm, embeddedBytecode({ const_cast<uint8_t*>(cachedBytes), cachedSize }, cachedEntryOffset), *source.provider(), bun_internal_modules_header.sourceStamp);
         if (executable)
             s_internalModulesFromBytecode.fetch_add(1, std::memory_order_relaxed);
     }
-    if (!executable)
+    if (!executable && !linked)
         executable = createInternalModuleExecutable(vm, source, moduleName);
 
-    JSFunction* func = JSFunction::create(vm, globalObject, executable->link(vm, nullptr, source), static_cast<JSC::JSGlobalObject*>(globalObject));
+    JSFunction* func = JSFunction::create(vm, globalObject, linked ? linked : executable->link(vm, nullptr, source), static_cast<JSC::JSGlobalObject*>(globalObject));
 
     RETURN_IF_EXCEPTION(throwScope, {});
     if (globalObject->hasDebugger() && globalObject->debugger()->isInteractivelyDebugging()) [[unlikely]] {

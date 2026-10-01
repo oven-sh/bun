@@ -177,6 +177,9 @@ pub mod Runtime {
         /// Test-only: have the React Compiler read leading `// @key value`
         /// fixture pragmas from the source. Set by the fixture runner.
         pub react_compiler_parse_test_pragmas: bool,
+        /// Lower TypeScript annotations to `$$t(value, mask)` runtime checks.
+        /// See `bun_ast::sound_types`.
+        pub sound_types: bun_ast::sound_types::Level,
         /// `hot_module_reloading` is specific to if we are using bun.bake.DevServer.
         /// It can be enabled on the command line with --format=internal_bake_dev
         ///
@@ -278,6 +281,7 @@ pub mod Runtime {
                 react_fast_refresh: false,
                 react_compiler: ReactCompilerMode::Disabled,
                 react_compiler_parse_test_pragmas: false,
+                sound_types: bun_ast::sound_types::Level::Off,
                 hot_module_reloading: false,
                 server_components: ServerComponentsMode::None,
                 is_macro_runtime: false,
@@ -384,6 +388,10 @@ pub mod Runtime {
             // `bool: NoUninit`, `u8: AnyBitPattern` → `cast_slice` is statically sound.
             hasher.update(bytemuck::cast_slice::<bool, u8>(&bools));
             hasher.update(&[self.react_compiler as u8]);
+            if self.sound_types.is_enabled() {
+                hasher.update(b"sound_types");
+                hasher.update(&[self.sound_types as u8]);
+            }
 
             // Hash --feature flags. These directly affect transpiled output via
             // feature("NAME") replacement in visit_expr.rs. When empty, we add
@@ -1267,6 +1275,9 @@ pub struct FnOrArrowDataParse {
 
     /// Allow TypeScript decorators in function arguments
     pub(crate) allow_ts_decorators: bool,
+
+    /// What `return` statements of this function are checked against.
+    pub(crate) sound_return: bun_ast::sound_types::SoundType,
 }
 
 impl Default for FnOrArrowDataParse {
@@ -1288,6 +1299,7 @@ impl Default for FnOrArrowDataParse {
             track_arrow_arg_errors: false,
             allow_missing_body_for_type_script: false,
             allow_ts_decorators: false,
+            sound_return: bun_ast::sound_types::SoundType::TOP,
         }
     }
 }
@@ -1324,6 +1336,10 @@ pub struct FnOnlyDataVisit {
     /// or a class declaration). That means the top-level module scope "this" value
     /// has been shadowed and is now inaccessible.
     pub(crate) is_this_nested: bool,
+
+    /// Non-zero while `this` is an instance of a class being visited: 1 + its
+    /// index in `SoundTypesState::classes`.
+    pub(crate) sound_this_class: u32,
 }
 
 /// Due to ES6 destructuring patterns, there are many cases where it's

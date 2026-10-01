@@ -789,6 +789,13 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
     // This makes `eval('require.main === module')` work when the main module is a symlink.
     // This behavior differs slightly from Node. Node sets the `id` to `.` when the main module is a symlink.
     'use_resolved_path: {
+        if let (true, Some(source_path)) = (
+            vm.main_resolved_path.is_empty(),
+            vm.standalone_module_graph
+                .and_then(|graph| graph.source_path(vm.main())),
+        ) {
+            vm.main_resolved_path = BunString::clone_utf8(source_path);
+        }
         if vm.main_resolved_path.is_empty() {
             // If it's from eval, don't try to resolve it.
             if strings::ends_with(vm.main(), b"[eval]") {

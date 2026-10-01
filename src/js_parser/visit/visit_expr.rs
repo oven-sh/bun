@@ -65,6 +65,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Tag::EJsxElement => Self::e_jsx_element(self, e, in_),
             Tag::ETemplate => Self::e_template(self, e, in_),
             Tag::EBinary => Self::e_binary(self, e),
+            Tag::EIndex | Tag::EDot if self.sound_types_full() => {
+                let is_plain_read = self.sound_is_plain_read(e, in_);
+                if e.data.tag() == Tag::EDot {
+                    Self::e_dot(self, e, in_);
+                } else {
+                    Self::e_index(self, e, in_);
+                }
+                if is_plain_read {
+                    self.sound_check_field_read(e);
+                }
+            }
             Tag::EIndex => Self::e_index(self, e, in_),
             Tag::EUnary => Self::e_unary(self, e, in_),
             Tag::EDot => Self::e_dot(self, e, in_),
@@ -74,7 +85,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Tag::EArray => Self::e_array(self, e, in_),
             Tag::EObject => Self::e_object(self, e, in_),
             Tag::EImport => Self::e_import(self, e, in_),
+            Tag::ECall if self.sound_types_full() => {
+                let is_unused = matches!(
+                    (self.stmt_expr_value, e.data),
+                    (Data::ECall(stmt), Data::ECall(call)) if core::ptr::eq(stmt.as_ptr(), call.as_ptr())
+                );
+                Self::e_call(self, e, in_);
+                if !is_unused {
+                    self.sound_check_call_result(e);
+                }
+            }
             Tag::ECall => Self::e_call(self, e, in_),
+            Tag::ETypeCheck => self.sound_visit_type_check(e, in_),
             Tag::ENew => Self::e_new(self, e, in_),
             Tag::EArrow => Self::e_arrow(self, e, in_),
             Tag::EFunction => Self::e_function(self, e, in_),
@@ -187,7 +209,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .expect("unreachable");
         }
 
-        let result = p.find_symbol(expr.loc, name).expect("unreachable");
+        // (Until it is visited, the `Ref` of an identifier says where in the source it is: this is that very one.)
+        let is_call_target = matches!(p.call_target.tag(), Tag::EIdentifier)
+            && e_.ref_.eql(
+                p.call_target
+                    .e_identifier()
+                    .expect("infallible: variant checked")
+                    .ref_,
+            );
+        p.next_use_leaves_the_value_alone = is_call_target;
+        let result = p.find_symbol(expr.loc, name);
+        p.next_use_leaves_the_value_alone = false;
+        let result = result.expect("unreachable");
+        // In `with (o) { f() }`, a compiler cannot tell whether this `f` is the one that is called.
+        if is_call_target && result.is_inside_with_scope {
+            p.note_use_of_value(result.r#ref);
+        }
 
         // Order matters: assigning a fresh `Ref` clears the packed user-bit
         // flags (intentional — the parse-time ref carries no flags), so set
@@ -2070,6 +2107,42 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // `import.meta.resolve(specifier)` resolves from this source file, wherever the call ends up.
+        if p.options.inline_import_meta_paths && e_.args.len_u32() == 1 {
+            if let Data::EDot(dot) = e_.target.data {
+                let first = e_.args.slice()[0];
+                if matches!(dot.target.data, Data::EImportMeta(..))
+                    && !matches!(first.data, Data::ESpread(..))
+                {
+                    let parent: Option<&[u8]> = match dot.name.slice() {
+                        b"resolveSync" => Some(p.source.path.text),
+                        b"resolve" => {
+                            let path = bun_core::String::from_bytes(p.source.path.text);
+                            Some(p.arena.alloc_slice_copy(
+                                format!("{}", bun_url::file_url_from_string(&path)).as_bytes(),
+                            ))
+                        }
+                        _ => None,
+                    };
+                    if let Some(parent) = parent {
+                        let mut args = ExprNodeList::init_capacity(2);
+                        VecExt::append(&mut args, first);
+                        VecExt::append(
+                            &mut args,
+                            p.new_expr(
+                                E::EString {
+                                    data: parent.into(),
+                                    ..Default::default()
+                                },
+                                first.loc,
+                            ),
+                        );
+                        e_.args = args;
+                    }
+                }
+            }
+        }
+
         let is_macro_ref: bool = if Self::ALLOW_MACROS {
             let possible_macro_ref = match &e_.target.data {
                 Data::EImportIdentifier(ident) => Some(ident.ref_),
@@ -2581,7 +2654,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.push_scope_for_visit_pass(js_ast::scope::Kind::FunctionArgs, expr.loc)
             .expect("unreachable");
-        let dupe: &'a mut [Stmt] = p.arena.alloc_slice_copy(e_.body.stmts.slice());
+        let sound_body = if p.sound_types_enabled() {
+            p.sound_arrow_body_with_param_checks(&e_)
+        } else {
+            None
+        };
+        let dupe: &'a mut [Stmt] = p
+            .arena
+            .alloc_slice_copy(sound_body.unwrap_or(e_.body.stmts.slice()));
         let prev_may_replace_body =
             p.enter_react_compiler_candidate(None, e_.has_react_hooks_suppression, dupe);
 

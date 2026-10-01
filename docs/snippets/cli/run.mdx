@@ -73,6 +73,10 @@ bun run <file or script>
   Use less memory, but run garbage collection more often
 </ParamField>
 
+<ParamField path="--aot" type="boolean">
+  Compile the program to machine code ahead of time, as <code>bun build --compile --compile-aot</code> does, then run it
+</ParamField>
+
 <ParamField path="--expose-gc" type="boolean">
   Expose <code>gc()</code> on the global object. Has no effect on <code>Bun.gc()</code>
 </ParamField>

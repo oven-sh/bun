@@ -516,6 +516,10 @@ impl ModuleInfoSlotTableBuilder {
     pub fn count(&self) -> u32 {
         self.slots.len() as u32
     }
+    /// The slot of each string, by table id.
+    pub fn slots(&self) -> &[u32] {
+        &self.slots
+    }
     pub fn serialize(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(4 + self.slots.len() * 4);
         out.extend_from_slice(&self.count().to_le_bytes());

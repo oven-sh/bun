@@ -1220,6 +1220,7 @@ pub struct BundleOptions<'a> {
     pub react_fast_refresh: bool,
     pub react_compiler: bun_ast::runtime::ReactCompilerMode,
     pub react_compiler_parse_test_pragmas: bool,
+    pub sound_types: bun_ast::sound_types::Level,
     pub(crate) inject: Option<Box<[Box<[u8]>]>>,
     // `bun_url::URL<'a>` borrows its input string; the owned variant keeps the
     // struct self-contained.
@@ -1338,6 +1339,10 @@ pub struct BundleOptions<'a> {
     pub bytecode_depth: u32,
     /// Run JSC's build-time bytecode optimization passes over the cached bytecode (`optimize.bytecode`).
     pub optimize_bytecode: bool,
+    /// `--compile-aot` / `compile.aot`: compile the link's bytecode to machine code (`JSC::AOT::Image`) and build its static heap.
+    pub aot: bool,
+    /// `--compile-run`: the program sees the paths of its source files: in `import.meta`, in stack traces, in `process.argv`.
+    pub preserve_source_paths: bool,
     /// `--compile --bytecode`: payload order files to lay the bytecode out by (`bytecode_order`), most important first.
     pub bytecode_order: Vec<Box<[u8]>>,
     /// `--compile --bytecode`: whose internal modules get ahead-of-time bytecode embedded alongside the bundle's.
@@ -1471,6 +1476,7 @@ impl<'a> BundleOptions<'a> {
             react_fast_refresh: self.react_fast_refresh,
             react_compiler: self.react_compiler,
             react_compiler_parse_test_pragmas: self.react_compiler_parse_test_pragmas,
+            sound_types: self.sound_types,
             inject: self.inject.clone(),
             origin: self.origin.clone(),
             // The owning handle stays with the parent; copying it here would
@@ -1543,6 +1549,8 @@ impl<'a> BundleOptions<'a> {
             bytecode: self.bytecode,
             bytecode_depth: self.bytecode_depth,
             optimize_bytecode: self.optimize_bytecode,
+            aot: self.aot,
+            preserve_source_paths: self.preserve_source_paths,
             bytecode_order: self.bytecode_order.clone(),
             compile_target_builtins: self.compile_target_builtins.clone(),
             code_coverage: self.code_coverage,
@@ -1736,6 +1744,7 @@ impl<'a> BundleOptions<'a> {
             react_fast_refresh: false,
             react_compiler: bun_ast::runtime::ReactCompilerMode::Disabled,
             react_compiler_parse_test_pragmas: false,
+            sound_types: bun_ast::sound_types::Level::Off,
             inject: None,
             origin: bun_url::OwnedURL::from_href(Box::default()),
             output_dir_handle: None,
@@ -1791,6 +1800,8 @@ impl<'a> BundleOptions<'a> {
             emit_dce_annotations: false,
             deprecated_namespace_object_setters: true,
             bytecode: false,
+            aot: false,
+            preserve_source_paths: false,
             bytecode_depth: u32::MAX,
             optimize_bytecode: true,
             bytecode_order: Vec::new(),

@@ -84,9 +84,8 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame& stack
 
     auto sourceURL = Zig::sourceURL(vm, stackFrame);
     frame.source_url = Bun::toStringRef(sourceURL);
-    auto m_codeBlock = stackFrame.codeBlock();
-    if (m_codeBlock) {
-        switch (m_codeBlock->codeType()) {
+    if (stackFrame.hasLineAndColumnInfo()) {
+        switch (stackFrame.codeType()) {
         case JSC::EvalCode: {
             frame.code_type = ZigStackFrameCodeEval;
             return;
@@ -100,7 +99,7 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame& stack
             return;
         }
         case JSC::FunctionCode: {
-            frame.code_type = !m_codeBlock->isConstructor() ? ZigStackFrameCodeFunction : ZigStackFrameCodeConstructor;
+            frame.code_type = !stackFrame.isConstructor() ? ZigStackFrameCodeFunction : ZigStackFrameCodeConstructor;
             break;
         }
         default:
@@ -146,6 +145,11 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
     auto location = Bun::getAdjustedPositionForBytecode(code, stackFrame.bytecodeIndex());
     memcpy(&position, &location, sizeof(ZigStackFramePosition));
     if (flags == PopulateStackTraceFlags::OnlyPosition)
+        return;
+    // The executable was built without it: there are no lines to show.
+    if (provider->hasNoText())
+        return;
+    if (location.byte_position < 0 || static_cast<unsigned>(location.byte_position) >= sourceString.length())
         return;
 
     if (source_lines_count > 1 && source_lines != nullptr && sourceString.is8Bit()) {

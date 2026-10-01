@@ -396,6 +396,56 @@ await renderFirstScreen();
 Bun.unsafe.setJITPolicy(1); // back to the normal JIT policy
 ```
 
+### Ahead-of-time compilation
+
+<Warning>Ahead-of-time compilation is experimental. It supports macOS on Apple silicon.</Warning>
+
+`--compile-aot` compiles your JavaScript to machine code when you build the executable. Without it, JavaScriptCore compiles the functions that run often while your program runs.
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash icon="terminal" terminal
+    bun build --compile --compile-aot ./app.ts --outfile myapp
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```ts build.ts icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./app.ts"],
+      compile: { outfile: "./myapp", aot: true },
+    });
+    ```
+  </Tab>
+</Tabs>
+
+`--compile-aot` implies `--bytecode` and `--format=esm`. CommonJS files in your program work as they do in any other bundle.
+
+The compiler sees your whole program at once, and the executable differs from one built without `--compile-aot` in these ways:
+
+- **The JIT is off.** Bun interprets code that the build cannot see: `eval`, `new Function`, files that your program loads from disk when it runs, and Workers created from a blob URL.
+- **Built-in objects are immutable.** Assigning to an existing property of a built-in object, such as `Array.prototype.push` or `Math.random`, throws a `TypeError` in strict mode and does nothing in sloppy mode. So does adding a property to `Object.prototype`. Objects that Bun or your program defines, such as `console` and `process`, stay mutable.
+- **`bun:ffi` is unavailable.** `bun:ffi` needs the JIT, and throws a `TypeError` that says so.
+- **The debugger is unavailable.**
+
+The build target must be the platform and the version of Bun that runs the build. `bun build` reports an error for any other `--target`.
+
+To run the executable from its bytecode instead of its machine code, set `BUN_AOT=0`:
+
+```bash icon="terminal" terminal
+BUN_AOT=0 ./myapp
+```
+
+#### Try your code without building an executable
+
+`bun run --aot` and `bun test --aot` compile your program the way `--compile-aot` does, then run the result. Use them to find out whether your code and your dependencies work with immutable built-in objects.
+
+```bash icon="terminal" terminal
+bun run --aot ./app.ts
+bun test --aot
+```
+
+Your program sees the paths of its source files, as it does with `bun run`. In `bun test --aot`, `spyOn` throws a `TypeError` for a property of a built-in object, such as `spyOn(Math, "random")`.
+
 ---
 
 ## Embedding runtime arguments

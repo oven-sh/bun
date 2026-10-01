@@ -1042,6 +1042,7 @@ impl CompletionStruct for JSBundleCompletionTask {
 
         transpiler.options.output_format = config.format;
         transpiler.options.bytecode = config.bytecode;
+        transpiler.options.aot = config.compile.as_ref().is_some_and(|compile| compile.aot);
         transpiler.options.bytecode_depth = config.bytecode_depth;
         transpiler.options.optimize_bytecode = config.optimize_bytecode;
         if let Some(compile) = &config.compile {
@@ -1135,6 +1136,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         };
         transpiler.options.react_compiler_parse_test_pragmas =
             config.react_compiler_parse_test_pragmas;
+        transpiler.options.sound_types = config.sound_types.or_from_env(config.compile.is_some());
         transpiler.options.metafile = config.metafile;
         transpiler.options.metafile_json_path =
             Box::from(config.metafile_json_path.list.as_slice());

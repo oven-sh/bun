@@ -224,6 +224,12 @@ extern "C" int Bun__ttySetMode(int fd, int mode, void* rawState, int drain)
 #endif
 }
 
+// For main().
+extern "C" void WTF__StringImpl__constructEmpty()
+{
+    WTF::StringImpl::constructEmpty();
+}
+
 extern "C" double WTF__parseDouble(const Latin1Character* string, size_t length, size_t* position)
 {
     return WTF::parseDouble({ string, length }, *position);

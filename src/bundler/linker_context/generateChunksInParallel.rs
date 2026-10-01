@@ -1384,7 +1384,13 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             .as_ref()
             .and_then(|table| table.get())
             .expect("an order file is only loaded for --compile --bytecode");
-        let encoder = crate::bundle_v2::dispatch::BytecodeLinkEncoderHandle::new(table, order);
+        let encoder =
+            crate::bundle_v2::dispatch::BytecodeLinkEncoderHandle::new(
+                table,
+                order,
+                c.options.aot,
+                c.options.sound_types,
+            );
         linked_bytecode_chunks
             .sort_by_key(|&(chunk_index, _, _)| output_files.output_files[chunk_index].load_order);
         let is_esm = c.options.output_format == options::Format::Esm;
@@ -1429,6 +1435,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         let mut linked = LinkedBytecode {
             encoder,
             output_files: Vec::with_capacity(linked_bytecode_chunks.len()),
+            graph_modules: Vec::with_capacity(linked_bytecode_chunks.len()),
             internal_names,
             names_out: crate::bytecode_order::names_out().map(|path| (path, Vec::new())),
         };
@@ -1451,6 +1458,14 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 names.as_ref(),
             ) {
                 linked.output_files.push(*bytecode_index);
+                linked.graph_modules.push(
+                    prelinked_graph
+                        .as_ref()
+                        .and_then(|(_, chunk_indices)| {
+                            chunk_indices.binary_search(&(*chunk_index as u32)).ok()
+                        })
+                        .map_or(u32::MAX, |module| module as u32),
+                );
                 if names.is_none() {
                     // JavaScriptCore compiled what the parser here does not take: nothing of the chunk can be listed
                     // in an order file, or placed by one.
@@ -1510,6 +1525,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         );
     }
     let mut linked_bytecode_payload: Option<Box<[u8]>> = None;
+    let mut aot_image: Vec<u8> = Vec::new();
+    let mut has_static_heap = false;
     if let Some(mut linked) = linked_bytecode {
         if let Some((path, names_out)) = &linked.names_out {
             let path = bun_core::ZBox::from_bytes(path);
@@ -1522,7 +1539,15 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             }
         }
         let encoded = linked.output_files;
-        match linked.encoder.finish() {
+        let finished = match &prelinked_graph {
+            Some((graph, _)) => linked.encoder.finish_linked(
+                graph,
+                module_info_strings.slots(),
+                &linked.graph_modules,
+            ),
+            None => linked.encoder.finish(),
+        };
+        match finished {
             Some(crate::bytecode_order::LinkedPayload {
                 payload,
                 entry_offsets,
@@ -1530,7 +1555,9 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 named_hot_functions,
                 placed_hot_functions,
                 functions_without_name,
+                aot_image: image,
             }) => {
+                aot_image = image;
                 if functions_without_name != 0 {
                     c.log_mut().add_warning_fmt(
                         None,
@@ -1661,12 +1688,59 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 .map_or(&[][..], |order| &order.hot_strings),
         );
         debug!("Bytecode external string table: {} bytes", bytes.len());
+        if !aot_image.is_empty() {
+            // The image ends on a page boundary, and so this starts on one.
+            // BUN_COMPILE_COMPACT_POSITIONS=1: the places that a stack trace can name are looked up in the source maps now, and
+            // the executable goes without the maps.
+            let maps = std::env::var_os("BUN_COMPILE_COMPACT_POSITIONS")
+                .is_some_and(|v| v == "1")
+                .then(|| SourceMapsByEntryOffset::of(&result));
+            let find = maps.as_ref().map(|maps| {
+                move |entry_offset: u32, line: u32, column: u32| maps.find(entry_offset, line, column)
+            });
+            let static_heap = crate::bundle_v2::dispatch::build_static_heap(
+                &bytes,
+                find.as_ref().map(|find| {
+                    find as &dyn Fn(u32, u32, u32) -> Option<(*const [u8], u32, u32)>
+                }),
+            );
+            has_static_heap = !static_heap.is_empty();
+            aot_image.extend_from_slice(&static_heap);
+        }
         result.push(options::OutputFile::init(options::OutputFileInit {
             output_path: b".bytecode-strings".to_vec().into_boxed_slice(),
             input_path: Box::default(),
             input_loader: Loader::File,
             hash: None,
             output_kind: options::OutputKind::BytecodeStringTable,
+            loader: Loader::File,
+            size: Some(bytes.len()),
+            display_size: bytes.len() as u32,
+            data: options::OutputFileData::Buffer { data: bytes },
+            side: None,
+            entry_point_index: None,
+            is_executable: false,
+            ..Default::default()
+        }));
+    }
+    // Without both, the executable would still run, from its bytecode, with nothing to show that it was not compiled.
+    if c.options.aot && !has_static_heap {
+        c.log_mut().add_error(
+            None,
+            bun_ast::Loc::EMPTY,
+            b"Failed to compile the program ahead of time",
+        );
+        return Err(crate::Error::BuildFailed);
+    }
+    if !aot_image.is_empty() {
+        debug!("AOT image: {} bytes", aot_image.len());
+        let bytes = aot_image.into_boxed_slice();
+        result.push(options::OutputFile::init(options::OutputFileInit {
+            output_path: b".aot-image".to_vec().into_boxed_slice(),
+            input_path: Box::default(),
+            input_loader: Loader::File,
+            hash: None,
+            output_kind: options::OutputKind::AotImage,
             loader: Loader::File,
             size: Some(bytes.len()),
             display_size: bytes.len() as u32,
@@ -1702,6 +1776,8 @@ fn debug_assert_no_placeholder_left(c: &LinkerContext, files: &[options::OutputF
 struct LinkedBytecode {
     encoder: crate::bundle_v2::dispatch::BytecodeLinkEncoderHandle,
     output_files: Vec<u32>,
+    /// For each chunk added, its module of the pre-resolved graph (`u32::MAX`: none).
+    graph_modules: Vec<u32>,
     /// What the code of the internal modules that will join the link is called, in their order.
     internal_names: Vec<Option<crate::bytecode_order::CodeNames>>,
     /// `BUN_BYTECODE_ORDER_NAMES_OUT`, and what is written there.
@@ -1959,3 +2035,68 @@ fn chunk_load_order(
 use crate::EntryPoint;
 use crate::options::SourceMapOption;
 use crate::output_file::{BakeExtra, BakeRouteKind};
+
+/// The source map of each chunk that has one, by where the chunk's cache entry is in the linked bytecode payload: which is how
+/// `JSC::StaticHeap` says which module it means.
+struct SourceMapsByEntryOffset {
+    maps: std::collections::HashMap<u32, (Box<[u8]>, Vec<Box<[u8]>>)>,
+}
+
+impl SourceMapsByEntryOffset {
+    fn of(output_files: &[options::OutputFile]) -> Self {
+        let mut maps = std::collections::HashMap::new();
+        for file in output_files {
+            if file.source_map_index == u32::MAX || file.bytecode_index == u32::MAX {
+                continue;
+            }
+            let (Some(map), Some(bytecode)) = (
+                output_files.get(file.source_map_index as usize),
+                output_files.get(file.bytecode_index as usize),
+            ) else {
+                continue;
+            };
+            if let Some(parsed) = Self::parse(map.value.as_slice()) {
+                maps.insert(bytecode.bytecode_entry_offset, parsed);
+            }
+        }
+        Self { maps }
+    }
+
+    /// Parses the map the way `serialize_json_source_map_for_standalone` does, so that lookups here match the executable's.
+    fn parse(json_source: &[u8]) -> Option<(Box<[u8]>, Vec<Box<[u8]>>)> {
+        let json_src = bun_ast::Source::init_path_string("sourcemap.json", json_source);
+        let mut log = bun_ast::Log::init();
+        let _reset_guard = bun_ast::StoreResetGuard::new();
+        let parsed = bun_parsers::json::ParsedJson::parse_json(&json_src, &mut log).ok()?;
+        let json = parsed.root;
+        let mappings = json.get(b"mappings")?;
+        let vlq: &[u8] = mappings.as_utf8_string_literal()?;
+        let bun_ast::ExprData::EArrayJSON(sources) = json.get(b"sources")?.data else {
+            return None;
+        };
+        let mut names: Vec<Box<[u8]>> = Vec::new();
+        for item in sources.get().items() {
+            names.push(Box::from(&*item.as_str()?));
+        }
+        let blob = bun_sourcemap::InternalSourceMap::from_vlq(vlq, 0).ok()?;
+        Some((blob, names))
+    }
+
+    /// Lines and columns count from one, going in and coming out.
+    fn find(&self, entry_offset: u32, line: u32, column: u32) -> Option<(*const [u8], u32, u32)> {
+        let (blob, names) = self.maps.get(&entry_offset)?;
+        let map = bun_sourcemap::InternalSourceMap {
+            data: blob.as_ptr(),
+        };
+        let mapping = map.find(
+            bun_core::Ordinal::from_one_based(i32::try_from(line).ok()?),
+            bun_core::Ordinal::from_one_based(i32::try_from(column).ok()?),
+        )?;
+        let name = names.get(usize::try_from(mapping.source_index).ok()?)?;
+        Some((
+            core::ptr::from_ref::<[u8]>(name),
+            u32::try_from(mapping.original.lines.one_based()).ok()?,
+            u32::try_from(mapping.original.columns.one_based()).ok()?,
+        ))
+    }
+}

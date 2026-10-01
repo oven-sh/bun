@@ -12,7 +12,7 @@ use bun_js_printer::analyze_transpiled_module::{
 use crate::analyze_transpiled_module::ModuleInfoSlotTableBuilder;
 
 pub const MAGIC: u32 = 0x474d_4c50; // "PLMG"
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 4;
 pub const NO_MODULE: u32 = u32::MAX;
 /// Hash column value of an entry whose name is a sentinel (never looked up by name); sorts last.
 const SENTINEL_HASH: u32 = u32::MAX;
@@ -29,11 +29,30 @@ mod module_flags {
     pub(super) const ALL_REQUESTS_IN_GRAPH: u32 = 1 << 4;
 }
 
+/// `PrelinkedModuleGraph::Binding`: what the linker knows of a variable at the top of a chunk.
+pub mod binding_flags {
+    /// `symbol::Kind`, as far as it matters: `KIND_*`.
+    pub const KIND_MASK: u32 = 0xf;
+    pub const KIND_FUNCTION: u32 = 2;
+    pub const KIND_GENERATOR_OR_ASYNC_FUNCTION: u32 = 3;
+    pub const KIND_CLASS: u32 = 4;
+    pub const KIND_CONST: u32 = 5;
+    /// Something assigns it other than its own declaration (`Symbol::has_been_assigned_to`).
+    pub const IS_ASSIGNED: u32 = 1 << 4;
+    /// `Symbol::escapes`.
+    pub const ESCAPES: u32 = 1 << 5;
+    /// `Symbol::call_ignores_this`.
+    pub const CALL_IGNORES_THIS: u32 = 1 << 6;
+    /// `Symbol::is_visible_from_outside`.
+    pub const IS_VISIBLE_FROM_OUTSIDE: u32 = 1 << 7;
+}
+
 /// `PrelinkedModuleGraph::Request::phaseDeferBit`.
 const PHASE_DEFER_BIT: u32 = 1 << 3;
 
 const HEADER_WORDS: usize = 16;
-const MODULE_WORDS: usize = 10;
+const MODULE_WORDS: usize = 12;
+const BINDING_WORDS: usize = 2;
 const REQUEST_WORDS: usize = 4;
 const IMPORT_WORDS: usize = 6;
 const EXPORT_WORDS: usize = 6;
@@ -105,6 +124,8 @@ struct Module {
     exports: Vec<Export>,
     /// Request indices, source order.
     star_exports: Vec<u32>,
+    /// (name, `binding_flags`).
+    bindings: Vec<(u32, u32)>,
     export_by_name: bun_collections::HashMap<u32, u32>,
 }
 
@@ -435,6 +456,12 @@ fn parse_module(
         imports,
         exports,
         star_exports,
+        bindings: input
+            .info
+            .bindings
+            .iter()
+            .map(|&(name, flags)| (input.table_ids[name.0 as usize], flags))
+            .collect(),
         export_by_name,
     }
 }
@@ -539,13 +566,15 @@ fn serialize(graph: &[Module], string_count: u32, hashes: &[Option<u32>]) -> Vec
     let import_count: usize = graph.iter().map(|m| m.imports.len()).sum();
     let export_count: usize = graph.iter().map(|m| m.exports.len()).sum();
     let star_count: usize = graph.iter().map(|m| m.star_exports.len()).sum();
+    let binding_count: usize = graph.iter().map(|m| m.bindings.len()).sum();
 
     let modules_offset = HEADER_WORDS * 4;
     let requests_offset = modules_offset + graph.len() * MODULE_WORDS * 4;
     let imports_offset = requests_offset + request_count * REQUEST_WORDS * 4;
     let exports_offset = imports_offset + import_count * IMPORT_WORDS * 4;
     let stars_offset = exports_offset + export_count * EXPORT_WORDS * 4;
-    let total = stars_offset + star_count * 4;
+    let bindings_offset = stars_offset + star_count * 4;
+    let total = bindings_offset + binding_count * BINDING_WORDS * 4;
 
     let mut out: Vec<u8> = Vec::with_capacity(total);
     let mut put = |v: u32| out.extend_from_slice(&v.to_le_bytes());
@@ -570,15 +599,15 @@ fn serialize(graph: &[Module], string_count: u32, hashes: &[Option<u32>]) -> Vec
         to_u32(imports_offset),
         to_u32(exports_offset),
         to_u32(stars_offset),
-        0,
-        0,
+        to_u32(binding_count),
+        to_u32(bindings_offset),
         0,
     ] {
         put(v);
     }
 
-    let (mut first_request, mut first_import, mut first_export, mut first_star) =
-        (0usize, 0usize, 0usize, 0usize);
+    let (mut first_request, mut first_import, mut first_export, mut first_star, mut first_binding) =
+        (0usize, 0usize, 0usize, 0usize, 0usize);
     for m in graph {
         for v in [
             m.key,
@@ -591,9 +620,12 @@ fn serialize(graph: &[Module], string_count: u32, hashes: &[Option<u32>]) -> Vec
             to_u32(m.exports.len()),
             to_u32(first_star),
             to_u32(m.star_exports.len()),
+            to_u32(first_binding),
+            to_u32(m.bindings.len()),
         ] {
             put(v);
         }
+        first_binding += m.bindings.len();
         first_request += m.requests.len();
         first_import += m.imports.len();
         first_export += m.exports.len();
@@ -639,6 +671,12 @@ fn serialize(graph: &[Module], string_count: u32, hashes: &[Option<u32>]) -> Vec
     for m in graph {
         for &s in &m.star_exports {
             put(s);
+        }
+    }
+    for m in graph {
+        for &(name, flags) in &m.bindings {
+            put(name);
+            put(flags);
         }
     }
     debug_assert_eq!(out.len(), total);

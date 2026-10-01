@@ -75,6 +75,8 @@ unsafe extern "C" {
         evaluated_module_count: usize,
         not_evaluated_modules: *const u64,
         not_evaluated_module_count: usize,
+        compile_ahead_of_time: bool,
+        sound_types: bool,
     ) -> *mut BytecodeLinkEncoder;
     fn Bun__BytecodeLinkEncoder__destroy(this: *mut BytecodeLinkEncoder);
     fn Bun__BytecodeLinkEncoder__addModule(
@@ -105,6 +107,15 @@ unsafe extern "C" {
         depth: u32,
         names: &CodeNamesRef<'_>,
     ) -> bool;
+    fn Bun__BytecodeLinkEncoder__setPrelinkedModuleGraph(
+        this: *mut BytecodeLinkEncoder,
+        blob: *const u8,
+        blob_size: usize,
+        string_slots: *const u32,
+        string_slot_count: usize,
+        graph_module_of_each_add: *const u32,
+        add_count: usize,
+    );
     fn Bun__BytecodeLinkEncoder__finish(
         this: *mut BytecodeLinkEncoder,
         output_byte_code: *mut Option<NonNull<u8>>,
@@ -117,6 +128,9 @@ unsafe extern "C" {
         placed_hot_functions: *mut u32,
         functions_without_name: *mut u32,
     ) -> bool;
+    /// The image that the last `finish` on this thread compiled (AOT builds only). Valid until `freeAOTImage`.
+    fn Bun__BytecodeLinkEncoder__aotImage(size: *mut usize) -> *const u8;
+    safe fn Bun__BytecodeLinkEncoder__freeAOTImage();
 }
 
 unsafe extern "C" {
@@ -318,6 +332,8 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_new(
     known_functions: &[u64],
     evaluated_modules: &[u64],
     not_evaluated_modules: &[u64],
+    compile_ahead_of_time: bool,
+    sound_types: bool,
 ) -> NonNull<BytecodeLinkEncoder> {
     crate::initialize(crate::InitializeOptions::default());
     // SAFETY: the slices are valid for the call (C++ copies them); `external_strings` is a live table. `new` never returns null.
@@ -332,6 +348,8 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_new(
             evaluated_modules.len(),
             not_evaluated_modules.as_ptr(),
             not_evaluated_modules.len(),
+            compile_ahead_of_time,
+            sound_types,
         ))
     }
 }
@@ -418,6 +436,30 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_add_internal_module_from_source(
     }
 }
 
+/// The module linkage (`bun_bundler::prelinked_module_graph`) that ahead-of-time compilation needs: the graph, the slot of
+/// each of its strings, and the graph module that each successful `add_*` call so far was for (`u32::MAX`: none). `blob`
+/// and `string_slots` are read by `finish`.
+#[unsafe(no_mangle)]
+pub(crate) fn __bun_jsc_bytecode_link_encoder_set_prelinked_module_graph(
+    encoder: NonNull<BytecodeLinkEncoder>,
+    blob: &[u8],
+    string_slots: &[u32],
+    graph_module_of_each_add: &[u32],
+) {
+    // SAFETY: `encoder` is live; the slices are valid for their lengths, and the caller keeps the first two until `finish`.
+    unsafe {
+        Bun__BytecodeLinkEncoder__setPrelinkedModuleGraph(
+            encoder.as_ptr(),
+            blob.as_ptr(),
+            blob.len(),
+            string_slots.as_ptr(),
+            string_slots.len(),
+            graph_module_of_each_add.as_ptr(),
+            graph_module_of_each_add.len(),
+        )
+    }
+}
+
 /// The payload, each module's cache-entry offset in it (in the order of the successful `add_*` calls), where each of the
 /// payload's regions ends (`JSC::BytecodeLinkEncoder`), how many of the order files' hot functions are functions
 /// of this link, and for each module how many functions with code its names did not cover.
@@ -458,6 +500,16 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_finish(
     // SAFETY: `bytes[..size]` is the CachedBytecode's payload, valid until the deref below.
     payload.extend_from_slice(unsafe { core::slice::from_raw_parts(bytes.as_ptr(), size) });
     CachedBytecode__deref(CachedBytecode::opaque_mut(handle.as_ptr()));
+    let mut aot_image_size = 0usize;
+    // SAFETY: the out-param is an initialized local.
+    let aot_image_bytes = unsafe { Bun__BytecodeLinkEncoder__aotImage(&raw mut aot_image_size) };
+    let aot_image = if aot_image_size == 0 {
+        Vec::new()
+    } else {
+        // SAFETY: C++ keeps `aot_image_bytes[..aot_image_size]` until the free below.
+        unsafe { core::slice::from_raw_parts(aot_image_bytes, aot_image_size) }.to_vec()
+    };
+    Bun__BytecodeLinkEncoder__freeAOTImage();
     Some(bun_bundler::bytecode_order::LinkedPayload {
         payload,
         entry_offsets,
@@ -465,6 +517,7 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_finish(
         named_hot_functions,
         placed_hot_functions,
         functions_without_name,
+        aot_image,
     })
 }
 
@@ -486,6 +539,85 @@ pub(crate) fn __bun_jsc_encoder_string_table_take(
     let bytes = EncoderStringTable::serialize(table, hot_strings).into_boxed_slice();
     EncoderStringTable::destroy(table);
     bytes
+}
+
+/// Builds the static heap (`JSC::StaticHeap`), which is placed after the image of the program's code. Returns an empty
+/// buffer on failure. Must be called on the thread that owns the bytecode VM.
+#[unsafe(no_mangle)]
+pub(crate) fn __bun_jsc_build_static_heap(
+    strings: &[u8],
+    // Maps the offset of a module's cache entry in the linked payload, and a line and column in its text (counting from
+    // one), to the name of the original source and the line and column there.
+    original_position: Option<&dyn Fn(u32, u32, u32) -> Option<(*const [u8], u32, u32)>>,
+) -> Vec<u8> {
+    type Find = extern "C" fn(
+        *mut core::ffi::c_void,
+        u32,
+        u32,
+        u32,
+        *mut *const u8,
+        *mut usize,
+        *mut u32,
+        *mut u32,
+    ) -> bool;
+    unsafe extern "C" {
+        fn Bun__StaticHeap__build(
+            strings: *const u8,
+            strings_size: usize,
+            ctx: *mut core::ffi::c_void,
+            append: extern "C" fn(*mut core::ffi::c_void, *const u8, usize),
+            find_ctx: *mut core::ffi::c_void,
+            find: Option<Find>,
+        );
+    }
+    extern "C" fn find(
+        ctx: *mut core::ffi::c_void,
+        entry_offset: u32,
+        line: u32,
+        column: u32,
+        name: *mut *const u8,
+        name_length: *mut usize,
+        line_in_source: *mut u32,
+        column_in_source: *mut u32,
+    ) -> bool {
+        // SAFETY: `ctx` is the reference below, which outlives the call; the rest are C++ locals.
+        unsafe {
+            let original_position =
+                *ctx.cast::<&dyn Fn(u32, u32, u32) -> Option<(*const [u8], u32, u32)>>();
+            let Some((source, line, column)) = original_position(entry_offset, line, column) else {
+                return false;
+            };
+            *name = source.cast::<u8>();
+            *name_length = source.len();
+            *line_in_source = line;
+            *column_in_source = column;
+        }
+        true
+    }
+    extern "C" fn append(ctx: *mut core::ffi::c_void, bytes: *const u8, size: usize) {
+        if size == 0 {
+            return;
+        }
+        // SAFETY: `ctx` is the `Vec` below, and C++ hands over `size` readable bytes for the length of the call.
+        unsafe {
+            (*ctx.cast::<Vec<u8>>()).extend_from_slice(core::slice::from_raw_parts(bytes, size))
+        };
+    }
+    let mut out: Vec<u8> = Vec::new();
+    // SAFETY: `strings` is valid for its length; `out` outlives the call.
+    unsafe {
+        Bun__StaticHeap__build(
+            strings.as_ptr(),
+            strings.len(),
+            (&raw mut out).cast(),
+            append,
+            original_position
+                .as_ref()
+                .map_or(core::ptr::null_mut(), |f| core::ptr::from_ref(f).cast_mut().cast()),
+            original_position.is_some().then_some(find as Find),
+        )
+    };
+    out
 }
 
 #[unsafe(no_mangle)]

@@ -351,6 +351,9 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   }
 
   const cxxObjects: string[] = [];
+  // Two objects define Bun__installCompilers(). The executable is linked with the first, bun-slim with the second.
+  let compilersObject: string | undefined;
+  let regExpCompilerOnlyObject: string | undefined;
   for (const src of cxxSources) {
     const relSrc = relative(cfg.cwd, src);
     const extraFlags = extraFlagsFor(cfg, relSrc);
@@ -367,8 +370,15 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
       opts.implicitInputs = depHeaderSignal;
       opts.orderOnlyInputs = codegenOrderOnly;
     }
-    cxxObjects.push(cxx(n, cfg, src, opts));
+    const object = cxx(n, cfg, src, opts);
+    if (slash(relSrc) === "src/jsc/bindings/BunCompilersRegExpOnly.cpp") {
+      regExpCompilerOnlyObject = object;
+      continue;
+    }
+    if (slash(relSrc) === "src/jsc/bindings/BunCompilers.cpp") compilersObject = object;
+    cxxObjects.push(object);
   }
+  assert(compilersObject !== undefined && regExpCompilerOnlyObject !== undefined, "BunCompilers*.cpp not found");
 
   // Compile all .c files. No PCH — dep signal applied directly.
   const cObjects: string[] = [];
@@ -449,6 +459,22 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     ...depLibs,
   ]);
 
+  // ─── bun-slim: the same link without JavaScriptCore's compilers ───
+  // The runtime for executables whose code was compiled ahead of time (`bun build --compile --compile-aot
+  // --compile-executable-path=<bun-slim>`). Not a default target: `ninja bun-slim`.
+  if (strippedExe !== undefined && !cfg.windows) {
+    const slimName = "bun-slim-profile";
+    const renamed = (path: string) => path.replaceAll(`${exeName}.`, `${slimName}.`);
+    const slimExe = link(n, cfg, slimName, [regExpCompilerOnlyObject, ...linkObjects.filter(o => o !== compilersObject)], {
+      libs: depLibs,
+      lazyObjects: depLink.lazy,
+      flags: ldflags.map(renamed),
+      implicitInputs: [...linkImplicitInputs(cfg), ...shimInputs],
+      linkerMapOutputs: linkerMapOutputs(cfg).map(renamed),
+    });
+    emitStrip(n, cfg, slimExe, flags.stripflags, "bun-slim");
+  }
+
   return { exe, strippedExe, dsym, deps, codegen, objects: allObjects };
 }
 
@@ -501,6 +527,7 @@ export function emitPostLink(
   let strippedExe: string | undefined;
   let dsym: string | undefined;
   if (shouldStrip(cfg)) {
+    registerStripRule(n, cfg);
     strippedExe = emitStrip(n, cfg, exe, stripflags);
     // darwin: extract debug symbols from the UNSTRIPPED exe into a .dSYM
     // bundle. dsymutil reads DWARF from bun-profile, writes
@@ -745,9 +772,22 @@ function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string, stri
  * Input (bun-profile) is NOT modified — strip writes a new file via `-o`.
  * The profile binary keeps its symbols for profiling/debugging release crashes.
  */
-function emitStrip(n: Ninja, cfg: Config, inputExe: string, stripflags: string[]): string {
-  const out = resolve(cfg.buildDir, "bun" + cfg.exeSuffix);
+function emitStrip(n: Ninja, cfg: Config, inputExe: string, stripflags: string[], name = "bun"): string {
+  const out = resolve(cfg.buildDir, name + cfg.exeSuffix);
+  const postlinkInputs = machoPostlinkImplicitInputs(cfg);
+  const node = {
+    outputs: [out],
+    inputs: [inputExe],
+    ...(postlinkInputs.length > 0 ? { implicitInputs: postlinkInputs } : {}),
+  };
+  if (cfg.windows) n.build({ ...node, rule: "copy_exe" });
+  else n.build({ ...node, rule: "strip", vars: { stripflags: stripflags.join(" ") } });
 
+  return out;
+}
+
+/** The rule that emitStrip() uses. */
+function registerStripRule(n: Ninja, cfg: Config): void {
   // Windows: strip equivalent is handled at link time (/OPT:REF etc), no
   // separate strip binary. The "stripped" bun is just a copy. Copy command
   // follows the HOST shell (cmd natively, cp when cross-compiling).
@@ -767,17 +807,6 @@ function emitStrip(n: Ninja, cfg: Config, inputExe: string, stripflags: string[]
       description: "strip $out",
     });
   }
-
-  const postlinkInputs = machoPostlinkImplicitInputs(cfg);
-  const node = {
-    outputs: [out],
-    inputs: [inputExe],
-    ...(postlinkInputs.length > 0 ? { implicitInputs: postlinkInputs } : {}),
-  };
-  if (cfg.windows) n.build({ ...node, rule: "copy_exe" });
-  else n.build({ ...node, rule: "strip", vars: { stripflags: stripflags.join(" ") } });
-
-  return out;
 }
 
 /**

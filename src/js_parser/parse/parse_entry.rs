@@ -139,6 +139,8 @@ pub struct Options<'a> {
     /// Used for inlining the state of import.meta.main during visiting
     pub import_meta_main_value: Option<bool>,
     pub lower_import_meta_main_for_node_js: bool,
+    /// `import.meta.dir`, `.path`, `.url` and the like become the values they have for this source file.
+    pub inline_import_meta_paths: bool,
 
     /// When using react fast refresh or server components, the framework is
     /// able to customize what import sources are used.
@@ -157,6 +159,9 @@ pub struct Options<'a> {
     /// A bundle entry point: its own output is needed, so a `module.exports = require(...)`-only file stays a real
     /// module rather than becoming a redirect to what it re-exports.
     pub is_entry_point: bool,
+
+    /// Where sound types finds the types a module imports.
+    pub sound_types_host: Option<&'a dyn bun_ast::sound_types::ModuleTypesHost>,
 }
 
 impl<'a> Default for Options<'a> {
@@ -187,10 +192,12 @@ impl<'a> Default for Options<'a> {
             transform_only: false,
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
+            inline_import_meta_paths: false,
             framework: None,
             repl_mode: false,
             lower_toml_datetimes: false,
             is_entry_point: false,
+            sound_types_host: None,
         }
     }
 }
@@ -228,6 +235,7 @@ impl<'a> Options<'a> {
                 react_fast_refresh: f.react_fast_refresh,
                 react_compiler: f.react_compiler,
                 react_compiler_parse_test_pragmas: f.react_compiler_parse_test_pragmas,
+                sound_types: f.sound_types,
                 hot_module_reloading: f.hot_module_reloading,
                 server_components: f.server_components,
                 is_macro_runtime: f.is_macro_runtime,
@@ -274,10 +282,12 @@ impl<'a> Options<'a> {
             transform_only: self.transform_only,
             import_meta_main_value: self.import_meta_main_value,
             lower_import_meta_main_for_node_js: self.lower_import_meta_main_for_node_js,
+            inline_import_meta_paths: self.inline_import_meta_paths,
             framework: self.framework,
             repl_mode: self.repl_mode,
             lower_toml_datetimes: self.lower_toml_datetimes,
             is_entry_point: self.is_entry_point,
+            sound_types_host: self.sound_types_host,
         }
     }
 
@@ -348,10 +358,12 @@ impl<'a> Options<'a> {
             transform_only: false,
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
+            inline_import_meta_paths: false,
             framework: None,
             repl_mode: false,
             lower_toml_datetimes: loader == options::Loader::Toml,
             is_entry_point: false,
+            sound_types_host: None,
         };
         opts.jsx.parse = loader.is_jsx();
         opts
@@ -462,6 +474,45 @@ impl<'a> Parser<'a> {
             stmts: stmts.as_slice(),
             p,
         }))
+    }
+
+    /// Parses a TypeScript module, visits nothing, and returns what it declares
+    /// in the type namespace. `options.features.sound_types` must be enabled.
+    /// `Ok(None)`: the module opted out of sound types.
+    #[cold]
+    pub(crate) fn parse_module_types(
+        mut self,
+    ) -> Result<Option<bun_ast::sound_types::ModuleTypes>, Error> {
+        type Pi<'a> = P<'a, true, false>;
+        let lexer = core::mem::replace(
+            &mut self.lexer,
+            js_lexer::Lexer::init_without_reading(
+                self.bump.alloc(bun_ast::Log::default()),
+                self.source,
+                self.bump,
+            ),
+        );
+        let options = core::mem::take(&mut self.options);
+        let mut __p = init_p!(Pi<'_>;
+            self.bump, self.log, self.source, self.define, lexer, options);
+        // SAFETY: `init_p!` only yields after `init` succeeded.
+        let p: &mut Pi<'_> = unsafe { __p.assume_init_mut() };
+        if !p.sound_types_enabled() {
+            return Ok(None);
+        }
+        if p.lexer.token == js_lexer::T::THashbang {
+            p.lexer.next()?;
+        }
+        let mut opts = ParseStatementOptions {
+            scope: StatementScope::Module,
+            ..Default::default()
+        };
+        p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts)?;
+        if p.log().errors > self.orig_error_count {
+            return Err(crate::Error::SyntaxError);
+        }
+        p.sound_finish_parse_pass();
+        Ok(Some(core::mem::take(&mut p.sound().types)))
     }
 
     /// Bundler-only scan pass (see `bundler/cache.rs`). Never reached from
@@ -958,6 +1009,9 @@ impl<'a> Parser<'a> {
 
         let mut visit_tracer = bun_core::perf::trace("JSParser::visit");
         p.prepare_for_visit_pass()?;
+        if p.sound_types_enabled() {
+            p.sound_finish_parse_pass();
+        }
 
         if p.options.features.react_compiler.is_enabled() {
             let rc_options = bun_react_compiler::ReactCompilerOptions {
@@ -1207,6 +1261,7 @@ impl<'a> Parser<'a> {
         }
 
         visit_tracer.end();
+        p.sound_flush_stats();
 
         // If there were errors while visiting, also halt here
         if p.log().errors > orig_error_count {

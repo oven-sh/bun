@@ -1246,7 +1246,9 @@ impl<'a> LinkerContext<'a> {
                 // Note: the relative path lives in a local owned buffer
                 // (drops at scope exit).
                 let rel_path_storage;
-                let pretty: &[u8] = if path.is_file() {
+                let pretty: &[u8] = if path.is_file() && self.options.preserve_source_paths {
+                    path.text
+                } else if path.is_file() {
                     rel_path_storage = Self::source_map_relative_path(chunk_abs_dir, path.text)?;
                     &rel_path_storage
                 } else {
@@ -1273,7 +1275,9 @@ impl<'a> LinkerContext<'a> {
                 let path = &sources[index as usize].path;
 
                 let rel_path_storage;
-                let pretty: &[u8] = if path.is_file() {
+                let pretty: &[u8] = if path.is_file() && self.options.preserve_source_paths {
+                    path.text
+                } else if path.is_file() {
                     rel_path_storage = Self::source_map_relative_path(chunk_abs_dir, path.text)?;
                     &rel_path_storage
                 } else {
@@ -1427,6 +1431,12 @@ pub struct LinkerOptions {
     pub(crate) target_builtins: Option<std::sync::Arc<[u8]>>,
     pub(crate) bytecode_depth: u32,
     pub(crate) optimize_bytecode: bool,
+    /// See `BundleOptions::aot`.
+    pub(crate) aot: bool,
+    /// The chunks have `$$t(value, mask)` in them (`BundleOptions::sound_types`), which the bytecode generator has to know.
+    pub(crate) sound_types: bool,
+    /// See `BundleOptions::preserve_source_paths`.
+    pub(crate) preserve_source_paths: bool,
     /// The order files of `--bytecode-order` / `compile.bytecodeOrder`, read and merged when the bundle started.
     pub(crate) bytecode_order: Option<crate::bytecode_order::BytecodeOrder>,
     pub(crate) output_format: Format,
@@ -1480,6 +1490,9 @@ impl Default for LinkerOptions {
             target_builtins: None,
             bytecode_depth: u32::MAX,
             optimize_bytecode: true,
+            aot: false,
+            sound_types: false,
+            preserve_source_paths: false,
             bytecode_order: None,
             output_format: Format::Esm,
             ignore_dce_annotations: false,
@@ -2474,6 +2487,13 @@ impl<'a> LinkerContext<'a> {
             },
             mangled_props: Some(mangled_props),
             module_info,
+            // Only in text that goes from here to the engine and nowhere else: nothing else reads such things.
+            type_tags: if self.options.generate_bytecode_cache {
+                let source = &parse_graph.input_files.items_source()[source_index.get() as usize];
+                bun_ast::sound_types::oracle::tags_for(source.path.text, source.contents())
+            } else {
+                None
+            },
             ..Default::default()
         };
 

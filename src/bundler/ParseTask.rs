@@ -792,9 +792,11 @@ pub mod parse_worker {
                     s.chunk_index.load(core::sync::atomic::Ordering::Relaxed),
                 ),
                 nested_scope_slot: s.nested_scope_slot,
+                sound_type: s.sound_type,
                 kind,
                 import_item_status,
                 flags: s.flags,
+                escapes: core::sync::atomic::AtomicU8::new(0),
             });
         }
         out
@@ -2534,6 +2536,8 @@ pub mod parse_worker {
             options::Format::Iife => js_parser::options::Format::Iife,
             options::Format::InternalBakeDev => js_parser::options::Format::InternalBakeDev,
         };
+        opts.inline_import_meta_paths = topts.preserve_source_paths;
+        opts.features.inject_jest_globals = topts.rewrite_jest_for_tests;
         opts.features.minify_syntax = topts.minify_syntax;
         opts.features.minify_identifiers = topts.minify_identifiers;
         opts.features.minify_keep_names = topts.keep_names;
@@ -2575,6 +2579,19 @@ pub mod parse_worker {
         };
         opts.features.react_compiler_parse_test_pragmas =
             opts.features.react_compiler.is_enabled() && topts.react_compiler_parse_test_pragmas;
+        opts.features.sound_types = topts.sound_types.unless_excluded_by_env(source.path.text);
+        let sound_types_host = crate::sound_types_host::SoundTypesHost {
+            resolver,
+            cache: bun_ptr::BackRef::new(&worker_ctx.sound_types_cache),
+        };
+        if opts.features.sound_types.is_enabled() && loader.is_typescript() {
+            // SAFETY: `opts` is consumed by the parse below, before `sound_types_host` drops.
+            opts.sound_types_host = Some(unsafe {
+                bun_ptr::detach_lifetime_ref::<dyn bun_ast::sound_types::ModuleTypesHost>(
+                    &sound_types_host,
+                )
+            });
+        }
 
         opts.features.server_components = if topts.server_components {
             use bun_ast::runtime::ServerComponentsMode as SC;

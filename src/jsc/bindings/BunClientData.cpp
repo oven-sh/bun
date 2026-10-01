@@ -15,6 +15,7 @@
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/CachedTypes.h>
 #include <JavaScriptCore/PrelinkedModuleGraph.h>
+#include <JavaScriptCore/StaticHeap.h>
 #include <wtf/MainThread.h>
 
 #include "JSDOMConstructorBase.h"
@@ -283,11 +284,13 @@ void JSVMClientData::reconcileWeakReferencesAtGCEnd(JSC::VM& vm, JSC::Collection
     Bun::JSCTaskScheduler::cancelWorkOfDeadRealms(this, vm);
 }
 
-void JSVMClientData::setDecoderStringTable(std::span<const uint8_t> bytes)
+void JSVMClientData::setDecoderStringTable(JSC::VM& vm, std::span<const uint8_t> bytes)
 {
     if (m_decoderStringTable)
         return; // slots may already hold cells this VM visits; never replace
-    m_decoderStringTable = makeUnique<JSC::DecoderStringTable>(bytes);
+    m_decoderStringTable = JSC::StaticHeap::tryCreateStringTable(vm, bytes);
+    if (!m_decoderStringTable)
+        m_decoderStringTable = makeUnique<JSC::DecoderStringTable>(bytes);
 }
 
 extern "C" bool Bun__standalonePrelinkedModuleGraph(const uint8_t** blob, size_t* blobLength, const uint8_t** slotTable, size_t* slotTableLength);

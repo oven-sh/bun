@@ -1,4 +1,4 @@
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 use std::cell::Cell;
 
 use crate::ImportItemStatus;
@@ -79,6 +79,11 @@ pub struct Symbol {
     /// Do not use this directly. Use `nestedScopeSlot()` instead.
     pub nested_scope_slot: u32,
 
+    /// The annotation of a variable declared with an initializer, when sound
+    /// types are enabled. Every plain assignment to the variable is checked
+    /// against it.
+    pub sound_type: crate::sound_types::SoundType,
+
     /// The kind of symbol. This is used to determine how to print the symbol
     /// and how to deal with conflicts, renaming, etc.
     pub kind: Kind,
@@ -104,6 +109,22 @@ pub struct Symbol {
 
     /// Packed boolean state — see [`SymbolFlags`].
     pub flags: SymbolFlags,
+
+    /// What the variable holds can get somewhere other than into a call of it:
+    /// some part that ships has a use that `Use::is_more_than_called`, or an
+    /// entry point exports it. Set on the symbol a use resolves to, by the
+    /// same walk and under the same rules as `chunk_index`; means nothing
+    /// before that.
+    ///
+    /// `IS_VISIBLE_FROM_OUTSIDE`: the value can be obtained by something other than a
+    /// use of the variable in code that ships: through an entry point's exports, or
+    /// by evaluated code. Never set without `ESCAPES`.
+    pub escapes: AtomicU8,
+}
+
+impl Symbol {
+    pub const ESCAPES: u8 = 1;
+    pub const IS_VISIBLE_FROM_OUTSIDE: u8 = 2;
 }
 
 bitflags::bitflags! {
@@ -176,9 +197,11 @@ impl Default for Symbol {
             use_count_estimate: 0,
             chunk_index: AtomicU32::new(INVALID_CHUNK_INDEX),
             nested_scope_slot: INVALID_NESTED_SCOPE_SLOT,
+            sound_type: crate::sound_types::SoundType::TOP,
             kind: Kind::Other,
             import_item_status: ImportItemStatus::None,
             flags: SymbolFlags::empty(),
+            escapes: AtomicU8::new(0),
         }
     }
 }
@@ -365,18 +388,21 @@ impl Kind {
 /// A part's uses of one symbol: an estimated count, plus whether any of them
 /// was added without its scope being recorded in `Ast::scope_uses` (by the
 /// linker or a transform), in which case the renamer must assume the symbol
-/// may be printed in any scope of the part. Packed into one word because
-/// every part holds one per referenced symbol.
+/// may be printed in any scope of the part; plus whether any of the parser's
+/// own is something other than the callee of a call. Packed into one word
+/// because every part holds one per referenced symbol.
 #[derive(Default, Clone, Copy)]
 pub struct Use(u32);
 
 impl Use {
     const UNSCOPED: u32 = 1 << 31;
+    const AS_VALUE: u32 = 1 << 30;
+    const FLAGS: u32 = Self::UNSCOPED | Self::AS_VALUE;
 
     /// `count` uses whose scope is not on record.
     pub const fn unscoped(count: u32) -> Use {
-        Use(if count >= Self::UNSCOPED {
-            u32::MAX
+        Use(if count >= Self::AS_VALUE {
+            (Self::AS_VALUE - 1) | Self::UNSCOPED
         } else {
             count | Self::UNSCOPED
         })
@@ -384,7 +410,7 @@ impl Use {
 
     #[inline]
     pub const fn count_estimate(self) -> u32 {
-        self.0 & !Self::UNSCOPED
+        self.0 & !Self::FLAGS
     }
 
     #[inline]
@@ -392,21 +418,37 @@ impl Use {
         self.0 & Self::UNSCOPED != 0
     }
 
-    /// The parser's `record_usage`: the use's scope is on record.
+    /// Some use may do more with the value than call it: the parser saw such a
+    /// use, or a use was added later without saying what kind it is.
     #[inline]
-    pub fn add_scoped(&mut self, count: u32) {
-        debug_assert!(self.count_estimate() + count < Self::UNSCOPED);
+    pub const fn is_more_than_called(self) -> bool {
+        self.0 & Self::FLAGS != 0
+    }
+
+    /// The parser's `record_usage`: the use's scope is on record.
+    /// `leaves_the_value_alone`: it is `f` in `f()`, `f?.()` or `export { f }`.
+    #[inline]
+    pub fn add_scoped(&mut self, count: u32, leaves_the_value_alone: bool) {
+        debug_assert!(self.count_estimate() + count < Self::AS_VALUE);
         self.0 += count;
+        if !leaves_the_value_alone {
+            self.0 |= Self::AS_VALUE;
+        }
+    }
+
+    #[inline]
+    pub fn note_value(&mut self) {
+        self.0 |= Self::AS_VALUE;
     }
 
     #[inline]
     pub fn subtract(&mut self, count: u32) {
-        self.0 = self.count_estimate().saturating_sub(count) | (self.0 & Self::UNSCOPED);
+        self.0 = self.count_estimate().saturating_sub(count) | (self.0 & Self::FLAGS);
     }
 
     pub fn merge(&mut self, other: Use) {
         let count = self.count_estimate().saturating_add(other.count_estimate());
-        self.0 = count.min(Self::UNSCOPED - 1) | ((self.0 | other.0) & Self::UNSCOPED);
+        self.0 = count.min(Self::AS_VALUE - 1) | ((self.0 | other.0) & Self::FLAGS);
     }
 }
 
@@ -469,6 +511,22 @@ impl Map {
             }
         }
         bun_core::output::flush();
+    }
+
+    /// See `Symbol::escapes`. From worker threads, like `assign_chunk_index`.
+    pub fn note_escape(&self, ref_: Ref) {
+        if let Some(symbol) = self.get_const(self.follow(ref_)) {
+            symbol.escapes.fetch_or(Symbol::ESCAPES, Ordering::Relaxed);
+        }
+    }
+
+    /// See `Symbol::escapes`.
+    pub fn note_visible_from_outside(&self, ref_: Ref) {
+        if let Some(symbol) = self.get_const(self.follow(ref_)) {
+            symbol
+                .escapes
+                .fetch_or(Symbol::ESCAPES | Symbol::IS_VISIBLE_FROM_OUTSIDE, Ordering::Relaxed);
+        }
     }
 
     // Takes `&self` (not `&mut self`) — the only caller

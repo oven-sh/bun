@@ -310,6 +310,8 @@ pub(crate) mod test {
 #[path = "Arguments.rs"]
 pub(crate) mod arguments;
 pub(crate) use arguments as Arguments;
+#[path = "aot.rs"]
+pub(crate) mod aot;
 #[path = "run_command.rs"]
 pub(crate) mod run_command;
 

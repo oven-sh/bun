@@ -486,6 +486,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Visiting a function that is handed to the React Compiler, which re-declares its locals as new symbols.
     pub(crate) react_compiler_may_replace_body: bool,
 
+    /// `Off` unless this file's annotations are being lowered to checks.
+    pub(crate) sound_level: bun_ast::sound_types::Level,
+    /// `Some` iff `sound_level != Off`.
+    pub(crate) sound_state: Option<Box<crate::sound_types::SoundTypesState<'a>>>,
+
     /// only applicable when `.options.features.server_components` is
     /// configured to wrap exports. populated before visit pass starts.
     pub(crate) server_components_wrap_ref: Ref,
@@ -548,6 +553,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // syntactic constructs as appropriate.
     pub(crate) stmt_expr_value: js_ast::ExprData,
     pub(crate) call_target: js_ast::ExprData,
+    /// The next use passed to `record_usage` is `f` in `f()`, or in `export { f }`, so the variable's value does not escape
+    /// through it. See `symbol::Use::is_more_than_called`.
+    pub(crate) next_use_leaves_the_value_alone: bool,
     pub(crate) template_tag: js_ast::ExprData,
     pub(crate) delete_target: js_ast::ExprData,
     pub(crate) loop_body: js_ast::StmtData,
@@ -2072,6 +2080,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self.part_uses[index].1
     }
 
+    /// A use that has been recorded turns out to be more than a call. See `symbol::Use::is_more_than_called`.
+    pub(crate) fn note_use_of_value(&mut self, ref_: Ref) {
+        if let Some(use_) = self.existing_part_use(ref_) {
+            use_.note_value();
+        }
+    }
+
     fn existing_part_use(&mut self, ref_: Ref) -> Option<&mut js_ast::symbol::Use> {
         let slot = *self.part_use_slot.get(ref_.inner_index() as usize)?;
         if (slot >> 32) as u32 != self.part_generation {
@@ -2116,7 +2131,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !self.is_control_flow_dead {
             debug_assert!(self.symbols.len() > ref_.inner_index() as usize);
             self.symbols[ref_.inner_index() as usize].use_count_estimate += 1;
-            self.part_use(ref_).add_scoped(1);
+            let leaves_the_value_alone = self.next_use_leaves_the_value_alone;
+            self.part_use(ref_).add_scoped(1, leaves_the_value_alone);
             if scope_use {
                 self.record_scope_use(ref_);
             }
@@ -3712,6 +3728,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             {
                                 // Silently merge this symbol into the existing symbol
                                 self.symbols[symbol_idx].link.set(member_in_scope.ref_);
+                                // "function foo() {} { var foo = 1 }"
+                                self.record_assignment(member_in_scope.ref_);
                                 if self.symbols[symbol_idx].must_not_be_renamed() {
                                     self.set_must_not_be_renamed_through_links(
                                         member_in_scope.ref_,
@@ -5267,6 +5285,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 MR::OverwriteWithNew => {}
             }
+            // Each declaration may come with an initializer: "function foo() {} var foo = 1".
+            if !matches!(merge, MR::Forbidden) {
+                self.record_assignment(ref_);
+            }
         }
         *entry.value_ptr = js_ast::scope::Member { ref_, loc };
         Ok(ref_)
@@ -6138,6 +6160,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             js_ast::ExprData::EIndex(e) => e.optional_chain.is_none(),
             js_ast::ExprData::EArray(e) => !e.is_parenthesized,
             js_ast::ExprData::EObject(e) => !e.is_parenthesized,
+            js_ast::ExprData::ETypeCheck(e) => self.is_valid_assignment_target(&e.value),
             _ => false,
         }
     }
@@ -7047,6 +7070,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // "name = (enclosing.name ||= {})"
                     self.record_usage(namespace);
                     self.record_usage(name_ref);
+                    self.record_assignment(name_ref);
                     let left = self.new_expr(
                         E::Dot {
                             target: Expr::init_identifier(namespace, name_loc),
@@ -7074,6 +7098,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // "name ||= {}"
             self.record_usage(name_ref);
+            self.record_assignment(name_ref);
             let right = self.new_expr(E::Object::default(), name_loc);
             self.new_expr(
                 E::Binary {
@@ -7605,7 +7630,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             break;
                         }
 
-                        let i = super_index.map(|j| j + 1).unwrap_or(0);
+                        let i = match super_index {
+                            Some(j) => j + 1,
+                            None if self.sound_types_enabled() => {
+                                self.sound_prologue_len(old_stmts)
+                            }
+                            None => 0,
+                        };
                         let mut constructor_stmts = BumpVec::<Stmt>::with_capacity_in(
                             old_stmts.len() + instance_members.len(),
                             self.arena,
@@ -7771,6 +7802,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     self.record_usage(class_ref);
                     self.record_usage(class_ref);
+                    self.record_assignment(class_ref);
                 }
                 stmts.into_bump_slice_mut()
             }
@@ -8417,6 +8449,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             for ref_ in stale {
                 self.ref_to_ts_namespace_member.remove(&ref_);
             }
+            self.sound_forget_symbols_from(snapshot.symbols_len);
         }
         self.allocated_names.truncate(snapshot.allocated_names_len);
         self.import_records.truncate(snapshot.import_records_len);
@@ -9740,7 +9773,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !TYPESCRIPT {
             // This is so it doesn't impact runtime transpiler caching when not in use
             opts.features.emit_decorator_metadata = false;
+            opts.features.sound_types = bun_ast::sound_types::Level::Off;
         }
+
+        // The printed callee has to be the global `$$t`. A file that mentions
+        // the name could bind it, so it keeps its annotations erased.
+        let sound_level = if opts.features.sound_types.is_enabled()
+            && !SCAN_ONLY
+            && !strings::contains(&source.contents, bun_ast::sound_types::CHECK_FN_NAME)
+        {
+            opts.features.sound_types
+        } else {
+            bun_ast::sound_types::Level::Off
+        };
+        let sound_state = sound_level.is_enabled().then(|| {
+            crate::sound_types::SoundTypesState::new(
+                source.path.text,
+                source.contents(),
+                opts.sound_types_host,
+            )
+        });
 
         let unwrap_all_requires = 'brk: {
             if opts.bundle && opts.output_format != options::Format::Cjs {
@@ -9796,6 +9848,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             allow_in: true,
 
             call_target: null_expr_data(),
+            next_use_leaves_the_value_alone: false,
             template_tag: null_expr_data(),
             delete_target: null_expr_data(),
             stmt_expr_value: null_expr_data(),
@@ -9901,6 +9954,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             react_compiler_pending: None,
             react_compiler_result: None,
             react_compiler_may_replace_body: false,
+            sound_level,
+            sound_state,
             server_components_wrap_ref: Ref::NONE,
             jest: Jest::default(),
             import_records_for_current_part: BumpVec::new_in(arena),

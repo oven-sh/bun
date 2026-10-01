@@ -941,6 +941,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             Global::exit(exit_code as u32);
         }
 
+        if ctx.runtime_options.aot || ctx.runtime_options.aot_graph_fd.is_some() {
+            return Self::boot_aot(ctx, &entry_path);
+        }
+
         // `bun_jsc::initialize`
         // is real (calls `JSCInitialize` over `bun_sys::environ()`); the
         // dispatch hooks (`jsc_hooks::install_jsc_hooks`) are installed by
@@ -1105,6 +1109,26 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         .start()
     }
 
+    /// `bun run --aot <file>`: see [`cli::aot`].
+    fn boot_aot(ctx: &mut ContextData, entry_path: &[u8]) -> crate::Result<()> {
+        let mut cwd_buf = paths::path_buffer_pool::get();
+        let mut path_buf = paths::path_buffer_pool::get();
+        let entry_path: &[u8] = if paths::is_absolute(entry_path) {
+            entry_path
+        } else {
+            paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
+                core::getcwd(&mut cwd_buf)?.as_bytes(),
+                &mut path_buf[..],
+                &[entry_path],
+            )
+        };
+        let Some(graph) = cli::aot::graph(ctx)? else {
+            cli::aot::exec_build(ctx, &[entry_path], false);
+        };
+        let entry_name = graph.entry_point().name.to_vec().into_boxed_slice();
+        Self::boot_standalone(ctx, entry_name, graph)
+    }
+
     /// Entry point for
     /// `bun build --compile` executables. Mirrors [`boot`] but routes through
     /// `VirtualMachine::init_with_module_graph` and applies the standalone
@@ -1117,7 +1141,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         use bun_standalone_graph::StandaloneModuleGraph::Flags as GraphFlags;
 
         // argv belongs to the compiled program, so a `-e` or `-p` in it is not ours.
-        bun_jsc::initialize(bun_jsc::InitializeOptions::default());
+        bun_jsc::initialize(bun_jsc::InitializeOptions {
+            use_aot: !bun_resolver::StandaloneModuleGraph::aot_image(&*graph).is_empty(),
+            ..Default::default()
+        });
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);
         if graph.flags.contains(GraphFlags::CROSS_COMPILED_BYTECODE) {
             bun_analytics::features::cross_compiled_bytecode.fetch_add(1, Ordering::Relaxed);

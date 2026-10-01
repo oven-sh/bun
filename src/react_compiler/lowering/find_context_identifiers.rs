@@ -513,6 +513,7 @@ impl<'a> ContextIdentifierVisitor<'a> {
                 }
             }
             Data::EInlinedEnum(e) => self.walk_expr(&e.value),
+            Data::ETypeCheck(e) => self.walk_expr(&e.value),
 
             Data::EPrivateIdentifier(_)
             | Data::ECommonjsExportIdentifier(_)

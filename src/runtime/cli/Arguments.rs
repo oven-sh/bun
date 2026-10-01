@@ -160,6 +160,12 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--smol                            Use less memory, but run garbage collection more often"
     ),
     parse_param!(
+        "--aot                             Compile the program to machine code ahead of time, then run it"
+    ),
+    parse_param!(
+        "--aot-graph-fd <STR>              (internal) What --aot becomes once the program is compiled"
+    ),
+    parse_param!(
         "--interactive                     Start a Node.js-compatible REPL, like node --interactive"
     ),
     parse_param!(
@@ -434,6 +440,18 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--no-compile-autoload-package-json Disable autoloading of package.json at runtime in standalone executable"
         ),
         parse_param!(
+            "--compile-aot                    Compile JavaScript to machine code ahead of time in standalone executable. Implies --bytecode"
+        ),
+        parse_param!(
+            "--compile-run                    (internal) Run what was built in place of this process instead of writing an executable"
+        ),
+        parse_param!(
+            "--compile-run-arg <STR>...       (internal) An argument for the bun that --compile-run runs"
+        ),
+        parse_param!(
+            "--rewrite-jest-for-tests         (internal) The entry points are test files"
+        ),
+        parse_param!(
             "--compile-executable-path <STR>  Path to a Bun executable to use for cross-compilation instead of downloading"
         ),
         parse_param!(
@@ -517,6 +535,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!(
             "--react-compiler                 Enable the React Compiler optimizing transform"
+        ),
+        parse_param!(
+            "--sound-types <STR>?             Check TypeScript annotations at runtime with the $$t intrinsic - 'basic' (default), 'full' or 'infer'"
         ),
         parse_param!("--no-bundle                      Transpile file only, do not bundle"),
         parse_param!(
@@ -1251,6 +1272,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");
+        ctx.runtime_options.aot = args.flag(b"--aot");
+        ctx.runtime_options.aot_graph_fd = args
+            .option(b"--aot-graph-fd")
+            .and_then(|fd| core::str::from_utf8(fd).ok()?.parse().ok());
         // node's `-i` is an alias for --interactive; elsewhere `-i` is --install=fallback.
         ctx.runtime_options.interactive = args.flag(b"--interactive")
             || (cmd == CommandTag::RunAsNodeCommand && args.flag(b"-i"));
@@ -2076,7 +2101,12 @@ fn parse_build_command_options(
     diag: &mut clap::Diagnostic,
 ) {
     ctx.bundler_options.transform_only = args.flag(b"--no-bundle");
-    ctx.bundler_options.bytecode = args.flag(b"--bytecode");
+    // Ahead-of-time compilation takes the linked bytecode as its input, so it implies `--bytecode`.
+    ctx.bundler_options.compile_aot = args.flag(b"--compile-aot");
+    ctx.bundler_options.compile_run = args.flag(b"--compile-run");
+    ctx.bundler_options.rewrite_jest_for_tests = args.flag(b"--rewrite-jest-for-tests");
+    ctx.bundler_options.compile_run_args = slice_to_owned(args.options(b"--compile-run-arg"));
+    ctx.bundler_options.bytecode = args.flag(b"--bytecode") || ctx.bundler_options.compile_aot;
     if let Some(depth) = args.option(b"--bytecode-depth") {
         ctx.bundler_options.bytecode_depth = match strings::parse_int::<u32>(depth, 10) {
             Ok(v) => v,
@@ -2111,7 +2141,11 @@ fn parse_build_command_options(
     ctx.bundler_options.optimize_bytecode = !args.flag(b"--no-optimize-bytecode");
 
     if ctx.bundler_options.bytecode {
-        ctx.bundler_options.output_format = options::Format::Cjs;
+        ctx.bundler_options.output_format = if ctx.bundler_options.compile_aot {
+            options::Format::Esm
+        } else {
+            options::Format::Cjs
+        };
         ctx.args.target = Some(api::Target::Bun);
     }
 
@@ -2412,6 +2446,21 @@ fn parse_build_command_options(
         }
     }
 
+    if ctx.bundler_options.compile_run && !ctx.bundler_options.compile {
+        Output::err_generic("--compile-run requires --compile", ());
+        Global::crash();
+    }
+    if ctx.bundler_options.compile_aot && !ctx.bundler_options.compile {
+        Output::err_generic("--compile-aot requires --compile", ());
+        Global::crash();
+    }
+    if ctx.bundler_options.compile_aot {
+        if let Some(why) = crate::cli::aot::why_unsupported(&ctx.bundler_options.compile_target) {
+            Output::err_generic("--compile-aot: {}", format_args!("{}", why));
+            Global::crash();
+        }
+    }
+
     if let Some(path) = args.option(b"--compile-executable-path") {
         if !ctx.bundler_options.compile {
             Output::err_generic("--compile-executable-path requires --compile", ());
@@ -2606,6 +2655,10 @@ fn parse_build_command_options(
         }
 
         ctx.bundler_options.output_format = format;
+        if ctx.bundler_options.compile_aot && format != options::Format::Esm {
+            Output::err_generic("--compile-aot requires --format=esm", ());
+            Global::exit(1);
+        }
         if ctx.bundler_options.bytecode {
             if format != options::Format::Cjs && format != options::Format::Esm {
                 Output::err_generic("format must be 'cjs' or 'esm' when bytecode is true.", ());
@@ -2704,6 +2757,17 @@ fn parse_build_command_options(
 
     if args.flag(b"--react-compiler") {
         ctx.bundler_options.react_compiler = true;
+    }
+
+    if let Some(setting) = args.option(b"--sound-types") {
+        let Some(level) = bun_ast::sound_types::Level::from_option_value(setting) else {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: Invalid --sound-types setting: \"{}\". Expected \"basic\", \"full\" or \"infer\"",
+                BStr::new(setting)
+            );
+            Global::crash();
+        };
+        ctx.bundler_options.sound_types = level;
     }
 
     if let Some(setting) = args.option(b"--sourcemap") {

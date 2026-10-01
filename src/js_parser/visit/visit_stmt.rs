@@ -181,7 +181,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.options.features.replace_exports.count() > 0 {
             for i in 0..items_len {
                 let name = p.load_name_from_ref(items[i].name.ref_);
-                let symbol = p.find_symbol(items[i].alias_loc, name)?;
+                // (Uses by importers are recorded at the import sites.)
+                p.next_use_leaves_the_value_alone = true;
+                let symbol = p.find_symbol(items[i].alias_loc, name);
+                p.next_use_leaves_the_value_alone = false;
+                let symbol = symbol?;
                 let ref_ = symbol.r#ref;
 
                 // reshaped for borrowck — get_ptr borrows options; clone the
@@ -222,7 +226,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else {
             for i in 0..items_len {
                 let name = p.load_name_from_ref(items[i].name.ref_);
-                let symbol = p.find_symbol(items[i].alias_loc, name)?;
+                // (Uses by importers are recorded at the import sites.)
+                p.next_use_leaves_the_value_alone = true;
+                let symbol = p.find_symbol(items[i].alias_loc, name);
+                p.next_use_leaves_the_value_alone = false;
+                let symbol = symbol?;
                 let ref_ = symbol.r#ref;
 
                 if p.symbols[ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Unbound {
@@ -1978,6 +1986,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .expect("unreachable");
         let _ = p.visit_for_loop_init(data.init, true);
         p.visit_expr(&mut data.value);
+        if p.sound_types_infer()
+            && !data.is_await
+            && let StmtData::SLocal(local) = data.init.data
+            && local.decls.len_u32() == 1
+        {
+            p.sound_infer_loop_variable(&local.decls.at(0).binding, &data.value);
+        }
+        if p.sound_types_infer() && !data.is_await {
+            data.value = p.sound_mark_iterated_array(data.value);
+        }
         data.body = p.visit_loop_body(data.body);
 
         if let StmtData::SLocal(_) = data.init.data {

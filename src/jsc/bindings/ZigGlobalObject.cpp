@@ -186,6 +186,7 @@
 #include "EventLoopTask.h"
 #include "NodeModuleModule.h"
 #include <JavaScriptCore/JSCBytecodeCacheVersion.h>
+#include <JavaScriptCore/StaticHeap.h>
 #include "JSPerformanceServerTiming.h"
 #include "JSPerformanceResourceTiming.h"
 #include "JSPerformanceTiming.h"
@@ -284,11 +285,16 @@ extern "C" long Bun__crashHandlerFromJSCFrame(void*, void*, void*, void*);
 // bun_icu_default_locale.cpp
 extern "C" void Bun__ensureICUDefaultLocale();
 
-extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals)
+extern "C" bool Bun__hasStandaloneModuleGraph();
+
+extern "C" void Bun__installCompilers(); // BunCompilers.cpp, or BunCompilersRegExpOnly.cpp
+extern "C" void Bun__AOT__setCodecOfImages(); // ZigSourceProvider.cpp
+
+extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals, bool useAOT)
 {
     static std::once_flag jsc_init_flag;
     // NOLINTBEGIN
-    std::call_once(jsc_init_flag, [evalMode, oneShotStartup, shortLivedGlobals, envp, envc, onCrash]() {
+    std::call_once(jsc_init_flag, [evalMode, oneShotStartup, shortLivedGlobals, useAOT, envp, envc, onCrash]() {
         Bun__ensureICUDefaultLocale();
         JSC::Config::enableRestrictedOptions();
         // JSC options come from BUN_JSC_* (applied in the callback below), not JSC_*.
@@ -302,6 +308,13 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         // Under ASAN+Linux, JSC's notifyOptionsChanged() already disables
         // useWasmFaultSignalHandler/FastMemory when ASAN_OPTIONS lacks
         // allow_user_segv_handler=1, so we don't force it off here.
+#if OS(DARWIN)
+        // If this is left unset, JSC assumes that a process without the JIT is sandboxed and has no Mach exception
+        // handlers either, and disables the features that need them, such as SharedArrayBuffer.
+        JSC::Options::machExceptionHandlerSandboxPolicy = JSC::Options::SandboxPolicy::Allow;
+#endif
+        Bun__installCompilers();
+        Bun__AOT__setCodecOfImages();
         JSC::initialize([&] {
             JSC::Options::useWasm() = true;
             JSC::Options::useJIT() = true;
@@ -315,6 +328,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // and trip JSValue::synthesizePrototype's isSymbol() debug assert.
             JSC::Options::exposeInternalModuleLoader() = false;
             JSC::Options::useSharedArrayBuffer() = true;
+            JSC::Options::useMiniVMModeWithoutJIT() = false;
             JSC::Options::useJITCage() = false;
             JSC::Options::useShadowRealm() = true;
             JSC::Options::useV8DateParser() = true;
@@ -327,6 +341,41 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useExplicitResourceManagement() = true;
             JSC::Options::useImportDefer() = true;
             JSC::Options::useTemporal() = true;
+            // An executable that was built with an AOT image and static heap uses them unless told not to, with BUN_AOT=0 or
+            // BUN_JSC_useAOT=0 (applied below). BUN_AOT exists because a Bun that does not know a BUN_JSC_ option refuses to start,
+            // and a child process may be a different Bun. BUN_AOT=1 asks the bundler for an AOT build and means nothing here: the
+            // process that runs the build has no image, and must not lose its JIT.
+            JSC::Options::useAOT() = useAOT;
+            if (const char* value = getenv("BUN_AOT"); value && !strcmp(value, "0"))
+                JSC::Options::useAOT() = false;
+            // Ahead-of-time compiled code runs without the JIT: code that the build could not see (eval, new Function)
+            // is interpreted. With JIT compiler threads, only the first VM can use the static heap
+            // (StaticHeap::install()), which the code of a Worker relies on. BUN_JSC_useJIT=1 (applied below) overrides
+            // this.
+            // (Regular expressions that are built at run time are still compiled: Options::notifyOptionsChanged().)
+            // The code was also compiled on the assumption that built-in objects are immutable.
+            if (JSC::Options::useAOT()) {
+                JSC::Options::useJIT() = false;
+                JSC::Options::useImmutableIntrinsics() = true;
+            }
+            // An executable that is built without its source text keeps the excerpts that its error messages quote.
+            if (const char* value = getenv("BUN_COMPILE_OMIT_SOURCE_TEXT"); value && !strcmp(value, "1"))
+                JSC::Options::useAOTSourceQuotes() = true;
+            // An executable that will never be interpreted is built without its bytecode.
+            if (const char* value = getenv("BUN_COMPILE_OMIT_BYTECODE"); value && !strcmp(value, "1"))
+                JSC::Options::omitBytecodeFromStaticHeap() = true;
+            // For experiments: a comma-separated list of engine options, as name=value. Unlike a BUN_JSC_ variable, it
+            // does not stop a Bun that does not know the option from starting, because such a Bun ignores it.
+            if (const char* value = getenv("BUN_AOT_OPTIONS")) {
+                for (auto option : WTF::StringView::fromLatin1(value).split(',')) {
+                    auto text = option.utf8();
+                    if (!JSC::Options::setOption(byteCast<char>(text.data()))) {
+                        // Fatal, so that a misspelled or renamed option cannot silently change what is being tested.
+                        WTFLogAlways("BUN_AOT_OPTIONS: %s is not an option", byteCast<char>(text.data()));
+                        exit(1);
+                    }
+                }
+            }
             // Upstream enabled Wasm Memory64 by default (0d0080ea539d); keep
             // it off in Bun while upstream stabilises it.
             // BUN_JSC_useWasmMemory64=1 re-enables it for opt-in testing.
@@ -443,6 +492,10 @@ GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure, uint3
 GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable* methodTable)
 {
     GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, methodTable);
+    // This has to happen before anything is allocated that only this object refers to, because a collection does not
+    // treat a pointer on the stack to a placed cell as a root.
+    if (JSC::StaticHeap::contains(ptr))
+        JSC::StaticHeap::didPlaceCell(vm, ptr);
     ptr->finishCreation(vm);
     return ptr;
 }
@@ -488,6 +541,8 @@ Zig::GlobalObject* defaultGlobalObject(JSC::VM& vm)
 extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
 {
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;
+    // Threads other than the first use the static heap too. (Does nothing on the first thread.)
+    JSC::StaticHeap::prepareThread();
     RefPtr<JSC::VM> vmPtr = JSC::VM::tryCreate(heapSize);
     if (!vmPtr) [[unlikely]] {
         BUN_PANIC("Failed to allocate JavaScriptCore Virtual Machine. Did your computer run out of memory? Or maybe you compiled Bun with a mismatching libc++ version or compiler?");
@@ -555,8 +610,12 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
             if (!structure) [[unlikely]] {
                 return nullptr;
             }
-            if (Bun__hasStandaloneModuleGraph())
+            if (Bun__hasStandaloneModuleGraph()) {
+                // The static heap refers to it by its address.
+                if (JSC::StaticHeap::isFirst(vm))
+                    JSC::StaticHeap::placeNextCell(vm, JSC::StaticHeap::addressOfGlobalObject());
                 return Zig::GlobalObject::create(vm, structure, &Zig::StandaloneGlobalObject::globalObjectMethodTable());
+            }
             return Zig::GlobalObject::create(
                 vm,
                 structure);
@@ -4267,13 +4326,26 @@ JSC::JSPromise* StandaloneGlobalObject::moduleLoaderFetch(JSGlobalObject* jsGlob
     RELEASE_AND_RETURN(scope, resolvedInternalPromise(globalObject, rootSource));
 }
 
+extern "C" const uint8_t* Bun__standaloneModuleSourcePath(const Latin1Character*, size_t, size_t* outLength);
+
 JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObject* globalObject,
     JSModuleLoader* loader,
     JSValue key,
     JSModuleRecord* record,
     RefPtr<JSC::ScriptFetcher>)
 {
-    auto* importMeta = Zig::ImportMetaObject::create(globalObject, key);
+    Zig::ImportMetaObject* importMeta = nullptr;
+    if (key.isString()) {
+        // `bun run --aot`: an entry point sees the path of its source file.
+        auto name = asString(key)->value(globalObject);
+        size_t length = 0;
+        if (name->is8Bit()) {
+            if (const uint8_t* sourcePath = Bun__standaloneModuleSourcePath(name->span8().data(), name->length(), &length))
+                importMeta = Zig::ImportMetaObject::createFromSpecifier(globalObject, String::fromUTF8(std::span { sourcePath, length }));
+        }
+    }
+    if (!importMeta)
+        importMeta = Zig::ImportMetaObject::create(globalObject, key);
     importMeta->setModuleGraph(globalObject->vm(), Bun::moduleGraphOfLoader(globalObject, loader));
     return importMeta;
 }

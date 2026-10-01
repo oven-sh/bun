@@ -119,6 +119,9 @@ impl BinaryExpressionVisitor {
             matches!(p.call_target, ExprData::EBinary(ptr) if core::ptr::eq(ptr.as_ptr(), e_ptr));
         let was_anonymous_named_expr = e_.right.is_anonymous_named();
         let prev_decorator_class_name = p.decorator_class_name;
+        let sound_check_store = p.sound_types_enabled()
+            && v.left_in.assign_target != js_ast::AssignTarget::None
+            && !p.sound_is_escape_hatch(&e_.right);
 
         // Propagate name for anonymous decorated class expressions in assignments
         if e_.op == Op::Code::BinAssign && was_anonymous_named_expr {
@@ -171,6 +174,9 @@ impl BinaryExpressionVisitor {
             }
         }
         p.decorator_class_name = prev_decorator_class_name;
+        if sound_check_store {
+            p.sound_check_assignment(e_);
+        }
 
         // `ns && …` never yields the namespace (it is truthy); `ns == null` /
         // `ns !== undefined` only test it.

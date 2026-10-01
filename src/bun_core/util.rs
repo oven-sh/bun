@@ -4340,6 +4340,47 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     }
 
     #[cfg(unix)]
+    {
+        // We clone argv so that the memory address isn't the same as the libc one.
+        let dupe_argv: Vec<ZBox> = argv_storage()
+            .iter()
+            .map(|z| ZBox::from_vec_with_nul(z.as_bytes().to_vec()))
+            .collect();
+        let errno = execve_self(&dupe_argv, None);
+        if may_return {
+            crate::output::pretty_errorln(format_args!(
+                "error: Failed to reload process: errno {}",
+                errno
+            ));
+            return;
+        }
+        panic!("Unexpected error while reloading: errno {}", errno);
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        // Bun only targets POSIX + Windows; any other target
+        // is a build-time error, not a runtime panic.
+        let _ = (clear_terminal, may_return);
+        compile_error!("unsupported platform for reload_process");
+    }
+}
+
+/// Replaces this process with `bun`, run with `args` (the arguments after `argv[0]`, which is unchanged). `keep_open` stays open
+/// in the new process image. Returns only on failure, with the errno.
+#[cfg(unix)]
+pub fn exec_self(args: &[&[u8]], keep_open: Option<Fd>) -> i32 {
+    let mut argv: Vec<ZBox> = Vec::with_capacity(args.len() + 1);
+    argv.push(ZBox::from_bytes(
+        argv_storage().first().map_or(&b"bun"[..], ZBox::as_bytes),
+    ));
+    argv.extend(args.iter().map(ZBox::from_bytes));
+    execve_self(&argv, keep_open)
+}
+
+/// `execve` of this executable. Returns only if it fails, with the errno.
+#[cfg(unix)]
+fn execve_self(argv: &[ZBox], keep_open: Option<Fd>) -> i32 {
     // SAFETY: FFI calls receive only locally-built NUL-terminated argv/envp arrays; on success
     // `execve` never returns, on failure errno is read. No borrowed Rust state observed after.
     unsafe {
@@ -4349,15 +4390,15 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
             }
             on_before_reload_process_posix();
         }
+        // After the hook: on Linux it marks every descriptor from 3 up close-on-exec.
+        if let Some(fd) = keep_open {
+            let flags = libc::fcntl(fd.native(), libc::F_GETFD);
+            if flags >= 0 {
+                libc::fcntl(fd.native(), libc::F_SETFD, flags & !libc::FD_CLOEXEC);
+            }
+        }
 
-        // We clone argv so that the memory address isn't the same as the libc one.
-        let args = argv_storage();
-        let dupe_argv: Vec<ZBox> = args
-            .iter()
-            .map(|z| ZBox::from_vec_with_nul(z.as_bytes().to_vec()))
-            .collect();
-        let mut newargv: Vec<*const core::ffi::c_char> =
-            dupe_argv.iter().map(|z| z.as_ptr()).collect();
+        let mut newargv: Vec<*const core::ffi::c_char> = argv.iter().map(|z| z.as_ptr()).collect();
         newargv.push(core::ptr::null());
 
         // We clone envp so that the memory address of environment variables isn't
@@ -4377,23 +4418,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
 
         libc::execve(exec_path, newargv.as_ptr().cast(), envp.as_ptr().cast());
         // execve only returns on error.
-        let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
-        if may_return {
-            crate::output::pretty_errorln(format_args!(
-                "error: Failed to reload process: errno {}",
-                errno
-            ));
-            return;
-        }
-        panic!("Unexpected error while reloading: errno {}", errno);
-    }
-
-    #[cfg(not(any(unix, windows)))]
-    {
-        // Bun only targets POSIX + Windows; any other target
-        // is a build-time error, not a runtime panic.
-        let _ = (clear_terminal, may_return);
-        compile_error!("unsupported platform for reload_process");
+        std::io::Error::last_os_error().raw_os_error().unwrap_or(-1)
     }
 }
 

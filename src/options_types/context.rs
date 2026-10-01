@@ -196,6 +196,7 @@ pub struct BundlerOptions {
     pub server_components: bool,
     pub react_fast_refresh: bool,
     pub react_compiler: bool,
+    pub sound_types: bun_ast::sound_types::Level,
     pub code_splitting: bool,
     pub split_require: bool,
     pub transform_only: bool,
@@ -236,6 +237,17 @@ pub struct BundlerOptions {
     pub compile_autoload_bunfig: bool,
     pub compile_autoload_tsconfig: bool,
     pub compile_autoload_package_json: bool,
+    /// `--compile-aot`: the executable carries machine code for its functions, compiled when it is built.
+    pub compile_aot: bool,
+    /// `--compile-run`: instead of writing an executable, replace this process with one that runs what was built
+    /// (`bun run --aot`). It runs where its sources are, so its modules see the paths of their source files.
+    pub compile_run: bool,
+    /// `--compile-run-arg`: the arguments of the `bun` that runs the result. The file descriptor of the build output is
+    /// appended to the argument `--aot-graph-fd=`.
+    pub compile_run_args: Vec<Box<[u8]>>,
+    /// `--rewrite-jest-for-tests`: the entry points are test files, and are transpiled the way `bun test` transpiles
+    /// them.
+    pub rewrite_jest_for_tests: bool,
     pub compile_executable_path: Option<Box<[u8]>>,
     /// `--compile-jit-policy`: JSC tier-up threshold scale baked into the executable (1 = normal).
     pub compile_jit_policy: f32,
@@ -261,6 +273,7 @@ impl Default for BundlerOptions {
             server_components: false,
             react_fast_refresh: false,
             react_compiler: false,
+            sound_types: bun_ast::sound_types::Level::Off,
             code_splitting: false,
             split_require: true,
             transform_only: false,
@@ -296,6 +309,10 @@ impl Default for BundlerOptions {
             compile_autoload_bunfig: true,
             compile_autoload_tsconfig: false,
             compile_autoload_package_json: false,
+            compile_aot: false,
+            compile_run: false,
+            compile_run_args: Vec::new(),
+            rewrite_jest_for_tests: false,
             compile_executable_path: None,
             compile_jit_policy: 1.0,
             compile_assets: Vec::new(),
@@ -558,6 +575,10 @@ pub struct DebuggerEnable {
 
 pub struct RuntimeOptions {
     pub smol: bool,
+    /// `--aot`: compile the program ahead of time, as `bun build --compile --compile-aot` does, and run that.
+    pub aot: bool,
+    /// `--aot-graph-fd`: replaces `--aot` once the build is done. The file descriptor of the build output.
+    pub aot_graph_fd: Option<i32>,
     pub debugger: Debugger,
     pub if_present: bool,
     pub redis_preconnect: bool,
@@ -629,6 +650,8 @@ impl Default for RuntimeOptions {
     fn default() -> Self {
         Self {
             smol: false,
+            aot: false,
+            aot_graph_fd: None,
             debugger: Debugger::Unspecified,
             if_present: false,
             redis_preconnect: false,

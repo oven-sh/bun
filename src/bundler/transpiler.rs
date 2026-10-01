@@ -1596,12 +1596,15 @@ impl<'a> Transpiler<'a> {
                     transform_only: self.options.transform_only,
                     import_meta_main_value: None,
                     lower_import_meta_main_for_node_js: false,
+                    inline_import_meta_paths: false,
                     framework: None,
                     repl_mode: self.options.repl_mode,
                     lower_toml_datetimes: false,
                     is_entry_point: false,
+                    sound_types_host: None,
                 };
 
+                opts.features.sound_types = self.options.sound_types;
                 opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;
                 // emitDecoratorMetadata implies legacy/experimental decorators, as it only
                 // makes sense with TypeScript's legacy decorator system (reflect-metadata).

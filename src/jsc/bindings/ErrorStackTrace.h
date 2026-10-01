@@ -207,6 +207,7 @@ public:
 };
 
 String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock);
+String functionName(JSC::VM& vm, JSC::CodeType, JSC::ScriptExecutable*);
 String functionName(JSC::VM& vm, JSC::JSObject* callee);
 String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* flags);
 

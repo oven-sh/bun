@@ -531,6 +531,8 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
                 if (auto* object = callee->getObject()) {
                     globalObjectForFrame = object->globalObject();
                 }
+            } else if (auto* globalObjectOfCode = stackFrame.globalObjectOfCode()) {
+                globalObjectForFrame = globalObjectOfCode;
             }
         }
 
@@ -696,8 +698,10 @@ static void protectFrameCells(JSC::MarkedArgumentBuffer& cells, const Vector<Sta
     for (auto& frame : stackTrace) {
         if (auto* callee = frame.callee())
             cells.append(callee);
-        if (auto* codeBlock = frame.codeBlock())
+        if (auto* codeBlock = frame.codeBlockIfExists())
             cells.append(codeBlock);
+        else if (auto* executable = frame.ownerExecutable())
+            cells.append(executable);
     }
 }
 

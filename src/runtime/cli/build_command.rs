@@ -205,6 +205,10 @@ impl BuildCommand {
         } else {
             bun_ast::runtime::ReactCompilerMode::Disabled
         };
+        this_transpiler.options.sound_types = ctx
+            .bundler_options
+            .sound_types
+            .or_from_env(ctx.bundler_options.compile);
         this_transpiler.options.inline_entrypoint_import_meta_main =
             ctx.bundler_options.inline_entrypoint_import_meta_main;
         this_transpiler.options.code_splitting = ctx.bundler_options.code_splitting;
@@ -254,6 +258,9 @@ impl BuildCommand {
         }
 
         this_transpiler.options.bytecode = ctx.bundler_options.bytecode;
+        this_transpiler.options.aot = ctx.bundler_options.compile_aot;
+        this_transpiler.options.preserve_source_paths = ctx.bundler_options.compile_run;
+        this_transpiler.options.rewrite_jest_for_tests = ctx.bundler_options.rewrite_jest_for_tests;
         this_transpiler.options.bytecode_depth = ctx.bundler_options.bytecode_depth;
         this_transpiler.options.optimize_bytecode = ctx.bundler_options.optimize_bytecode;
         this_transpiler
@@ -869,14 +876,17 @@ impl BuildCommand {
             }
 
             if ctx.bundler_options.compile {
-                print_summary(
-                    bundled_end,
-                    minify_duration,
-                    opt_minify_identifiers || opt_minify_whitespace || opt_minify_syntax,
-                    input_code_length as usize,
-                    reachable_file_count,
-                    output_files,
-                );
+                // (With `--compile-run`, stdout belongs to the program that is about to run.)
+                if !ctx.bundler_options.compile_run {
+                    print_summary(
+                        bundled_end,
+                        minify_duration,
+                        opt_minify_identifiers || opt_minify_whitespace || opt_minify_syntax,
+                        input_code_length as usize,
+                        reachable_file_count,
+                        output_files,
+                    );
+                }
 
                 Output::flush();
 
@@ -905,6 +915,67 @@ impl BuildCommand {
                     }
                 }
 
+                let graph_flags = {
+                    use bun_standalone_module_graph::StandaloneModuleGraph::Flags;
+                    let mut flags = Flags::default();
+                    if !ctx.bundler_options.compile_autoload_dotenv {
+                        flags |= Flags::DISABLE_DEFAULT_ENV_FILES;
+                    }
+                    if !ctx.bundler_options.compile_autoload_bunfig {
+                        flags |= Flags::DISABLE_AUTOLOAD_BUNFIG;
+                    }
+                    if !ctx.bundler_options.compile_autoload_tsconfig {
+                        flags |= Flags::DISABLE_AUTOLOAD_TSCONFIG;
+                    }
+                    if !ctx.bundler_options.compile_autoload_package_json {
+                        flags |= Flags::DISABLE_AUTOLOAD_PACKAGE_JSON;
+                    }
+                    flags
+                };
+                let graph_runtime_options = bun_standalone_module_graph::StandaloneModuleGraph::RuntimeOptions {
+                    jit_policy: ctx.bundler_options.compile_jit_policy,
+                };
+                let compile_exec_argv = ctx
+                    .bundler_options
+                    .compile_exec_argv
+                    .as_deref()
+                    .unwrap_or(b"");
+                #[cfg(unix)]
+                if ctx.bundler_options.compile_run {
+                    let fd = match bun_standalone_module_graph::StandaloneModuleGraph::to_graph_fd(
+                        compile_target,
+                        output_files,
+                        &opt_public_path,
+                        opt_output_format,
+                        compile_exec_argv,
+                        graph_flags,
+                        graph_runtime_options,
+                    ) {
+                        Ok(fd) => fd,
+                        Err(err) => {
+                            Output::print_errorln(format_args!("{}", bstr::BStr::new(err.slice())));
+                            Global::exit(1);
+                        }
+                    };
+                    log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                        Output::error_writer(),
+                    ))?;
+                    Output::flush();
+                    let graph_fd = format!("--aot-graph-fd={}", fd.native());
+                    let args: Vec<&[u8]> = ctx
+                        .bundler_options
+                        .compile_run_args
+                        .iter()
+                        .map(|arg| match &**arg {
+                            b"--aot-graph-fd=" => graph_fd.as_bytes(),
+                            arg => arg,
+                        })
+                        .collect();
+                    let errno = bun_core::exec_self(&args, Some(fd));
+                    Output::print_errorln(format_args!("failed to run what was built: errno {errno}"));
+                    Global::exit(1);
+                }
+
                 let result = match bun_standalone_module_graph::StandaloneModuleGraph::to_executable(
                     compile_target,
                     output_files,
@@ -915,31 +986,10 @@ impl BuildCommand {
                     unsafe { &mut *env_ptr },
                     opt_output_format,
                     &ctx.bundler_options.windows,
-                    ctx.bundler_options
-                        .compile_exec_argv
-                        .as_deref()
-                        .unwrap_or(b""),
+                    compile_exec_argv,
                     ctx.bundler_options.compile_executable_path.as_deref(),
-                    {
-                        use bun_standalone_module_graph::StandaloneModuleGraph::Flags;
-                        let mut flags = Flags::default();
-                        if !ctx.bundler_options.compile_autoload_dotenv {
-                            flags |= Flags::DISABLE_DEFAULT_ENV_FILES;
-                        }
-                        if !ctx.bundler_options.compile_autoload_bunfig {
-                            flags |= Flags::DISABLE_AUTOLOAD_BUNFIG;
-                        }
-                        if !ctx.bundler_options.compile_autoload_tsconfig {
-                            flags |= Flags::DISABLE_AUTOLOAD_TSCONFIG;
-                        }
-                        if !ctx.bundler_options.compile_autoload_package_json {
-                            flags |= Flags::DISABLE_AUTOLOAD_PACKAGE_JSON;
-                        }
-                        flags
-                    },
-                    bun_standalone_module_graph::StandaloneModuleGraph::RuntimeOptions {
-                        jit_policy: ctx.bundler_options.compile_jit_policy,
-                    },
+                    graph_flags,
+                    graph_runtime_options,
                 ) {
                     Ok(r) => r,
                     Err(err) => {
@@ -1120,6 +1170,7 @@ impl BuildCommand {
                         | options::OutputKind::BuiltinBytecode
                         | options::OutputKind::BytecodeStringTable
                         | options::OutputKind::BytecodePayload
+                        | options::OutputKind::AotImage
                         | options::OutputKind::ModuleInfoStringTable
                         | options::OutputKind::PrelinkedModuleGraph => "<d>",
                         options::OutputKind::MetafileJson
@@ -1170,6 +1221,7 @@ impl BuildCommand {
                         options::OutputKind::BuiltinBytecode => "builtin bytecode",
                         options::OutputKind::BytecodeStringTable => "bytecode strings",
                         options::OutputKind::BytecodePayload => "bytecode payload",
+                        options::OutputKind::AotImage => "machine code",
                         options::OutputKind::ModuleInfoStringTable => "module info strings",
                         options::OutputKind::PrelinkedModuleGraph => "module graph",
                         options::OutputKind::MetafileJson => "metafile json",

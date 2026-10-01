@@ -541,6 +541,29 @@ pub unsafe extern "C" fn Bun__standaloneModuleKey(
     }
 }
 
+/// `bun run --aot`: the path of the source file of the entry point `name`, which its `import.meta` reports. Returns
+/// null if the graph does not record it (`StandaloneModuleGraph::source_path`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__standaloneModuleSourcePath(
+    name: *const u8,
+    len: usize,
+    out_len: *mut usize,
+) -> *const u8 {
+    // SAFETY: `name[..len]` is the caller's live 8-bit string buffer.
+    let name = unsafe { bun_core::ffi::slice(name, len) };
+    if !bun_options_types::standalone_path::is_bun_standalone_file_path(name) {
+        return core::ptr::null();
+    }
+    match standalone_module_graph().and_then(|graph| graph.source_path(name)) {
+        Some(source_path) => {
+            // SAFETY: `out_len` is the caller's writable out-parameter.
+            unsafe { *out_len = source_path.len() };
+            source_path.as_ptr()
+        }
+        None => core::ptr::null(),
+    }
+}
+
 /// `StandaloneGlobalObject::moduleLoaderFetch`: an embedded key whose file carries a serialized ES module record, i.e.
 /// one the loader can register ahead of JSC's graph walk (CommonJS, JSON, assets take the normal path).
 #[unsafe(no_mangle)]
@@ -1475,6 +1498,43 @@ impl VirtualMachine {
         }
         // SAFETY: `jsc_vm` set in `init()`; `table` is a mmapped process-lifetime span from the executable's own section.
         unsafe { Bun__DecoderStringTable__install(self.jsc_vm, table.as_ptr(), table.len()) };
+    }
+
+    /// Maps the static heap that the executable's build created for its main VM (`JSC::StaticHeap`). Must run before
+    /// that VM exists.
+    fn map_static_heap(graph: &'static dyn bun_resolver::StandaloneModuleGraph) {
+        unsafe extern "C" {
+            fn Bun__StaticHeap__map(bytes: *const u8, len: usize, fd: i32, offset_in_file: i64);
+        }
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            let image = graph.aot_image();
+            // The C++ side decides whether to use it (`JSC::Options::useAOT()`).
+            if image.is_empty() {
+                return;
+            }
+            let (fd, offset_in_file) = graph.aot_image_file().unwrap_or((-1, 0));
+            // SAFETY: `image` is a mmapped process-lifetime span, and `fd` (if any) stays open as long.
+            unsafe { Bun__StaticHeap__map(image.as_ptr(), image.len(), fd, offset_in_file) };
+        });
+    }
+
+    /// Hand the executable's machine code (if it has any) to JSC, for every VM of the process.
+    fn install_aot_image(graph: &'static dyn bun_resolver::StandaloneModuleGraph) {
+        unsafe extern "C" {
+            fn Bun__AOT__registerImage(bytes: *const u8, len: usize, fd: i32, offset_in_file: i64);
+        }
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            let image = graph.aot_image();
+            // The C++ side decides whether to use it (`JSC::Options::useAOT()`).
+            if image.is_empty() {
+                return;
+            }
+            let (fd, offset_in_file) = graph.aot_image_file().unwrap_or((-1, 0));
+            // SAFETY: `image` is a mmapped process-lifetime span, and `fd` (if any) stays open as long.
+            unsafe { Bun__AOT__registerImage(image.as_ptr(), image.len(), fd, offset_in_file) };
+        });
     }
 
     /// Safe `&VM` accessor for the JSC VM owned by this Bun VM. Set once in
@@ -3278,6 +3338,13 @@ impl VirtualMachine {
         // no `&mut` is held across the FFI re-entry (`Bun__getVM()` —
         // ZigGlobalObject.cpp:473/961).
         unsafe { (*vm).regular_event_loop.ensure_waker() };
+        if opts.is_main_thread {
+            if let Some(graph) = standalone_module_graph() {
+                Self::map_static_heap(graph);
+                // Before the first realm: its built-in functions have code in the image.
+                Self::install_aot_image(graph);
+            }
+        }
         // `console`/`worker_ptr` are opaque round-trip pointers C++ stores into
         // the new global. `worker_ptr` is the C++ `WebCore::Worker*` (or null on
         // the main thread).
@@ -5088,7 +5155,7 @@ impl VirtualMachine {
         let mut query_string: &[u8] = b"";
         let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
         let top_level_dir = self.top_level_dir();
-        let source_to_use: &[u8] = if !is_special_source {
+        let mut source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {
                 // SAFETY: PORT — `dir_with_trailing_slash()` returns a
                 // re-slice of `source`, which the caller guarantees outlives
@@ -5111,6 +5178,7 @@ impl VirtualMachine {
         // returning the resolver result; `retry_on_not_found` is consumed on
         // the first miss.
         let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
+        let mut may_retry_from_source_path = is_a_file_path && !is_special_source;
         let result: bun_resolver::Result = loop {
             let import_kind = if is_esm {
                 bun_ast::ImportKind::Stmt
@@ -5127,6 +5195,18 @@ impl VirtualMachine {
                 ResultUnion::Success(r) => break r,
                 ResultUnion::Failure(e) => return Err(e.into()),
                 ResultUnion::Pending(_) | ResultUnion::NotFound => {
+                    // `bun run --aot`: a module that is not in the graph is resolved relative to the entry point's source file.
+                    if core::mem::take(&mut may_retry_from_source_path) {
+                        if let Some(source_path) = self
+                            .standalone_module_graph
+                            .and_then(|graph| graph.source_path(source))
+                        {
+                            source_to_use =
+                                bun_resolver::fs::PathName::init(source_path).dir_with_trailing_slash();
+                            retry_on_not_found = true;
+                            continue;
+                        }
+                    }
                     if !retry_on_not_found {
                         return Err(crate::CrateError::ModuleNotFound);
                     }

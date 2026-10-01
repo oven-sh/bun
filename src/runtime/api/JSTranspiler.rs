@@ -118,6 +118,32 @@ impl Default for Config {
 use bun_bundler_jsc::options_jsc::{loader_from_js, target_from_js};
 use bun_collections::index_sort;
 
+/// `soundTypes: boolean | "basic" | "full" | "infer"`
+pub(crate) fn sound_types_from_js(
+    global: &JSGlobalObject,
+    options: JSValue,
+) -> JsResult<bun_ast::sound_types::Level> {
+    use bun_ast::sound_types::Level;
+    let Some(value) = options.get_truthy(global, "soundTypes")? else {
+        return Ok(Level::Off);
+    };
+    if value.is_boolean() {
+        return Ok(if value.to_boolean() {
+            Level::Basic
+        } else {
+            Level::Off
+        });
+    }
+    if value.is_string()
+        && let Some(level) = Level::from_option_value(&value.to_utf8(global)?)
+    {
+        return Ok(level);
+    }
+    Err(global.throw_invalid_arguments(format_args!(
+        "Expected soundTypes to be a boolean, \"basic\", \"full\" or \"infer\""
+    )))
+}
+
 fn source_map_option_from_js(
     global: &JSGlobalObject,
     value: JSValue,
@@ -385,6 +411,8 @@ impl Config {
         if let Some(flag) = object.get_boolean_loose(global, "deadCodeElimination")? {
             self.dead_code_elimination = flag;
         }
+
+        self.runtime.sound_types = sound_types_from_js(global, object)?;
 
         if let Some(flag) = object.get_boolean_loose(global, "replMode")? {
             self.repl_mode = flag;
@@ -1052,6 +1080,7 @@ impl JSTranspiler {
         transpiler.options.inlining = config.runtime.inlining;
         transpiler.options.hot_module_reloading = config.runtime.hot_module_reloading;
         transpiler.options.react_fast_refresh = false;
+        transpiler.options.sound_types = config.runtime.sound_types;
         transpiler.options.repl_mode = config.repl_mode;
 
         Ok(bun_core::heap::into_raw(this))

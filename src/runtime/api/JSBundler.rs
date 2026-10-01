@@ -110,6 +110,7 @@ pub(crate) mod js_bundler {
         pub(crate) react_fast_refresh: bool,
         pub(crate) react_compiler: bun_ast::runtime::ReactCompilerMode,
         pub(crate) react_compiler_parse_test_pragmas: bool,
+        pub(crate) sound_types: bun_ast::sound_types::Level,
         pub(crate) react_compiler_output_mode: Option<bun_ast::runtime::ReactCompilerMode>,
         pub(crate) define: StringMap,
         pub(crate) loaders: Option<api::LoaderMap>,
@@ -174,6 +175,7 @@ pub(crate) mod js_bundler {
                 react_fast_refresh: false,
                 react_compiler: bun_ast::runtime::ReactCompilerMode::Disabled,
                 react_compiler_parse_test_pragmas: false,
+                sound_types: bun_ast::sound_types::Level::Off,
                 react_compiler_output_mode: None,
                 define: StringMap::init(false),
                 loaders: None,
@@ -246,6 +248,8 @@ pub(crate) mod js_bundler {
         pub(crate) autoload_bunfig: bool,
         pub(crate) autoload_tsconfig: bool,
         pub(crate) autoload_package_json: bool,
+        /// `compile.aot`: see `BundleOptions::aot`.
+        pub(crate) aot: bool,
         /// `compile.jitPolicy`: the tier-up threshold scale the executable starts with (1 = normal JIT policy).
         pub(crate) jit_policy: f32,
         /// `compile.bytecodeOrder`: payload order files, most important first.
@@ -271,6 +275,7 @@ pub(crate) mod js_bundler {
                 autoload_bunfig: true,
                 autoload_tsconfig: false,
                 autoload_package_json: false,
+                aot: false,
                 jit_policy: 1.0,
                 bytecode_order: Vec::new(),
             }
@@ -447,6 +452,10 @@ pub(crate) mod js_bundler {
                 object.get_boolean_loose(global_this, "autoloadPackageJson")?
             {
                 this.autoload_package_json = autoload_package_json;
+            }
+
+            if let Some(aot) = object.get_boolean_loose(global_this, "aot")? {
+                this.aot = aot;
             }
 
             // `false` is "no order file", as in `compile: { bytecodeOrder: haveProfile && path }`.
@@ -711,6 +720,8 @@ pub(crate) mod js_bundler {
                     bun_ast::runtime::ReactCompilerMode::Disabled
                 };
             }
+
+            this.sound_types = crate::api::js_transpiler::sound_types_from_js(global_this, config)?;
 
             if let Some(v) =
                 config.get_boolean_loose(global_this, "reactCompilerParseTestPragmas")?
@@ -1373,6 +1384,17 @@ pub(crate) mod js_bundler {
                         compile.outfile.append_slice_exact(outfile)?;
                     }
                 }
+            }
+
+            // Ahead-of-time compilation takes the linked bytecode as its input, so it implies `bytecode`.
+            if let Some(compile) = this.compile.as_ref().filter(|compile| compile.aot) {
+                if let Some(why) = crate::cli::aot::why_unsupported(&compile.compile_target) {
+                    return Err(global_this.throw_invalid_arguments(format_args!("compile.aot: {why}")));
+                }
+                if this.format != options::Format::Esm {
+                    return Err(global_this.throw_invalid_arguments(format_args!("compile.aot requires format: 'esm'")));
+                }
+                this.bytecode = true;
             }
 
             // ESM bytecode requires compile because module_info (import/export metadata)

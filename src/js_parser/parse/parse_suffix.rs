@@ -7,6 +7,7 @@ use crate::parser::DeferredErrors;
 use crate::scan::scan_side_effects::SideEffects;
 use bun_ast::expr::EFlags;
 use bun_ast::op::Level;
+use bun_ast::sound_types::{Rule, SoundType, mask};
 use bun_ast::{E, Expr, ExprData, OpCode, OptionalChain};
 
 // The 50+ per-token `t_*` helpers are private; only `parse_suffix` is surfaced.
@@ -20,14 +21,20 @@ enum Continuation {
 type CResult = core::result::Result<Continuation, Error>;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    fn sfx_handle_typescript_as(p: &mut Self, level: Level) -> CResult {
+    fn sfx_handle_typescript_as(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
         if Self::IS_TYPESCRIPT_ENABLED
             && level.lt(Level::Compare)
             && !p.lexer.has_newline_before
             && (p.lexer.is_contextual_keyword(b"as") || p.lexer.is_contextual_keyword(b"satisfies"))
         {
-            p.lexer.next()?;
-            p.skip_type_script_type(Level::Lowest)?;
+            if p.sound_types_enabled() && p.lexer.identifier == b"as" {
+                p.lexer.next()?;
+                let ty = p.skip_type_script_type_sound(Level::Lowest, None)?;
+                *left = p.sound_annotate(*left, ty, Rule::Cast);
+            } else {
+                p.lexer.next()?;
+                p.skip_type_script_type(Level::Lowest)?;
+            }
 
             // These tokens are not allowed to follow a cast expression. This isn't
             // an outright error because it may be on a new line, in which case it's
@@ -126,6 +133,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         left: &mut Expr,
     ) -> CResult {
         p.lexer.next()?;
+        // "(e as Error)?.name" probes a value that the author does not trust to be an Error.
+        *left = Self::sound_without_annotations(*left);
         let mut optional_start: Option<OptionalChain> = Some(OptionalChain::Start);
 
         // Remove unnecessary optional chains
@@ -172,7 +181,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 let list_loc = p.parse_call_args()?;
                 let loc = left.loc;
-                let target = *left;
+                let target = Self::sound_without_annotations(*left);
                 *left = p.new_expr(
                     E::Call {
                         target,
@@ -202,7 +211,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 let list_loc = p.parse_call_args()?;
                 let loc = left.loc;
-                let target = *left;
+                let target = Self::sound_without_annotations(*left);
                 *left = p.new_expr(
                     E::Call {
                         target,
@@ -285,7 +294,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
 
         let loc = left.loc;
-        let tag = *left;
+        let tag = Self::sound_without_annotations(*left);
         *left = p.new_expr(
             E::Template {
                 tag: Some(tag),
@@ -314,7 +323,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
         let head = E::Str::new(p.lexer.raw_template_contents());
         let (parts, _tail_loc) = p.parse_template_parts(true)?;
-        let tag = *left;
+        let tag = Self::sound_without_annotations(*left);
         let loc = left.loc;
         *left = p.new_expr(
             E::Template {
@@ -386,7 +395,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let list_loc = p.parse_call_args()?;
         let loc = left.loc;
-        let target = *left;
+        let target = Self::sound_without_annotations(*left);
         *left = p.new_expr(
             E::Call {
                 target,
@@ -486,6 +495,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p: &mut Self,
         optional_chain: &mut Option<OptionalChain>,
         old_optional_chain: Option<OptionalChain>,
+        left: &mut Expr,
     ) -> CResult {
         // Skip over TypeScript non-null assertions
         if p.lexer.has_newline_before {
@@ -499,6 +509,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.lexer.next()?;
         *optional_chain = old_optional_chain;
+
+        // "a?.b!.c" is still one chain: it is undefined when "a" is.
+        if p.sound_types_enabled() && old_optional_chain.is_none() {
+            *left = p.sound_annotate(
+                *left,
+                SoundType::from_mask(mask::NON_NULLISH),
+                Rule::NonNull,
+            );
+        }
 
         Ok(Continuation::Next)
     }
@@ -1555,7 +1574,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 T::TSlash => Self::sfx_t_slash(p, level, left),
                 T::TSlashEquals => Self::sfx_t_slash_equals(p, level, left),
                 T::TExclamation => {
-                    Self::sfx_t_exclamation(p, &mut optional_chain, old_optional_chain)
+                    Self::sfx_t_exclamation(p, &mut optional_chain, old_optional_chain, left)
                 }
                 T::TBarBar => Self::sfx_t_bar_bar(p, level, left, flags),
                 T::TAmpersandAmpersand => Self::sfx_t_ampersand_ampersand(p, level, left, flags),
@@ -1596,7 +1615,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     old_optional_chain,
                     left,
                 ),
-                _ => Self::sfx_handle_typescript_as(p, level),
+                _ => Self::sfx_handle_typescript_as(p, level, left),
             };
 
             match continuation? {

@@ -23,6 +23,7 @@ pub mod parse;
 pub mod react_compiler_host;
 pub(crate) mod repl_transforms;
 pub mod scan;
+pub mod sound_types;
 pub mod typescript;
 pub mod visit;
 

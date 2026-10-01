@@ -277,7 +277,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
 
                             // Track how many times we've referenced this symbol
+                            p.next_use_leaves_the_value_alone = identifier_opts.is_call_target();
                             p.record_usage(ref_);
+                            p.next_use_leaves_the_value_alone = false;
                             if identifier_opts.is_call_target() || identifier_opts.is_template_tag()
                             {
                                 p.symbols[ref_.inner_index() as usize].set_called_as_method(true);
@@ -614,6 +616,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     // Inline import.meta properties for Bake
                     if p.options.framework.is_some()
+                        || p.options.inline_import_meta_paths
                         || (p.options.bundle
                             && p.options.output_format == js_parser::options::Format::Cjs)
                     {
@@ -627,7 +630,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             return Some(
                                 p.new_expr(e_string_init(p.source.path.name().filename), name_loc),
                             );
-                        } else if name == b"path" {
+                        } else if name == b"path" || name == b"filename" {
                             // Inline import.meta.path (full path)
                             return Some(p.new_expr(e_string_init(p.source.path.text), name_loc));
                         } else if name == b"url" {

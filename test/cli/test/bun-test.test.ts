@@ -114,6 +114,20 @@ describe("bun test", () => {
     expect(stderr).toContain(path);
   });
 
+  test("a value nested too deeply to print is a RangeError", () => {
+    const stderr = runTest({
+      input: `
+        import { test, expect } from "bun:test";
+        test("deep", () => {
+          let value = 1;
+          for (let i = 0; i < 100_000; i++) value = i % 2 ? [value] : { a: value };
+          expect(() => expect(value).toMatchInlineSnapshot('"x"')).toThrow(RangeError);
+        });
+      `,
+      expectExitCode: 0,
+    });
+    expect(stderr).toContain("1 pass");
+  });
   describe("when filters are provided", () => {
     let dir: string;
     beforeAll(() => {

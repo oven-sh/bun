@@ -1048,6 +1048,11 @@ impl<'a> Formatter<'a> {
         let mut writer = WrappedWriter::new(writer_);
 
         if FORMAT.can_have_circular_references() {
+            if !bun_core::StackCheck::init().is_safe_to_recurse() {
+                self.failed = true;
+                return Err(self.global_this.throw_stack_overflow());
+            }
+
             if self.map_node.is_none() {
                 // `visited::Pool::get()` returns an RAII `PoolGuard` that
                 // would release on scope exit; instead the raw node is stashed on

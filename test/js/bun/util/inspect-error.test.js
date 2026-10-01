@@ -253,8 +253,8 @@ describe("source map remapping of the printed stack", () => {
       .map(line => line.replaceAll(prefix, ""));
   }
 
-  // A child that never exits fails its test by timeout. It must not outlive
-  // the run too.
+  // A child that never exits fails its test by timeout and must not outlive the run. afterAll, not
+  // afterEach: the tests run concurrently, and a hook is not told which test it runs for.
   const children = [];
   afterAll(() => {
     for (const child of children) child.kill("SIGKILL");

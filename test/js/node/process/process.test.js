@@ -522,7 +522,7 @@ it("process.env reads are never stale after a write (JIT inline-cache soundness)
 });
 
 // On Windows process.env is a Proxy, which has no structure of its own to look at.
-it.skipIf(isWindows)("reading process.env does not change its structure", async () => {
+it.concurrent.skipIf(isWindows)("reading process.env does not change its structure", async () => {
   // JSC turns an object into a dictionary, which inline caches give up on, after 128 transitions.
   const env = { ...bunEnv };
   for (let i = 0; i < 200; i++) env["STRUCTURE_TEST_" + i] = "value " + i;
@@ -572,17 +572,19 @@ it.skipIf(isWindows)("reading process.env does not change its structure", async 
 const countRawWrites = body => `
   ${body}
   let raw = 0;
-  for (let i = 0; i < 300000; i++) {
+  for (let i = 0; i < 10000; i++) {
     write(i);
     if (typeof Object.getOwnPropertyDescriptor(process.env, "HOT_WRITE").value !== "string") raw++;
   }
   console.log(raw);
 `;
+// The concurrent JIT is off and the FTL threshold is low: write() reaches every tier early in the loop, in a debug build too.
+const hotWriteEnv = { ...bunEnv, BUN_JSC_useConcurrentJIT: "0", BUN_JSC_thresholdForFTLOptimizeAfterWarmUp: "1000" };
 
-it("process.env coerces every write from a hot site to a string", async () => {
+it.concurrent("process.env coerces every write from a hot site to a string", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", countRawWrites(`function write(value) { process.env.HOT_WRITE = value; }`)],
-    env: bunEnv,
+    env: hotWriteEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -595,14 +597,14 @@ it("process.env coerces every write from a hot site to a string", async () => {
 });
 
 // PutByStatus::computeFor(StructureSet) in JSC does not look at OverridesPut, so the DFG stores the value directly.
-it.todo("process.env coerces every write from a hot site that also reads the variable", async () => {
+it.concurrent.todo("process.env coerces every write from a hot site that also reads the variable", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       countRawWrites(`function write(value) { process.env.HOT_WRITE = value; return process.env.HOT_WRITE; }`),
     ],
-    env: bunEnv,
+    env: hotWriteEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -615,7 +617,7 @@ it.todo("process.env coerces every write from a hot site that also reads the var
 });
 
 // Windows environment blocks are UTF-16.
-it.skipIf(isWindows)("process.env has the value of a variable whose name is not valid UTF-8", async () => {
+it.concurrent.skipIf(isWindows)("process.env has the value of a variable whose name is not valid UTF-8", async () => {
   await using proc = Bun.spawn({
     cmd: [
       "sh",
@@ -628,9 +630,9 @@ it.skipIf(isWindows)("process.env has the value of a variable whose name is not 
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // Both names decode to "BAD\ufffd".
+  // Both names decode to "BAD\ufffd". The one that comes first in the environment keeps the name.
   expect({ out: JSON.parse(stdout || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
-    out: [["BAD\ufffd", expect.stringMatching(/^(first|second)$/)]],
+    out: [["BAD\ufffd", "first"]],
     stderr: "",
     exitCode: 0,
   });
@@ -907,6 +909,43 @@ it("util.parseArgs reads process.argv the way JavaScript does", () => {
   } finally {
     Object.defineProperty(process, "argv", original);
   }
+});
+
+// Bun.argv takes its value from process.argv on the first read. The child has not read it yet.
+it.concurrent("Bun.argv keeps no value when the process.argv getter throws", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        Object.defineProperty(process, "argv", {
+          get() {
+            throw new Error("argv getter");
+          },
+          configurable: true,
+        });
+        const thrown = [];
+        for (let i = 0; i < 2; i++) {
+          try {
+            Bun.argv;
+          } catch (error) {
+            thrown.push(error.message);
+          }
+        }
+        Object.defineProperty(process, "argv", { value: ["a", "b"], configurable: true });
+        console.log(JSON.stringify({ thrown, argv: Bun.argv, same: Bun.argv === process.argv }));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    out: { thrown: ["argv getter", "argv getter"], argv: ["a", "b"], same: true },
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 describe("process.exitCode", () => {

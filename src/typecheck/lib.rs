@@ -2,6 +2,7 @@
 
 pub mod collections;
 pub mod core;
+pub mod diagnostics;
 pub mod internal;
 pub mod jsnum;
 pub mod stringutil;

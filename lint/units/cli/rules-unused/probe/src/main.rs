@@ -381,6 +381,42 @@ fn check(path: &str, dump: bool) -> Option<String> {
                     ErasedMemberData::IndexSignature => String::from("index signature"),
                 };
                 println!("  erased member {}..{} class_body={} index={} {:?} {}", member.start, member.end, member.class_body, member.index, member.flags, what);
+                if let ErasedMemberData::Property(property) = &member.data {
+                    let attached = &parsed.sidecar.attached;
+                    if let Some(key) = &property.key {
+                        println!("    key@{} annotation={}", key.loc.start, attached.annotation_of(key.loc).is_some_and(|a| a.type_node.is_some()));
+                    }
+                    if let Some(Expr { data: ExprData::EFunction(function), .. }) = &property.value {
+                        let owner = bun_js_parser::parse::attached::Owner::function(function.func.open_parens_loc);
+                        println!("    function open_parens={} return_type={} type_parameters={}", function.func.open_parens_loc.start, attached.return_type_of(owner).is_some(), attached.type_parameters_of(owner).is_some());
+                        for arg in function.func.args.slice() {
+                            println!("    arg@{} annotation={}", arg.binding.loc.start, attached.annotation_of(arg.binding.loc).is_some_and(|a| a.type_node.is_some()));
+                        }
+                    }
+                }
+            }
+        }
+        if dump {
+            let attached = &parsed.sidecar.attached;
+            println!("  attached: annotations={} this={} type_parameters={} return_types={} heritage={} specifiers={}", attached.annotations.len(), attached.this_parameters.len(), attached.type_parameters.len(), attached.return_types.len(), attached.heritage.len(), attached.specifiers.len());
+            for record in &parsed.sidecar.erased.statements {
+                let what = match &record.data {
+                    ErasedData::Interface(name) => format!("interface {}", String::from_utf8_lossy(name.text.slice())),
+                    ErasedData::TypeAlias(name) => format!("type alias {}", String::from_utf8_lossy(name.text.slice())),
+                    ErasedData::Declaration(_) => String::from("declaration"),
+                    ErasedData::Module(_) => String::from("module"),
+                    ErasedData::NamespaceExport(_) => String::from("namespace export"),
+                    ErasedData::Import(import) => match &import.clause {
+                        bun_js_parser::parse::erased::ImportClause::Named(items) => format!("import named items={}", items.slice().len()),
+                        _ => String::from("import default or namespace"),
+                    },
+                    ErasedData::ImportEquals(_) => String::from("import equals"),
+                    ErasedData::Export(export) => match &export.clause {
+                        bun_js_parser::parse::erased::ExportClause::Named(items) => format!("export named items={} from={}", items.slice().len(), export.module_specifier.is_some()),
+                        _ => String::from("export star"),
+                    },
+                };
+                println!("  erased statement {}..{} {:?} {:?} {}", record.start, record.end, record.place, record.flags, what);
             }
         }
         let mut walker = Walker {

@@ -41,7 +41,7 @@ enum Applicable {
     No(Mismatch),
 }
 
-impl Checker<'_> {
+impl<'p> Checker<'p> {
     fn class_of_decorated(
         &self,
         file: FileId,
@@ -748,7 +748,7 @@ impl Checker<'_> {
             DecoratorOwner::Member(_) => 1241,
         };
         let sigs = self.reorder_candidates(&sigs);
-        let lists: Vec<Vec<SigParam>> = sigs.iter().map(|&s| self.sig_params(s)).collect();
+        let lists: Vec<List<'p, SigParam>> = sigs.iter().map(|&s| self.sig_params(s)).collect();
         // `isPotentiallyUncalledDecorator`, which goes by the parameters as declared: one that takes `void` is required.
         if !sigs.is_empty()
             && !is_parenthesized

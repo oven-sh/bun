@@ -765,7 +765,7 @@ impl<'p> Checker<'p> {
                     mapper,
                 };
                 let later = self.type_of_prop(&later, MapperId::IDENTITY);
-                let mut call = self.signatures(so_far, false);
+                let mut call = self.signatures(so_far, false).into_vec();
                 if !call.is_empty() {
                     call.extend(self.signatures(later, false));
                     let ty = self.synth(Shape {
@@ -2145,7 +2145,7 @@ impl<'p> Checker<'p> {
         for &part in parts {
             let sigs = self.signatures(part, true);
             is_mixin.push(self.is_mixin_constructor_type(&sigs));
-            constructors.push(sigs);
+            constructors.push(sigs.into_vec());
         }
         let constructor_types = constructors.iter().filter(|sigs| !sigs.is_empty()).count();
         let mixins = is_mixin.iter().filter(|&&mixin| mixin).count();
@@ -4185,7 +4185,25 @@ impl<'p> Checker<'p> {
     }
 
     /// The call or construct signatures of `ty`.
-    pub fn signatures(&mut self, ty: TypeId, construct: bool) -> Vec<SigId> {
+    pub fn signatures(&mut self, ty: TypeId, construct: bool) -> List<'p, SigId> {
+        let p = self.p;
+        let kept = if construct {
+            &p.construct_signatures
+        } else {
+            &p.call_signatures
+        };
+        if let Some(known) = kept.get_ref(&ty) {
+            return List::Kept(known);
+        }
+        let before = self.what_only_holds_for_now();
+        let signatures = self.signatures_uncached(ty, construct);
+        if self.what_only_holds_for_now() == before {
+            return List::Kept(kept.insert_ref(ty, signatures.into()).1);
+        }
+        List::Own(signatures)
+    }
+
+    fn signatures_uncached(&mut self, ty: TypeId, construct: bool) -> Vec<SigId> {
         self.guard("signatures");
         // `getReducedApparentType`: an intersection nothing can be has no signatures.
         let ty = self.reduced(ty);
@@ -4237,7 +4255,7 @@ impl<'p> Checker<'p> {
                         of: Box::new([]),
                     })]
                 } else {
-                    self.signatures(part, construct)
+                    self.signatures(part, construct).into_vec()
                 };
                 if sigs.is_empty() {
                     return Vec::new();
@@ -4304,7 +4322,7 @@ impl<'p> Checker<'p> {
             self.array_of(element)
         };
         match self.type_of_property(array, name) {
-            Some(method) => self.signatures(method, false),
+            Some(method) => self.signatures(method, false).into_vec(),
             None => Vec::new(),
         }
     }

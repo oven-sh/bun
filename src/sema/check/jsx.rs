@@ -18,7 +18,7 @@ pub(super) enum JsxName {
     Name(Atom),
 }
 
-impl Checker<'_> {
+impl<'p> Checker<'p> {
     fn jsx_symbol(&mut self, file: FileId, name: Atom) -> Option<Sym> {
         let ns = self.jsx_namespace(file)?;
         let member = self.files().namespace_member(ns, name)?;
@@ -73,7 +73,7 @@ impl Checker<'_> {
     }
 
     /// `getUninstantiatedJsxSignaturesOfType`, and whether they are for `new`.
-    pub(super) fn jsx_signatures(&mut self, component: TypeId) -> (Vec<SigId>, bool) {
+    pub(super) fn jsx_signatures(&mut self, component: TypeId) -> (List<'p, SigId>, bool) {
         let apparent = self.apparent_type(component);
         let construct = self.signatures(apparent, true);
         if !construct.is_empty() {

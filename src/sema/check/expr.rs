@@ -3693,7 +3693,7 @@ impl<'p> Checker<'p> {
         }
         // `inferJsxTypeArguments`: the attributes and the children are one argument, an object.
         let param = self.jsx_effective_first_argument(file, e, sig, construct);
-        let mut inference = super::infer::Inference::new(type_params, Some(sig));
+        let mut inference = super::infer::Inference::new(type_params.into_vec(), Some(sig));
         // `chooseOverload`: `InferenceFlagsAnyDefault`
         inference.any_default = hir.is_js;
         let children: Vec<ExprId> = hir.ids(jsx.children).collect();

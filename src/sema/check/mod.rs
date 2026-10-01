@@ -63,7 +63,7 @@ use crate::program::{FileId, Files, Sym};
 use crate::table::{Bases, ById, ByIdKept, ByNode, ByNodeKept, IdSet, NodeSet, RawWord};
 use crate::types::Prop;
 use crate::types::*;
-use crate::util::{FxHashMap, ShardedMap};
+use crate::util::{FxHashMap, List, ShardedMap};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
@@ -155,6 +155,10 @@ pub struct Program {
     /// arguments or without the alias. Types are hash-consed: `T | undefined` is the same type whoever wrote it, and has none.
     alias_of: ByIdKept<TypeId, (Sym, Arc<[TypeId]>)>,
     shapes: ByIdKept<TypeId, shape::Resolved>,
+    sig_params: ByIdKept<SigId, Box<[SigParam]>>,
+    sig_type_params: ByIdKept<SigId, Box<[TypeId]>>,
+    call_signatures: ByIdKept<TypeId, Box<[SigId]>>,
+    construct_signatures: ByIdKept<TypeId, Box<[SigId]>>,
     /// What `members` says of a type, once that holds for good.
     members: ById<TypeId, shape::KeptMembers>,
     instantiations: ShardedMap<(TypeId, MapperId), TypeId>,
@@ -234,6 +238,10 @@ impl Program {
             union_origins: Default::default(),
             alias_of: Default::default(),
             shapes: Default::default(),
+            sig_params: Default::default(),
+            sig_type_params: Default::default(),
+            call_signatures: Default::default(),
+            construct_signatures: Default::default(),
             members: Default::default(),
             instantiations: ShardedMap::default(),
             outer_type_params: ByNodeKept::new(&scopes),
@@ -562,7 +570,7 @@ pub struct Checker<'p> {
     /// For each overloaded call being resolved: the type parameters of its candidates, as holes.
     candidate_holes: Vec<MapperId>,
     /// The next target to be related to is a member of an intersection.
-    resolving: Vec<call::Resolving>,
+    resolving: Vec<call::Resolving<'p>>,
     /// The `failure_sigs` entry of the call that `resolve_among` just resolved. `resolve_call` takes it, and stores it only together
     /// with the entry of `calls`.
     pending_failure_sig: Option<SigId>,
@@ -1150,6 +1158,14 @@ impl<'p> Checker<'p> {
         let tainted = self.tainted.pop().unwrap();
         self.left_a_circle = self.circular.pop().unwrap();
         !tainted
+    }
+
+    /// Changes whenever something happens that keeps what is being worked out from holding for whoever asks next: a question came back to
+    /// itself, something was read that rests on a candidate being tried out, or an instantiation went too deep, which is said again
+    /// to everybody who gets there.
+    #[inline]
+    fn what_only_holds_for_now(&self) -> (u64, u64) {
+        (self.cycles as u64, self.deep_events as u64)
     }
 
     /// An answer that was worked out while something it rests on was still open (a question it came back to, a candidate being tried

@@ -2095,7 +2095,7 @@ impl<'p> Checker<'p> {
     pub fn base_sig(&mut self, sig: SigId) -> SigId {
         let mut params = self.sig_type_params(sig);
         if params.is_empty() {
-            params = self.adopted_type_params(sig);
+            params = self.adopted_type_params(sig).into();
         }
         if params.is_empty() {
             return sig;
@@ -2149,7 +2149,7 @@ impl<'p> Checker<'p> {
         let Some(contextual) = contextual else {
             return Vec::new();
         };
-        let mut params = self.sig_type_params(contextual);
+        let mut params = self.sig_type_params(contextual).into_vec();
         params.retain(|&param| self.p.types.map(mapper, param).is_none());
         params
     }

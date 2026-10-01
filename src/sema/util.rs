@@ -73,6 +73,122 @@ pub fn fx_hash<T: std::hash::Hash + ?Sized>(value: &T) -> u64 {
     h.finish()
 }
 
+/// A list that is kept for good somewhere, or was made for whoever asked.
+#[derive(Clone, Debug)]
+pub enum List<'p, T> {
+    Kept(&'p [T]),
+    Own(Vec<T>),
+}
+
+impl<T> std::ops::Deref for List<'_, T> {
+    type Target = [T];
+    #[inline]
+    fn deref(&self) -> &[T] {
+        match self {
+            List::Kept(kept) => kept,
+            List::Own(own) => own,
+        }
+    }
+}
+
+impl<T: Clone> List<'_, T> {
+    #[inline]
+    pub fn into_vec(self) -> Vec<T> {
+        match self {
+            List::Kept(kept) => kept.to_vec(),
+            List::Own(own) => own,
+        }
+    }
+}
+
+impl<T> Default for List<'_, T> {
+    #[inline]
+    fn default() -> Self {
+        List::Kept(&[])
+    }
+}
+
+impl<T> From<Vec<T>> for List<'_, T> {
+    #[inline]
+    fn from(own: Vec<T>) -> Self {
+        List::Own(own)
+    }
+}
+
+impl<T: Clone> From<List<'_, T>> for Box<[T]> {
+    #[inline]
+    fn from(list: List<'_, T>) -> Self {
+        match list {
+            List::Kept(kept) => kept.into(),
+            List::Own(own) => own.into(),
+        }
+    }
+}
+
+impl<T: PartialEq> PartialEq for List<'_, T> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        **self == **other
+    }
+}
+
+impl<T: PartialEq> PartialEq<Vec<T>> for List<'_, T> {
+    #[inline]
+    fn eq(&self, other: &Vec<T>) -> bool {
+        **self == **other
+    }
+}
+
+impl<T: PartialEq> PartialEq<List<'_, T>> for Vec<T> {
+    #[inline]
+    fn eq(&self, other: &List<'_, T>) -> bool {
+        **self == **other
+    }
+}
+
+pub struct ListIter<'p, T> {
+    list: List<'p, T>,
+    next: usize,
+}
+
+impl<T: Copy> Iterator for ListIter<'_, T> {
+    type Item = T;
+    #[inline]
+    fn next(&mut self) -> Option<T> {
+        let item = self.list.get(self.next).copied();
+        self.next += 1;
+        item
+    }
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let left = self.list.len().saturating_sub(self.next);
+        (left, Some(left))
+    }
+}
+
+impl<T: Copy> ExactSizeIterator for ListIter<'_, T> {}
+
+impl<'p, T: Copy> IntoIterator for List<'p, T> {
+    type Item = T;
+    type IntoIter = ListIter<'p, T>;
+    #[inline]
+    fn into_iter(self) -> ListIter<'p, T> {
+        ListIter {
+            list: self,
+            next: 0,
+        }
+    }
+}
+
+impl<'a, T> IntoIterator for &'a List<'_, T> {
+    type Item = &'a T;
+    type IntoIter = std::slice::Iter<'a, T>;
+    #[inline]
+    fn into_iter(self) -> std::slice::Iter<'a, T> {
+        self.iter()
+    }
+}
+
 const FIRST_CHUNK_BITS: u32 = 10;
 const CHUNKS: usize = 23;
 

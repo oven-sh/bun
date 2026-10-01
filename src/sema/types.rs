@@ -324,7 +324,7 @@ impl Shape {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct SigParam {
     pub name: Atom,
     pub ty: TypeId,

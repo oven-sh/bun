@@ -2810,7 +2810,28 @@ impl<'p> Checker<'p> {
     }
 
     /// The type parameters that are still to be given.
-    pub fn sig_type_params(&mut self, sig: SigId) -> Vec<TypeId> {
+    pub fn sig_type_params(&mut self, sig: SigId) -> List<'p, TypeId> {
+        match self.p.types.sig(sig) {
+            SigData::Synth { type_params, .. } => return List::Kept(type_params),
+            SigData::WithReturn { sig: inner, .. } => return self.sig_type_params(*inner),
+            // Most functions have none.
+            SigData::Decl { file, func, .. } if self.hir(*file)[*func].type_params.is_empty() => {
+                return List::default();
+            }
+            _ => {}
+        }
+        if let Some(kept) = self.p.sig_type_params.get_ref(&sig) {
+            return List::Kept(kept);
+        }
+        let before = self.what_only_holds_for_now();
+        let params = self.sig_type_params_of_declaration(sig);
+        if self.what_only_holds_for_now() == before {
+            return List::Kept(self.p.sig_type_params.insert_ref(sig, params.into()).1);
+        }
+        List::Own(params)
+    }
+
+    fn sig_type_params_of_declaration(&mut self, sig: SigId) -> Vec<TypeId> {
         match self.p.types.sig(sig) {
             SigData::Decl { file, func, mapper } => {
                 let (file, mapper) = (*file, *mapper);
@@ -2848,7 +2869,7 @@ impl<'p> Checker<'p> {
             SigData::Synth { type_params, .. } => type_params.to_vec(),
             SigData::WithReturn { sig: inner, .. } => {
                 let inner = *inner;
-                self.sig_type_params(inner)
+                self.sig_type_params(inner).into_vec()
             }
         }
     }
@@ -2897,19 +2918,31 @@ impl<'p> Checker<'p> {
         }
     }
 
-    pub fn sig_params(&mut self, sig: SigId) -> Vec<SigParam> {
+    pub fn sig_params(&mut self, sig: SigId) -> List<'p, SigParam> {
         if let SigData::WithReturn { sig: inner, .. } = *self.p.types.sig(sig) {
             return self.sig_params(inner);
         }
         if let SigData::Synth { params, .. } = self.p.types.sig(sig) {
-            return params.to_vec();
+            return List::Kept(params);
+        }
+        if let Some(kept) = self.p.sig_params.get_ref(&sig) {
+            return List::Kept(kept);
         }
         if matches!(self.p.types.sig(sig), SigData::DefaultConstruct { .. }) {
             return match self.default_construct_base_sig(sig) {
                 Some(base) => self.sig_params(base),
-                None => Vec::new(),
+                None => List::default(),
             };
         }
+        let before = self.what_only_holds_for_now();
+        let params = self.sig_params_of_declaration(sig);
+        if self.what_only_holds_for_now() == before && params.iter().all(|p| self.is_known(p.ty)) {
+            return List::Kept(self.p.sig_params.insert_ref(sig, params.into()).1);
+        }
+        List::Own(params)
+    }
+
+    fn sig_params_of_declaration(&mut self, sig: SigId) -> Vec<SigParam> {
         let Some((file, func, mapper)) = self.sig_decl(sig) else {
             return Vec::new();
         };

@@ -2561,7 +2561,7 @@ fn iteration_types_of_method(
         if c.is_any(ty) {
             return Iteration::ANY;
         }
-        signatures = c.signatures(ty, false);
+        signatures = c.signatures(ty, false).into_vec();
     }
     if signatures.is_empty() {
         if reports {

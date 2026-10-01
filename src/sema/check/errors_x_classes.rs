@@ -476,7 +476,7 @@ impl Checker<'_> {
         for &part in parts {
             let sigs = self.signatures(part, true);
             is_mixin.push(parts.len() > 1 && self.is_mixin_constructor(&sigs)?);
-            lists.push(sigs);
+            lists.push(sigs.into_vec());
         }
         let constructor_types = lists.iter().filter(|sigs| !sigs.is_empty()).count();
         let mixins = is_mixin.iter().filter(|&&mixin| mixin).count();

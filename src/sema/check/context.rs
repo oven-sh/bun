@@ -1824,7 +1824,7 @@ impl<'p> Checker<'p> {
                 continue;
             }
             // `getContextualCallSignature`
-            let mut fitting = self.signatures(part, false);
+            let mut fitting = self.signatures(part, false).into_vec();
             fitting.retain(|&s| !self.is_arity_smaller(file, func, s, required));
             let sig = match fitting[..] {
                 [] => continue,

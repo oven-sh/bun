@@ -37,13 +37,13 @@ pub(super) enum Arg {
 }
 
 /// A call whose signature is being picked, and the one under consideration.
-pub(super) struct Resolving {
+pub(super) struct Resolving<'p> {
     pub file: FileId,
     /// `NONE`: the attributes of a JSX element, which nothing is looked up in this for.
     pub call: ExprId,
     /// The signature under consideration, as it is before its type parameters are filled in.
     pub sig: Option<SigId>,
-    pub params: Vec<SigParam>,
+    pub params: List<'p, SigParam>,
     /// Its type parameters, as far as the arguments looked at so far say; `Unresolved` for those nothing is known of yet.
     pub so_far: MapperId,
     /// `returnMapper`: what is expected of its result says about its type parameters.
@@ -81,14 +81,14 @@ pub(super) struct NestedGenericFunction {
     instantiated: Option<TypeId>,
 }
 
-impl Resolving {
+impl<'p> Resolving<'p> {
     fn new(
         file: FileId,
         call: ExprId,
         sig: Option<SigId>,
-        params: Vec<SigParam>,
+        params: List<'p, SigParam>,
         return_mapper: MapperId,
-    ) -> Resolving {
+    ) -> Resolving<'p> {
         Resolving {
             file,
             call,
@@ -107,7 +107,12 @@ impl Resolving {
     }
 
     /// For `candidate`, which is held against the arguments to see whether it will do. `params`: what it takes as far as is known.
-    fn trial(file: FileId, call: ExprId, candidate: SigId, params: Vec<SigParam>) -> Resolving {
+    fn trial(
+        file: FileId,
+        call: ExprId,
+        candidate: SigId,
+        params: List<'p, SigParam>,
+    ) -> Resolving<'p> {
         Resolving {
             is_trial: true,
             ..Resolving::new(file, call, Some(candidate), params, MapperId::IDENTITY)
@@ -1536,7 +1541,7 @@ impl<'p> Checker<'p> {
 
     /// `createUnionOfSignaturesForOverloadFailure`: it takes what any of `sigs` takes, and returns what all of them return.
     fn union_of_signatures_for_overload_failure(&mut self, sigs: &[SigId]) -> SigId {
-        let lists: Vec<Vec<SigParam>> = sigs.iter().map(|&sig| self.sig_params(sig)).collect();
+        let lists: Vec<List<'p, SigParam>> = sigs.iter().map(|&sig| self.sig_params(sig)).collect();
         // `getNonRestParameterCount`
         let plain =
             |list: &[SigParam]| list.len() - usize::from(list.last().is_some_and(|p| p.rest));
@@ -2032,7 +2037,7 @@ impl<'p> Checker<'p> {
             .into_iter()
             .map(|(i, a)| (i, self.arg_type(file, a)))
             .collect();
-        let mut inference = Inference::new(type_params.clone(), Some(candidate));
+        let mut inference = Inference::new(type_params.to_vec(), Some(candidate));
         inference.any_default = self.hir(file).is_js;
         for &(i, ty) in &plain {
             if let Some(param) = self.param_type_at(params, i)
@@ -2148,7 +2153,8 @@ impl<'p> Checker<'p> {
         args: &[Arg],
         upto: usize,
     ) -> Inference {
-        let mut inference = Inference::new(self.sig_type_params(candidate), Some(candidate));
+        let mut inference =
+            Inference::new(self.sig_type_params(candidate).into_vec(), Some(candidate));
         inference.any_default = self.hir(file).is_js;
         for (j, &arg) in args[..upto].iter().enumerate() {
             let Some(param) = self.param_type_at(params, j) else {
@@ -2269,7 +2275,8 @@ impl<'p> Checker<'p> {
         this_arg: Option<ExprId>,
     ) -> Option<SigId> {
         // An argument is looked at once, whichever candidate is tried: it is expected to be what any of them wants.
-        let lists: Vec<Vec<SigParam>> = candidates.iter().map(|&c| self.sig_params(c)).collect();
+        let lists: Vec<List<'p, SigParam>> =
+            candidates.iter().map(|&c| self.sig_params(c)).collect();
         // What is expected of the result says what a candidate's type parameters are, for a start.
         let mut from_result: Vec<Option<MapperId>> = vec![None; candidates.len()];
         let mut plain: Vec<Option<(bool, MapperId, MapperId)>> = vec![None; candidates.len()];
@@ -2412,7 +2419,7 @@ impl<'p> Checker<'p> {
         };
         // The first whose parameters the arguments are subtypes of, if there is one; whether the call is an error is up to
         // whether they can be assigned.
-        let mut instantiated: Vec<Option<(Vec<SigParam>, Option<TypeId>)>> =
+        let mut instantiated: Vec<Option<(List<'p, SigParam>, Option<TypeId>)>> =
             vec![None; candidates.len()];
         let passes: &[bool] = if candidates.len() > 1 {
             &[true, false]
@@ -3229,7 +3236,7 @@ impl<'p> Checker<'p> {
             return sig;
         }
 
-        let mut inference = Inference::new(type_params.clone(), Some(sig));
+        let mut inference = Inference::new(type_params.to_vec(), Some(sig));
         // `chooseOverload`, `inferSignatureInstantiationForOverloadFailure`: `InferenceFlagsAnyDefault` depends on the file that contains
         // the call, not on the file that declares `sig`.
         inference.any_default = self.hir(file).is_js;
@@ -4060,7 +4067,7 @@ impl<'p> Checker<'p> {
         expected: SigId,
         with_result: bool,
     ) -> SigId {
-        let mut inference = Inference::new(self.sig_type_params(sig), Some(sig));
+        let mut inference = Inference::new(self.sig_type_params(sig).into_vec(), Some(sig));
         // What `expected` takes may really be a type parameter of `sig`, adopted by the call around or in scope there:
         // `inferFromTypes` takes it for a candidate like any other.
         inference.calls_itself = true;
@@ -5475,7 +5482,7 @@ impl<'p> Checker<'p> {
                 file,
                 ExprId::NONE,
                 inference.sig,
-                Vec::new(),
+                List::default(),
                 MapperId::IDENTITY,
             ));
         }
@@ -6203,14 +6210,14 @@ impl<'p> Checker<'p> {
         } else if function.is_some() {
             // `getContextualSignature`: of a union, the members that can be called.
             let callable = self.filter(non_null, |c, m| !c.signatures(m, false).is_empty());
-            self.signatures(callable, false)
+            self.signatures(callable, false).into_vec()
         } else {
             let sigs = self.signatures(non_null, false);
             // Something to construct, given where something to construct is expected.
             if sigs.is_empty() && arg.is_none() {
-                self.signatures(non_null, true)
+                self.signatures(non_null, true).into_vec()
             } else {
-                sigs
+                sigs.into_vec()
             }
         };
         // `isAritySmaller`: a signature that takes less than the function asks for is not what it goes by.

@@ -801,6 +801,18 @@ impl Lockfile {
         None
     }
 
+    /// The first edge, in package order, that resolved to package `id`.
+    pub(crate) fn first_dependency_resolving_to(&self, id: PackageID) -> Option<DependencyID> {
+        let resolutions = self.buffers.resolutions.as_slice();
+        for res_list in self.packages.items_resolutions() {
+            let begin = res_list.begin() as usize;
+            if let Some(i) = res_list.get(resolutions).iter().position(|&pkg| pkg == id) {
+                return Some(DependencyID::try_from(begin + i).expect("int cast"));
+            }
+        }
+        None
+    }
+
     /// Does the root package.json declare the same dependency (name and specifier) itself?
     pub(crate) fn has_equal_root_dependency(&self, dependency: &Dependency) -> bool {
         let buf = self.buffers.string_bytes.as_slice();

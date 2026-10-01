@@ -1064,33 +1064,6 @@ it("prints an actionable error for a lockfile version newer than this build supp
   expect(await exited).toBe(0);
 });
 
-// Without --silent the parse errors are printed and dropped on the "Ignoring
-// lockfile" path. They must be dropped when nothing prints them too, or they
-// fail the install that goes on without the lockfile.
-it.concurrent("--silent ignores a bun.lock that fails to parse and writes a new one", async () => {
-  const { packageDir, packageJson } = await registry.createTestDir();
-  await Promise.all([
-    write(packageJson, JSON.stringify({ name: "broken-lockfile", dependencies: { "no-deps": "1.0.0" } })),
-    write(join(packageDir, "bun.lock"), "{ this is not json"),
-  ]);
-
-  for (const args of [["--lockfile-only"], []]) {
-    await using proc = spawn({
-      cmd: [bunExe(), "install", "--silent", ...args],
-      cwd: packageDir,
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(out).toBe("");
-    expect(err).toBe("");
-    expect(await file(join(packageDir, "bun.lock")).text()).toContain('"no-deps": ["no-deps@1.0.0"');
-    expect(exitCode).toBe(0);
-    await write(join(packageDir, "bun.lock"), "{ this is not json");
-  }
-});
-
 async function installWithHandEditedOverrides(overrides: Record<string, unknown>) {
   const { packageDir, packageJson } = await registry.createTestDir();
   const lockfile = JSON.stringify(

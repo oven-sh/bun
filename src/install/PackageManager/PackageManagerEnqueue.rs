@@ -1706,11 +1706,15 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         }
         dependency::version::Tag::Tarball => {
             let tarball = version.tarball();
+            // A local tarball is read from the project (`local_tarball_base_dir`), so only a
+            // package.json that is itself read from the project may name one.
             if matches!(tarball.uri, dependency::tarball::Uri::Local(_))
                 && !version_was_replaced
                 && !this.lockfile.is_dependency_of_local_package(id)
                 && !this.lockfile.has_equal_root_dependency(dependency)
                 && let Some(declarer) = this.lockfile.get_parent_pkg_of_dependency(id)
+                && this.lockfile.packages.items_resolution()[declarer as usize].tag
+                    != ResolutionTag::LocalTarball
             {
                 if dependency.behavior.is_required() {
                     reject_local_tarball_of_remote_package(this, declarer, dependency);
@@ -1876,16 +1880,22 @@ fn reject_local_tarball_of_remote_package(
     let name = bstr::BStr::new(dependency.name.slice(buf));
     let literal = bstr::BStr::new(dependency.version.literal.slice(buf));
     let declarer_name = bstr::BStr::new(packages.items_name()[declarer as usize].slice(buf));
-    this.log_mut().add_range_error_fmt_with_notes(
-        None,
-        bun_ast::Range::NONE,
+    // A bundled dependency ships inside the declaring package. The root cannot stand in for it.
+    let notes: Box<[bun_ast::Data]> = if dependency.behavior.is_bundled() {
+        Box::new([])
+    } else {
         Box::new([bun_ast::range_data(
             None,
             bun_ast::Range::NONE,
             bun_ast::alloc_print(format_args!(
                 "add \"{name}\": \"{literal}\" to the root package.json to install that tarball for {declarer_name} as well",
             )),
-        )]),
+        )])
+    };
+    this.log_mut().add_range_error_fmt_with_notes(
+        None,
+        bun_ast::Range::NONE,
+        notes,
         format_args!(
             "refusing to resolve \"{name}@{literal}\" declared by {declarer_name}@{}: local tarball dependencies are only allowed in the package.json files of this project",
             packages.items_resolution()[declarer as usize].fmt(buf, bun_fmt::PathSep::Posix),
@@ -2176,7 +2186,7 @@ fn enqueue_local_tarball(
                 Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
                     FileSystem::instance().top_level_dir(),
                     &mut abs_buf,
-                    &[base_dir, path],
+                    &[&base_dir, path],
                 ),
                 false,
             ),
@@ -2232,12 +2242,12 @@ fn enqueue_local_tarball(
     unsafe { &raw mut (*task).threadpool_task }
 }
 
-/// The workspace or `file:` folder directory that `path` is relative to; `None` is the top-level dir.
-fn local_tarball_base_dir<'a>(
-    lockfile: &'a Lockfile::Lockfile,
+/// The directory that `path` is relative to, itself relative to the top-level dir; `None` is the top-level dir.
+fn local_tarball_base_dir(
+    lockfile: &Lockfile::Lockfile,
     dependency_id: DependencyID,
     path: &[u8],
-) -> Option<&'a [u8]> {
+) -> Option<Vec<u8>> {
     let declared = &lockfile.buffers.dependencies[dependency_id as usize].version;
     let declared_by_parent = declared.tag == dependency::version::Tag::Tarball
         && matches!(
@@ -2250,13 +2260,34 @@ fn local_tarball_base_dir<'a>(
     }
 
     let declarer = lockfile.get_parent_pkg_of_dependency(dependency_id)?;
-    let declarer_res = &lockfile.packages.items_resolution()[declarer as usize];
-    let base_dir = match declarer_res.tag {
-        ResolutionTag::Workspace => declarer_res.workspace(),
-        ResolutionTag::Folder => declarer_res.folder(),
-        _ => return None,
-    };
-    Some(lockfile.str(base_dir))
+    local_package_dir(lockfile, declarer)
+}
+
+/// The directory the package.json of `package_id` was read from, relative to the
+/// top-level dir: a workspace, a `file:` folder, or the directory of a local
+/// tarball. `None` for the root and for packages from the cache.
+fn local_package_dir(lockfile: &Lockfile::Lockfile, package_id: PackageID) -> Option<Vec<u8>> {
+    let res = &lockfile.packages.items_resolution()[package_id as usize];
+    match res.tag {
+        ResolutionTag::Workspace => Some(lockfile.str(res.workspace()).to_vec()),
+        ResolutionTag::Folder => Some(lockfile.str(res.folder()).to_vec()),
+        // Like npm, a local tarball's own `file:` tarballs are read next to it.
+        ResolutionTag::LocalTarball => {
+            let tarball = lockfile.str(res.local_tarball());
+            let base_dir = lockfile
+                .first_dependency_resolving_to(package_id)
+                .and_then(|edge| lockfile.get_parent_pkg_of_dependency(edge))
+                .and_then(|declarer| local_package_dir(lockfile, declarer));
+            let location = match base_dir {
+                Some(base_dir) => {
+                    Path::resolve_path::join::<Path::platform::Auto>(&[&base_dir, tarball])
+                }
+                None => tarball,
+            };
+            Some(bun_paths::dirname(location).unwrap_or(b"").to_vec())
+        }
+        _ => None,
+    }
 }
 
 fn update_name_and_name_hash_from_version_replacement(

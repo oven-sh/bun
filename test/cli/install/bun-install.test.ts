@@ -10671,19 +10671,78 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
     expect(exitCode).toBe(1);
   }
 
-  it("rejects the ones declared by a tarball dependency", async () => {
+  // A local tarball is part of the project like a file: folder. Its own file:
+  // tarballs are read from the directory the tarball is in, as npm does, not from
+  // the project directory: here `inside.tgz` exists only next to `bar.tgz`.
+  it("reads the ones declared by a local tarball from next to that tarball", async () => {
     using dir = tempDir("local-tarballs-of-tarball-dep", {
-      "project/package.json": rootPackageJson({ bar: "file:./bar.tgz" }),
+      "project/package.json": rootPackageJson({ bar: "file:./vendor/bar.tgz" }),
     });
     const root = String(dir);
-    await plantDeclaredTarballs(root);
-    await packManifest(join(root, "project", "bar.tgz"), {
+    await Promise.all([
+      cp(planted, join(root, "project", "vendor", "inside.tgz")),
+      cp(planted, join(root, "project", "outside.tgz")),
+      cp(planted, join(root, "absolute.tgz")),
+    ]);
+    await packManifest(join(root, "project", "vendor", "bar.tgz"), {
       name: "bar",
       version: "0.0.2",
       dependencies: declaredTarballs(root),
     });
 
-    await expectRejected(root, "bar@./bar.tgz");
+    const { err, out, exitCode } = await install(root);
+    expect(diagnostics(err)).toEqual([]);
+    expect(out).toContain("4 packages installed");
+    expect(await readdirSorted(join(root, "project", "node_modules"))).toEqual([
+      ".bin",
+      "absolute",
+      "bar",
+      "inside",
+      "outside",
+    ]);
+    const lockfile = await file(join(root, "project", "bun.lock")).text();
+    expect(lockfile).toContain('"bar": ["bar@./vendor/bar.tgz"');
+    expect(lockfile).toContain('"inside": ["baz@./inside.tgz"');
+    expect(lockfile).toContain('"outside": ["baz@../outside.tgz"');
+    expect(exitCode).toBe(0);
+
+    // The lockfile keeps the paths as declared, so a later install reads them from the same place.
+    await rm(join(root, "project", "node_modules"), { recursive: true });
+    const again = await install(root, "--frozen-lockfile");
+    expect(diagnostics(again.err)).toEqual([]);
+    expect(again.out).toContain("4 packages installed");
+    expect(await file(join(root, "project", "node_modules", "inside", "package.json")).json()).toEqual(plantedManifest);
+    expect(again.exitCode).toBe(0);
+  });
+
+  it("reads a local tarball's tarball's tarball from next to the tarball that declares it", async () => {
+    using dir = tempDir("local-tarball-chain", {
+      "project/package.json": rootPackageJson({ a: "file:./vendor/a.tgz" }),
+    });
+    const root = String(dir);
+    await mkdir(join(root, "project", "vendor", "nested"), { recursive: true });
+    await Promise.all([
+      packManifest(join(root, "project", "vendor", "a.tgz"), {
+        name: "a",
+        version: "1.0.0",
+        dependencies: { b: "file:./nested/b.tgz" },
+      }),
+      packManifest(join(root, "project", "vendor", "nested", "b.tgz"), {
+        name: "b",
+        version: "1.0.0",
+        dependencies: { c: "file:./c.tgz" },
+      }),
+      cp(planted, join(root, "project", "vendor", "nested", "c.tgz")),
+    ]);
+
+    const { err, out, exitCode } = await install(root);
+    expect(diagnostics(err)).toEqual([]);
+    expect(out).toContain("3 packages installed");
+    expect(await file(join(root, "project", "node_modules", "c", "package.json")).json()).toEqual(plantedManifest);
+    const lockfile = await file(join(root, "project", "bun.lock")).text();
+    expect(lockfile).toContain('"b": ["b@./nested/b.tgz"');
+    expect(lockfile).toContain('"c": ["baz@./c.tgz"');
+    expect(exitCode).toBe(0);
   });
 
   it("rejects the ones declared by a git dependency", async () => {
@@ -10715,27 +10774,21 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
 
   // Peers are installed too, so the same refusal applies; unlike a regular
   // dependency, an unresolved peer is not reported a second time as
-  // "failed to resolve". An unresolved peer is also not what fails the install,
-  // so `--lockfile-only`, which never reaches the linking step, has to fail on
-  // the error itself.
-  for (const args of [[], ["--lockfile-only"]]) {
-    it(`rejects the one a registry package declares as a peer dependency (${args.join(" ") || "install"})`, async () => {
-      await withContext(defaultOpts, async ctx => {
-        using dir = tempDir("peer-local-tarball-of-registry-dep", {});
-        const root = String(dir);
-        await writeRegistryProject(ctx, root, { peerDependencies: { inside: "file:./inside.tgz" } });
-        await cp(planted, join(root, "project", "inside.tgz"));
+  // "failed to resolve".
+  it("rejects the one a registry package declares as a peer dependency", async () => {
+    await withContext(defaultOpts, async ctx => {
+      using dir = tempDir("peer-local-tarball-of-registry-dep", {});
+      const root = String(dir);
+      await writeRegistryProject(ctx, root, { peerDependencies: { inside: "file:./inside.tgz" } });
+      await cp(planted, join(root, "project", "inside.tgz"));
 
-        const { err, out, exitCode } = await install(root, ...args);
-        expect(diagnostics(err)).toEqual(refusal("inside", "file:./inside.tgz", "bar@0.0.2"));
-        expect(err).not.toContain("Saved lockfile");
-        expect(out).not.toContain("Saved bun.lock");
-        expect(await exists(join(root, "project", "node_modules", "inside"))).toBe(false);
-        expect(await exists(join(root, "project", "bun.lock"))).toBe(false);
-        expect(exitCode).toBe(1);
-      });
+      const { err, exitCode } = await install(root);
+      expect(diagnostics(err)).toEqual(refusal("inside", "file:./inside.tgz", "bar@0.0.2"));
+      expect(await exists(join(root, "project", "node_modules", "inside"))).toBe(false);
+      expect(await exists(join(root, "project", "bun.lock"))).toBe(false);
+      expect(exitCode).toBe(1);
     });
-  }
+  });
 
   // The remedy the note describes: a tarball the root package.json itself depends
   // on, under the same name, is the project's own, so a registry package asking

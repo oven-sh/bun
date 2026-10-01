@@ -99,7 +99,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             value: Some(value),
                             ..Default::default()
                         });
-                        i += 1; // defer i += 1
+                        i += 1;
                     }
                     T::TOpenBrace => {
                         // This arm must increment `i` once before exiting.
@@ -206,7 +206,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         p.lexer.next_inside_jsx_element()?;
-                        i += 1; // defer i += 1
+                        i += 1;
                     }
                     _ => {
                         break 'parse_attributes;

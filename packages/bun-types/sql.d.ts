@@ -92,8 +92,12 @@ declare module "bun" {
      * Inside a transaction, `reserve()` returns a brand new connection, not
      * one related to the transaction. This matches the behaviour of the
      * `postgres` package.
+     *
+     * @param options `signal` aborts the reservation while it is still
+     * waiting for a connection; the returned promise rejects with
+     * `signal.reason` and no connection is taken from the pool.
      */
-    reserve(): Promise<ReservedSQL>;
+    reserve(options?: { signal?: AbortSignal }): Promise<ReservedSQL>;
   }
 
   namespace SQL {
@@ -325,7 +329,13 @@ declare module "bun" {
       /**
        * Whether to use TLS/SSL for the connection. A string selects the
        * SSL mode (`"disable"`, `"allow"`, `"prefer"`, `"require"`, `"verify-ca"`, `"verify-full"`).
+       * A `BunFile` is the CA certificate to verify the server against, the
+       * same as `{ ca: Bun.file(path) }`, and selects `"verify-full"`.
        * @default false
+       * @example
+       * ```ts
+       * const sql = new SQL(url, { tls: Bun.file("./rds-ca-bundle.pem") });
+       * ```
        */
       tls?:
         | Bun.BunFile
@@ -720,6 +730,12 @@ declare module "bun" {
      * Calling `reserve()` on a reserved client returns a new reserved
      * connection, not the same one (behavior matches the `postgres` package).
      *
+     * @param options `signal` aborts the reservation while it is still
+     * waiting for a connection; the returned promise rejects with
+     * `signal.reason` and no connection is taken from the pool. Aborting
+     * after the promise resolved has no effect: the caller owns the
+     * connection and must `release()` it.
+     *
      * @throws {Error} If the adapter does not support connection pooling (e.g., SQLite)
      *
      * @example
@@ -740,9 +756,12 @@ declare module "bun" {
      * // so `using` releases the connection at the end of the scope
      * using reserved = await sql.reserve()
      * await reserved`select * from users`
+     *
+     * // Give up on the reservation if no connection frees up in time
+     * const reserved = await sql.reserve({ signal: AbortSignal.timeout(5000) });
      * ```
      */
-    reserve(): Promise<ReservedSQL>;
+    reserve(options?: { signal?: AbortSignal }): Promise<ReservedSQL>;
 
     /**
      * Creates a SQL array parameter

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { join } from "node:path";
 
 describe.concurrent("spawnSync isolated event loop", () => {
   test("JavaScript timers should not fire during spawnSync", async () => {
@@ -115,6 +116,35 @@ describe.concurrent("spawnSync isolated event loop", () => {
     expect(stdout).toContain("BEFORE");
     expect(stdout).toContain("AFTER");
     expect(stdout).toContain("SUCCESS");
+    expect(exitCode).toBe(0);
+  });
+
+  test("GC finishing inside spawnSync does not move the main loop's keep-alive count", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "spawnSync-keepalive-gc-fixture.js")],
+      // collectContinuously makes a collection reliably end inside spawnSync.
+      env: { ...bunEnv, BUN_JSC_collectContinuously: "1" },
+      stderr: "inherit",
+      stdout: "pipe",
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout).toBe("OK\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("spawnSync under GC pressure with a worker and a server keeps the main loop balanced and exits", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "spawnSync-keepalive-stress-fixture.js")],
+      env: { ...bunEnv, BUN_JSC_collectContinuously: "1" },
+      stderr: "inherit",
+      stdout: "pipe",
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout).toBe("OK\n");
     expect(exitCode).toBe(0);
   });
 

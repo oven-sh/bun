@@ -5,8 +5,7 @@ use bun_collections::{DynamicBitSet, StringArrayHashMap, StringHashMap};
 use bun_core::strings;
 use bun_install_types::DependencyGroup;
 use bun_paths::resolve_path;
-use bun_semver::query::token::Wildcard;
-use bun_semver::{self as Semver, SlicedString, String as SemverString};
+use bun_semver::{self as Semver, String as SemverString};
 use bun_sys::{Fd, File, O};
 
 use super::{package_name_from_path, pkg_flag_is_true, string_hash};
@@ -108,6 +107,8 @@ struct Migrator<'a> {
     link_entries: DynamicBitSet,
     shadowed: DynamicBitSet,
     skipped_external: DynamicBitSet,
+    /// Targets the root or a workspace depends on directly.
+    local_declared: DynamicBitSet,
     entry_package_ids: Vec<PackageID>,
     queue: Vec<(u32, PackageID)>,
     probe: Vec<u8>,
@@ -142,6 +143,7 @@ pub(super) fn migrate_packages(
         link_entries: DynamicBitSet::init_empty(entry_count)?,
         shadowed: DynamicBitSet::init_empty(entry_count)?,
         skipped_external: DynamicBitSet::init_empty(entry_count)?,
+        local_declared: DynamicBitSet::init_empty(entry_count)?,
         entry_package_ids: vec![INVALID_PACKAGE_ID; entry_count],
         queue: Vec::new(),
         probe: Vec::new(),
@@ -203,10 +205,9 @@ impl<'a> Migrator<'a> {
             };
             let key = entry.key.slice();
 
-            if let Some(link) = pkg.get(b"link") {
+            if pkg.get(b"link").is_some() {
                 self.link_entries.set(j);
                 self.index.put(key, j as u32)?;
-                self.register_renamed_workspace_link(key, pkg, link)?;
                 continue;
             }
             if pkg_flag_is_true(pkg, b"extraneous") {
@@ -217,45 +218,6 @@ impl<'a> Migrator<'a> {
 
         if self.link_entries.is_set(0) || self.index.get(&b""[..]).copied() != Some(0) {
             return Err(Error::InvalidNPMLockfile);
-        }
-        Ok(())
-    }
-
-    fn register_renamed_workspace_link(
-        &mut self,
-        key: &[u8],
-        pkg: &E::ObjectJSON,
-        link: &E::JsonValue,
-    ) -> Result<(), Error> {
-        let Some(wksp) = self.workspace_map else {
-            return Ok(());
-        };
-        if !matches!(link, E::JsonValue::Boolean(true)) {
-            return Ok(());
-        }
-        let Some(resolved) = pkg.get(b"resolved").and_then(|r| r.as_str()) else {
-            return Ok(());
-        };
-        let Some(wksp_entry) = wksp.get(resolved) else {
-            return Ok(());
-        };
-        let pkg_name = package_name_from_path(key);
-        if strings::eql_long(&wksp_entry.name, pkg_name, true) {
-            return Ok(());
-        }
-        let pkg_name_hash = string_hash(pkg_name);
-        if self.this.workspace_paths.contains(&pkg_name_hash) {
-            return Ok(());
-        }
-        let appended = self.this.string_buf().append(resolved)?;
-        self.this.workspace_paths.insert(pkg_name_hash, appended);
-        if let Some(version_string) = &wksp_entry.version {
-            let result = Semver::Version::parse(SlicedString::init(version_string, version_string));
-            if result.valid && result.wildcard == Wildcard::None {
-                self.this
-                    .workspace_versions
-                    .insert(pkg_name_hash, result.version.min());
-            }
         }
         Ok(())
     }
@@ -765,9 +727,20 @@ impl<'a> Migrator<'a> {
                 }
 
                 let version_tag = version.tag;
+                // Trust a `file:` spec only in a `file:` package the root or a workspace
+                // declares, not in a folder a registry package ships (`is_trusted_folder_dependency`).
+                let declares_folder = res_tag == resolution::Tag::Folder
+                    && version_tag == DepTag::Folder
+                    && self.local_declared.is_set(j as usize);
                 let mut found = self.find_target(key, name);
+                if let Some((t, _)) = found
+                    && is_local
+                {
+                    self.local_declared.set(t as usize);
+                }
                 if let Some((t, through_link)) = found
                     && !is_local
+                    && !declares_folder
                     && self.is_external_folder(t, through_link)
                 {
                     self.skip_external(t, name);

@@ -1,8 +1,7 @@
 // Hardcoded module "node:fs/promises"
 const types = require("node:util/types");
 const EventEmitter = require("node:events");
-const fs = require("internal/fs/binding") as $ZigGeneratedClasses.NodeJSFS;
-const { Glob } = require("internal/fs/glob");
+const fs = require("internal/fs/binding");
 const {
   validateInteger,
   validateBoolean,
@@ -48,6 +47,7 @@ function watch(
     persistent?: boolean;
     recursive?: boolean;
     signal?: AbortSignal;
+    ignore?: import("node:fs").WatchOptions["ignore"];
   } = {},
 ) {
   type Event = {
@@ -199,10 +199,10 @@ function settleFromNodeCallback(resolve, reject, err, value) {
   else resolve(value);
 }
 
-async function opendir(dir: string, options) {
+async function opendir(dir: string, options?) {
   // Delegate to the callback form so the eager path check (ENOTDIR/ENOENT at
   // open time, like node) runs on an async stat instead of blocking.
-  const { promise, resolve, reject } = Promise.withResolvers();
+  const { promise, resolve, reject } = Promise.withResolvers<import("node:fs").Dir>();
   require("node:fs").opendir(dir, options, settleFromNodeCallback.bind(null, resolve, reject));
   return promise;
 }
@@ -241,15 +241,17 @@ const _readFile = fs.readFile.bind(fs);
 const _writeFile = fs.writeFile.bind(fs);
 const _appendFile = fs.appendFile.bind(fs);
 
+type TailParameters<F> = F extends (first: any, ...rest: infer Rest) => any ? Rest : never;
+
 // Argument validation must run at the first .next(), not at call time: Node's
 // fs/promises glob is an async generator whose body constructs Glob lazily.
 async function* glob(pattern, options) {
-  yield* new Glob(pattern, options).glob();
+  yield* new (require("internal/fs/glob").Glob)(pattern, options).glob();
 }
 
 const exports = {
   access: asyncWrap(fs.access, "access"),
-  appendFile: async function (fileHandleOrFdOrPath, ...args) {
+  appendFile: async function (fileHandleOrFdOrPath, ...args: TailParameters<typeof _appendFile>) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
     return _appendFile(fileHandleOrFdOrPath, ...args);
   },
@@ -309,7 +311,7 @@ const exports = {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
     return _readFile(fileHandleOrFdOrPath, ...args);
   },
-  writeFile: async function (fileHandleOrFdOrPath, ...args: any[]) {
+  writeFile: async function (fileHandleOrFdOrPath, ...args: TailParameters<typeof _writeFile>) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
     if (
       !$isTypedArrayView(args[0]) &&
@@ -361,10 +363,8 @@ const exports = {
     return fs.rm(path, options);
   },
   rmdir: async function rmdir(path, options) {
-    // node throws for any defined `recursive`, not just truthy ones
-    if (options?.recursive !== undefined) {
-      throw $ERR_INVALID_ARG_VALUE("options.recursive", options.recursive, "is no longer supported");
-    }
+    // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep it working through `rm`.
+    if (options?.recursive) return exports.rm(path, options);
     return fs.rmdir(path, options);
   },
   writev: async (fd, buffers, position) => {
@@ -452,10 +452,10 @@ function asyncWrap(fn: any, name: string) {
     // needs to exist for https://github.com/nodejs/node/blob/8641d941893/test/parallel/test-worker-message-port-transfer-fake-js-transferable.js to pass
     [Symbol("messaging_transfer_symbol")]() {}
 
-    async appendFile(data, options) {
+    async appendFile(data, options?: BufferEncoding | { encoding?: BufferEncoding | null; flush?: boolean } | null) {
       const fd = this[kFd];
       throwEBADFIfNecessary("writeFile", fd);
-      let encoding = "utf8";
+      let encoding: BufferEncoding = "utf8";
       let flush = false;
       if (options == null || typeof options === "function") {
       } else if (typeof options === "string") {
@@ -521,7 +521,7 @@ function asyncWrap(fn: any, name: string) {
       }
     }
 
-    async read(bufferOrParams, offset, length, position) {
+    async read(bufferOrParams?, offset?, length?, position?) {
       const fd = this[kFd];
       throwEBADFIfNecessary("read", fd);
 
@@ -680,10 +680,13 @@ function asyncWrap(fn: any, name: string) {
       }
     }
 
-    async writeFile(data: string, options: any = "utf8") {
+    async writeFile(
+      data: string,
+      options: BufferEncoding | { encoding?: BufferEncoding | null; signal?: AbortSignal } | null = "utf8",
+    ) {
       const fd = this[kFd];
       throwEBADFIfNecessary("writeFile", fd);
-      let encoding: string = "utf8";
+      let encoding: BufferEncoding = "utf8";
       let signal: AbortSignal | undefined = undefined;
 
       if (options == null || typeof options === "function") {
@@ -812,7 +815,7 @@ function asyncWrap(fn: any, name: string) {
           // The handle can be closed while a pull is in flight, which settles the
           // request and drops the fd out from under the read below.
           if (request === null) return;
-          const view = request.view;
+          const view = request.view!;
 
           let bytesRead;
           try {
@@ -829,7 +832,7 @@ function asyncWrap(fn: any, name: string) {
             await ondone();
           }
 
-          controller.byobRequest.respond(bytesRead);
+          controller.byobRequest!.respond(bytesRead);
         },
 
         async cancel() {
@@ -1089,8 +1092,8 @@ function asyncWrap(fn: any, name: string) {
       let totalBytesWritten = 0;
       let closed = false;
       let closing = false;
-      let pendingEndPromise = null;
-      let error = null;
+      let pendingEndPromise: Promise<number> | null = null;
+      let error: unknown = null;
       // Count of in-flight async writes (write() doesn't serialize callers,
       // so several can be on the threadpool at once).
       let asyncPending = 0;
@@ -1149,7 +1152,7 @@ function asyncWrap(fn: any, name: string) {
 
             if (bytesWritten === 0) {
               if (++retries > 5) {
-                throw $ERR_OPERATION_FAILED("Operation failed: write failed after retries");
+                throw $ERR_OPERATION_FAILED("write failed after retries");
               }
             } else {
               retries = 0;
@@ -1193,7 +1196,7 @@ function asyncWrap(fn: any, name: string) {
               // Retry the writev as-is on a zero-byte write (up to 5 times)
               // instead of degrading to the concat fallback below.
               if (++retries > 5) {
-                throw $ERR_OPERATION_FAILED("Operation failed: writev failed after retries");
+                throw $ERR_OPERATION_FAILED("writev failed after retries");
               }
               continue;
             }
@@ -1230,7 +1233,7 @@ function asyncWrap(fn: any, name: string) {
           const bytesWritten = fsSync.writeSync(fd, buf, offset, length, position >= 0 ? position : null) || 0;
           if (bytesWritten === 0) {
             if (++retries > 5) {
-              throw $ERR_OPERATION_FAILED("Operation failed: write failed after retries");
+              throw $ERR_OPERATION_FAILED("write failed after retries");
             }
           } else {
             retries = 0;

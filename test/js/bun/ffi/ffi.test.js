@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe, compileFixture, isGlibcVersionAtLeast, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, compileFixture, isDebug, isGlibcVersionAtLeast, isWindows, tempDir } from "harness";
 import { platform } from "os";
 
 import {
@@ -928,6 +928,46 @@ it("JSCallback exceptions propagate out of the native call", async () => {
   });
 });
 
+// A `ptr` argument that is a cell but not a typed array view (here: a plain ArrayBuffer) must convert
+// correctly in FTL-compiled callers too. The optimizing tier used to read JSArrayBufferView::m_mode from
+// any cell before checking its type; when the ArrayBuffer was the last cell in its MarkedBlock and the
+// following page was not committed, that read faulted. Allocating many small ArrayBuffers per round makes
+// block-final cells common; the check itself is that every call returns the buffer's data pointer.
+it.skipIf(!FFI_FIXTURE_PATH)("ptr argument: ArrayBuffer cells through an FTL-compiled call site", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `import { dlopen, read } from "bun:ffi";
+      const { symbols } = dlopen(process.env.FFI_FIXTURE_PATH, { identity_ptr: { args: ["ptr"], returns: "ptr" } });
+      function callIt(value) { return symbols.identity_ptr(value); }
+      const view = new Uint8Array(16);
+      for (let i = 0; i < 300_000; i++) callIt(view);
+      const rounds = ${isDebug ? 3 : 60};
+      const perRound = ${isDebug ? 100_000 : 200_000};
+      let mismatches = 0;
+      for (let round = 0; round < rounds; round++) {
+        const buffers = [];
+        for (let i = 0; i < perRound; i++) buffers.push(new ArrayBuffer(8));
+        for (let i = 0; i < buffers.length; i++) if (i % 10 !== 0) buffers[i] = null;
+        Bun.gc(true);
+        for (let i = 0; i < buffers.length; i += 10) {
+          const buffer = buffers[i];
+          new Uint8Array(buffer)[0] = i & 0xff;
+          const address = callIt(buffer);
+          if (read.u8(address, 0) !== (i & 0xff)) mismatches++;
+        }
+      }
+      console.log("mismatches", mismatches);`,
+    ],
+    env: { ...bunEnv, FFI_FIXTURE_PATH },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "mismatches 0\n", stderr: "", exitCode: 0 });
+});
+
 it("worker teardown drops queued threadsafe JSCallback invocations without crashing", async () => {
   using dir = tempDir("ffi-jscallback-terminate-queued", {
     "main.js": `
@@ -1456,6 +1496,44 @@ describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {
       expect(getDeallocatorCalledCount()).toBe(1);
     },
   );
+});
+
+// toBuffer hands an arbitrary (pointer, byteLength) pair straight to the Buffer
+// hand-off that spawnSync, Bun.$ and others use for their output. That makes it
+// the one way to reach the hand-off with a byteLength above kMaxLength (2^32)
+// without 4 GiB of real bytes; the views below never touch the memory they
+// describe. Subprocess because unpatched builds abort inside JSC.
+describe("toBuffer at the Buffer length limit", () => {
+  it.concurrent("throws a RangeError above 2^32 bytes and still creates a view of exactly 2^32 bytes", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { ptr, toBuffer } from "bun:ffi";
+        const backing = new Uint8Array(16);
+        let aboveLimit;
+        try {
+          aboveLimit = { length: toBuffer(ptr(backing), 0, 2 ** 32 + 1).length };
+        } catch (e) {
+          aboveLimit = { isRangeError: e instanceof RangeError };
+        }
+        const atLimit = { length: toBuffer(ptr(backing), 0, 2 ** 32).length };
+        console.log(JSON.stringify({ aboveLimit, atLimit }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ result: JSON.parse(stdout.trim() || "null"), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      result: { aboveLimit: { isRangeError: true }, atLimit: { length: 2 ** 32 } },
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
 });
 
 describe.skipIf(!FFI_FIXTURE_PATH)("engine-native FFI (single implementation)", () => {

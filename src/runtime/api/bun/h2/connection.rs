@@ -1496,8 +1496,7 @@ impl Connection {
         let data_total = hdr.length as usize - off - pad;
 
         // §6.9: the whole declared frame counts against the connection recv window on receipt.
-        self.recv_window.on_data(hdr.length as i64);
-        if self.recv_window.is_overflowed() {
+        if self.recv_window.on_data(hdr.length as i64) && self.recv_window.is_overflowed() {
             self.send_go_away(
                 sink,
                 ErrorCode::FlowControlError,
@@ -1532,8 +1531,9 @@ impl Connection {
                     sink.on_stream_reset(hdr.stream_id, ErrorCode::StreamClosed.as_u32());
                     discard = true;
                 } else {
-                    st.recv_window.on_data(hdr.length as i64);
-                    if st.recv_window.is_overflowed_with(recv_limit) {
+                    if st.recv_window.on_data(hdr.length as i64)
+                        && st.recv_window.is_overflowed_with(recv_limit)
+                    {
                         // nghttp2 (nghttp2_session_update_recv_stream_window_size): a peer that
                         // violates a stream's flow-control window terminates the whole session
                         // with FLOW_CONTROL_ERROR; node surfaces it as NghttpError "Protocol
@@ -1614,8 +1614,7 @@ impl Connection {
         let consumed = payload.len() as i64; // full frame counts against flow control, incl. padding
 
         // §6.9: the whole frame counts against the connection recv window.
-        self.recv_window.on_data(consumed);
-        if self.recv_window.is_overflowed() {
+        if self.recv_window.on_data(consumed) && self.recv_window.is_overflowed() {
             self.send_go_away(
                 sink,
                 ErrorCode::FlowControlError,
@@ -1663,8 +1662,9 @@ impl Connection {
                 if !stream::can_receive_data(s.state) {
                     DataDecision::Rst(ErrorCode::StreamClosed)
                 } else {
-                    s.recv_window.on_data(consumed);
-                    if s.recv_window.is_overflowed_with(recv_limit) {
+                    if s.recv_window.on_data(consumed)
+                        && s.recv_window.is_overflowed_with(recv_limit)
+                    {
                         DataDecision::FlowControlViolation
                     } else {
                         s.recv_body_bytes = s.recv_body_bytes.saturating_add((end - off) as u64);

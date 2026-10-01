@@ -1125,16 +1125,16 @@ describe("flow-control windows after WINDOW_UPDATE and SETTINGS (RFC 9113 §6.9.
     });
   });
 
-  /** A server that lowers its initialWindowSize to `lowered` at the first DATA of a stream. */
-  async function serverThatLowersItsWindow(lowered: number, onEnd: (bytes: number) => void = () => {}) {
+  /** A server that lowers its initialWindowSize to `lowered` at the first DATA of stream 1. */
+  async function serverThatLowersItsWindow(lowered: number, onEnd: (bytes: number, id: number) => void = () => {}) {
     const server = http2.createServer();
     server.on("stream", stream => {
       let bytes = 0;
       stream.on("error", () => {});
-      stream.once("data", () => stream.session!.settings({ initialWindowSize: lowered }));
+      if (stream.id === 1) stream.once("data", () => stream.session!.settings({ initialWindowSize: lowered }));
       stream.on("data", (chunk: Buffer) => (bytes += chunk.length));
       stream.on("end", () => {
-        onEnd(bytes);
+        onEnd(bytes, stream.id!);
         if (stream.destroyed) return;
         stream.respond({ ":status": 200 });
         stream.end();
@@ -1171,6 +1171,39 @@ describe("flow-control windows after WINDOW_UPDATE and SETTINGS (RFC 9113 §6.9.
       c.sendSettingsAck();
       const update = await c.waitFor(f => f.type === FrameType.WINDOW_UPDATE && f.streamId === 1);
       expect(update.payload.readUInt32BE(0)).toBe(1000);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  // The client cannot know of the lower value when it sends the 2000 bytes of stream 3. Its ACK
+  // makes that value the limit, and the empty frame behind it takes no window (§6.9.1).
+  test("an empty END_STREAM frame is accepted when the bytes in flight exceed a lowered initialWindowSize", async () => {
+    const ended = Promise.withResolvers<number>();
+    const server = await serverThatLowersItsWindow(1, (bytes, id) => id === 3 && ended.resolve(bytes));
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
+      c.sendSettingsAck();
+      c.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, requestHeaderBlock("POST"));
+      c.sendFrame(FrameType.DATA, 0, 1, Buffer.alloc(100, 0x61));
+      await c.waitFor(f => setsInitialWindowSize(f, 1));
+      c.send(
+        Buffer.concat([
+          encodeFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 3, requestHeaderBlock("POST")),
+          encodeFrame(FrameType.DATA, 0, 3, Buffer.alloc(2000, 0x62)),
+          settingsAck,
+          encodeFrame(FrameType.DATA, 0x1 /* END_STREAM */, 3),
+        ]),
+      );
+      const answer = await c.waitFor(
+        f => f.type === FrameType.GOAWAY || (f.type === FrameType.HEADERS && f.streamId === 3),
+      );
+      expect(answer.type === FrameType.GOAWAY ? goawayErrorCode(answer) : "response").toBe("response");
+      expect(await ended.promise).toBe(2000);
     } finally {
       c.destroy();
       server.close();

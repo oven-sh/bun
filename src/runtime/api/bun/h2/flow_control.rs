@@ -92,9 +92,12 @@ impl RecvWindow {
         }
     }
 
+    /// Counts a DATA frame of `n` bytes. False for an empty frame: it takes no window (§6.9.1).
     #[inline]
-    pub(crate) fn on_data(&mut self, n: i64) {
+    #[must_use]
+    pub(crate) fn on_data(&mut self, n: i64) -> bool {
         self.consumed += n;
+        n > 0
     }
 
     /// Whether the peer exceeded our advertised window (a FLOW_CONTROL_ERROR, §6.9.1).
@@ -151,7 +154,7 @@ mod tests {
     #[test]
     fn recv_window_replenish() {
         let mut w = RecvWindow::new(100);
-        w.on_data(60);
+        assert!(w.on_data(60));
         assert!(w.needs_update());
         assert_eq!(w.take_update(), 60);
         assert_eq!(w.consumed, 0);

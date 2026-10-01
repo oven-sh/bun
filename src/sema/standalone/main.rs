@@ -258,6 +258,96 @@ fn main() {
                 program.types.len(),
             );
         }
+        Some("check") => {
+            // check <tsconfig.json with "files", or a directory of sources with a tsconfig.json> [--roots=a,b] [--threads=n]
+            // Prints `path:line:column TS<code>` for every error outside node_modules and TypeScript's own lib.
+            let flag = |name: &str| {
+                args.iter()
+                    .find_map(|a| a.strip_prefix(&format!("--{name}=")).map(str::to_owned))
+            };
+            let threads = flag("threads").and_then(|t| t.parse().ok()).unwrap_or(8);
+            let target = std::fs::canonicalize(&args[1])
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+            let start = std::time::Instant::now();
+            let (files, dir) = if target.ends_with(".json") {
+                let dir = target.rsplit_once('/').unwrap().0.to_owned();
+                (bun_sema_standalone::load_project(&target), dir)
+            } else {
+                let roots = flag("roots").unwrap_or_else(|| "src".to_owned());
+                let roots: Vec<&str> = roots.split(',').collect();
+                (
+                    bun_sema_standalone::load_tree(&target, &roots, threads),
+                    target.clone(),
+                )
+            };
+            let loaded = start.elapsed();
+            let program = bun_sema::check::Program::new(files);
+            let prefix = format!("{dir}/");
+            let sources: Vec<bun_sema::program::FileId> = (0..program.files.modules.len())
+                .filter(|&i| {
+                    let path = &program.files.modules[i].path;
+                    path.starts_with(&prefix) && !path.contains("/node_modules/")
+                })
+                .map(|i| bun_sema::program::FileId(i as u32))
+                .collect();
+            let lines = std::sync::Mutex::new(Vec::new());
+            for code in program.files.configuration_errors() {
+                lines
+                    .lock()
+                    .unwrap()
+                    .push(format!("tsconfig.json:1:1 TS{code}"));
+            }
+            let start = std::time::Instant::now();
+            bun_sema_standalone::for_each_parallel(threads, sources.len(), |i| {
+                let module = &program.files.modules[sources[i].0 as usize];
+                let path = module.path.strip_prefix(&prefix).unwrap_or(&module.path);
+                if module.hir.has_errors {
+                    lines
+                        .lock()
+                        .unwrap()
+                        .push(format!("{path}:1:1 REJECTED by the parser"));
+                    return;
+                }
+                let mut checker = program.checker();
+                checker.set_stack_limit(bun_sema_standalone::STACK - (64 << 20));
+                let errors = checker.check_file(sources[i]);
+                if errors.is_empty() {
+                    return;
+                }
+                let text = &module.hir.text;
+                let mut found: Vec<String> = errors
+                    .iter()
+                    .map(|e| {
+                        let before = &text[..(e.start as usize).min(text.len())];
+                        let line = before.iter().filter(|&&b| b == b'\n').count() + 1;
+                        let column = before.len()
+                            - before
+                                .iter()
+                                .rposition(|&b| b == b'\n')
+                                .map_or(0, |n| n + 1)
+                            + 1;
+                        format!("{path}:{line}:{column} TS{}", e.code)
+                    })
+                    .collect();
+                lines.lock().unwrap().append(&mut found);
+            });
+            let mut lines = lines.into_inner().unwrap();
+            lines.sort();
+            for line in &lines {
+                println!("{line}");
+            }
+            eprintln!(
+                "{} errors in {} files checked ({} loaded in {:.2}s, checked in {:.2}s, peak {:.2} GB)",
+                lines.len(),
+                sources.len(),
+                program.files.modules.len(),
+                loaded.as_secs_f64(),
+                start.elapsed().as_secs_f64(),
+                bun_sema_standalone::peak_rss() as f64 / (1u64 << 30) as f64
+            );
+        }
         Some("at") => {
             // at <tree> <file relative to tree> <offset>...: every site at those offsets, with the properties of its type
             let tree = std::fs::canonicalize(&args[1])

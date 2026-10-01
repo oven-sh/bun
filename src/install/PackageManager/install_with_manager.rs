@@ -324,6 +324,9 @@ pub fn install_with_manager(
                     let off = lf.dependencies.len() as u32;
                     let len = (new_dependencies.len() + kept_pruned.len()) as u32;
                     let old_resolutions_list = lf.packages.items_resolutions()[0];
+                    // The rows of the old root slice stay in the buffer, but no
+                    // package declares them now, so they must not be resolved again.
+                    let replaced_root_rows = root.dependencies;
                     lf.packages.items_dependencies_mut()[0] =
                         lockfile::DependencySlice::new(off, len);
                     lf.packages.items_resolutions_mut()[0] =
@@ -501,7 +504,9 @@ pub fn install_with_manager(
                     if manager.summary.overrides_changed && !all_name_hashes.is_empty() {
                         let dependencies_len = manager.lockfile.buffers.dependencies.len();
                         for dependency_i in 0..dependencies_len {
-                            if pinned_rows.is_set_allow_out_of_bound(dependency_i, false) {
+                            if pinned_rows.is_set_allow_out_of_bound(dependency_i, false)
+                                || replaced_root_rows.contains(dependency_i as u32)
+                            {
                                 continue;
                             }
                             let dependency =
@@ -535,7 +540,9 @@ pub fn install_with_manager(
                         let dependencies_len = manager.lockfile.buffers.dependencies.len();
                         for _dep_id in 0..dependencies_len {
                             let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
-                            if pinned_rows.is_set_allow_out_of_bound(_dep_id, false) {
+                            if pinned_rows.is_set_allow_out_of_bound(_dep_id, false)
+                                || replaced_root_rows.contains(dep_id)
+                            {
                                 continue;
                             }
                             let dep =

@@ -1526,7 +1526,7 @@ impl<'a> PackageInstaller<'a> {
                 {
                     if log_level != Options::LogLevel::Silent {
                         bun_core::pretty_errorln!(
-                            "<r><red>error<r>: refusing to link dependency <b>{}<r> to \"{}\": only the root package.json, a workspace, or an override may link to a path outside the project",
+                            "<r><red>error<r>: refusing to link dependency <b>{}<r> to \"{}\": only the root package.json, a workspace, or a top-level override may link to a path outside the project",
                             bstr::BStr::new(pkg_name.slice(string_buf!())),
                             bstr::BStr::new(folder),
                         );

@@ -2107,7 +2107,7 @@ pub(crate) fn install_isolated_packages(
                     && !lockfile_ro.is_trusted_folder_package(pkg_id)
                 {
                     Output::err_generic(
-                        "refusing to link dependency <b>{}<r> to \"{}\": only the root package.json, a workspace, or an override may link to a path outside the project",
+                        "refusing to link dependency <b>{}<r> to \"{}\": only the root package.json, a workspace, or a top-level override may link to a path outside the project",
                         (
                             BStr::new(pkg_names[pkg_id as usize].slice(string_buf)),
                             BStr::new(target),

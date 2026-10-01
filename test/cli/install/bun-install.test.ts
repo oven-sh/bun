@@ -11190,7 +11190,7 @@ describe.concurrent("link: paths with .. or an absolute path declared by a depen
 
   // `declarer` is how bun prints the package declaring the dependency.
   function refusal(name: string, spec: string, declarer: string) {
-    return `error: refusing to resolve "${name}@${spec}" declared by ${declarer}: only the root package.json, a workspace, or an override may link to a path outside the project`;
+    return `error: refusing to resolve "${name}@${spec}" declared by ${declarer}: only the root package.json, a workspace, or a top-level override may link to a path outside the project`;
   }
 
   // The rest of stderr is progress output ("Resolving dependencies", ...).
@@ -11309,7 +11309,7 @@ describe.concurrent("link: paths with .. or an absolute path declared by a depen
 
       const { err, exitCode } = await install(root, "--linker", linker);
       expect(errorLines(err)).toEqual([
-        'error: refusing to link dependency outside-dir to "../outside": only the root package.json, a workspace, or an override may link to a path outside the project',
+        'error: refusing to link dependency outside-dir to "../outside": only the root package.json, a workspace, or a top-level override may link to a path outside the project',
       ]);
       expect(await exists(join(root, "project", "node_modules", "outside"))).toBe(false);
       expect(exitCode).toBe(1);
@@ -11399,6 +11399,56 @@ describe.concurrent("link: paths with .. or an absolute path declared by a depen
         expect(lockfile).toContain('"vendored": ["outside-dir@link:../outside"');
         expect(exitCode).toBe(0);
       });
+    });
+  }
+
+  // A scoped rule only replaces one parent -> child edge, so the trust rule
+  // consults plain rules only, as it does for a nested rule with a `file:` path
+  // (tested above). The error names the value the rule supplied.
+  for (const [shape, rules] of [
+    ["parent>name", { "bar>outside": "link:../outside" }],
+    ["nested", { bar: { outside: "link:../outside" } }],
+  ] as const) {
+    it(`are refused when a scoped root override (${shape}) puts one on a registry package's dependency`, async () => {
+      await withContext(defaultOpts, async ctx => {
+        using dir = tempDir(`scoped-override-escaping-link-${shape}`, linkTargets());
+        const root = String(dir);
+        await writeRegistryProject(ctx, root, { dependencies: { outside: "0.0.1" } }, { overrides: rules });
+
+        const { err, exitCode } = await install(root, "--lockfile-only");
+        expect(errorLines(err)).toEqual([
+          refusal("outside", "link:../outside", "bar@0.0.2"),
+          "error: outside@0.0.1 failed to resolve",
+        ]);
+        expect(await exists(join(root, "project", "bun.lock"))).toBe(false);
+        expect(exitCode).toBe(1);
+      });
+    });
+  }
+
+  // An override edit makes bun rebuild the root's dependency rows and resolve
+  // every row whose name an override rule has again. The rows it replaced stay
+  // in the buffer with no declaring package and used to be resolved too, which
+  // the trust rule refuses (for `file:` that path reported `Could not find
+  // package.json`).
+  for (const protocol of ["link", "file"]) {
+    it(`declared by the root as ${protocol}: are still resolved after an override edit`, async () => {
+      using dir = tempDir(`root-${protocol}-override-edit`, linkTargets());
+      const root = String(dir);
+      const spec = `${protocol}:../outside`;
+      const overrides = [
+        { "foo>outside": spec },
+        { "foo>outside": spec, zzz: "1.0.0" },
+        { "foo>outside": spec, zzz: "1.0.1" },
+      ];
+
+      for (const rules of overrides) {
+        await write(join(root, "project", "package.json"), rootPackageJson({ outside: spec }, { overrides: rules }));
+        const { err, exitCode } = await install(root, "--lockfile-only");
+        expect(err).not.toContain("error:");
+        expect(await file(join(root, "project", "bun.lock")).text()).toContain(`"outside": ["outside-dir@${spec}"`);
+        expect(exitCode).toBe(0);
+      }
     });
   }
 

@@ -1,0 +1,13 @@
+# head: tree=/workspace/wt/parser rev=be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb dirty=[] copied 2026-10-01T07:57:43Z
+copied: /workspace/notes/lint/measure/parser/head/bun
+sha256 7e1111b462362a5748907049a1c7a424638fbdc976790a9e265d05ebfb04b8e6  /workspace/notes/lint/measure/parser/head/bun  bytes=81204808
+copied: /workspace/notes/lint/measure/parser/head/bun-profile
+sha256 1816498a6b5d6e19d19dd7c013c465383ca112a76199a2b084f5de24e1fff46b  /workspace/notes/lint/measure/parser/head/bun-profile  bytes=170775520
+copied: /workspace/notes/lint/measure/parser/head/bun-profile.linker-map
+sha256 9b65438645cb32f6dc4aef33bd1842e31a6baeaa50258db62bae6baa54bfda1b  /workspace/notes/lint/measure/parser/head/bun-profile.linker-map  bytes=48881337
+/workspace/notes/lint/measure/parser/head/bun --version: 1.4.3   --revision: 1.4.3-canary.1+be1ebe529
+/workspace/notes/lint/measure/parser/head/bun-profile --version: 1.4.3   --revision: 1.4.3-canary.1+be1ebe529
+configure.json: {
+  "profile": "release",
+  "overrides": {}
+}

@@ -1,0 +1,9 @@
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet test test/js/bun/typescript/type-export.test.ts --timeout "180000"
+bun test v1.4.3 (be1ebe529)
+
+test/js/bun/typescript/type-export.test.ts:
+(skip) re-export with export from > import with require > run > works
+(pass) re-export with export from > import with require > build > works [4675.18ms]
+(pass) re-export with export from > import with require > compile > works [12746.66ms]
+(skip) re-export with export from > import with import star > run > works
+(pass) re-export with export from > import with import star > build > works [3074.43ms]

@@ -193,3 +193,106 @@ test/bundler/transpiler/transpiler.test.js:
 (pass) malformed function definition does not crash due to invalid scope initialization > fails with a parse error and exits cleanly [14.25ms]
 (pass) does not crash with 9 comments and typescript type skipping [616.35ms]
 (pass) does not crash with --minify-syntax and revisiting dot expressions [1128.29ms]
+(pass) minify.identifiers on an empty source or a data loader > the toml, yaml and text loaders [1039.72ms]
+(pass) minify.identifiers on an empty source or a data loader > new Bun.Transpiler({ minify: true }).transformSync('{"key":1}', "json") [1380.35ms]
+(pass) minify.identifiers on an empty source or a data loader > new Bun.Transpiler({ minify: { identifiers: true } }).transformSync("") [1725.98ms]
+(pass) minify.identifiers on an empty source or a data loader > bun build --no-bundle --minify-identifiers empty.js [322.44ms]
+(pass) minify.identifiers on an empty source or a data loader > await new Bun.Transpiler({ minify: true }).transform('{"key":1}', "json") [1643.16ms]
+(pass) minify.identifiers on an empty source or a data loader > new Bun.Transpiler({ minify: true }).transformSync(" ") [2368.88ms]
+(pass) minify.identifiers on an empty source or a data loader > bun build --no-bundle --minify data.json [1287.94ms]
+(pass) runtime transpiler stack overflows [346.90ms]
+(pass) Bun.Transpiler.transformSync stack overflows [76.92ms]
+(pass) Bun.Transpiler.transform stack overflows [231.12ms]
+(pass) deeply nested expressions error instead of crashing the process [5477.96ms]
+(pass) deeply nested TypeScript types error instead of crashing the process [1643.62ms]
+(pass) deeply nested statement blocks error instead of crashing the process [2538.40ms]
+(pass) running a file with deeply nested unary operators does not crash the process [1206.04ms]
+(pass) does not duplicate the branch when simplifying an unused ternary with a comma test [9.59ms]
+(pass) arrow function parsing after const declaration (scope mismatch bug) > reproduces the original scope mismatch bug with JSX [4.72ms]
+(pass) arrow function parsing after const declaration (scope mismatch bug) > correctly parses array literal on next line after block body arrow function [3.06ms]
+(pass) arrow function parsing after const declaration (scope mismatch bug) > correctly parses JSX arrow function followed by array literal [7.33ms]
+(pass) arrow function parsing after const declaration (scope mismatch bug) > rejects indexing directly into block body arrow function without parens [5.39ms]
+(pass) arrow function parsing after const declaration (scope mismatch bug) > allows indexing into parenthesized arrow function [5.11ms]
+(pass) arrow function parsing after const declaration (scope mismatch bug) > correctly handles expression body arrow functions [3.83ms]
+(pass) arrow function parsing after const declaration (scope mismatch bug) > correctly handles arrow function with comma operator [2.84ms]
+(pass) arrow function parsing after const declaration (scope mismatch bug) > correctly handles multiple arrow functions in const declaration [3.15ms]
+(pass) arrow function parsing after const declaration (scope mismatch bug) > preserves intentional array access with explicit semicolon [2.99ms]
+(pass) arrow function parsing after const declaration (scope mismatch bug) > handles nested arrow functions correctly [2.58ms]
+(pass) arrow function parsing after const declaration (scope mismatch bug) > handles arrow function followed by object literal [2.95ms]
+(pass) export of a block-scoped function declaration > is a parse error for JavaScript [6.09ms]
+(pass) export of a block-scoped function declaration > is a parse error for JSX [7.28ms]
+(pass) export of a block-scoped function declaration > is stripped like a type-only export for TypeScript [7.74ms]
+(pass) export of a block-scoped function declaration > still allows exporting a top-level function declaration [4.50ms]
+(pass) export of a block-scoped function declaration > still allows exporting a var declared inside a block [5.73ms]
+(pass) export of a block-scoped function declaration > does not affect block-level function declarations in sloppy mode [4.55ms]
+(pass) export of a block-scoped function declaration > reports the error when running a module with this pattern [1885.59ms]
+(pass) using declarations in switch statements > lowers by wrapping the entire switch in a single try/finally [59.86ms]
+(pass) using declarations in switch statements > lowers `await using` in switch cases the same way [28.66ms]
+(pass) using declarations in switch statements > keeps generated temp refs unique across sibling switches in the same scope [14.88ms]
+(pass) using declarations in switch statements > keeps case bindings const when combined with top-level using declarations [20.10ms]
+(pass) using declarations in switch statements > disposes at switch exit in reverse order and keeps bindings visible across cases [1927.96ms]
+(pass) minifyWhitespace keeps the space before keyword operators > between a single-character identifier and 'instanceof' [16.69ms]
+(pass) minifyWhitespace keeps the space before keyword operators > between a single-character identifier and 'in' [11.72ms]
+(pass) minifyWhitespace keeps the space before keyword operators > between a numeric literal and 'in' [8.60ms]
+(pass) transform() result is unaffected by detaching the input ArrayBuffer while the task is in flight [3613.44ms]
+(pass) numeric property keys that overflow to Infinity > are printed as computed properties when minifying whitespace [23.92ms]
+(pass) numeric property keys that overflow to Infinity > are printed as computed properties without minification [10.17ms]
+(pass) numeric property keys that overflow to Infinity > handles a method name with hundreds of digits [7.43ms]
+(pass) numeric property keys that overflow to Infinity > still refers to the same property at runtime [128.37ms]
+(pass) parse error flood > reports duplicate-binding floods in linear time [9393.88ms]
+(pass) multi-line comment scanning > strips block comments of every size around the SIMD threshold [446.29ms]
+(pass) multi-line comment scanning > handles a lone '*' at every offset inside a large comment [317.64ms]
+(pass) multi-line comment scanning > handles comments made entirely of '*' [10.47ms]
+(pass) multi-line comment scanning > treats newlines inside a large block comment as line terminators (ASI) [11.80ms]
+(pass) multi-line comment scanning > scans large comments containing non-ASCII text [7.76ms]
+(pass) multi-line comment scanning > does not corrupt code around a large comment [4.28ms]
+(pass) multi-line comment scanning > handles a large comment that ends exactly at EOF [6.11ms]
+(pass) multi-line comment scanning > reports unterminated large block comments [8.12ms]
+(pass) same-target destructuring with a re-declared target > keeps a run that rebinds a re-declared parameter [5.41ms]
+(pass) same-target destructuring with a re-declared target > keeps a run whose target is re-declared again later in the scope [2.82ms]
+(pass) same-target destructuring with a re-declared target > ends the group at a re-declared parameter that rebinds the target [3.58ms]
+(pass) same-target destructuring with a re-declared target > keeps a run that rebinds an earlier var after the statements merge [5.12ms]
+(pass) same-target destructuring with a re-declared target > still folds a run with distinct bindings [5.57ms]
+(pass) same-target destructuring with a re-declared target > walks a linked list with var re-declarations at runtime [2072.49ms]
+(pass) same-target destructuring with an unstable target > keeps the reads of an unbound global [14.68ms]
+(pass) same-target destructuring with an unstable target > keeps the reads of a variable that the file assigns [43.28ms]
+(pass) same-target destructuring with an unstable target > keeps the reads when a block var hoists onto the variable [12.17ms]
+(pass) same-target destructuring with an unstable target > keeps the reads inside a with statement [12.22ms]
+(pass) same-target destructuring with an unstable target > keeps the reads when a direct eval can reach the variable [27.50ms]
+(pass) same-target destructuring with an unstable target > keeps the reads of a parameter when a sloppy function uses arguments [31.80ms]
+(pass) same-target destructuring with an unstable target > still folds a stable target [39.64ms]
+(pass) same-target destructuring with an unstable target > reads an unstable target once per declarator at runtime [3462.57ms]
+
+1 tests skipped:
+(skip) Bun.Transpiler > transform > supports macros
+
+
+21 tests todo:
+(todo) Bun.Transpiler > TypeScript > instantiation expressions
+(todo) Bun.Transpiler > exports.replace > supports replacing exports
+(todo) Bun.Transpiler > jsxFactory (two level)
+(todo) Bun.Transpiler > jsxFactory (one level)
+(todo) Bun.Transpiler > JSX
+(todo) Bun.Transpiler > parser > pass objects to macros
+(todo) Bun.Transpiler > parser > macros can return a promise
+(todo) Bun.Transpiler > parser > macros can return a Response body
+(todo) Bun.Transpiler > parser > macros get dead code eliminated
+(todo) Bun.Transpiler > parser > Bun.js > require -> import.meta.require
+(todo) Bun.Transpiler > parser > Bun.js > require.resolve -> import.meta.require.resolve
+(todo) Bun.Transpiler > parser > Bun.js > require.resolve(path, {paths: ["blah"]}) -> import.meta.require.resolve
+(todo) Bun.Transpiler > parser > Bun.js > require is defined
+(todo) Bun.Transpiler > parser > decls
+(todo) Bun.Transpiler > simplification > const inlining
+(todo) Bun.Transpiler > simplification > substitution
+(todo) Bun.Transpiler > transform > sync supports macros
+(todo) Bun.Transpiler > transform > sync supports macros remap > import {createElement, bacon} from 'react';
+(todo) Bun.Transpiler > transform > sync supports macros remap > import {bacon, createElement} from 'react';
+(todo) Bun.Transpiler > transform > macro remap removes import statement if its the only used one
+(todo) Bun.Transpiler > edge cases > import statement with quoted specifier
+
+ 237 pass
+ 1 skip
+ 21 todo
+ 0 fail
+ 12 snapshots, 2043 expect() calls
+Ran 259 tests across 1 file. [85.52s]

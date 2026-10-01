@@ -22,18 +22,19 @@ const ECMASCRIPT_GLOBALS = new Set(Object.keys(require(path.join(eslintDir, "con
 // ---------------------------------------------------------------------------------------------------------------------
 // acorn -> the shape of Bun's tree
 // ---------------------------------------------------------------------------------------------------------------------
-function toBun(ast, declared) {
+function toBun(ast, declared, parensOf = () => []) {
 	const E = (tag, loc, rest) => ({ tag, loc, wrappers: [], ...rest });
+	const at = n => (n.start !== undefined ? n.start : n.range[0]);
 	function pattern(n) {
 		// A binding: B::Identifier, B::Array, B::Object.
 		switch (n.type) {
 			case "Identifier":
 				declared.add(n.name);
-				return { tag: "BIdentifier", loc: n.start };
+				return { tag: "BIdentifier", loc: at(n) };
 			case "ArrayPattern":
 				return {
 					tag: "BArray",
-					loc: n.start,
+					loc: at(n),
 					items: n.elements.map(e => {
 						if (!e) return { binding: { tag: "BMissing" }, default_value: null };
 						if (e.type === "AssignmentPattern") return { binding: pattern(e.left), default_value: expr(e.right) };
@@ -44,7 +45,7 @@ function toBun(ast, declared) {
 			case "ObjectPattern":
 				return {
 					tag: "BObject",
-					loc: n.start,
+					loc: at(n),
 					properties: n.properties.map(p => {
 						if (p.type === "RestElement") return { key: null, value: pattern(p.argument), default_value: null };
 						const key = p.computed ? expr(p.key) : null;
@@ -60,9 +61,9 @@ function toBun(ast, declared) {
 	function target(n) {
 		switch (n.type) {
 			case "ArrayPattern":
-				return E("EArray", n.start, { is_target: true, items: n.elements.map(e => (e ? target(e) : E("EMissing", n.start, {}))) });
+				return E("EArray", at(n), { is_target: true, items: n.elements.map(e => (e ? target(e) : E("EMissing", at(n), {}))) });
 			case "ObjectPattern":
-				return E("EObject", n.start, {
+				return E("EObject", at(n), {
 					is_target: true,
 					properties: n.properties.map(p => (p.type === "RestElement" ? { kind: "spread", value: target(p.argument) } : { key: p.computed ? expr(p.key) : null, value: target(p.value) })),
 				});
@@ -71,10 +72,10 @@ function toBun(ast, declared) {
 				return E("EBinary", left.loc, { op: "=", left, right: expr(n.right), is_default: true });
 			}
 			case "RestElement":
-				return E("ESpread", n.start, { value: target(n.argument), is_rest: true });
+				return E("ESpread", at(n), { value: target(n.argument), is_rest: true });
 			case "ParenthesizedExpression": {
 				const inner = target(n.expression);
-				inner.wrappers.push({ kind: "paren", op: n.start });
+				inner.wrappers.push({ kind: "paren", op: at(n) });
 				return inner;
 			}
 			default:
@@ -83,6 +84,7 @@ function toBun(ast, declared) {
 	}
 	function args(params) {
 		return params.map(p => {
+			if (p.type === "TSParameterProperty") p = p.parameter;
 			if (p.type === "AssignmentPattern") return { binding: pattern(p.left), default: expr(p.right) };
 			if (p.type === "RestElement") return { binding: pattern(p.argument), default: null };
 			return { binding: pattern(p), default: null };
@@ -90,6 +92,7 @@ function toBun(ast, declared) {
 	}
 	function fn(n) {
 		if (n.id) declared.add(n.id.name);
+		if (!n.body) return { args: args(n.params), body: [] };
 		return { args: args(n.params), body: n.body.type === "BlockStatement" ? n.body.body.map(stmt) : [{ tag: "SReturn", value: expr(n.body) }] };
 	}
 	function klass(n) {
@@ -98,6 +101,7 @@ function toBun(ast, declared) {
 			extends: n.superClass ? expr(n.superClass) : null,
 			properties: n.body.body.map(m => {
 				if (m.type === "StaticBlock") return { class_static_block: m.body.map(stmt) };
+				if (m.type === "TSIndexSignature") return { key: null, value: null };
 				return { key: m.computed ? expr(m.key) : null, value: m.value ? expr(m.value) : null };
 			}),
 		};
@@ -105,6 +109,11 @@ function toBun(ast, declared) {
 	// `optional_chain` of the elements of one ChainExpression: Start at `?.`, Continuation above it.
 	function chain(n, state) {
 		if (n.type === "ParenthesizedExpression") return expr(n);
+		if (n.type === "TSNonNullExpression") {
+			const inner = chain(n.expression, state);
+			inner.wrappers.push({ kind: "non-null" });
+			return inner;
+		}
 		if (n.type === "MemberExpression" || n.type === "CallExpression") {
 			const below = n.type === "MemberExpression" ? n.object : n.callee;
 			const inner = chain(below, state);
@@ -119,59 +128,78 @@ function toBun(ast, declared) {
 	}
 	function member(n, t, oc) {
 		if (n.computed) return E("EIndex", t.loc, { target: t, index: expr(n.property), optional_chain: oc });
-		if (n.property.type === "PrivateIdentifier") return E("EIndex", t.loc, { target: t, index: E("EPrivateIdentifier", n.property.start, {}), optional_chain: oc });
+		if (n.property.type === "PrivateIdentifier") return E("EIndex", t.loc, { target: t, index: E("EPrivateIdentifier", at(n.property), {}), optional_chain: oc });
 		return E("EDot", t.loc, { target: t, name: n.property.name, optional_chain: oc });
 	}
 	function call(n, t, oc) {
 		return E("ECall", t.loc, { target: t, args: n.arguments.map(expr), optional_chain: oc });
 	}
 	function expr(n) {
+		const out = exprCore(n);
+		for (const op of parensOf(n)) out.wrappers.push({ kind: "paren", op });
+		return out;
+	}
+	function wrapped(n, kind, prefix) {
+		const inner = expr(n.expression);
+		inner.wrappers.push(prefix ? { kind, op: at(n) } : { kind });
+		return inner;
+	}
+	function exprCore(n) {
 		switch (n.type) {
 			case "ParenthesizedExpression": {
 				const inner = expr(n.expression);
-				inner.wrappers.push({ kind: "paren", op: n.start });
+				inner.wrappers.push({ kind: "paren", op: at(n) });
 				return inner;
 			}
+			case "TSAsExpression":
+				return wrapped(n, "as", false);
+			case "TSSatisfiesExpression":
+				return wrapped(n, "satisfies", false);
+			case "TSNonNullExpression":
+				return wrapped(n, "non-null", false);
+			case "TSTypeAssertion":
+				return wrapped(n, "type-assertion", true);
 			case "Literal":
-				if (n.regex) return E("ERegExp", n.start, {});
-				if (n.bigint !== undefined) return E("EBigInt", n.start, { digits: n.raw.slice(0, -1).replace(/_/g, "") });
-				if (n.value === null) return E("ENull", n.start, {});
-				if (typeof n.value === "boolean") return E("EBoolean", n.start, { value: n.value });
-				if (typeof n.value === "number") return E("ENumber", n.start, { value: n.value });
-				return E("EString", n.start, { value: n.value, prefer_template: false });
+				if (n.regex) return E("ERegExp", at(n), {});
+				if (n.bigint !== undefined) return E("EBigInt", at(n), { digits: n.raw.slice(0, -1).replace(/_/g, "") });
+				if (n.value === null) return E("ENull", at(n), {});
+				if (typeof n.value === "boolean") return E("EBoolean", at(n), { value: n.value });
+				if (typeof n.value === "number") return E("ENumber", at(n), { value: n.value });
+				return E("EString", at(n), { value: n.value, prefer_template: false });
 			case "TemplateLiteral":
-				if (n.expressions.length === 0) return E("EString", n.start, { value: n.quasis[0].value.cooked, prefer_template: true });
-				return E("ETemplate", n.start, { tag_expr: null, head: n.quasis[0].value.cooked, parts: n.expressions.map((e, i) => ({ value: expr(e), tail: n.quasis[i + 1].value.cooked })) });
+				if (n.expressions.length === 0) return E("EString", at(n), { value: n.quasis[0].value.cooked, prefer_template: true });
+				return E("ETemplate", at(n), { tag_expr: null, head: n.quasis[0].value.cooked, parts: n.expressions.map((e, i) => ({ value: expr(e), tail: n.quasis[i + 1].value.cooked })) });
 			case "TaggedTemplateExpression": {
 				const tagExpr = expr(n.tag);
 				return E("ETemplate", tagExpr.loc, { tag_expr: tagExpr, head: null, parts: n.quasi.expressions.map(e => ({ value: expr(e), tail: null })) });
 			}
 			case "Identifier":
-				return E("EIdentifier", n.start, { name: n.name });
+				return E("EIdentifier", at(n), { name: n.name });
 			case "PrivateIdentifier":
-				return E("EPrivateIdentifier", n.start, {});
+				return E("EPrivateIdentifier", at(n), {});
 			case "ThisExpression":
-				return E("EThis", n.start, {});
+				return E("EThis", at(n), {});
 			case "Super":
-				return E("ESuper", n.start, {});
+				return E("ESuper", at(n), {});
 			case "MetaProperty":
-				return E(n.meta.name === "new" ? "ENewTarget" : "EImportMeta", n.start, {});
+				return E(n.meta.name === "new" ? "ENewTarget" : "EImportMeta", at(n), {});
 			case "ArrayExpression":
-				return E("EArray", n.start, { items: n.elements.map(e => (e ? expr(e) : E("EMissing", n.start, {}))) });
+				return E("EArray", at(n), { items: n.elements.map(e => (e ? expr(e) : E("EMissing", at(n), {}))) });
 			case "SpreadElement":
-				return E("ESpread", n.start, { value: expr(n.argument) });
+				return E("ESpread", at(n), { value: expr(n.argument) });
 			case "ObjectExpression":
-				return E("EObject", n.start, {
+				return E("EObject", at(n), {
 					properties: n.properties.map(p => (p.type === "SpreadElement" ? { kind: "spread", value: expr(p.argument) } : { key: p.computed ? expr(p.key) : null, value: expr(p.value) })),
 				});
 			case "FunctionExpression":
-				return E("EFunction", n.start, { func: fn(n) });
+			case "TSEmptyBodyFunctionExpression":
+				return E("EFunction", at(n), { func: fn(n) });
 			case "ArrowFunctionExpression":
-				return E("EArrow", n.start, fn(n));
+				return E("EArrow", at(n), fn(n));
 			case "ClassExpression":
-				return E("EClass", n.start, klass(n));
+				return E("EClass", at(n), klass(n));
 			case "NewExpression":
-				return E("ENew", n.start, { target: expr(n.callee), args: n.arguments.map(expr) });
+				return E("ENew", at(n), { target: expr(n.callee), args: n.arguments.map(expr) });
 			case "ChainExpression":
 				return chain(n.expression, { started: false });
 			case "CallExpression":
@@ -179,12 +207,12 @@ function toBun(ast, declared) {
 			case "MemberExpression":
 				return member(n, expr(n.object), null);
 			case "ImportExpression":
-				return E("EImport", n.start, { expr: expr(n.source) });
+				return E("EImport", at(n), { expr: expr(n.source) });
 			case "UnaryExpression":
-				return E("EUnary", n.start, { op: n.operator, value: expr(n.argument) });
+				return E("EUnary", at(n), { op: n.operator, value: expr(n.argument) });
 			case "UpdateExpression": {
 				const value = expr(n.argument);
-				return E("EUnary", n.prefix ? n.start : value.loc, { op: (n.prefix ? "pre" : "post") + n.operator, value });
+				return E("EUnary", n.prefix ? at(n) : value.loc, { op: (n.prefix ? "pre" : "post") + n.operator, value });
 			}
 			case "BinaryExpression":
 			case "LogicalExpression": {
@@ -205,9 +233,9 @@ function toBun(ast, declared) {
 				return E("EIf", test.loc, { test, yes: expr(n.consequent), no: expr(n.alternate) });
 			}
 			case "AwaitExpression":
-				return E("EAwait", n.start, { value: expr(n.argument) });
+				return E("EAwait", at(n), { value: expr(n.argument) });
 			case "YieldExpression":
-				return E("EYield", n.start, { value: n.argument ? expr(n.argument) : null });
+				return E("EYield", at(n), { value: n.argument ? expr(n.argument) : null });
 			case "JSXElement":
 			case "JSXFragment": {
 				const inside = [];
@@ -216,14 +244,14 @@ function toBun(ast, declared) {
 					if (x !== n && (x.type === "JSXElement" || x.type === "JSXFragment")) return void inside.push(expr(x));
 					if (x.type === "JSXExpressionContainer") return void (x.expression.type !== "JSXEmptyExpression" && inside.push(expr(x.expression)));
 					if (x.type === "JSXSpreadAttribute") return void inside.push(expr(x.argument));
-					if (x.type === "JSXSpreadChild") return void inside.push(E("ESpread", x.start, { value: expr(x.expression) }));
+					if (x.type === "JSXSpreadChild") return void inside.push(E("ESpread", at(x), { value: expr(x.expression) }));
 					for (const k of Object.keys(x)) {
 						const v = x[k];
 						if (Array.isArray(v)) v.forEach(collect);
 						else if (v && typeof v === "object" && k !== "loc") collect(v);
 					}
 				})(n);
-				return E("EJsxElement", n.start, { children: inside });
+				return E("EJsxElement", at(n), { children: inside });
 			}
 			default:
 				throw new Error("expression " + n.type);
@@ -236,60 +264,93 @@ function toBun(ast, declared) {
 	function stmt(n) {
 		switch (n.type) {
 			case "ExpressionStatement":
-				return { tag: "SExpr", loc: n.start, value: expr(n.expression) };
+				return { tag: "SExpr", loc: at(n), value: expr(n.expression) };
 			case "BlockStatement":
-				return { tag: "SBlock", loc: n.start, stmts: n.body.map(stmt) };
+				return { tag: "SBlock", loc: at(n), stmts: n.body.map(stmt) };
 			case "StaticBlock":
-				return { tag: "SBlock", loc: n.start, stmts: n.body.map(stmt) };
+				return { tag: "SBlock", loc: at(n), stmts: n.body.map(stmt) };
 			case "EmptyStatement":
 			case "DebuggerStatement":
 			case "BreakStatement":
 			case "ContinueStatement":
-				return { tag: "SEmpty", loc: n.start };
+				return { tag: "SEmpty", loc: at(n) };
 			case "IfStatement":
-				return { tag: "SIf", loc: n.start, test: expr(n.test), yes: stmt(n.consequent), no: n.alternate ? stmt(n.alternate) : null };
+				return { tag: "SIf", loc: at(n), test: expr(n.test), yes: stmt(n.consequent), no: n.alternate ? stmt(n.alternate) : null };
 			case "WhileStatement":
-				return { tag: "SWhile", loc: n.start, test: expr(n.test), body: stmt(n.body) };
+				return { tag: "SWhile", loc: at(n), test: expr(n.test), body: stmt(n.body) };
 			case "DoWhileStatement":
-				return { tag: "SDoWhile", loc: n.start, body: stmt(n.body), test: expr(n.test) };
+				return { tag: "SDoWhile", loc: at(n), body: stmt(n.body), test: expr(n.test) };
 			case "ForStatement":
-				return { tag: "SFor", loc: n.start, init: n.init ? (n.init.type === "VariableDeclaration" ? stmt(n.init) : { tag: "SExpr", value: expr(n.init) }) : null, test: n.test ? expr(n.test) : null, update: n.update ? expr(n.update) : null, body: stmt(n.body) };
+				return { tag: "SFor", loc: at(n), init: n.init ? (n.init.type === "VariableDeclaration" ? stmt(n.init) : { tag: "SExpr", value: expr(n.init) }) : null, test: n.test ? expr(n.test) : null, update: n.update ? expr(n.update) : null, body: stmt(n.body) };
 			case "ForInStatement":
-				return { tag: "SForIn", loc: n.start, init: forHead(n.left), value: expr(n.right), body: stmt(n.body) };
+				return { tag: "SForIn", loc: at(n), init: forHead(n.left), value: expr(n.right), body: stmt(n.body) };
 			case "ForOfStatement":
-				return { tag: "SForOf", loc: n.start, init: forHead(n.left), value: expr(n.right), body: stmt(n.body) };
+				return { tag: "SForOf", loc: at(n), init: forHead(n.left), value: expr(n.right), body: stmt(n.body) };
 			case "WithStatement":
-				return { tag: "SWith", loc: n.start, value: expr(n.object), body: stmt(n.body) };
+				return { tag: "SWith", loc: at(n), value: expr(n.object), body: stmt(n.body) };
 			case "LabeledStatement":
-				return { tag: "SLabel", loc: n.start, stmt: stmt(n.body) };
+				return { tag: "SLabel", loc: at(n), stmt: stmt(n.body) };
 			case "ReturnStatement":
-				return { tag: "SReturn", loc: n.start, value: n.argument ? expr(n.argument) : null };
+				return { tag: "SReturn", loc: at(n), value: n.argument ? expr(n.argument) : null };
 			case "ThrowStatement":
-				return { tag: "SThrow", loc: n.start, value: expr(n.argument) };
+				return { tag: "SThrow", loc: at(n), value: expr(n.argument) };
 			case "SwitchStatement":
-				return { tag: "SSwitch", loc: n.start, test: expr(n.discriminant), cases: n.cases.map(c => ({ value: c.test ? expr(c.test) : null, body: c.consequent.map(stmt) })) };
+				return { tag: "SSwitch", loc: at(n), test: expr(n.discriminant), cases: n.cases.map(c => ({ value: c.test ? expr(c.test) : null, body: c.consequent.map(stmt) })) };
 			case "TryStatement":
-				return { tag: "STry", loc: n.start, body: n.block.body.map(stmt), catch: n.handler ? { binding: n.handler.param ? pattern(n.handler.param) : null, body: n.handler.body.body.map(stmt) } : null, finally: n.finalizer ? n.finalizer.body.map(stmt) : null };
+				return { tag: "STry", loc: at(n), body: n.block.body.map(stmt), catch: n.handler ? { binding: n.handler.param ? pattern(n.handler.param) : null, body: n.handler.body.body.map(stmt) } : null, finally: n.finalizer ? n.finalizer.body.map(stmt) : null };
 			case "VariableDeclaration":
-				return { tag: "SLocal", loc: n.start, decls: n.declarations.map(d => ({ binding: pattern(d.id), value: d.init ? expr(d.init) : null })) };
+				return { tag: "SLocal", loc: at(n), decls: n.declarations.map(d => ({ binding: pattern(d.id), value: d.init ? expr(d.init) : null })) };
+			case "TSTypeAliasDeclaration":
+			case "TSInterfaceDeclaration":
+			case "TSDeclareFunction":
+				return { tag: "SEmpty", loc: at(n) };
+			case "TSEnumDeclaration":
+				declared.add(n.id.name);
+				return { tag: "SBlock", loc: at(n), stmts: n.declare ? [] : n.body.members.filter(m => m.initializer).map(m => ({ tag: "SExpr", value: expr(m.initializer) })) };
+			case "TSModuleDeclaration":
+				if (n.declare || !n.body) return { tag: "SEmpty", loc: at(n) };
+				if (n.id.type === "Identifier") declared.add(n.id.name);
+				return { tag: "SBlock", loc: at(n), stmts: n.body.body.map(stmt) };
+			case "TSImportEqualsDeclaration":
+				declared.add(n.id.name);
+				return { tag: "SEmpty", loc: at(n) };
+			case "TSExportAssignment":
+				return { tag: "SExpr", loc: at(n), value: expr(n.expression) };
 			case "FunctionDeclaration":
-				return { tag: "SFunction", loc: n.start, func: fn(n) };
+				return { tag: "SFunction", loc: at(n), func: fn(n) };
 			case "ClassDeclaration":
-				return { tag: "SClass", loc: n.start, class: klass(n) };
+				return { tag: "SClass", loc: at(n), class: klass(n) };
 			case "ImportDeclaration":
-				for (const s of n.specifiers) declared.add(s.local.name);
-				return { tag: "SEmpty", loc: n.start };
+				for (const s of n.specifiers) if (n.importKind !== "type" && s.importKind !== "type") declared.add(s.local.name);
+				return { tag: "SEmpty", loc: at(n) };
 			case "ExportNamedDeclaration":
-				return n.declaration ? stmt(n.declaration) : { tag: "SEmpty", loc: n.start };
+				return n.declaration ? stmt(n.declaration) : { tag: "SEmpty", loc: at(n) };
 			case "ExportDefaultDeclaration":
-				return /Declaration$/.test(n.declaration.type) ? stmt(n.declaration) : { tag: "SExpr", loc: n.start, value: expr(n.declaration) };
+				return /Declaration$/.test(n.declaration.type) ? stmt(n.declaration) : { tag: "SExpr", loc: at(n), value: expr(n.declaration) };
 			case "ExportAllDeclaration":
-				return { tag: "SEmpty", loc: n.start };
+				return { tag: "SEmpty", loc: at(n) };
 			default:
 				throw new Error("statement " + n.type);
 		}
 	}
 	return ast.body.map(stmt);
+}
+
+// The tree of typescript-eslint, and for each of its nodes the parentheses directly around it, from the tree of tsc.
+function parseTypeScript(code, tsx) {
+	const req = require("module").createRequire("/workspace/ref/tseslint/package.json");
+	const estree = req("@typescript-eslint/typescript-estree");
+	const ts = req("typescript");
+	const r = estree.parseAndGenerateServices(code, { range: true, loc: true, jsx: tsx, filePath: tsx ? "a.tsx" : "a.ts" });
+	const map = r.services.esTreeNodeToTSNodeMap;
+	const parensOf = n => {
+		// A ChainExpression and what it holds are one node of tsc: the parentheses are those of the ChainExpression.
+		if (n.parent && n.parent.type === "ChainExpression" && n.parent.expression === n) return [];
+		const out = [];
+		for (let t = map.get(n); t && t.parent && t.parent.kind === ts.SyntaxKind.ParenthesizedExpression; t = t.parent) out.push(t.parent.getStart());
+		return out;
+	};
+	return { ast: r.ast, parensOf };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -860,16 +921,26 @@ function lineColumn(code, offset) {
 	}
 	return `${line}:${offset - last}`;
 }
-function ours(code, sourceType, withJsx) {
-	const ast = (withJsx ? Parser : acorn.Parser).parse(code, { ecmaVersion: "latest", sourceType: sourceType === "commonjs" ? "script" : sourceType, preserveParens: true, allowReturnOutsideFunction: sourceType === "commonjs", allowHashBang: true });
+function ours(code, sourceType, withJsx, ext) {
 	const declared = new Set();
-	const stmts = toBun(ast, declared);
+	let stmts;
+	if (ext) {
+		const { ast, parensOf } = parseTypeScript(code, ext === "tsx");
+		stmts = toBun(ast, declared, parensOf);
+	} else {
+		const ast = (withJsx ? Parser : acorn.Parser).parse(code, { ecmaVersion: "latest", sourceType: sourceType === "commonjs" ? "script" : sourceType, preserveParens: true, allowReturnOutsideFunction: sourceType === "commonjs", allowHashBang: true });
+		stmts = toBun(ast, declared);
+	}
 	const cx = makeContext(declared);
 	lint(stmts, cx);
 	return cx.reports.map(r => `${r.rule} ${lineColumn(code, r.at)} ${r.message}`);
 }
-function theirs(code, sourceType, withJsx) {
-	const messages = linter.verify(code, [{ languageOptions: { ecmaVersion: "latest", sourceType, parserOptions: { ecmaFeatures: { jsx: withJsx } } }, rules: Object.fromEntries(RULES.map(r => [r, "error"])) }]);
+const tsParser = require("module").createRequire("/workspace/ref/tseslint/package.json")("@typescript-eslint/parser");
+function theirs(code, sourceType, withJsx, ext) {
+	const rules = Object.fromEntries(RULES.map(r => [r, "error"]));
+	const messages = ext
+		? linter.verify(code, [{ files: ["**/*.ts", "**/*.tsx"], languageOptions: { parser: tsParser, parserOptions: { ecmaFeatures: { jsx: ext === "tsx" } }, sourceType: "module" }, rules }], { filename: `a.${ext}` })
+		: linter.verify(code, [{ languageOptions: { ecmaVersion: "latest", sourceType, parserOptions: { ecmaFeatures: { jsx: withJsx } } }, rules }]);
 	if (messages.some(m => m.fatal)) return null;
 	return messages.map(m => `${m.ruleId} ${m.line}:${m.column} ${m.message}`);
 }
@@ -889,13 +960,14 @@ for (const f of files) {
 	}
 	for (const raw of list) {
 		const c = typeof raw === "string" ? { code: raw } : raw;
-		if (c.skip || c.ext === "ts" || c.ext === "tsx" || seen.has(c.code)) continue;
-		seen.add(c.code);
+		const ext = c.ext === "ts" || c.ext === "tsx" ? c.ext : null;
+		if (c.skip || seen.has((ext || "") + c.code)) continue;
+		seen.add((ext || "") + c.code);
 		let result = null;
 		let type = null;
 		let withJsx = false;
-		for (const [t, j] of [["script", false], ["module", false], ["script", true], ["module", true]]) {
-			const r = theirs(c.code, t, j);
+		for (const [t, j] of ext ? [["module", ext === "tsx"]] : [["script", false], ["module", false], ["script", true], ["module", true]]) {
+			const r = theirs(c.code, t, j, ext);
 			if (r) {
 				result = r;
 				type = t;
@@ -910,7 +982,7 @@ for (const f of files) {
 		}
 		let mine;
 		try {
-			mine = ours(c.code, type, withJsx);
+			mine = ours(c.code, type, withJsx, ext);
 		} catch (e) {
 			tally.errors++;
 			console.log(`ERROR ${JSON.stringify(c.code)}: ${e.message}`);

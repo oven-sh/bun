@@ -6,3 +6,7 @@ leak test/bundler/transpiler/typescript-grammar-decorator-metadata.test.ts rc=0 
 leak test/bundler/transpiler/decorator-metadata.test.ts rc=0 secs=14 ::  5 pass; 0 fail; 227 expect() calls;Ran 5 tests across 1 file. [7.18s];
 leak test/bundler/transpiler/decorators.test.ts rc=0 secs=55 ::  24 pass; 0 fail; 273 expect() calls;Ran 24 tests across 1 file. [42.36s];
 leak test/bundler/transpiler/transpiler-stack-overflow.test.ts rc=0 secs=54 ::  1 pass; 0 fail; 1 expect() calls;
+leak test/bundler/transpiler/transpiler.test.js rc=0 secs=92 ::  237 pass; 1 skip; 21 todo; 0 fail; 12 snapshots, 2043 expect() calls;Ran 259 tests across 1 file. [85.52s];
+leak test/bundler/bundler_decorator_metadata.test.ts rc=0 secs=24 ::  2 pass; 0 fail; 2 expect() calls;Ran 2 tests across 1 file. [14.26s];
+leak test/bundler/esbuild/ts.test.ts rc=0 secs=93 ::  59 pass; 16 todo; 0 fail; 43 expect() calls;Ran 75 tests across 1 file. [85.63s];
+leak test/js/bun/typescript/type-export.test.ts rc=1 secs=118 ::  52 pass; 18 skip; 18 fail; 189 expect() calls;Ran 88 tests across 1 file. [107.39s];

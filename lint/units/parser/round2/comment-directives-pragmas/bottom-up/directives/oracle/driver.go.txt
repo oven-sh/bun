@@ -1,11 +1,30 @@
 
 
-func main() {
+func readInputs(path string) [][]string {
+	data, _ := os.ReadFile(path)
 	var inputs [][]string
-	data, _ := os.ReadFile(os.Args[1])
+	if strings.HasSuffix(path, ".hex") {
+		for _, line := range strings.Split(string(data), "\n") {
+			name, h, ok := strings.Cut(line, "\t")
+			if !ok {
+				continue
+			}
+			b, err := hex.DecodeString(h)
+			if err != nil {
+				panic(err)
+			}
+			inputs = append(inputs, []string{name, string(b)})
+		}
+		return inputs
+	}
 	if err := json.Unmarshal(data, &inputs); err != nil {
 		panic(err)
 	}
+	return inputs
+}
+
+func main() {
+	inputs := readInputs(os.Args[1])
 	for _, in := range inputs {
 		text := in[1]
 		s := &Scanner{text: text, end: len(text), skipTrivia: true}
@@ -29,6 +48,10 @@ func main() {
 				k = "Ignore"
 			}
 			ds = append(ds, fmt.Sprintf("%s %d..%d", k, d.Loc.Pos(), d.Loc.End()))
+		}
+		if strings.HasSuffix(os.Args[1], ".hex") {
+			fmt.Printf("%s\t%s\t%s\n", in[0], strings.Join(comments, " "), strings.Join(ds, ", "))
+			continue
 		}
 		j, _ := json.Marshal(text)
 		fmt.Printf("--- %s %s\n  comments=[%s] unterminated=%v\n  directives=[%s]\n", in[0], j, strings.Join(comments, " "), len(s.errors) > 0, strings.Join(ds, ", "))

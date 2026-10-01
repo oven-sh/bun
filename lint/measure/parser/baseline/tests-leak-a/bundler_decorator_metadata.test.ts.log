@@ -1,0 +1,11 @@
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet test test/bundler/bundler_decorator_metadata.test.ts
+bun test v1.4.3 (be1ebe529)
+
+test/bundler/bundler_decorator_metadata.test.ts:
+(pass) bundler > decorator_metadata/TypeSerialization [5265.53ms]
+(pass) bundler > decorator_metadata/ImportIdentifiers [3803.20ms]
+
+ 2 pass
+ 0 fail
+ 2 expect() calls
+Ran 2 tests across 1 file. [14.26s]

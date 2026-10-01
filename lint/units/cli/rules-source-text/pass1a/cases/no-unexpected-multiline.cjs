@@ -1,0 +1,17 @@
+module.exports = [
+  { code: "a\n[b]" }, { code: "a // c\n[b]" }, { code: "a /* \n */ [b]" }, { code: "a /* c */ [b]" }, { code: "(a)\n[b]" }, { code: "(a\n)[b]" },
+  { code: "a\n[(b)]" }, { code: "a[\nb]" }, { code: "a[ // [\n b]" }, { code: "a\n?.[b]" }, { code: "a?.b\n[c]" }, { code: "a?.\n[c]" },
+  { code: "class A extends B { m() { super\n[a] } }" }, { code: "a\n[b]\n[c]" }, { code: "a\n[b] = 1" }, { code: "x = [a\n[b]]" },
+  { code: "f\n(a)" }, { code: "f\n()" }, { code: "f\n((a))" }, { code: "f(\n(a))" }, { code: "new f\n(a)" }, { code: "f\n(a)(b)" }, { code: "f(a)\n(b)" },
+  { code: "f // (\n(a)" }, { code: "f( // (\n (a))" }, { code: "f /* ( */\n(a)" }, { code: "f( /* x\n y */ (a))" }, { code: "import\n(a)", st: "module" },
+  { code: "class A extends B { constructor() { super\n(a) } }" }, { code: "f?.\n(a)" }, { code: "f\n?.(a)" }, { code: "a?.b\n(c)" }, { code: "f\n(...a)" },
+  { code: "f\n(a)\n(b)\n[c]" }, { code: "(f)\n(a)" }, { code: "(f\n)(a)" }, { code: "f\u2028(a)" }, { code: "f\r(a)" }, { code: "f\r\n(a)" }, { code: "f\u00A0\n(a)" }, { code: "f\n\u00A0(a)" },
+  { code: "a\n/b/g" }, { code: "a\n/b/g.c" }, { code: "(a\n/b)/g" }, { code: "a\n/b/\\u0067" }, { code: "a /b/g" }, { code: "a\n/b/ g" }, { code: "a\n/b/(g)" }, { code: "a\n/b/gx" }, { code: "a\n/b/g/c" },
+  { code: "a\n/b/*c*//g" }, { code: "a\n/(b)/g" }, { code: "a\n/ /* c */ b/g" }, { code: "a /* c\n */ /b/g" }, { code: "a\n/b/y++" }, { code: "a\n/b/g`x`" }, { code: "a\n/b/g**2" }, { code: "a\n/b/g\n/c/g" },
+  { code: "a\n`x`" }, { code: "a`x`\n`y`" }, { code: "a\n`x``y`" }, { code: "a\n`x${1}`" }, { code: "a /* c */`x`" }, { code: "a /* \n */`x`" }, { code: "a // c\n`x`" }, { code: "(a\n)`x`" }, { code: "(a)\n`x`" },
+  { code: "a\n`x\r\ny`" }, { code: "a`x\r\ny`" }, { code: "a\r\n`x\r\ny`" }, { code: "`a`\n`b`" }, { code: "a.b\n`x`" }, { code: "new a\n`x`" }, { code: "a()\n`x`" }, { code: "a[0]\n`x`" },
+  { code: "f\n<T>(a)", ext: "ts" }, { code: "f<T>\n(a)", ext: "ts" }, { code: "f<\nT>(a)", ext: "ts" }, { code: "a!\n[b]", ext: "ts" }, { code: "a\n![b]", ext: "ts" }, { code: "a!\n(b)", ext: "ts" }, { code: "(a as any)\n[b]", ext: "ts" },
+  { code: "a\n<T>`x`", ext: "ts" }, { code: "a<T>\n`x`", ext: "ts" }, { code: "a<`t${string}`>\n`x`", ext: "ts" }, { code: "let x: T\n[K]", ext: "ts" }, { code: "f\n<T>(a)\n[b]", ext: "ts" }, { code: "x = <T>a\n[b]", ext: "ts" }, { code: "x = a as T\n[b]", ext: "ts" },
+  { code: "a\n/b/g as any", ext: "ts" }, { code: "a\n/b/g!", ext: "ts" },
+  { code: "x = <a/>\n(b)", ext: "jsx" }, { code: "x = <a>{b\n[c]}</a>", ext: "jsx" },
+];

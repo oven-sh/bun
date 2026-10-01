@@ -475,8 +475,7 @@ fn iterate_included_project_tree(
         });
 
         let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(&dir));
-        'next_entry: while let Some(entry) = dir_iter.next().ok().flatten() {
-            // On iterator error, treat as end of iteration.
+        'next_entry: while let Some(entry) = next_dir_entry(&mut dir_iter, &dir_subpath) {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
             }
@@ -712,7 +711,7 @@ fn add_entire_tree(
         }
 
         let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
-        'next_entry: while let Some(entry) = iter.next().ok().flatten() {
+        'next_entry: while let Some(entry) = next_dir_entry(&mut iter, &dir_subpath) {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
             }
@@ -812,6 +811,41 @@ fn open_subdir(dir: &Dir, entry_name: &[u8], entry_subpath: &ZStr) -> Dir {
     }
 }
 
+/// The next entry of a package directory. A failed read ends the command, not the directory.
+fn next_dir_entry(
+    iter: &mut DirIterator::WrappedIterator,
+    dir_subpath: &[u8],
+) -> Option<DirIterator::IteratorResult> {
+    match iter.next() {
+        Ok(entry) => entry,
+        Err(err) => read_dir_failed(err, iter, dir_subpath),
+    }
+}
+
+#[cold]
+fn read_dir_failed(
+    err: bun_sys::Error,
+    iter: &DirIterator::WrappedIterator,
+    dir_subpath: &[u8],
+) -> ! {
+    let mut path_buf = bun_paths::path_buffer_pool::get();
+    // An empty subpath is the package root.
+    let dir_path: &[u8] = if !dir_subpath.is_empty() {
+        dir_subpath
+    } else {
+        match bun_sys::get_fd_path(iter.dir(), &mut *path_buf) {
+            Ok(abs_path) => abs_path,
+            Err(_) => b".",
+        }
+    };
+    Output::err(
+        err,
+        "failed to read directory \"{}\" for packing",
+        format_args!("{}", bstr::BStr::new(dir_path)),
+    );
+    Global::crash();
+}
+
 fn entry_subpath(dir_subpath: &[u8], entry_name: &[u8]) -> Result<ZBox, AllocError> {
     let sep: &[u8] = if dir_subpath.is_empty() { b"" } else { b"/" };
     let mut buf = Vec::with_capacity(dir_subpath.len() + sep.len() + entry_name.len() + 1);
@@ -883,7 +917,7 @@ fn iterate_bundled_deps(
     let mut additional_bundled_deps: Vec<DirInfo> = Vec::new();
 
     let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
-    while let Some(entry) = iter.next().ok().flatten() {
+    while let Some(entry) = next_dir_entry(&mut iter, b"node_modules") {
         if entry.kind != bun_sys::FileKind::Directory {
             continue;
         }
@@ -907,7 +941,8 @@ fn iterate_bundled_deps(
             };
 
             let mut scope_iter = DirIterator::iterate(Fd::from_std_dir(&scope_dir));
-            while let Some(scope_entry) = scope_iter.next().ok().flatten() {
+            while let Some(scope_entry) = next_dir_entry(&mut scope_iter, scope_subpath.as_bytes())
+            {
                 let dep_name = entry_subpath(scope_name, scope_entry.name.slice_u8())?;
 
                 let Some(dep) = bundled_deps.iter_mut().find(|dep| {
@@ -1022,7 +1057,7 @@ fn add_bundled_dep(
         let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
 
         let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
-        while let Some(entry) = iter.next().ok().flatten() {
+        while let Some(entry) = next_dir_entry(&mut iter, &dir_subpath) {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
             }
@@ -1284,7 +1319,7 @@ fn iterate_project_tree(
         }
 
         let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(&dir));
-        'next_entry: while let Some(entry) = dir_iter.next().ok().flatten() {
+        'next_entry: while let Some(entry) = next_dir_entry(&mut dir_iter, &dir_subpath) {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
             }

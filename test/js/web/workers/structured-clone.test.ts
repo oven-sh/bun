@@ -2,8 +2,10 @@ import { deserialize, serialize } from "bun:jsc";
 import { openSync } from "fs";
 import { bunEnv, bunExe, tls } from "harness";
 import { createPrivateKey, createPublicKey, createSecretKey, KeyObject, X509Certificate } from "node:crypto";
+import { once } from "node:events";
 import { BlockList } from "node:net";
-import { deserialize as v8Deserialize } from "node:v8";
+import { deserialize as v8Deserialize, serialize as v8Serialize } from "node:v8";
+import { MessageChannel, Worker as NodeWorker } from "node:worker_threads";
 import { deflate } from "node:zlib";
 import { join } from "path";
 
@@ -38,7 +40,7 @@ function jscSerializeRoundtrip(value: any) {
 // Cold variant: a brand-new Bun process per clone, so the deserialize happens in a
 // completely fresh JSC VM (empty object pool, first-touch platform-object structures).
 function jscSerializeRoundtripCrossProcessCold(original: any) {
-  const serialized = serialize(original);
+  const serialized = serialize(original, { binaryType: "nodebuffer" });
 
   const result = Bun.spawnSync({
     cmd: [
@@ -47,7 +49,7 @@ function jscSerializeRoundtripCrossProcessCold(original: any) {
       `
     import {deserialize, serialize} from "bun:jsc";
     const serialized = deserialize(await Bun.stdin.bytes());
-    const cloned = serialize(serialized);
+    const cloned = serialize(serialized, { binaryType: "nodebuffer" });
     process.stdout.write(cloned);
     `,
     ],
@@ -56,6 +58,7 @@ function jscSerializeRoundtripCrossProcessCold(original: any) {
     stdout: "pipe",
     stderr: "inherit",
   });
+  expect(result.exitCode).toBe(0);
   return deserialize(result.stdout);
 }
 
@@ -76,7 +79,7 @@ const crossProcessChildScript = `
         chunks = [buf];
         break;
       }
-      const cloned = serialize(deserialize(buf.subarray(4, 4 + len)));
+      const cloned = serialize(deserialize(buf.subarray(4, 4 + len)), { binaryType: "nodebuffer" });
       const header = Buffer.alloc(4);
       header.writeUInt32LE(cloned.byteLength, 0);
       process.stdout.write(header);
@@ -256,6 +259,89 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
       }
     });
 
+    describe("Map and Set own properties are not structured clone data", () => {
+      for (const Collection of [Map, Set]) {
+        test(`empty ${Collection.name} ignores uncloneable own properties`, async () => {
+          const input = Collection === Map ? new Map() : new Set();
+          Object.defineProperty(input, "extra", { enumerable: true, value: () => {} });
+          const cloned = await structuredCloneFn(input);
+          expect(Object.getPrototypeOf(cloned)).toBe(Collection.prototype);
+          expect(cloned.size).toBe(0);
+          expect(Reflect.ownKeys(cloned)).toEqual([]);
+        });
+        for (const subclass of [false, true]) {
+          const Ctor: new () => any = subclass ? class extends (Collection as any) {} : Collection;
+          for (const property of ["plain", "getter", "function", "symbol value", "symbol key", "WeakSet"]) {
+            test(`${Collection.name} ${subclass ? "subclass" : "base"}: ignores ${property}`, async () => {
+              let getterCalls = 0;
+              const entry = { payload: 42 };
+              const input: any = new Ctor();
+              if (input instanceof Map) input.set("entry", entry);
+              else input.add(entry);
+              switch (property) {
+                case "plain":
+                  input.extra = { ignored: true };
+                  break;
+                case "getter":
+                  Object.defineProperty(input, "extra", {
+                    enumerable: true,
+                    get() {
+                      getterCalls++;
+                      throw new Error("must not invoke");
+                    },
+                  });
+                  break;
+                case "function":
+                  input.extra = () => {};
+                  break;
+                case "symbol value":
+                  input.extra = Symbol("ignored");
+                  break;
+                case "symbol key":
+                  input[Symbol.iterator] = () => {
+                    throw new Error("must not iterate own properties");
+                  };
+                  break;
+                case "WeakSet":
+                  input.extra = new WeakSet();
+                  break;
+              }
+              const cloned = await structuredCloneFn({ input, entry });
+              expect(Object.getPrototypeOf(cloned.input)).toBe(Collection.prototype);
+              expect(Reflect.ownKeys(cloned.input)).toEqual([]);
+              expect([...cloned.input.values()]).toEqual([{ payload: 42 }]);
+              expect([...cloned.input.values()][0]).toBe(cloned.entry);
+              expect(cloned.entry).not.toBe(entry);
+              expect(getterCalls).toBe(0);
+            });
+          }
+        }
+      }
+      test("nested collections preserve cycles and aliases", async () => {
+        const map: any = new Map();
+        const set: any = new Set();
+        map.set(set, map);
+        set.add(map);
+        map.ignored = new WeakSet();
+        set.ignored = () => {};
+        const result = await structuredCloneFn({ map, set });
+        expect(result.map.get(result.set)).toBe(result.map);
+        expect(result.set.has(result.map)).toBe(true);
+        expect(Reflect.ownKeys(result.map)).toEqual([]);
+        expect(Reflect.ownKeys(result.set)).toEqual([]);
+      });
+      test.each([
+        ["function", () => () => {}],
+        ["WeakSet", () => new WeakSet()],
+        ["symbol", () => Symbol("entry")],
+      ])("still rejects %s in collection entries", async (_name, make) => {
+        for (const value of [make(), new Map([["key", make()]]), new Map([[make(), 1]]), new Set([make()])]) {
+          await expect(Promise.resolve().then(() => structuredCloneFn(value))).rejects.toMatchObject({
+            name: "DataCloneError",
+          });
+        }
+      });
+    });
     test("map", async () => {
       const input = new Map();
       input.set("a", 1);
@@ -1200,5 +1286,87 @@ describe("string constant pool entries survive GC during deserialization", () =>
       expect(result.get("free")).toBe(0x1234);
       expect(result.get("tmp")).toEqual({ a: 1 });
     }
+  });
+});
+
+describe("legacy Map and Set property sections remain readable", () => {
+  // Existing persisted data can contain own properties after collection entries.
+  test.each([
+    [
+      "Map",
+      "0e0000001e10030000806b6579100500008076616c75651f060000806c656761637902060000806e6573746564052a000000ffffffffffffffff",
+    ],
+    ["Set", "0e0000001d100500008076616c756520060000806c656761637902060000806e6573746564052a000000ffffffffffffffff"],
+  ])("reads persisted %s entries and old own properties", (kind, hex) => {
+    for (const read of [deserialize, v8Deserialize]) {
+      const value = read(Buffer.from(hex, "hex"));
+      expect(value.legacy).toEqual({ nested: 42 });
+      expect([...value]).toEqual(kind === "Map" ? [["key", "value"]] : ["value"]);
+    }
+  });
+});
+
+describe("Map/Set own properties across message and storage boundaries", () => {
+  function payload() {
+    const map: any = new Map([["key", { value: 42 }]]);
+    const set: any = new Set([map]);
+    for (const collection of [map, set]) {
+      collection.fn = () => {};
+      Object.defineProperty(collection, "getter", {
+        enumerable: true,
+        get() {
+          throw new Error("own getter called");
+        },
+      });
+    }
+    return { map, set };
+  }
+  function check(value) {
+    expect([...value.map]).toEqual([["key", { value: 42 }]]);
+    expect([...value.set]).toEqual([value.map]);
+    expect(Reflect.ownKeys(value.map)).toEqual([]);
+    expect(Reflect.ownKeys(value.set)).toEqual([]);
+  }
+  test("node:v8 storage", () => check(v8Deserialize(v8Serialize(payload()))));
+  test("MessagePort postMessage", async () => {
+    const { port1, port2 } = new MessageChannel();
+    try {
+      const message = once(port2, "message");
+      port1.postMessage(payload());
+      check((await message)[0]);
+    } finally {
+      port1.close();
+      port2.close();
+    }
+  });
+  test("Worker postMessage", async () => {
+    const worker = new NodeWorker(
+      'require("node:worker_threads").parentPort.on("message", value => require("node:worker_threads").parentPort.postMessage(value))',
+      { eval: true },
+    );
+    try {
+      const message = once(worker, "message");
+      worker.postMessage(payload());
+      check((await message)[0]);
+    } finally {
+      await worker.terminate();
+    }
+  });
+  test("advanced child IPC", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", 'process.on("message", value => process.send(value));'],
+      env: bunEnv,
+      serialization: "advanced",
+      ipc: value => resolve(value),
+      onExit: () => reject(new Error("IPC child exited before its reply")),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    proc.send(payload());
+    check(await promise);
+    proc.disconnect();
+    expect(await proc.exited).toBe(0);
+    expect(await proc.stderr.text()).toBe("");
   });
 });

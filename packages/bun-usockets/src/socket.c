@@ -217,7 +217,7 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
     }
     if (!c->error) {
         // if we have no error, we have to set that we were aborted aka we called close
-        c->error = LIBUS_ECONNABORTED;
+        c->error = LIBUS_ECANCELED;
     }
     struct us_socket_group_t *group = c->group;
 
@@ -349,7 +349,8 @@ static struct us_socket_t *us_internal_socket_close_and_notify(struct us_socket_
  * code==0) waits for the peer's, instead of slamming the fd shut and racing the peer's
  * handshake/secureConnection event. openssl.c re-enters here once that graceful path is done. */
 struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code, void *reason) {
-    return us_internal_socket_close_and_notify(s, code, reason, LIBUS_ECONNABORTED);
+    /* Not an error a connect can fail with, so the holder can tell the two apart. */
+    return us_internal_socket_close_and_notify(s, code, reason, LIBUS_ECANCELED);
 }
 
 void us_internal_socket_connect_failed(struct us_socket_t *s, int error) {

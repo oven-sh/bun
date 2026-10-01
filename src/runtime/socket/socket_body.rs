@@ -1214,7 +1214,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // Unix-path connect errors keep their real code (a non-socket file
             // is ENOTSOCK, a permission-denied path is EACCES, a missing one is
             // ENOENT, an inexpressible path is EINVAL), and a connect that was
-            // closed rather than refused is ECONNABORTED; everything else stays
+            // closed rather than failed is ECANCELED; everything else stays
             // ECONNREFUSED.
             let errno_: c_int = if errno == sys::SystemErrno::ENOENT as c_int
                 || errno == sys::SystemErrno::ENOTSOCK as c_int
@@ -1224,6 +1224,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 || errno == sys::SystemErrno::EADDRINUSE as c_int
                 || errno == sys::SystemErrno::EADDRNOTAVAIL as c_int
                 || errno == sys::SystemErrno::ECONNABORTED as c_int
+                || errno == sys::SystemErrno::ECANCELED as c_int
             {
                 errno
             } else {
@@ -1245,6 +1246,8 @@ impl<const SSL: bool> NewSocket<SSL> {
                 BunString::static_("EADDRNOTAVAIL")
             } else if errno == sys::SystemErrno::ECONNABORTED as c_int {
                 BunString::static_("ECONNABORTED")
+            } else if errno == sys::SystemErrno::ECANCELED as c_int {
+                BunString::static_("ECANCELED")
             } else {
                 BunString::static_("ECONNREFUSED")
             };

@@ -745,7 +745,7 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     if (result->error) {
         /* Preserve the getaddrinfo failure so the connect-error callback can
          * report the resolver error (ENOTFOUND, ...) instead of the fabricated
-         * ECONNABORTED that us_connecting_socket_close fills in when `error`
+         * ECANCELED that us_connecting_socket_close fills in when `error`
          * is still 0. `error_is_dns` tags the namespace: getaddrinfo return
          * codes and errnos overlap numerically. */
         c->error = result->error;
@@ -805,7 +805,7 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                 if (opened == 0 && c->connecting_head == NULL) {
                     /* Every resolved address failed to connect. Without this,
                      * us_connecting_socket_close defaults c->error to
-                     * ECONNABORTED (caller abort) and never invalidates the
+                     * ECANCELED (caller abort) and never invalidates the
                      * DNS cache entry for the dead host. */
                     c->error = ECONNREFUSED;
                     us_connecting_socket_close(c);

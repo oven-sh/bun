@@ -1628,8 +1628,10 @@ const SocketHandlers2 = {
       req.errno = error.errno || uv().UV_ECANCELED;
       return;
     }
+    // Closing the handle is what aborts a connect; uv_close completes the request with ECANCELED.
+    const status = error.code === "ECONNABORTED" ? uv().UV_ECANCELED : error.errno;
     // An attempt that timed out was closed with its `oncomplete` cleared.
-    req.oncomplete?.(error.errno, self._handle, req, true, true);
+    req.oncomplete?.(status, self._handle, req, true, true);
   },
 } satisfies InternalSocketHandler<ConnectData>;
 

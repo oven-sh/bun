@@ -18,13 +18,72 @@
 
 import { SQL } from "bun";
 import { expect, mock, test } from "bun:test";
-import { blackholePortSource, bunEnv, bunExe, isMusl, isWindows } from "harness";
-import { listeningServer, neverAnsweringServer, pgAuthenticationOk, pgReadyForQuery } from "./wire-frames";
+import { blackholePortSource, bunEnv, bunExe, isMusl, isWindows, tls as tlsCert } from "harness";
+import net from "node:net";
+import tls from "node:tls";
+import {
+  listeningServer,
+  MYSQL_CLIENT_SSL,
+  MYSQL_DEFAULT_CAPABILITIES,
+  mysqlHandshakeV10,
+  neverAnsweringServer,
+  pgAuthenticationOk,
+  pgReadyForQuery,
+  pgSSLResponse,
+} from "./wire-frames";
 
 const drivers = [
   ["postgres", "postgres://postgres@", "ERR_POSTGRES_CONNECTION_CLOSED", "ERR_POSTGRES_CONNECTION_TIMEOUT"],
   ["mysql", "mysql://root@", "ERR_MYSQL_CONNECTION_CLOSED", "ERR_MYSQL_CONNECTION_TIMEOUT"],
 ] as const;
+
+// How each protocol gets to TLS: what the server says first, how long the client's plaintext
+// request for TLS is, and what the server answers it with.
+const startTls = {
+  postgres: { greeting: undefined, requestLength: 8, answer: pgSSLResponse("S") },
+  mysql: {
+    greeting: mysqlHandshakeV10({ capabilities: MYSQL_DEFAULT_CAPABILITIES | MYSQL_CLIENT_SSL }),
+    requestLength: 36,
+    answer: undefined,
+  },
+} as const;
+
+/**
+ * A server that completes the TLS handshake, takes the client's first message and from then on
+ * reads nothing: a close_notify gets no answer. `silent` resolves once it has stopped reading.
+ */
+async function silentAfterFirstMessageTlsServer(name: keyof typeof startTls) {
+  const { greeting, requestLength, answer } = startTls[name];
+  const silent = Promise.withResolvers<void>();
+  const terminator = tls.createServer(tlsCert, socket => {
+    socket.on("error", () => {});
+    socket.once("data", () => silent.resolve());
+  });
+  await new Promise<void>(resolve => terminator.listen(0, "127.0.0.1", resolve));
+  const { port, server } = await listeningServer(client => {
+    client.on("error", () => {});
+    if (greeting) client.write(greeting);
+    client.once("data", chunk => {
+      if (answer) client.write(answer);
+      const upstream = net.connect((terminator.address() as net.AddressInfo).port, "127.0.0.1");
+      upstream.on("error", () => {});
+      upstream.write(chunk.subarray(requestLength));
+      client.pipe(upstream).pipe(client);
+      silent.promise.then(() => {
+        client.unpipe(upstream);
+        client.pause();
+      });
+    });
+  });
+  return {
+    port,
+    silent: silent.promise,
+    close() {
+      server.close();
+      terminator.close();
+    },
+  };
+}
 
 for (const [name, scheme, closedCode, timeoutCode] of drivers) {
   test(`${name}: forced close() resolves while a connection is mid-handshake`, async () => {
@@ -108,6 +167,49 @@ for (const [name, scheme, closedCode, timeoutCode] of drivers) {
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
       expect(stdout).toBe(timeoutCode + "\n");
       expect(exitCode).toBe(0);
+    },
+  );
+
+  // A graceful TLS close waits for the peer's close_notify. A connection that failed does not.
+  test.each([
+    ["close()", 0, `await sql.close({ timeout: "0" });`, closedCode],
+    ["the connection timeout", 0.5, "", timeoutCode],
+  ])(
+    `${name}: the process exits after %s of a TLS connection whose peer has gone silent`,
+    async (_, connectionTimeout, act, code) => {
+      const server = await silentAfterFirstMessageTlsServer(name);
+      try {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+            const sql = new Bun.SQL({
+              url: "${scheme}127.0.0.1:${server.port}/db",
+              max: 1,
+              tls: { rejectUnauthorized: false },
+              connectionTimeout: ${connectionTimeout},
+            });
+            const query = sql\`SELECT 1\`.catch(err => err.code);
+            // The peer has gone silent.
+            await Bun.stdin.text();
+            ${act}
+            console.log(await query);
+            `,
+          ],
+          env: bunEnv,
+          stdin: "pipe",
+          stdout: "pipe",
+          stderr: "inherit",
+        });
+        await server.silent;
+        proc.stdin.end();
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        expect(stdout).toBe(code + "\n");
+        expect(exitCode).toBe(0);
+      } finally {
+        server.close();
+      }
     },
   );
 }

@@ -84,11 +84,13 @@ extern void __attribute__((__noreturn__)) Bun__outOfMemory(void);
 #define IS_EINTR(rc) (rc == SOCKET_ERROR && WSAGetLastError() == WSAEINTR)
 #define LIBUS_ERR WSAGetLastError()
 #define LIBUS_ECONNRESET WSAECONNRESET
+#define LIBUS_ECONNABORTED WSAECONNABORTED
 #else
 #include <errno.h>
 #define IS_EINTR(rc) (rc == -1 && errno == EINTR)
 #define LIBUS_ERR errno
 #define LIBUS_ECONNRESET ECONNRESET
+#define LIBUS_ECONNABORTED ECONNABORTED
 #endif
 #include <stdbool.h>
 /* Poll type and what it polls for */

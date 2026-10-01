@@ -1488,14 +1488,26 @@ impl PostgresSQLConnection {
         unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
     }
 
+    /// `js_reason`: why the connection failed; `None` for a disconnect that was asked for.
     fn ref_and_close(&self, js_reason: Option<JSValue>) {
         // refAndClose is always called when we wanna to disconnect or when we are closed
 
-        if !self.socket.get().is_closed() {
+        let socket = self.socket.get();
+        if !socket.is_closed() {
             // event loop need to be alive to close the socket
             self.poll_ref.with_mut(|r| r.ref_(self.vm_ctx()));
             // will unref on socket close
-            self.socket.get().close(uws::CloseKind::Normal);
+            if js_reason.is_none() {
+                socket.close(uws::CloseKind::Normal);
+            } else {
+                // A failed connection does not wait for its peer, which `Normal` does over TLS
+                // (for a close_notify): a peer gone silent is one way connections fail.
+                socket.close(uws::CloseKind::FastShutdown);
+                // Parked behind ciphertext the kernel would not take.
+                if !socket.is_closed() {
+                    socket.close(uws::CloseKind::Failure);
+                }
+            }
         }
 
         // cleanup requests

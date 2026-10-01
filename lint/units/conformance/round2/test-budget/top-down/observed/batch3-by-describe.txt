@@ -1,0 +1,52 @@
+stack-release-warm2.log
+  reference              6 tests     0.2 s in all, the longest   0.1 s
+  directives             1 tests     0.0 s in all, the longest   0.0 s
+  variations            15 tests     0.0 s in all, the longest   0.0 s
+  enumerator            11 tests     0.1 s in all, the longest   0.0 s
+  error baselines       13 tests     0.2 s in all, the longest   0.1 s
+  run                   13 tests     0.1 s in all, the longest   0.0 s
+  expectations           4 tests     0.0 s in all, the longest   0.0 s
+  plain format           9 tests     0.0 s in all, the longest   0.0 s
+  default check         32 tests    28.6 s in all, the longest   1.8 s
+  listed instances       2 tests     0.3 s in all, the longest   0.3 s
+  corpus                 1 tests     0.0 s in all, the longest   0.0 s
+  expectations.json      1 tests     0.0 s in all, the longest   0.0 s
+stack-debug.log
+  reference              4 tests    11.9 s in all, the longest   7.7 s
+  directives             1 tests     2.1 s in all, the longest   2.1 s
+  variations            16 tests     0.9 s in all, the longest   0.4 s
+  enumerator            11 tests    15.8 s in all, the longest   4.9 s
+  error baselines       13 tests    18.3 s in all, the longest   3.8 s
+  run                   13 tests     7.5 s in all, the longest   2.0 s
+  expectations           4 tests     0.2 s in all, the longest   0.1 s
+  plain format          20 tests     2.4 s in all, the longest   2.3 s
+  default check         32 tests   133.8 s in all, the longest  10.9 s
+  listed instances       2 tests     1.0 s in all, the longest   1.0 s
+  corpus                 1 tests     0.2 s in all, the longest   0.2 s
+  expectations.json      1 tests     0.0 s in all, the longest   0.0 s
+stack-debug-leak.log
+  reference              4 tests     8.3 s in all, the longest   4.1 s
+  directives             1 tests     2.3 s in all, the longest   2.3 s
+  variations            16 tests     1.5 s in all, the longest   0.5 s
+  enumerator            11 tests    13.8 s in all, the longest   3.5 s
+  error baselines       13 tests    18.3 s in all, the longest   3.2 s
+  run                   13 tests     4.4 s in all, the longest   1.4 s
+  expectations           4 tests     0.1 s in all, the longest   0.1 s
+  plain format          20 tests     1.6 s in all, the longest   1.6 s
+  default check         32 tests   163.1 s in all, the longest  12.7 s
+  listed instances       2 tests     1.2 s in all, the longest   1.1 s
+  corpus                 1 tests     0.2 s in all, the longest   0.2 s
+  expectations.json      1 tests     0.0 s in all, the longest   0.0 s
+stack-debug-ci.log
+  reference              4 tests    17.8 s in all, the longest  13.7 s
+  directives             1 tests     3.4 s in all, the longest   3.4 s
+  variations            16 tests     0.8 s in all, the longest   0.2 s
+  enumerator            11 tests    23.4 s in all, the longest   6.3 s
+  error baselines       13 tests    24.8 s in all, the longest   6.0 s
+  run                   13 tests    13.2 s in all, the longest   3.5 s
+  expectations           4 tests     0.2 s in all, the longest   0.1 s
+  plain format          20 tests     5.7 s in all, the longest   5.5 s
+  default check         32 tests   310.5 s in all, the longest  24.9 s
+  listed instances       2 tests     3.0 s in all, the longest   2.9 s
+  corpus                 1 tests     0.3 s in all, the longest   0.3 s
+  expectations.json      1 tests     0.0 s in all, the longest   0.0 s

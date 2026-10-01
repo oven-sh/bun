@@ -1,0 +1,63 @@
+[1] stack-debug.log
+[2] stack-debug-leak.log
+[3] stack-debug-ci.log
+   7727    4148   13669  reference > the list has the instances of the reference's run: 14,915, of which 12,797 run and 2,118 are skipp
+   3324    3727    3352  reference > the case and space tables are those of Go
+   2079    2345    3435  directives > the vectors of the reference parser
+   4882    3532    6264  enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 1
+   2859    1568    4860  enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 2
+   1151     764    1550  enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 3
+   1381    2288    2033  enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 4
+   1391    1139    1600  enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 5
+    743    1391     736  enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 6
+   1286     864    2101  enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 7
+    342     783    1850  enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 8
+    688     715    1771  enumerator > the instances of one of 40 cases and of the named cases are their lines of the list: group 9
+   3760    2715    3135  error baselines > read and written again, the bytes are the same: group 1
+    770    1262    1312  error baselines > read and written again, the bytes are the same: group 3
+   2135    3162    3166  error baselines > read and written again, the bytes are the same: group 4
+    977     672     906  error baselines > read and written again, the bytes are the same: group 5
+   1326    1044    1672  error baselines > read and written again, the bytes are the same: group 6
+   1051     864    1195  error baselines > read and written again, the bytes are the same: group 7
+   1039    1531    1567  error baselines > read and written again, the bytes are the same: group 8
+   1022    1332    2272  error baselines > read and written again, the bytes are the same: group 9
+   3075    2655    6021  error baselines > read and written again, the bytes are the same: group 10
+   1322    1896     856  error baselines > read and written again, the bytes are the same: group 11
+   1520     500    2229  error baselines > read and written again, the bytes are the same: group 12
+   1676    1421    3453  run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 1
+   1995     978    3109  run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 5
+    507     323    1565  run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 6
+    612     498    1703  run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 7
+   2291    1574    5470  plain format > the first section of the baselines of one of 250 cases is the plain format
+   1052     942    2015  default check > the probe: a command that dies
+   2680    3804    6628  default check > the probe: a command that runs its operand
+   3234    3918    4249  default check > the probe: a command that takes the flag and does nothing
+   2509    1787    2868  default check > the probe: the binary under test lints, and it ends both runs as the test run asks of a child
+   7292    5911   13698  default check > the probe: a command that lints
+   3660    3982    5946  default check > a command that runs its operand gets no instance
+  10725   12423   24919  default check > a command that lints gets the written unit as its operand, and no diagnostic passes an instanc
+   9281   10283   22788  default check > a command that died is a crash with what it left, and never an empty list of diagnostics: an e
+  10926   10026   22918  default check > stderr is read in the plain format, chain lines too: the first section is the oracle's, and th
+   2475    3182   13431  default check > a command that died is a crash with what it left, and never an empty list of diagnostics: a li
+   7901    9684   19709  default check > a command that died is a crash with what it left, and never an empty list of diagnostics: the 
+   8329    6431   16698  default check > a command that died is a crash with what it left, and never an empty list of diagnostics: the 
+   2099    5203    7915  default check > a command that died is a crash with what it left, and never an empty list of diagnostics: no e
+   3074    2635   11008  default check > a command that died is a crash with what it left, and never an empty list of diagnostics: an e
+   1810    4931   10957  default check > a command that died is a crash with what it left, and never an empty list of diagnostics: text
+   2008    1005    4390  default check > a command that died is a crash with what it left, and never an empty list of diagnostics: a si
+   1992    4697   10630  default check > what no baseline holds fails the instance, with the code, the place and the text in the reason
+   2931     971    1745  default check > a command that died is a crash with what it left, and never an empty list of diagnostics: a si
+   2015    3547    9814  default check > what no baseline holds fails the instance, with the code, the place and the text in the reason
+   3778    4598    9858  default check > what no baseline holds fails the instance, with the code, the place and the text in the reason
+   2506    6131    8073  default check > what no baseline holds fails the instance, with the code, the place and the text in the reason
+   4289    3078    7877  default check > what no baseline holds fails the instance, with the code, the place and the text in the reason
+   2498    4820    5754  default check > what no baseline holds fails the instance, with the code, the place and the text in the reason
+   1539    7131    7926  default check > a refusal is no crash and no pass
+   3724    4338    6752  default check > what no baseline holds fails the instance, with the code, the place and the text in the reason
+   5540    5474    5193  default check > what no baseline holds fails the instance, with the code, the place and the text in the reason
+   5639    8863   14823  default check > the fixture refuses an extension and skips a declaration file as `bun --lint` does
+   4139    6022    5095  default check > never equal to an oracle without errors: a stand-in
+   3957    3466    8611  default check > never equal to an oracle without errors: the code -1
+   8979   12703   17146  default check > the report of a rule is left out of the comparison and counted
+    987    1099    2950  listed instances > a batch passes when the oracle is replayed, and fails its names of list E when nothing is r
+ 193960  214778  403349  sum of the times of all tests (tests that run at the same time count each)

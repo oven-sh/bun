@@ -1,0 +1,52 @@
+### 2026-10-01T17:01:38Z stack: release 1.4.3-canary.1+be1ebe529, cold, then warm twice
+evicted 22219 files, 33643117 bytes, in 12.4 s
+stack release cold load 451.12:  120 pass 0 fail Ran 120 tests across 1 file. [11.57s] TIME wall 11.616 s user 1.375 s sys 0.484 s exit 0 sanitizer-lines 0
+stack release warm1 load 424.17:  120 pass 0 fail Ran 120 tests across 1 file. [5.46s] TIME wall 5.533 s user 1.326 s sys 0.370 s exit 0 sanitizer-lines 0
+stack release warm2 load 419.43:  120 pass 0 fail Ran 120 tests across 1 file. [5.02s] TIME wall 5.355 s user 1.211 s sys 0.407 s exit 0 sanitizer-lines 0
+stack release-ci load 405.70:  120 pass 0 fail Ran 120 tests across 1 file. [4.09s] TIME wall 4.106 s user 1.235 s sys 0.402 s exit 0 sanitizer-lines 0
+✓ default check > what no baseline holds fails the instance, with the code, the place and the text in the reason: an error of the command [1802.83ms]
+✓ default check > what no baseline holds fails the instance, with the code, the place and the text in the reason: a warning of the parser [1788.40ms]
+✓ default check > what no baseline holds fails the instance, with the code, the place and the text in the reason: a file that is not of the instance [1651.57ms]
+✓ default check > what no baseline holds fails the instance, with the code, the place and the text in the reason: an operand with an unsupported extension [1619.57ms]
+✓ default check > what no baseline holds fails the instance, with the code, the place and the text in the reason: an error of the command beside a syntax error [1605.73ms]
+✓ default check > the fixture refuses an extension and skips a declaration file as `bun --lint` does [1382.25ms]
+### 2026-10-01T17:02:19Z budget: release 1.4.3-canary.1+367d939d9, cold twice
+evicted 22219 files, 33631134 bytes, in 12.1 s
+budget release cold1 load 367.39:  107 pass 0 fail Ran 107 tests across 1 file. [7.45s] TIME wall 7.473 s user 1.071 s sys 0.293 s exit 0 sanitizer-lines 0
+evicted 22219 files, 33631134 bytes, in 0.3 s
+budget release cold2 load 362.07:  107 pass 0 fail Ran 107 tests across 1 file. [4.00s] TIME wall 4.016 s user 0.952 s sys 0.301 s exit 0 sanitizer-lines 0
+### 2026-10-01T17:02:46Z stack: debug 1.4.3-debug+3110ce85c
+stack debug load 528.35:  118 pass 2 skip 0 fail Ran 120 tests across 1 file. [107.60s] TIME wall 108.123 s user 82.513 s sys 5.972 s exit 0 sanitizer-lines 0
+(pass) default check > stderr is read in the plain format, chain lines too: the first section is the oracle's, and that is no pass [10926.13ms]
+(pass) default check > a command that lints gets the written unit as its operand, and no diagnostic passes an instance without errors [10725.03ms]
+(pass) default check > a command that died is a crash with what it left, and never an empty list of diagnostics: an exit code that is none of 0, 1 and 2 [9281.09ms]
+(pass) default check > the report of a rule is left out of the comparison and counted [8979.18ms]
+(pass) default check > a command that died is a crash with what it left, and never an empty list of diagnostics: the exit code 1 and nothing written [8328.56ms]
+(pass) default check > a command that died is a crash with what it left, and never an empty list of diagnostics: the exit code 1 with the report of a sanitizer [7900.85ms]
+(pass) reference > the list has the instances of the reference's run: 14,915, of which 12,797 run and 2,118 are skipped [7727.40ms]
+(pass) default check > the probe: a command that lints [7292.34ms]
+(pass) default check > the fixture refuses an extension and skips a declaration file as `bun --lint` does [5639.13ms]
+(pass) default check > what no baseline holds fails the instance, with the code, the place and the text in the reason: a file that is not of the instance [5540.41ms]
+stack debug-leak load 542.95:  118 pass 2 skip 0 fail Ran 120 tests across 1 file. [99.66s] TIME wall 101.370 s user 88.170 s sys 6.473 s exit 0 sanitizer-lines 0
+(pass) default check > the report of a rule is left out of the comparison and counted [12702.50ms]
+(pass) default check > a command that lints gets the written unit as its operand, and no diagnostic passes an instance without errors [12423.18ms]
+(pass) default check > a command that died is a crash with what it left, and never an empty list of diagnostics: an exit code that is none of 0, 1 and 2 [10282.68ms]
+(pass) default check > stderr is read in the plain format, chain lines too: the first section is the oracle's, and that is no pass [10026.02ms]
+(pass) default check > a command that died is a crash with what it left, and never an empty list of diagnostics: the exit code 1 with the report of a sanitizer [9684.31ms]
+(pass) default check > the fixture refuses an extension and skips a declaration file as `bun --lint` does [8862.77ms]
+(pass) default check > a refusal is no crash and no pass [7131.28ms]
+(pass) default check > a command that died is a crash with what it left, and never an empty list of diagnostics: the exit code 1 and nothing written [6430.54ms]
+(pass) default check > what no baseline holds fails the instance, with the code, the place and the text in the reason: an error of the command [6131.45ms]
+(pass) default check > never equal to an oracle without errors: a stand-in [6022.09ms]
+stack debug-ci load 628.68:  118 pass 2 skip 0 fail Ran 120 tests across 1 file. [178.67s] TIME wall 180.495 s user 126.567 s sys 6.961 s exit 0 sanitizer-lines 0
+✓ default check > a command that lints gets the written unit as its operand, and no diagnostic passes an instance without errors [24919.40ms]
+✓ default check > stderr is read in the plain format, chain lines too: the first section is the oracle's, and that is no pass [22918.27ms]
+✓ default check > a command that died is a crash with what it left, and never an empty list of diagnostics: an exit code that is none of 0, 1 and 2 [22787.63ms]
+✓ default check > a command that died is a crash with what it left, and never an empty list of diagnostics: the exit code 1 with the report of a sanitizer [19709.18ms]
+✓ default check > the report of a rule is left out of the comparison and counted [17145.89ms]
+✓ default check > a command that died is a crash with what it left, and never an empty list of diagnostics: the exit code 1 and nothing written [16698.14ms]
+✓ default check > the fixture refuses an extension and skips a declaration file as `bun --lint` does [14822.55ms]
+✓ default check > the probe: a command that lints [13698.03ms]
+✓ reference > the list has the instances of the reference's run: 14,915, of which 12,797 run and 2,118 are skipped [13669.34ms]
+✓ default check > a command that died is a crash with what it left, and never an empty list of diagnostics: a line of no form [13431.46ms]
+### 2026-10-01T17:09:27Z done

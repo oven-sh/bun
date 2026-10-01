@@ -1706,8 +1706,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         }
         dependency::version::Tag::Tarball => {
             let tarball = version.tarball();
-            // A local tarball is read from the project (`local_tarball_base_dir`), so only a
-            // package.json that is itself read from the project may name one.
+            // Only a package.json read from the project may name a tarball in the project.
             if matches!(tarball.uri, dependency::tarball::Uri::Local(_))
                 && !version_was_replaced
                 && !this.lockfile.is_dependency_of_local_package(id)
@@ -2263,9 +2262,7 @@ fn local_tarball_base_dir(
     local_package_dir(lockfile, declarer)
 }
 
-/// The directory the package.json of `package_id` was read from, relative to the
-/// top-level dir: a workspace, a `file:` folder, or the directory of a local
-/// tarball. `None` for the root and for packages from the cache.
+/// The directory `package_id` was read from, relative to the top-level dir. `None` for the root and the cache.
 fn local_package_dir(lockfile: &Lockfile::Lockfile, package_id: PackageID) -> Option<Vec<u8>> {
     let res = &lockfile.packages.items_resolution()[package_id as usize];
     match res.tag {

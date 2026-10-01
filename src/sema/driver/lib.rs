@@ -65,6 +65,8 @@ pub struct Request<'a> {
     pub thread_start: &'a (dyn Fn(usize) + Sync),
     /// How long a single file may take. One that takes longer has run into a bug, and nothing is said about it but that.
     pub file_time_limit: Duration,
+    /// Called with everything that was loaded, before any of it is checked.
+    pub loaded: Option<&'a (dyn Fn(&Program) + Sync)>,
 }
 
 /// Something that is wrong, ready to be shown.
@@ -330,6 +332,9 @@ pub fn check(request: &Request) -> Report {
     let program = Program::new(files);
     report.files_loaded = program.files.modules.len();
     report.load_time = started.elapsed();
+    if let Some(loaded) = request.loaded {
+        loaded(&program);
+    }
     report.diagnostics.extend(
         program
             .files

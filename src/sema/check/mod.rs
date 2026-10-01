@@ -309,6 +309,7 @@ impl Program {
             deadline: None,
             constraint_stack: Vec::new(),
             trap_on_timeout: std::env::var_os("BUN_SEMA_TIME_TRAP").is_some(),
+            deepest_stack: std::cell::Cell::new(0),
             shapes_for_now: Vec::new(),
             serials: Vec::new(),
             held_for_now: FxHashMap::default(),
@@ -501,6 +502,7 @@ pub struct Checker<'p> {
     /// The `stack` of `getResolvedBaseConstraint`: what the constraints being worked out, one for the sake of the other, are instances of.
     constraint_stack: Vec<relate::RecursionId>,
     trap_on_timeout: bool,
+    deepest_stack: std::cell::Cell<usize>,
     /// See `shape_for_now`.
     shapes_for_now: Vec<Box<shape::Resolved>>,
     /// For each question on `stack`, a number no other question has had.
@@ -662,7 +664,16 @@ impl<'p> Checker<'p> {
     #[inline]
     pub(crate) fn is_stack_low(&self) -> bool {
         let probe = 0u8;
-        self.stack_base.wrapping_sub((&raw const probe).addr()) > self.stack_limit
+        let used = self.stack_base.wrapping_sub((&raw const probe).addr());
+        if used > self.deepest_stack.get() && used < (1 << 40) {
+            self.deepest_stack.set(used);
+        }
+        used > self.stack_limit
+    }
+
+    /// The most stack that was in use when a question was asked.
+    pub fn deepest_stack(&self) -> usize {
+        self.deepest_stack.get()
     }
 
     /// For finding runaway recursion: `BUN_SEMA_DEBUG_STACK=1`.

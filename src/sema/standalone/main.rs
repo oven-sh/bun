@@ -50,6 +50,243 @@ fn collect_sources(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// Where the memory of what was loaded is: for every vector of every file, what it has room for and what it uses.
+fn print_loaded_sizes(program: &bun_sema::check::Program) {
+    fn add<T>(rows: &mut Vec<(&'static str, usize, usize, usize)>, name: &'static str, v: &Vec<T>) {
+        let size = std::mem::size_of::<T>();
+        match rows.iter_mut().find(|r| r.0 == name) {
+            Some(row) => {
+                row.1 += v.capacity() * size;
+                row.2 += v.len() * size;
+                row.3 += v.len();
+            }
+            None => rows.push((name, v.capacity() * size, v.len() * size, v.len())),
+        }
+    }
+    let mut rows = Vec::new();
+    let (mut text, mut headers) = (0usize, 0usize);
+    for m in &program.files.modules {
+        text += m.hir.text.len();
+        headers += std::mem::size_of_val(m);
+        add(&mut rows, "hir.decorators", &m.hir.decorators);
+        add(&mut rows, "hir.early_errors", &m.hir.early_errors);
+        add(&mut rows, "hir.checker_errors", &m.hir.checker_errors);
+        add(&mut rows, "hir.references", &m.hir.references);
+        add(&mut rows, "hir.suppressed", &m.hir.suppressed);
+        add(&mut rows, "hir.with_bodies", &m.hir.with_bodies);
+        add(&mut rows, "hir.after_skipped", &m.hir.after_skipped);
+        add(&mut rows, "hir.stray_decorators", &m.hir.stray_decorators);
+        add(&mut rows, "hir.specifier_uses", &m.hir.specifier_uses);
+        add(&mut rows, "hir.import_options", &m.hir.import_options);
+        add(
+            &mut rows,
+            "hir.deferred_import_calls",
+            &m.hir.deferred_import_calls,
+        );
+        add(&mut rows, "hir.import_attributes", &m.hir.import_attributes);
+        add(&mut rows, "hir.parens", &m.hir.parens);
+        add(&mut rows, "hir.ids", &m.hir.ids);
+        add(&mut rows, "hir.numbers", &m.hir.numbers);
+        add(&mut rows, "hir.exprs", &m.hir.exprs);
+        add(&mut rows, "hir.stmts", &m.hir.stmts);
+        add(&mut rows, "hir.types", &m.hir.types);
+        add(&mut rows, "hir.pats", &m.hir.pats);
+        add(&mut rows, "hir.pat_props", &m.hir.pat_props);
+        add(&mut rows, "hir.pat_elems", &m.hir.pat_elems);
+        add(&mut rows, "hir.fns", &m.hir.fns);
+        add(&mut rows, "hir.params", &m.hir.params);
+        add(&mut rows, "hir.type_params", &m.hir.type_params);
+        add(&mut rows, "hir.classes", &m.hir.classes);
+        add(&mut rows, "hir.interfaces", &m.hir.interfaces);
+        add(&mut rows, "hir.aliases", &m.hir.aliases);
+        add(&mut rows, "hir.enums", &m.hir.enums);
+        add(&mut rows, "hir.enum_members", &m.hir.enum_members);
+        add(&mut rows, "hir.modules", &m.hir.modules);
+        add(&mut rows, "hir.members", &m.hir.members);
+        add(&mut rows, "hir.props", &m.hir.props);
+        add(&mut rows, "hir.var_decls", &m.hir.var_decls);
+        add(&mut rows, "hir.calls", &m.hir.calls);
+        add(&mut rows, "hir.cases", &m.hir.cases);
+        add(&mut rows, "hir.jsx", &m.hir.jsx);
+        add(&mut rows, "hir.imports", &m.hir.imports);
+        add(&mut rows, "hir.import_specs", &m.hir.import_specs);
+        add(&mut rows, "hir.import_equals", &m.hir.import_equals);
+        add(&mut rows, "hir.exports", &m.hir.exports);
+        add(&mut rows, "hir.export_specs", &m.hir.export_specs);
+        add(&mut rows, "hir.tuple_elems", &m.hir.tuple_elems);
+        add(&mut rows, "hir.mapped", &m.hir.mapped);
+        add(&mut rows, "bound.symbols", &m.bound.symbols);
+        add(&mut rows, "bound.scopes", &m.bound.scopes);
+        add(&mut rows, "bound.tables", &m.bound.tables);
+        add(&mut rows, "bound.entries", &m.bound.entries);
+        add(&mut rows, "bound.ids", &m.bound.ids);
+        add(&mut rows, "bound.export_stars", &m.bound.export_stars);
+        add(
+            &mut rows,
+            "bound.export_star_type_only",
+            &m.bound.export_star_type_only,
+        );
+        add(&mut rows, "bound.ambient_modules", &m.bound.ambient_modules);
+        add(
+            &mut rows,
+            "bound.global_augmentations",
+            &m.bound.global_augmentations,
+        );
+        add(&mut rows, "bound.refused_exports", &m.bound.refused_exports);
+        add(&mut rows, "bound.umd_globals", &m.bound.umd_globals);
+        add(&mut rows, "bound.specifiers", &m.bound.specifiers);
+        add(
+            &mut rows,
+            "bound.ambient_specifiers",
+            &m.bound.ambient_specifiers,
+        );
+        add(&mut rows, "bound.this_properties", &m.bound.this_properties);
+        add(&mut rows, "bound.expr_symbol", &m.bound.expr_symbol);
+        add(&mut rows, "bound.expr_parent", &m.bound.expr_parent);
+        add(&mut rows, "bound.expr_flow", &m.bound.expr_flow);
+        add(&mut rows, "bound.stmt_parent", &m.bound.stmt_parent);
+        add(&mut rows, "bound.type_scope", &m.bound.type_scope);
+        add(&mut rows, "bound.type_by_alias", &m.bound.type_by_alias);
+        add(&mut rows, "bound.pat_parent", &m.bound.pat_parent);
+        add(&mut rows, "bound.pat_symbol", &m.bound.pat_symbol);
+        add(&mut rows, "bound.prop_owner", &m.bound.prop_owner);
+        add(&mut rows, "bound.member_owner", &m.bound.member_owner);
+        add(&mut rows, "bound.param_fn", &m.bound.param_fn);
+        add(
+            &mut rows,
+            "bound.type_param_symbol",
+            &m.bound.type_param_symbol,
+        );
+        add(
+            &mut rows,
+            "bound.type_param_scope",
+            &m.bound.type_param_scope,
+        );
+        add(&mut rows, "bound.fns", &m.bound.fns);
+        add(
+            &mut rows,
+            "bound.requires_scope_change",
+            &m.bound.requires_scope_change,
+        );
+        add(&mut rows, "bound.fn_symbol", &m.bound.fn_symbol);
+        add(&mut rows, "bound.class_symbol", &m.bound.class_symbol);
+        add(&mut rows, "bound.class_owner", &m.bound.class_owner);
+        add(&mut rows, "bound.class_scope", &m.bound.class_scope);
+        add(
+            &mut rows,
+            "bound.interface_symbol",
+            &m.bound.interface_symbol,
+        );
+        add(&mut rows, "bound.alias_symbol", &m.bound.alias_symbol);
+        add(&mut rows, "bound.alias_scope", &m.bound.alias_scope);
+        add(&mut rows, "bound.enum_symbol", &m.bound.enum_symbol);
+        add(
+            &mut rows,
+            "bound.enum_member_symbol",
+            &m.bound.enum_member_symbol,
+        );
+        add(
+            &mut rows,
+            "bound.enum_member_owner",
+            &m.bound.enum_member_owner,
+        );
+        add(&mut rows, "bound.module_symbol", &m.bound.module_symbol);
+        add(
+            &mut rows,
+            "bound.module_instantiated",
+            &m.bound.module_instantiated,
+        );
+        add(&mut rows, "bound.var_stmt", &m.bound.var_stmt);
+        add(&mut rows, "bound.assignments", &m.bound.assignments);
+        add(
+            &mut rows,
+            "bound.type_query_operands",
+            &m.bound.type_query_operands,
+        );
+        add(&mut rows, "bound.infer_positions", &m.bound.infer_positions);
+        add(
+            &mut rows,
+            "bound.declared_fn_expandos",
+            &m.bound.declared_fn_expandos,
+        );
+        add(
+            &mut rows,
+            "bound.fn_expr_expandos",
+            &m.bound.fn_expr_expandos,
+        );
+        add(
+            &mut rows,
+            "bound.declared_fn_keyed_expandos",
+            &m.bound.declared_fn_keyed_expandos,
+        );
+        add(
+            &mut rows,
+            "bound.fn_expr_keyed_expandos",
+            &m.bound.fn_expr_keyed_expandos,
+        );
+        add(&mut rows, "bound.object_expandos", &m.bound.object_expandos);
+        add(
+            &mut rows,
+            "bound.object_keyed_expandos",
+            &m.bound.object_keyed_expandos,
+        );
+        add(
+            &mut rows,
+            "bound.expando_declarations",
+            &m.bound.expando_declarations,
+        );
+        add(&mut rows, "bound.case_stmt", &m.bound.case_stmt);
+        add(&mut rows, "bound.stmt_flow", &m.bound.stmt_flow);
+        add(
+            &mut rows,
+            "bound.case_fallthrough",
+            &m.bound.case_fallthrough,
+        );
+        add(&mut rows, "bound.hoisted_vars", &m.bound.hoisted_vars);
+        add(
+            &mut rows,
+            "bound.refused_decorators",
+            &m.bound.refused_decorators,
+        );
+        add(&mut rows, "bound.unused_labels", &m.bound.unused_labels);
+        add(
+            &mut rows,
+            "bound.import_equals_scope",
+            &m.bound.import_equals_scope,
+        );
+        add(&mut rows, "bound.export_scope", &m.bound.export_scope);
+        add(&mut rows, "bound.free_idents", &m.bound.free_idents);
+        add(&mut rows, "bound.alias_idents", &m.bound.alias_idents);
+        add(
+            &mut rows,
+            "bound.arguments_objects",
+            &m.bound.arguments_objects,
+        );
+        add(&mut rows, "bound.flow", &m.bound.flow);
+        add(&mut rows, "bound.flow_edges", &m.bound.flow_edges);
+    }
+    rows.sort_by_key(|r| std::cmp::Reverse(r.1));
+    let mb = |n: usize| n as f64 / (1 << 20) as f64;
+    let (room, used): (usize, usize) = rows.iter().fold((0, 0), |a, r| (a.0 + r.1, a.1 + r.2));
+    eprintln!(
+        "after loading: peak {:.2} GB; source text {:.0} MB; the modules themselves {:.0} MB; vectors {:.0} MB, of which in use {:.0} MB",
+        bun_sema_standalone::peak_rss() as f64 / (1u64 << 30) as f64,
+        mb(text),
+        mb(headers),
+        mb(room),
+        mb(used)
+    );
+    for (name, room, used, count) in rows.iter().take(28) {
+        eprintln!(
+            "  {:>7.0} MB ({:>6.0} in use, {:>10} of {:>3} bytes)  {name}",
+            mb(*room),
+            mb(*used),
+            count,
+            if *count == 0 { 0 } else { used / count }
+        );
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
@@ -290,6 +527,10 @@ fn main() {
                 global_node_modules: None,
                 thread_start: &bun_sema_standalone::native::set_stack_size,
                 file_time_limit: std::time::Duration::from_secs(10),
+                loaded: args
+                    .iter()
+                    .any(|a| a == "--memory")
+                    .then_some(&print_loaded_sizes as &(dyn Fn(&bun_sema::check::Program) + Sync)),
             });
             let cwd = bun_sema_driver::host::from_native(&cwd);
             let style = Style {

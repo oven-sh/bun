@@ -332,6 +332,9 @@ fn compare_errors(program: &Program, file: FileId, expected: &OracleFile, local:
     if checker.timed_out() {
         eprintln!("TIMEOUT errors {}", expected.path);
     }
+    if std::env::var_os("BUN_SEMA_STACKS").is_some() {
+        eprintln!("STACK {} {}", checker.deepest_stack(), expected.path);
+    }
     compare_error_lists(&expected.path, &expected.errors, &mine, local);
 }
 

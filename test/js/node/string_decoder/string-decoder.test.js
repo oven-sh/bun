@@ -514,6 +514,14 @@ it(
         console.log(method, e.code);
       }
     }
+    // text() must measure the tail without truncating: 2**32 does not fit in
+    // 32 bits, and a length that wraps to 0 would slip past the limit.
+    try {
+      new StringDecoder("utf8").text(Buffer.allocUnsafe(2 ** 32), 0);
+      console.log("text", "no throw");
+    } catch (e) {
+      console.log("text", e.code);
+    }
   `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", src],
@@ -529,7 +537,7 @@ it(
       .filter(s => !s.startsWith("WARNING: ASAN interferes"))
       .join("\n");
     expect(stderrFiltered).toBe("");
-    expect(stdout).toBe("write ERR_STRING_TOO_LONG\nend ERR_STRING_TOO_LONG\n");
+    expect(stdout).toBe("write ERR_STRING_TOO_LONG\nend ERR_STRING_TOO_LONG\ntext ERR_STRING_TOO_LONG\n");
     expect(exitCode).toBe(0);
     // The 2 GiB ASCII scan takes ~15s under debug/ASAN vs ~1s in release.
   },

@@ -466,10 +466,10 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_textBody(JSC:
     }
     int32_t offset = callFrame->uncheckedArgument(1).toInt32(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
-    uint32_t byteLength = view->byteLength();
-    if (offset < 0 || static_cast<uint32_t>(offset) > byteLength)
+    const size_t byteLength = view->byteLength();
+    if (offset < 0 || static_cast<size_t>(offset) > byteLength)
         RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsEmptyString(vm)));
-    if (byteLength - static_cast<uint32_t>(offset) > WTF::String::MaxLength) [[unlikely]]
+    if (byteLength - static_cast<size_t>(offset) > WTF::String::MaxLength) [[unlikely]]
         return Bun::ERR::STRING_TOO_LONG(throwScope, lexicalGlobalObject);
     WTF::Vector<uint8_t> storage;
     auto bytes = Bun::stableBytes(lexicalGlobalObject, throwScope, view->span().subspan(offset), storage);

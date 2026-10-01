@@ -1589,6 +1589,60 @@ test.concurrent("cancelling the output cancels a JS stream input while a collect
   expect(exitCode).toBe(0);
 });
 
+// A handler parks on a promise that nothing can settle, and the whole rewrite
+// dies with it. The task that abandons the rewrite can run before the sweep:
+// the transform cell is dead, but the pipe still points at it. The pipe then
+// cancelled the dead input stream, which calls the dead source's cancel() (a
+// SEGV on a release build, "ASSERTION FAILED: decontaminate()" on a debug one).
+test.concurrent("a parked rewrite that dies with its handler promise does not reach its dead input", async () => {
+  // A file, not -e: the same code does not reach the window when it is evaluated from the command line.
+  using dir = tempDir("hr-abandon-dead-input", {
+    "abandon.js": /* js */ `
+      const N = 50;
+      const encoder = new TextEncoder();
+      const tick = () => new Promise(resolve => setImmediate(resolve));
+      let cancelled = 0;
+      for (let i = 0; i < N; i++) {
+        let controller;
+        const input = new ReadableStream({
+          start: c => void (controller = c),
+          cancel: () => void cancelled++,
+        });
+        // Nothing keeps the Response, the input or the handler's promise.
+        new HTMLRewriter().on("p", { element: () => new Promise(() => {}) }).transform(new Response(input));
+        controller.enqueue(encoder.encode("<p>x</p>"));
+      }
+      for (let i = 0; i < 5; i++) await tick();
+      // Not synchronous: a cell that this collection finds dead waits for its sweep.
+      for (let round = 0; round < 10; round++) {
+        Bun.gc(false);
+        const junk = [];
+        for (let j = 0; j < 500; j++) junk.push({ j });
+        await tick();
+      }
+      process.stdout.write(JSON.stringify({ rewrites: N, cancelled }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "abandon.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(withoutAsanWarning(stderr)).toBe("");
+  // A crash leaves stdout empty.
+  expect({ stdout, exitCode }).toEqual({
+    stdout: expect.stringMatching(/^\{"rewrites":50,"cancelled":\d+\}$/),
+    exitCode: 0,
+  });
+  // A dead stream is not cancelled: nothing is left that could observe it. (Unfixed, without a
+  // crash: all 50. The stack can keep a few of the rewrites reachable, and those are cancelled.)
+  expect(JSON.parse(stdout).cancelled).toBeLessThan(50 / 4);
+});
+
 // The same for the array of pending onEndTag() callbacks, whose slots are also
 // read back, cleared and reused. (Passes before the change too.)
 test.concurrent("an indexed accessor on Array.prototype never sees an onEndTag callback", async () => {

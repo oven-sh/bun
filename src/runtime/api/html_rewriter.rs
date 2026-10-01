@@ -871,11 +871,11 @@ impl RewriterPipe {
     /// settling: it will never resume this pipe. Runs on the JS thread,
     /// outside GC sweep; the suspension's ref keeps `pipe` live until here.
     ///
-    /// If the Transform cell is still alive (its `cell` backref is set) —
+    /// If the Transform cell is still alive, that is,
     /// a reader or the output Response keeps the rewrite reachable — fail
     /// the body normally, which errors the live output stream and clears the
     /// `owner`/`sinkOwner` edges so the cell becomes ordinary garbage. If the
-    /// cell was swept with the promise (`cell` is zeroed), every source that
+    /// cell died with the promise (swept, or still waiting for its sweep), every source that
     /// could have held a backref died with the cell, so clear the handles
     /// raw and fail the body through the Response native `+1`.
     ///
@@ -891,7 +891,8 @@ impl RewriterPipe {
         // (for nobody, if that was a `Bun.ModuleGraph` that has been disposed since).
         let _context = VirtualMachine::get().enter_context(this.script_context);
         let vm_stopped = !VirtualMachine::get().script_allowed();
-        if vm_stopped || !this.cell.get().is_cell() {
+        let cell = this.cell.get();
+        if vm_stopped || !cell.is_cell() || !cell.is_live_cell() {
             this.input_source.set(SourceHandle::None);
             this.output.set(None);
         }

@@ -1,0 +1,41 @@
+n 20: cases 661 (compiler 336, conformance 325), lines 779, reasons 9 of 10; none of: module resolution kind 2
+n 21: cases 575 (compiler 313, conformance 262), lines 718, reasons 8 of 10; none of: esModuleInterop=false, module resolution kind 2
+n 22: cases 561 (compiler 295, conformance 266), lines 698, reasons 8 of 10; none of: esModuleInterop=false, module resolution kind 2
+n 23: cases 541 (compiler 279, conformance 262), lines 671, reasons 9 of 10; none of: module resolution kind 2
+n 24: cases 500 (compiler 283, conformance 217), lines 598, reasons 6 of 10; none of: module kind UMD, baseUrl, esModuleInterop=false, module resolution kind 2
+n 25: cases 520 (compiler 272, conformance 248), lines 606, reasons 10 of 10
+n 26: cases 478 (compiler 253, conformance 225), lines 578, reasons 8 of 10; none of: module resolution kind 1, module resolution kind 2
+n 27: cases 502 (compiler 266, conformance 236), lines 603, reasons 10 of 10
+n 28: cases 437 (compiler 252, conformance 185), lines 501, reasons 8 of 10; none of: module resolution kind 1, esModuleInterop=false
+n 29: cases 447 (compiler 239, conformance 208), lines 537, reasons 9 of 10; none of: module resolution kind 2
+n 30: cases 404 (compiler 208, conformance 196), lines 464, reasons 8 of 10; none of: esModuleInterop=false, module resolution kind 2
+n 31: cases 438 (compiler 229, conformance 209), lines 533, reasons 8 of 10; none of: baseUrl, esModuleInterop=false
+n 32: cases 353 (compiler 191, conformance 162), lines 426, reasons 9 of 10; none of: esModuleInterop=false
+n 33: cases 403 (compiler 235, conformance 168), lines 498, reasons 9 of 10; none of: esModuleInterop=false
+n 34: cases 352 (compiler 195, conformance 157), lines 400, reasons 6 of 10; none of: alwaysStrict=false, module resolution kind 1, module kind UMD, esModuleInterop=false
+n 35: cases 359 (compiler 192, conformance 167), lines 420, reasons 7 of 10; none of: module kind UMD, esModuleInterop=false, module resolution kind 2
+n 36: cases 328 (compiler 186, conformance 142), lines 376, reasons 5 of 10; none of: outFile, module kind UMD, baseUrl, esModuleInterop=false, module resolution kind 2
+n 37: cases 345 (compiler 185, conformance 160), lines 405, reasons 8 of 10; none of: outFile, baseUrl
+n 38: cases 316 (compiler 168, conformance 148), lines 378, reasons 6 of 10; none of: outFile, module kind UMD, baseUrl, module resolution kind 2
+n 39: cases 314 (compiler 177, conformance 137), lines 395, reasons 6 of 10; none of: module resolution kind 1, module kind UMD, baseUrl, esModuleInterop=false
+n 40: cases 333 (compiler 161, conformance 172), lines 383, reasons 7 of 10; none of: module kind UMD, esModuleInterop=false, module resolution kind 2
+n 41: cases 307 (compiler 153, conformance 154), lines 384, reasons 7 of 10; none of: module kind UMD, baseUrl, esModuleInterop=false
+n 42: cases 279 (compiler 144, conformance 135), lines 334, reasons 4 of 10; none of: module kind System, module resolution kind 1, outFile, module kind UMD, esModuleInterop=false, module resolution kind 2
+n 43: cases 271 (compiler 150, conformance 121), lines 351, reasons 7 of 10; none of: module kind UMD, esModuleInterop=false, module resolution kind 2
+n 44: cases 294 (compiler 149, conformance 145), lines 394, reasons 7 of 10; none of: outFile, esModuleInterop=false, module resolution kind 2
+n 45: cases 292 (compiler 171, conformance 121), lines 336, reasons 5 of 10; none of: module kind System, module resolution kind 1, module kind UMD, baseUrl, esModuleInterop=false
+n 46: cases 257 (compiler 128, conformance 129), lines 325, reasons 8 of 10; none of: module kind UMD, module resolution kind 2
+n 47: cases 259 (compiler 123, conformance 136), lines 305, reasons 8 of 10; none of: outFile, esModuleInterop=false
+n 48: cases 245 (compiler 135, conformance 110), lines 304, reasons 6 of 10; none of: module kind UMD, baseUrl, esModuleInterop=false, module resolution kind 2
+n 49: cases 273 (compiler 140, conformance 133), lines 332, reasons 7 of 10; none of: alwaysStrict=false, esModuleInterop=false, module resolution kind 2
+n 50: cases 267 (compiler 140, conformance 127), lines 294, reasons 9 of 10; none of: esModuleInterop=false
+n 51: cases 246 (compiler 145, conformance 101), lines 280, reasons 5 of 10; none of: module resolution kind 1, module kind UMD, baseUrl, esModuleInterop=false, module resolution kind 2
+n 52: cases 234 (compiler 124, conformance 110), lines 285, reasons 6 of 10; none of: alwaysStrict=false, module resolution kind 1, module kind UMD, module resolution kind 2
+n 53: cases 258 (compiler 141, conformance 117), lines 295, reasons 6 of 10; none of: alwaysStrict=false, baseUrl, esModuleInterop=false, module resolution kind 2
+n 54: cases 252 (compiler 129, conformance 123), lines 299, reasons 6 of 10; none of: outFile, baseUrl, esModuleInterop=false, module resolution kind 2
+n 55: cases 243 (compiler 125, conformance 118), lines 282, reasons 6 of 10; none of: module resolution kind 1, module kind UMD, esModuleInterop=false, module resolution kind 2
+n 56: cases 218 (compiler 123, conformance 95), lines 241, reasons 4 of 10; none of: module kind System, module resolution kind 1, outFile, baseUrl, esModuleInterop=false, module resolution kind 2
+n 57: cases 218 (compiler 106, conformance 112), lines 261, reasons 6 of 10; none of: module resolution kind 1, outFile, module kind UMD, esModuleInterop=false
+n 58: cases 223 (compiler 115, conformance 108), lines 281, reasons 8 of 10; none of: module kind UMD, module resolution kind 2
+n 59: cases 204 (compiler 113, conformance 91), lines 236, reasons 6 of 10; none of: module kind UMD, baseUrl, esModuleInterop=false, module resolution kind 2
+n 60: cases 225 (compiler 111, conformance 114), lines 254, reasons 8 of 10; none of: esModuleInterop=false, module resolution kind 2

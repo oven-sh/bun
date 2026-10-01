@@ -1,0 +1,26 @@
+one case in 40: 333 of 12444 cases, 383 of 14915 lines
+    199 of  7027  E
+    132 of  5770  C
+     32 of  1244  unsupported target ES5
+     10 of   321  unsupported module kind AMD
+      2 of   222  unsupported module kind System
+      4 of    87  unsupported outFile
+      2 of    57  unsupported module resolution kind 1
+      0 of    57  unsupported module kind UMD
+      1 of    52  alwaysStrict=false is unsupported
+      1 of    31  unsupported baseUrl
+      0 of    24  esModuleInterop=false is unsupported
+      0 of    23  unsupported module resolution kind 2
+one case in 250: 54 of 12444 cases, 59 of 14915 lines
+     32 of  7027  E
+     20 of  5770  C
+      4 of  1244  unsupported target ES5
+      1 of   321  unsupported module kind AMD
+      1 of   222  unsupported module kind System
+      0 of    87  unsupported outFile
+      0 of    57  unsupported module resolution kind 1
+      0 of    57  unsupported module kind UMD
+      1 of    52  alwaysStrict=false is unsupported
+      0 of    31  unsupported baseUrl
+      0 of    24  esModuleInterop=false is unsupported
+      0 of    23  unsupported module resolution kind 2

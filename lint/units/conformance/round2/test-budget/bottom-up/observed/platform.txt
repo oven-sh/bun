@@ -1,0 +1,12 @@
+ArrowFunctionExpression1.ts | run E | platformLimited: undefined | units: /.src/ArrowFunctionExpression1.ts | links: 0
+ClassDeclaration10.ts | run E | platformLimited: undefined | units: /.src/ClassDeclaration10.ts | links: 0
+abstractPropertyNegative(target=es2015).ts | run E | platformLimited: undefined | units: /.src/abstractPropertyNegative.ts | links: 0
+castingTuple.ts | run E | platformLimited: undefined | units: /.src/castingTuple.ts | links: 0
+2dArrays.ts | run C | platformLimited: undefined | units: /.src/2dArrays.ts | links: 0
+abstractPropertyNegative(target=es5).ts | skip C | platformLimited: undefined | units: /.src/abstractPropertyNegative.ts | links: 0
+instances that run: 12797
+   175 linux: absolute-path-in-text
+     8 linux: dos-root
+     5 win32: link-not-permitted
+     3 linux: case-insensitive-requested
+     1 win32: windows-name

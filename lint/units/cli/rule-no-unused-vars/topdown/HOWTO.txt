@@ -1,4 +1,4 @@
-RESEARCH OF D4, "rule-no-unused-vars" (pass 1b, from the goal): the tools. Nothing here is in the tree.
+RESEARCH OF D4, "rule-no-unused-vars" (pass 1b, from the goal): the tools, all in this directory (topdown/). Nothing here is in the tree.
 ESLint is the checkout of the pin (/workspace/ref/eslint, eslint-scope 9.1.2); TypeScript cases run with the parser, the scope
 manager and the rule of typescript-eslint 8.58.2 (/workspace/ref/tseslint). No comment configures a run (noInlineConfig).
 

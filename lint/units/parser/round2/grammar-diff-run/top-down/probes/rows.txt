@@ -1,0 +1,76 @@
+class C implements +1 {}
+interface I extends typeof a() {}
+class C implements void A {}
+interface I extends delete A {}
+class C implements await A {}
+interface I extends <B>[] {}
+interface I extends A extends B {}
+interface I extends A, B extends C {}
+interface I implements A extends B {}
+interface I extends {}
+interface I extends A, {}
+type X = (a?: A = 1) => R;
+type X = (a? = 1) => R;
+type X = (...a = []) => R;
+type X = (...a: A[] = []) => R;
+type X = ({ ...a = 1 }) => R;
+type X = ([...a = 1]) => R;
+type X = { a(b? = 1): A };
+type X = new (a? = 1) => A;
+type X = (public private a: A) => R;
+type X = (public public a: A) => R;
+type X = (readonly public a: A) => R;
+type X = (override public a: A) => R;
+type X = (readonly readonly a: A) => R;
+function f(public private a: A) {}
+function f(public public a: A) {}
+function f(readonly public a: A) {}
+function f(override public a: A) {}
+function f(readonly readonly a: A) {}
+type X = { #a: A };
+interface I { #a(): void }
+type X = { get #a(): A };
+type X = { 1n: A };
+type X = { get a(): A {} };
+type X = { set a(v: A) {} };
+type X = { a: A = 1 };
+type X = { a?: A = 1 };
+type X = { [a] = 1 };
+interface I { a: A = 1 }
+type X = { [k: string, l: number]: A };
+type X = { [a, b]: A };
+type X = { []: A };
+type X = { [k?: string]: A };
+type X = { [k?]: A };
+type X = { [...k: string[]]: A };
+type X = { [k: string,]: A };
+type X = { [k = 1]: A };
+type X = { [a + b]: A };
+type X = { ["a" + "b"]: A };
+type X = { [a as B]: A };
+type X = [a: A?];
+type X = [a?: A?];
+type X = [a: ...B];
+let x: #a;
+let x: keyof #a;
+let x: #a[];
+function f<U extends #a>() {}
+type X = A.<B>;
+let x: Array.<A>;
+let x: A.B.<D>[];
+function f<U extends in>() {}
+function f<U extends delete>() {}
+function f<U extends class>() {}
+function f<U extends super>() {}
+function f<U extends super.a>() {}
+let f = <U extends class>() => 0;
+f< extends>(x);
+let x: A<extends>;
+class C { [k: string] }
+class C { [k: string, l: number]: A }
+class C { x: A⏎[]; }
+class C { [k?: string]: T }
+class C { [...k: string[]]: T }
+class C { [k: string,]: T }
+class C { []: T }
+class C { [k: string = ""]: T }

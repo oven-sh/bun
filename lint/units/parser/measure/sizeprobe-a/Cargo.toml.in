@@ -1,0 +1,21 @@
+# Scratch crate outside the worktrees: reads size_of of parser and AST types of one tree from the errors of cargo check.
+# Generated into a directory under /tmp by run.sh; @TREE@ is the checkout that is measured.
+[package]
+name = "sizeprobe"
+version = "0.0.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+bun_js_parser = { path = "@TREE@/src/js_parser" }
+bun_ast = { path = "@TREE@/src/ast" }
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+
+[workspace]

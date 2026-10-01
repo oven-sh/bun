@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { createECDH, ECDH, getCurves } from "node:crypto";
+import { createContext, runInContext } from "node:vm";
 
 // Helper function to generate test key pairs for various curves
 function generateTestKeyPairs() {
@@ -265,4 +266,36 @@ test("ECDH - computeSecret throws when only a public key is set (no private key)
   expect(carolSecret).toBeInstanceOf(Buffer);
   expect(carolSecret.length).toBeGreaterThan(0);
   expect(carolSecret.toString("hex")).toBe(aliceSecret.toString("hex"));
+});
+
+test.each([
+  [
+    "the main realm",
+    () =>
+      class MyECDH extends ECDH {
+        publicKeyHex() {
+          return this.getPublicKey("hex");
+        }
+      },
+  ],
+  [
+    "a node:vm context",
+    () =>
+      runInContext(
+        `(class MyECDH extends ECDH { publicKeyHex() { return this.getPublicKey("hex"); } })`,
+        createContext({ ECDH }),
+      ),
+  ],
+])("ECDH - a subclass declared in %s has the subclass prototype and working keys", (_realm, declare) => {
+  const MyECDH = declare();
+
+  const alice = new MyECDH("prime256v1");
+  expect(Object.getPrototypeOf(alice)).toBe(MyECDH.prototype);
+  expect(alice).toBeInstanceOf(ECDH);
+
+  const bob = createECDH("prime256v1");
+  alice.generateKeys();
+  bob.generateKeys();
+  expect(alice.publicKeyHex()).toBe(alice.getPublicKey("hex"));
+  expect(alice.computeSecret(bob.getPublicKey())).toEqual(bob.computeSecret(alice.getPublicKey()));
 });

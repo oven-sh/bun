@@ -156,6 +156,32 @@ describe("spawn stdin ReadableStream", () => {
     expect(await proc.exited).toBe(0);
   });
 
+  // A direct stream's pull() runs once; its promise resolving without close() is the end of
+  // stdin. Before, the pipe was closed without flushing what the sink had buffered since its
+  // last flush, so the child saw a truncated stdin with no error anywhere.
+  test("direct ReadableStream whose pull() resolves without close()", async () => {
+    const stream = new ReadableStream({
+      type: "direct",
+      async pull(controller) {
+        controller.write("hello");
+        // The sink flushes "hello" to the pipe before this resolves.
+        await new Promise(resolve => setImmediate(resolve));
+        controller.write(" ");
+        controller.write(new TextEncoder().encode("world"));
+      },
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+      stdin: stream,
+      stdout: "pipe",
+      env: bunEnv,
+    });
+
+    expect(await proc.stdout.text()).toBe("hello world");
+    expect(await proc.exited).toBe(0);
+  });
+
   test("ReadableStream with large data", async () => {
     const largeData = "x".repeat(1024 * 1024); // 1MB
     const stream = new ReadableStream({

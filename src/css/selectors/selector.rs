@@ -322,14 +322,13 @@ fn pseudo_element_weight(pseudo: &PseudoElement) -> u64 {
         PseudoElement::CueFunction { selector } | PseudoElement::CueRegionFunction { selector } => {
             NAME.saturating_add(selector_weight(selector))
         }
-        PseudoElement::ViewTransitionGroup { part_name }
-        | PseudoElement::ViewTransitionImagePair { part_name }
-        | PseudoElement::ViewTransitionOld { part_name }
-        | PseudoElement::ViewTransitionNew { part_name } => NAME.saturating_add(match part_name {
-            parser::ViewTransitionPartName::All => 1,
-            parser::ViewTransitionPartName::Name(ident)
-            | parser::ViewTransitionPartName::Class(ident) => ident.v.len() as u64,
-        }),
+        PseudoElement::ViewTransitionGroup { part }
+        | PseudoElement::ViewTransitionImagePair { part }
+        | PseudoElement::ViewTransitionOld { part }
+        | PseudoElement::ViewTransitionNew { part }
+        | PseudoElement::ViewTransitionGroupChildren { part } => {
+            NAME.saturating_add(view_transition_part_weight(part))
+        }
         PseudoElement::PickerFunction { identifier } => {
             NAME.saturating_add(identifier.v.len() as u64)
         }
@@ -339,6 +338,19 @@ fn pseudo_element_weight(pseudo: &PseudoElement) -> u64 {
             .saturating_add(token_list_weight(arguments)),
         _ => NAME,
     }
+}
+
+fn view_transition_part_weight(part: &parser::ViewTransitionPartSelector) -> u64 {
+    let mut weight: u64 = match &part.name {
+        Some(parser::ViewTransitionPartName::Name(ident)) => ident.v.len() as u64,
+        Some(parser::ViewTransitionPartName::All) | None => 1,
+    };
+    for class in part.classes.iter() {
+        weight = weight
+            .saturating_add(1)
+            .saturating_add(ident_or_ref_weight(*class));
+    }
+    weight
 }
 
 fn token_list_weight(list: &crate::properties::custom::TokenList) -> u64 {

@@ -5,20 +5,34 @@ For every case and for mode in (default, glob): set up a scratch dir, run the ex
 with each binary, and print the cases where (result, tree) differ. Also runs each case a
 second time into the same destination (re-extraction) and compares that too.
 """
-import json, os, shutil, subprocess, sys, tempfile
+import json, os, shutil, signal, subprocess, sys, tempfile
 
 cases_dir, base_bin, pr_bin = sys.argv[1:4]
 user = sys.argv[sys.argv.index("--user") + 1] if "--user" in sys.argv else None
 RUN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run.mjs")
+TIMEOUT = 30
 WORK = tempfile.mkdtemp(prefix="diffwork-", dir="/tmp")
 os.chmod(WORK, 0o777)
 
+def as_user(cmd):
+    return ["setpriv", "--reuid=" + user, "--regid=nogroup", "--clear-groups"] + cmd if user else cmd
+
 def sh(cmd, cwd):
-    if user:
-        cmd = ["su", user, "-s", "/bin/sh", "-c", "cd %s && %s" % (cwd, " ".join("'%s'" % c for c in cmd))]
-    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=300,
-                          env={**os.environ, "BUN_DEBUG_QUIET_LOGS": "1", "HOME": "/tmp/nobody-home",
-                               "BUN_RUNTIME_TRANSPILER_CACHE_PATH": "0"})
+    proc = subprocess.Popen(as_user(cmd), cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            start_new_session=True,
+                            env={**os.environ, "BUN_DEBUG_QUIET_LOGS": "1", "HOME": "/tmp/nobody-home",
+                                 "BUN_RUNTIME_TRANSPILER_CACHE_PATH": "0"})
+    try:
+        out, err = proc.communicate(timeout=TIMEOUT)
+    except subprocess.TimeoutExpired:
+        # Root has no CAP_KILL here: the signal has to come from the owner of the process.
+        subprocess.run(as_user(["kill", "-9", "--", "-%d" % proc.pid]), capture_output=True)
+        try:
+            proc.communicate(timeout=20)
+        except subprocess.TimeoutExpired:
+            pass
+        return subprocess.CompletedProcess(cmd, 124, stdout='{"result": "TIMEOUT", "tree": []}\n', stderr="")
+    return subprocess.CompletedProcess(cmd, proc.returncode, stdout=out, stderr=err)
 
 def fix_perms(path):
     subprocess.run(["chmod", "-R", "u+rwx", path], capture_output=True)
@@ -55,7 +69,7 @@ for case in sorted(os.listdir(cases_dir)):
         b = one(case, pr_bin, mode, "pr")
         if a != b:
             diffs += 1
-            print("=" * 8, case, mode, "(EXPECTED: pre-existing symlink)" if case.startswith("XPRE") else "")
+            print("=" * 8, case, mode, "(EXPECTED: pre-existing symlink)" if case.startswith("XPRE") else "", flush=True)
             for attempt, (x, y) in enumerate(zip(a, b), 1):
                 if x == y:
                     print("  run %d: same (%s)" % (attempt, x.get("result") if isinstance(x, dict) else x))

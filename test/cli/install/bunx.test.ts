@@ -1450,7 +1450,6 @@ describe("bunx honors the project-local bunfig.toml [install] registry", () => {
     expect(exited).toBe(0);
   });
 
-  // https://github.com/oven-sh/bun/issues/30748
   // The release-age gate must cover the command that downloads and runs a
   // package, not only `bun add`. The registry comes from the global bunfig,
   // so only the gate depends on the project file.

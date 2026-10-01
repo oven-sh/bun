@@ -1,0 +1,44 @@
+# seven other configurations (harness.extra-apis.mjs), base e3566be889 against head be1ebe5295, by configuration and class
+== comments: 854 records compared, 50 differ, in 18 sources
+   i.js.plain R>A: 2
+   t.ts.min.all R>A: 16
+   t.ts.min.ids R>A: 16
+   t.tsx.min.ids R>A: 16
+== testrows: 2107 records compared, 688 differ, in 236 sources
+   i.js.plain R>A: 8
+   i.js.plain R>R: 2
+   s.js.plain R>A: 6
+   t.js.plain R>A: 6
+   t.jsx.plain R>A: 6
+   t.ts.min.all A>A: 10
+   t.ts.min.all R>A: 222
+   t.ts.min.ids A>A: 10
+   t.ts.min.ids R>A: 222
+   t.tsx.min.ids A>A: 10
+   t.tsx.min.ids R>A: 186
+== targeted: 27664 records compared, 464 differ, in 169 sources
+   i.js.plain R>A: 2
+   i.js.plain R>R: 16
+   t.ts.min.all A>A: 1
+   t.ts.min.all R>A: 108
+   t.ts.min.all R>R: 42
+   t.ts.min.ids A>A: 1
+   t.ts.min.ids R>A: 108
+   t.ts.min.ids R>R: 42
+   t.tsx.min.ids A>A: 1
+   t.tsx.min.ids R>A: 105
+   t.tsx.min.ids R>R: 38
+== small, in six parts of 34,938 sources:
+   part 0: 244566 records compared, 3674 differ, in 1248 sources
+   part 1: 244566 records compared, 3771 differ, in 1281 sources
+   part 2: 244566 records compared, 3845 differ, in 1306 sources
+   part 3: 244566 records compared, 3625 differ, in 1233 sources
+   part 4: 244566 records compared, 3427 differ, in 1164 sources
+   part 5: 244566 records compared, 3676 differ, in 1251 sources
+   i.js.plain R>R: 6
+   t.ts.min.all R>A: 1614
+   t.ts.min.all R>R: 5863
+   t.ts.min.ids R>A: 1614
+   t.ts.min.ids R>R: 5863
+   t.tsx.min.ids R>A: 1524
+   t.tsx.min.ids R>R: 5534

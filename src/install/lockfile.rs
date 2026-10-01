@@ -801,12 +801,26 @@ impl Lockfile {
         None
     }
 
-    /// The first edge, in package order, that resolved to package `id`.
-    pub(crate) fn first_dependency_resolving_to(&self, id: PackageID) -> Option<DependencyID> {
-        let resolutions = self.buffers.resolutions.as_slice();
-        for res_list in self.packages.items_resolutions() {
-            let begin = res_list.begin() as usize;
-            if let Some(i) = res_list.get(resolutions).iter().position(|&pkg| pkg == id) {
+    /// The first edge, in package order, declared as `file:<path>` with exactly that tarball path.
+    pub(crate) fn first_dependency_declaring_local_tarball(
+        &self,
+        path: &[u8],
+    ) -> Option<DependencyID> {
+        let buf = self.buffers.string_bytes.as_slice();
+        let dependencies = self.buffers.dependencies.as_slice();
+        for dependency_list in self.packages.items_dependencies() {
+            let begin = dependency_list.begin() as usize;
+            let found = dependency_list
+                .get(dependencies)
+                .iter()
+                .position(|dependency| {
+                    dependency.version.tag == dependency::Tag::Tarball
+                        && matches!(
+                            &dependency.version.tarball().uri,
+                            dependency::tarball::Uri::Local(declared) if declared.slice(buf) == path
+                        )
+                });
+            if let Some(i) = found {
                 return Some(DependencyID::try_from(begin + i).expect("int cast"));
             }
         }

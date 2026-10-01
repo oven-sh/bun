@@ -2296,15 +2296,17 @@ fn locate_next_to_declaring_tarball(
     if bun_paths::is_absolute(declared_path) {
         return None;
     }
-    // The declaring tarball is read from the same place as `enqueue_local_tarball` read it.
+    // The declaring tarball is read from the same place as `enqueue_local_tarball` read it:
+    // under the workspace or folder whose package.json names that path, else the top-level dir.
     let declarer_tarball = lockfile.str(declarer_res.local_tarball());
     let mut declarer_buf = bun_paths::path_buffer_pool::get();
     let declarer_location = if bun_paths::is_absolute(declarer_tarball) {
         declarer_tarball
     } else {
         match lockfile
-            .first_dependency_resolving_to(declarer)
-            .and_then(|edge| local_tarball_base_dir(lockfile, edge, declarer_tarball))
+            .first_dependency_declaring_local_tarball(declarer_tarball)
+            .and_then(|edge| lockfile.get_parent_pkg_of_dependency(edge))
+            .and_then(|declarer_of_declarer| local_package_dir(lockfile, declarer_of_declarer))
         {
             Some(base_dir) => Path::resolve_path::join_string_buf::<Path::platform::Posix>(
                 &mut *declarer_buf,
@@ -2319,8 +2321,7 @@ fn locate_next_to_declaring_tarball(
         &mut *location_buf,
         &[declarer_dir, declared_path],
     );
-    // Posix separators and a `./` prefix: the lockfile is shared between platforms, and
-    // `Resolution::from_text_lockfile` reads a bare `x.tgz` as an npm version.
+    // The lockfile reader takes a bare `x.tgz` for an npm version.
     let location: Vec<u8> = if bun_paths::is_absolute(joined)
         || joined.starts_with(b"./")
         || joined.starts_with(b"../")

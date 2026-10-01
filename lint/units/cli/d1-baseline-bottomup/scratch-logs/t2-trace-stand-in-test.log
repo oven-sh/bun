@@ -1,0 +1,24 @@
+### cmd: cargo test -p bun_lint --lib native_test_shims -- --test-threads=1 --nocapture
+### cwd: /tmp/cli-d1/tree
+### start: 2026-10-01T11:32:54Z
+   Compiling bun_lint v0.0.0 (/tmp/cli-d1/tree/src/lint)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 25.74s
+     Running unittests lib.rs (target/debug/build/bun_lint/98e96dc9ddf11405/out/bun_lint-98e96dc9ddf11405)
+
+running 1 test
+test native_test_shims::tests::text_past_the_scalar_paths_of_bun_core_is_searched_by_the_stand_ins ... STANDIN highway_index_of_char
+STANDIN highway_index_of_char
+STANDIN highway_last_index_of_char
+STANDIN highway_last_index_of_char
+STANDIN highway_count_char
+STANDIN highway_index_of_any_char
+STANDIN highway_index_of_any_char
+STANDIN highway_memmem
+STANDIN highway_memmem
+STANDIN simdutf__validate_ascii
+STANDIN simdutf__validate_ascii
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 28 filtered out; finished in 0.05s
+
+### finished: 2026-10-01T11:33:21Z rc=0 wall=28s

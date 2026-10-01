@@ -51,3 +51,6 @@
 ### clippy queued 2026-10-01T11:02:34Z
 ### clippy probe cancelled while it waited for the lock 2026-10-01T11:11:04Z: w1 and the CI job answer it
 ### trace2 queued 2026-10-01T11:18:58Z
+### trace2 lock acquired 2026-10-01T11:32:52Z
+### trace2 t2-trace-stand-in-test rc=0 wall=28s 2026-10-01T11:33:22Z
+### trace2 complete 2026-10-01T11:33:24Z pristine=0

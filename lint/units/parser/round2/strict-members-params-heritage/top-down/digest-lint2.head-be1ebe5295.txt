@@ -1,0 +1,462 @@
+## a start of a heritage entry or of a decorator: isStartOfLeftHandSideExpression
+A   "class C extends +a {}"  ref: TS1109@16+1 Expression expected. | TS1005@19  lint: accepts
+A   "class C extends ~a {}"  ref: TS1109@16+1 Expression expected. | TS1005@19  lint: accepts
+A   "class C extends --a {}"  ref: TS1109@16+2 Expression expected. | TS1005@20  lint: accepts
+B!  "class C extends await a {}"  ref: TS1005@22+1 ',' expected.  lint: nocode @22+1 "await" can only be used inside an "async" function  plain: accepts
+C   "class C extends yield {}"  ref: checker TS1213@16+5 Identifier expected. 'yield' is a reserved word in strict mode. Class defi  lint: accepts
+B!  "class C extends <T,>(a) => a {}"  ref: TS1109@16+1 Expression expected. | TS1005@29  lint: nocode @24+2 Unexpected =>
+C   "class C extends new.target {}"  ref: checker TS17013@16+10 Meta-property 'new.target' is only allowed in the body of a function decla  lint: accepts
+F   "class C extends async function() {} {}"  ref: ok  lint: accepts
+F   "class C extends async {}"  ref: ok  lint: accepts
+B!  "class C extends import {}"  ref: TS1109@16+6 Expression expected. | TS1005@25  lint: TS1005@23+1 @23+1 Expected "(" but found "{"
+F   "class C extends import.meta.x {}"  ref: ok  lint: accepts
+F   "class C extends function* () {} {}"  ref: ok  lint: accepts
+F   "class C extends /=/ {}"  ref: ok  lint: accepts
+C   "class C extends let {}"  ref: checker TS1213@16+3 Identifier expected. 'let' is a reserved word in strict mode. Class defini  lint: accepts
+C   "class C extends static {}"  ref: checker TS1213@16+6 Identifier expected. 'static' is a reserved word in strict mode. Class def  lint: accepts
+C   "class C extends interface {}"  ref: checker TS1213@16+9 Identifier expected. 'interface' is a reserved word in strict mode. Class   lint: accepts
+F   "class C extends of {}"  ref: ok  lint: accepts
+F   "class C extends type {}"  ref: ok  lint: accepts
+F   "class C extends abstract {}"  ref: ok  lint: accepts
+B=  "class C extends in {}"  ref: TS1109@16+2 Expression expected.  lint: TS1109@16+2 @16+2 Unexpected in
+B=  "class C extends instanceof {}"  ref: TS1109@16+10 Expression expected.  lint: TS1109@16+10 @16+10 Unexpected instanceof
+B=  "class C extends var {}"  ref: TS1109@16+3 Expression expected.  lint: TS1109@16+3 @16+3 Unexpected var
+B=  "class C extends if {}"  ref: TS1109@16+2 Expression expected. | TS1005@19  lint: TS1109@16+2 @16+2 Unexpected if
+B=  "class C extends ) {}"  ref: TS1109@16+1 Expression expected.  lint: TS1109@16+1 @16+1 Unexpected )
+B=  "class C extends ; {}"  ref: TS1109@16+1 Expression expected.  lint: TS1109@16+1 @16+1 Unexpected ;
+B=  "class C extends = {}"  ref: TS1109@16+1 Expression expected.  lint: TS1109@16+1 @16+1 Unexpected =
+B=  "class C extends => {}"  ref: TS1109@16+2 Expression expected.  lint: TS1109@16+2 @16+2 Unexpected =>
+B=  "class C extends ... {}"  ref: TS1109@16+3 Expression expected.  lint: TS1109@16+3 @16+3 Unexpected ...
+B=  "class C extends ?.a {}"  ref: TS1109@16+2 Expression expected.  lint: TS1109@16+2 @16+2 Unexpected ?.
+B=  "class C extends . {}"  ref: TS1109@16+1 Expression expected.  lint: TS1109@16+1 @16+1 Unexpected .
+B=  "class C extends * {}"  ref: TS1109@16+1 Expression expected.  lint: TS1109@16+1 @16+1 Unexpected *
+B!  "class C extends + {}"  ref: TS1109@16+1 Expression expected.  lint: TS1005@20+0 @20+0 Expected "{" but found end of file
+F   "class C extends true {}"  ref: ok  lint: accepts
+F   "class C extends false {}"  ref: ok  lint: accepts
+F   "class C extends 1n {}"  ref: ok  lint: accepts
+F   "class C extends {a: 1} {}"  ref: ok  lint: accepts
+D   "class C extends {}, B {}"  ref: checker TS1174@20+1 Classes can only extend a single class.  lint: TS1005@18+1 @18+1 Expected "{" but found ","
+F   "class C extends {} implements I {}"  ref: ok  lint: accepts
+A   "class C extends {}.x {}"  ref: TS1128@18+1 Declaration or statement expected. | TS1434@19  lint: accepts
+D   "class C extends {} extends B {}"  ref: checker TS1172@19+7 'extends' clause already seen.  lint: TS1005@19+7 @19+7 Expected "{" but found "extends"
+F   "class C extends {}\n{}"  ref: ok  lint: accepts
+B!  "class C extends {"  ref: TS1005@17+0 '}' expected.  lint: TS1003@17+0 @17+0 Expected identifier but found end of file
+D   "class C extends { }"  ref: checker TS1097@15+0 'extends' list cannot be empty.  lint: TS1005@19+0 @19+0 Expected "{" but found end of file
+C   "class C extends {a} {}"  ref: checker TS18004@17+1 No value exists in scope for the shorthand property 'a'. Either declare on  lint: accepts
+B=  "class C extends {a}"  ref: TS1005@19+0 '{' expected.  lint: TS1005@19+0 @19+0 Expected "{" but found end of file
+C   "class C implements {} {}"  ref: checker TS2500@19+2 A class can only implement an identifier/qualified-name with optional type  lint: accepts
+C   "class C implements {}, A {}"  ref: checker TS2500@19+2 A class can only implement an identifier/qualified-name with optional type  lint: accepts
+D   "class C implements {} extends B {}"  ref: checker TS2500@19+2 A class can only implement an identifier/qualified-name with optional type | TS1173@22+7 'extends' clause must precede 'implements' clause.  lint: TS1005@22+7 @22+7 Expected "{" but found "extends"
+C   "class C implements {a: string} {}"  ref: checker TS2500@19+11 A class can only implement an identifier/qualified-name with optional type  lint: accepts
+C   "class C implements A, {} {}"  ref: checker TS2500@22+2 A class can only implement an identifier/qualified-name with optional type  lint: accepts
+A   "class C implements +a {}"  ref: TS1109@19+1 Expression expected. | TS1005@22  lint: accepts
+A   "class C implements !a {}"  ref: TS1109@19+1 Expression expected. | TS1005@22  lint: accepts
+B!  "class C implements await a {}"  ref: TS1005@25+1 ',' expected.  lint: nocode @25+1 "await" can only be used inside an "async" function  plain: accepts
+A   "class C implements <T>a {}"  ref: TS1109@19+1 Expression expected. | TS1005@24  lint: accepts
+A   "class C implements #a {}"  ref: TS1109@19+2 Expression expected. | TS1005@22  lint: accepts  plain: rejects
+A   "class C implements super {}"  ref: TS1034@25+1  lint: accepts  plain: rejects
+C   "class C implements new A {}"  ref: checker TS2500@19+5 A class can only implement an identifier/qualified-name with optional type  lint: accepts
+C   "class C implements function() {} {}"  ref: checker TS2500@19+8 A class can only implement an identifier/qualified-name with optional type  lint: accepts
+C   "class C implements class {} {}"  ref: checker TS2500@19+5 A class can only implement an identifier/qualified-name with optional type  lint: accepts
+C   "class C implements a`b` {}"  ref: checker TS2500@19+4 A class can only implement an identifier/qualified-name with optional type  lint: accepts
+C   "class C implements a!.b {}"  ref: checker TS2500@19+4 A class can only implement an identifier/qualified-name with optional type  lint: accepts
+F   "class C implements A.B {}"  ref: ok  lint: accepts
+F   "class C implements A.B.C<D, E> {}"  ref: ok  lint: accepts
+F   "class C implements A<B<C>> {}"  ref: ok  lint: accepts
+B=  "class C implements A<B>>{}"  ref: TS1005@23+1 ',' expected.  lint: TS1005@23+1 @23+1 Expected "{" but found ">"
+C   "class C implements a.b?.c {}"  ref: checker TS2500@19+6 A class can only implement an identifier/qualified-name with optional type  lint: accepts
+C   "class C implements a[b] {}"  ref: checker TS2500@19+4 A class can only implement an identifier/qualified-name with optional type  lint: accepts
+A   "class C implements typeof a.b {}"  ref: TS1109@19+6 Expression expected. | TS1005@30  lint: accepts
+C   "class C implements yield {}"  ref: checker TS1213@19+5 Identifier expected. 'yield' is a reserved word in strict mode. Class defi  lint: accepts
+A   "function* g() { class C implements yield {} }"  ref: TS1109@35+5 Expression expected.  lint: accepts
+A   "async function f() { class C implements await {} }"  ref: TS1109@40+5 Expression expected.  lint: accepts
+F   "class C implements async {}"  ref: ok  lint: accepts
+B!  "class C implements import {}"  ref: TS1109@19+6 Expression expected. | TS1005@28  lint: TS1005@26+1 @26+1 Expected "(" but found "{"
+F   "class C implements of, type, abstract {}"  ref: ok  lint: accepts
+C   "class C implements extends {}"  ref: checker TS1097@18+0 'implements' list cannot be empty. | TS1173@19+7 'extends' clause must precede 'implements' clause.  lint: accepts  plain: rejects
+C   "class C implements implements {}"  ref: checker TS1097@18+0 'implements' list cannot be empty. | TS1175@19+10 'implements' clause already seen.  lint: accepts
+D   "class C implements A extends {}"  ref: checker TS1173@21+7 'extends' clause must precede 'implements' clause.  lint: TS1005@21+7 @21+7 Expected "{" but found "extends"
+D   "class C extends A implements B extends C {}"  ref: checker TS1172@31+7 'extends' clause already seen.  lint: TS1005@31+7 @31+7 Expected "{" but found "extends"
+D   "class C extends A extends B extends C {}"  ref: checker TS1172@18+7 'extends' clause already seen.  lint: TS1005@18+7 @18+7 Expected "{" but found "extends"
+A   "@+a class C {}"  ref: TS1109@1+1 Expression expected. | TS1005@4  lint: accepts
+A   "@!a class C {}"  ref: TS1109@1+1 Expression expected. | TS1146@2  lint: accepts
+A   "@typeof a class C {}"  ref: TS1109@1+6 Expression expected. | TS1005@10  lint: accepts
+A   "@<T>a class C {}"  ref: TS1109@1+1 Expression expected. | TS1005@6  lint: accepts
+D   "@#a class C {}"  ref: checker TS1451@1+2 Private identifiers are only allowed in class bodies and may only be used  | TS1497@1+2 Expression must be enclosed in parentheses to be used as a decorator.  lint: nocode @1+2 Unexpected #a
+A   "class C { @-a m() {} }"  ref: TS1109@11+1 Expression expected. | TS1005@14  lint: accepts
+A   "class C { m(@-a x) {} }"  ref: TS1109@13+1 Expression expected. | TS1005@16  lint: accepts
+B!  "function* g() { @yield class C {} }"  ref: TS1109@17+5 Expression expected.  lint: nocode @17+5 Cannot use a "yield" here without parentheses
+B!  "@async () => {} class C {}"  ref: TS1146@9+0 Declaration expected. | TS1128@10  lint: nocode @10+2 Unexpected =>
+C   "@a.b?.c class C {}"  ref: checker TS1497@1+6 Expression must be enclosed in parentheses to be used as a decorator.  lint: accepts
+F   "@(a, b) class C {}"  ref: ok  lint: accepts
+F   "@a() class C {}"  ref: ok  lint: accepts
+A   "@++a class C {}"  ref: TS1109@1+2 Expression expected. | TS1005@5  lint: accepts
+A   "@void 0 class C {}"  ref: TS1109@1+4 Expression expected. | TS1005@8  lint: accepts
+A   "@delete a.b class C {}"  ref: TS1109@1+6 Expression expected. | TS1005@12  lint: accepts
+C   "@new A class C {}"  ref: checker TS1497@1+5 Expression must be enclosed in parentheses to be used as a decorator.  lint: accepts
+C   "@a`b` class C {}"  ref: checker TS1497@1+4 Expression must be enclosed in parentheses to be used as a decorator.  lint: accepts
+F   "@a! class C {}"  ref: ok  lint: accepts
+F   "@a!.b class C {}"  ref: ok  lint: accepts
+F   "@a<T>() class C {}"  ref: ok  lint: accepts
+C   "@import('x') class C {}"  ref: checker TS1497@1+11 Expression must be enclosed in parentheses to be used as a decorator.  lint: accepts
+C   "@{} class C {}"  ref: checker TS1497@1+2 Expression must be enclosed in parentheses to be used as a decorator.  lint: accepts
+B!  "@[a][0] class C {}"  ref: TS1146@4+0 Declaration expected. | TS1005@8  lint: TS1005@4+1 @4+1 Expected "class" but found "["
+C   "@/a/ class C {}"  ref: checker TS1497@1+3 Expression must be enclosed in parentheses to be used as a decorator.  lint: accepts
+C   "@'a' class C {}"  ref: checker TS1497@1+3 Expression must be enclosed in parentheses to be used as a decorator.  lint: accepts
+C   "@1 class C {}"  ref: checker TS1497@1+1 Expression must be enclosed in parentheses to be used as a decorator.  lint: accepts
+C   "@null class C {}"  ref: checker TS1238@1+4 Unable to resolve signature of class decorator when called as an expressio | TS1497@1+4 Expression must be enclosed in parentheses to be used as a decorator.  lint: accepts
+C   "@this class C {}"  ref: checker TS1497@1+4 Expression must be enclosed in parentheses to be used as a decorator.  lint: accepts
+C   "@function f() {} class C {}"  ref: checker TS1329@0+16 'function f() {}' accepts too few arguments to be used as a decorator here | TS1497@10+1 Expression must be enclosed in parentheses to be used as a decorator.  lint: accepts
+C   "@class {} class C {}"  ref: checker TS1238@1+5 Unable to resolve signature of class decorator when called as an expressio | TS1497@1+5 Expression must be enclosed in parentheses to be used as a decorator.  lint: accepts
+B!  "@@a class C {}"  ref: TS1146@14+0 Declaration expected.  lint: TS1005@14+0 @14+0 Expected "class" but found end of file
+A   "@a @-b class C {}"  ref: TS1109@4+1 Expression expected. | TS1005@7  lint: accepts
+A   "interface I extends +a {}"  ref: TS1109@20+1 Expression expected. | TS1005@23  lint: accepts
+A   "interface I extends !a {}"  ref: TS1109@20+1 Expression expected. | TS1005@23  lint: accepts
+A   "interface I extends <T>a {}"  ref: TS1109@20+1 Expression expected. | TS1005@25  lint: accepts
+B!  "interface I extends #a {}"  ref: TS1109@20+2 Expression expected. | TS1005@23  lint: nocode @20+2 Unexpected #a
+C   "interface I extends {} {}"  ref: checker TS2499@20+2 An interface can only extend an identifier/qualified-name with optional ty  lint: accepts
+C   "interface I extends {}, A {}"  ref: checker TS2499@20+2 An interface can only extend an identifier/qualified-name with optional ty  lint: accepts
+B=  "interface I extends {a: 1}"  ref: TS1005@26+0 '{' expected.  lint: TS1005@26+0 @26+0 Expected "{" but found end of file
+A   "interface I extends readonly A[] {}"  ref: TS1005@29+1 ',' expected. | TS1011@31  lint: accepts
+A   "interface I extends unique symbol {}"  ref: TS1005@27+6 ',' expected.  lint: accepts
+A   "interface I extends infer A {}"  ref: TS1005@26+1 ',' expected.  lint: accepts
+B=  "interface I extends asserts x {}"  ref: TS1005@28+1 ',' expected.  lint: TS1005@28+1 @28+1 Expected "{" but found "x"
+A   "interface I extends x is A {}"  ref: TS1005@22+2 ',' expected. | TS1005@25  lint: accepts
+A   "interface I extends new () => A {}"  ref: TS1109@25+1 Expression expected. | TS1005@27  lint: accepts
+F   "interface I extends A.B.C<D> {}"  ref: ok  lint: accepts
+F   "interface I extends A<B<C>> {}"  ref: ok  lint: accepts
+C   "interface I extends a`b` {}"  ref: checker TS2499@20+4 An interface can only extend an identifier/qualified-name with optional ty  lint: accepts
+B!  "interface I extends super {}"  ref: TS1034@26+1  lint: nocode @20+5 Unexpected super
+C   "interface I extends yield {}"  ref: checker TS1212@20+5 Identifier expected. 'yield' is a reserved word in strict mode.  lint: accepts
+F   "interface I extends await {}"  ref: ok  lint: accepts
+C   "interface I extends any {}"  ref: checker TS2840@20+3 An interface cannot extend a primitive type like 'any'. It can only extend  lint: accepts
+C   "interface I extends A extends {}"  ref: checker TS1172@22+7 'extends' clause already seen.  lint: accepts
+## a start of a heritage entry: JavaScript and TSX
+A   [js] "class C extends -a {}"  ref: TS1109@16+1 Expression expected. | TS1005@19  lint: accepts
+A   [js] "class C extends typeof a {}"  ref: TS1109@16+6 Expression expected. | TS1005@25  lint: accepts
+B!  [js] "class C extends await a {}"  ref: TS1005@22+1 ',' expected.  lint: nocode @22+1 "await" can only be used inside an "async" function  plain: accepts
+B!  [js] "@-a class C {}"  ref: TS1109@1+1 Expression expected. | TS1005@4  lint: nocode @0+1 Unexpected @
+A   [tsx] "class C extends <div/> {}"  ref: TS1109@16+1 Expression expected. | TS1005@23  lint: accepts
+B!  [tsx] "class C extends <T,>(a) => a {}"  ref: TS1109@16+1 Expression expected. | TS1005@29  lint: nocode @24+2 Unexpected =>
+A   [tsx] "class C implements <div/> {}"  ref: TS1109@19+1 Expression expected. | TS1005@26  lint: accepts
+A   [tsx] "class C extends -a {}"  ref: TS1109@16+1 Expression expected. | TS1005@19  lint: accepts
+## d the token after the name of a member: ? and !
+B=  "class C { get x!() { return 1 } }"  ref: TS1005@15+1 '(' expected. | TS1109@17  lint: TS1005@15+1 @15+1 Expected "(" but found "!"
+A   "class C { set x?(v) {} }"  ref: TS1005@15+1 '(' expected. | TS1068@16  lint: accepts
+A   "class C { static get x?() { return 1 } }"  ref: TS1005@22+1 '(' expected. | TS1068@23  lint: accepts
+B!  "class C { async m!() {} }"  ref: TS1441@18+1 Cannot start a function call in a type annotation. | TS1068@19  lint: TS1005@17+1 @17+1 Expected "(" but found "!"
+B=  "class C { *m!() {} }"  ref: TS1005@12+1 '(' expected. | TS1109@14  lint: TS1005@12+1 @12+1 Expected "(" but found "!"
+F   "class C { *m?() {} }"  ref: ok  lint: accepts
+F   "class C { async m?() {} }"  ref: ok  lint: accepts
+F   "class C { 'constructor'?() {} }"  ref: ok  lint: accepts
+A   "class C { 'constructor'!() {} }"  ref: TS1441@24+1 Cannot start a function call in a type annotation. | TS1068@25  lint: accepts
+A   "class C { static constructor?() {} }"  ref: TS1005@28+1 '(' expected. | TS1068@29  lint: accepts
+B!  "class C { constructor?: number }"  ref: TS1005@21+1 '(' expected. | TS1068@22  lint: nocode @10+11 Invalid field name
+B!  "class C { constructor! : number }"  ref: TS1005@21+1 '(' expected. | TS1109@23  lint: nocode @10+11 Invalid field name
+B!  "class C { x!<T>() {} }"  ref: TS1434@10+1 Unexpected keyword or identifier. | TS1068@12  lint: TS1005@12+1 @12+1 Expected ";" but found "<"
+B!  "class C { x?!() {} }"  ref: TS1434@10+1 Unexpected keyword or identifier. | TS1068@12  lint: TS1005@12+1 @12+1 Expected ";" but found "!"
+B!  "class C { accessor x!() {} }"  ref: TS1441@21+1 Cannot start a function call in a type annotation. | TS1068@22  lint: nocode @19+1 auto-accessor properties cannot have a method body
+A   "class C { declare x!() }"  ref: TS1441@20+1 Cannot start a function call in a type annotation. | TS1068@21  lint: accepts
+A   "class C { x!(): void }"  ref: TS1441@12+1 Cannot start a function call in a type annotation. | TS1068@13  lint: accepts
+A   "class C { x!\n() {} }"  ref: TS1441@13+1 Cannot start a function call in a type annotation. | TS1068@14  lint: accepts
+B!  "class C { x!;\n() {} }"  ref: TS1068@14+1 | TS1005@17  lint: TS1003@14+1 @14+1 Expected identifier but found "("
+A   "class C { [k]!() {} }"  ref: TS1441@14+1 Cannot start a function call in a type annotation. | TS1068@15  lint: accepts
+A   "class C { 1!() {} }"  ref: TS1441@12+1 Cannot start a function call in a type annotation. | TS1068@13  lint: accepts
+A   "class C { #x!() {} }"  ref: TS1441@13+1 Cannot start a function call in a type annotation. | TS1068@14  lint: accepts
+A   "class C { static x!() {} }"  ref: TS1441@19+1 Cannot start a function call in a type annotation. | TS1068@20  lint: accepts
+A   "abstract class C { abstract x!(): void }"  ref: TS1441@30+1 Cannot start a function call in a type annotation. | TS1068@31  lint: accepts
+D   "({ x!() {} })"  ref: checker TS1255@4+1 A definite assignment assertion '!' is not permitted in this context.  lint: TS1005@4+1 @4+1 Expected "}" but found "!"
+D   "({ x?() {} })"  ref: checker TS1162@4+1 An object member cannot be declared optional.  lint: TS1005@4+1 @4+1 Expected "}" but found "?"
+F   "class C { x?() {} }"  ref: ok  lint: accepts
+F   "class C { x?<T>() {} }"  ref: ok  lint: accepts
+F   "class C { x?: number }"  ref: ok  lint: accepts
+F   "class C { x!: number }"  ref: ok  lint: accepts
+F   "class C { x? = 1 }"  ref: ok  lint: accepts
+C   "class C { x! }"  ref: checker TS1264@11+1 Declarations with definite assignment assertions must also have type annot  lint: accepts
+C   "class C { x!; }"  ref: checker TS1264@11+1 Declarations with definite assignment assertions must also have type annot  lint: accepts
+F   "class C { x? }"  ref: ok  lint: accepts
+F   "class C { x?\n y }"  ref: ok  lint: accepts
+C   "class C { x!\n y }"  ref: checker TS1264@11+1 Declarations with definite assignment assertions must also have type annot  lint: accepts
+F   "class C { x ! : number }"  ref: ok  lint: accepts
+F   "class C { 'x'!: number }"  ref: ok  lint: accepts
+F   "class C { [k]?: number }"  ref: ok  lint: accepts
+B~  "class C { get x?: number }"  ref: TS1005@15+1 '(' expected. | TS1068@16  lint: TS1005@16+1 @16+1 Expected "(" but found ":"
+B~  "class C { get x? }"  ref: TS1005@15+1 '(' expected.  lint: TS1005@17+1 @17+1 Expected "(" but found "}"
+B=  "class C { set x! }"  ref: TS1005@15+1 '(' expected. | TS1109@17  lint: TS1005@15+1 @15+1 Expected "(" but found "!"
+B=  "class C { get x!: number }"  ref: TS1005@15+1 '(' expected. | TS1109@16  lint: TS1005@15+1 @15+1 Expected "(" but found "!"
+F   "class C { static x?() {} }"  ref: ok  lint: accepts
+F   "class C { static?() {} }"  ref: ok  lint: accepts
+F   "class C { get?() {} }"  ref: ok  lint: accepts
+A   "class C { get!() {} }"  ref: TS1441@14+1 Cannot start a function call in a type annotation. | TS1068@15  lint: accepts
+F   "class C { get?: number }"  ref: ok  lint: accepts
+F   "class C { set!: number }"  ref: ok  lint: accepts
+F   "class C { async?() {} }"  ref: ok  lint: accepts
+F   "class C { async!: number }"  ref: ok  lint: accepts
+A   "class C { constructor?(): void }"  ref: TS1005@21+1 '(' expected. | TS1068@22  lint: accepts
+A   "declare class C { constructor?() }"  ref: TS1005@29+1 '(' expected. | TS1068@30  lint: accepts
+A   "class C { public constructor?() {} }"  ref: TS1005@28+1 '(' expected. | TS1068@29  lint: accepts
+B=  "class C { constructor<T>?() {} }"  ref: TS1005@24+1 '(' expected. | TS1068@25  lint: TS1005@24+1 @24+1 Expected "(" but found "?"
+C   "class C { accessor x?: number }"  ref: checker TS1276@20+1 An 'accessor' property cannot be declared optional.  lint: accepts
+F   "class C { accessor x!: number }"  ref: ok  lint: accepts
+C   "class C { readonly x?() {} }"  ref: checker TS1024@10+8 'readonly' modifier can only appear on a property declaration or index sig  lint: accepts
+## e a modifier of a parameter and what follows it
+A   "class C { constructor(readonly\n x) {} }"  ref: TS1005@32+1 ',' expected.  lint: accepts
+A   "class C { constructor(public readonly\n x) {} }"  ref: TS1005@39+1 ',' expected.  lint: accepts
+A   "class C { constructor(public\n readonly x) {} }"  ref: TS1005@30+8 ',' expected.  lint: accepts
+B!  "class C { constructor(private\n[x]) {} }"  ref: TS1005@30+1 ',' expected.  lint: TS1003@30+1 @30+1 Expected identifier but found "["
+D   "class C { constructor(static\n x) {} }"  ref: checker TS1090@22+6 'static' modifier cannot appear on a parameter.  lint: TS1005@30+1 @30+1 Expected ")" but found "x"
+B=  "function f(public\n x) {}"  ref: TS1005@19+1 ',' expected.  lint: TS1005@19+1 @19+1 Expected ")" but found "x"
+F   "class C { constructor(public/*c*/x) {} }"  ref: ok  lint: accepts
+A   "class C { constructor(public // c\n x) {} }"  ref: TS1005@35+1 ',' expected.  lint: accepts
+B!  "class C { constructor(public 'a') {} }"  ref: TS1003@29+3 Identifier expected.  lint: TS1005@29+3 @29+3 Expected ")" but found "'a'"
+B!  "class C { constructor(public 1) {} }"  ref: TS1003@29+1 Identifier expected.  lint: TS1005@29+1 @29+1 Expected ")" but found "1"
+B!  "class C { constructor(public *) {} }"  ref: TS1003@29+1 Identifier expected.  lint: TS1005@29+1 @29+1 Expected ")" but found "*"
+C   "class C { constructor(public = 1, y) {} }"  ref: checker TS1213@22+6 Identifier expected. 'public' is a reserved word in strict mode. Class def  lint: accepts
+C   "class C { constructor(public x, private y, protected z, readonly w, override v) {} }"  ref: checker TS4112@68+10 This member cannot have an 'override' modifier because its containing clas  lint: accepts
+A   "class C { constructor(override\n x) {} }"  ref: TS1005@32+1 ',' expected.  lint: accepts
+C   "class C { constructor(public,\n x) {} }"  ref: checker TS1213@22+6 Identifier expected. 'public' is a reserved word in strict mode. Class def  lint: accepts
+C   "class C { constructor(public\n, x) {} }"  ref: checker TS1213@22+6 Identifier expected. 'public' is a reserved word in strict mode. Class def  lint: accepts
+C   "class C { constructor(public\n) {} }"  ref: checker TS1213@22+6 Identifier expected. 'public' is a reserved word in strict mode. Class def  lint: accepts
+C   "class C { constructor(public\n: number) {} }"  ref: checker TS1213@22+6 Identifier expected. 'public' is a reserved word in strict mode. Class def  lint: accepts
+C   "class C { constructor(public\n = 1) {} }"  ref: checker TS1213@22+6 Identifier expected. 'public' is a reserved word in strict mode. Class def  lint: accepts
+C   "class C { constructor(public\n?) {} }"  ref: checker TS1213@22+6 Identifier expected. 'public' is a reserved word in strict mode. Class def  lint: accepts
+B=  "class C { m(public\n x) {} }"  ref: TS1005@20+1 ',' expected.  lint: TS1005@20+1 @20+1 Expected ")" but found "x"
+B=  "(public\n x) => 1"  ref: TS1005@9+1 ',' expected.  lint: TS1005@9+1 @9+1 Expected ")" but found "x"
+A   "class C { constructor(protected\n x: number) {} }"  ref: TS1005@33+1 ',' expected.  lint: accepts
+A   "class C { constructor(private\n private x) {} }"  ref: TS1005@31+7 ',' expected.  lint: accepts
+F   "class C { constructor(public readonly x) {} }"  ref: ok  lint: accepts
+C   "class C { constructor(readonly public x) {} }"  ref: checker TS1029@31+6 'public' modifier must precede 'readonly' modifier.  lint: accepts
+C   "class C { constructor(public public x) {} }"  ref: checker TS1028@29+6 Accessibility modifier already seen.  lint: accepts
+D   "class C { constructor(public {x}) {} }"  ref: checker TS1187@22+10 A parameter property may not be declared using a binding pattern.  lint: TS1003@29+1 @29+1 Expected identifier but found "{"
+D   "class C { constructor(public [x]) {} }"  ref: checker TS1187@22+10 A parameter property may not be declared using a binding pattern.  lint: TS1003@29+1 @29+1 Expected identifier but found "["
+D   "class C { constructor(public ...x) {} }"  ref: checker TS1317@22+11 A parameter property cannot be declared using a rest parameter.  lint: TS1005@29+3 @29+3 Expected ")" but found "..."
+C   "class C { constructor(...public) {} }"  ref: checker TS1213@25+6 Identifier expected. 'public' is a reserved word in strict mode. Class def  lint: accepts
+A   "class C { constructor(...public x) {} }"  ref: TS1005@32+1 ',' expected.  lint: accepts
+B!  "class C { constructor(public this) {} }"  ref: TS1433@22+6  lint: TS1005@29+4 @29+4 Expected ")" but found "this"
+F   "class C { constructor(public async) {} }"  ref: ok  lint: accepts
+C   "class C { constructor(public public) {} }"  ref: checker TS1213@29+6 Identifier expected. 'public' is a reserved word in strict mode. Class def  lint: accepts
+F   "class C { constructor(public readonly) {} }"  ref: ok  lint: accepts
+C   "class C { constructor(readonly public) {} }"  ref: checker TS1213@31+6 Identifier expected. 'public' is a reserved word in strict mode. Class def  lint: accepts
+C   "class C { constructor(public static) {} }"  ref: checker TS1213@29+6 Identifier expected. 'static' is a reserved word in strict mode. Class def  lint: accepts
+B=  "class C { constructor(public x y) {} }"  ref: TS1005@31+1 ',' expected.  lint: TS1005@31+1 @31+1 Expected ")" but found "y"
+F   "class C { constructor(public x = 1, y) {} }"  ref: ok  lint: accepts
+## f an index signature after get, set or *, and [modifier name
+A   "class C { set [k: string]: any }"  ref: TS1005@16+1 ']' expected. | TS1005@24  lint: accepts
+A   "class C { static get [k: string]: any }"  ref: TS1005@23+1 ']' expected. | TS1005@31  lint: accepts
+C   "class C { async [k: string]: any }"  ref: checker TS1071@10+5 'async' modifier cannot appear on an index signature.  lint: accepts
+A   "class C { async *[k: string]: any }"  ref: TS1005@19+1 ']' expected. | TS1144@27  lint: accepts
+C   "class C { accessor [k: string]: any }"  ref: checker TS1071@10+8 'accessor' modifier cannot appear on an index signature.  lint: accepts
+C   "class C { declare [k: string]: any }"  ref: checker TS1071@10+7 'declare' modifier cannot appear on an index signature.  lint: accepts
+C   "abstract class C { abstract [k: string]: any }"  ref: checker TS1071@19+8 'abstract' modifier cannot appear on an index signature.  lint: accepts
+B=  "class C { get [k]: any }"  ref: TS1005@17+1 '(' expected.  lint: TS1005@17+1 @17+1 Expected "(" but found ":"
+A   "class C { get [k: string] }"  ref: TS1005@16+1 ']' expected. | TS1005@24  lint: accepts
+B~  "class C { get [k: string]() { return 1 } }"  ref: TS1005@16+1 ']' expected. | TS1005@24  lint: TS1005@25+1 @25+1 Expected ";" but found "("
+F   "class C { get [k]() { return 1 } }"  ref: ok  lint: accepts
+F   "class C { *[k]() {} }"  ref: ok  lint: accepts
+B~  "class C { *[k: string]() {} }"  ref: TS1005@13+1 ']' expected. | TS1144@21  lint: TS1005@22+1 @22+1 Expected ";" but found "("
+A   "class C { get [...k]: any }"  ref: TS1109@15+3 Expression expected. | TS1434@18  lint: accepts
+A   "class C { get []: any }"  ref: TS1109@15+1 Expression expected. | TS1005@16  lint: accepts
+A   "class C { *[] }"  ref: TS1109@12+1 Expression expected. | TS1005@14  lint: accepts
+A   "class C { get [k?]: any }"  ref: TS1109@17+1 Expression expected. | TS1005@18  lint: accepts
+A   "class C { get [k, j]: any }"  ref: TS1005@20+1 '(' expected.  lint: accepts
+B!  "class C { get [k?]() { return 1 } }"  ref: TS1109@17+1 Expression expected.  lint: TS1005@18+1 @18+1 Expected ";" but found "("
+D   "class C { set [k, j](v) {} }"  ref: checker TS1171@15+4 A comma expression is not allowed in a computed property name.  lint: TS1005@20+1 @20+1 Expected ";" but found "("
+A   "class C { static *[k: string]: any }"  ref: TS1005@20+1 ']' expected. | TS1144@28  lint: accepts
+A   "class C { readonly get [k: string]: any }"  ref: TS1005@25+1 ']' expected. | TS1005@33  lint: accepts
+D   "class C { [async x]: any }"  ref: checker TS1090@11+5 'async' modifier cannot appear on a parameter. | TS1018@17+1 An index signature parameter cannot have an accessibility modifier.  lint: TS1005@17+1 @17+1 Expected "]" but found "x"
+A   "class C { [async x => x] = 1 }"  ref: TS1005@19+2 ',' expected. | TS1005@25  lint: accepts
+A   "class C { [async x => x]() {} }"  ref: TS1005@19+2 ',' expected. | TS1005@24  lint: accepts
+D   "class C { [static k]: any }"  ref: checker TS1090@11+6 'static' modifier cannot appear on a parameter. | TS1018@18+1 An index signature parameter cannot have an accessibility modifier.  lint: TS1005@18+1 @18+1 Expected "]" but found "k"
+D   "class C { [abstract k]: any }"  ref: checker TS1242@11+8 'abstract' modifier can only appear on a class, method, or property declar | TS1018@20+1 An index signature parameter cannot have an accessibility modifier.  lint: TS1005@20+1 @20+1 Expected "]" but found "k"
+D   "class C { [in k]: any }"  ref: checker TS1274@11+2 'in' modifier can only appear on a type parameter of a class, interface or | TS1018@14+1 An index signature parameter cannot have an accessibility modifier.  lint: TS1109@11+2 @11+2 Unexpected in
+D   "class C { [out k]: any }"  ref: checker TS1274@11+3 'out' modifier can only appear on a type parameter of a class, interface o | TS1018@15+1 An index signature parameter cannot have an accessibility modifier.  lint: TS1005@15+1 @15+1 Expected "]" but found "k"
+B!  "class C { [const k]: any }"  ref: TS1359@11+5 | TS1005@17  lint: TS1109@11+5 @11+5 Unexpected const
+D   "class C { [export k]: any }"  ref: checker TS1090@11+6 'export' modifier cannot appear on a parameter. | TS1018@18+1 An index signature parameter cannot have an accessibility modifier.  lint: TS1109@11+6 @11+6 Unexpected export
+B!  "class C { [default k]: any }"  ref: TS1359@11+7 | TS1005@19  lint: TS1109@11+7 @11+7 Unexpected default
+D   "class C { [declare k]: any }"  ref: checker TS1090@11+7 'declare' modifier cannot appear on a parameter. | TS1018@19+1 An index signature parameter cannot have an accessibility modifier.  lint: TS1005@19+1 @19+1 Expected "]" but found "k"
+D   "class C { [accessor k]: any }"  ref: checker TS1275@11+8 'accessor' modifier can only appear on a property declaration. | TS1018@20+1 An index signature parameter cannot have an accessibility modifier.  lint: TS1005@20+1 @20+1 Expected "]" but found "k"
+D   "class C { [override k]: any }"  ref: checker TS2369@11+10 A parameter property is only allowed in a constructor implementation. | TS1018@20+1 An index signature parameter cannot have an accessibility modifier.  lint: TS1005@20+1 @20+1 Expected "]" but found "k"
+D   "class C { [readonly k]: any }"  ref: checker TS2369@11+10 A parameter property is only allowed in a constructor implementation. | TS1018@20+1 An index signature parameter cannot have an accessibility modifier.  lint: TS1005@20+1 @20+1 Expected "]" but found "k"
+D   "class C { [private k]: any }"  ref: checker TS2369@11+9 A parameter property is only allowed in a constructor implementation. | TS1018@19+1 An index signature parameter cannot have an accessibility modifier.  lint: TS1005@19+1 @19+1 Expected "]" but found "k"
+D   "class C { [protected k: string]: any }"  ref: checker TS2369@11+19 A parameter property is only allowed in a constructor implementation. | TS1018@21+1 An index signature parameter cannot have an accessibility modifier.  lint: TS1005@21+1 @21+1 Expected "]" but found "k"
+D   "class C { [public k, j]: any }"  ref: checker TS2369@11+8 A parameter property is only allowed in a constructor implementation. | TS1096@18+1 An index signature must have exactly one parameter.  lint: TS1005@18+1 @18+1 Expected "]" but found "k"
+D   "class C { [public k?]: any }"  ref: checker TS2369@11+9 A parameter property is only allowed in a constructor implementation. | TS1018@18+1 An index signature parameter cannot have an accessibility modifier.  lint: TS1005@18+1 @18+1 Expected "]" but found "k"
+C   "class C { [public]: any }"  ref: checker TS1213@11+6 Identifier expected. 'public' is a reserved word in strict mode. Class def  lint: accepts
+C   "class C { [public] = 1 }"  ref: checker TS1213@11+6 Identifier expected. 'public' is a reserved word in strict mode. Class def  lint: accepts
+B~  "class C { [public k] = 1 }"  ref: TS1005@21+1 ';' expected.  lint: TS1005@18+1 @18+1 Expected "]" but found "k"
+C   "class C { [async () => {}]: any }"  ref: checker TS1166@10+16 A computed property name in a class property declaration must have a simpl | TS2464@10+16 A computed property name must be of type 'string', 'number', 'symbol', or   lint: accepts
+D   "class C { [await x]: any }"  ref: checker TS1166@10+9 A computed property name in a class property declaration must have a simpl | TS1375@11+5 'await' expressions are only allowed at the top level of a file when that   lint: nocode @17+1 "await" can only be used inside an "async" function  plain: accepts
+D   "class C { [yield x]: any }"  ref: checker TS1166@10+9 A computed property name in a class property declaration must have a simpl | TS1163@11+5 A 'yield' expression is only allowed in a generator body.  lint: nocode @11+5 Cannot use "yield" outside a generator function
+F   "class C { [abstract]: any }"  ref: ok  lint: accepts
+F   "class C { [async]: any }"  ref: ok  lint: accepts
+C   "class C { [async, b]: any }"  ref: checker TS1096@11+5 An index signature must have exactly one parameter.  lint: accepts
+C   "class C { [async?]: any }"  ref: checker TS1019@16+1 An index signature parameter cannot have a question mark.  lint: accepts
+F   "class C { [async: string]: any }"  ref: ok  lint: accepts
+C   "class C { [static]() {} }"  ref: checker TS1213@11+6 Identifier expected. 'static' is a reserved word in strict mode. Class def  lint: accepts
+B=  "class C { [x y]: any }"  ref: TS1005@13+1 ']' expected. | TS1068@14  lint: TS1005@13+1 @13+1 Expected "]" but found "y"
+B=  "class C { [type x]: any }"  ref: TS1005@16+1 ']' expected. | TS1068@17  lint: TS1005@16+1 @16+1 Expected "]" but found "x"
+B=  "class C { [of x]: any }"  ref: TS1005@14+1 ']' expected. | TS1068@15  lint: TS1005@14+1 @14+1 Expected "]" but found "x"
+B=  "class C { [let x]: any }"  ref: TS1005@15+1 ']' expected. | TS1068@16  lint: TS1005@15+1 @15+1 Expected "]" but found "x"
+B=  "class C { [get x]: any }"  ref: TS1005@15+1 ']' expected. | TS1068@16  lint: TS1005@15+1 @15+1 Expected "]" but found "x"
+## f [async x => x] in JavaScript
+A   [js] "class C { [async x => x] = 1 }"  ref: TS1005@19+2 ',' expected. | TS1005@25  lint: accepts
+A   [js] "class C { [async x => x]() {} }"  ref: TS1005@19+2 ',' expected. | TS1005@24  lint: accepts
+F   [js] "class C { [public] = 1 }"  ref: ok  lint: accepts
+## g a binding property that is one reserved word
+A   "var {class} = x"  ref: TS1005@10+1 ':' expected.  lint: accepts
+A   "let {if} = x"  ref: TS1005@7+1 ':' expected.  lint: accepts
+A   "const {this} = x"  ref: TS1005@11+1 ':' expected.  lint: accepts
+A   "var {true} = x"  ref: TS1005@9+1 ':' expected.  lint: accepts
+A   "var {null} = x"  ref: TS1005@9+1 ':' expected.  lint: accepts
+A   "var {typeof} = x"  ref: TS1005@11+1 ':' expected.  lint: accepts
+A   "var {in} = x"  ref: TS1005@7+1 ':' expected.  lint: accepts
+A   "var {new} = x"  ref: TS1005@8+1 ':' expected.  lint: accepts
+A   "var {function} = x"  ref: TS1005@13+1 ':' expected.  lint: accepts
+A   "var {enum} = x"  ref: TS1005@9+1 ':' expected.  lint: accepts
+C   "var {yield} = x"  ref: checker TS1212@5+5 Identifier expected. 'yield' is a reserved word in strict mode.  lint: accepts
+F   "var {await} = x"  ref: ok  lint: accepts
+C   "var {let} = x"  ref: checker TS1212@5+3 Identifier expected. 'let' is a reserved word in strict mode.  lint: accepts
+C   "var {static} = x"  ref: checker TS1212@5+6 Identifier expected. 'static' is a reserved word in strict mode.  lint: accepts
+A   "var {class = 1} = x"  ref: TS1005@11+1 ':' expected.  lint: accepts
+F   "var {class: a} = x"  ref: ok  lint: accepts
+A   "function f({if}) {}"  ref: TS1005@14+1 ':' expected.  lint: accepts
+A   "try {} catch ({class}) {}"  ref: TS1005@20+1 ':' expected.  lint: accepts
+A   "for (var {class} of x) {}"  ref: TS1005@15+1 ':' expected.  lint: accepts
+A   "var [{class}] = x"  ref: TS1005@11+1 ':' expected.  lint: accepts
+A   "var {a: {class}} = x"  ref: TS1005@14+1 ':' expected.  lint: accepts
+B!  "var {...class} = x"  ref: TS1005@13+1 ':' expected.  lint: TS1359@8+5 @8+5 Expected identifier but found "class"
+B!  "var {...this} = x"  ref: TS1005@12+1 ':' expected.  lint: TS1359@8+4 @8+4 Expected identifier but found "this"
+B=  "({class}) => 1"  ref: TS1005@7+1 ':' expected.  lint: TS1005@7+1 @7+1 Expected ":" but found "}"
+B=  "({class} = x)"  ref: TS1005@7+1 ':' expected.  lint: TS1005@7+1 @7+1 Expected ":" but found "}"
+A   "var {class,} = x"  ref: TS1005@10+1 ':' expected.  lint: accepts
+A   "var {class}"  ref: TS1005@10+1 ':' expected.  lint: accepts
+C   "var {implements} = x"  ref: checker TS1212@5+10 Identifier expected. 'implements' is a reserved word in strict mode.  lint: accepts
+C   "var {interface} = x"  ref: checker TS1212@5+9 Identifier expected. 'interface' is a reserved word in strict mode.  lint: accepts
+C   "var {package} = x"  ref: checker TS1212@5+7 Identifier expected. 'package' is a reserved word in strict mode.  lint: accepts
+C   "var {private} = x"  ref: checker TS1212@5+7 Identifier expected. 'private' is a reserved word in strict mode.  lint: accepts
+C   "var {arguments} = x"  ref: checker TS1100@5+9 Invalid use of 'arguments' in strict mode.  lint: accepts
+C   "var {eval} = x"  ref: checker TS1100@5+4 Invalid use of 'eval' in strict mode.  lint: accepts
+F   "var {of} = x"  ref: ok  lint: accepts
+F   "var {async} = x"  ref: ok  lint: accepts
+F   "var {type} = x"  ref: ok  lint: accepts
+A   "var {super} = x"  ref: TS1005@10+1 ':' expected.  lint: accepts
+A   "var {import} = x"  ref: TS1005@11+1 ':' expected.  lint: accepts
+A   "var {export} = x"  ref: TS1005@11+1 ':' expected.  lint: accepts
+A   "var {default} = x"  ref: TS1005@12+1 ':' expected.  lint: accepts
+A   "var {void} = x"  ref: TS1005@9+1 ':' expected.  lint: accepts
+A   "var {delete} = x"  ref: TS1005@11+1 ':' expected.  lint: accepts
+A   "var {const} = x"  ref: TS1005@10+1 ':' expected.  lint: accepts
+A   "var {var} = x"  ref: TS1005@8+1 ':' expected.  lint: accepts
+A   "var {with} = x"  ref: TS1005@9+1 ':' expected.  lint: accepts
+A   "var {false} = x"  ref: TS1005@10+1 ':' expected.  lint: accepts
+B=  "var {class()} = x"  ref: TS1005@10+1 ':' expected. | TS1109@11  lint: TS1005@10+1 @10+1 Expected ":" but found "("
+B=  "var {class(){}} = x"  ref: TS1005@10+1 ':' expected. | TS1005@12  lint: TS1005@10+1 @10+1 Expected ":" but found "("
+B=  "var {a()} = x"  ref: TS1005@6+1 ',' expected. | TS1109@7  lint: TS1005@6+1 @6+1 Expected ":" but found "("
+B=  "var {get a(){}} = x"  ref: TS1005@9+1 ',' expected. | TS1005@10  lint: TS1005@9+1 @9+1 Expected "}" but found "a"
+B=  "var {a b} = x"  ref: TS1005@7+1 ',' expected.  lint: TS1005@7+1 @7+1 Expected "}" but found "b"
+B!  "var {a,, b} = x"  ref: TS1180@7+1 Property destructuring pattern expected.  lint: TS1003@7+1 @7+1 Expected identifier but found ","
+B=  "var {'a'} = x"  ref: TS1005@8+1 ':' expected.  lint: TS1005@8+1 @8+1 Expected ":" but found "}"
+B=  "var {1} = x"  ref: TS1005@6+1 ':' expected.  lint: TS1005@6+1 @6+1 Expected ":" but found "}"
+B=  "var {[a]} = x"  ref: TS1005@8+1 ':' expected.  lint: TS1005@8+1 @8+1 Expected ":" but found "}"
+B!  "var {#a} = x"  ref: TS1005@7+1 ':' expected.  lint: TS1003@5+2 @5+2 Expected identifier but found "#a"
+C   "function* g() { var {yield} = x }"  ref: checker TS1212@21+5 Identifier expected. 'yield' is a reserved word in strict mode.  lint: accepts
+C   "async function f() { var {await} = x }"  ref: checker TS1359@26+5 Identifier expected. 'await' is a reserved word that cannot be used here.  lint: accepts
+## g a binding property that is one reserved word: JavaScript
+A   [js] "var {class} = x"  ref: TS1005@10+1 ':' expected.  lint: accepts
+A   [js] "function f({this}) {}"  ref: TS1005@16+1 ':' expected.  lint: accepts
+A   [js] "var {enum} = x"  ref: TS1005@9+1 ':' expected.  lint: accepts
+## h an arrow parameter that is more than a binding
+A   "(a!) => 1"  ref: TS1005@5+2 ';' expected.  lint: accepts
+A   "(a as T) => 1"  ref: TS1005@9+2 ';' expected.  lint: accepts
+A   "(<T>a) => 1"  ref: TS1005@7+2 ';' expected.  lint: accepts
+A   "((a)) => 1"  ref: TS1005@6+2 ';' expected.  lint: accepts
+A   "(a satisfies T) => 1"  ref: TS1005@16+2 ';' expected.  lint: accepts
+A   "(a!, b) => 1"  ref: TS1005@8+2 ';' expected.  lint: accepts
+A   "async (a!) => 1"  ref: TS1005@11+2 ';' expected.  lint: accepts
+A   "([a!]) => 1"  ref: TS1005@7+2 ';' expected.  lint: accepts
+A   "({a: b!}) => 1"  ref: TS1005@10+2 ';' expected.  lint: accepts
+A   "(a! = 1) => 1"  ref: TS1005@9+2 ';' expected.  lint: accepts
+A   "((a), b) => 1"  ref: TS1005@9+2 ';' expected.  lint: accepts
+A   "((a) = 1) => 1"  ref: TS1005@10+2 ';' expected.  lint: accepts
+A   "([(a)]) => 1"  ref: TS1005@8+2 ';' expected.  lint: accepts
+A   "({a: (b)}) => 1"  ref: TS1005@11+2 ';' expected.  lint: accepts
+A   "(a as any as T) => 1"  ref: TS1005@16+2 ';' expected.  lint: accepts
+A   "(a!: T) => 1"  ref: TS1005@3+1 ')' expected. | TS1434@5  lint: accepts
+A   "<T>(a!) => 1"  ref: TS1005@8+2 ';' expected.  lint: accepts
+A   "((a!)) => 1"  ref: TS1005@7+2 ';' expected.  lint: accepts
+A   "(...a!) => 1"  ref: TS1005@5+1 ',' expected.  lint: accepts
+A   "(...(a)) => 1"  ref: TS1003@4+1 Identifier expected. | TS1005@7  lint: accepts
+A   "([...a!]) => 1"  ref: TS1005@10+2 ';' expected.  lint: accepts
+A   "({...a!}) => 1"  ref: TS1005@10+2 ';' expected.  lint: accepts
+A   "([a as T]) => 1"  ref: TS1005@4+2 ',' expected. | TS1005@7  lint: accepts
+A   "({a: b as T}) => 1"  ref: TS1005@7+2 ',' expected. | TS1005@10  lint: accepts
+F   "({a = 1!}) => 1"  ref: ok  lint: accepts
+F   "(a = b!) => 1"  ref: ok  lint: accepts
+F   "(a = (b)) => 1"  ref: ok  lint: accepts
+F   "(a = b as T) => 1"  ref: ok  lint: accepts
+F   "([a = b!]) => 1"  ref: ok  lint: accepts
+F   "({a: b = c!}) => 1"  ref: ok  lint: accepts
+A   "(a!!) => 1"  ref: TS1005@6+2 ';' expected.  lint: accepts
+A   "((a) as T) => 1"  ref: TS1005@11+2 ';' expected.  lint: accepts
+A   "(a! as T) => 1"  ref: TS1005@10+2 ';' expected.  lint: accepts
+A   "async ((a)) => 1"  ref: TS1005@12+2 ';' expected.  lint: accepts
+A   "async (a as T) => 1"  ref: TS1005@15+2 ';' expected.  lint: accepts
+A   "async (<T>a) => 1"  ref: TS1005@13+2 ';' expected.  lint: accepts
+B!  "((a, b)) => 1"  ref: TS1005@9+2 ';' expected.  lint: nocode @2+0 Invalid binding pattern
+A   "(a, (b)) => 1"  ref: TS1005@9+2 ';' expected.  lint: accepts
+A   "([a], (b)) => 1"  ref: TS1005@11+2 ';' expected.  lint: accepts
+A   "(((a))) => 1"  ref: TS1005@8+2 ';' expected.  lint: accepts
+B=  "(a)! => 1"  ref: TS1005@5+2 ';' expected.  lint: TS1005@5+2 @5+2 Expected ";" but found "=>"
+B=  "(a) as T => 1"  ref: TS1005@9+2 ';' expected.  lint: TS1005@9+2 @9+2 Expected ";" but found "=>"
+A   "((a)): void => 1"  ref: TS1005@5+1 ';' expected. | TS1109@12  lint: accepts
+A   "(a!): void => 1"  ref: TS1005@4+1 ';' expected. | TS1109@11  lint: accepts
+A   "((a)?: T) => 1"  ref: TS1109@5+1 Expression expected. | TS1005@10  lint: accepts
+B=  "(a?!) => 1"  ref: TS1109@4+1 Expression expected. | TS1005@6  lint: TS1109@4+1 @4+1 Unexpected )
+A   "(a!?) => 1"  ref: TS1109@4+1 Expression expected. | TS1005@6  lint: accepts
+## i other members that Bun reads in its own way
+B=  "class C { get x() x }"  ref: TS1005@18+1 '{' expected.  lint: TS1005@18+1 @18+1 Expected ";" but found "x"
+B=  "class C { get x(): number x }"  ref: TS1005@26+1 '{' expected.  lint: TS1005@26+1 @26+1 Expected ";" but found "x"
+B=  "class C { set x(v) x }"  ref: TS1005@19+1 '{' expected.  lint: TS1005@19+1 @19+1 Expected ";" but found "x"
+B=  "({ get x() x })"  ref: TS1005@11+1 '{' expected.  lint: TS1005@11+1 @11+1 Expected "{" but found "x"
+B=  "class C { get x() => 1 }"  ref: TS1005@18+2 '{' expected.  lint: TS1005@18+2 @18+2 Expected ";" but found "=>"
+D   "class C { 'constructor': number }"  ref: checker TS18006@10+13 Classes may not have a field named 'constructor'.  lint: nocode @10+13 Invalid field name
+D   "class C { \"constructor\" }"  ref: checker TS18006@10+13 Classes may not have a field named 'constructor'.  lint: nocode @10+13 Invalid field name
+F   "class C { constructor\n() {} }"  ref: ok  lint: accepts
+C   "class C { constructor\n(): void }"  ref: checker TS2390@10+11 Constructor implementation is missing. | TS1093@26+4 Type annotation cannot appear on a constructor declaration.  lint: accepts
+C   "class C { static\nconstructor() {} }"  ref: checker TS1089@10+6 'static' modifier cannot appear on a constructor declaration.  lint: accepts
+B!  "class C { constructor }"  ref: TS1005@22+1 '(' expected.  lint: nocode @10+11 Invalid field name
+B!  "class C { constructor\n x }"  ref: TS1005@23+1 '(' expected.  lint: nocode @10+11 Invalid field name
+B!  "class C { get constructor }"  ref: TS1005@26+1 '(' expected.  lint: nocode @14+11 Class constructor cannot be a getter
+B!  "class C { async constructor }"  ref: TS1005@28+1 '(' expected.  lint: nocode @16+11 Class constructor cannot be an async function
+B=  "class C { constructor<T> }"  ref: TS1005@25+1 '(' expected.  lint: TS1005@25+1 @25+1 Expected "(" but found "}"
+F   "class C { public\nconstructor() {} }"  ref: ok  lint: accepts
+D   "class C { get\nconstructor() {} }"  ref: checker TS1341@14+11 Class constructor may not be an accessor.  lint: nocode @14+11 Class constructor cannot be a getter
+C   "class C { static *constructor() {} }"  ref: checker TS1368@18+11 Class constructor may not be a generator.  lint: accepts
+C   "class C { static get constructor() { return 1 } }"  ref: checker TS1341@21+11 Class constructor may not be an accessor.  lint: accepts
+C   "class C { static async constructor() {} }"  ref: checker TS1089@10+6 'static' modifier cannot appear on a constructor declaration.  lint: accepts
+C   "class C { constructor() {} 'constructor'() {} }"  ref: checker TS2392@10+11 Multiple constructor implementations are not allowed. | TS2392@27+20 Multiple constructor implementations are not allowed.  lint: accepts
+F   "class C { ['constructor']: number }"  ref: ok  lint: accepts
+B!  "class C { static constructor: number }"  ref: TS1005@28+1 '(' expected.  lint: nocode @17+11 Invalid field name
+D   "class C { static 1n = 1 }"  ref: checker TS1539@17+2 A 'bigint' literal cannot be used as a property name.  lint: TS1005@17+2 @17+2 Expected ";" but found "1n"
+E   "class C { static 1n() {} }"  ref: ok  lint: TS1005@17+2 @17+2 Expected ";" but found "1n"
+D   "class C { public 1n = 1 }"  ref: checker TS1539@17+2 A 'bigint' literal cannot be used as a property name.  lint: TS1005@17+2 @17+2 Expected ";" but found "1n"
+D   "class C { readonly 1n = 1 }"  ref: checker TS1539@19+2 A 'bigint' literal cannot be used as a property name.  lint: TS1005@19+2 @19+2 Expected ";" but found "1n"
+E   "class C { async 1n() {} }"  ref: ok  lint: TS1005@16+2 @16+2 Expected ";" but found "1n"
+E   "class C { set 1n(v) {} }"  ref: ok  lint: TS1005@14+2 @14+2 Expected ";" but found "1n"
+D   "class C { accessor 1n = 1 }"  ref: checker TS1539@19+2 A 'bigint' literal cannot be used as a property name.  lint: TS1005@19+2 @19+2 Expected ";" but found "1n"
+D   "class C { declare 1n: number }"  ref: checker TS1539@18+2 A 'bigint' literal cannot be used as a property name.  lint: TS1005@18+2 @18+2 Expected ";" but found "1n"
+F   "class C { *1n() {} }"  ref: ok  lint: accepts
+E   "({ get 1n() { return 1 } })"  ref: ok  lint: TS1005@7+2 @7+2 Expected "}" but found "1n"
+E   "({ async 1n() {} })"  ref: ok  lint: TS1005@9+2 @9+2 Expected "}" but found "1n"
+C   "({ 1n: 1 })"  ref: checker TS1539@3+2 A 'bigint' literal cannot be used as a property name.  lint: accepts
+C   "class C { 1n = 1 }"  ref: checker TS1539@10+2 A 'bigint' literal cannot be used as a property name.  lint: accepts
+F   "class C { 1n() {} }"  ref: ok  lint: accepts
+F   "class C { get 1() { return 1 } }"  ref: ok  lint: accepts
+F   "class C { static 'a' = 1 }"  ref: ok  lint: accepts
+E   "class C { get 0x1n() { return 1 } }"  ref: ok  lint: TS1005@14+4 @14+4 Expected ";" but found "0x1n"
+## i members named by a bigint: JavaScript
+E   [js] "class C { get 1n() { return 1 } }"  ref: ok  lint: TS1005@14+2 @14+2 Expected ";" but found "1n"
+E   [js] "class C { static 1n() {} }"  ref: ok  lint: TS1005@17+2 @17+2 Expected ";" but found "1n"
+E   [js] "({ get 1n() { return 1 } })"  ref: ok  lint: TS1005@7+2 @7+2 Expected "}" but found "1n"
+E   [js] "({ async 1n() {} })"  ref: ok  lint: TS1005@9+2 @9+2 Expected "}" but found "1n"
+# counts {"A":142,"B!":41,"C":86,"F":77,"B=":50,"D":39,"B~":5,"E":10}

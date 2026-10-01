@@ -1,65 +1,58 @@
 #!/usr/bin/env python3
-# usage: compare-release.py <observed/instances.tsv> <raw.jsonl of this survey> <raw-release.jsonl of an earlier survey>
-# Holds the debug build against a release build of the same sources, instance by instance: the class of the run
-# (silent, diagnostic, not laid out, died) and, where both printed diagnostics, the lines of stderr.
-# raw-release.jsonl is the file of round2/default-check-classification (probes/raw.ts): every run instance through
-# `<release binary> --lint <operands>`, one JSON line each with exitCode, signal, stderr and notLaid.
+# usage: compare-release.py <observed/instances.tsv> <raw.jsonl> <release/observed/instances.tsv> <release/observed/raw.jsonl>
+# Holds the survey of one binary against the survey of another, instance by instance: the class of the run (silent,
+# diagnostic, not laid out, died, ...) with its first code and, where both printed something, the bytes of stderr.
+# Made for the debug build against the release build of the same sources (release/ beside this script).
 import json
 import sys
 
-table_path, raw_path, release_path = sys.argv[1:4]
-debug = {}
-for line in open(table_path, encoding="utf8"):
-    if not line.strip():
-        continue
-    name, kind, case_path, outcome, cls, code, reason = (line.rstrip("\n").split("\t") + [""] * 7)[:7]
-    debug[name] = {"kind": kind, "class": cls, "code": code, "outcome": outcome, "reason": reason}
-raw = {}
-for line in open(raw_path, encoding="utf8"):
-    if line.strip():
-        r = json.loads(line)
-        raw[r["name"]] = r
-release = {}
-for line in open(release_path, encoding="utf8"):
-    if line.strip():
-        r = json.loads(line)
-        release[r["name"]] = r
+table_path, raw_path, other_table_path, other_raw_path = sys.argv[1:5]
 
 
-def release_class(r):
-    if "notLaid" in r:
-        return "not-laid-out"
-    if r.get("timedOut"):
-        return "timeout"
-    if r.get("signal") is not None or r.get("exitCode") not in (0, 2) or r.get("stdout"):
-        return "died"
-    return "diagnostic" if r.get("stderr") else "silent"
+def table_of(path):
+    out = {}
+    for line in open(path, encoding="utf8"):
+        if not line.strip():
+            continue
+        name, kind, case_path, outcome, cls, code, reason = (line.rstrip("\n").split("\t") + [""] * 7)[:7]
+        out[name] = {"kind": kind, "class": cls, "code": code, "outcome": outcome, "reason": reason}
+    return out
 
 
-only_debug = sorted(set(debug) - set(release))
-only_release = sorted(set(release) - set(debug))
-print(f"instances: debug {len(debug)}, release {len(release)}; only in debug {len(only_debug)}, only in release {len(only_release)}")
+def raw_of(path):
+    out = {}
+    for line in open(path, encoding="utf8"):
+        if line.strip():
+            r = json.loads(line)
+            out[r["name"]] = r
+    return out
+
+
+mine, other = table_of(table_path), table_of(other_table_path)
+mine_raw, other_raw = raw_of(raw_path), raw_of(other_raw_path)
+only_mine = sorted(set(mine) - set(other))
+only_other = sorted(set(other) - set(mine))
+print(f"instances: here {len(mine)}, there {len(other)}; only here {len(only_mine)}, only there {len(only_other)}")
 differ = []
-same_class = 0
-same_lines = 0
-other_lines = []
-for name in sorted(set(debug) & set(release)):
-    d = debug[name]
-    rc = release_class(release[name])
-    if d["class"] != rc:
-        differ.append((name, d["class"], d["code"], rc, d["reason"]))
+same = 0
+same_bytes = 0
+other_bytes = []
+for name in sorted(set(mine) & set(other)):
+    a, b = mine[name], other[name]
+    if (a["class"], a["code"]) != (b["class"], b["code"]):
+        differ.append((name, a, b))
         continue
-    same_class += 1
-    if rc == "diagnostic" and name in raw:
-        if raw[name].get("stderr") == release[name].get("stderr"):
-            same_lines += 1
+    same += 1
+    if name in mine_raw and name in other_raw:
+        if mine_raw[name].get("stderr") == other_raw[name].get("stderr") and mine_raw[name].get("exitCode") == other_raw[name].get("exitCode"):
+            same_bytes += 1
         else:
-            other_lines.append(name)
-print(f"same class of run in both builds: {same_class}; another class: {len(differ)}")
-for name, cls, code, rc, reason in differ:
-    print(f"  {name}: debug {cls} {code} ({reason[:160]}); release {rc}")
-print(f"both printed diagnostics: the same bytes of stderr {same_lines}, other bytes {len(other_lines)}")
-for name in other_lines[:40]:
+            other_bytes.append(name)
+print(f"same class of run and first code in both: {same}; another: {len(differ)}")
+for name, a, b in differ:
+    print(f"  {name}: here {a['class']} {a['code']} ({a['reason'][:160]}); there {b['class']} {b['code']}")
+print(f"both have a raw run: the same exit code and bytes of stderr {same_bytes}, other {len(other_bytes)}")
+for name in other_bytes[:40]:
     print(f"  {name}")
-    print("    debug:   " + raw[name].get("stderr", "")[:300].replace("\n", " | "))
-    print("    release: " + release[name].get("stderr", "")[:300].replace("\n", " | "))
+    print("    here:  " + (mine_raw[name].get("stderr") or "")[:300].replace("\n", " | "))
+    print("    there: " + (other_raw[name].get("stderr") or "")[:300].replace("\n", " | "))

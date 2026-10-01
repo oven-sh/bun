@@ -11,7 +11,8 @@ here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 scratch=${1:-/tmp/ls1a-scratch}
 work=${2:-/tmp/ls1a}
 out=${3:-$here}
-release=${RELEASE_RAW:-/tmp/dcc/raw-release.jsonl}
+# The survey of the release build of the same sources, to hold this one against.
+release=${RELEASE_SURVEY:-$here/release/observed}
 log=$work/driver.log
 if ! grep -q '^### finished' "$log" 2> /dev/null; then
   echo "finish.sh: the driver has not ended: $(tail -1 "$log" 2> /dev/null || echo "no $log")"
@@ -44,8 +45,9 @@ for r in other[:50]:
         print(f"      {line}")
 EOF
 fi
-if [ -s "$release" ]; then
-  python3 "$here/compare-release.py" "$out/observed/instances.tsv" "$work/raw.jsonl" "$release" > "$out/observed/compare-release.txt"
+if [ -z "${DERIVED:-}" ] && [ -s "$release/instances.tsv" ] && [ -s "$release/raw.jsonl" ]; then
+  python3 "$here/compare-release.py" "$out/observed/instances.tsv" "$work/raw.jsonl" "$release/instances.tsv" "$release/raw.jsonl" \
+    > "$out/observed/compare-release.txt"
 fi
 
 acquired=$(sed -n 's/^### lock acquired \([^ ]*\).*/\1/p' "$log" | head -1)
@@ -103,10 +105,8 @@ bun "$here/crashes-md.ts" "$out/observed" "$work/raw.jsonl" "$here/class-c-cause
   echo "Class C instances where Bun prints a diagnostic and TypeScript none (CRASHES.md, last section, for the parser unit):"
   sed -n '1p;4,/^$/p' "$out/observed/class-c-diagnostics.txt" | sed 's/^/  /'
   if [ -s "$out/observed/compare-release.txt" ]; then
-    echo "The debug build against the release build of the same src/ (raw runs of round2/default-check-classification, $release):"
-    head -2 "$out/observed/compare-release.txt" | sed 's/^/  /'
-    grep -A12 '^same class of run' "$out/observed/compare-release.txt" | grep '^  ' | head -12 | sed 's/^/  /'
-    grep '^both printed diagnostics' "$out/observed/compare-release.txt" | sed 's/^/  /'
+    echo "This build (here) against the release build of the same src/ (there: release/ of round2/lint-survey/bottom-up), observed/compare-release.txt:"
+    head -40 "$out/observed/compare-release.txt" | sed 's/^/  /'
     echo
   fi
   echo "expectations.json: no name enters. No instance of class E passes (the command prints no code of TypeScript: every"

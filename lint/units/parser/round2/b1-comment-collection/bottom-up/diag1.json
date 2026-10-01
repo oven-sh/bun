@@ -1,0 +1,15 @@
+[
+ ["ts", "type A = B | /*c*/ () => void;"],
+ ["ts", "type A = B | () => void;"],
+ ["ts", "type A = B & /*c*/ new () => C;"],
+ ["ts", "let x: A< /*1*/ >;"],
+ ["ts", "f< /*2*/ >();"],
+ ["ts", "let y: B<C, /*3*/ >;"],
+ ["ts", "let f = (a): /*c*/ => a;"],
+ ["ts", "let f = (a): => a;"],
+ ["ts", "let g = c ? (a): /*c*/ => a : b;"],
+ ["ts", "let x: A< // c\n >;"],
+ ["tsx", "let e = <A< /*1*/ > />;"],
+ ["ts", "let x: /*c*/ ;"],
+ ["ts", "let x: (a: /*c*/ ) => void;"]
+]

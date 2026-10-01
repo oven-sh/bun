@@ -1,0 +1,191 @@
+--- leading-ts [ts]
+4..8 line "// a"
+11..19 block "/* b\n */"
+20..28 jsdoc "/** c */"
+40..44 line "// d"
+--- leading-js [js]
+0..4 line "// a"
+5..12 block "/* b */"
+13..21 jsdoc "/** c */"
+--- leading-jsx [jsx]
+0..7 block "/* a */"
+8..12 line "// b"
+--- leading-tsx [tsx]
+0..8 jsdoc "/** a */"
+--- only-comments [js]
+0..4 line "// a"
+5..12 block "/* b */"
+--- jsdoc-only [ts]
+0..10 jsdoc "/** doc */"
+--- hashbang-ts [ts]
+19..26 block "/* a */"
+27..31 line "// b"
+--- hashbang-js-eof [js]
+5..9 line "// a"
+--- kinds [ts]
+0..4 block "/**/"
+5..10 jsdoc "/***/"
+11..19 jsdoc "/** d */"
+20..27 block "/* b */"
+28..32 line "// l"
+33..45 block "/*! legal */"
+46..55 line "//! legal"
+--- eof-line [js]
+11..18 line "// tail"
+--- eof-block [js]
+11..21 block "/* tail */"
+--- line-breaks [ts]
+0..4 line "// a"
+13..17 line "// b"
+27..31 line "// c"
+--- non-ascii [ts]
+12..20 block "/* ü */"
+21..26 line "// ñ"
+41..48 block "/* z */"
+--- look-alikes-js [js]
+35..44 block "/* yes */"
+103..112 block "/* yes */"
+--- look-alikes-ts [ts]
+30..39 block "/* yes */"
+68..74 line "// yes"
+--- look-alikes-jsx [jsx]
+50..59 block "/* yes */"
+--- jsx-open-tag [jsx]
+10..15 block "/*1*/"
+20..25 block "/*2*/"
+28..33 block "/*3*/"
+36..41 block "/*4*/"
+46..50 line "// 5"
+57..62 block "/*6*/"
+67..72 block "/*7*/"
+79..84 block "/*8*/"
+87..92 block "/*9*/"
+--- jsx-close-tag [tsx]
+13..18 block "/*1*/"
+28..33 block "/*2*/"
+39..44 block "/*3*/"
+49..54 block "/*4*/"
+--- jsx-close-tag-line [jsx]
+15..19 line "// 1"
+--- jsx-member-ns [tsx]
+11..16 block "/*1*/"
+19..24 block "/*2*/"
+27..32 block "/*3*/"
+50..55 block "/*4*/"
+60..65 block "/*5*/"
+--- jsx-fragment [jsx]
+10..15 block "/*1*/"
+21..26 block "/*2*/"
+--- jsx-nested [tsx]
+11..16 block "/*1*/"
+21..26 block "/*2*/"
+33..38 block "/*3*/"
+43..48 block "/*4*/"
+55..60 block "/*5*/"
+63..68 block "/*6*/"
+--- jsx-type-arguments [tsx]
+13..18 block "/*1*/"
+21..26 block "/*2*/"
+34..39 block "/*3*/"
+42..47 block "/*4*/"
+54..59 block "/*5*/"
+--- jsx-directive-in-tag [tsx]
+15..34 line "// @ts-expect-error"
+47..63 block "/* @ts-ignore */"
+--- type-arguments [ts]
+10..15 block "/*1*/"
+18..23 block "/*2*/"
+26..31 block "/*3*/"
+36..41 block "/*4*/"
+45..50 block "/*5*/"
+56..61 block "/*6*/"
+64..69 block "/*7*/"
+73..78 block "/*8*/"
+89..94 block "/*9*/"
+99..105 block "/*10*/"
+--- type-arguments-empty [ts]
+10..15 block "/*1*/"
+31..36 block "/*2*/"
+--- computed-name-in-type [ts]
+14..19 block "/*1*/"
+24..29 block "/*2*/"
+32..37 block "/*3*/"
+--- initializer-in-function-type [ts]
+14..19 block "/*1*/"
+26..31 block "/*2*/"
+34..39 block "/*3*/"
+44..49 block "/*4*/"
+--- initializer-in-property-signature [ts]
+25..30 block "/*1*/"
+35..40 block "/*2*/"
+--- accessor-body-in-type-literal [ts]
+19..24 block "/*1*/"
+34..39 block "/*2*/"
+51..56 block "/*3*/"
+61..66 block "/*4*/"
+--- import-attributes-in-type [ts]
+36..41 block "/*1*/"
+44..49 block "/*2*/"
+--- implements-expression [ts]
+21..26 block "/*1*/"
+31..36 block "/*2*/"
+40..45 block "/*3*/"
+48..53 block "/*4*/"
+57..62 block "/*5*/"
+--- extends-expression [ts]
+18..23 block "/*1*/"
+26..31 block "/*2*/"
+34..39 block "/*3*/"
+42..47 block "/*4*/"
+50..55 block "/*5*/"
+58..63 block "/*6*/"
+--- interface-extends-expression [ts]
+22..27 block "/*1*/"
+32..37 block "/*2*/"
+41..46 block "/*3*/"
+--- class-index-initializer [ts]
+27..32 block "/*1*/"
+35..40 block "/*2*/"
+50..55 block "/*3*/"
+--- class-index-computed [ts]
+28..33 block "/*1*/"
+38..43 block "/*2*/"
+51..56 block "/*3*/"
+--- class-index-function-default [ts]
+30..35 block "/*1*/"
+46..51 block "/*2*/"
+--- class-index-accessor [ts]
+33..38 block "/*1*/"
+50..55 block "/*2*/"
+60..65 block "/*3*/"
+--- erased [ts]
+0..5 block "/*1*/"
+13..18 block "/*2*/"
+27..32 block "/*3*/"
+39..44 block "/*4*/"
+47..52 block "/*5*/"
+55..60 block "/*6*/"
+68..73 block "/*7*/"
+76..81 block "/*8*/"
+92..97 block "/*9*/"
+100..106 block "/*10*/"
+111..117 block "/*11*/"
+123..129 block "/*12*/"
+132..138 block "/*13*/"
+141..147 block "/*14*/"
+150..156 block "/*15*/"
+--- wrappers [ts]
+10..15 block "/*1*/"
+18..23 block "/*2*/"
+26..31 block "/*3*/"
+35..40 block "/*4*/"
+43..48 block "/*5*/"
+61..66 block "/*6*/"
+69..74 block "/*7*/"
+90..95 block "/*8*/"
+98..103 block "/*9*/"
+106..112 block "/*10*/"
+115..121 block "/*11*/"
+134..140 block "/*12*/"
+151..157 block "/*13*/"
+160..166 block "/*14*/"

@@ -25,12 +25,12 @@ function eslintReports(code, ts, sourceType) {
 	if (ts) {
 		const messages = linter.verify(code, { rules: { "no-unreachable": 2 }, languageOptions: { parser: getTs() } });
 		if (messages.some(m => m.fatal)) return { error: messages.find(m => m.fatal).message };
-		return { reports: messages.map(m => `${m.line}:${m.column}`), sourceType: "module" };
+		return { reports: messages.filter(m => m.ruleId === "no-unreachable").map(m => `${m.line}:${m.column}`), sourceType: "module" };
 	}
 	let first = null;
 	for (const type of [sourceType || "module", "commonjs", "script"]) {
 		const messages = linter.verify(code, { rules: { "no-unreachable": 2 }, languageOptions: { ecmaVersion: "latest", sourceType: type, parserOptions: { ecmaFeatures: { jsx: true } } } });
-		if (!messages.some(m => m.fatal)) return { reports: messages.map(m => `${m.line}:${m.column}`), sourceType: type };
+		if (!messages.some(m => m.fatal)) return { reports: messages.filter(m => m.ruleId === "no-unreachable").map(m => `${m.line}:${m.column}`), sourceType: type };
 		first = first || { error: messages.find(m => m.fatal).message };
 	}
 	return first;

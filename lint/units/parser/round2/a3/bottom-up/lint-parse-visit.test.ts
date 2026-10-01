@@ -1,7 +1,7 @@
 import { Glob } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // With debug assertions, `Parser::parse` reads BUN_DEBUG_TEST_LINT_PARSE_THEN_VISIT and then gives its parse pass the
@@ -64,11 +64,19 @@ let found: string[] | undefined;
 function filesToCompare(): string[] {
   if (found) return found;
   const files: string[] = [];
-  for (const dir of ["test", "src/js"]) {
-    for (const file of new Glob("**/*.{ts,tsx,mts,cts}").scanSync({ cwd: join(root, dir) })) {
-      const path = `${dir}/${file.replaceAll("\\", "/")}`;
-      // An installed package is no part of the claim.
-      if (!path.includes("/node_modules/")) files.push(path);
+  const glob = new Glob("**/*.{ts,tsx,mts,cts}");
+  for (const top of ["test", "src/js"]) {
+    for (const entry of readdirSync(join(root, top), { withFileTypes: true })) {
+      // An installed package is no part of the claim, and the packages of test/ are not walked.
+      if (entry.name === "node_modules") continue;
+      if (!entry.isDirectory()) {
+        if (/\.(ts|tsx|mts|cts)$/.test(entry.name)) files.push(`${top}/${entry.name}`);
+        continue;
+      }
+      for (const file of glob.scanSync({ cwd: join(root, top, entry.name) })) {
+        const path = `${top}/${entry.name}/${file.replaceAll("\\", "/")}`;
+        if (!path.includes("/node_modules/")) files.push(path);
+      }
     }
   }
   return (found = files.sort());

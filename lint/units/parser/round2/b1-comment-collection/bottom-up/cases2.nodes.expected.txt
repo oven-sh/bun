@@ -1,0 +1,65 @@
+--- ts-fn-init [ts] "type T = (a = 1 /*1*/ , b = 2 /*2*/ ) => void;"
+ TypeAliasDeclaration pos=0 start=0 end=46
+  FunctionType pos=8 start=9 end=45 parameters[10,29)
+   Parameter pos=10 start=10 end=15
+   Parameter pos=23 start=24 end=29
+--- ts-prop-init-last [ts] "type T = { a: number = 1 /*1*/ };"
+ TypeAliasDeclaration pos=0 start=0 end=33
+  TypeLiteral pos=8 start=9 end=32 members[10,24)
+   PropertySignature pos=10 start=11 end=24
+--- ts-mapped-no-semi [ts] "type T = { [K in U]? /*1*/ };"
+ TypeAliasDeclaration pos=0 start=0 end=29
+  MappedType pos=8 start=9 end=28 members[20,20)
+   TypeParameter pos=12 start=12 end=18
+    TypeReference pos=16 start=17 end=18
+--- ts-mapped-minus [ts] "type T = { [K in U]-? /*1*/ };"
+ TypeAliasDeclaration pos=0 start=0 end=30
+  MappedType pos=8 start=9 end=29 members[21,21)
+   TypeParameter pos=12 start=12 end=18
+    TypeReference pos=16 start=17 end=18
+--- ts-computed [ts] "type T = { [a /*1*/ + b /*2*/ ] /*3*/ : 1 };"
+ TypeAliasDeclaration pos=0 start=0 end=44
+  TypeLiteral pos=8 start=9 end=43 members[10,41)
+   PropertySignature pos=10 start=11 end=41
+    ComputedPropertyName pos=10 start=11 end=31
+     BinaryExpression pos=12 start=12 end=23
+    LiteralType pos=39 start=40 end=41
+--- extends-no-targs [ts] "class A extends B /* c */ {}"
+ ClassDeclaration pos=0 start=0 end=28 members[27,27)
+  HeritageClause pos=7 start=8 end=17 types[15,17)
+   ExpressionWithTypeArguments pos=15 start=16 end=17
+--- extends-call-no-targs [ts] "class E extends f /*1*/ ( /*2*/ ) /*3*/ {}"
+ ClassDeclaration pos=0 start=0 end=42 members[41,41)
+  HeritageClause pos=7 start=8 end=33 types[15,33)
+   ExpressionWithTypeArguments pos=15 start=16 end=33
+    CallExpression pos=15 start=16 end=33
+--- implements-expr [ts] "class C implements A /*1*/ [0 /*2*/ ] /*3*/ {}"
+ ClassDeclaration pos=0 start=0 end=46 members[45,45)
+  HeritageClause pos=7 start=8 end=37 types[18,37)
+   ExpressionWithTypeArguments pos=18 start=19 end=37
+    ElementAccessExpression pos=18 start=19 end=37
+--- decl-tparams [ts] "interface I /*1*/ <T> {}\ntype A /*2*/ <U> = U;\n"
+ InterfaceDeclaration pos=0 start=0 end=24 typeParameters[19,20) members[23,23)
+  TypeParameter pos=19 start=19 end=20
+ TypeAliasDeclaration pos=24 start=25 end=46 typeParameters[39,40)
+  TypeParameter pos=39 start=39 end=40
+  TypeReference pos=43 start=44 end=45
+--- paren-comment [ts] "(a) /* c */ + b;\nx = (y) // d\n;\n"
+ ExpressionStatement pos=0 start=0 end=16
+  BinaryExpression pos=0 start=0 end=15
+   ParenthesizedExpression pos=0 start=0 end=3
+ ExpressionStatement pos=16 start=17 end=31
+  BinaryExpression pos=16 start=17 end=24
+   ParenthesizedExpression pos=20 start=21 end=24
+--- union-fn [ts] "type A = B | /*c*/ () => void;"
+ TypeAliasDeclaration pos=0 start=0 end=30
+  UnionType pos=8 start=9 end=29 types[8,29)
+   TypeReference pos=8 start=9 end=10
+   FunctionType pos=12 start=19 end=29 parameters[20,20)
+--- erased [ts] "/*1*/ export /*2*/ declare /*3*/ const /*4*/ a /*5*/ : /*6*/ number /*7*/ ; /*8*/ interface /*9*/ I /*10*/ { } /*11*/ type /*12*/ T /*13*/ = /*14*/ 1 /*15*/ ;"
+ FirstStatement pos=0 start=6 end=75 modifiers[0,26)
+  VariableDeclarationList pos=26 start=33 end=67
+   VariableDeclaration pos=38 start=45 end=67
+ InterfaceDeclaration pos=75 start=82 end=110 members[108,108)
+ TypeAliasDeclaration pos=110 start=118 end=158
+  LiteralType pos=140 start=148 end=149

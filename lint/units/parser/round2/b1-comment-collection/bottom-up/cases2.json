@@ -1,0 +1,14 @@
+[
+ ["ts-fn-init", "ts", "type T = (a = 1 /*1*/ , b = 2 /*2*/ ) => void;"],
+ ["ts-prop-init-last", "ts", "type T = { a: number = 1 /*1*/ };"],
+ ["ts-mapped-no-semi", "ts", "type T = { [K in U]? /*1*/ };"],
+ ["ts-mapped-minus", "ts", "type T = { [K in U]-? /*1*/ };"],
+ ["ts-computed", "ts", "type T = { [a /*1*/ + b /*2*/ ] /*3*/ : 1 };"],
+ ["extends-no-targs", "ts", "class A extends B /* c */ {}"],
+ ["extends-call-no-targs", "ts", "class E extends f /*1*/ ( /*2*/ ) /*3*/ {}"],
+ ["implements-expr", "ts", "class C implements A /*1*/ [0 /*2*/ ] /*3*/ {}"],
+ ["decl-tparams", "ts", "interface I /*1*/ <T> {}\ntype A /*2*/ <U> = U;\n"],
+ ["paren-comment", "ts", "(a) /* c */ + b;\nx = (y) // d\n;\n"],
+ ["union-fn", "ts", "type A = B | /*c*/ () => void;"],
+ ["erased", "ts", "/*1*/ export /*2*/ declare /*3*/ const /*4*/ a /*5*/ : /*6*/ number /*7*/ ; /*8*/ interface /*9*/ I /*10*/ { } /*11*/ type /*12*/ T /*13*/ = /*14*/ 1 /*15*/ ;"]
+]

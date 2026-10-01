@@ -1,0 +1,14 @@
+"type A = B | /*c*/ () => void;" [ts] => TS1385[12,29) Function type notation must be parenthesized when used in a union type.
+"type A = B | () => void;" [ts] => TS1385[12,23) Function type notation must be parenthesized when used in a union type.
+"type A = B & /*c*/ new () => C;" [ts] => TS1388[12,30) Constructor type notation must be parenthesized when used in an intersection type.
+"let x: A< /*1*/ >;" [ts] => no parse diagnostics
+"f< /*2*/ >();" [ts] => no parse diagnostics
+"let y: B<C, /*3*/ >;" [ts] => no parse diagnostics
+"let f = (a): /*c*/ => a;" [ts] => TS1005[11,12) ',' expected. | TS1005[19,21) ';' expected.
+"let f = (a): => a;" [ts] => TS1005[11,12) ',' expected. | TS1005[13,15) ';' expected.
+"let g = c ? (a): /*c*/ => a : b;" [ts] => TS1005[23,25) '(' expected. | TS1005[28,29) ',' expected.
+"let x: A< // c\n >;" [ts] => no parse diagnostics
+"let e = <A< /*1*/ > />;" [tsx] => no parse diagnostics
+"let x: /*c*/ ;" [ts] => TS1110[13,14) Type expected.
+"let x: (a: /*c*/ ) => void;" [ts] => TS1110[17,18) Type expected.
+6.0.2

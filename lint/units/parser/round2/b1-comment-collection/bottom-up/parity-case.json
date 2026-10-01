@@ -1,0 +1,1 @@
+[["parity","tsx","let e = <div /*1*/ id=\"x\" // 2\n>{/*3*/ a}</div /*4*/ >; /*5*/\nclass F { [k: string = \"a\" /*6*/ ] /*7*/ : number /*8*/ ; }\nclass G { [k: string]: { [a /*9*/ + b]: 1 } /*10*/ ; }\n"]]

@@ -41,6 +41,7 @@ function report(exitCode: number, stdout: string): string {
   return JSON.stringify({ exitCode, stdout, stderr: "" }) + "\n";
 }
 
+const EPERM = 1;
 const EIO = 5;
 
 // On Linux, once the slave side of a pty is closed, read() on the master
@@ -143,8 +144,10 @@ describe.concurrent("cat (builtin)", () => {
     } catch {
       parsed = stdout;
     }
+    // The exit code is the errno the reader failed with: EPERM from epoll_ctl
+    // on Linux. Other platforms fail the read itself, with their own errno.
     expect({ parsed, stderr }).toEqual({
-      parsed: { exitCode: expect.any(Number), stdout: "", stderr: "" },
+      parsed: { exitCode: isLinux ? EPERM : expect.any(Number), stdout: "", stderr: "" },
       stderr: "",
     });
     expect((parsed as { exitCode: number }).exitCode).toBeGreaterThan(0);

@@ -27,6 +27,8 @@ pub(crate) struct Cmd {
     pub(crate) redirection_fd: Option<*mut CowFd>,
     pub(crate) exec: Exec,
     pub(crate) exit_code: Option<ExitCode>,
+    /// The rejected promise of a `< ${stream}` that failed: the command read a truncated stdin.
+    pub(crate) stdin_stream_failed: crate::jsc::strong::Optional,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
@@ -121,7 +123,8 @@ impl BufferedIoClosed {
         const STDOUT_NO: usize = 1;
         const STDERR_NO: usize = 2;
         Self {
-            stdin: if io[STDIN_NO].is_piped() {
+            // A stream's sink ends with the process (`on_process_exit`), so it gates nothing.
+            stdin: if io[STDIN_NO].is_piped() && !matches!(io[STDIN_NO], Stdio::ReadableStream(_)) {
                 Some(false)
             } else {
                 None
@@ -216,6 +219,7 @@ impl Cmd {
             redirection_fd: None,
             exec: Exec::None,
             exit_code: None,
+            stdin_stream_failed: crate::jsc::strong::Optional::empty(),
         }))
     }
 
@@ -293,6 +297,15 @@ impl Cmd {
                 }
                 CmdState::WaitingWriteErr => return Yield::suspended(),
                 CmdState::Done => {
+                    let failed = core::mem::take(&mut interp.as_cmd_mut(this).stdin_stream_failed);
+                    if let (Some(promise), Some(global)) = (
+                        failed.get().and_then(|value| value.as_any_promise()),
+                        interp.global_this_ref(),
+                    ) && !interp.failed()
+                    {
+                        let _ = global.throw_value(promise.result(global.vm()));
+                        return Yield::Failed(this);
+                    }
                     let exit = interp.as_cmd(this).exit_code.unwrap_or(0);
                     let parent = interp.as_cmd(this).base.parent;
                     return interp.child_done(parent, this, exit);
@@ -780,24 +793,31 @@ impl Cmd {
                         )?;
                     }
                 } else if crate::webcore::ReadableStream::from_js(jsval, global)?.is_some() {
-                    panic!("TODO SHELL READABLE STREAM");
-                } else if let Some(req) = jsval.as_::<crate::webcore::Response>() {
-                    // SAFETY: `as_` returns a live JSC-owned `*mut Response`;
-                    // `get_body_value` is `&self`.
-                    let req = unsafe { &*req };
-                    req.get_body_value().to_blob_if_possible();
-                    Interpreter::check_redirect_body(global, req.get_body_value())?;
+                    if !flags.stdin() {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "Cannot redirect stdout/stderr to a ReadableStream"
+                        )));
+                    }
+                    let cx = interp.js_thread().expect("global_this_ref is Some above");
+                    Stdio::extract(&mut stdio[STDIN_NO], &cx, STDIN_NO as i32, jsval, false)?;
+                } else if let Some(body) =
+                    crate::webcore::body::Value::from_request_or_response(jsval)
+                {
                     if flags.stdin() {
-                        let b = req.get_body_value().use_as_any_blob();
-                        stdio[STDIN_NO].extract_blob(global, b, STDIN_NO as i32)?;
-                    }
-                    if flags.stdout() {
-                        let b = req.get_body_value().use_as_any_blob();
-                        stdio[STDOUT_NO].extract_blob(global, b, STDOUT_NO as i32)?;
-                    }
-                    if flags.stderr() {
-                        let b = req.get_body_value().use_as_any_blob();
-                        stdio[STDERR_NO].extract_blob(global, b, STDERR_NO as i32)?;
+                        let cx = interp.js_thread().expect("global_this_ref is Some above");
+                        Stdio::extract(&mut stdio[STDIN_NO], &cx, STDIN_NO as i32, jsval, false)?;
+                    } else {
+                        // SAFETY: the body of the live Request/Response that `interp.jsobjs` roots.
+                        let body = unsafe { &mut *body };
+                        body.to_blob_if_possible();
+                        if flags.stdout() {
+                            let b = body.use_as_any_blob();
+                            stdio[STDOUT_NO].extract_blob(global, b, STDOUT_NO as i32)?;
+                        }
+                        if flags.stderr() {
+                            let b = body.use_as_any_blob();
+                            stdio[STDERR_NO].extract_blob(global, b, STDERR_NO as i32)?;
+                        }
                     }
                 } else {
                     return Err(global.throw(format_args!(

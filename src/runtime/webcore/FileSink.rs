@@ -59,6 +59,8 @@ pub struct FileSink {
     /// A write or source failure that is not a JS value; a JS one lives on `pipe` and sets `stream_js_error`.
     stream_error: JsCell<Option<streams::StreamError>>,
     stream_js_error: Cell<bool>,
+    /// The first failure came from the piped stream, not from a write.
+    source_failed: Cell<bool>,
     /// Bytes accepted since `pipe_stream` (`written` counts buffered bytes again when flushed).
     pub(crate) stream_bytes: Cell<Option<u64>>,
     /// `assign_to_js_stream` holds a ref for the pump promise's reactions, which release it.
@@ -597,6 +599,17 @@ impl FileSink {
         self.stream_error.get().is_some() || self.stream_js_error.get()
     }
 
+    pub(crate) fn source_failed(&self) -> bool {
+        self.source_failed.get()
+    }
+
+    /// Before the failure is recorded: an earlier one, which `settle_stream_done` forgets, is what stopped the source.
+    fn note_source_failure(&self) {
+        if !self.has_stream_error() && self.pipe.get().has_done() {
+            self.source_failed.set(true);
+        }
+    }
+
     /// `record_stream_error` for a JS value: it is held by the pipe's controller cell, not rooted here.
     fn record_js_stream_error(&self, error: JSValue) {
         if self.has_stream_error() {
@@ -1018,6 +1031,7 @@ impl FileSink {
                 written as u64 // @truncate
             }
             WriteResult::Err(err) => {
+                self.record_stream_error(streams::StreamError::Error(err.clone()));
                 return sys::Result::Err(err);
             }
         };
@@ -1235,6 +1249,7 @@ impl FileSink {
             _ => None,
         };
         if let Some(err) = err {
+            self.note_source_failure();
             self.record_stream_error(err);
         }
         if !errored || !is_byte_stream {
@@ -1490,6 +1505,7 @@ impl crate::webcore::sink::JsSinkType for FileSink {
         let _guard = unsafe { RefPtr::init_ref(this) };
         // SAFETY: `_guard` keeps `this` live for this borrow.
         let this = unsafe { &*this };
+        this.note_source_failure();
         this.record_js_stream_error(reason);
         // Not a ByteStream source: `end_from_stream` would flush and end the same way.
         let _ = this.end(None);
@@ -1627,6 +1643,7 @@ impl FileSink {
             pipe: JsCell::new(streams::PipeCell::default()),
             stream_error: JsCell::new(None),
             stream_js_error: Cell::new(false),
+            source_failed: Cell::new(false),
             stream_bytes: Cell::new(None),
             pump_promise_ref: Cell::new(false),
             js_sink_ref: JsCell::new(bun_jsc::strong::Optional::empty()),
@@ -1721,6 +1738,7 @@ impl FileSink {
 
     /// Does not ref or unref.
     fn handle_reject_stream(&self, global_this: &JSGlobalObject, err: JSValue) -> JsResult<()> {
+        self.note_source_failure();
         self.record_js_stream_error(err);
         let aborted = match self.pipe.get().take_stream() {
             Some(stream) => stream.abort(global_this),

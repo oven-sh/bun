@@ -23,6 +23,7 @@ pub(crate) struct Builtin {
     /// Points into the Cmd's `args` storage.
     pub args: Vec<*const c_char>,
     pub(crate) stdin: BuiltinInput,
+    pub(crate) stdin_stream: Option<crate::shell::subproc::StreamStdin>,
     pub(crate) stdout: BuiltinIO,
     pub(crate) stderr: BuiltinIO,
     /// Scratch for `fmt_error_arena`. One outstanding error string at a time.
@@ -510,6 +511,7 @@ impl Builtin {
             kind,
             args,
             stdin,
+            stdin_stream: None,
             stdout,
             stderr,
             err_buf: Vec::new(),
@@ -692,8 +694,16 @@ impl Builtin {
                     return Some(Yield::Failed(cmd));
                 };
                 let jsval = interp.jsobjs[idx];
+                let stream = match Self::redirect_stream(interp, redirect, jsval) {
+                    Ok(stream) => stream,
+                    Err(_) => return Some(Yield::Failed(cmd)),
+                };
 
-                if jsval.js_type().is_array_buffer_like() {
+                if let Some(stream) = stream {
+                    if Self::pipe_stream_to_stdin(interp, cmd, global, stream).is_err() {
+                        return Some(Yield::Failed(cmd));
+                    }
+                } else if jsval.js_type().is_array_buffer_like() {
                     // Each slot gets its own pin + GC root; `None` has thrown OOM.
                     let root = || {
                         let buf = PinnedArrayBuffer::root(global, jsval);
@@ -727,10 +737,6 @@ impl Builtin {
                     // SAFETY: returned a live JSC-owned `*mut Value` borrowed
                     // from a Response/Request wrapper.
                     let body = unsafe { &mut *body };
-                    body.to_blob_if_possible();
-                    if Interpreter::check_redirect_body(global, body).is_err() {
-                        return Some(Yield::Failed(cmd));
-                    }
                     let is_file_blob = matches!(body, crate::webcore::body::Value::Blob(b)
                         if !b.needs_to_read_file());
                     if (redirect.stdout() || redirect.stderr()) && !is_file_blob {
@@ -844,9 +850,85 @@ impl Builtin {
 
     /// Finish the builtin with `exit_code` and signal the owning Cmd.
     pub(crate) fn done(interp: &Interpreter, cmd: NodeId, exit_code: ExitCode) -> Yield {
+        if let Some(stream) = Self::of_mut(interp, cmd).stdin_stream.take() {
+            let failed = stream.finish(&bun_spawn::Status::Exited(bun_spawn::Exited {
+                code: exit_code as u8,
+                ..Default::default()
+            }));
+            interp.as_cmd_mut(cmd).stdin_stream_failed = failed;
+        }
         // Output is written through immediately in `write_no_io`, so there
         // is nothing to flush here.
         Cmd::on_exec_done(interp, cmd, exit_code)
+    }
+
+    fn redirect_stream(
+        interp: &Interpreter,
+        redirect: ast::RedirectFlags,
+        value: crate::jsc::JSValue,
+    ) -> crate::jsc::JsResult<Option<crate::webcore::ReadableStream>> {
+        use crate::api::bun_spawn::stdio::Stdio;
+        use crate::webcore::body::Value;
+        let Some(cx) = interp.js_thread() else {
+            return Ok(None);
+        };
+        if let Some(stream) = crate::webcore::ReadableStream::from_js(value, cx.global())? {
+            if !redirect.stdin() {
+                return Err(cx.global().throw_invalid_arguments(format_args!(
+                    "Cannot redirect stdout/stderr to a ReadableStream"
+                )));
+            }
+            Stdio::check_stream_unused(cx.global(), &stream, b"stdin")?;
+            return Ok(Some(stream));
+        }
+        let Some(body) = Value::from_request_or_response(value).filter(|_| redirect.stdin()) else {
+            return Ok(None);
+        };
+        // SAFETY: the body of the live Request/Response that `interp.jsobjs` roots; the borrow ends here.
+        let is_bytes = unsafe {
+            (*body).to_blob_if_possible();
+            !matches!(*body, Value::Locked(_) | Value::Used | Value::Error(_))
+        };
+        if is_bytes {
+            return Ok(None);
+        }
+        let mut stdio = Stdio::Ignore;
+        Stdio::extract(&mut stdio, &cx, 0, value, false)?;
+        Ok(match &stdio {
+            Stdio::ReadableStream(stream) => Some(*stream),
+            _ => None,
+        })
+    }
+
+    fn pipe_stream_to_stdin(
+        interp: &Interpreter,
+        cmd: NodeId,
+        global: &crate::jsc::JSGlobalObject,
+        stream: crate::webcore::ReadableStream,
+    ) -> crate::jsc::JsResult<()> {
+        #[cfg(windows)]
+        let pair = bun_sys::pipe();
+        #[cfg(unix)]
+        let pair = bun_sys::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, true);
+        let [read_end, write_end] = match pair {
+            Ok(pair) => pair,
+            Err(err) => {
+                use bun_sys_jsc::ErrorJsc;
+                return Err(global.throw_value(err.to_js(global)?));
+            }
+        };
+        let event_loop = interp.event_loop;
+        let reader = IOReader::init(read_end, event_loop);
+        reader.set_interp(interp.as_ctx_ptr());
+        let Some(mut stdin) = crate::shell::subproc::StreamStdin::from_fd(event_loop, write_end)
+        else {
+            return Err(global.throw(format_args!("Failed to open a pipe for the ReadableStream")));
+        };
+        let started = stdin.start(stream, global);
+        let me = Self::of_mut(interp, cmd);
+        me.stdin = BuiltinInput::Fd(reader);
+        me.stdin_stream = Some(stdin);
+        started.map_err(|err| global.throw_value(err))
     }
 
     /// Look up the Builtin inside a Cmd's `exec` slot.

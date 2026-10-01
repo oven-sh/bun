@@ -390,6 +390,25 @@ impl Stdio {
         Ok(())
     }
 
+    pub(crate) fn check_stream_unused(
+        global: &JSGlobalObject,
+        stream: &webcore::ReadableStream,
+        name: &[u8],
+    ) -> JsResult<()> {
+        if !stream.is_disturbed(global) {
+            return Ok(());
+        }
+        Err(global
+            .err(
+                jsc::ErrorCode::INVALID_STATE,
+                format_args!(
+                    "'{}' ReadableStream has already been used",
+                    bstr::BStr::new(name),
+                ),
+            )
+            .throw())
+    }
+
     pub(crate) fn extract(
         out_stdio: &mut Stdio,
         cx: &bun_jsc::JsThread<'_>,
@@ -522,18 +541,7 @@ impl Stdio {
                 )));
             }
 
-            if stream.is_disturbed(cx.global()) {
-                return Err(cx
-                    .global()
-                    .err(
-                        jsc::ErrorCode::INVALID_STATE,
-                        format_args!(
-                            "'{}' ReadableStream has already been used",
-                            bstr::BStr::new(name),
-                        ),
-                    )
-                    .throw());
-            }
+            Self::check_stream_unused(cx.global(), &stream, name)?;
             *out_stdio = Stdio::ReadableStream(stream);
             return Ok(());
         }

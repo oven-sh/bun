@@ -760,12 +760,14 @@ impl ShellSubprocess {
         // populated `exec.subproc.child`.
         unsafe { *out_subproc = subprocess };
 
-        let stdin = match Writable::init(stdio0, event_loop, subprocess, spawn_stdin) {
-            Ok(w) => w,
-            Err(WritableInitError::UnexpectedCreatingStdin) => {
-                panic!("unexpected error while creating stdin");
-            }
+        let stdin_stream = match &stdio0 {
+            Stdio::ReadableStream(stream) => Some(*stream),
+            _ => None,
         };
+        // Reported below, once there is a subprocess to kill.
+        let stdin_init = Writable::init(stdio0, event_loop, subprocess, spawn_stdin);
+        let stdin_init_failed = stdin_init.is_err();
+        let stdin = stdin_init.unwrap_or(Writable::Ignore);
         let stdout = Readable::init(
             OutKind::Stdout,
             stdio1,
@@ -876,16 +878,41 @@ impl ShellSubprocess {
         // SAFETY: borrow of the stdin slot scoped to this match; single-threaded.
         let stdin_start_err = match unsafe { &(*subprocess).stdin } {
             // SAFETY: single-threaded; the writer is uniquely reachable here.
-            Writable::Buffer(buffer) => unsafe { buffer_mut(buffer) }.start().err(),
-            _ => None,
+            Writable::Buffer(buffer) => unsafe { buffer_mut(buffer) }
+                .start()
+                .err()
+                .map(|err| ShellErr::Sys(err.to_shell_system_error())),
+            _ => stdin_init_failed.then(|| {
+                ShellErr::Custom(Box::from(&b"unexpected error while creating stdin"[..]))
+            }),
         };
         if let Some(err) = stdin_start_err {
-            let sys_err = err.to_shell_system_error();
             // SAFETY: scoped `&mut` for the kill; `abort_after_failed_start`
             // then consumes the allocation.
             let _ = unsafe { (*subprocess).try_kill(SignalCode::SIGTERM as i32) };
             Self::abort_after_failed_start(subprocess);
-            return Err(ShellErr::Sys(sys_err));
+            return Err(err);
+        }
+        // SAFETY: `interp` is the live owning interpreter (see `SpawnArgs::interp`).
+        if let (Some(stream), Some(global)) = (stdin_stream, unsafe { &*interp }.global_this_ref())
+        {
+            // Out of the slot while the stream's JS runs.
+            // SAFETY: scoped `&mut` of the slot; `subprocess` is live.
+            let taken = core::mem::replace(unsafe { &mut (*subprocess).stdin }, Writable::Ignore);
+            if let Writable::Stream(mut stdin) = taken {
+                let started = stdin.start(stream, global);
+                // SAFETY: as above.
+                unsafe { (*subprocess).stdin = Writable::Stream(stdin) };
+                if let Err(err) = started {
+                    // SAFETY: as for `stdin_start_err` above.
+                    let _ = unsafe { (*subprocess).try_kill(SignalCode::SIGTERM as i32) };
+                    Self::abort_after_failed_start(subprocess);
+                    let message = err
+                        .to_bun_string(global)
+                        .map_or_else(|_| Vec::new(), |message| message.to_owned_slice());
+                    return Err(ShellErr::Custom(message.into_boxed_slice()));
+                }
+            }
         }
 
         // SAFETY: `subprocess` is live; the slot is passed raw because the
@@ -954,11 +981,22 @@ impl ShellSubprocess {
         };
 
         let Some(code) = exit_code else { return };
+        // SAFETY: caller contract; the slot's borrow ends with the `replace`.
+        let stdin_stream_failed =
+            match core::mem::replace(unsafe { &mut (*this).stdin }, Writable::Ignore) {
+                Writable::Stream(stdin) => stdin.finish(status),
+                other => {
+                    // SAFETY: as above.
+                    unsafe { (*this).stdin = other };
+                    jsc::strong::Optional::empty()
+                }
+            };
         // SAFETY: caller contract; `CmdHandle` is `Copy`, no borrow is kept.
         let handle = unsafe { (*this).cmd_parent };
         // SAFETY: the owning Cmd outlives its subprocess; the `&mut Cmd` ends
         // before the Yield runs.
         let cmd = unsafe { handle.cmd_mut() };
+        cmd.stdin_stream_failed = stdin_stream_failed;
         cmd.base.interrupted |= interrupted;
         let y = cmd.on_exit(code.into());
         // May free `*this`.
@@ -976,8 +1014,68 @@ pub enum WritableInitError {
     UnexpectedCreatingStdin,
 }
 
+pub struct StreamStdin {
+    sink: RefPtr<FileSink>,
+    done: jsc::strong::Optional,
+}
+
+impl StreamStdin {
+    fn new(sink: RefPtr<FileSink>) -> Self {
+        Self {
+            sink,
+            done: jsc::strong::Optional::empty(),
+        }
+    }
+
+    pub(crate) fn from_fd(event_loop: EventLoopHandle, fd: Fd) -> Option<Self> {
+        use bun_sys::FdExt as _;
+        let sink = FileSink::init(fd, event_loop);
+        if sink.writer.with_mut(|w| w.start(fd, true)).is_err() {
+            fd.close();
+            return None;
+        }
+        #[cfg(not(windows))]
+        sink.writer.with_mut(|w| {
+            if let Some(poll) = w.handle.get_poll() {
+                poll.set_flag(bun_io::FilePollFlag::Socket);
+            }
+        });
+        Some(Self::new(sink))
+    }
+
+    pub(crate) fn start(
+        &mut self,
+        mut stream: webcore::ReadableStream,
+        global: &jsc::JSGlobalObject,
+    ) -> Result<(), jsc::JSValue> {
+        // SAFETY: single-threaded; no other borrow of the sink is live.
+        let result = unsafe { &mut *self.sink.as_ptr() }.pipe_stream(&mut stream, global);
+        if let Some(err) = result.to_error() {
+            return Err(err);
+        }
+        if let Some(done) = result.as_any_promise() {
+            done.set_handled(global.vm());
+            self.done = jsc::strong::Optional::create(result, global);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn finish(self, status: &Status) -> jsc::strong::Optional {
+        // Read first: the cancel below reaches the sink as a failure of the source.
+        let failed = self.sink.source_failed();
+        // SAFETY: `sink` holds a ref on the canonical allocation for the call.
+        unsafe { FileSink::on_attached_process_exit(self.sink.as_ptr(), status) };
+        if failed {
+            self.done
+        } else {
+            jsc::strong::Optional::empty()
+        }
+    }
+}
+
 pub enum Writable {
     Pipe(RefPtr<FileSink>),
+    Stream(StreamStdin),
     Fd(Fd),
     Buffer(RefPtr<StaticPipeWriter>),
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -1017,6 +1115,7 @@ impl Writable {
         {
             match &mut stdio {
                 Stdio::Pipe | Stdio::ReadableStream(_) => {
+                    let is_stream = matches!(stdio, Stdio::ReadableStream(_));
                     if let StdioResult::Buffer(buf) = result {
                         // Ownership of the `Box<uv::Pipe>` transfers into the
                         // FileSink's writer.
@@ -1032,6 +1131,9 @@ impl Writable {
                         // subprocess.weak_file_sink_stdin_ptr = pipe;
                         // subprocess.flags.has_stdin_destructor_called = false;
 
+                        if is_stream {
+                            return Ok(Writable::Stream(StreamStdin::new(pipe)));
+                        }
                         return Ok(Writable::Pipe(pipe));
                     }
                     return Ok(Writable::Inherit);
@@ -1127,10 +1229,9 @@ impl Writable {
                 Stdio::Inherit => Ok(Writable::Inherit),
                 Stdio::Path(_) | Stdio::Ignore => Ok(Writable::Ignore),
                 Stdio::Ipc | Stdio::Capture(_) => Ok(Writable::Ignore),
-                Stdio::ReadableStream(_) => {
-                    // The shell never uses this
-                    panic!("Unimplemented stdin readable_stream");
-                }
+                Stdio::ReadableStream(_) => StreamStdin::from_fd(event_loop, result.unwrap())
+                    .map(Writable::Stream)
+                    .ok_or(WritableInitError::UnexpectedCreatingStdin),
                 Stdio::SocketFd => {
                     // The shell never uses this; rejected at i < 3 anyway.
                     panic!("Unimplemented stdin socket-fd");
@@ -1144,7 +1245,7 @@ impl Writable {
 
     pub fn finalize(&mut self) {
         match self {
-            Writable::Pipe(_) => {
+            Writable::Pipe(_) | Writable::Stream(_) => {
                 // deref via drop-on-reassign
                 *self = Writable::Ignore;
             }

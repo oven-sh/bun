@@ -47,7 +47,6 @@
 /// would force every `write_array<T>` caller to propagate
 /// `T: AssertNoUninitializedPadding`.
 #[inline(always)]
-#[allow(dropping_copy_types, clippy::needless_pass_by_value)]
 pub fn assert_no_uninitialized_padding<T>(_type_witness: T) {
     // Body intentionally empty — the per-type `const` layout asserts are the check.
 }

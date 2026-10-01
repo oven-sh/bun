@@ -9,7 +9,7 @@ use bun_jsc::EncodedSliceJsc as _;
 /// Waits until stdin is readable, running JS signal listeners as signals arrive (a blocking `read(2)` cannot: handlers are SA_RESTART).
 #[cfg(unix)]
 fn wait_for_stdin(global: &JSGlobalObject) {
-    use bun_jsc::PosixSignalHandle;
+    use bun_jsc::posix_signal_handle::PosixSignalHandle;
     use bun_sys::posix::{POLL_IN, PollFd, poll};
 
     let Some(signals) = PosixSignalHandle::blocking_wait_fd(global) else {
@@ -204,7 +204,7 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     Ok(JSValue::FALSE)
 }
 
-pub mod prompt {
+pub(crate) mod prompt {
     use super::*;
 
     /// Error set for the read-until-delimiter helpers below.
@@ -218,7 +218,7 @@ pub mod prompt {
 
     /// Small trait exposing `read_byte() -> Result<u8, _>`; the only
     /// concrete impl is [`InterruptibleStdin`].
-    pub trait ReadByte {
+    pub(crate) trait ReadByte {
         type Error;
         fn read_byte(&mut self) -> Result<u8, Self::Error>;
     }

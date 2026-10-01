@@ -250,6 +250,10 @@ impl Checker<'_> {
         pass!(check_isolated_declarations);
         // `GetSyntacticDiagnostics`: no comment directive takes these back.
         out.append(&mut syntactic);
+        // `GetDeclarationDiagnostics`: nor these.
+        if self.files().options.emits_declaration_files {
+            pass!(check_declaration_emit);
+        }
         out.sort_unstable();
         out.dedup();
         out

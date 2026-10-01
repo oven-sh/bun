@@ -340,6 +340,9 @@ pub struct Files {
     order: Vec<FileId>,
     /// What is wrong with what the options name, no file being to blame.
     program_errors: Vec<Problem>,
+    /// The `package.json` of each package in a `node_modules` that a file of the program is in, by its directory. Only where declaration
+    /// files are emitted, which have to call such files something.
+    pub package_jsons: FxHashMap<String, Json>,
 }
 
 /// What follows from how symbols are put together, each worked out the first time it is asked for. Until they are put together the
@@ -1285,6 +1288,17 @@ impl Files {
                 module.redirected_imports = redirected.into();
             }
         }
+        let mut package_jsons: FxHashMap<String, Json> = FxHashMap::default();
+        if options.emits_declaration_files {
+            for module in modules.iter().flatten() {
+                if let Some((_, _, end)) = crate::resolve::node_module_path_parts(&module.path)
+                    && !package_jsons.contains_key(&module.path[..end])
+                    && let Some(json) = resolver.package_json(&module.path[..end])
+                {
+                    package_jsons.insert(module.path[..end].to_owned(), json);
+                }
+            }
+        }
         drop(resolver);
         let mut modules: Vec<ModuleCell> = modules
             .into_iter()
@@ -1369,6 +1383,7 @@ impl Files {
             memo,
             order: Vec::new(),
             program_errors,
+            package_jsons,
         };
         files.order = files.declaration_order(&starts);
         files.merge();

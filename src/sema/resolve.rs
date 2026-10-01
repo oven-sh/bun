@@ -269,6 +269,10 @@ pub struct Options {
     pub no_error_truncation: bool,
     /// `emitDecoratorMetadata`
     pub emit_decorator_metadata: bool,
+    /// `GetEmitDeclarations`: `declaration` or `composite`.
+    pub emits_declaration_files: bool,
+    /// `stripInternal`
+    pub strips_internal_declarations: bool,
     /// `importHelpers`
     pub import_helpers: bool,
     /// `noEmit` itself.
@@ -653,6 +657,8 @@ impl Options {
             _ => {}
         }
         options.skip_lib_check = flag("skipLibCheck");
+        options.emits_declaration_files = flag("declaration") || flag("composite");
+        options.strips_internal_declarations = flag("stripInternal");
         options.skip_default_lib_check = flag("skipDefaultLibCheck");
         options.no_check = flag("noCheck");
         options.suppress_output_path_check = flag("suppressOutputPathCheck");
@@ -873,6 +879,50 @@ pub(crate) fn is_declaration_file_name(path: &str) -> bool {
         || base.ends_with(".ts") && base.contains(".d.")
 }
 
+/// `GetNodeModulePathParts`: where the first `/node_modules` of `path` starts, where the `/` after it is, and where the directory of the
+/// innermost package ends. `None`: `path` is in no package in a `node_modules`.
+pub fn node_module_path_parts(path: &str) -> Option<(usize, usize, usize)> {
+    #[derive(Copy, Clone)]
+    enum State {
+        BeforeNodeModules,
+        NodeModules,
+        Scope,
+        PackageContent,
+    }
+    let (mut top_level_node_modules, mut top_level_package_name, mut package_root) = (0, 0, 0);
+    let mut state = State::BeforeNodeModules;
+    let mut part_end = Some(0);
+    while let Some(part_start) = part_end {
+        part_end = path
+            .get(part_start + 1..)
+            .and_then(|rest| rest.find('/'))
+            .map(|at| part_start + 1 + at);
+        let is_node_modules = path[part_start..].starts_with("/node_modules/");
+        state = match state {
+            State::BeforeNodeModules if is_node_modules => {
+                top_level_node_modules = part_start;
+                top_level_package_name = part_end.unwrap_or(path.len());
+                State::NodeModules
+            }
+            State::BeforeNodeModules => State::BeforeNodeModules,
+            State::NodeModules if path.as_bytes().get(part_start + 1) == Some(&b'@') => {
+                State::Scope
+            }
+            State::NodeModules | State::Scope => {
+                package_root = part_end.unwrap_or(path.len());
+                State::PackageContent
+            }
+            State::PackageContent if is_node_modules => State::NodeModules,
+            State::PackageContent => State::PackageContent,
+        };
+    }
+    matches!(state, State::Scope | State::PackageContent).then_some((
+        top_level_node_modules,
+        top_level_package_name,
+        package_root,
+    ))
+}
+
 /// Whether the file at `path` is JavaScript, going by its name.
 pub fn is_javascript(path: &str) -> bool {
     [".js", ".jsx", ".mjs", ".cjs"]
@@ -931,6 +981,11 @@ impl<'h> Resolver<'h> {
             .unwrap()
             .insert(dir.to_owned(), package.clone());
         package
+    }
+
+    /// The `package.json` in `dir`, if there is one that can be read.
+    pub fn package_json(&self, dir: &str) -> Option<Json> {
+        self.package(dir).map(|package| package.json.clone())
     }
 
     /// `getPackageScopeForPath`: the `package.json` nearest to `dir`, in it or above it, and where it is.

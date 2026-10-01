@@ -209,6 +209,14 @@ impl Checker<'_> {
         with_printer(self, 0, |printer| printer.alias_of_type(ty)).map(|alias| alias.0)
     }
 
+    /// `t.alias`, with its type arguments.
+    pub(super) fn alias_with_arguments_for_declaration_emit(
+        &mut self,
+        ty: TypeId,
+    ) -> Option<(Sym, Vec<TypeId>)> {
+        with_printer(self, 0, |printer| printer.alias_of_type(ty))
+    }
+
     /// `c.varianceTypeParameter = parameter`: the type parameter `sub-T` and `super-T` are named after, for as long as the error of
     /// a variance annotation is put into words.
     pub fn set_variance_type_parameter(&mut self, parameter: Option<TypeId>) {

@@ -14,6 +14,7 @@ mod errors_assign;
 mod errors_call;
 mod errors_circular;
 mod errors_decl;
+mod errors_declaration_emit;
 mod errors_duplicates;
 mod errors_emit_helpers;
 mod errors_flow;

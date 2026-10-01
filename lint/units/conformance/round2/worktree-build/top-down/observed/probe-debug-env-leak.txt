@@ -1,0 +1,267 @@
+# binary: /workspace/wt/conformance/build/debug/bun-debug
+# env leak: {"HOME":"/root","BUN_FEATURE_FLAG_EXPERIMENTAL_LINT":"1","BUN_DEBUG_QUIET_LOGS":"1","NO_COLOR":"1","BUN_DESTRUCT_VM_ON_EXIT":"1","ASAN_OPTIONS":"allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1","LSAN_OPTIONS":"malloc_context_size=30:print_suppressions=0:suppressions=/workspace/wt/conformance/test/leaksan.supp"}
+## 01 clean .ts
+   cwd=/tmp/conf-wb-1b/probe args=["clean.ts"]
+   exit=0 signal=null ms=853
+   stdout=""
+   stderr=""
+## 02 `const = ;` in .ts
+   cwd=/tmp/conf-wb-1b/probe args=["bad.ts"]
+   exit=2 signal=null ms=861
+   stdout=""
+   stderr="bad.ts(1,7): error syntax: This constant must be initialized\nbad.ts(1,7): error syntax: Expected identifier but found \"=\"\n"
+## 03a clean .tsx
+   cwd=/tmp/conf-wb-1b/probe args=["ok.tsx"]
+   exit=0 signal=null ms=722
+   stdout=""
+   stderr=""
+## 03b .tsx with mismatched tag
+   cwd=/tmp/conf-wb-1b/probe args=["bad.tsx"]
+   exit=2 signal=null ms=588
+   stdout=""
+   stderr="bad.tsx(1,28): error syntax: Expected closing JSX tag to match opening tag \"<div>\"\n"
+## 04a .js with debugger
+   cwd=/tmp/conf-wb-1b/probe args=["dbg.js"]
+   exit=2 signal=null ms=397
+   stdout=""
+   stderr="dbg.js(1,1): error no-debugger: Unexpected 'debugger' statement.\n"
+## 04b .ts with debugger
+   cwd=/tmp/conf-wb-1b/probe args=["dbg.ts"]
+   exit=0 signal=null ms=367
+   stdout=""
+   stderr=""
+## 05a .d.ts with syntax error
+   cwd=/tmp/conf-wb-1b/probe args=["bad.d.ts"]
+   exit=0 signal=null ms=716
+   stdout=""
+   stderr=""
+## 05b .d.ts ambient const without initializer
+   cwd=/tmp/conf-wb-1b/probe args=["ok.d.ts"]
+   exit=0 signal=null ms=949
+   stdout=""
+   stderr=""
+## 06 .json operand
+   cwd=/tmp/conf-wb-1b/probe args=["data.json"]
+   exit=2 signal=null ms=517
+   stdout=""
+   stderr="error unsupported-extension: File 'data.json' has an unsupported extension. The only supported extensions are '.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'.\n"
+## 07a missing .ts
+   cwd=/tmp/conf-wb-1b/probe args=["missing.ts"]
+   exit=2 signal=null ms=1970
+   stdout=""
+   stderr="error cannot-read-file: File 'missing.ts' not found.\n"
+## 07b missing .d.ts
+   cwd=/tmp/conf-wb-1b/probe args=["missing.d.ts"]
+   exit=2 signal=null ms=2080
+   stdout=""
+   stderr="error cannot-read-file: File 'missing.d.ts' not found.\n"
+## 07c a directory as operand
+   cwd=/tmp/conf-wb-1b/probe args=["sub"]
+   exit=2 signal=null ms=1359
+   stdout=""
+   stderr="error unsupported-extension: File 'sub' has an unsupported extension. The only supported extensions are '.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'.\n"
+## 07d a directory named x.ts
+   cwd=/tmp/conf-wb-1b/probe args=["other"]
+   exit=2 signal=null ms=1329
+   stdout=""
+   stderr="error unsupported-extension: File 'other' has an unsupported extension. The only supported extensions are '.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'.\n"
+## 08a two operands: bad.ts dbg.js
+   cwd=/tmp/conf-wb-1b/probe args=["bad.ts","dbg.js"]
+   exit=2 signal=null ms=1329
+   stdout=""
+   stderr="bad.ts(1,7): error syntax: This constant must be initialized\nbad.ts(1,7): error syntax: Expected identifier but found \"=\"\ndbg.js(1,1): error no-debugger: Unexpected 'debugger' statement.\n"
+## 08b two operands reversed: dbg.js bad.ts
+   cwd=/tmp/conf-wb-1b/probe args=["dbg.js","bad.ts"]
+   exit=2 signal=null ms=1176
+   stdout=""
+   stderr="bad.ts(1,7): error syntax: This constant must be initialized\nbad.ts(1,7): error syntax: Expected identifier but found \"=\"\ndbg.js(1,1): error no-debugger: Unexpected 'debugger' statement.\n"
+## 08c two operands: clean.ts bad.ts
+   cwd=/tmp/conf-wb-1b/probe args=["clean.ts","bad.ts"]
+   exit=2 signal=null ms=346
+   stdout=""
+   stderr="bad.ts(1,7): error syntax: This constant must be initialized\nbad.ts(1,7): error syntax: Expected identifier but found \"=\"\n"
+## 08d the same operand twice
+   cwd=/tmp/conf-wb-1b/probe args=["bad.ts","bad.ts"]
+   exit=2 signal=null ms=620
+   stdout=""
+   stderr="bad.ts(1,7): error syntax: This constant must be initialized\nbad.ts(1,7): error syntax: Expected identifier but found \"=\"\n"
+## 08e same file, two spellings
+   cwd=/tmp/conf-wb-1b/probe args=["bad.ts","./bad.ts"]
+   exit=2 signal=null ms=690
+   stdout=""
+   stderr="bad.ts(1,7): error syntax: This constant must be initialized\nbad.ts(1,7): error syntax: Expected identifier but found \"=\"\n"
+## 08f missing + json + bad.ts
+   cwd=/tmp/conf-wb-1b/probe args=["missing.ts","data.json","bad.ts"]
+   exit=2 signal=null ms=953
+   stdout=""
+   stderr="error cannot-read-file: File 'missing.ts' not found.\nerror unsupported-extension: File 'data.json' has an unsupported extension. The only supported extensions are '.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'.\nbad.ts(1,7): error syntax: This constant must be initialized\nbad.ts(1,7): error syntax: Expected identifier but found \"=\"\n"
+## 09a CR LF file
+   cwd=/tmp/conf-wb-1b/probe args=["crlf.ts"]
+   exit=2 signal=null ms=546
+   stdout=""
+   stderr="crlf.ts(2,7): error syntax: This constant must be initialized\ncrlf.ts(2,7): error syntax: Expected identifier but found \"=\"\n"
+## 09b lone CR file
+   cwd=/tmp/conf-wb-1b/probe args=["cr.ts"]
+   exit=2 signal=null ms=1367
+   stdout=""
+   stderr="cr.ts(2,7): error syntax: This constant must be initialized\ncr.ts(2,7): error syntax: Expected identifier but found \"=\"\n"
+## 10a BOM .ts
+   cwd=/tmp/conf-wb-1b/probe args=["bom.ts"]
+   exit=2 signal=null ms=851
+   stdout=""
+   stderr="bom.ts(1,7): error syntax: This constant must be initialized\nbom.ts(1,7): error syntax: Expected identifier but found \"=\"\n"
+## 10b BOM .js with debugger
+   cwd=/tmp/conf-wb-1b/probe args=["bom.js"]
+   exit=2 signal=null ms=705
+   stdout=""
+   stderr="bom.js(1,1): error no-debugger: Unexpected 'debugger' statement.\n"
+## 11a warning only .ts
+   cwd=/tmp/conf-wb-1b/probe args=["warn.ts"]
+   exit=0 signal=null ms=1045
+   stdout=""
+   stderr=""
+## 11b warning only .js
+   cwd=/tmp/conf-wb-1b/probe args=["warn.js"]
+   exit=0 signal=null ms=944
+   stdout=""
+   stderr=""
+## 12a relative operand from another cwd
+   cwd=/tmp/conf-wb-1b/probe/other args=["../sub/deep/rel.ts"]
+   exit=2 signal=null ms=1715
+   stdout=""
+   stderr="../sub/deep/rel.ts(1,7): error syntax: This constant must be initialized\n../sub/deep/rel.ts(1,7): error syntax: Expected identifier but found \"=\"\n"
+## 12b absolute operand from another cwd
+   cwd=/tmp/conf-wb-1b/probe/other args=["/tmp/conf-wb-1b/probe/sub/deep/rel.ts"]
+   exit=2 signal=null ms=647
+   stdout=""
+   stderr="../sub/deep/rel.ts(1,7): error syntax: This constant must be initialized\n../sub/deep/rel.ts(1,7): error syntax: Expected identifier but found \"=\"\n"
+## 12c absolute operand from cwd /
+   cwd=/ args=["/tmp/conf-wb-1b/probe/bad.ts"]
+   exit=2 signal=null ms=796
+   stdout=""
+   stderr="tmp/conf-wb-1b/probe/bad.ts(1,7): error syntax: This constant must be initialized\ntmp/conf-wb-1b/probe/bad.ts(1,7): error syntax: Expected identifier but found \"=\"\n"
+## 12d absolute operand inside cwd
+   cwd=/tmp/conf-wb-1b/probe args=["/tmp/conf-wb-1b/probe/sub/deep/rel.ts"]
+   exit=2 signal=null ms=1262
+   stdout=""
+   stderr="sub/deep/rel.ts(1,7): error syntax: This constant must be initialized\nsub/deep/rel.ts(1,7): error syntax: Expected identifier but found \"=\"\n"
+## 13 path with space and parentheses
+   cwd=/tmp/conf-wb-1b/probe args=["sp ace/a (1).ts"]
+   exit=2 signal=null ms=745
+   stdout=""
+   stderr="sp ace/a (1).ts(1,7): error syntax: This constant must be initialized\nsp ace/a (1).ts(1,7): error syntax: Expected identifier but found \"=\"\n"
+## 14 astral character before the error
+   cwd=/tmp/conf-wb-1b/probe args=["astral.ts"]
+   exit=2 signal=null ms=1122
+   stdout=""
+   stderr="astral.ts(1,21): error syntax: This constant must be initialized\nastral.ts(1,21): error syntax: Expected identifier but found \"=\"\n"
+## 15 several rules in a .js
+   cwd=/tmp/conf-wb-1b/probe args=["rules.js"]
+   exit=2 signal=null ms=994
+   stdout=""
+   stderr="rules.js(2,29): error no-duplicate-case: Duplicate case label.\nrules.js(3,5): error no-compare-neg-zero: Do not use the '===' operator to compare against -0.\nrules.js(4,5): error no-self-assign: 'x' is assigned to itself.\n"
+## 16 empty .ts
+   cwd=/tmp/conf-wb-1b/probe args=["empty.ts"]
+   exit=0 signal=null ms=765
+   stdout=""
+   stderr=""
+## 17 no operand
+   cwd=/tmp/conf-wb-1b/probe args=[]
+   exit=1 signal=null ms=1069
+   stdout=""
+   stderr="error: --lint needs one or more files\n"
+## x01 legacy HTML close comment .js
+   cwd=/tmp/conf-wb-1b/probe args=["htmlclose.js"]
+   exit=0 signal=null ms=829
+   stdout=""
+   stderr="htmlclose.js(2,1): warning syntax: Treating \"-->\" as the start of a legacy HTML single-line comment\n"
+## x02 legacy HTML close comment .ts
+   cwd=/tmp/conf-wb-1b/probe args=["htmlclose.ts"]
+   exit=0 signal=null ms=843
+   stdout=""
+   stderr="htmlclose.ts(2,1): warning syntax: Treating \"-->\" as the start of a legacy HTML single-line comment\n"
+## x03 JSX key without value .tsx
+   cwd=/tmp/conf-wb-1b/probe args=["key.tsx"]
+   exit=0 signal=null ms=1469
+   stdout=""
+   stderr="key.tsx(1,23): warning syntax: \"key\" prop ignored. Must be a string, number or symbol.\n"
+## x04 JSX key without value .jsx
+   cwd=/tmp/conf-wb-1b/probe args=["key.jsx"]
+   exit=0 signal=null ms=1765
+   stdout=""
+   stderr="key.jsx(1,23): warning syntax: \"key\" prop ignored. Must be a string, number or symbol.\n"
+## x05 unsupported jsxRuntime pragma .tsx
+   cwd=/tmp/conf-wb-1b/probe args=["pragma.tsx"]
+   exit=0 signal=null ms=1001
+   stdout=""
+   stderr="pragma.tsx(1,23): warning syntax: Unsupported JSX runtime: \"preserve\"\n"
+## x06 write to private method .ts (visit warning)
+   cwd=/tmp/conf-wb-1b/probe args=["priv.ts"]
+   exit=0 signal=null ms=447
+   stdout=""
+   stderr="priv.ts(1,30): warning syntax: Writing to read-only method \"#m\" will throw\n"
+## x07 warning and error in one .ts
+   cwd=/tmp/conf-wb-1b/probe args=["warnerr.ts"]
+   exit=2 signal=null ms=473
+   stdout=""
+   stderr="warnerr.ts(2,7): error syntax: This constant must be initialized\nwarnerr.ts(2,7): error syntax: Expected identifier but found \"=\"\n"
+## x08 a directory named dir.ts
+   cwd=/tmp/conf-wb-1b/probe args=["dir.ts"]
+   exit=2 signal=null ms=729
+   stdout=""
+   stderr="error cannot-read-file: Cannot read file 'dir.ts': EISDIR.\n"
+## x09 unreadable file (mode 000, as root)
+   cwd=/tmp/conf-wb-1b/probe args=["noperm.ts"]
+   exit=2 signal=null ms=1101
+   stdout=""
+   stderr="noperm.ts(1,7): error syntax: This constant must be initialized\nnoperm.ts(1,7): error syntax: Expected identifier but found \"=\"\n"
+## x10 .mts .cjs .cts .mjs .jsx
+   cwd=/tmp/conf-wb-1b/probe args=["mod.mts","c.cjs","e.cts","m.mjs","j.jsx"]
+   exit=2 signal=null ms=466
+   stdout=""
+   stderr="c.cjs(1,21): error no-debugger: Unexpected 'debugger' statement.\ne.cts(1,7): error syntax: This constant must be initialized\ne.cts(1,7): error syntax: Expected identifier but found \"=\"\nj.jsx(1,1): error no-debugger: Unexpected 'debugger' statement.\nm.mjs(1,1): error no-debugger: Unexpected 'debugger' statement.\n"
+## x11 type errors only .ts
+   cwd=/tmp/conf-wb-1b/probe args=["typeerr.ts"]
+   exit=0 signal=null ms=338
+   stdout=""
+   stderr=""
+## x12 200000 nested parentheses .ts
+   cwd=/tmp/conf-wb-1b/probe args=["deep.ts"]
+   exit=2 signal=null ms=1026
+   stdout=""
+   stderr="deep.ts(1,1796): error syntax: Maximum call stack size exceeded\n"
+## x13 200000 nested arrays .js
+   cwd=/tmp/conf-wb-1b/probe args=["deep.js"]
+   exit=2 signal=null ms=579
+   stdout=""
+   stderr="deep.js(1,4273): error syntax: Maximum call stack size exceeded\n"
+## x14 1 MB clean .ts
+   cwd=/tmp/conf-wb-1b/probe args=["big.ts"]
+   exit=0 signal=null ms=2410
+   stdout=""
+   stderr=""
+## x15 --lint=value
+   cwd=/tmp/conf-wb-1b/probe args=["__RAW__","--lint=1","clean.ts"]
+   exit=1 signal=null ms=415
+   stdout="Bun is a fast JavaScript runtime, package manager, bundler, and test runner. (1.4.3-debug+3110ce85c)\n\nUsage: bun <command> [...flags] [...args]\n\nCommands:\n  run       ./my-script.ts       Execute a file with Bun\n            lint                 Run a package.json script\n  test                           Run unit tests with Bun\n  x         next                 Execute a package binary (CLI), installing if needed (bunx)\n  repl                           Start a REPL session with Bun\n  exec                           Run a shell script directly with Bun\n\n  install                        Install dependencies for a package.json (bun i)\n  add       @remix-run/dev       Add a dependency to package.json (bun a)\n  remove    backbone             Remove a dependency from package.json (bun rm)\n  update    @evan/duckdb         Update outdated dependencies\n  audit                          Check installed packages for vulnerabilities\n  dedupe                         Remove duplicate versions from the lockfile\n  prune                          Remove packages that are not in the lockfile from node_modules\n  outdated                       Display latest versions of outdated dependencies\n  link      [<package>]          Register or link a local npm package\n  unlink                         Unregister a local npm package\n  publish                        Publish a package to the npm registry\n  patch <pkg>                    Prepare a package for patching\n  pm <subcommand>                Additional pa...[2161 chars]"
+   stderr="error: The argument '--lint' does not take a value.\n"
+## x16 operand starting with - after the first
+   cwd=/tmp/conf-wb-1b/probe args=["clean.ts","-b.ts"]
+   exit=1 signal=null ms=770
+   stdout=""
+   stderr="error: --lint cannot be used with \"-b.ts\" after the first file\n"
+## x17 bun run --lint
+   cwd=/tmp/conf-wb-1b/probe args=["__RAW__","run","--lint","bad.ts"]
+   exit=2 signal=null ms=347
+   stdout=""
+   stderr="bad.ts(1,7): error syntax: This constant must be initialized\nbad.ts(1,7): error syntax: Expected identifier but found \"=\"\n"
+## x18 -- then operand
+   cwd=/tmp/conf-wb-1b/probe args=["--","bad.ts"]
+   exit=2 signal=null ms=1035
+   stdout=""
+   stderr="bad.ts(1,7): error syntax: This constant must be initialized\nbad.ts(1,7): error syntax: Expected identifier but found \"=\"\n"
+## x19 unknown flag before operand
+   cwd=/tmp/conf-wb-1b/probe args=["--fix","bad.ts"]
+   exit=2 signal=null ms=352
+   stdout=""
+   stderr="bad.ts(1,7): error syntax: This constant must be initialized\nbad.ts(1,7): error syntax: Expected identifier but found \"=\"\n"

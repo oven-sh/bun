@@ -168,6 +168,7 @@ function main() {
 		else if (args[i] === "--verbose") verbose = true;
 		else if (args[i] === "--option") options[args[++i]] = true;
 		else if (args[i] === "--drop") options.dropVirtual = new Set(args[++i].split(","));
+		else if (args[i] === "--events-only") options.eventsOnly = true;
 	}
 	const linter = new Linter();
 	const languageOptionsPattern = /\/\*languageOptions\s((?:.|[\r\n])+?)\*\//u;
@@ -209,6 +210,12 @@ function main() {
 			const gone = new Set([...bunshape.dropped].flatMap(n => [`enter ${key(n)} `, `exit ${key(n)} `]));
 			r.out = r.out.filter(x => !(x.startsWith("e") && gone.has(x.slice(0, x.indexOf("[")))));
 			bunshape.dropped.clear();
+		}
+		if (options.eventsOnly) {
+			// Without the places of the nodes: what the events alone say.
+			const keep = x => !x.startsWith("enter ") && !x.startsWith("exit ");
+			r.out = r.out.filter(keep);
+			d = d.filter(keep);
 		}
 		paths += r.out.filter(x => x.startsWith("pathend")).length;
 		events += r.out.length;

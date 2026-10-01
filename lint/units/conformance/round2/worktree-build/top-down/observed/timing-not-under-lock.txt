@@ -1,0 +1,14 @@
+# binary /workspace/wt/conformance/build/debug/bun-debug  env none
+# sample: 40 of 12444 .ts/.tsx case files (every 311th of the sorted list), 13540 bytes in all
+one run (clean.ts, 7 times): wall min 386 median 537 max 1212 ms; cpu median 171 ms; maxRSS median 217 MB
+40 runs, 1 at a time: wall 22575 ms (564 ms per run); per-run wall median 503 max 2094 ms; cpu sum 5122 ms (median 112); maxRSS max 220 MB; exits {"0":35,"2":5}
+40 runs, 4 at a time: wall 8383 ms (210 ms per run); per-run wall median 729 max 2051 ms; cpu sum 5440 ms (median 119); maxRSS max 221 MB; exits {"0":35,"2":5}
+40 runs, 1 at a time: wall 19810 ms (495 ms per run); per-run wall median 401 max 2213 ms; cpu sum 5426 ms (median 122); maxRSS max 221 MB; exits {"0":35,"2":5}
+40 runs, 4 at a time: wall 7241 ms (181 ms per run); per-run wall median 656 max 2065 ms; cpu sum 5171 ms (median 117); maxRSS max 222 MB; exits {"0":35,"2":5}
+# binary /tmp/conf-wb-1b/bun-release-be1ebe529  env none
+# sample: 40 of 12444 .ts/.tsx case files (every 311th of the sorted list), 13540 bytes in all
+one run (clean.ts, 7 times): wall min 10 median 18 max 120 ms; cpu median 2 ms; maxRSS median 41 MB
+40 runs, 1 at a time: wall 1707 ms (43 ms per run); per-run wall median 21 max 399 ms; cpu sum 84 ms (median 2); maxRSS max 42 MB; exits {"0":35,"2":5}
+40 runs, 4 at a time: wall 1330 ms (33 ms per run); per-run wall median 54 max 430 ms; cpu sum 71 ms (median 2); maxRSS max 42 MB; exits {"0":35,"2":5}
+40 runs, 1 at a time: wall 3769 ms (94 ms per run); per-run wall median 36 max 491 ms; cpu sum 82 ms (median 2); maxRSS max 42 MB; exits {"0":35,"2":5}
+40 runs, 4 at a time: wall 944 ms (24 ms per run); per-run wall median 37 max 461 ms; cpu sum 74 ms (median 2); maxRSS max 42 MB; exits {"0":35,"2":5}

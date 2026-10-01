@@ -1,0 +1,60 @@
+instances 602: run 571 (E 335, C 236), skipped 31
+      15  skipped: unsupported outFile
+       7  skipped: unsupported target ES5
+       3  skipped: esModuleInterop=false is unsupported
+       2  skipped: unsupported module resolution kind 1
+       1  skipped: unsupported module kind AMD
+       1  skipped: unsupported module kind System
+       1  skipped: unsupported module kind UMD
+       1  skipped: unsupported module resolution kind 2
+check /tmp/conf-wb-1b/bun-release-be1ebe529 --lint
+pass: E 0 of 335, C 232 of 236
+by outcome, E: fail 310, unsupported 1, crash 24
+by outcome, C: pass 232, crash 4
+     310  fail: no diagnostic where the oracle has a baseline
+      22  crash: the check threw: Error: stderr line n has the code syntax, which is no code of TypeScript
+       4  crash: the check threw: Error: stderr line n has the code unsupported-extension, which is no code of TypeSc
+       1  crash: the check threw: Error: stderr line n has the code no-debugger, which is no code of TypeScript
+       1  crash: the check threw: Error: stderr line n has the code no-empty-pattern, which is no code of TypeScript
+       1  unsupported: absolute-path-in-text: /index.ts: /typings/index.d.ts
+
+by directory: instances that pass, of those whose oracle has errors (E) and of those whose oracle has none (C)
+  compiler                                                     E     0 of 63     C    86 of 88
+  conformance/classes/members/privateNames                     E     0 of 4      C     1 of 1
+  conformance/controlFlow                                      E     0 of 1      C     0 of 0
+  conformance/directives                                       E     0 of 1      C     1 of 1
+  conformance/es2019                                           E     0 of 1      C     0 of 0
+  conformance/es6/destructuring                                E     0 of 1      C     1 of 1
+  conformance/es6/yieldExpressions                             E     0 of 1      C     0 of 0
+  conformance/externalModules/rewriteRelativeImportExtensions  E     0 of 4      C     0 of 0
+  conformance/externalModules/typeOnly                         E     0 of 4      C     0 of 0
+  conformance/jsdoc                                            E     0 of 108    C    80 of 80
+  conformance/jsdoc/declarations                               E     0 of 7      C     6 of 6
+  conformance/moduleResolution                                 E     0 of 9      C     3 of 3
+  conformance/moduleResolution/bundler                         E     0 of 12     C     4 of 4
+  conformance/node                                             E     0 of 14     C     0 of 0
+  conformance/node/allowJs                                     E     0 of 0      C     1 of 1
+  conformance/salsa                                            E     0 of 104    C    47 of 49
+  conformance/scanner                                          E     0 of 0      C     1 of 1
+  conformance/types/thisType                                   E     0 of 0      C     1 of 1
+  conformance/types/typeRelationships/recursiveTypes           E     0 of 1      C     0 of 0
+
+by diagnostic code: 215 codes; instances that pass, of those whose oracle has the code
+  TS2339       0 of 72
+  TS2322       0 of 36
+  TS2683       0 of 36
+  TS2304       0 of 29
+  TS1005       0 of 26
+  TS2749       0 of 23
+  TS7009       0 of 23
+  TS2503       0 of 18
+  TS7006       0 of 18
+  TS2309       0 of 17
+  TS6504       0 of 11
+  TS2307       0 of 10
+  TS2353       0 of 10
+  TS7016       0 of 10
+  TS2554       0 of 9
+  TS2345       0 of 7
+  TS2694       0 of 7
+  TS8030       0 of 6

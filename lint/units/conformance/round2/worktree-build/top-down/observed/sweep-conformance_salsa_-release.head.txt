@@ -1,0 +1,44 @@
+instances 193: run 186 (E 124, C 62), skipped 7
+       5  skipped: unsupported outFile
+       2  skipped: unsupported target ES5
+check /tmp/conf-wb-1b/bun-release-be1ebe529 --lint
+pass: E 0 of 124, C 60 of 62
+by outcome, E: fail 117, crash 7
+by outcome, C: pass 60, crash 2
+     117  fail: no diagnostic where the oracle has a baseline
+       9  crash: the check threw: Error: stderr line n has the code syntax, which is no code of TypeScript
+
+by directory: instances that pass, of those whose oracle has errors (E) and of those whose oracle has none (C)
+  conformance/salsa  E     0 of 124    C    60 of 62
+
+by diagnostic code: 123 codes; instances that pass, of those whose oracle has the code
+  TS2339       0 of 43
+  TS2683       0 of 23
+  TS7009       0 of 20
+  TS2503       0 of 16
+  TS2309       0 of 15
+  TS2322       0 of 13
+  TS2749       0 of 12
+  TS2304       0 of 8
+  TS7053       0 of 8
+  TS7006       0 of 5
+  TS2694       0 of 4
+  TS2451       0 of 3
+  TS1107       0 of 2
+  TS1214       0 of 2
+  TS2433       0 of 2
+  TS2554       0 of 2
+  TS5055       0 of 2
+  TS1005       0 of 1
+  TS1009       0 of 1
+  TS1013       0 of 1
+  TS1014       0 of 1
+  TS1029       0 of 1
+  TS1030       0 of 1
+  TS1031       0 of 1
+  TS1042       0 of 1
+  and 98 more codes in the report
+
+listed: E 0, C 0; of them run 0, not passing 0
+60 instances pass and may not enter a list: quota 60
+report /tmp/conf-wb-1b/rep-conformance_salsa_-release.json

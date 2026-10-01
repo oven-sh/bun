@@ -1,0 +1,60 @@
+instances 522: run 419 (E 265, C 154), skipped 103
+      57  skipped: unsupported target ES5
+      28  skipped: unsupported outFile
+       8  skipped: unsupported baseUrl
+       5  skipped: unsupported module resolution kind 2
+       3  skipped: unsupported module kind AMD
+       2  skipped: alwaysStrict=false is unsupported
+check /tmp/conf-wb-1b/bun-release-be1ebe529 --lint
+pass: E 0 of 265, C 150 of 154
+by outcome, E: fail 193, unsupported 2, crash 70
+by outcome, C: pass 150, unsupported 4
+     193  fail: no diagnostic where the oracle has a baseline
+      66  crash: the check threw: Error: stderr line n has the code syntax, which is no code of TypeScript
+       3  crash: the check threw: Error: stderr line n has the code unsupported-extension, which is no code of TypeSc
+       1  crash: the check threw: Error: stderr line n has the code no-self-assign, which is no code of TypeScript
+       1  unsupported: absolute-path-in-text: /.src/file.jsx: /.lib/react.d.ts
+       1  unsupported: absolute-path-in-text: /.src/index.js: /some-mod
+       1  unsupported: absolute-path-in-text: /.src/jsDeclarationsNonIdentifierInferredNames.jsx: /.lib/reactn.d.ts
+       1  unsupported: absolute-path-in-text: /.src/jsDeclarationsReactComponentsn.jsx: /.lib/reactn.d.ts
+       1  unsupported: absolute-path-in-text: /.src/jsxDeclarationsWithEsModuleInteropNoCrash.jsx: /.lib/reactn.d.ts
+       1  unsupported: absolute-path-in-text: /bar.jsx: /foo
+
+by directory: instances that pass, of those whose oracle has errors (E) and of those whose oracle has none (C)
+  compiler                                                 E     0 of 103    C    67 of 68
+  conformance/async/es2017/asyncArrowFunction              E     0 of 1      C     0 of 0
+  conformance/async/es5/functionDeclarations               E     0 of 1      C     0 of 0
+  conformance/classes/members/privateNames                 E     0 of 1      C     0 of 0
+  conformance/classes/propertyMemberDeclarations           E     0 of 0      C     1 of 1
+  conformance/es2019                                       E     0 of 1      C     0 of 0
+  conformance/es6/destructuring                            E     0 of 1      C     1 of 1
+  conformance/esDecorators/classDeclaration                E     0 of 1      C     0 of 0
+  conformance/expressions/functionCalls                    E     0 of 2      C     0 of 0
+  conformance/externalModules                              E     0 of 0      C     1 of 1
+  conformance/jsdoc                                        E     0 of 29     C     6 of 6
+  conformance/jsdoc/declarations                           E     0 of 32     C    43 of 46
+  conformance/jsx                                          E     0 of 1      C     0 of 0
+  conformance/moduleResolution                             E     0 of 6      C     3 of 3
+  conformance/node/allowJs                                 E     0 of 60     C    20 of 20
+  conformance/override                                     E     0 of 3      C     1 of 1
+  conformance/parser/ecmascript5/ArrowFunctionExpressions  E     0 of 10     C     0 of 0
+  conformance/salsa                                        E     0 of 13     C     5 of 5
+  conformance/types/contextualTypes/jsdoc                  E     0 of 0      C     1 of 1
+  conformance/types/import                                 E     0 of 0      C     1 of 1
+
+by diagnostic code: 136 codes; instances that pass, of those whose oracle has the code
+  TS5055       0 of 28
+  TS2339       0 of 22
+  TS2307       0 of 19
+  TS2322       0 of 19
+  TS1005       0 of 14
+  TS2343       0 of 14
+  TS8002       0 of 14
+  TS2683       0 of 13
+  TS1479       0 of 12
+  TS8010       0 of 12
+  TS1003       0 of 11
+  TS2309       0 of 11
+  TS2304       0 of 10
+  TS7009       0 of 10
+  TS2749       0 of 9

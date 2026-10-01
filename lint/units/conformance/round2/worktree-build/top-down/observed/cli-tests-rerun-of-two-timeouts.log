@@ -1,0 +1,17 @@
+### queued: 2026-10-01T10:38:09Z
+### lock acquired: 2026-10-01T11:00:05Z
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet test test/cli/lint/lint.test.ts --timeout "180000" -t compile-exec-argv
+bun test v1.4.3 (3110ce85c)
+
+test/cli/lint/lint.test.ts:
+(pass) --lint in the value of --compile-exec-argv > a value of "--lint=value" is refused and nothing is compiled [464.89ms]
+(pass) --lint in the value of --compile-exec-argv > a value of "--lint" is refused and nothing is compiled [997.85ms]
+(pass) --lint in the value of --compile-exec-argv > a value of "--smol --lint" is refused and nothing is compiled [374.65ms]
+(pass) --lint in the value of --compile-exec-argv > a value of "--lint\t--smol" is refused and nothing is compiled [475.02ms]
+
+ 4 pass
+ 57 filtered out
+ 0 fail
+ 12 expect() calls
+Ran 4 tests across 1 file. [5.98s]
+### finished: 2026-10-01T11:00:23Z rc=0 run_secs=17

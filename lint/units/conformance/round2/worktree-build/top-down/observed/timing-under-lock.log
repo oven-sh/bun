@@ -1,0 +1,28 @@
+### queued: 2026-10-01T10:35:30Z
+### lock acquired: 2026-10-01T10:47:43Z
+some avg10=20.70 avg60=31.06 avg300=35.05 total=3520831153
+# binary /workspace/wt/conformance/build/debug/bun-debug  env none
+# sample: 40 of 12444 .ts/.tsx case files (every 311th of the sorted list), 13540 bytes in all
+one run (clean.ts, 7 times): wall min 147 median 252 max 760 ms; cpu median 117 ms; maxRSS median 221 MB
+40 runs, 1 at a time: wall 15775 ms (394 ms per run); per-run wall median 351 max 1284 ms; cpu sum 5540 ms (median 122); maxRSS max 224 MB; exits {"0":35,"2":5}
+40 runs, 4 at a time: wall 6866 ms (172 ms per run); per-run wall median 675 max 1208 ms; cpu sum 5449 ms (median 120); maxRSS max 223 MB; exits {"0":35,"2":5}
+40 runs, 1 at a time: wall 16488 ms (412 ms per run); per-run wall median 331 max 1342 ms; cpu sum 5610 ms (median 119); maxRSS max 224 MB; exits {"0":35,"2":5}
+40 runs, 4 at a time: wall 4593 ms (115 ms per run); per-run wall median 416 max 1177 ms; cpu sum 4904 ms (median 110); maxRSS max 224 MB; exits {"0":35,"2":5}
+# binary /workspace/wt/conformance/build/debug/bun-debug  env leak
+# sample: 40 of 12444 .ts/.tsx case files (every 311th of the sorted list), 13540 bytes in all
+one run (clean.ts, 7 times): wall min 393 median 628 max 1142 ms; cpu median 174 ms; maxRSS median 244 MB
+40 runs, 1 at a time: wall 25564 ms (639 ms per run); per-run wall median 570 max 1386 ms; cpu sum 7069 ms (median 173); maxRSS max 247 MB; exits {"0":35,"2":5}
+40 runs, 4 at a time: wall 8490 ms (212 ms per run); per-run wall median 774 max 1655 ms; cpu sum 7389 ms (median 182); maxRSS max 247 MB; exits {"0":35,"2":5}
+40 runs, 1 at a time: wall 31266 ms (782 ms per run); per-run wall median 739 max 2869 ms; cpu sum 7465 ms (median 185); maxRSS max 247 MB; exits {"0":35,"2":5}
+40 runs, 4 at a time: wall 11058 ms (276 ms per run); per-run wall median 963 max 2761 ms; cpu sum 6772 ms (median 167); maxRSS max 247 MB; exits {"0":35,"2":5}
+# binary /tmp/conf-wb-1b/bun-release-be1ebe529  env none
+# sample: 40 of 12444 .ts/.tsx case files (every 311th of the sorted list), 13540 bytes in all
+one run (clean.ts, 7 times): wall min 17 median 72 max 436 ms; cpu median 2 ms; maxRSS median 39 MB
+40 runs, 1 at a time: wall 5860 ms (147 ms per run); per-run wall median 75 max 845 ms; cpu sum 93 ms (median 2); maxRSS max 39 MB; exits {"0":35,"2":5}
+40 runs, 4 at a time: wall 2401 ms (60 ms per run); per-run wall median 175 max 864 ms; cpu sum 82 ms (median 2); maxRSS max 39 MB; exits {"0":35,"2":5}
+40 runs, 1 at a time: wall 5597 ms (140 ms per run); per-run wall median 111 max 458 ms; cpu sum 132 ms (median 3); maxRSS max 39 MB; exits {"0":35,"2":5}
+40 runs, 4 at a time: wall 3307 ms (83 ms per run); per-run wall median 312 max 917 ms; cpu sum 124 ms (median 2); maxRSS max 39 MB; exits {"0":35,"2":5}
+sweep conformance/statements/ (318 run instances) debug jobs=4: wall 67435 ms = 212 ms per instance; exit=0; by outcome, E: fail 69, crash 43;by outcome, C: pass 206;
+sweep conformance/statements/ (318 run instances) release jobs=4: wall 34263 ms = 107 ms per instance; exit=0; by outcome, E: fail 69, crash 43;by outcome, C: pass 206;
+some avg10=34.02 avg60=26.63 avg300=26.52 total=3569386455
+### finished: 2026-10-01T10:51:57Z

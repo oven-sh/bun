@@ -1,0 +1,60 @@
+instances 905: run 820 (E 599, C 221), skipped 85
+      80  skipped: unsupported target ES5
+       5  skipped: alwaysStrict=false is unsupported
+check /tmp/conf-wb-1b/bun-release-be1ebe529 --lint
+pass: E 0 of 599, C 219 of 221
+by outcome, E: fail 319, crash 280
+by outcome, C: pass 219, crash 2
+     319  fail: no diagnostic where the oracle has a baseline
+     282  crash: the check threw: Error: stderr line n has the code syntax, which is no code of TypeScript
+
+by directory: instances that pass, of those whose oracle has errors (E) and of those whose oracle has none (C)
+  conformance/parser/ecmascript2018/asyncGenerators           E     0 of 4      C     0 of 0
+  conformance/parser/ecmascript2018/forAwait                  E     0 of 1      C     0 of 0
+  conformance/parser/ecmascript2021/numericSeparators         E     0 of 5      C     5 of 5
+  conformance/parser/ecmascript3/Accessors                    E     0 of 3      C     1 of 1
+  conformance/parser/ecmascript5                              E     0 of 37     C    19 of 19
+  conformance/parser/ecmascript5/Accessors                    E     0 of 11     C     2 of 2
+  conformance/parser/ecmascript5/ArrayLiteralExpressions      E     0 of 0      C    15 of 15
+  conformance/parser/ecmascript5/ArrowFunctionExpressions     E     0 of 15     C     2 of 2
+  conformance/parser/ecmascript5/AutomaticSemicolonInsertion  E     0 of 1      C     0 of 0
+  conformance/parser/ecmascript5/CatchClauses                 E     0 of 1      C     0 of 0
+  conformance/parser/ecmascript5/ClassDeclarations            E     0 of 22     C     8 of 8
+  conformance/parser/ecmascript5/ComputedPropertyNames        E     0 of 11     C     0 of 0
+  conformance/parser/ecmascript5/ConstructorDeclarations      E     0 of 9      C     2 of 2
+  conformance/parser/ecmascript5/EnumDeclarations             E     0 of 6      C    10 of 11
+  conformance/parser/ecmascript5/ErrorRecovery                E     0 of 78     C    14 of 14
+  conformance/parser/ecmascript5/ExportAssignments            E     0 of 9      C     0 of 0
+  conformance/parser/ecmascript5/Expressions                  E     0 of 15     C     1 of 1
+  conformance/parser/ecmascript5/FunctionDeclarations         E     0 of 8      C     2 of 2
+  conformance/parser/ecmascript5/Fuzz                         E     0 of 1      C     1 of 1
+  conformance/parser/ecmascript5/Generics                     E     0 of 38     C    10 of 10
+  conformance/parser/ecmascript5/IndexMemberDeclarations      E     0 of 8      C     2 of 2
+  conformance/parser/ecmascript5/IndexSignatures              E     0 of 11     C     0 of 0
+  conformance/parser/ecmascript5/InterfaceDeclarations        E     0 of 6      C     3 of 3
+  conformance/parser/ecmascript5/MemberAccessorDeclarations   E     0 of 16     C     3 of 3
+  conformance/parser/ecmascript5/MemberFunctionDeclarations   E     0 of 6      C     0 of 0
+  conformance/parser/ecmascript5/MemberVariableDeclarations   E     0 of 4      C     1 of 1
+  conformance/parser/ecmascript5/MethodSignatures             E     0 of 0      C    12 of 12
+  conformance/parser/ecmascript5/MissingTokens                E     0 of 2      C     0 of 0
+  conformance/parser/ecmascript5/ModuleDeclarations           E     0 of 8      C     9 of 9
+  conformance/parser/ecmascript5/ObjectLiterals               E     0 of 0      C     1 of 1
+  conformance/parser/ecmascript5/ObjectTypes                  E     0 of 2      C     4 of 4
+  conformance/parser/ecmascript5/ParameterLists               E     0 of 16     C     1 of 1
+  conformance/parser/ecmascript5/PropertyAssignments          E     0 of 0      C     4 of 4
+  conformance/parser/ecmascript5/PropertySignatures           E     0 of 0      C    12 of 12
+  conformance/parser/ecmascript5/Protected                    E     0 of 5      C     4 of 4
+  conformance/parser/ecmascript5/RealWorld                    E     0 of 2      C     0 of 0
+  conformance/parser/ecmascript5/RegressionTests              E     0 of 24     C    11 of 11
+  conformance/parser/ecmascript5/RegularExpressions           E     0 of 11     C     3 of 3
+  conformance/parser/ecmascript5/SkippedTokens                E     0 of 20     C     0 of 0
+  conformance/parser/ecmascript5/Statements                   E     0 of 70     C    22 of 23
+  conformance/parser/ecmascript5/StrictMode                   E     0 of 20     C     0 of 0
+  conformance/parser/ecmascript5/SuperExpressions             E     0 of 4      C     0 of 0
+  conformance/parser/ecmascript5/Symbols                      E     0 of 2      C    10 of 10
+  conformance/parser/ecmascript5/TupleTypes                   E     0 of 2      C     4 of 4
+  conformance/parser/ecmascript5/Types                        E     0 of 9      C     0 of 0
+  conformance/parser/ecmascript5/VariableDeclarations         E     0 of 9      C     3 of 3
+  conformance/parser/ecmascript6/ComputedPropertyNames        E     0 of 41     C     0 of 0
+  conformance/parser/ecmascript6/Iterators                    E     0 of 19     C     6 of 6
+  conformance/parser/ecmascript6/ShorthandPropertyAssignment  E     0 of 5      C     0 of 0

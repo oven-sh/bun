@@ -1,0 +1,60 @@
+instances 525: run 318 (E 112, C 206), skipped 207
+     127  skipped: unsupported target ES5
+      76  skipped: unsupported module kind System
+       3  skipped: unsupported module kind AMD
+       1  skipped: alwaysStrict=false is unsupported
+check /workspace/wt/conformance/build/debug/bun-debug --lint
+pass: E 0 of 112, C 206 of 206
+by outcome, E: fail 69, crash 43
+by outcome, C: pass 206
+      69  fail: no diagnostic where the oracle has a baseline
+      43  crash: the check threw: Error: stderr line n has the code syntax, which is no code of TypeScript
+
+by directory: instances that pass, of those whose oracle has errors (E) and of those whose oracle has none (C)
+  conformance/statements/VariableStatements                    E     0 of 4      C     2 of 2
+  conformance/statements/VariableStatements/usingDeclarations  E     0 of 44     C   157 of 157
+  conformance/statements/breakStatements                       E     0 of 6      C     4 of 4
+  conformance/statements/continueStatements                    E     0 of 5      C     4 of 4
+  conformance/statements/for-await-ofStatements                E     0 of 1      C     3 of 3
+  conformance/statements/for-inStatements                      E     0 of 7      C     2 of 2
+  conformance/statements/for-ofStatements                      E     0 of 25     C    30 of 30
+  conformance/statements/forStatements                         E     0 of 3      C     0 of 0
+  conformance/statements/ifDoWhileStatements                   E     0 of 1      C     0 of 0
+  conformance/statements/labeledStatements                     E     0 of 9      C     0 of 0
+  conformance/statements/returnStatements                      E     0 of 2      C     1 of 1
+  conformance/statements/switchStatements                      E     0 of 1      C     0 of 0
+  conformance/statements/throwStatements                       E     0 of 1      C     2 of 2
+  conformance/statements/tryStatements                         E     0 of 2      C     1 of 1
+  conformance/statements/withStatements                        E     0 of 1      C     0 of 0
+
+by diagnostic code: 70 codes; instances that pass, of those whose oracle has the code
+  TS1344       0 of 17
+  TS2339       0 of 12
+  TS2322       0 of 10
+  TS2488       0 of 9
+  TS2564       0 of 9
+  TS1107       0 of 8
+  TS1492       0 of 8
+  TS2403       0 of 7
+  TS1155       0 of 6
+  TS2454       0 of 6
+  TS5102       0 of 6
+  TS1104       0 of 5
+  TS2304       0 of 5
+  TS1005       0 of 4
+  TS1105       0 of 4
+  TS1115       0 of 4
+  TS1116       0 of 4
+  TS2448       0 of 4
+  TS2491       0 of 4
+  TS2741       0 of 4
+  TS1123       0 of 3
+  TS1235       0 of 3
+  TS2678       0 of 3
+  TS2851       0 of 3
+  TS2853       0 of 3
+  and 45 more codes in the report
+
+listed: E 0, C 0; of them run 0, not passing 0
+206 instances pass and may not enter a list: quota 206
+report /tmp/conf-wb-1b/rep-conformance_statements_-debug.json

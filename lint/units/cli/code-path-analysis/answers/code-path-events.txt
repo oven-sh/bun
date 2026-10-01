@@ -1,0 +1,5405 @@
+== assignment--do-while-and.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_3 s1_2
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== assignment--do-while-or.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_2 s1_2
+loop s1_3 s1_2
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== assignment--do-while-qq.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_2 s1_2
+loop s1_3 s1_2
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== assignment--for-and-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_5
+loop s1_5 s1_2
+end s1_5
+start s1_4
+loop s1_4 s1_5
+end s1_4
+start s1_6
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== assignment--for-and-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+loop s1_4 s1_2
+end s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== assignment--for-or-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_5
+loop s1_5 s1_2
+end s1_5
+start s1_4
+loop s1_4 s1_5
+end s1_4
+start s1_6
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== assignment--for-or-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+loop s1_4 s1_2
+end s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== assignment--for-qq-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_5
+loop s1_5 s1_2
+end s1_5
+start s1_4
+loop s1_4 s1_5
+end s1_4
+start s1_6
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== assignment--for-qq-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+loop s1_4 s1_2
+end s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== assignment--if-and-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== assignment--if-and-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== assignment--if-and-3.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+start s1_9
+end s1_9
+pathend s1 returned=s1_9 thrown= final=s1_9
+== assignment--if-or-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== assignment--if-or-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== assignment--if-or-3.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+start s1_9
+end s1_9
+pathend s1 returned=s1_9 thrown= final=s1_9
+== assignment--if-qq-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== assignment--if-qq-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== assignment--logical-and-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== assignment--logical-and-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== assignment--logical-and-3.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== assignment--logical-or-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== assignment--logical-or-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== assignment--logical-or-3.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== assignment--logical-qq-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== assignment--logical-qq-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== assignment--logical-qq-3.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== assignment--multi-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== assignment--multi-10.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+start s1_9
+end s1_9
+pathend s1 returned=s1_9 thrown= final=s1_9
+== assignment--multi-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== assignment--multi-3.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== assignment--multi-4.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== assignment--multi-5.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== assignment--multi-6.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== assignment--multi-7.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== assignment--multi-8.js
+pathstart s1 program
+start s1_1
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== assignment--multi-9.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+start s1_9
+end s1_9
+pathend s1 returned=s1_9 thrown= final=s1_9
+== assignment--nested-and-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== assignment--nested-and-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== assignment--nested-and-3.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== assignment--nested-or-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== assignment--nested-or-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== assignment--nested-or-3.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== assignment--nested-qq-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== assignment--nested-qq-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== assignment--nested-qq-3.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== assignment--simple-and-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+pathend s1 returned=s1_3 thrown= final=s1_3
+== assignment--simple-and-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== assignment--simple-and-3.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== assignment--simple-bitand.js
+pathstart s1 program
+start s1_1
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== assignment--simple-eq.js
+pathstart s1 program
+start s1_1
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== assignment--simple-or-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+pathend s1 returned=s1_3 thrown= final=s1_3
+== assignment--simple-or-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== assignment--simple-or-3.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== assignment--simple-plus.js
+pathstart s1 program
+start s1_1
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== assignment--simple-qq-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+pathend s1 returned=s1_3 thrown= final=s1_3
+== assignment--simple-qq-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== assignment--simple-qq-3.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== assignment--while-and.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+loop s1_4 s1_2
+end s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== assignment--while-or.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+loop s1_4 s1_2
+end s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== assignment--while-qq.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+loop s1_4 s1_2
+end s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== block-and-break-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+ustart s1_3
+uend s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== block-and-break-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+ustart s1_3
+uend s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+ustart s1_6
+uend s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+start s1_9
+end s1_9
+pathend s1 returned=s1_9 thrown= final=s1_9
+== block-and-break-3.js
+pathstart s1 program
+start s1_1
+end s1_1
+ustart s1_2
+uend s1_2
+start s1_3
+end s1_3
+pathend s1 returned=s1_3 thrown= final=s1_3
+== block-and-break-4.js
+pathstart s1 program
+start s1_1
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== class-fields-init--arrow-function.js
+pathstart s1 program
+start s1_1
+pathstart s2 class-field-initializer
+start s2_1
+pathstart s3 function
+start s3_1
+end s3_1
+pathend s3 returned=s3_1 thrown= final=s3_1
+end s2_1
+pathend s2 returned=s2_1 thrown= final=s2_1
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== class-fields-init--call-expression.js
+pathstart s1 program
+start s1_1
+pathstart s2 class-field-initializer
+start s2_1
+end s2_1
+pathend s2 returned=s2_1 thrown= final=s2_1
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== class-fields-init--conditional.js
+pathstart s1 program
+start s1_1
+pathstart s2 class-field-initializer
+start s2_1
+end s2_1
+start s2_2
+end s2_2
+start s2_3
+end s2_3
+start s2_4
+end s2_4
+pathend s2 returned=s2_4 thrown= final=s2_4
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== class-fields-init--simple.js
+pathstart s1 program
+start s1_1
+pathstart s2 class-field-initializer
+start s2_1
+end s2_1
+pathend s2 returned=s2_1 thrown= final=s2_1
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== class-static-blocks--between-fields.js
+pathstart s1 program
+start s1_1
+pathstart s2 class-field-initializer
+start s2_1
+end s2_1
+start s2_2
+end s2_2
+start s2_3
+end s2_3
+pathend s2 returned=s2_3 thrown= final=s2_3
+pathstart s3 class-static-block
+start s3_1
+end s3_1
+start s3_2
+end s3_2
+start s3_3
+end s3_3
+start s3_4
+end s3_4
+pathend s3 returned=s3_4 thrown= final=s3_4
+pathstart s4 class-field-initializer
+start s4_1
+end s4_1
+start s4_2
+end s4_2
+start s4_3
+end s4_3
+start s4_4
+end s4_4
+start s4_5
+end s4_5
+pathend s4 returned=s4_5 thrown= final=s4_5
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== class-static-blocks--between-methods.js
+pathstart s1 program
+start s1_1
+pathstart s2 function
+start s2_1
+end s2_1
+start s2_2
+end s2_2
+start s2_3
+end s2_3
+pathend s2 returned=s2_3 thrown= final=s2_3
+pathstart s3 class-static-block
+start s3_1
+end s3_1
+start s3_2
+end s3_2
+start s3_3
+end s3_3
+start s3_4
+end s3_4
+pathend s3 returned=s3_4 thrown= final=s3_4
+pathstart s4 function
+start s4_1
+end s4_1
+start s4_2
+end s4_2
+start s4_3
+end s4_3
+start s4_4
+end s4_4
+start s4_5
+end s4_5
+pathend s4 returned=s4_5 thrown= final=s4_5
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== class-static-blocks--conditional.js
+pathstart s1 program
+start s1_1
+pathstart s2 class-static-block
+start s2_1
+end s2_1
+start s2_2
+end s2_2
+start s2_3
+end s2_3
+start s2_4
+end s2_4
+pathend s2 returned=s2_4 thrown= final=s2_4
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== class-static-blocks--empty.js
+pathstart s1 program
+start s1_1
+pathstart s2 class-static-block
+start s2_1
+end s2_1
+pathend s2 returned=s2_1 thrown= final=s2_1
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== class-static-blocks--function-inside.js
+pathstart s1 program
+start s1_1
+pathstart s2 class-static-block
+start s2_1
+pathstart s3 function
+start s3_1
+end s3_1
+pathend s3 returned=s3_1 thrown= final=s3_1
+end s2_1
+pathend s2 returned=s2_1 thrown= final=s2_1
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== class-static-blocks--if-else.js
+pathstart s1 program
+start s1_1
+pathstart s2 class-static-block
+start s2_1
+end s2_1
+start s2_2
+end s2_2
+start s2_3
+end s2_3
+start s2_4
+end s2_4
+pathend s2 returned=s2_4 thrown= final=s2_4
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== class-static-blocks--multiple-1.js
+pathstart s1 program
+start s1_1
+pathstart s2 class-static-block
+start s2_1
+end s2_1
+pathend s2 returned=s2_1 thrown= final=s2_1
+pathstart s3 class-static-block
+start s3_1
+end s3_1
+pathend s3 returned=s3_1 thrown= final=s3_1
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== class-static-blocks--multiple-2.js
+pathstart s1 program
+start s1_1
+pathstart s2 class-static-block
+start s2_1
+end s2_1
+start s2_2
+end s2_2
+start s2_3
+end s2_3
+start s2_4
+end s2_4
+pathend s2 returned=s2_4 thrown= final=s2_4
+pathstart s3 class-static-block
+start s3_1
+end s3_1
+start s3_2
+end s3_2
+start s3_3
+end s3_3
+pathend s3 returned=s3_3 thrown= final=s3_3
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== class-static-blocks--simple.js
+pathstart s1 program
+start s1_1
+pathstart s2 class-static-block
+start s2_1
+end s2_1
+pathend s2 returned=s2_1 thrown= final=s2_1
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== default-params--nest.js
+pathstart s1 program
+start s1_1
+pathstart s2 function
+start s2_1
+end s2_1
+start s2_2
+end s2_2
+start s2_3
+end s2_3
+start s2_4
+end s2_4
+start s2_5
+end s2_5
+pathend s2 returned=s2_5 thrown= final=s2_5
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== default-params--simple.js
+pathstart s1 program
+start s1_1
+pathstart s2 function
+start s2_1
+end s2_1
+start s2_2
+end s2_2
+start s2_3
+end s2_3
+pathend s2 returned=s2_3 thrown= final=s2_3
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== do-while--break-always.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+ustart s1_3
+uend s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== do-while--break-label.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+ustart s1_5
+uend s1_5
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+ustart s1_8
+uend s1_8
+start s1_9
+loop s1_9 s1_3
+end s1_9
+start s1_10
+loop s1_10 s1_2
+end s1_10
+start s1_11
+end s1_11
+pathend s1 returned=s1_11 thrown= final=s1_11
+== do-while--break-nest.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+ustart s1_5
+uend s1_5
+start s1_6
+loop s1_6 s1_3
+end s1_6
+start s1_7
+loop s1_7 s1_2
+end s1_7
+start s1_8
+end s1_8
+pathend s1 returned=s1_8 thrown= final=s1_8
+== do-while--break-simple.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+ustart s1_4
+uend s1_4
+start s1_5
+loop s1_5 s1_2
+end s1_5
+start s1_6
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== do-while--continue-always.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+ustart s1_3
+uend s1_3
+start s1_4
+loop s1_4 s1_2
+end s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== do-while--continue-label.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+ustart s1_5
+uend s1_5
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+ustart s1_8
+uend s1_8
+start s1_9
+end s1_9
+start s1_10
+loop s1_10 s1_3
+end s1_10
+start s1_11
+end s1_11
+start s1_12
+loop s1_12 s1_2
+end s1_12
+start s1_13
+end s1_13
+pathend s1 returned=s1_13 thrown= final=s1_13
+== do-while--continue-nest.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+ustart s1_5
+uend s1_5
+start s1_6
+end s1_6
+start s1_7
+loop s1_7 s1_3
+end s1_7
+start s1_8
+loop s1_8 s1_2
+end s1_8
+start s1_9
+end s1_9
+pathend s1 returned=s1_9 thrown= final=s1_9
+== do-while--continue-simple.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+ustart s1_4
+uend s1_4
+start s1_5
+end s1_5
+start s1_6
+loop s1_6 s1_2
+end s1_6
+start s1_7
+end s1_7
+pathend s1 returned=s1_7 thrown= final=s1_7
+== do-while--empty.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+loop s1_2 s1_2
+end s1_2
+start s1_3
+end s1_3
+pathend s1 returned=s1_3 thrown= final=s1_3
+== do-while--simple.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+loop s1_2 s1_2
+end s1_2
+start s1_3
+end s1_3
+pathend s1 returned=s1_3 thrown= final=s1_3
+== for--break-always.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_4
+loop s1_4 s1_2
+end s1_4
+start s1_3
+end s1_3
+ustart s1_5
+uend s1_5
+start s1_6
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== for--break-label.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_4
+loop s1_4 s1_2
+end s1_4
+start s1_3
+end s1_3
+start s1_5
+end s1_5
+start s1_7
+loop s1_7 s1_5
+end s1_7
+start s1_6
+end s1_6
+start s1_8
+end s1_8
+ustart s1_9
+uend s1_9
+start s1_10
+end s1_10
+start s1_11
+end s1_11
+ustart s1_12
+uend s1_12
+start s1_13
+loop s1_13 s1_7
+end s1_13
+start s1_14
+loop s1_14 s1_4
+end s1_14
+start s1_15
+end s1_15
+pathend s1 returned=s1_15 thrown= final=s1_15
+== for--break-nest.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_4
+loop s1_4 s1_2
+end s1_4
+start s1_3
+end s1_3
+start s1_5
+end s1_5
+start s1_7
+loop s1_7 s1_5
+end s1_7
+start s1_6
+end s1_6
+start s1_8
+end s1_8
+ustart s1_9
+uend s1_9
+start s1_10
+loop s1_10 s1_7
+end s1_10
+start s1_11
+loop s1_11 s1_4
+end s1_11
+start s1_12
+end s1_12
+pathend s1 returned=s1_12 thrown= final=s1_12
+== for--break-simple-no-test.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+ustart s1_5
+uend s1_5
+start s1_6
+loop s1_6 s1_2
+end s1_6
+start s1_7
+end s1_7
+pathend s1 returned=s1_7 thrown= final=s1_7
+== for--break-simple-no-update.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+ustart s1_5
+uend s1_5
+start s1_6
+loop s1_6 s1_2
+end s1_6
+start s1_7
+end s1_7
+pathend s1 returned=s1_7 thrown= final=s1_7
+== for--break-simple.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_4
+loop s1_4 s1_2
+end s1_4
+start s1_3
+end s1_3
+start s1_5
+end s1_5
+ustart s1_6
+uend s1_6
+start s1_7
+loop s1_7 s1_4
+end s1_7
+start s1_8
+end s1_8
+pathend s1 returned=s1_8 thrown= final=s1_8
+== for--continue-always.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_4
+loop s1_4 s1_2
+end s1_4
+start s1_3
+loop s1_3 s1_4
+end s1_3
+ustart s1_5
+uend s1_5
+start s1_6
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== for--continue-label.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_4
+loop s1_4 s1_2
+end s1_4
+start s1_3
+end s1_3
+start s1_5
+end s1_5
+start s1_7
+loop s1_7 s1_5
+end s1_7
+start s1_6
+end s1_6
+start s1_8
+loop s1_8 s1_4
+end s1_8
+ustart s1_9
+uend s1_9
+start s1_10
+end s1_10
+start s1_11
+loop s1_11 s1_7
+end s1_11
+ustart s1_12
+uend s1_12
+start s1_13
+loop s1_13 s1_7
+end s1_13
+start s1_14
+loop s1_14 s1_4
+end s1_14
+start s1_15
+end s1_15
+pathend s1 returned=s1_15 thrown= final=s1_15
+== for--continue-nest.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_4
+loop s1_4 s1_2
+end s1_4
+start s1_3
+end s1_3
+start s1_5
+end s1_5
+start s1_7
+loop s1_7 s1_5
+end s1_7
+start s1_6
+end s1_6
+start s1_8
+loop s1_8 s1_7
+end s1_8
+ustart s1_9
+uend s1_9
+start s1_10
+loop s1_10 s1_7
+end s1_10
+start s1_11
+loop s1_11 s1_4
+end s1_11
+start s1_12
+end s1_12
+pathend s1 returned=s1_12 thrown= final=s1_12
+== for--continue-simple-no-test.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+loop s1_4 s1_2
+end s1_4
+ustart s1_5
+uend s1_5
+start s1_6
+loop s1_6 s1_2
+end s1_6
+ustart s1_7
+uend s1_7
+pathend s1 returned= thrown= final=
+== for--continue-simple-no-update.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+loop s1_4 s1_2
+end s1_4
+ustart s1_5
+uend s1_5
+start s1_6
+loop s1_6 s1_2
+end s1_6
+start s1_7
+end s1_7
+pathend s1 returned=s1_7 thrown= final=s1_7
+== for--continue-simple.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_4
+loop s1_4 s1_2
+end s1_4
+start s1_3
+end s1_3
+start s1_5
+loop s1_5 s1_4
+end s1_5
+ustart s1_6
+uend s1_6
+start s1_7
+loop s1_7 s1_4
+end s1_7
+start s1_8
+end s1_8
+pathend s1 returned=s1_8 thrown= final=s1_8
+== for--direct-nest.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_4
+loop s1_4 s1_2
+end s1_4
+start s1_3
+end s1_3
+start s1_5
+end s1_5
+start s1_7
+loop s1_7 s1_5
+end s1_7
+start s1_6
+loop s1_6 s1_7
+end s1_6
+start s1_8
+loop s1_8 s1_4
+end s1_8
+start s1_9
+end s1_9
+pathend s1 returned=s1_9 thrown= final=s1_9
+== for--empty.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+loop s1_2 s1_2
+end s1_2
+ustart s1_3
+uend s1_3
+pathend s1 returned= thrown= final=
+== for--simple-fork-in-test-update.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+start s1_9
+end s1_9
+start s1_10
+loop s1_10 s1_2
+end s1_10
+start s1_6
+loop s1_6 s1_7
+end s1_6
+start s1_11
+end s1_11
+pathend s1 returned=s1_11 thrown= final=s1_11
+== for--simple-no-test.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_3 s1_2
+end s1_3
+ustart s1_4
+uend s1_4
+pathend s1 returned= thrown= final=
+== for--simple-no-update.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_3 s1_2
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== for--simple-test-true.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_4
+loop s1_4 s1_2
+end s1_4
+start s1_3
+loop s1_3 s1_4
+end s1_3
+ustart s1_5
+uend s1_5
+pathend s1 returned= thrown= final=
+== for--simple.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_4
+loop s1_4 s1_2
+end s1_4
+start s1_3
+loop s1_3 s1_4
+end s1_3
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== for-in--break-always.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_3 s1_2
+end s1_3
+start s1_4
+end s1_4
+ustart s1_5
+uend s1_5
+start s1_6
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== for-in--break-label.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_3 s1_2
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+loop s1_6 s1_5
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+ustart s1_9
+uend s1_9
+start s1_10
+end s1_10
+start s1_11
+end s1_11
+ustart s1_12
+uend s1_12
+start s1_13
+loop s1_13 s1_5
+end s1_13
+start s1_14
+loop s1_14 s1_2
+end s1_14
+start s1_15
+end s1_15
+pathend s1 returned=s1_15 thrown= final=s1_15
+== for-in--break-nest.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_3 s1_2
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+loop s1_6 s1_5
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+ustart s1_9
+uend s1_9
+start s1_10
+loop s1_10 s1_5
+end s1_10
+start s1_11
+loop s1_11 s1_2
+end s1_11
+start s1_12
+end s1_12
+pathend s1 returned=s1_12 thrown= final=s1_12
+== for-in--break-simple.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_3 s1_2
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+ustart s1_6
+uend s1_6
+start s1_7
+loop s1_7 s1_2
+end s1_7
+start s1_8
+end s1_8
+pathend s1 returned=s1_8 thrown= final=s1_8
+== for-in--continue-always.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_3 s1_2
+end s1_3
+start s1_4
+loop s1_4 s1_2
+end s1_4
+ustart s1_5
+uend s1_5
+start s1_6
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== for-in--continue-label.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_3 s1_2
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+loop s1_6 s1_5
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+loop s1_8 s1_2
+end s1_8
+ustart s1_9
+uend s1_9
+start s1_10
+end s1_10
+start s1_11
+loop s1_11 s1_5
+end s1_11
+ustart s1_12
+uend s1_12
+start s1_13
+loop s1_13 s1_5
+end s1_13
+start s1_14
+loop s1_14 s1_2
+end s1_14
+start s1_15
+end s1_15
+pathend s1 returned=s1_15 thrown= final=s1_15
+== for-in--continue-nest.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_3 s1_2
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+loop s1_6 s1_5
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+loop s1_8 s1_5
+end s1_8
+ustart s1_9
+uend s1_9
+start s1_10
+loop s1_10 s1_5
+end s1_10
+start s1_11
+loop s1_11 s1_2
+end s1_11
+start s1_12
+end s1_12
+pathend s1 returned=s1_12 thrown= final=s1_12
+== for-in--continue-simple.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_3 s1_2
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+loop s1_5 s1_2
+end s1_5
+ustart s1_6
+uend s1_6
+start s1_7
+loop s1_7 s1_2
+end s1_7
+start s1_8
+end s1_8
+pathend s1 returned=s1_8 thrown= final=s1_8
+== for-in--direct-nest.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_3 s1_2
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+loop s1_6 s1_5
+end s1_6
+start s1_7
+loop s1_7 s1_5
+end s1_7
+start s1_8
+loop s1_8 s1_2
+end s1_8
+start s1_9
+end s1_9
+pathend s1 returned=s1_9 thrown= final=s1_9
+== for-in--empty.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_3 s1_2
+end s1_3
+start s1_4
+loop s1_4 s1_2
+end s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== for-in--simple.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_3 s1_2
+end s1_3
+start s1_4
+loop s1_4 s1_2
+end s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== for-of--break-always.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_3 s1_2
+end s1_3
+start s1_4
+end s1_4
+ustart s1_5
+uend s1_5
+start s1_6
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== for-of--break-label.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_3 s1_2
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+loop s1_6 s1_5
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+ustart s1_9
+uend s1_9
+start s1_10
+end s1_10
+start s1_11
+end s1_11
+ustart s1_12
+uend s1_12
+start s1_13
+loop s1_13 s1_5
+end s1_13
+start s1_14
+loop s1_14 s1_2
+end s1_14
+start s1_15
+end s1_15
+pathend s1 returned=s1_15 thrown= final=s1_15
+== for-of--break-nest.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_3 s1_2
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+loop s1_6 s1_5
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+ustart s1_9
+uend s1_9
+start s1_10
+loop s1_10 s1_5
+end s1_10
+start s1_11
+loop s1_11 s1_2
+end s1_11
+start s1_12
+end s1_12
+pathend s1 returned=s1_12 thrown= final=s1_12
+== for-of--break-simple.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_3 s1_2
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+ustart s1_6
+uend s1_6
+start s1_7
+loop s1_7 s1_2
+end s1_7
+start s1_8
+end s1_8
+pathend s1 returned=s1_8 thrown= final=s1_8
+== for-of--continue-always.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_3 s1_2
+end s1_3
+start s1_4
+loop s1_4 s1_2
+end s1_4
+ustart s1_5
+uend s1_5
+start s1_6
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== for-of--continue-label.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_3 s1_2
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+loop s1_6 s1_5
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+loop s1_8 s1_2
+end s1_8
+ustart s1_9
+uend s1_9
+start s1_10
+end s1_10
+start s1_11
+loop s1_11 s1_5
+end s1_11
+ustart s1_12
+uend s1_12
+start s1_13
+loop s1_13 s1_5
+end s1_13
+start s1_14
+loop s1_14 s1_2
+end s1_14
+start s1_15
+end s1_15
+pathend s1 returned=s1_15 thrown= final=s1_15
+== for-of--continue-nest.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_3 s1_2
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+loop s1_6 s1_5
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+loop s1_8 s1_5
+end s1_8
+ustart s1_9
+uend s1_9
+start s1_10
+loop s1_10 s1_5
+end s1_10
+start s1_11
+loop s1_11 s1_2
+end s1_11
+start s1_12
+end s1_12
+pathend s1 returned=s1_12 thrown= final=s1_12
+== for-of--continue-simple.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_3 s1_2
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+loop s1_5 s1_2
+end s1_5
+ustart s1_6
+uend s1_6
+start s1_7
+loop s1_7 s1_2
+end s1_7
+start s1_8
+end s1_8
+pathend s1 returned=s1_8 thrown= final=s1_8
+== for-of--direct-nest.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_3 s1_2
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+loop s1_6 s1_5
+end s1_6
+start s1_7
+loop s1_7 s1_5
+end s1_7
+start s1_8
+loop s1_8 s1_2
+end s1_8
+start s1_9
+end s1_9
+pathend s1 returned=s1_9 thrown= final=s1_9
+== for-of--empty.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_3 s1_2
+end s1_3
+start s1_4
+loop s1_4 s1_2
+end s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== for-of--simple.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_3 s1_2
+end s1_3
+start s1_4
+loop s1_4 s1_2
+end s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== function--in-condition-expr.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+pathstart s2 function
+start s2_1
+end s2_1
+pathend s2 returned=s2_1 thrown= final=s2_1
+end s1_2
+start s1_3
+pathstart s3 function
+start s3_1
+end s3_1
+pathend s3 returned=s3_1 thrown= final=s3_1
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== function--in-logical-right.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+pathstart s2 function
+start s2_1
+end s2_1
+pathend s2 returned=s2_1 thrown= final=s2_1
+end s1_2
+start s1_3
+end s1_3
+pathend s1 returned=s1_3 thrown= final=s1_3
+== function--new.js
+pathstart s1 program
+start s1_1
+pathstart s2 function
+start s2_1
+end s2_1
+start s2_2
+end s2_2
+start s2_3
+end s2_3
+start s2_4
+end s2_4
+pathend s2 returned=s2_4 thrown= final=s2_4
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== function--simple.js
+pathstart s1 program
+start s1_1
+pathstart s2 function
+start s2_1
+end s2_1
+pathend s2 returned=s2_1 thrown= final=s2_1
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== generator-yield-return-1.js
+pathstart s1 program
+start s1_1
+pathstart s2 function
+start s2_1
+end s2_1
+start s2_2
+end s2_2
+start s2_3
+end s2_3
+start s2_4
+end s2_4
+pathend s2 returned=s2_1,s2_4 thrown=s2_1 final=s2_1,s2_4
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== if-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+pathend s1 returned=s1_3 thrown= final=s1_3
+== if-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== if-3.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+start s1_9
+end s1_9
+pathend s1 returned=s1_9 thrown= final=s1_9
+== if-4.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+ustart s1_3
+uend s1_3
+start s1_4
+end s1_4
+ustart s1_5
+uend s1_5
+ustart s1_6
+uend s1_6
+pathend s1 returned=s1_2 thrown=s1_4 final=s1_2,s1_4
+== if-5.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_4
+end s1_4
+pathend s1 returned=s1_2,s1_4 thrown= final=s1_2,s1_4
+== if-6.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+start s1_9
+end s1_9
+pathend s1 returned=s1_9 thrown= final=s1_9
+== logical--and-qq.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== logical--do-while-and-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_3 s1_2
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== logical--do-while-and-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+loop s1_5 s1_2
+end s1_5
+start s1_6
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== logical--do-while-mix-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+loop s1_3 s1_2
+loop s1_4 s1_2
+end s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== logical--do-while-mix-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+loop s1_2 s1_2
+loop s1_4 s1_2
+end s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== logical--do-while-or-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_2 s1_2
+loop s1_3 s1_2
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== logical--do-while-or-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+loop s1_2 s1_2
+loop s1_3 s1_2
+loop s1_4 s1_2
+loop s1_5 s1_2
+end s1_5
+start s1_6
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== logical--do-while-qq-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_2 s1_2
+loop s1_3 s1_2
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== logical--do-while-qq-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+loop s1_2 s1_2
+loop s1_3 s1_2
+loop s1_4 s1_2
+loop s1_5 s1_2
+end s1_5
+start s1_6
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== logical--for-and-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_5
+loop s1_5 s1_2
+end s1_5
+start s1_4
+loop s1_4 s1_5
+end s1_4
+start s1_6
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== logical--for-and-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_7
+loop s1_7 s1_2
+end s1_7
+start s1_6
+loop s1_6 s1_7
+end s1_6
+start s1_8
+end s1_8
+pathend s1 returned=s1_8 thrown= final=s1_8
+== logical--for-and-3.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+loop s1_4 s1_2
+end s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== logical--for-mix-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_6
+loop s1_6 s1_2
+end s1_6
+start s1_5
+loop s1_5 s1_6
+end s1_5
+start s1_7
+end s1_7
+pathend s1 returned=s1_7 thrown= final=s1_7
+== logical--for-mix-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_6
+loop s1_6 s1_2
+end s1_6
+start s1_5
+loop s1_5 s1_6
+end s1_5
+start s1_7
+end s1_7
+pathend s1 returned=s1_7 thrown= final=s1_7
+== logical--for-mix-3.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+loop s1_5 s1_2
+end s1_5
+start s1_6
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== logical--for-or-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_5
+loop s1_5 s1_2
+end s1_5
+start s1_4
+loop s1_4 s1_5
+end s1_4
+start s1_6
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== logical--for-or-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_7
+loop s1_7 s1_2
+end s1_7
+start s1_6
+loop s1_6 s1_7
+end s1_6
+start s1_8
+end s1_8
+pathend s1 returned=s1_8 thrown= final=s1_8
+== logical--for-or-3.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+loop s1_4 s1_2
+end s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== logical--if-and-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== logical--if-and-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== logical--if-and-3.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+start s1_9
+end s1_9
+pathend s1 returned=s1_9 thrown= final=s1_9
+== logical--if-and-4.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+pathend s1 returned=s1_7 thrown= final=s1_7
+== logical--if-and-5.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+start s1_9
+end s1_9
+pathend s1 returned=s1_9 thrown= final=s1_9
+== logical--if-mix-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== logical--if-mix-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== logical--if-mix-and-qq-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== logical--if-mix-and-qq-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== logical--if-mix-or-qq-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== logical--if-mix-or-qq-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== logical--if-or-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== logical--if-or-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== logical--if-or-3.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+start s1_9
+end s1_9
+pathend s1 returned=s1_9 thrown= final=s1_9
+== logical--if-or-4.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+pathend s1 returned=s1_7 thrown= final=s1_7
+== logical--if-or-5.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+start s1_9
+end s1_9
+pathend s1 returned=s1_9 thrown= final=s1_9
+== logical--if-qdot-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+start s1_9
+end s1_9
+start s1_10
+end s1_10
+start s1_11
+end s1_11
+pathend s1 returned=s1_11 thrown= final=s1_11
+== logical--if-qq-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== logical--if-qq-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== logical--if-qq-3.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+start s1_9
+end s1_9
+pathend s1 returned=s1_9 thrown= final=s1_9
+== logical--if-qq-4.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+pathend s1 returned=s1_7 thrown= final=s1_7
+== logical--if-qq-5.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+start s1_9
+end s1_9
+pathend s1 returned=s1_9 thrown= final=s1_9
+== logical--simple-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== logical--simple-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== logical--simple-3.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== logical--while-and-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+loop s1_4 s1_2
+end s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== logical--while-and-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+loop s1_6 s1_2
+end s1_6
+start s1_7
+end s1_7
+pathend s1 returned=s1_7 thrown= final=s1_7
+== logical--while-mix-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+loop s1_5 s1_2
+end s1_5
+start s1_6
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== logical--while-mix-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+loop s1_5 s1_2
+end s1_5
+start s1_6
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== logical--while-or-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+loop s1_4 s1_2
+end s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== logical--while-or-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+loop s1_6 s1_2
+end s1_6
+start s1_7
+end s1_7
+pathend s1 returned=s1_7 thrown= final=s1_7
+== logical--while-qq-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+loop s1_4 s1_2
+end s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== logical--while-qq-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+loop s1_6 s1_2
+end s1_6
+start s1_7
+end s1_7
+pathend s1 returned=s1_7 thrown= final=s1_7
+== object-literal--conditional.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== optional-chaining--complex-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+start s1_9
+end s1_9
+start s1_10
+end s1_10
+start s1_11
+end s1_11
+start s1_12
+end s1_12
+start s1_13
+end s1_13
+start s1_16
+end s1_16
+pathend s1 returned=s1_16 thrown= final=s1_16
+== optional-chaining--complex-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+start s1_9
+end s1_9
+start s1_10
+end s1_10
+start s1_11
+end s1_11
+start s1_12
+end s1_12
+start s1_13
+end s1_13
+start s1_16
+end s1_16
+pathend s1 returned=s1_16 thrown= final=s1_16
+== optional-chaining--complex-3.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+start s1_10
+end s1_10
+start s1_11
+end s1_11
+start s1_12
+end s1_12
+start s1_13
+end s1_13
+start s1_14
+end s1_14
+start s1_15
+end s1_15
+start s1_16
+end s1_16
+pathend s1 returned=s1_16 thrown= final=s1_16
+== optional-chaining--simple-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+pathend s1 returned=s1_3 thrown= final=s1_3
+== optional-chaining--simple-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+pathend s1 returned=s1_3 thrown= final=s1_3
+== optional-chaining--simple-3.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_7
+end s1_7
+pathend s1 returned=s1_7 thrown= final=s1_7
+== optional-chaining--simple-4.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+pathend s1 returned=s1_3 thrown= final=s1_3
+== switch--cases-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+ustart s1_3
+uend s1_3
+start s1_4
+end s1_4
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+ustart s1_8
+uend s1_8
+start s1_9
+end s1_9
+start s1_10
+end s1_10
+start s1_11
+end s1_11
+start s1_12
+end s1_12
+start s1_13
+end s1_13
+pathend s1 returned=s1_13 thrown= final=s1_13
+== switch--cases-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+ustart s1_3
+uend s1_3
+start s1_4
+end s1_4
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+ustart s1_8
+uend s1_8
+start s1_9
+end s1_9
+start s1_10
+end s1_10
+start s1_11
+end s1_11
+start s1_12
+end s1_12
+ustart s1_13
+uend s1_13
+start s1_14
+end s1_14
+pathend s1 returned=s1_2,s1_7,s1_14 thrown= final=s1_2,s1_7,s1_14
+== switch--cases-and-default-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+ustart s1_3
+uend s1_3
+start s1_4
+end s1_4
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+ustart s1_8
+uend s1_8
+start s1_9
+end s1_9
+start s1_10
+end s1_10
+start s1_11
+end s1_11
+start s1_12
+end s1_12
+start s1_13
+end s1_13
+pathend s1 returned=s1_13 thrown= final=s1_13
+== switch--cases-and-default-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+ustart s1_3
+uend s1_3
+start s1_4
+end s1_4
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+ustart s1_8
+uend s1_8
+start s1_9
+end s1_9
+start s1_10
+end s1_10
+start s1_11
+end s1_11
+start s1_12
+loop s1_11 s1_10
+end s1_12
+start s1_13
+end s1_13
+pathend s1 returned=s1_13 thrown= final=s1_13
+== switch--cases-and-default-3.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+ustart s1_3
+uend s1_3
+start s1_4
+end s1_4
+start s1_6
+end s1_6
+start s1_8
+end s1_8
+start s1_9
+end s1_9
+ustart s1_10
+uend s1_10
+start s1_11
+end s1_11
+start s1_12
+loop s1_11 s1_9
+end s1_12
+start s1_13
+end s1_13
+pathend s1 returned=s1_13 thrown= final=s1_13
+== switch--default-only-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== switch--default-only-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+ustart s1_2
+uend s1_2
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== switch--empty.js
+pathstart s1 program
+start s1_1
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== switch--precedence.js
+pathstart s1 program
+start s1_1
+pathstart s2 function
+start s2_1
+end s2_1
+start s2_2
+end s2_2
+ustart s2_3
+uend s2_3
+start s2_4
+end s2_4
+start s2_6
+end s2_6
+start s2_8
+end s2_8
+start s2_9
+end s2_9
+ustart s2_10
+uend s2_10
+start s2_11
+end s2_11
+start s2_12
+end s2_12
+ustart s2_13
+uend s2_13
+start s2_14
+end s2_14
+start s2_15
+end s2_15
+start s2_16
+end s2_16
+ustart s2_17
+uend s2_17
+start s2_18
+end s2_18
+start s2_19
+end s2_19
+ustart s2_20
+uend s2_20
+start s2_21
+end s2_21
+start s2_22
+end s2_22
+start s2_23
+end s2_23
+start s2_24
+end s2_24
+ustart s2_25
+uend s2_25
+start s2_26
+end s2_26
+start s2_27
+end s2_27
+ustart s2_28
+uend s2_28
+start s2_29
+end s2_29
+start s2_30
+end s2_30
+ustart s2_31
+uend s2_31
+start s2_32
+end s2_32
+start s2_34
+end s2_34
+start s2_36
+end s2_36
+start s2_38
+end s2_38
+start s2_39
+end s2_39
+ustart s2_40
+uend s2_40
+start s2_41
+end s2_41
+start s2_43
+end s2_43
+start s2_45
+end s2_45
+start s2_47
+end s2_47
+start s2_49
+end s2_49
+start s2_51
+end s2_51
+start s2_52
+end s2_52
+ustart s2_53
+uend s2_53
+start s2_54
+end s2_54
+start s2_56
+end s2_56
+start s2_58
+end s2_58
+start s2_59
+end s2_59
+ustart s2_60
+uend s2_60
+start s2_61
+end s2_61
+start s2_63
+end s2_63
+start s2_64
+end s2_64
+ustart s2_65
+uend s2_65
+start s2_66
+end s2_66
+start s2_68
+end s2_68
+start s2_70
+end s2_70
+start s2_71
+end s2_71
+ustart s2_72
+uend s2_72
+start s2_73
+end s2_73
+start s2_74
+end s2_74
+start s2_75
+end s2_75
+ustart s2_76
+uend s2_76
+start s2_77
+end s2_77
+start s2_78
+end s2_78
+ustart s2_79
+uend s2_79
+start s2_80
+end s2_80
+start s2_81
+end s2_81
+start s2_82
+end s2_82
+ustart s2_83
+uend s2_83
+start s2_84
+end s2_84
+ustart s2_85
+uend s2_85
+start s2_86
+end s2_86
+start s2_87
+end s2_87
+ustart s2_88
+uend s2_88
+start s2_89
+end s2_89
+ustart s2_90
+uend s2_90
+pathend s2 returned=s2_2,s2_9,s2_12,s2_16,s2_19,s2_24,s2_27,s2_30,s2_39,s2_52,s2_59,s2_64,s2_71,s2_75,s2_78,s2_82,s2_84,s2_87,s2_89 thrown= final=s2_2,s2_9,s2_12,s2_16,s2_19,s2_24,s2_27,s2_30,s2_39,s2_52,s2_59,s2_64,s2_71,s2_75,s2_78,s2_82,s2_84,s2_87,s2_89
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== switch--single-case-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_3
+end s1_3
+pathend s1 returned=s1_3 thrown= final=s1_3
+== switch--single-case-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+ustart s1_3
+uend s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== try--generator-yield-finally-1.js
+pathstart s1 program
+start s1_1
+pathstart s2 function
+start s2_1
+end s2_1
+start s2_2
+end s2_2
+start s2_3
+end s2_3
+start s2_4
+end s2_4
+start s2_6
+start s2_7
+end s2_7
+end s2_6
+pathend s2 returned=s2_7,s2_6 thrown=s2_7 final=s2_7,s2_6
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== try--try-catch-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== try--try-catch-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+ustart s1_4
+uend s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown=s1_3 final=s1_3,s1_5
+== try--try-catch-3.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_3
+end s1_3
+ustart s1_4
+uend s1_4
+start s1_5
+end s1_5
+ustart s1_6
+uend s1_6
+ustart s1_7
+uend s1_7
+start s1_8
+end s1_8
+start s1_9
+end s1_9
+pathend s1 returned=s1_3,s1_9 thrown= final=s1_3,s1_9
+== try--try-catch-4.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_3
+end s1_3
+ustart s1_4
+uend s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+ustart s1_8
+uend s1_8
+start s1_9
+end s1_9
+start s1_10
+end s1_10
+ustart s1_11
+uend s1_11
+start s1_12
+end s1_12
+pathend s1 returned=s1_12 thrown=s1_10 final=s1_10,s1_12
+== try--try-catch-finally-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_6
+start s1_7
+end s1_7
+end s1_6
+pathend s1 returned=s1_6 thrown=s1_7 final=s1_7,s1_6
+== try--try-catch-finally-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+ustart s1_2
+uend s1_2
+ustart s1_3
+uend s1_3
+ustart s1_5
+start s1_6
+end s1_6
+uend s1_5
+pathend s1 returned=s1_6 thrown= final=s1_6
+== try--try-catch-finally-3.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_3
+end s1_3
+ustart s1_4
+uend s1_4
+start s1_5
+end s1_5
+ustart s1_6
+uend s1_6
+ustart s1_7
+uend s1_7
+start s1_8
+end s1_8
+start s1_9
+end s1_9
+start s1_11
+start s1_12
+end s1_12
+end s1_11
+pathend s1 returned=s1_12,s1_11 thrown=s1_12 final=s1_12,s1_11
+== try--try-finally-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+start s1_4
+end s1_4
+end s1_3
+pathend s1 returned=s1_3 thrown=s1_4 final=s1_4,s1_3
+== try--try-finally-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+ustart s1_2
+uend s1_2
+ustart s1_3
+start s1_4
+end s1_4
+uend s1_3
+pathend s1 returned=s1_4 thrown= final=s1_4
+== try--try-finally-3.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+ustart s1_3
+uend s1_3
+ustart s1_4
+start s1_5
+end s1_5
+uend s1_4
+pathend s1 returned= thrown=s1_5 final=s1_5
+== try--try-finally-4.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_3
+end s1_3
+ustart s1_4
+uend s1_4
+start s1_5
+end s1_5
+ustart s1_6
+uend s1_6
+ustart s1_7
+uend s1_7
+ustart s1_8
+start s1_9
+uend s1_8
+end s1_9
+ustart s1_11
+start s1_12
+end s1_12
+uend s1_11
+ustart s1_14
+start s1_15
+end s1_15
+uend s1_14
+pathend s1 returned=s1_15 thrown=s1_15 final=s1_15
+== try--try-finally-5.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_3
+end s1_3
+ustart s1_4
+uend s1_4
+start s1_5
+end s1_5
+start s1_6
+start s1_7
+end s1_6
+end s1_7
+start s1_9
+start s1_10
+end s1_10
+end s1_9
+start s1_11
+start s1_12
+end s1_12
+end s1_11
+pathend s1 returned=s1_12,s1_11 thrown=s1_12 final=s1_12,s1_11
+== try--try-with-for-inof-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_3 s1_2
+end s1_3
+start s1_5
+loop s1_5 s1_2
+end s1_5
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+pathend s1 returned=s1_8 thrown= final=s1_8
+== try--try-with-for-inof-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+loop s1_4 s1_2
+end s1_4
+start s1_5
+loop s1_5 s1_2
+end s1_5
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+pathend s1 returned=s1_8 thrown= final=s1_8
+== try-catch-finally-identifier-reference.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_6
+start s1_7
+end s1_7
+end s1_6
+pathend s1 returned=s1_6 thrown=s1_7 final=s1_7,s1_6
+== try-catch-finally-import-expression.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_6
+start s1_7
+end s1_7
+end s1_6
+pathend s1 returned=s1_6 thrown=s1_7 final=s1_7,s1_6
+== try-catch-finally-member-expression.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_6
+start s1_7
+end s1_7
+end s1_6
+pathend s1 returned=s1_6 thrown=s1_7 final=s1_7,s1_6
+== try-catch-finally-new-expression.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_6
+start s1_7
+end s1_7
+end s1_6
+pathend s1 returned=s1_6 thrown=s1_7 final=s1_7,s1_6
+== unreachable-controls.js
+pathstart s1 program
+start s1_1
+pathstart s2 function
+start s2_1
+end s2_1
+ustart s2_2
+uend s2_2
+ustart s2_3
+uend s2_3
+ustart s2_4
+uend s2_4
+ustart s2_5
+uend s2_5
+pathend s2 returned=s2_1 thrown= final=s2_1
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== while--break-always.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+ustart s1_4
+uend s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== while--break-label.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+ustart s1_7
+uend s1_7
+start s1_8
+end s1_8
+start s1_9
+end s1_9
+ustart s1_10
+uend s1_10
+start s1_11
+loop s1_11 s1_4
+end s1_11
+start s1_12
+loop s1_12 s1_2
+end s1_12
+start s1_13
+end s1_13
+pathend s1 returned=s1_13 thrown= final=s1_13
+== while--break-nest-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+ustart s1_5
+uend s1_5
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+ustart s1_8
+uend s1_8
+start s1_9
+end s1_9
+start s1_10
+loop s1_10 s1_2
+end s1_10
+start s1_11
+end s1_11
+pathend s1 returned=s1_11 thrown= final=s1_11
+== while--break-nest.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+ustart s1_7
+uend s1_7
+start s1_8
+loop s1_8 s1_4
+end s1_8
+start s1_9
+loop s1_9 s1_2
+end s1_9
+start s1_10
+end s1_10
+pathend s1 returned=s1_10 thrown= final=s1_10
+== while--break-simple.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+ustart s1_5
+uend s1_5
+start s1_6
+loop s1_6 s1_2
+end s1_6
+start s1_7
+end s1_7
+pathend s1 returned=s1_7 thrown= final=s1_7
+== while--continue-always.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_3 s1_2
+end s1_3
+ustart s1_4
+uend s1_4
+start s1_5
+end s1_5
+pathend s1 returned=s1_5 thrown= final=s1_5
+== while--continue-label.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+loop s1_6 s1_2
+end s1_6
+ustart s1_7
+uend s1_7
+start s1_8
+end s1_8
+start s1_9
+loop s1_9 s1_4
+end s1_9
+ustart s1_10
+uend s1_10
+start s1_11
+loop s1_11 s1_4
+end s1_11
+start s1_12
+loop s1_12 s1_2
+end s1_12
+start s1_13
+end s1_13
+pathend s1 returned=s1_13 thrown= final=s1_13
+== while--continue-nest.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+loop s1_6 s1_4
+end s1_6
+ustart s1_7
+uend s1_7
+start s1_8
+loop s1_8 s1_4
+end s1_8
+start s1_9
+loop s1_9 s1_2
+end s1_9
+start s1_10
+end s1_10
+pathend s1 returned=s1_10 thrown= final=s1_10
+== while--continue-simple.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+loop s1_4 s1_2
+end s1_4
+ustart s1_5
+uend s1_5
+start s1_6
+loop s1_6 s1_2
+end s1_6
+start s1_7
+end s1_7
+pathend s1 returned=s1_7 thrown= final=s1_7
+== while--direct-nest.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+loop s1_5 s1_4
+end s1_5
+start s1_6
+loop s1_6 s1_2
+end s1_6
+start s1_7
+end s1_7
+pathend s1 returned=s1_7 thrown= final=s1_7
+== while--empty.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_3 s1_2
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== while--simple.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+loop s1_3 s1_2
+end s1_3
+start s1_4
+end s1_4
+pathend s1 returned=s1_4 thrown= final=s1_4
+== bun--arrow-expression-body.js
+pathstart s1 program
+start s1_1
+pathstart s2 function
+start s2_1
+end s2_1
+start s2_2
+end s2_2
+start s2_3
+end s2_3
+pathend s2 returned=s2_3 thrown= final=s2_3
+pathstart s3 function
+start s3_1
+end s3_1
+pathend s3 returned=s3_1 thrown= final=s3_1
+pathstart s4 function
+start s4_1
+pathstart s5 function
+start s5_1
+end s5_1
+start s5_2
+end s5_2
+start s5_3
+end s5_3
+start s5_4
+end s5_4
+pathend s5 returned=s5_4 thrown= final=s5_4
+end s4_1
+pathend s4 returned=s4_1 thrown= final=s4_1
+pathstart s6 function
+start s6_1
+end s6_1
+pathend s6 returned=s6_1 thrown= final=s6_1
+pathstart s7 function
+start s7_1
+end s7_1
+start s7_2
+end s7_2
+start s7_3
+end s7_3
+ustart s7_4
+uend s7_4
+pathend s7 returned=s7_3 thrown= final=s7_3
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== bun--calls.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+start s1_9
+end s1_9
+start s1_10
+end s1_10
+start s1_11
+end s1_11
+start s1_12
+end s1_12
+start s1_13
+end s1_13
+start s1_14
+end s1_14
+start s1_15
+end s1_15
+start s1_16
+end s1_16
+start s1_17
+end s1_17
+pathend s1 returned=s1_17 thrown= final=s1_17
+== bun--class-fields.js
+pathstart s1 program
+start s1_1
+pathstart s2 class-field-initializer
+start s2_1
+end s2_1
+start s2_2
+end s2_2
+start s2_3
+end s2_3
+pathend s2 returned=s2_3 thrown= final=s2_3
+pathstart s3 class-field-initializer
+start s3_1
+end s3_1
+start s3_2
+end s3_2
+start s3_3
+end s3_3
+pathend s3 returned=s3_3 thrown= final=s3_3
+pathstart s4 class-field-initializer
+start s4_1
+end s4_1
+pathend s4 returned=s4_1 thrown= final=s4_1
+pathstart s5 class-static-block
+start s5_1
+end s5_1
+pathend s5 returned=s5_1 thrown= final=s5_1
+pathstart s6 class-field-initializer
+start s6_1
+end s6_1
+pathend s6 returned=s6_1 thrown= final=s6_1
+pathstart s7 class-field-initializer
+start s7_1
+pathstart s8 function
+start s8_1
+end s8_1
+pathend s8 returned=s8_1 thrown= final=s8_1
+end s7_1
+pathend s7 returned=s7_1 thrown= final=s7_1
+pathstart s9 class-field-initializer
+start s9_1
+pathstart s10 function
+start s10_1
+end s10_1
+ustart s10_2
+uend s10_2
+pathend s10 returned=s10_1 thrown= final=s10_1
+end s9_1
+pathend s9 returned=s9_1 thrown= final=s9_1
+pathstart s11 class-field-initializer
+start s11_1
+pathstart s12 class-field-initializer
+start s12_1
+end s12_1
+pathend s12 returned=s12_1 thrown= final=s12_1
+end s11_1
+pathend s11 returned=s11_1 thrown= final=s11_1
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== bun--default-params.js
+pathstart s1 program
+start s1_1
+pathstart s2 function
+start s2_1
+end s2_1
+start s2_2
+end s2_2
+start s2_3
+end s2_3
+start s2_4
+end s2_4
+start s2_5
+end s2_5
+start s2_6
+end s2_6
+start s2_7
+end s2_7
+start s2_8
+end s2_8
+start s2_9
+end s2_9
+start s2_10
+end s2_10
+start s2_11
+end s2_11
+start s2_12
+end s2_12
+start s2_13
+end s2_13
+pathend s2 returned=s2_13 thrown= final=s2_13
+pathstart s3 function
+start s3_1
+end s3_1
+start s3_2
+end s3_2
+start s3_3
+end s3_3
+start s3_4
+end s3_4
+start s3_5
+end s3_5
+start s3_6
+end s3_6
+pathend s3 returned=s3_6 thrown= final=s3_6
+pathstart s4 function
+start s4_1
+end s4_1
+start s4_2
+end s4_2
+start s4_3
+end s4_3
+pathend s4 returned=s4_3 thrown= final=s4_3
+pathstart s5 function
+start s5_1
+end s5_1
+start s5_2
+end s5_2
+start s5_3
+end s5_3
+pathend s5 returned=s5_3 thrown= final=s5_3
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== bun--dropped-statements.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+pathstart s2 function
+start s2_1
+end s2_1
+ustart s2_2
+uend s2_2
+pathend s2 returned=s2_1 thrown= final=s2_1
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+loop s1_6 s1_5
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+ustart s1_9
+uend s1_9
+start s1_10
+end s1_10
+pathend s1 returned=s1_10 thrown= final=s1_10
+== bun--exports.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+pathstart s2 function
+start s2_1
+end s2_1
+ustart s2_2
+uend s2_2
+pathend s2 returned=s2_1 thrown= final=s2_1
+pathstart s3 function
+start s3_1
+end s3_1
+pathend s3 returned=s3_1 thrown= final=s3_1
+end s1_6
+pathend s1 returned=s1_6 thrown= final=s1_6
+== bun--for-head-first-throwable-1.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_3
+end s1_3
+start s1_5
+loop s1_5 s1_3
+end s1_5
+start s1_4
+loop s1_4 s1_5
+end s1_4
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+pathend s1 returned=s1_8 thrown= final=s1_8
+== bun--for-head-first-throwable-2.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_4
+loop s1_4 s1_2
+end s1_4
+start s1_5
+loop s1_5 s1_2
+end s1_5
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+pathend s1 returned=s1_8 thrown= final=s1_8
+== bun--for-head-first-throwable-3.js
+pathstart s1 program
+start s1_1
+pathstart s2 function
+start s2_1
+end s2_1
+start s2_2
+end s2_2
+start s2_4
+loop s2_4 s2_2
+end s2_4
+start s2_5
+loop s2_5 s2_2
+end s2_5
+start s2_6
+end s2_6
+start s2_7
+start s2_8
+end s2_8
+end s2_7
+pathend s2 returned=s2_7 thrown=s2_8 final=s2_8,s2_7
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== bun--for-head-patterns.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+loop s1_5 s1_2
+end s1_5
+start s1_6
+loop s1_6 s1_2
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+start s1_9
+end s1_9
+start s1_10
+end s1_10
+start s1_11
+end s1_11
+start s1_12
+end s1_12
+start s1_13
+loop s1_13 s1_8
+end s1_13
+start s1_14
+loop s1_14 s1_8
+end s1_14
+start s1_15
+end s1_15
+start s1_16
+end s1_16
+start s1_17
+loop s1_17 s1_16
+end s1_17
+start s1_18
+loop s1_18 s1_16
+end s1_18
+start s1_19
+end s1_19
+start s1_20
+end s1_20
+start s1_21
+end s1_21
+start s1_22
+end s1_22
+start s1_23
+loop s1_23 s1_20
+end s1_23
+start s1_24
+loop s1_24 s1_20
+end s1_24
+ustart s1_25
+uend s1_25
+start s1_26
+end s1_26
+pathend s1 returned=s1_26 thrown= final=s1_26
+== bun--generators.js
+pathstart s1 program
+start s1_1
+pathstart s2 function
+start s2_1
+end s2_1
+start s2_3
+end s2_3
+start s2_4
+end s2_4
+start s2_5
+start s2_6
+end s2_6
+end s2_5
+pathend s2 returned=s2_6,s2_5 thrown=s2_6 final=s2_6,s2_5
+pathstart s3 function
+start s3_1
+end s3_1
+start s3_2
+end s3_2
+start s3_3
+end s3_3
+start s3_4
+end s3_4
+start s3_5
+end s3_5
+start s3_7
+loop s3_7 s3_2
+end s3_7
+ustart s3_8
+uend s3_8
+pathend s3 returned=s3_3,s3_5 thrown=s3_3 final=s3_3,s3_5
+pathstart s4 function
+start s4_1
+end s4_1
+start s4_2
+end s4_2
+start s4_3
+loop s4_3 s4_2
+end s4_3
+start s4_4
+end s4_4
+start s4_5
+loop s4_5 s4_2
+end s4_5
+start s4_6
+end s4_6
+pathend s4 returned=s4_4,s4_6 thrown=s4_4 final=s4_4,s4_6
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== bun--jsx.jsx
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+pathstart s2 function
+start s2_1
+end s2_1
+pathend s2 returned=s2_1 thrown= final=s2_1
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+start s1_9
+end s1_9
+start s1_10
+end s1_10
+start s1_11
+end s1_11
+start s1_12
+end s1_12
+start s1_13
+end s1_13
+pathend s1 returned=s1_13 thrown= final=s1_13
+== bun--labels.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_6
+end s1_6
+start s1_7
+loop s1_7 s1_2
+end s1_7
+start s1_9
+loop s1_9 s1_2
+end s1_9
+ustart s1_10
+uend s1_10
+start s1_11
+end s1_11
+start s1_12
+end s1_12
+start s1_14
+end s1_14
+ustart s1_15
+uend s1_15
+start s1_16
+end s1_16
+start s1_17
+end s1_17
+start s1_18
+end s1_18
+start s1_19
+loop s1_19 s1_18
+end s1_19
+ustart s1_20
+uend s1_20
+ustart s1_21
+uend s1_21
+ustart s1_22
+uend s1_22
+ustart s1_23
+uend s1_23
+ustart s1_24
+uend s1_24
+ustart s1_25
+uend s1_25
+ustart s1_26
+uend s1_26
+ustart s1_27
+uend s1_27
+ustart s1_28
+uend s1_28
+ustart s1_29
+uend s1_29
+ustart s1_30
+uend s1_30
+ustart s1_31
+uend s1_31
+ustart s1_32
+uend s1_32
+ustart s1_33
+uend s1_33
+ustart s1_34
+uend s1_34
+pathend s1 returned= thrown= final=
+== bun--logical-assignments.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+start s1_9
+end s1_9
+start s1_10
+end s1_10
+start s1_11
+end s1_11
+start s1_12
+end s1_12
+start s1_13
+end s1_13
+start s1_14
+end s1_14
+start s1_15
+loop s1_15 s1_13
+end s1_15
+start s1_16
+end s1_16
+start s1_17
+end s1_17
+start s1_18
+end s1_18
+start s1_19
+end s1_19
+start s1_20
+end s1_20
+start s1_21
+end s1_21
+start s1_22
+end s1_22
+start s1_23
+end s1_23
+pathend s1 returned=s1_23 thrown= final=s1_23
+== bun--loops-const-test.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_6
+loop s1_6 s1_2
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+start s1_9
+end s1_9
+ustart s1_10
+uend s1_10
+start s1_11
+end s1_11
+start s1_12
+end s1_12
+start s1_13
+loop s1_13 s1_12
+end s1_13
+start s1_14
+end s1_14
+start s1_15
+loop s1_15 s1_15
+end s1_15
+start s1_16
+end s1_16
+start s1_17
+end s1_17
+start s1_18
+loop s1_18 s1_17
+end s1_18
+start s1_19
+end s1_19
+start s1_20
+end s1_20
+start s1_21
+loop s1_21 s1_20
+end s1_21
+start s1_22
+end s1_22
+start s1_23
+end s1_23
+start s1_24
+end s1_24
+ustart s1_25
+uend s1_25
+start s1_26
+end s1_26
+start s1_27
+end s1_27
+start s1_28
+loop s1_28 s1_27
+end s1_28
+start s1_29
+end s1_29
+start s1_30
+end s1_30
+ustart s1_31
+uend s1_31
+start s1_32
+loop s1_32 s1_30
+end s1_32
+ustart s1_33
+uend s1_33
+pathend s1 returned= thrown= final=
+== bun--object-members.js
+pathstart s1 program
+start s1_1
+pathstart s2 function
+start s2_1
+end s2_1
+ustart s2_2
+uend s2_2
+pathend s2 returned=s2_1 thrown= final=s2_1
+pathstart s3 function
+start s3_1
+end s3_1
+pathend s3 returned=s3_1 thrown= final=s3_1
+pathstart s4 function
+start s4_1
+end s4_1
+pathend s4 returned=s4_1 thrown= final=s4_1
+pathstart s5 function
+start s5_1
+end s5_1
+pathend s5 returned=s5_1 thrown= final=s5_1
+pathstart s6 function
+start s6_1
+end s6_1
+start s6_2
+end s6_2
+pathend s6 returned=s6_1,s6_2 thrown=s6_1 final=s6_1,s6_2
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+pathstart s7 function
+start s7_1
+end s7_1
+pathend s7 returned=s7_1 thrown= final=s7_1
+pathstart s8 function
+start s8_1
+end s8_1
+pathend s8 returned=s8_1 thrown= final=s8_1
+end s1_3
+pathend s1 returned=s1_3 thrown= final=s1_3
+== bun--optional-chaining-parens.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+start s1_9
+end s1_9
+start s1_10
+end s1_10
+start s1_13
+end s1_13
+start s1_15
+end s1_15
+start s1_16
+end s1_16
+start s1_17
+end s1_17
+start s1_18
+end s1_18
+start s1_19
+end s1_19
+start s1_21
+end s1_21
+start s1_22
+end s1_22
+start s1_23
+end s1_23
+start s1_24
+end s1_24
+start s1_25
+end s1_25
+start s1_26
+end s1_26
+start s1_27
+end s1_27
+start s1_28
+end s1_28
+start s1_29
+end s1_29
+start s1_30
+end s1_30
+start s1_31
+end s1_31
+start s1_32
+end s1_32
+start s1_35
+end s1_35
+start s1_36
+end s1_36
+start s1_37
+end s1_37
+pathend s1 returned=s1_37 thrown= final=s1_37
+== bun--sequences.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_6
+loop s1_6 s1_4
+end s1_6
+start s1_5
+loop s1_5 s1_6
+end s1_5
+start s1_7
+end s1_7
+start s1_8
+end s1_8
+start s1_9
+end s1_9
+start s1_10
+end s1_10
+start s1_11
+end s1_11
+pathend s1 returned=s1_11 thrown= final=s1_11
+== bun--switch-empty-statements.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_5
+end s1_5
+start s1_6
+end s1_6
+start s1_7
+end s1_7
+start s1_8
+loop s1_7 s1_6
+end s1_8
+start s1_9
+end s1_9
+start s1_11
+end s1_11
+start s1_12
+end s1_12
+start s1_13
+end s1_13
+start s1_14
+loop s1_13 s1_12
+end s1_14
+start s1_15
+end s1_15
+start s1_16
+end s1_16
+start s1_17
+end s1_17
+start s1_19
+end s1_19
+start s1_20
+end s1_20
+ustart s1_21
+uend s1_21
+start s1_22
+end s1_22
+start s1_23
+end s1_23
+start s1_24
+end s1_24
+pathend s1 returned=s1_24 thrown= final=s1_24
+== bun--try-assignment-targets.js
+pathstart s1 program
+start s1_1
+pathstart s2 function
+start s2_1
+end s2_1
+start s2_2
+end s2_2
+start s2_3
+end s2_3
+start s2_4
+end s2_4
+start s2_5
+end s2_5
+start s2_6
+end s2_6
+start s2_7
+end s2_7
+start s2_8
+end s2_8
+start s2_9
+end s2_9
+start s2_10
+end s2_10
+start s2_11
+end s2_11
+start s2_12
+end s2_12
+start s2_13
+end s2_13
+start s2_15
+end s2_15
+start s2_16
+end s2_16
+start s2_17
+end s2_17
+start s2_18
+end s2_18
+start s2_19
+end s2_19
+start s2_20
+end s2_20
+start s2_21
+end s2_21
+start s2_22
+end s2_22
+start s2_23
+end s2_23
+pathend s2 returned=s2_23 thrown= final=s2_23
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== bun--try-bindings.js
+pathstart s1 program
+start s1_1
+pathstart s2 function
+start s2_1
+end s2_1
+start s2_2
+end s2_2
+start s2_3
+end s2_3
+start s2_4
+end s2_4
+start s2_5
+end s2_5
+start s2_6
+end s2_6
+start s2_7
+end s2_7
+start s2_8
+end s2_8
+start s2_9
+end s2_9
+start s2_10
+end s2_10
+start s2_11
+end s2_11
+start s2_12
+end s2_12
+start s2_13
+end s2_13
+start s2_14
+end s2_14
+start s2_15
+end s2_15
+start s2_16
+end s2_16
+start s2_18
+end s2_18
+start s2_19
+end s2_19
+start s2_20
+end s2_20
+start s2_21
+end s2_21
+start s2_23
+start s2_24
+end s2_24
+end s2_23
+ustart s2_25
+uend s2_25
+start s2_26
+end s2_26
+start s2_27
+end s2_27
+start s2_29
+start s2_30
+end s2_30
+end s2_29
+pathend s2 returned=s2_29 thrown=s2_24,s2_30 final=s2_24,s2_30,s2_29
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== bun--try-declarations.js
+pathstart s1 program
+start s1_1
+pathstart s2 function
+start s2_1
+end s2_1
+start s2_2
+end s2_2
+start s2_3
+end s2_3
+start s2_4
+pathstart s3 function
+start s3_1
+end s3_1
+pathend s3 returned=s3_1 thrown= final=s3_1
+end s2_4
+start s2_5
+end s2_5
+start s2_6
+pathstart s4 function
+start s4_1
+end s4_1
+pathend s4 returned=s4_1 thrown= final=s4_1
+end s2_6
+start s2_7
+pathstart s5 function
+start s5_1
+end s5_1
+pathend s5 returned=s5_1 thrown= final=s5_1
+pathstart s6 class-field-initializer
+start s6_1
+end s6_1
+pathend s6 returned=s6_1 thrown= final=s6_1
+end s2_7
+start s2_8
+end s2_8
+start s2_9
+end s2_9
+start s2_10
+end s2_10
+start s2_11
+end s2_11
+start s2_12
+end s2_12
+start s2_13
+end s2_13
+start s2_14
+end s2_14
+start s2_15
+end s2_15
+pathend s2 returned=s2_15 thrown= final=s2_15
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== bun--try-finally-controls.js
+pathstart s1 program
+start s1_1
+pathstart s2 function
+start s2_1
+end s2_1
+start s2_2
+end s2_2
+start s2_4
+end s2_4
+start s2_6
+end s2_6
+start s2_7
+loop s2_7 s2_2
+end s2_7
+start s2_9
+end s2_9
+start s2_10
+end s2_10
+start s2_12
+end s2_12
+start s2_13
+start s2_14
+end s2_14
+loop s2_13 s2_2
+end s2_13
+start s2_15
+end s2_15
+start s2_16
+end s2_16
+start s2_17
+end s2_17
+start s2_18
+end s2_18
+ustart s2_19
+uend s2_19
+start s2_21
+start s2_22
+end s2_21
+end s2_22
+start s2_24
+start s2_25
+end s2_25
+end s2_24
+start s2_26
+end s2_26
+start s2_27
+end s2_27
+start s2_29
+start s2_30
+end s2_30
+end s2_29
+start s2_31
+end s2_31
+ustart s2_32
+uend s2_32
+ustart s2_33
+start s2_34
+uend s2_33
+end s2_34
+ustart s2_35
+start s2_36
+uend s2_35
+end s2_36
+ustart s2_37
+start s2_38
+ustart s2_39
+start s2_40
+uend s2_39
+end s2_40
+end s2_38
+uend s2_37
+pathend s2 returned=s2_14,s2_38 thrown=s2_14,s2_30,s2_39,s2_40,s2_38 final=s2_14,s2_30,s2_39,s2_40,s2_38
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== bun--try-literals.js
+pathstart s1 program
+start s1_1
+pathstart s2 function
+start s2_1
+end s2_1
+start s2_2
+pathstart s3 function
+start s3_1
+end s3_1
+pathend s3 returned=s3_1 thrown= final=s3_1
+pathstart s4 function
+start s4_1
+end s4_1
+ustart s4_2
+uend s4_2
+pathend s4 returned=s4_1 thrown= final=s4_1
+end s2_2
+start s2_3
+end s2_3
+start s2_4
+end s2_4
+start s2_5
+end s2_5
+start s2_6
+end s2_6
+start s2_7
+end s2_7
+start s2_8
+end s2_8
+start s2_9
+end s2_9
+start s2_10
+end s2_10
+start s2_11
+end s2_11
+start s2_12
+end s2_12
+start s2_13
+end s2_13
+start s2_14
+end s2_14
+start s2_15
+end s2_15
+start s2_16
+end s2_16
+start s2_17
+end s2_17
+start s2_18
+end s2_18
+pathend s2 returned=s2_18 thrown= final=s2_18
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== bun--try-members.js
+pathstart s1 program
+start s1_1
+pathstart s2 function
+start s2_1
+end s2_1
+start s2_2
+end s2_2
+start s2_3
+end s2_3
+start s2_4
+end s2_4
+start s2_5
+end s2_5
+start s2_6
+end s2_6
+start s2_7
+end s2_7
+start s2_8
+end s2_8
+start s2_9
+end s2_9
+start s2_10
+end s2_10
+start s2_11
+end s2_11
+start s2_12
+end s2_12
+start s2_13
+end s2_13
+start s2_14
+end s2_14
+start s2_15
+start s2_16
+end s2_16
+end s2_15
+pathend s2 returned=s2_15 thrown=s2_16 final=s2_16,s2_15
+pathstart s3 function
+start s3_1
+end s3_1
+start s3_2
+end s3_2
+start s3_3
+end s3_3
+start s3_4
+end s3_4
+start s3_5
+end s3_5
+start s3_6
+end s3_6
+pathend s3 returned=s3_6 thrown= final=s3_6
+end s1_1
+pathend s1 returned=s1_1 thrown= final=s1_1
+== bun--try-meta.js
+pathstart s1 program
+start s1_1
+end s1_1
+start s1_2
+end s1_2
+start s1_3
+end s1_3
+start s1_4
+end s1_4
+start s1_5
+end s1_5
+start s1_6
+start s1_7
+end s1_7
+end s1_6
+pathend s1 returned=s1_6 thrown=s1_7 final=s1_7,s1_6

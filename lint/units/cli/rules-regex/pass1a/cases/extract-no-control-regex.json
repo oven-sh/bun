@@ -1,0 +1,159 @@
+{
+	"valid": [
+		{
+			"code": "var regex = /x1f/"
+		},
+		{
+			"code": "var regex = /\\\\x1f/"
+		},
+		{
+			"code": "var regex = new RegExp('x1f')"
+		},
+		{
+			"code": "var regex = RegExp('x1f')"
+		},
+		{
+			"code": "new RegExp('[')"
+		},
+		{
+			"code": "RegExp('[')"
+		},
+		{
+			"code": "function foo(RegExp) { RegExp(\"\\x1f\"); }"
+		},
+		{
+			"code": "function foo(RegExp) { new RegExp(\"\\x1f\"); }"
+		},
+		{
+			"code": "let RegExp; RegExp(\"\\x1f\");"
+		},
+		{
+			"code": "RegExp(\"\\x1f\")",
+			"languageOptions": {
+				"globals": {
+					"RegExp": "off"
+				}
+			}
+		},
+		{
+			"code": "new (function foo(){})('\\x1f')"
+		},
+		{
+			"code": "/\\u{20}/u"
+		},
+		{
+			"code": "/\\u{1F}/"
+		},
+		{
+			"code": "/\\u{1F}/g"
+		},
+		{
+			"code": "new RegExp(\"\\\\u{20}\", \"u\")"
+		},
+		{
+			"code": "new RegExp(\"\\\\u{1F}\")"
+		},
+		{
+			"code": "new RegExp(\"\\\\u{1F}\", \"g\")"
+		},
+		{
+			"code": "new RegExp(\"\\\\u{1F}\", flags)"
+		},
+		{
+			"code": "new RegExp(\"[\\\\q{\\\\u{20}}]\", \"v\")"
+		},
+		{
+			"code": "/[\\u{20}--B]/v"
+		},
+		{
+			"code": "var regex = /\\c1/"
+		},
+		{
+			"code": "var regex = /\\c$/"
+		},
+		{
+			"code": "var regex = new RegExp('\\\\c1')"
+		},
+		{
+			"code": "var regex = /\\cA/"
+		},
+		{
+			"code": "var regex = /\\cz/"
+		},
+		{
+			"code": "var regex = new RegExp('\\\\cA')"
+		},
+		{
+			"code": "/\\cA/u"
+		},
+		{
+			"code": "/\\cA/v"
+		}
+	],
+	"invalid": [
+		{
+			"code": "var regex = /\\x1f/"
+		},
+		{
+			"code": "var regex = /\\\\\\x1f\\\\x1e/"
+		},
+		{
+			"code": "var regex = /\\\\\\x1fFOO\\\\x00/"
+		},
+		{
+			"code": "var regex = /FOO\\\\\\x1fFOO\\\\x1f/"
+		},
+		{
+			"code": "var regex = new RegExp('\\x1f\\x1e')"
+		},
+		{
+			"code": "var regex = new RegExp('\\x1fFOO\\x00')"
+		},
+		{
+			"code": "var regex = new RegExp('FOO\\x1fFOO\\x1f')"
+		},
+		{
+			"code": "var regex = RegExp('\\x1f')"
+		},
+		{
+			"code": "var regex = /(?<a>\\x1f)/"
+		},
+		{
+			"code": "var regex = /(?<\\u{1d49c}>.)\\x1f/"
+		},
+		{
+			"code": "new RegExp(\"\\\\u001F\", flags)"
+		},
+		{
+			"code": "/\\u{1111}*\\x1F/u"
+		},
+		{
+			"code": "new RegExp(\"\\\\u{1111}*\\\\x1F\", \"u\")"
+		},
+		{
+			"code": "/\\u{1F}/u"
+		},
+		{
+			"code": "/\\u{1F}/gui"
+		},
+		{
+			"code": "new RegExp(\"\\\\u{1F}\", \"u\")"
+		},
+		{
+			"code": "new RegExp(\"\\\\u{1F}\", \"gui\")"
+		},
+		{
+			"code": "new RegExp(\"[\\\\q{\\\\u{1F}}]\", \"v\")"
+		},
+		{
+			"code": "/[\\u{1F}--B]/v"
+		},
+		{
+			"code": "/\\x11/; RegExp(\"foo\", \"uv\");"
+		},
+		{
+			"code": "var regex = /\\x1f\\cA/"
+		}
+	],
+	"typescript": []
+}

@@ -1,0 +1,611 @@
+[
+	{
+		"kind": "valid",
+		"code": "var foo = /foo/;",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = RegExp('foo')",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = / /;",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = RegExp(' ')",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = / a b c d /;",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /bar {3}baz/g;",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = RegExp('bar {3}baz', 'g')",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = new RegExp('bar {3}baz')",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /bar\t\t\tbaz/;",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = RegExp('bar\t\t\tbaz');",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = new RegExp('bar\t\t\tbaz');",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var RegExp = function() {}; var foo = new RegExp('bar   baz');",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var RegExp = function() {}; var foo = RegExp('bar   baz');",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /  +/;",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /  ?/;",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /  */;",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /  {2}/;",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /bar \\ baz/;",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /bar\\ \\ baz/;",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /bar \\u0020 baz/;",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /bar\\u0020\\u0020baz/;",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = new RegExp('bar \\ baz')",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = new RegExp('bar\\ \\ baz')",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = new RegExp('bar \\\\ baz')",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = new RegExp('bar \\u0020 baz')",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = new RegExp('bar\\u0020\\u0020baz')",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = new RegExp('bar \\\\u0020 baz')",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /[  ]/;",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /[   ]/;",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = / [  ] /;",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = / [  ] [  ] /;",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = new RegExp('[  ]');",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = new RegExp('[   ]');",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = new RegExp(' [  ] ');",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = RegExp(' [  ] [  ] ');",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = new RegExp(' \\[   ');",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = new RegExp(' \\[   \\] ');",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /  {2}/v;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /[\\q{    }]/v;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = new RegExp('[  ');",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = new RegExp('{  ', 'u');",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "new RegExp('  ', flags)",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "new RegExp('[[abc]  ]', flags + 'v')",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "new RegExp('[[abc]\\\\q{  }]', flags + 'v')",
+		"run": 0
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /bar  baz/;",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "multipleSpaces",
+				"data": {
+					"length": "2"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /bar    baz/;",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "multipleSpaces",
+				"data": {
+					"length": "4"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = / a b  c d /;",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "multipleSpaces",
+				"data": {
+					"length": "2"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = RegExp(' a b c d  ');",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "multipleSpaces",
+				"data": {
+					"length": "2"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = RegExp('bar    baz');",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "multipleSpaces",
+				"data": {
+					"length": "4"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = new RegExp('bar    baz');",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "multipleSpaces",
+				"data": {
+					"length": "4"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "{ let RegExp = function() {}; } var foo = RegExp('bar    baz');",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"errors": [
+			{
+				"messageId": "multipleSpaces",
+				"data": {
+					"length": "4"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /bar   {3}baz/;",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "multipleSpaces",
+				"data": {
+					"length": "2"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /bar    ?baz/;",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "multipleSpaces",
+				"data": {
+					"length": "3"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = new RegExp('bar   *baz')",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "multipleSpaces",
+				"data": {
+					"length": "2"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = RegExp('bar   +baz')",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "multipleSpaces",
+				"data": {
+					"length": "2"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = new RegExp('bar    ');",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "multipleSpaces",
+				"data": {
+					"length": "4"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /bar\\  baz/;",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "multipleSpaces",
+				"data": {
+					"length": "2"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /[   ]  /;",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "multipleSpaces",
+				"data": {
+					"length": "2"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /  [   ] /;",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "multipleSpaces",
+				"data": {
+					"length": "2"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = new RegExp('[   ]  ');",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "multipleSpaces",
+				"data": {
+					"length": "2"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = RegExp('  [ ]');",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "multipleSpaces",
+				"data": {
+					"length": "2"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /\\[  /;",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "multipleSpaces",
+				"data": {
+					"length": "2"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /\\[  \\]/;",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "multipleSpaces",
+				"data": {
+					"length": "2"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /(?:  )/;",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "multipleSpaces",
+				"data": {
+					"length": "2"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = RegExp('^foo(?=   )');",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "multipleSpaces",
+				"data": {
+					"length": "3"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /\\  /",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "multipleSpaces",
+				"data": {
+					"length": "2"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = / \\  /",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "multipleSpaces",
+				"data": {
+					"length": "2"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /  foo   /;",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "multipleSpaces",
+				"data": {
+					"length": "2"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = new RegExp('\\\\d  ')",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "multipleSpaces",
+				"data": {
+					"length": "2"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = RegExp('\\u0041   ')",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "multipleSpaces",
+				"data": {
+					"length": "3"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = new RegExp('\\\\[  \\\\]');",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "multipleSpaces",
+				"data": {
+					"length": "2"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /[[    ]    ]    /v;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"errors": [
+			{
+				"messageId": "multipleSpaces",
+				"data": {
+					"length": "4"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = new RegExp('[[    ]    ]    ', 'v');",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "multipleSpaces",
+				"data": {
+					"length": "4"
+				}
+			}
+		]
+	}
+]

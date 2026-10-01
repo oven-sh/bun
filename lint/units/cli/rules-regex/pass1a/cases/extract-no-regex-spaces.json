@@ -1,0 +1,226 @@
+{
+	"valid": [
+		{
+			"code": "var foo = /foo/;"
+		},
+		{
+			"code": "var foo = RegExp('foo')"
+		},
+		{
+			"code": "var foo = / /;"
+		},
+		{
+			"code": "var foo = RegExp(' ')"
+		},
+		{
+			"code": "var foo = / a b c d /;"
+		},
+		{
+			"code": "var foo = /bar {3}baz/g;"
+		},
+		{
+			"code": "var foo = RegExp('bar {3}baz', 'g')"
+		},
+		{
+			"code": "var foo = new RegExp('bar {3}baz')"
+		},
+		{
+			"code": "var foo = /bar\t\t\tbaz/;"
+		},
+		{
+			"code": "var foo = RegExp('bar\t\t\tbaz');"
+		},
+		{
+			"code": "var foo = new RegExp('bar\t\t\tbaz');"
+		},
+		{
+			"code": "var RegExp = function() {}; var foo = new RegExp('bar   baz');"
+		},
+		{
+			"code": "var RegExp = function() {}; var foo = RegExp('bar   baz');"
+		},
+		{
+			"code": "var foo = /  +/;"
+		},
+		{
+			"code": "var foo = /  ?/;"
+		},
+		{
+			"code": "var foo = /  */;"
+		},
+		{
+			"code": "var foo = /  {2}/;"
+		},
+		{
+			"code": "var foo = /bar \\ baz/;"
+		},
+		{
+			"code": "var foo = /bar\\ \\ baz/;"
+		},
+		{
+			"code": "var foo = /bar \\u0020 baz/;"
+		},
+		{
+			"code": "var foo = /bar\\u0020\\u0020baz/;"
+		},
+		{
+			"code": "var foo = new RegExp('bar \\ baz')"
+		},
+		{
+			"code": "var foo = new RegExp('bar\\ \\ baz')"
+		},
+		{
+			"code": "var foo = new RegExp('bar \\\\ baz')"
+		},
+		{
+			"code": "var foo = new RegExp('bar \\u0020 baz')"
+		},
+		{
+			"code": "var foo = new RegExp('bar\\u0020\\u0020baz')"
+		},
+		{
+			"code": "var foo = new RegExp('bar \\\\u0020 baz')"
+		},
+		{
+			"code": "var foo = /[  ]/;"
+		},
+		{
+			"code": "var foo = /[   ]/;"
+		},
+		{
+			"code": "var foo = / [  ] /;"
+		},
+		{
+			"code": "var foo = / [  ] [  ] /;"
+		},
+		{
+			"code": "var foo = new RegExp('[  ]');"
+		},
+		{
+			"code": "var foo = new RegExp('[   ]');"
+		},
+		{
+			"code": "var foo = new RegExp(' [  ] ');"
+		},
+		{
+			"code": "var foo = RegExp(' [  ] [  ] ');"
+		},
+		{
+			"code": "var foo = new RegExp(' \\[   ');"
+		},
+		{
+			"code": "var foo = new RegExp(' \\[   \\] ');"
+		},
+		{
+			"code": "var foo = /  {2}/v;"
+		},
+		{
+			"code": "var foo = /[\\q{    }]/v;"
+		},
+		{
+			"code": "var foo = new RegExp('[  ');"
+		},
+		{
+			"code": "var foo = new RegExp('{  ', 'u');"
+		},
+		{
+			"code": "new RegExp('  ', flags)"
+		},
+		{
+			"code": "new RegExp('[[abc]  ]', flags + 'v')"
+		},
+		{
+			"code": "new RegExp('[[abc]\\\\q{  }]', flags + 'v')"
+		}
+	],
+	"invalid": [
+		{
+			"code": "var foo = /bar  baz/;"
+		},
+		{
+			"code": "var foo = /bar    baz/;"
+		},
+		{
+			"code": "var foo = / a b  c d /;"
+		},
+		{
+			"code": "var foo = RegExp(' a b c d  ');"
+		},
+		{
+			"code": "var foo = RegExp('bar    baz');"
+		},
+		{
+			"code": "var foo = new RegExp('bar    baz');"
+		},
+		{
+			"code": "{ let RegExp = function() {}; } var foo = RegExp('bar    baz');"
+		},
+		{
+			"code": "var foo = /bar   {3}baz/;"
+		},
+		{
+			"code": "var foo = /bar    ?baz/;"
+		},
+		{
+			"code": "var foo = new RegExp('bar   *baz')"
+		},
+		{
+			"code": "var foo = RegExp('bar   +baz')"
+		},
+		{
+			"code": "var foo = new RegExp('bar    ');"
+		},
+		{
+			"code": "var foo = /bar\\  baz/;"
+		},
+		{
+			"code": "var foo = /[   ]  /;"
+		},
+		{
+			"code": "var foo = /  [   ] /;"
+		},
+		{
+			"code": "var foo = new RegExp('[   ]  ');"
+		},
+		{
+			"code": "var foo = RegExp('  [ ]');"
+		},
+		{
+			"code": "var foo = /\\[  /;"
+		},
+		{
+			"code": "var foo = /\\[  \\]/;"
+		},
+		{
+			"code": "var foo = /(?:  )/;"
+		},
+		{
+			"code": "var foo = RegExp('^foo(?=   )');"
+		},
+		{
+			"code": "var foo = /\\  /"
+		},
+		{
+			"code": "var foo = / \\  /"
+		},
+		{
+			"code": "var foo = /  foo   /;"
+		},
+		{
+			"code": "var foo = new RegExp('\\\\d  ')"
+		},
+		{
+			"code": "var foo = RegExp('\\u0041   ')"
+		},
+		{
+			"code": "var foo = new RegExp('\\\\[  \\\\]');"
+		},
+		{
+			"code": "var foo = /[[    ]    ]    /v;"
+		},
+		{
+			"code": "var foo = new RegExp('[[    ]    ]    ', 'v');"
+		}
+	],
+	"typescript": []
+}

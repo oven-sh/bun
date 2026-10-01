@@ -1,0 +1,5 @@
+program  Ir 528,915,851 -> 528,838,195 (-77,656)  Bc 100,338,099 -> 100,338,591 (+492)  Bi 5,226,620 -> 5,226,631 (+11)
+matched /bun_js_parser|bun_ast/ 203 symbols  Ir 364,856,107 -> 364,786,287 (-69,820)  Bc 52,009,911 -> 52,009,911 (+0)  Bi 4,643,696 -> 4,643,696 (+0)
+2 matched symbols differ
+  Ir      -51,720  Bc          +0  Bi        +0  (a Ir 1,422,740) <bun_js_parser::p::P<true, false>>::parse_prefix
+  Ir      -18,100  Bc          +0  Bi        +0  (a Ir 1,358,760) <bun_js_parser::p::P<true, false>>::parse_suffix

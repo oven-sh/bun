@@ -1,0 +1,5172 @@
+[
+	{
+		"kind": "valid",
+		"code": "var foo = /\\./",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /\\//g",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /\"\"/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /''/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /([A-Z])\\t+/g",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /([A-Z])\\n+/g",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /([A-Z])\\v+/g",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /\\D/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /\\W/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /\\w/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /\\\\/g",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /\\w\\$\\*\\./",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /\\^\\+\\./",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /\\|\\}\\{\\./",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /]\\[\\(\\)\\//",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = \"\\x123\"",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = \"\\u00a9\"",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = \"\\377\"",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = \"\\\"\"",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = \"xs\\u2111\"",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = \"foo \\\\ bar\";",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = \"\\t\";",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = \"foo \\b bar\";",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = '\\n';",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = 'foo \\r bar';",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = '\\v';",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = '\\f';",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = '\\\n';",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = '\\\r\n';",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "<foo attr=\"\\d\"/>",
+		"run": 0,
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "<div> Testing: \\ </div>",
+		"run": 0,
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "<div> Testing: &#x5C </div>",
+		"run": 0,
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "<foo attr='\\d'></foo>",
+		"run": 0,
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "<> Testing: \\ </>",
+		"run": 0,
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "<> Testing: &#x5C </>",
+		"run": 0,
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = `\\x123`",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = `\\u00a9`",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = `xs\\u2111`",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = `foo \\\\ bar`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = `\\t`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = `foo \\b bar`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = `\\n`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = `foo \\r bar`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = `\\v`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = `\\f`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = `\\\n`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = `\\\r\n`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = `${foo} \\x123`",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = `${foo} \\u00a9`",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = `${foo} xs\\u2111`",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = `${foo} \\\\ ${bar}`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = `${foo} \\b ${bar}`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = `${foo}\\t`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = `${foo}\\n`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = `${foo}\\r`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = `${foo}\\v`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = `${foo}\\f`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = `${foo}\\\n`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = `${foo}\\\r\n`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = `\\``",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = `\\`${foo}\\``",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = `\\${{${foo}`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = `$\\{{${foo}`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = String.raw`\\.`",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = myFunc`\\.`",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /[\\d]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /[a\\-b]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /foo\\?/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /example\\.com/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /foo\\|bar/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /\\^bar/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /[\\^bar]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /\\(bar\\)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /[[\\]]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /[[]\\./",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /[\\]\\]]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /\\[abc]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /\\[foo\\.bar]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /vi/m",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /\\B/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /\\0/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /\\1/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /(a)\\1/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /(a)\\12/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /[\\0]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = 'foo \\  bar'",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = 'foo \\  bar'",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/\\]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/\\]/u",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /foo\\]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /[[]\\]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /\\[foo\\.bar\\]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /(?<a>)\\k<a>/",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2018
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /(\\\\?<a>)/",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2018
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /\\p{ASCII}/u",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2018
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /\\P{ASCII}/u",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2018
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /[\\p{ASCII}]/u",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2018
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /[\\P{ASCII}]/u",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2018
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[^^]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[^^]/u",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2015
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\q{abc}]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\(]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\)]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\{]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\]]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\}]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\/]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\-]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\|]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\$$]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\&&]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\!!]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\##]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\%%]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\**]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\++]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\,,]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\..]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\::]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\;;]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\<<]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\==]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\>>]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\??]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\@@]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\``]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\~~]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[^\\^^]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[_\\^^]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[$\\$]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[&\\&]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[!\\!]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[#\\#]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[%\\%]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[*\\*]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[+\\+]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[,\\,]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[.\\.]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[:\\:]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[;\\;]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[<\\<]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[=\\=]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[>\\>]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[?\\?]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[@\\@]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[`\\`]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[~\\~]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[^^\\^]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[_^\\^]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\&&&\\&]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[[\\-]\\-]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\^]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /\\#/;",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"#"
+				]
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /\\;/;",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					";"
+				]
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /\\#\\;/;",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"#",
+					";"
+				]
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /[ab\\-]/",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"-"
+				]
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /[\\-ab]/",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"-"
+				]
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /[ab\\?]/",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"?"
+				]
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /[ab\\.]/",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"."
+				]
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /[a\\|b]/",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"|"
+				]
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /\\-/",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"-"
+				]
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /[\\-]/",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"-"
+				]
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /[ab\\$]/",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"$"
+				]
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /[\\(paren]/",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"("
+				]
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /[\\[]/",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"["
+				]
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /[\\/]/",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"/"
+				]
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /[\\B]/",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"B"
+				]
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /[a][\\-b]/",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"-"
+				]
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /\\-[]/",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"-"
+				]
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var foo = /[a\\^]/",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"^"
+				]
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[^\\^]/",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"^"
+				]
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[^\\^]/u",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"^"
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2015
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\$]/v",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"$"
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\&\\&]/v",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"&"
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\!!]/v",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"!"
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\##]/v",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"#"
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\%%]/v",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"%"
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\*\\*]/v",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"*"
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\+\\+]/v",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"+"
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\,,]/v",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					","
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\..]/v",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"."
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\:\\:]/v",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					":"
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\;\\;]/v",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					";"
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\<\\<]/v",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"<"
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\=\\=]/v",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"="
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\>\\>]/v",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					">"
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\?\\?]/v",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"?"
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\@\\@]/v",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"@"
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\``]/v",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"`"
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\~\\~]/v",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"~"
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[^\\^\\^]/v",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"^"
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[_\\^\\^]/v",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"^"
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\&\\&&\\&]/v",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"&"
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\p{ASCII}--\\.]/v",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"."
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\p{ASCII}&&\\.]/v",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"."
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\.--[.&]]/v",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"."
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\.&&[.&]]/v",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"."
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\.--\\.--\\.]/v",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"."
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\.&&\\.&&\\.]/v",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"."
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[[\\.&]--[\\.&]]/v",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"."
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[[\\.&]&&[\\.&]]/v",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"."
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /\\#/;",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 12,
+				"endColumn": 13,
+				"message": "Unnecessary escape character: \\#.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = /#/;"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = /\\\\#/;"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /\\;/;",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 12,
+				"endColumn": 13,
+				"message": "Unnecessary escape character: \\;.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = /;/;"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = /\\\\;/;"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = \"\\'\";",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 12,
+				"endColumn": 13,
+				"message": "Unnecessary escape character: \\'.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = \"'\";"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = \"\\\\'\";"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = \"\\#/\";",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 12,
+				"endColumn": 13,
+				"message": "Unnecessary escape character: \\#.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = \"#/\";"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = \"\\\\#/\";"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = \"\\a\"",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 12,
+				"endColumn": 13,
+				"message": "Unnecessary escape character: \\a.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = \"a\""
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = \"\\\\a\""
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = \"\\B\";",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 12,
+				"endColumn": 13,
+				"message": "Unnecessary escape character: \\B.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = \"B\";"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = \"\\\\B\";"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = \"\\@\";",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 12,
+				"endColumn": 13,
+				"message": "Unnecessary escape character: \\@.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = \"@\";"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = \"\\\\@\";"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = \"foo \\a bar\";",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 16,
+				"endColumn": 17,
+				"message": "Unnecessary escape character: \\a.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = \"foo a bar\";"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = \"foo \\\\a bar\";"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = '\\\"';",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 12,
+				"endColumn": 13,
+				"message": "Unnecessary escape character: \\\".",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = '\"';"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = '\\\\\"';"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = '\\#';",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 12,
+				"endColumn": 13,
+				"message": "Unnecessary escape character: \\#.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = '#';"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = '\\\\#';"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = '\\$';",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 12,
+				"endColumn": 13,
+				"message": "Unnecessary escape character: \\$.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = '$';"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = '\\\\$';"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = '\\p';",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 12,
+				"endColumn": 13,
+				"message": "Unnecessary escape character: \\p.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = 'p';"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = '\\\\p';"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = '\\p\\a\\@';",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 12,
+				"endColumn": 13,
+				"message": "Unnecessary escape character: \\p.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = 'p\\a\\@';"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = '\\\\p\\a\\@';"
+					}
+				]
+			},
+			{
+				"line": 1,
+				"column": 14,
+				"endColumn": 15,
+				"message": "Unnecessary escape character: \\a.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = '\\pa\\@';"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = '\\p\\\\a\\@';"
+					}
+				]
+			},
+			{
+				"line": 1,
+				"column": 16,
+				"endColumn": 17,
+				"message": "Unnecessary escape character: \\@.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = '\\p\\a@';"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = '\\p\\a\\\\@';"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "<foo attr={\"\\d\"}/>",
+		"run": 0,
+		"languageOptions": {
+			"parserOptions": {
+				"ecmaFeatures": {
+					"jsx": true
+				}
+			}
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 13,
+				"endColumn": 14,
+				"message": "Unnecessary escape character: \\d.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "<foo attr={\"d\"}/>"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "<foo attr={\"\\\\d\"}/>"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = '\\`';",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 12,
+				"endColumn": 13,
+				"message": "Unnecessary escape character: \\`.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = '`';"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = '\\\\`';"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = `\\\"`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 12,
+				"endColumn": 13,
+				"message": "Unnecessary escape character: \\\".",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = `\"`;"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = `\\\\\"`;"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = `\\'`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 12,
+				"endColumn": 13,
+				"message": "Unnecessary escape character: \\'.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = `'`;"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = `\\\\'`;"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = `\\#`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 12,
+				"endColumn": 13,
+				"message": "Unnecessary escape character: \\#.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = `#`;"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = `\\\\#`;"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = '\\`foo\\`';",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 12,
+				"endColumn": 13,
+				"message": "Unnecessary escape character: \\`.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = '`foo\\`';"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = '\\\\`foo\\`';"
+					}
+				]
+			},
+			{
+				"line": 1,
+				"column": 17,
+				"endColumn": 18,
+				"message": "Unnecessary escape character: \\`.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = '\\`foo`';"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = '\\`foo\\\\`';"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = `\\\"${foo}\\\"`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 12,
+				"endColumn": 13,
+				"message": "Unnecessary escape character: \\\".",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = `\"${foo}\\\"`;"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = `\\\\\"${foo}\\\"`;"
+					}
+				]
+			},
+			{
+				"line": 1,
+				"column": 20,
+				"endColumn": 21,
+				"message": "Unnecessary escape character: \\\".",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = `\\\"${foo}\"`;"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = `\\\"${foo}\\\\\"`;"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = `\\'${foo}\\'`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 12,
+				"endColumn": 13,
+				"message": "Unnecessary escape character: \\'.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = `'${foo}\\'`;"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = `\\\\'${foo}\\'`;"
+					}
+				]
+			},
+			{
+				"line": 1,
+				"column": 20,
+				"endColumn": 21,
+				"message": "Unnecessary escape character: \\'.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = `\\'${foo}'`;"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = `\\'${foo}\\\\'`;"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = `\\#${foo}`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 12,
+				"endColumn": 13,
+				"message": "Unnecessary escape character: \\#.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = `#${foo}`;"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = `\\\\#${foo}`;"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "let foo = '\\ ';",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 12,
+				"endColumn": 13,
+				"message": "Unnecessary escape character: \\ .",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "let foo = ' ';"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "let foo = '\\\\ ';"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "let foo = /\\ /;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 12,
+				"endColumn": 13,
+				"message": "Unnecessary escape character: \\ .",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "let foo = / /;"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "let foo = /\\\\ /;"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = `\\$\\{{${foo}`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 12,
+				"endColumn": 13,
+				"message": "Unnecessary escape character: \\$.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = `$\\{{${foo}`;"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = `\\\\$\\{{${foo}`;"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = `\\$a${foo}`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 12,
+				"endColumn": 13,
+				"message": "Unnecessary escape character: \\$.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = `$a${foo}`;"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = `\\\\$a${foo}`;"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = `a\\{{${foo}`;",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 13,
+				"endColumn": 14,
+				"message": "Unnecessary escape character: \\{.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = `a{{${foo}`;"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = `a\\\\{{${foo}`;"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /[ab\\-]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 15,
+				"endColumn": 16,
+				"message": "Unnecessary escape character: \\-.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = /[ab-]/"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = /[ab\\\\-]/"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /[\\-ab]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 13,
+				"endColumn": 14,
+				"message": "Unnecessary escape character: \\-.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = /[-ab]/"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = /[\\\\-ab]/"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /[ab\\?]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 15,
+				"endColumn": 16,
+				"message": "Unnecessary escape character: \\?.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = /[ab?]/"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = /[ab\\\\?]/"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /[ab\\.]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 15,
+				"endColumn": 16,
+				"message": "Unnecessary escape character: \\..",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = /[ab.]/"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = /[ab\\\\.]/"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /[a\\|b]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 14,
+				"endColumn": 15,
+				"message": "Unnecessary escape character: \\|.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = /[a|b]/"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = /[a\\\\|b]/"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /\\-/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 12,
+				"endColumn": 13,
+				"message": "Unnecessary escape character: \\-.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = /-/"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = /\\\\-/"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /[\\-]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 13,
+				"endColumn": 14,
+				"message": "Unnecessary escape character: \\-.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = /[-]/"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = /[\\\\-]/"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /[ab\\$]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 15,
+				"endColumn": 16,
+				"message": "Unnecessary escape character: \\$.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = /[ab$]/"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = /[ab\\\\$]/"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /[\\(paren]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 13,
+				"endColumn": 14,
+				"message": "Unnecessary escape character: \\(.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = /[(paren]/"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = /[\\\\(paren]/"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /[\\[]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 13,
+				"endColumn": 14,
+				"message": "Unnecessary escape character: \\[.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = /[[]/"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = /[\\\\[]/"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /[\\/]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 13,
+				"endColumn": 14,
+				"message": "Unnecessary escape character: \\/.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = /[/]/"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = /[\\\\/]/"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /[\\B]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 13,
+				"endColumn": 14,
+				"message": "Unnecessary escape character: \\B.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = /[B]/"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = /[\\\\B]/"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /[a][\\-b]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 16,
+				"endColumn": 17,
+				"message": "Unnecessary escape character: \\-.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = /[a][-b]/"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = /[a][\\\\-b]/"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /\\-[]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 12,
+				"endColumn": 13,
+				"message": "Unnecessary escape character: \\-.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = /-[]/"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = /\\\\-[]/"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /[a\\^]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 14,
+				"endColumn": 15,
+				"message": "Unnecessary escape character: \\^.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = /[a^]/"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = /[a\\\\^]/"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "`multiline template\nliteral with useless \\escape`",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 2,
+				"column": 22,
+				"endColumn": 23,
+				"message": "Unnecessary escape character: \\e.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "`multiline template\nliteral with useless escape`"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "`multiline template\nliteral with useless \\\\escape`"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "`multiline template\r\nliteral with useless \\escape`",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 2,
+				"column": 22,
+				"endColumn": 23,
+				"message": "Unnecessary escape character: \\e.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "`multiline template\r\nliteral with useless escape`"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "`multiline template\r\nliteral with useless \\\\escape`"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "`template literal with line continuation \\\nand useless \\escape`",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 2,
+				"column": 13,
+				"endColumn": 14,
+				"message": "Unnecessary escape character: \\e.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "`template literal with line continuation \\\nand useless escape`"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "`template literal with line continuation \\\nand useless \\\\escape`"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "`template literal with line continuation \\\r\nand useless \\escape`",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 2,
+				"column": 13,
+				"endColumn": 14,
+				"message": "Unnecessary escape character: \\e.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "`template literal with line continuation \\\r\nand useless escape`"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "`template literal with line continuation \\\r\nand useless \\\\escape`"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "`template literal with mixed linebreaks \r\r\n\n\\and useless escape`",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 4,
+				"column": 1,
+				"endColumn": 2,
+				"message": "Unnecessary escape character: \\a.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "`template literal with mixed linebreaks \r\r\n\nand useless escape`"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "`template literal with mixed linebreaks \r\r\n\n\\\\and useless escape`"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "`template literal with mixed linebreaks in line continuations \\\n\\\r\\\r\n\\and useless escape`",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 4,
+				"column": 1,
+				"endColumn": 2,
+				"message": "Unnecessary escape character: \\a.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "`template literal with mixed linebreaks in line continuations \\\n\\\r\\\r\nand useless escape`"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "`template literal with mixed linebreaks in line continuations \\\n\\\r\\\r\n\\\\and useless escape`"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "`\\a```",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 2,
+				"endColumn": 3,
+				"message": "Unnecessary escape character: \\a.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "`a```"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "`\\\\a```"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\"use\\ strict\";",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 5,
+				"endColumn": 6,
+				"message": "Unnecessary escape character: \\ .",
+				"suggestions": [
+					{
+						"messageId": "removeEscapeDoNotKeepSemantics",
+						"output": "\"use strict\";"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "\"use\\\\ strict\";"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "({ foo() { \"foo\"; \"bar\"; \"ba\\z\" } })",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 6
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 29,
+				"endColumn": 30,
+				"message": "Unnecessary escape character: \\z.",
+				"suggestions": [
+					{
+						"messageId": "removeEscapeDoNotKeepSemantics",
+						"output": "({ foo() { \"foo\"; \"bar\"; \"baz\" } })"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "({ foo() { \"foo\"; \"bar\"; \"ba\\\\z\" } })"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[^\\^]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 4,
+				"message": "Unnecessary escape character: \\^.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[^^]/"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "/[^\\\\^]/"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[^\\^]/u",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2015
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 4,
+				"message": "Unnecessary escape character: \\^.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[^^]/u"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "/[^\\\\^]/u"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\$]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 3,
+				"endColumn": 4,
+				"message": "Unnecessary escape character: \\$.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[$]/v"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "/[\\\\$]/v"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\&\\&]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unnecessary escape character: \\&.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[&\\&]/v"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "/[\\\\&\\&]/v"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\!\\!]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unnecessary escape character: \\!.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[!\\!]/v"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "/[\\\\!\\!]/v"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\#\\#]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unnecessary escape character: \\#.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[#\\#]/v"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "/[\\\\#\\#]/v"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\%\\%]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unnecessary escape character: \\%.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[%\\%]/v"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "/[\\\\%\\%]/v"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\*\\*]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unnecessary escape character: \\*.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[*\\*]/v"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "/[\\\\*\\*]/v"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\+\\+]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unnecessary escape character: \\+.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[+\\+]/v"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "/[\\\\+\\+]/v"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\,\\,]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unnecessary escape character: \\,.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[,\\,]/v"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "/[\\\\,\\,]/v"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\.\\.]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unnecessary escape character: \\..",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[.\\.]/v"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "/[\\\\.\\.]/v"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\:\\:]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unnecessary escape character: \\:.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[:\\:]/v"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "/[\\\\:\\:]/v"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\;\\;]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unnecessary escape character: \\;.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[;\\;]/v"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "/[\\\\;\\;]/v"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\<\\<]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unnecessary escape character: \\<.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[<\\<]/v"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "/[\\\\<\\<]/v"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\=\\=]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unnecessary escape character: \\=.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[=\\=]/v"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "/[\\\\=\\=]/v"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\>\\>]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unnecessary escape character: \\>.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[>\\>]/v"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "/[\\\\>\\>]/v"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\?\\?]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unnecessary escape character: \\?.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[?\\?]/v"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "/[\\\\?\\?]/v"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\@\\@]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unnecessary escape character: \\@.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[@\\@]/v"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "/[\\\\@\\@]/v"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\`\\`]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unnecessary escape character: \\`.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[`\\`]/v"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "/[\\\\`\\`]/v"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\~\\~]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unnecessary escape character: \\~.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[~\\~]/v"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "/[\\\\~\\~]/v"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[^\\^\\^]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 4,
+				"message": "Unnecessary escape character: \\^.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[^^\\^]/v"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "/[^\\\\^\\^]/v"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[_\\^\\^]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 4,
+				"message": "Unnecessary escape character: \\^.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[_^\\^]/v"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "/[_\\\\^\\^]/v"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\&\\&&\\&]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unnecessary escape character: \\&.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[&\\&&\\&]/v"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "/[\\\\&\\&&\\&]/v"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\p{ASCII}--\\.]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 14,
+				"message": "Unnecessary escape character: \\..",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[\\p{ASCII}--.]/v"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\p{ASCII}&&\\.]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 14,
+				"message": "Unnecessary escape character: \\..",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[\\p{ASCII}&&.]/v"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\.--[.&]]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unnecessary escape character: \\..",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[.--[.&]]/v"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\.&&[.&]]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unnecessary escape character: \\..",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[.&&[.&]]/v"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\.--\\.--\\.]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unnecessary escape character: \\..",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[.--\\.--\\.]/v"
+					}
+				]
+			},
+			{
+				"line": 1,
+				"column": 7,
+				"message": "Unnecessary escape character: \\..",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[\\.--.--\\.]/v"
+					}
+				]
+			},
+			{
+				"line": 1,
+				"column": 11,
+				"message": "Unnecessary escape character: \\..",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[\\.--\\.--.]/v"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\.&&\\.&&\\.]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unnecessary escape character: \\..",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[.&&\\.&&\\.]/v"
+					}
+				]
+			},
+			{
+				"line": 1,
+				"column": 7,
+				"message": "Unnecessary escape character: \\..",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[\\.&&.&&\\.]/v"
+					}
+				]
+			},
+			{
+				"line": 1,
+				"column": 11,
+				"message": "Unnecessary escape character: \\..",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[\\.&&\\.&&.]/v"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[[\\.&]--[\\.&]]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 4,
+				"message": "Unnecessary escape character: \\..",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[[.&]--[\\.&]]/v"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "/[[\\\\.&]--[\\.&]]/v"
+					}
+				]
+			},
+			{
+				"line": 1,
+				"column": 11,
+				"message": "Unnecessary escape character: \\..",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[[\\.&]--[.&]]/v"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "/[[\\.&]--[\\\\.&]]/v"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[[\\.&]&&[\\.&]]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 4,
+				"message": "Unnecessary escape character: \\..",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[[.&]&&[\\.&]]/v"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "/[[\\\\.&]&&[\\.&]]/v"
+					}
+				]
+			},
+			{
+				"line": 1,
+				"column": 11,
+				"message": "Unnecessary escape character: \\..",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[[\\.&]&&[.&]]/v"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "/[[\\.&]&&[\\\\.&]]/v"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = \"\\#/\";",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"#"
+				]
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 12,
+				"endColumn": 13,
+				"message": "Unnecessary escape character: \\#.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = \"#/\";"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = \"\\\\#/\";"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /\\#\\@/;",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"#"
+				]
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 14,
+				"endColumn": 15,
+				"message": "Unnecessary escape character: \\@.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = /\\#@/;"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = /\\#\\\\@/;"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var foo = /[a\\@b]/",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"#"
+				]
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 14,
+				"endColumn": 15,
+				"message": "Unnecessary escape character: \\@.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "var foo = /[a@b]/"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "var foo = /[a\\\\@b]/"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\@\\@]/v",
+		"run": 0,
+		"options": [
+			{
+				"allowRegexCharacters": [
+					"#"
+				]
+			}
+		],
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"line": 1,
+				"column": 3,
+				"message": "Unnecessary escape character: \\@.",
+				"suggestions": [
+					{
+						"messageId": "removeEscape",
+						"output": "/[@\\@]/v"
+					},
+					{
+						"messageId": "escapeBackslash",
+						"output": "/[\\\\@\\@]/v"
+					}
+				]
+			}
+		]
+	}
+]

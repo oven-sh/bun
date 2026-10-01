@@ -1,0 +1,183 @@
+{"kind":"valid","code":"var r = /[👍]/u","type":"script","reports":[]}
+{"kind":"valid","code":"var r = /[\\uD83D\\uDC4D]/u","type":"script","reports":[]}
+{"kind":"valid","code":"var r = /[\\u{1F44D}]/u","type":"script","reports":[]}
+{"kind":"valid","code":"var r = /❇️/","type":"script","reports":[]}
+{"kind":"valid","code":"var r = /Á/","type":"script","reports":[]}
+{"kind":"valid","code":"var r = /[❇]/","type":"script","reports":[]}
+{"kind":"valid","code":"var r = /👶🏻/","type":"script","reports":[]}
+{"kind":"valid","code":"var r = /[👶]/u","type":"script","reports":[]}
+{"kind":"valid","code":"var r = /🇯🇵/","type":"script","reports":[]}
+{"kind":"valid","code":"var r = /[JP]/","type":"script","reports":[]}
+{"kind":"valid","code":"var r = /👨‍👩‍👦/","type":"script","reports":[]}
+{"kind":"valid","code":"new RegExp()","type":"script","reports":[]}
+{"kind":"valid","code":"var r = RegExp(/[👍]/u)","type":"script","reports":[]}
+{"kind":"valid","code":"const regex = /[👍]/u; new RegExp(regex);","type":"script","reports":[]}
+{"kind":"valid","code":"new RegExp('[👍]')","type":"script","reports":["1:14-1:16 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"valid","code":"var r = /[\\uD83D]/","type":"script","reports":[]}
+{"kind":"valid","code":"var r = /[\\uDC4D]/","type":"script","reports":[]}
+{"kind":"valid","code":"var r = /[\\uD83D]/u","type":"script","reports":[]}
+{"kind":"valid","code":"var r = /[\\uDC4D]/u","type":"script","reports":[]}
+{"kind":"valid","code":"var r = /[\\u0301]/","type":"script","reports":[]}
+{"kind":"valid","code":"var r = /[\\uFE0F]/","type":"script","reports":[]}
+{"kind":"valid","code":"var r = /[\\u0301]/u","type":"script","reports":[]}
+{"kind":"valid","code":"var r = /[\\uFE0F]/u","type":"script","reports":[]}
+{"kind":"valid","code":"var r = /[\\u{1F3FB}]/u","type":"script","reports":[]}
+{"kind":"valid","code":"var r = /[🏻]/u","type":"script","reports":[]}
+{"kind":"valid","code":"var r = /[🇯]/u","type":"script","reports":[]}
+{"kind":"valid","code":"var r = /[🇵]/u","type":"script","reports":[]}
+{"kind":"valid","code":"var r = /[\\u200D]/","type":"script","reports":[]}
+{"kind":"valid","code":"var r = /[\\u200D]/u","type":"script","reports":[]}
+{"kind":"valid","code":"new RegExp('[Á] [ ');","type":"script","reports":[]}
+{"kind":"valid","code":"var r = new RegExp('[Á] [ ');","type":"script","reports":[]}
+{"kind":"valid","code":"var r = RegExp('{ [Á]', 'u');","type":"script","reports":[]}
+{"kind":"valid","code":"var r = new globalThis.RegExp('[Á] [ ');","type":"script","reports":[]}
+{"kind":"valid","code":"var r = globalThis.RegExp('{ [Á]', 'u');","type":"script","reports":[]}
+{"kind":"valid","code":"var r = RegExp(`${x}[👍]`)","type":"script","reports":[]}
+{"kind":"valid","code":"var r = new RegExp('[🇯🇵]', `${foo}`)","type":"script","reports":[]}
+{"kind":"valid","code":"var r = new RegExp(\"[👍]\", flags)","type":"script","reports":[]}
+{"kind":"valid","code":"const args = ['[👍]', 'i']; new RegExp(...args);","type":"script","reports":[]}
+{"kind":"valid","code":"var r = /[👍]/v","type":"script","reports":[]}
+{"kind":"valid","code":"var r = /^[\\q{👶🏻}]$/v","type":"script","reports":[]}
+{"kind":"valid","code":"var r = /[🇯\\q{abc}🇵]/v","type":"script","reports":[]}
+{"kind":"valid","code":"var r = /[🇯[A]🇵]/v","type":"script","reports":[]}
+{"kind":"valid","code":"var r = /[🇯[A--B]🇵]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\ud83d\\udc4d]/","type":"script","reports":["1:3-1:15 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"valid","code":"/[\ud83d\\udc4d]/u // U+D83D + Backslash + \"udc4d\"","type":"script","reports":["1:3-1:10 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"valid","code":"/[A\\u0301]/","type":"script","reports":["1:3-1:10 Unexpected combined character in character class."]}
+{"kind":"valid","code":"/[👶\\u{1f3fb}]/u","type":"script","reports":["1:3-1:14 Unexpected modified Emoji in character class."]}
+{"kind":"valid","code":"/[\\u{1F1EF}\\u{1F1F5}]/u","type":"script","reports":["1:3-1:21 Unexpected national flag in character class."]}
+{"kind":"valid","code":"/[👨\\u200d👩\\u200d👦]/u","type":"script","reports":["1:3-1:21 Unexpected joined character sequence in character class."]}
+{"kind":"valid","code":"/[\\u00B7\\u0300-\\u036F]/u","type":"script","reports":["1:3-1:15 Unexpected combined character in character class."]}
+{"kind":"valid","code":"/[\\n\\u0305]/","type":"script","reports":["1:3-1:11 Unexpected combined character in character class."]}
+{"kind":"valid","code":"RegExp(\"[\\uD83D\\uDC4D]\")","type":"script","reports":["1:10-1:22 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"valid","code":"RegExp(\"[A\\u0301]\")","type":"script","reports":["1:10-1:17 Unexpected combined character in character class."]}
+{"kind":"valid","code":"RegExp(\"[\\x41\\\\u0301]\")","type":"script","reports":["1:10-1:21 Unexpected combined character in character class."]}
+{"kind":"valid","code":"RegExp(`[\\uD83D\\uDC4D]`) // Backslash + \"uD83D\" + Backslash + \"uDC4D\"","type":"script","reports":["1:10-1:22 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = /[👍]/","type":"script","reports":["1:11-1:13 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = /[\\uD83D\\uDC4D]/","type":"script","reports":["1:11-1:23 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = /[\\uD83D\\uDC4D-\\uffff]/","type":"script","reports":["1:11-1:23 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = /before[\\uD83D\\uDC4D]after/","type":"script","reports":["1:17-1:29 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = /[before\\uD83D\\uDC4Dafter]/","type":"script","reports":["1:17-1:29 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = /\\uDC4D[\\uD83D\\uDC4D]/","type":"script","reports":["1:17-1:29 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = /[👍]\\a/","type":"script","reports":["1:11-1:13 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = /\\a[👍]\\a/","type":"script","reports":["1:13-1:15 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = /(?<=[👍])/","type":"script","reports":["1:15-1:17 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = /[Á]/","type":"script","reports":["1:11-1:13 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"var r = /[Á]/u","type":"script","reports":["1:11-1:13 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"var r = /[\\u0041\\u0301]/","type":"script","reports":["1:11-1:23 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"var r = /[\\u0041\\u0301]/u","type":"script","reports":["1:11-1:23 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"var r = /[\\u{41}\\u{301}]/u","type":"script","reports":["1:11-1:24 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"var r = /[❇️]/","type":"script","reports":["1:11-1:13 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"var r = /[❇️]/u","type":"script","reports":["1:11-1:13 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"var r = /[\\u2747\\uFE0F]/","type":"script","reports":["1:11-1:23 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"var r = /[\\u2747\\uFE0F]/u","type":"script","reports":["1:11-1:23 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"var r = /[\\u{2747}\\u{FE0F}]/u","type":"script","reports":["1:11-1:27 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"var r = /[👶🏻]/","type":"script","reports":["1:11-1:13 Unexpected surrogate pair in character class. Use 'u' flag.","1:13-1:15 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = /[👶🏻]/u","type":"script","reports":["1:11-1:15 Unexpected modified Emoji in character class."]}
+{"kind":"invalid","code":"var r = /[a\\uD83C\\uDFFB]/u","type":"script","reports":["1:11-1:24 Unexpected modified Emoji in character class."]}
+{"kind":"invalid","code":"var r = /[\\uD83D\\uDC76\\uD83C\\uDFFB]/u","type":"script","reports":["1:11-1:35 Unexpected modified Emoji in character class."]}
+{"kind":"invalid","code":"var r = /[\\u{1F476}\\u{1F3FB}]/u","type":"script","reports":["1:11-1:29 Unexpected modified Emoji in character class."]}
+{"kind":"invalid","code":"var r = /[🇯🇵]/","type":"script","reports":["1:11-1:13 Unexpected surrogate pair in character class. Use 'u' flag.","1:13-1:15 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = /[🇯🇵]/i","type":"script","reports":["1:11-1:13 Unexpected surrogate pair in character class. Use 'u' flag.","1:13-1:15 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = /[🇯🇵]/u","type":"script","reports":["1:11-1:15 Unexpected national flag in character class."]}
+{"kind":"invalid","code":"var r = /[\\uD83C\\uDDEF\\uD83C\\uDDF5]/u","type":"script","reports":["1:11-1:35 Unexpected national flag in character class."]}
+{"kind":"invalid","code":"var r = /[\\u{1F1EF}\\u{1F1F5}]/u","type":"script","reports":["1:11-1:29 Unexpected national flag in character class."]}
+{"kind":"invalid","code":"var r = /[👨‍👩‍👦]/","type":"script","reports":["1:11-1:13 Unexpected surrogate pair in character class. Use 'u' flag.","1:12-1:15 Unexpected joined character sequence in character class.","1:14-1:16 Unexpected surrogate pair in character class. Use 'u' flag.","1:15-1:18 Unexpected joined character sequence in character class.","1:17-1:19 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = /[👨‍👩‍👦]/u","type":"script","reports":["1:11-1:19 Unexpected joined character sequence in character class."]}
+{"kind":"invalid","code":"var r = /[👩‍👦]/u","type":"script","reports":["1:11-1:16 Unexpected joined character sequence in character class."]}
+{"kind":"invalid","code":"var r = /[👩‍👦][👩‍👦]/u","type":"script","reports":["1:11-1:16 Unexpected joined character sequence in character class.","1:18-1:23 Unexpected joined character sequence in character class."]}
+{"kind":"invalid","code":"var r = /[👨‍👩‍👦]foo[👨‍👩‍👦]/u","type":"script","reports":["1:11-1:19 Unexpected joined character sequence in character class.","1:24-1:32 Unexpected joined character sequence in character class."]}
+{"kind":"invalid","code":"var r = /[👨‍👩‍👦👩‍👦]/u","type":"script","reports":["1:11-1:19 Unexpected joined character sequence in character class.","1:19-1:24 Unexpected joined character sequence in character class."]}
+{"kind":"invalid","code":"var r = /[\\uD83D\\uDC68\\u200D\\uD83D\\uDC69\\u200D\\uD83D\\uDC66]/u","type":"script","reports":["1:11-1:59 Unexpected joined character sequence in character class."]}
+{"kind":"invalid","code":"var r = /[\\u{1F468}\\u{200D}\\u{1F469}\\u{200D}\\u{1F466}]/u","type":"script","reports":["1:11-1:54 Unexpected joined character sequence in character class."]}
+{"kind":"invalid","code":"var r = /[\\uD83D\\uDC68\\u200D\\uD83D\\uDC69]/u","type":"script","reports":["1:11-1:41 Unexpected joined character sequence in character class."]}
+{"kind":"invalid","code":"var r = /[\\u{1F468}\\u{200D}\\u{1F469}]/u","type":"script","reports":["1:11-1:37 Unexpected joined character sequence in character class."]}
+{"kind":"invalid","code":"var r = /[\\u{1F468}\\u{200D}\\u{1F469}\\u{200D}\\u{1F466}]foo[\\u{1F468}\\u{200D}\\u{1F469}\\u{200D}\\u{1F466}]/u","type":"script","reports":["1:11-1:54 Unexpected joined character sequence in character class.","1:59-1:102 Unexpected joined character sequence in character class."]}
+{"kind":"invalid","code":"var r = RegExp(\"[👍]\", \"\")","type":"script","reports":["1:18-1:20 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[👍]\", \"\")","type":"script","reports":["1:22-1:24 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = new RegExp('[👍]', ``)","type":"script","reports":["1:22-1:24 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = new RegExp(`\n                [👍]`)","type":"script","reports":["2:18-2:20 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = new RegExp(`\n                [❇️]`)","type":"script","reports":["2:18-2:20 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"var r = new RegExp(`\r\n[❇️]`)","type":"script","reports":["2:2-2:4 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"const flags = \"\"; var r = new RegExp(\"[👍]\", flags)","type":"script","reports":["1:40-1:42 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = RegExp(\"[\\\\uD83D\\\\uDC4D]\", \"\")","type":"script","reports":["1:18-1:32 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = RegExp(\"before[\\\\uD83D\\\\uDC4D]after\", \"\")","type":"script","reports":["1:24-1:38 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = RegExp(\"[before\\\\uD83D\\\\uDC4Dafter]\", \"\")","type":"script","reports":["1:24-1:38 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = RegExp(\"\\t\\t\\t👍[👍]\")","type":"script","reports":["1:26-1:28 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = new RegExp(\"\\u1234[\\\\uD83D\\\\uDC4D]\")","type":"script","reports":["1:28-1:42 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = new RegExp(\"\\\\u1234\\\\u5678👎[👍]\")","type":"script","reports":["1:38-1:40 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = new RegExp(\"\\\\u1234\\\\u5678👍[👍]\")","type":"script","reports":["1:38-1:40 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[👍]\\\\a\", \"\")","type":"script","reports":["1:22-1:24 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = new RegExp(\"/(?<=[👍])\", \"\")","type":"script","reports":["1:27-1:29 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[Á]\", \"\")","type":"script","reports":["1:22-1:24 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[Á]\", \"u\")","type":"script","reports":["1:22-1:24 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[\\\\u0041\\\\u0301]\", \"\")","type":"script","reports":["1:22-1:36 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[\\\\u0041\\\\u0301]\", \"u\")","type":"script","reports":["1:22-1:36 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[\\\\u{41}\\\\u{301}]\", \"u\")","type":"script","reports":["1:22-1:37 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[❇️]\", \"\")","type":"script","reports":["1:22-1:24 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[❇️]\", \"u\")","type":"script","reports":["1:22-1:24 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"new RegExp(\"[ \\\\ufe0f]\", \"\")","type":"script","reports":["1:14-1:22 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"new RegExp(\"[ \\\\ufe0f]\", \"u\")","type":"script","reports":["1:14-1:22 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"new RegExp(\"[ \\\\ufe0f][ \\\\ufe0f]\")","type":"script","reports":["1:14-1:22 Unexpected combined character in character class.","1:24-1:32 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[\\\\u2747\\\\uFE0F]\", \"\")","type":"script","reports":["1:22-1:36 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[\\\\u2747\\\\uFE0F]\", \"u\")","type":"script","reports":["1:22-1:36 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[\\\\u{2747}\\\\u{FE0F}]\", \"u\")","type":"script","reports":["1:22-1:40 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[👶🏻]\", \"\")","type":"script","reports":["1:22-1:24 Unexpected surrogate pair in character class. Use 'u' flag.","1:24-1:26 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[👶🏻]\", \"u\")","type":"script","reports":["1:22-1:26 Unexpected modified Emoji in character class."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[\\\\uD83D\\\\uDC76\\\\uD83C\\\\uDFFB]\", \"u\")","type":"script","reports":["1:22-1:50 Unexpected modified Emoji in character class."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[\\\\u{1F476}\\\\u{1F3FB}]\", \"u\")","type":"script","reports":["1:22-1:42 Unexpected modified Emoji in character class."]}
+{"kind":"invalid","code":"var r = RegExp(`\t\t\t👍[👍]`)","type":"script","reports":["1:23-1:25 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = RegExp(`\\t\\t\\t👍[👍]`)","type":"script","reports":["1:26-1:28 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[🇯🇵]\", \"\")","type":"script","reports":["1:22-1:24 Unexpected surrogate pair in character class. Use 'u' flag.","1:24-1:26 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[🇯🇵]\", \"i\")","type":"script","reports":["1:22-1:24 Unexpected surrogate pair in character class. Use 'u' flag.","1:24-1:26 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = new RegExp('[🇯🇵]', `i`)","type":"script","reports":["1:22-1:24 Unexpected surrogate pair in character class. Use 'u' flag.","1:24-1:26 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[🇯🇵]\")","type":"script","reports":["1:22-1:24 Unexpected surrogate pair in character class. Use 'u' flag.","1:24-1:26 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[🇯🇵]\",)","type":"script","reports":["1:22-1:24 Unexpected surrogate pair in character class. Use 'u' flag.","1:24-1:26 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = new RegExp((\"[🇯🇵]\"))","type":"script","reports":["1:23-1:25 Unexpected surrogate pair in character class. Use 'u' flag.","1:25-1:27 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = new RegExp(((\"[🇯🇵]\")))","type":"script","reports":["1:24-1:26 Unexpected surrogate pair in character class. Use 'u' flag.","1:26-1:28 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = new RegExp((\"[🇯🇵]\"),)","type":"script","reports":["1:23-1:25 Unexpected surrogate pair in character class. Use 'u' flag.","1:25-1:27 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[🇯🇵]\", \"u\")","type":"script","reports":["1:22-1:26 Unexpected national flag in character class."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[\\\\uD83C\\\\uDDEF\\\\uD83C\\\\uDDF5]\", \"u\")","type":"script","reports":["1:22-1:50 Unexpected national flag in character class."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[\\\\u{1F1EF}\\\\u{1F1F5}]\", \"u\")","type":"script","reports":["1:22-1:42 Unexpected national flag in character class."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[👨‍👩‍👦]\", \"\")","type":"script","reports":["1:22-1:24 Unexpected surrogate pair in character class. Use 'u' flag.","1:23-1:26 Unexpected joined character sequence in character class.","1:25-1:27 Unexpected surrogate pair in character class. Use 'u' flag.","1:26-1:29 Unexpected joined character sequence in character class.","1:28-1:30 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[👨‍👩‍👦]\", \"u\")","type":"script","reports":["1:22-1:30 Unexpected joined character sequence in character class."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[👩‍👦]\", \"u\")","type":"script","reports":["1:22-1:27 Unexpected joined character sequence in character class."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[👩‍👦][👩‍👦]\", \"u\")","type":"script","reports":["1:22-1:27 Unexpected joined character sequence in character class.","1:29-1:34 Unexpected joined character sequence in character class."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[👨‍👩‍👦]foo[👨‍👩‍👦]\", \"u\")","type":"script","reports":["1:22-1:30 Unexpected joined character sequence in character class.","1:35-1:43 Unexpected joined character sequence in character class."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[👨‍👩‍👦👩‍👦]\", \"u\")","type":"script","reports":["1:22-1:30 Unexpected joined character sequence in character class.","1:30-1:35 Unexpected joined character sequence in character class."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[\\\\uD83D\\\\uDC68\\\\u200D\\\\uD83D\\\\uDC69\\\\u200D\\\\uD83D\\\\uDC66]\", \"u\")","type":"script","reports":["1:22-1:78 Unexpected joined character sequence in character class."]}
+{"kind":"invalid","code":"var r = new RegExp(\"[\\\\u{1F468}\\\\u{200D}\\\\u{1F469}\\\\u{200D}\\\\u{1F466}]\", \"u\")","type":"script","reports":["1:22-1:70 Unexpected joined character sequence in character class."]}
+{"kind":"invalid","code":"var r = new globalThis.RegExp(\"[❇️]\", \"\")","type":"script","reports":["1:33-1:35 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"var r = new globalThis.RegExp(\"[👶🏻]\", \"u\")","type":"script","reports":["1:33-1:37 Unexpected modified Emoji in character class."]}
+{"kind":"invalid","code":"var r = new globalThis.RegExp(\"[🇯🇵]\", \"\")","type":"script","reports":["1:33-1:35 Unexpected surrogate pair in character class. Use 'u' flag.","1:35-1:37 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"var r = new globalThis.RegExp(\"[\\\\u{1F468}\\\\u{200D}\\\\u{1F469}\\\\u{200D}\\\\u{1F466}]\", \"u\")","type":"script","reports":["1:33-1:81 Unexpected joined character sequence in character class."]}
+{"kind":"invalid","code":"/[\\ud83d\\u{dc4d}]/u","type":"script","reports":["1:3-1:17 Unexpected surrogate pair in character class."]}
+{"kind":"invalid","code":"/[\\u{d83d}\\udc4d]/u","type":"script","reports":["1:3-1:17 Unexpected surrogate pair in character class."]}
+{"kind":"invalid","code":"/[\\u{d83d}\\u{dc4d}]/u","type":"script","reports":["1:3-1:19 Unexpected surrogate pair in character class."]}
+{"kind":"invalid","code":"/[\\uD83D\\u{DC4d}]/u","type":"script","reports":["1:3-1:17 Unexpected surrogate pair in character class."]}
+{"kind":"invalid","code":"new RegExp(`${\"[👍🇯🇵]\"}[😊]`);","type":"script","reports":["1:12-1:31 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"const pattern = \"[👍]\"; new RegExp(pattern);","type":"script","reports":["1:36-1:43 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"RegExp(/[a👍z]/u, '');","type":"script","reports":["1:11-1:13 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"RegExp(/[👍]/)","type":"script","reports":["1:10-1:12 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"RegExp(/[👍]/, 'i');","type":"script","reports":["1:10-1:12 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"RegExp(/[👍]/, 'g');","type":"script","reports":["1:10-1:12 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"\n\n            // \"[\" and \"]\" escaped as \"\\x5B\" and \"\\u005D\"\n            new RegExp(\"\\x5B \\\\ufe0f\\u005D\")\n\n            ","type":"script","reports":["4:29-4:37 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"\n\n            // backslash escaped as \"\\u{5c}\"\n            new RegExp(\"[ \\u{5c}ufe0f]\")\n\n            ","type":"script","reports":["4:26-4:38 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"\n\n            // \"0\" escaped as \"\\60\"\n            new RegExp(\"[ \\\\ufe\\60f]\")\n\n            ","type":"script","reports":["4:26-4:36 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"\n\n            // \"e\" escaped as \"\\e\"\n            new RegExp(\"[ \\\\uf\\e0f]\")\n\n            ","type":"script","reports":["4:26-4:35 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"\n\n            // line continuation: backslash + <CR> + <LF>\n            new RegExp('[ \\\\u\\\r\nfe0f]')\n\n            ","type":"script","reports":["4:26-5:5 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"\n\n            // just a backslash escaped as \"\\\\\"\n            new RegExp(`[.\\\\u200D.]`)\n\n            ","type":"script","reports":["4:26-4:35 Unexpected joined character sequence in character class."]}
+{"kind":"invalid","code":"\n\n            // \"u\" escaped as \"\\x75\"\n            new RegExp(`[.\\\\\\x75200D.]`)\n\n            ","type":"script","reports":["4:26-4:38 Unexpected joined character sequence in character class."]}
+{"kind":"invalid","code":"\n\n            // unescaped <CR> <LF> counts as a single character\n            new RegExp(`[\n\\\\u200D.]`)\n\n            ","type":"script","reports":["4:26-5:9 Unexpected joined character sequence in character class."]}
+{"kind":"invalid","code":"var r = /[[👶🏻]]/v","type":"script","reports":["1:12-1:16 Unexpected modified Emoji in character class."]}
+{"kind":"invalid","code":"new RegExp(/^[👍]$/v, '')","type":"script","reports":["1:15-1:17 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"/[Á]/","type":"script","reports":["1:3-1:5 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"/[\\\\̶]/","type":"script","reports":["1:3-1:6 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"/[\\n̅]/","type":"script","reports":["1:3-1:6 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"/[\\👍]/","type":"script","reports":["1:3-1:6 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"RegExp('[\\è]')","type":"script","reports":["1:10-1:13 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"RegExp('[\\👍]')","type":"script","reports":["1:10-1:13 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"RegExp('[\\\\👍]')","type":"script","reports":["1:10-1:14 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"RegExp('[\\❇️]')","type":"script","reports":["1:10-1:13 Unexpected combined character in character class."]}
+{"kind":"invalid","code":"RegExp(`[\\👍]`) // Backslash + U+D83D + U+DC4D","type":"script","reports":["1:10-1:13 Unexpected surrogate pair in character class. Use 'u' flag."]}
+{"kind":"invalid","code":"const pattern = \"[\\x41\\u0301]\"; RegExp(pattern);","type":"script","reports":["1:40-1:47 Unexpected combined character in character class."]}

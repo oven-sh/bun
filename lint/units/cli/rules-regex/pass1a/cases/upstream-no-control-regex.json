@@ -1,0 +1,457 @@
+[
+	{
+		"kind": "valid",
+		"code": "var regex = /x1f/",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var regex = /\\\\x1f/",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var regex = new RegExp('x1f')",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var regex = RegExp('x1f')",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "new RegExp('[')",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "RegExp('[')",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "function foo(RegExp) { RegExp(\"\\x1f\"); }",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "function foo(RegExp) { new RegExp(\"\\x1f\"); }",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "let RegExp; RegExp(\"\\x1f\");",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "RegExp(\"\\x1f\")",
+		"run": 0,
+		"languageOptions": {
+			"globals": {
+				"RegExp": "off"
+			}
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "new (function foo(){})('\\x1f')",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "/\\u{20}/u",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/\\u{1F}/",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "/\\u{1F}/g",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "new RegExp(\"\\\\u{20}\", \"u\")",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "new RegExp(\"\\\\u{1F}\")",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "new RegExp(\"\\\\u{1F}\", \"g\")",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "new RegExp(\"\\\\u{1F}\", flags)",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "new RegExp(\"[\\\\q{\\\\u{20}}]\", \"v\")",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\u{20}--B]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var regex = /\\c1/",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var regex = /\\c$/",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var regex = new RegExp('\\\\c1')",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var regex = /\\cA/",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var regex = /\\cz/",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "var regex = new RegExp('\\\\cA')",
+		"run": 0
+	},
+	{
+		"kind": "valid",
+		"code": "/\\cA/u",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/\\cA/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		}
+	},
+	{
+		"kind": "invalid",
+		"code": "var regex = /\\x1f/",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"controlChars": "\\x1f"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var regex = /\\\\\\x1f\\\\x1e/",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"controlChars": "\\x1f"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var regex = /\\\\\\x1fFOO\\\\x00/",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"controlChars": "\\x1f"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var regex = /FOO\\\\\\x1fFOO\\\\x1f/",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"controlChars": "\\x1f"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var regex = new RegExp('\\x1f\\x1e')",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"controlChars": "\\x1f, \\x1e"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var regex = new RegExp('\\x1fFOO\\x00')",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"controlChars": "\\x1f, \\x00"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var regex = new RegExp('FOO\\x1fFOO\\x1f')",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"controlChars": "\\x1f, \\x1f"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var regex = RegExp('\\x1f')",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"controlChars": "\\x1f"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var regex = /(?<a>\\x1f)/",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2018
+		},
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"controlChars": "\\x1f"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var regex = /(?<\\u{1d49c}>.)\\x1f/",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2020
+		},
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"controlChars": "\\x1f"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "new RegExp(\"\\\\u001F\", flags)",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"controlChars": "\\x1f"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/\\u{1111}*\\x1F/u",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"controlChars": "\\x1f"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "new RegExp(\"\\\\u{1111}*\\\\x1F\", \"u\")",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"controlChars": "\\x1f"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/\\u{1F}/u",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"controlChars": "\\x1f"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/\\u{1F}/gui",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"controlChars": "\\x1f"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "new RegExp(\"\\\\u{1F}\", \"u\")",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"controlChars": "\\x1f"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "new RegExp(\"\\\\u{1F}\", \"gui\")",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"controlChars": "\\x1f"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "new RegExp(\"[\\\\q{\\\\u{1F}}]\", \"v\")",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"controlChars": "\\x1f"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\u{1F}--B]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"controlChars": "\\x1f"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/\\x11/; RegExp(\"foo\", \"uv\");",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"controlChars": "\\x11"
+				},
+				"column": 1
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var regex = /\\x1f\\cA/",
+		"run": 0,
+		"errors": [
+			{
+				"messageId": "unexpected",
+				"data": {
+					"controlChars": "\\x1f"
+				}
+			}
+		]
+	}
+]

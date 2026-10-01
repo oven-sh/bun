@@ -1,0 +1,3263 @@
+[
+	{
+		"kind": "valid",
+		"code": "var r = /[👍]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = /[\\uD83D\\uDC4D]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = /[\\u{1F44D}]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = /❇️/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = /Á/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = /[❇]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = /👶🏻/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = /[👶]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = /🇯🇵/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = /[JP]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = /👨‍👩‍👦/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "new RegExp()",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = RegExp(/[👍]/u)",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "const regex = /[👍]/u; new RegExp(regex);",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "new RegExp('[👍]')",
+		"run": 0,
+		"languageOptions": {
+			"globals": {
+				"RegExp": "off"
+			}
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = /[\\uD83D]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = /[\\uDC4D]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = /[\\uD83D]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = /[\\uDC4D]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = /[\\u0301]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = /[\\uFE0F]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = /[\\u0301]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = /[\\uFE0F]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = /[\\u{1F3FB}]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = /[🏻]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = /[🇯]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = /[🇵]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = /[\\u200D]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = /[\\u200D]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "new RegExp('[Á] [ ');",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = new RegExp('[Á] [ ');",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = RegExp('{ [Á]', 'u');",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = new globalThis.RegExp('[Á] [ ');",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2020
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = globalThis.RegExp('{ [Á]', 'u');",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2020
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = RegExp(`${x}[👍]`)",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = new RegExp('[🇯🇵]', `${foo}`)",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = new RegExp(\"[👍]\", flags)",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "const args = ['[👍]', 'i']; new RegExp(...args);",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = /[👍]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = /^[\\q{👶🏻}]$/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = /[🇯\\q{abc}🇵]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = /[🇯[A]🇵]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "var r = /[🇯[A--B]🇵]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\ud83d\\udc4d]/",
+		"run": 0,
+		"options": [
+			{
+				"allowEscape": true
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\ud83d\\udc4d]/u // U+D83D + Backslash + \"udc4d\"",
+		"run": 0,
+		"options": [
+			{
+				"allowEscape": true
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[A\\u0301]/",
+		"run": 0,
+		"options": [
+			{
+				"allowEscape": true
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[👶\\u{1f3fb}]/u",
+		"run": 0,
+		"options": [
+			{
+				"allowEscape": true
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\u{1F1EF}\\u{1F1F5}]/u",
+		"run": 0,
+		"options": [
+			{
+				"allowEscape": true
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[👨\\u200d👩\\u200d👦]/u",
+		"run": 0,
+		"options": [
+			{
+				"allowEscape": true
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\u00B7\\u0300-\\u036F]/u",
+		"run": 0,
+		"options": [
+			{
+				"allowEscape": true
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/[\\n\\u0305]/",
+		"run": 0,
+		"options": [
+			{
+				"allowEscape": true
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "RegExp(\"[\\uD83D\\uDC4D]\")",
+		"run": 0,
+		"options": [
+			{
+				"allowEscape": true
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "RegExp(\"[A\\u0301]\")",
+		"run": 0,
+		"options": [
+			{
+				"allowEscape": true
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "RegExp(\"[\\x41\\\\u0301]\")",
+		"run": 0,
+		"options": [
+			{
+				"allowEscape": true
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "RegExp(`[\\uD83D\\uDC4D]`) // Backslash + \"uD83D\" + Backslash + \"uDC4D\"",
+		"run": 0,
+		"options": [
+			{
+				"allowEscape": true
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		}
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[👍]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 13,
+				"line": 1,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = /[👍]/u"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[\\uD83D\\uDC4D]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 23,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = /[\\uD83D\\uDC4D]/u"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[\\uD83D\\uDC4D-\\uffff]/",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 3,
+			"sourceType": "script"
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 23,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[👍]/",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 3,
+			"sourceType": "script"
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 13,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /before[\\uD83D\\uDC4D]after/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 17,
+				"endColumn": 29,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = /before[\\uD83D\\uDC4D]after/u"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[before\\uD83D\\uDC4Dafter]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 17,
+				"endColumn": 29,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = /[before\\uD83D\\uDC4Dafter]/u"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /\\uDC4D[\\uD83D\\uDC4D]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 17,
+				"endColumn": 29,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = /\\uDC4D[\\uD83D\\uDC4D]/u"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[👍]/",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 13,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[👍]\\a/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 13,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /\\a[👍]\\a/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 13,
+				"endColumn": 15,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /(?<=[👍])/",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 9
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 15,
+				"endColumn": 17,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = /(?<=[👍])/u"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /(?<=[👍])/",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2018
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 15,
+				"endColumn": 17,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = /(?<=[👍])/u"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[Á]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 13,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[Á]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 13,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[\\u0041\\u0301]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 23,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[\\u0041\\u0301]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 23,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[\\u{41}\\u{301}]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 24,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[❇️]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 13,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[❇️]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 13,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[\\u2747\\uFE0F]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 23,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[\\u2747\\uFE0F]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 23,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[\\u{2747}\\u{FE0F}]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 27,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[👶🏻]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 13,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = /[👶🏻]/u"
+					}
+				]
+			},
+			{
+				"column": 13,
+				"endColumn": 15,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = /[👶🏻]/u"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[👶🏻]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 15,
+				"messageId": "emojiModifier",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[a\\uD83C\\uDFFB]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 24,
+				"messageId": "emojiModifier"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[\\uD83D\\uDC76\\uD83C\\uDFFB]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 35,
+				"messageId": "emojiModifier",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[\\u{1F476}\\u{1F3FB}]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 29,
+				"messageId": "emojiModifier",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[🇯🇵]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 13,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = /[🇯🇵]/u"
+					}
+				]
+			},
+			{
+				"column": 13,
+				"endColumn": 15,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = /[🇯🇵]/u"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[🇯🇵]/i",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 13,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = /[🇯🇵]/iu"
+					}
+				]
+			},
+			{
+				"column": 13,
+				"endColumn": 15,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = /[🇯🇵]/iu"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[🇯🇵]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 15,
+				"messageId": "regionalIndicatorSymbol",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[\\uD83C\\uDDEF\\uD83C\\uDDF5]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 35,
+				"messageId": "regionalIndicatorSymbol",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[\\u{1F1EF}\\u{1F1F5}]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 29,
+				"messageId": "regionalIndicatorSymbol",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[👨‍👩‍👦]/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 13,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = /[👨‍👩‍👦]/u"
+					}
+				]
+			},
+			{
+				"column": 12,
+				"endColumn": 15,
+				"messageId": "zwj",
+				"suggestions": null
+			},
+			{
+				"column": 14,
+				"endColumn": 16,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = /[👨‍👩‍👦]/u"
+					}
+				]
+			},
+			{
+				"column": 15,
+				"endColumn": 18,
+				"messageId": "zwj",
+				"suggestions": null
+			},
+			{
+				"column": 17,
+				"endColumn": 19,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = /[👨‍👩‍👦]/u"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[👨‍👩‍👦]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 19,
+				"messageId": "zwj",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[👩‍👦]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 16,
+				"messageId": "zwj",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[👩‍👦][👩‍👦]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 16,
+				"messageId": "zwj",
+				"suggestions": null
+			},
+			{
+				"column": 18,
+				"endColumn": 23,
+				"messageId": "zwj",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[👨‍👩‍👦]foo[👨‍👩‍👦]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 19,
+				"messageId": "zwj",
+				"suggestions": null
+			},
+			{
+				"column": 24,
+				"endColumn": 32,
+				"messageId": "zwj",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[👨‍👩‍👦👩‍👦]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 19,
+				"messageId": "zwj",
+				"suggestions": null
+			},
+			{
+				"column": 19,
+				"endColumn": 24,
+				"messageId": "zwj",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[\\uD83D\\uDC68\\u200D\\uD83D\\uDC69\\u200D\\uD83D\\uDC66]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 59,
+				"messageId": "zwj",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[\\u{1F468}\\u{200D}\\u{1F469}\\u{200D}\\u{1F466}]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 54,
+				"messageId": "zwj",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[\\uD83D\\uDC68\\u200D\\uD83D\\uDC69]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 41,
+				"messageId": "zwj",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[\\u{1F468}\\u{200D}\\u{1F469}]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 37,
+				"messageId": "zwj",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[\\u{1F468}\\u{200D}\\u{1F469}\\u{200D}\\u{1F466}]foo[\\u{1F468}\\u{200D}\\u{1F469}\\u{200D}\\u{1F466}]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 54,
+				"messageId": "zwj",
+				"suggestions": null
+			},
+			{
+				"column": 59,
+				"endColumn": 102,
+				"messageId": "zwj",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = RegExp(\"[👍]\", \"\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 18,
+				"endColumn": 20,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = RegExp(\"[👍]\", \"u\")"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[👍]\", \"\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 24,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new RegExp(\"[👍]\", \"u\")"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp('[👍]', ``)",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 24,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new RegExp('[👍]', `u`)"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(`\n                [👍]`)",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"line": 2,
+				"endLine": 2,
+				"column": 18,
+				"endColumn": 20,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new RegExp(`\n                [👍]`, \"u\")"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(`\n                [❇️]`)",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 18,
+				"endColumn": 20,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(`\r\n[❇️]`)",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"line": 2,
+				"column": 2,
+				"endLine": 2,
+				"endColumn": 4,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "const flags = \"\"; var r = new RegExp(\"[👍]\", flags)",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 40,
+				"endColumn": 42,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = RegExp(\"[\\\\uD83D\\\\uDC4D]\", \"\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 18,
+				"endColumn": 32,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = RegExp(\"[\\\\uD83D\\\\uDC4D]\", \"u\")"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = RegExp(\"before[\\\\uD83D\\\\uDC4D]after\", \"\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 24,
+				"endColumn": 38,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = RegExp(\"before[\\\\uD83D\\\\uDC4D]after\", \"u\")"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = RegExp(\"[before\\\\uD83D\\\\uDC4Dafter]\", \"\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 24,
+				"endColumn": 38,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = RegExp(\"[before\\\\uD83D\\\\uDC4Dafter]\", \"u\")"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = RegExp(\"\\t\\t\\t👍[👍]\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 26,
+				"endColumn": 28,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = RegExp(\"\\t\\t\\t👍[👍]\", \"u\")"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"\\u1234[\\\\uD83D\\\\uDC4D]\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 28,
+				"endColumn": 42,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new RegExp(\"\\u1234[\\\\uD83D\\\\uDC4D]\", \"u\")"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"\\\\u1234\\\\u5678👎[👍]\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 38,
+				"endColumn": 40,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new RegExp(\"\\\\u1234\\\\u5678👎[👍]\", \"u\")"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"\\\\u1234\\\\u5678👍[👍]\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 38,
+				"endColumn": 40,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new RegExp(\"\\\\u1234\\\\u5678👍[👍]\", \"u\")"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[👍]\", \"\")",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 3,
+			"sourceType": "script"
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 24,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[👍]\", \"\")",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 5,
+			"sourceType": "script"
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 24,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[👍]\\\\a\", \"\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 24,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"/(?<=[👍])\", \"\")",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 9
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 27,
+				"endColumn": 29,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new RegExp(\"/(?<=[👍])\", \"u\")"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"/(?<=[👍])\", \"\")",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2018
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 27,
+				"endColumn": 29,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new RegExp(\"/(?<=[👍])\", \"u\")"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[Á]\", \"\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 24,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[Á]\", \"u\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 24,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[\\\\u0041\\\\u0301]\", \"\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 36,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[\\\\u0041\\\\u0301]\", \"u\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 36,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[\\\\u{41}\\\\u{301}]\", \"u\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 37,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[❇️]\", \"\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 24,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[❇️]\", \"u\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 24,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "new RegExp(\"[ \\\\ufe0f]\", \"\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 14,
+				"endColumn": 22,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "new RegExp(\"[ \\\\ufe0f]\", \"u\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 14,
+				"endColumn": 22,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "new RegExp(\"[ \\\\ufe0f][ \\\\ufe0f]\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 14,
+				"endColumn": 22,
+				"messageId": "combiningClass",
+				"suggestions": null
+			},
+			{
+				"column": 24,
+				"endColumn": 32,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[\\\\u2747\\\\uFE0F]\", \"\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 36,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[\\\\u2747\\\\uFE0F]\", \"u\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 36,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[\\\\u{2747}\\\\u{FE0F}]\", \"u\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 40,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[👶🏻]\", \"\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 24,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new RegExp(\"[👶🏻]\", \"u\")"
+					}
+				]
+			},
+			{
+				"column": 24,
+				"endColumn": 26,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new RegExp(\"[👶🏻]\", \"u\")"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[👶🏻]\", \"u\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 26,
+				"messageId": "emojiModifier",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[\\\\uD83D\\\\uDC76\\\\uD83C\\\\uDFFB]\", \"u\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 50,
+				"messageId": "emojiModifier",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[\\\\u{1F476}\\\\u{1F3FB}]\", \"u\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 42,
+				"messageId": "emojiModifier",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = RegExp(`\t\t\t👍[👍]`)",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 23,
+				"endColumn": 25,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = RegExp(`\t\t\t👍[👍]`, \"u\")"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = RegExp(`\\t\\t\\t👍[👍]`)",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 26,
+				"endColumn": 28,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = RegExp(`\\t\\t\\t👍[👍]`, \"u\")"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[🇯🇵]\", \"\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 24,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new RegExp(\"[🇯🇵]\", \"u\")"
+					}
+				]
+			},
+			{
+				"column": 24,
+				"endColumn": 26,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new RegExp(\"[🇯🇵]\", \"u\")"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[🇯🇵]\", \"i\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 24,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new RegExp(\"[🇯🇵]\", \"iu\")"
+					}
+				]
+			},
+			{
+				"column": 24,
+				"endColumn": 26,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new RegExp(\"[🇯🇵]\", \"iu\")"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp('[🇯🇵]', `i`)",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 24,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new RegExp('[🇯🇵]', `iu`)"
+					}
+				]
+			},
+			{
+				"column": 24,
+				"endColumn": 26,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new RegExp('[🇯🇵]', `iu`)"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[🇯🇵]\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 24,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new RegExp(\"[🇯🇵]\", \"u\")"
+					}
+				]
+			},
+			{
+				"column": 24,
+				"endColumn": 26,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new RegExp(\"[🇯🇵]\", \"u\")"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[🇯🇵]\",)",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2017
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 24,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new RegExp(\"[🇯🇵]\", \"u\",)"
+					}
+				]
+			},
+			{
+				"column": 24,
+				"endColumn": 26,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new RegExp(\"[🇯🇵]\", \"u\",)"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp((\"[🇯🇵]\"))",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 23,
+				"endColumn": 25,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new RegExp((\"[🇯🇵]\"), \"u\")"
+					}
+				]
+			},
+			{
+				"column": 25,
+				"endColumn": 27,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new RegExp((\"[🇯🇵]\"), \"u\")"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(((\"[🇯🇵]\")))",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 24,
+				"endColumn": 26,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new RegExp(((\"[🇯🇵]\")), \"u\")"
+					}
+				]
+			},
+			{
+				"column": 26,
+				"endColumn": 28,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new RegExp(((\"[🇯🇵]\")), \"u\")"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp((\"[🇯🇵]\"),)",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2017
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 23,
+				"endColumn": 25,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new RegExp((\"[🇯🇵]\"), \"u\",)"
+					}
+				]
+			},
+			{
+				"column": 25,
+				"endColumn": 27,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new RegExp((\"[🇯🇵]\"), \"u\",)"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[🇯🇵]\", \"u\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 26,
+				"messageId": "regionalIndicatorSymbol",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[\\\\uD83C\\\\uDDEF\\\\uD83C\\\\uDDF5]\", \"u\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 50,
+				"messageId": "regionalIndicatorSymbol",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[\\\\u{1F1EF}\\\\u{1F1F5}]\", \"u\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 42,
+				"messageId": "regionalIndicatorSymbol",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[👨‍👩‍👦]\", \"\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 24,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new RegExp(\"[👨‍👩‍👦]\", \"u\")"
+					}
+				]
+			},
+			{
+				"column": 23,
+				"endColumn": 26,
+				"messageId": "zwj",
+				"suggestions": null
+			},
+			{
+				"column": 25,
+				"endColumn": 27,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new RegExp(\"[👨‍👩‍👦]\", \"u\")"
+					}
+				]
+			},
+			{
+				"column": 26,
+				"endColumn": 29,
+				"messageId": "zwj",
+				"suggestions": null
+			},
+			{
+				"column": 28,
+				"endColumn": 30,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new RegExp(\"[👨‍👩‍👦]\", \"u\")"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[👨‍👩‍👦]\", \"u\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 30,
+				"messageId": "zwj",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[👩‍👦]\", \"u\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 27,
+				"messageId": "zwj",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[👩‍👦][👩‍👦]\", \"u\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 27,
+				"messageId": "zwj",
+				"suggestions": null
+			},
+			{
+				"column": 29,
+				"endColumn": 34,
+				"messageId": "zwj",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[👨‍👩‍👦]foo[👨‍👩‍👦]\", \"u\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 30,
+				"messageId": "zwj",
+				"suggestions": null
+			},
+			{
+				"column": 35,
+				"endColumn": 43,
+				"messageId": "zwj",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[👨‍👩‍👦👩‍👦]\", \"u\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 30,
+				"messageId": "zwj",
+				"suggestions": null
+			},
+			{
+				"column": 30,
+				"endColumn": 35,
+				"messageId": "zwj",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[\\\\uD83D\\\\uDC68\\\\u200D\\\\uD83D\\\\uDC69\\\\u200D\\\\uD83D\\\\uDC66]\", \"u\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 78,
+				"messageId": "zwj",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new RegExp(\"[\\\\u{1F468}\\\\u{200D}\\\\u{1F469}\\\\u{200D}\\\\u{1F466}]\", \"u\")",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 22,
+				"endColumn": 70,
+				"messageId": "zwj",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new globalThis.RegExp(\"[❇️]\", \"\")",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2020
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 33,
+				"endColumn": 35,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new globalThis.RegExp(\"[👶🏻]\", \"u\")",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2020
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 33,
+				"endColumn": 37,
+				"messageId": "emojiModifier",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new globalThis.RegExp(\"[🇯🇵]\", \"\")",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2020
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 33,
+				"endColumn": 35,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new globalThis.RegExp(\"[🇯🇵]\", \"u\")"
+					}
+				]
+			},
+			{
+				"column": 35,
+				"endColumn": 37,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "var r = new globalThis.RegExp(\"[🇯🇵]\", \"u\")"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = new globalThis.RegExp(\"[\\\\u{1F468}\\\\u{200D}\\\\u{1F469}\\\\u{200D}\\\\u{1F466}]\", \"u\")",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2020
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 33,
+				"endColumn": 81,
+				"messageId": "zwj",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\ud83d\\u{dc4d}]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"messageId": "surrogatePair",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\u{d83d}\\udc4d]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"messageId": "surrogatePair",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\u{d83d}\\u{dc4d}]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"messageId": "surrogatePair",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\uD83D\\u{DC4d}]/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"messageId": "surrogatePair",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "new RegExp(`${\"[👍🇯🇵]\"}[😊]`);",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 12,
+				"endColumn": 31,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "new RegExp(`${\"[👍🇯🇵]\"}[😊]`, \"u\");"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "const pattern = \"[👍]\"; new RegExp(pattern);",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 36,
+				"endColumn": 43,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "const pattern = \"[👍]\"; new RegExp(pattern, \"u\");"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "RegExp(/[a👍z]/u, '');",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 11,
+				"endColumn": 13,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "RegExp(/[a👍z]/u, 'u');"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "RegExp(/[👍]/)",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 10,
+				"endColumn": 12,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "RegExp(/[👍]/u)"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "RegExp(/[👍]/, 'i');",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 10,
+				"endColumn": 12,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "RegExp(/[👍]/, 'iu');"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "RegExp(/[👍]/, 'g');",
+		"run": 0,
+		"languageOptions": {
+			"globals": {
+				"RegExp": "off"
+			}
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 10,
+				"endColumn": 12,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "RegExp(/[👍]/u, 'g');"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n\n            // \"[\" and \"]\" escaped as \"\\x5B\" and \"\\u005D\"\n            new RegExp(\"\\x5B \\\\ufe0f\\u005D\")\n\n            ",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 29,
+				"endColumn": 37,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n\n            // backslash escaped as \"\\u{5c}\"\n            new RegExp(\"[ \\u{5c}ufe0f]\")\n\n            ",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 26,
+				"endColumn": 38,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n\n            // \"0\" escaped as \"\\60\"\n            new RegExp(\"[ \\\\ufe\\60f]\")\n\n            ",
+		"run": 0,
+		"languageOptions": {
+			"sourceType": "script"
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 26,
+				"endColumn": 36,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n\n            // \"e\" escaped as \"\\e\"\n            new RegExp(\"[ \\\\uf\\e0f]\")\n\n            ",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 26,
+				"endColumn": 35,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n\n            // line continuation: backslash + <CR> + <LF>\n            new RegExp('[ \\\\u\\\r\nfe0f]')\n\n            ",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"line": 4,
+				"column": 26,
+				"endLine": 5,
+				"endColumn": 5,
+				"messageId": "combiningClass",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n\n            // just a backslash escaped as \"\\\\\"\n            new RegExp(`[.\\\\u200D.]`)\n\n            ",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 26,
+				"endColumn": 35,
+				"messageId": "zwj",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n\n            // \"u\" escaped as \"\\x75\"\n            new RegExp(`[.\\\\\\x75200D.]`)\n\n            ",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 26,
+				"endColumn": 38,
+				"messageId": "zwj",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n\n            // unescaped <CR> <LF> counts as a single character\n            new RegExp(`[\n\\\\u200D.]`)\n\n            ",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"line": 4,
+				"column": 26,
+				"endLine": 5,
+				"endColumn": 9,
+				"messageId": "zwj",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var r = /[[👶🏻]]/v",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 12,
+				"endColumn": 16,
+				"messageId": "emojiModifier",
+				"suggestions": null
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "new RegExp(/^[👍]$/v, '')",
+		"run": 0,
+		"languageOptions": {
+			"ecmaVersion": 2024
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"column": 15,
+				"endColumn": 17,
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "new RegExp(/^[👍]$/v, 'u')"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[Á]/",
+		"run": 0,
+		"options": [
+			{
+				"allowEscape": false
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"messageId": "combiningClass"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[Á]/",
+		"run": 0,
+		"options": [
+			{}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"messageId": "combiningClass"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\\\̶]/",
+		"run": 0,
+		"options": [
+			{
+				"allowEscape": true
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"messageId": "combiningClass"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\n̅]/",
+		"run": 0,
+		"options": [
+			{
+				"allowEscape": true
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"messageId": "combiningClass"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/[\\👍]/",
+		"run": 0,
+		"options": [
+			{
+				"allowEscape": true
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"messageId": "surrogatePairWithoutUFlag"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "RegExp('[\\è]')",
+		"run": 0,
+		"options": [
+			{
+				"allowEscape": true
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"messageId": "combiningClass"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "RegExp('[\\👍]')",
+		"run": 0,
+		"options": [
+			{
+				"allowEscape": true
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "RegExp('[\\👍]', \"u\")"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "RegExp('[\\\\👍]')",
+		"run": 0,
+		"options": [
+			{
+				"allowEscape": true
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"messageId": "surrogatePairWithoutUFlag"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "RegExp('[\\❇️]')",
+		"run": 0,
+		"options": [
+			{
+				"allowEscape": true
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"messageId": "combiningClass"
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "RegExp(`[\\👍]`) // Backslash + U+D83D + U+DC4D",
+		"run": 0,
+		"options": [
+			{
+				"allowEscape": true
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"messageId": "surrogatePairWithoutUFlag",
+				"suggestions": [
+					{
+						"messageId": "suggestUnicodeFlag",
+						"output": "RegExp(`[\\👍]`, \"u\") // Backslash + U+D83D + U+DC4D"
+					}
+				]
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "const pattern = \"[\\x41\\u0301]\"; RegExp(pattern);",
+		"run": 0,
+		"options": [
+			{
+				"allowEscape": true
+			}
+		],
+		"testerLanguageOptions": {
+			"ecmaVersion": 2015
+		},
+		"errors": [
+			{
+				"messageId": "combiningClass"
+			}
+		]
+	}
+]

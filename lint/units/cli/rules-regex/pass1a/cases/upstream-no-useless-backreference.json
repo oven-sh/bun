@@ -1,0 +1,2572 @@
+[
+	{
+		"kind": "valid",
+		"code": "'\\1(a)'",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "regExp('\\\\1(a)')",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "new Regexp('\\\\1(a)', 'u')",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "RegExp.foo('\\\\1(a)', 'u')",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "new foo.RegExp('\\\\1(a)')",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "RegExp(p)",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "new RegExp(p, 'u')",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "RegExp('\\\\1(a)' + suffix)",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "new RegExp(`${prefix}\\\\1(a)`)",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "let RegExp; new RegExp('\\\\1(a)');",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "function foo() { var RegExp; RegExp('\\\\1(a)', 'u'); }",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "function foo(RegExp) { new RegExp('\\\\1(a)'); }",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "if (foo) { const RegExp = bar; RegExp('\\\\1(a)'); }",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/* globals RegExp:off */ new RegExp('\\\\1(a)');",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "RegExp('\\\\1(a)');",
+		"run": 0,
+		"languageOptions": {
+			"globals": {
+				"RegExp": "off"
+			}
+		},
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/(?:)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/(?:a)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "new RegExp('')",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "RegExp('(?:a)|(?:b)*')",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/^ab|[cd].\\n$/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/(a)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "RegExp('(a)|(b)')",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "new RegExp('\\\\n\\\\d(a)')",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/\\0(a)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/\\0(a)/u",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/(?<=(a))(b)(?=(c))/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/(?<!(a))(b)(?!(c))/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/(?<foo>a)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "RegExp('\\1(a)')",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "RegExp('\\\\\\\\1(a)')",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/\\\\1(a)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/\\1/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/^\\1$/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/\\2(a)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/\\1(?:a)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/\\1(?=a)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/\\1(?!a)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/^[\\1](a)$/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "new RegExp('[\\\\1](a)')",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/\\11(a)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/\\k<foo>(a)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/^(a)\\1\\2$/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/(a)\\1/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/(a).\\1/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "RegExp('(a)\\\\1(b)')",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/(a)(b)\\2(c)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/(?<foo>a)\\k<foo>/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "new RegExp('(.)\\\\1')",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "RegExp('(a)\\\\1(?:b)')",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/(a)b\\1/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/((a)\\2)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/((a)b\\2c)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/^(?:(a)\\1)$/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/^((a)\\2)$/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/^(((a)\\3))|b$/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/a(?<foo>(.)b\\2)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/(a)?(b)*(\\1)(c)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/(a)?(b)*(\\2)(c)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/(?<=(a))b\\1/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/(?<=(?=(a)\\1))b/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/(?<!\\1(a))b/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/(?<=\\1(a))b/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/(?<!\\1.(a))b/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/(?<=\\1.(a))b/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/(?<=(?:\\1.(a)))b/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/(?<!(?:\\1)((a)))b/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/(?<!(?:\\2)((a)))b/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/(?=(?<=\\1(a)))b/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/(?=(?<!\\1(a)))b/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/(.)(?<=\\2(a))b/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/^(a)\\1|b/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/^a|(b)\\1/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/^a|(b|c)\\1/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/^(a)|(b)\\2/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/^(?:(a)|(b)\\2)$/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/^a|(?:.|(b)\\1)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/^a|(?:.|(b).(\\1))/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/^a|(?:.|(?:(b)).(\\1))/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/^a|(?:.|(?:(b)|c).(\\1))/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/^a|(?:.|(?:(b)).(\\1|c))/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/^a|(?:.|(?:(b)|c).(\\1|d))/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/.(?=(b))\\1/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/.(?<=(b))\\1/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/a(?!(b)\\1)./",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/a(?<!\\1(b))./",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/a(?!(b)(\\1))./",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/a(?!(?:(b)\\1))./",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/a(?!(?:(b))\\1)./",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/a(?<!(?:\\1)(b))./",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/a(?<!(?:(?:\\1)(b)))./",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/(?<!(a))(b)(?!(c))\\2/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/a(?!(b|c)\\1)./",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "RegExp('\\\\1(a)[')",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "new RegExp('\\\\1(a){', 'u')",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "new RegExp('\\\\1(a)\\\\2', 'ug')",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "const flags = 'gus'; RegExp('\\\\1(a){', flags);",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "RegExp('\\\\1(a)\\\\k<foo>', 'u')",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "new RegExp('\\\\k<foo>(?<foo>a)\\\\k<bar>')",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "new RegExp('([[A--B]])\\\\1', 'v')",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "new RegExp('[[]\\\\1](a)', 'v')",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "valid",
+		"code": "/((?<foo>bar)\\k<foo>|(?<foo>baz))/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		}
+	},
+	{
+		"kind": "invalid",
+		"code": "/(b)(\\2a)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"message": "Backreference '\\2' will be ignored. It references group '(\\2a)' from within that group."
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/\\k<foo>(?<foo>bar)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"message": "Backreference '\\k<foo>' will be ignored. It references group '(?<foo>bar)' which appears later in the pattern."
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "RegExp('(a|bc)|\\\\1')",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"message": "Backreference '\\1' will be ignored. It references group '(a|bc)' which is in another alternative."
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "new RegExp('(?!(?<foo>\\\\n))\\\\1')",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"message": "Backreference '\\1' will be ignored. It references group '(?<foo>\\n)' which is in a negative lookaround."
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(?<!(a)\\1)b/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"message": "Backreference '\\1' will be ignored. It references group '(a)' which appears before in the same lookbehind."
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "new RegExp('(\\\\1)')",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "nested",
+				"data": {
+					"bref": "\\1",
+					"group": "(\\1)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/^(a\\1)$/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "nested",
+				"data": {
+					"bref": "\\1",
+					"group": "(a\\1)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/^((a)\\1)$/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "nested",
+				"data": {
+					"bref": "\\1",
+					"group": "((a)\\1)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "new RegExp('^(a\\\\1b)$')",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "nested",
+				"data": {
+					"bref": "\\1",
+					"group": "(a\\1b)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "RegExp('^((\\\\1))$')",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "nested",
+				"data": {
+					"bref": "\\1",
+					"group": "((\\1))",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/((\\2))/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "nested",
+				"data": {
+					"bref": "\\2",
+					"group": "(\\2)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/a(?<foo>(.)b\\1)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "nested",
+				"data": {
+					"bref": "\\1",
+					"group": "(?<foo>(.)b\\1)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/a(?<foo>\\k<foo>)b/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "nested",
+				"data": {
+					"bref": "\\k<foo>",
+					"group": "(?<foo>\\k<foo>)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/^(\\1)*$/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "nested",
+				"data": {
+					"bref": "\\1",
+					"group": "(\\1)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/^(?:a)(?:((?:\\1)))*$/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "nested",
+				"data": {
+					"bref": "\\1",
+					"group": "((?:\\1))",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(?!(\\1))/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "nested",
+				"data": {
+					"bref": "\\1",
+					"group": "(\\1)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/a|(b\\1c)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "nested",
+				"data": {
+					"bref": "\\1",
+					"group": "(b\\1c)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(a|(\\1))/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "nested",
+				"data": {
+					"bref": "\\1",
+					"group": "(a|(\\1))",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(a|(\\2))/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "nested",
+				"data": {
+					"bref": "\\2",
+					"group": "(\\2)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(?:a|(\\1))/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "nested",
+				"data": {
+					"bref": "\\1",
+					"group": "(\\1)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(a)?(b)*(\\3)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "nested",
+				"data": {
+					"bref": "\\3",
+					"group": "(\\3)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(?<=(a\\1))b/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "nested",
+				"data": {
+					"bref": "\\1",
+					"group": "(a\\1)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/\\1(a)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "forward",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/\\1.(a)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "forward",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(?:\\1)(?:(a))/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "forward",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(?:\\1)(?:((a)))/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "forward",
+				"data": {
+					"bref": "\\1",
+					"group": "((a))",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(?:\\2)(?:((a)))/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "forward",
+				"data": {
+					"bref": "\\2",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(?:\\1)(?:((?:a)))/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "forward",
+				"data": {
+					"bref": "\\1",
+					"group": "((?:a))",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(\\2)(a)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "forward",
+				"data": {
+					"bref": "\\2",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "RegExp('(a)\\\\2(b)')",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "forward",
+				"data": {
+					"bref": "\\2",
+					"group": "(b)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(?:a)(b)\\2(c)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "forward",
+				"data": {
+					"bref": "\\2",
+					"group": "(c)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/\\k<foo>(?<foo>a)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "forward",
+				"data": {
+					"bref": "\\k<foo>",
+					"group": "(?<foo>a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(?:a(b)\\2)(c)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "forward",
+				"data": {
+					"bref": "\\2",
+					"group": "(c)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "new RegExp('(a)(b)\\\\3(c)')",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "forward",
+				"data": {
+					"bref": "\\3",
+					"group": "(c)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/\\1(?<=(a))./",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "forward",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/\\1(?<!(a))./",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "forward",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(?<=\\1)(?<=(a))/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "forward",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(?<!\\1)(?<!(a))/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "forward",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(?=\\1(a))./",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "forward",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(?!\\1(a))./",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "forward",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(?<=(a)\\1)b/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "backward",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(?<!.(a).\\1.)b/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "backward",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(.)(?<!(b|c)\\2)d/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "backward",
+				"data": {
+					"bref": "\\2",
+					"group": "(b|c)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(?<=(?:(a)\\1))b/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "backward",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(?<=(?:(a))\\1)b/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "backward",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(?<=(a)(?:\\1))b/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "backward",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(?<!(?:(a))(?:\\1))b/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "backward",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(?<!(?:(a))(?:\\1)|.)b/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "backward",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/.(?!(?<!(a)\\1))./",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "backward",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/.(?=(?<!(a)\\1))./",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "backward",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/.(?!(?<=(a)\\1))./",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "backward",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/.(?=(?<=(a)\\1))./",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "backward",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(a)|\\1b/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "disjunctive",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/^(?:(a)|\\1b)$/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "disjunctive",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/^(?:(a)|b(?:c|\\1))$/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "disjunctive",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/^(?:a|b(?:(c)|\\1))$/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "disjunctive",
+				"data": {
+					"bref": "\\1",
+					"group": "(c)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/^(?:(a(?!b))|\\1b)+$/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "disjunctive",
+				"data": {
+					"bref": "\\1",
+					"group": "(a(?!b))",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/^(?:(?:(a)(?!b))|\\1b)+$/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "disjunctive",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/^(?:(a(?=a))|\\1b)+$/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "disjunctive",
+				"data": {
+					"bref": "\\1",
+					"group": "(a(?=a))",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/^(?:(a)(?=a)|\\1b)+$/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "disjunctive",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/.(?:a|(b)).|(?:(\\1)|c)./",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "disjunctive",
+				"data": {
+					"bref": "\\1",
+					"group": "(b)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/.(?!(a)|\\1)./",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "disjunctive",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/.(?<=\\1|(a))./",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "disjunctive",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/a(?!(b)).\\1/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "intoNegativeLookaround",
+				"data": {
+					"bref": "\\1",
+					"group": "(b)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(?<!(a))b\\1/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "intoNegativeLookaround",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(?<!(a))(?:\\1)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "intoNegativeLookaround",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/.(?<!a|(b)).\\1/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "intoNegativeLookaround",
+				"data": {
+					"bref": "\\1",
+					"group": "(b)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/.(?!(a)).(?!\\1)./",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "intoNegativeLookaround",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/.(?<!(a)).(?<!\\1)./",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "intoNegativeLookaround",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/.(?=(?!(a))\\1)./",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "intoNegativeLookaround",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/.(?<!\\1(?!(a)))/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "intoNegativeLookaround",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/\\1(a)(b)\\2/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "forward",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/\\1(a)\\1/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "forward",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/\\1(a)\\2(b)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "forward",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			},
+			{
+				"messageId": "forward",
+				"data": {
+					"bref": "\\2",
+					"group": "(b)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/\\1.(?<=(a)\\1)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "forward",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			},
+			{
+				"messageId": "backward",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(?!\\1(a)).\\1/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "forward",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			},
+			{
+				"messageId": "intoNegativeLookaround",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(a)\\2(b)/; RegExp('(\\\\1)');",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "forward",
+				"data": {
+					"bref": "\\2",
+					"group": "(b)",
+					"otherGroups": ""
+				}
+			},
+			{
+				"messageId": "nested",
+				"data": {
+					"bref": "\\1",
+					"group": "(\\1)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "RegExp('\\\\1(a){', flags);",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "forward",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "const r = RegExp, p = '\\\\1', s = '(a)'; new r(p + s);",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "forward",
+				"data": {
+					"bref": "\\1",
+					"group": "(a)",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "new RegExp('\\\\1([[A--B]])', 'v')",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"messageId": "forward",
+				"data": {
+					"bref": "\\1",
+					"group": "([[A--B]])",
+					"otherGroups": ""
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/\\k<foo>((?<foo>bar)|(?<foo>baz))/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"message": "Backreference '\\k<foo>' will be ignored. It references group '(?<foo>bar)' and another group which appears later in the pattern."
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/((?<foo>bar)|\\k<foo>(?<foo>baz))/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"message": "Backreference '\\k<foo>' will be ignored. It references group '(?<foo>baz)' which appears later in the pattern."
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/\\k<foo>((?<foo>bar)|(?<foo>baz)|(?<foo>qux))/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"message": "Backreference '\\k<foo>' will be ignored. It references group '(?<foo>bar)' and other 2 groups which appears later in the pattern."
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/((?<foo>bar)|\\k<foo>(?<foo>baz)|(?<foo>qux))/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"message": "Backreference '\\k<foo>' will be ignored. It references group '(?<foo>baz)' which appears later in the pattern."
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/((?<foo>bar)|\\k<foo>|(?<foo>baz))/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"message": "Backreference '\\k<foo>' will be ignored. It references group '(?<foo>bar)' and another group which is in another alternative."
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/((?<foo>bar)|\\k<foo>|(?<foo>baz)|(?<foo>qux))/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"message": "Backreference '\\k<foo>' will be ignored. It references group '(?<foo>bar)' and other 2 groups which is in another alternative."
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/((?<foo>bar)|(?<foo>baz\\k<foo>)|(?<foo>qux\\k<foo>))/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"message": "Backreference '\\k<foo>' will be ignored. It references group '(?<foo>baz\\k<foo>)' from within that group."
+			},
+			{
+				"message": "Backreference '\\k<foo>' will be ignored. It references group '(?<foo>qux\\k<foo>)' from within that group."
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/(?<=((?<foo>bar)|(?<foo>baz))\\k<foo>)/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"message": "Backreference '\\k<foo>' will be ignored. It references group '(?<foo>bar)' and another group which appears before in the same lookbehind."
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/((?!(?<foo>bar))|(?!(?<foo>baz)))\\k<foo>/",
+		"run": 0,
+		"testerLanguageOptions": {
+			"ecmaVersion": 2025,
+			"sourceType": "script"
+		},
+		"errors": [
+			{
+				"message": "Backreference '\\k<foo>' will be ignored. It references group '(?<foo>bar)' and another group which is in a negative lookaround."
+			}
+		]
+	}
+]

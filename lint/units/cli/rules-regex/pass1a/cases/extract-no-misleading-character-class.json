@@ -1,0 +1,572 @@
+{
+	"valid": [
+		{
+			"code": "var r = /[👍]/u"
+		},
+		{
+			"code": "var r = /[\\uD83D\\uDC4D]/u"
+		},
+		{
+			"code": "var r = /[\\u{1F44D}]/u"
+		},
+		{
+			"code": "var r = /❇️/"
+		},
+		{
+			"code": "var r = /Á/"
+		},
+		{
+			"code": "var r = /[❇]/"
+		},
+		{
+			"code": "var r = /👶🏻/"
+		},
+		{
+			"code": "var r = /[👶]/u"
+		},
+		{
+			"code": "var r = /🇯🇵/"
+		},
+		{
+			"code": "var r = /[JP]/"
+		},
+		{
+			"code": "var r = /👨‍👩‍👦/"
+		},
+		{
+			"code": "new RegExp()"
+		},
+		{
+			"code": "var r = RegExp(/[👍]/u)"
+		},
+		{
+			"code": "const regex = /[👍]/u; new RegExp(regex);"
+		},
+		{
+			"code": "new RegExp('[👍]')",
+			"languageOptions": {
+				"globals": {
+					"RegExp": "off"
+				}
+			}
+		},
+		{
+			"code": "var r = /[\\uD83D]/"
+		},
+		{
+			"code": "var r = /[\\uDC4D]/"
+		},
+		{
+			"code": "var r = /[\\uD83D]/u"
+		},
+		{
+			"code": "var r = /[\\uDC4D]/u"
+		},
+		{
+			"code": "var r = /[\\u0301]/"
+		},
+		{
+			"code": "var r = /[\\uFE0F]/"
+		},
+		{
+			"code": "var r = /[\\u0301]/u"
+		},
+		{
+			"code": "var r = /[\\uFE0F]/u"
+		},
+		{
+			"code": "var r = /[\\u{1F3FB}]/u"
+		},
+		{
+			"code": "var r = /[🏻]/u"
+		},
+		{
+			"code": "var r = /[🇯]/u"
+		},
+		{
+			"code": "var r = /[🇵]/u"
+		},
+		{
+			"code": "var r = /[\\u200D]/"
+		},
+		{
+			"code": "var r = /[\\u200D]/u"
+		},
+		{
+			"code": "new RegExp('[Á] [ ');"
+		},
+		{
+			"code": "var r = new RegExp('[Á] [ ');"
+		},
+		{
+			"code": "var r = RegExp('{ [Á]', 'u');"
+		},
+		{
+			"code": "var r = new globalThis.RegExp('[Á] [ ');"
+		},
+		{
+			"code": "var r = globalThis.RegExp('{ [Á]', 'u');"
+		},
+		{
+			"code": "var r = RegExp(`${x}[👍]`)"
+		},
+		{
+			"code": "var r = new RegExp('[🇯🇵]', `${foo}`)"
+		},
+		{
+			"code": "var r = new RegExp(\"[👍]\", flags)"
+		},
+		{
+			"code": "const args = ['[👍]', 'i']; new RegExp(...args);"
+		},
+		{
+			"code": "var r = /[👍]/v"
+		},
+		{
+			"code": "var r = /^[\\q{👶🏻}]$/v"
+		},
+		{
+			"code": "var r = /[🇯\\q{abc}🇵]/v"
+		},
+		{
+			"code": "var r = /[🇯[A]🇵]/v"
+		},
+		{
+			"code": "var r = /[🇯[A--B]🇵]/v"
+		},
+		{
+			"code": "/[\\ud83d\\udc4d]/"
+		},
+		{
+			"code": "/[\ud83d\\udc4d]/u // U+D83D + Backslash + \"udc4d\""
+		},
+		{
+			"code": "/[A\\u0301]/"
+		},
+		{
+			"code": "/[👶\\u{1f3fb}]/u"
+		},
+		{
+			"code": "/[\\u{1F1EF}\\u{1F1F5}]/u"
+		},
+		{
+			"code": "/[👨\\u200d👩\\u200d👦]/u"
+		},
+		{
+			"code": "/[\\u00B7\\u0300-\\u036F]/u"
+		},
+		{
+			"code": "/[\\n\\u0305]/"
+		},
+		{
+			"code": "RegExp(\"[\\uD83D\\uDC4D]\")"
+		},
+		{
+			"code": "RegExp(\"[A\\u0301]\")"
+		},
+		{
+			"code": "RegExp(\"[\\x41\\\\u0301]\")"
+		},
+		{
+			"code": "RegExp(`[\\uD83D\\uDC4D]`) // Backslash + \"uD83D\" + Backslash + \"uDC4D\""
+		}
+	],
+	"invalid": [
+		{
+			"code": "var r = /[👍]/"
+		},
+		{
+			"code": "var r = /[\\uD83D\\uDC4D]/"
+		},
+		{
+			"code": "var r = /[\\uD83D\\uDC4D-\\uffff]/",
+			"languageOptions": {
+				"sourceType": "script"
+			}
+		},
+		{
+			"code": "var r = /before[\\uD83D\\uDC4D]after/"
+		},
+		{
+			"code": "var r = /[before\\uD83D\\uDC4Dafter]/"
+		},
+		{
+			"code": "var r = /\\uDC4D[\\uD83D\\uDC4D]/"
+		},
+		{
+			"code": "var r = /[👍]\\a/"
+		},
+		{
+			"code": "var r = /\\a[👍]\\a/"
+		},
+		{
+			"code": "var r = /(?<=[👍])/"
+		},
+		{
+			"code": "var r = /[Á]/"
+		},
+		{
+			"code": "var r = /[Á]/u"
+		},
+		{
+			"code": "var r = /[\\u0041\\u0301]/"
+		},
+		{
+			"code": "var r = /[\\u0041\\u0301]/u"
+		},
+		{
+			"code": "var r = /[\\u{41}\\u{301}]/u"
+		},
+		{
+			"code": "var r = /[❇️]/"
+		},
+		{
+			"code": "var r = /[❇️]/u"
+		},
+		{
+			"code": "var r = /[\\u2747\\uFE0F]/"
+		},
+		{
+			"code": "var r = /[\\u2747\\uFE0F]/u"
+		},
+		{
+			"code": "var r = /[\\u{2747}\\u{FE0F}]/u"
+		},
+		{
+			"code": "var r = /[👶🏻]/"
+		},
+		{
+			"code": "var r = /[👶🏻]/u"
+		},
+		{
+			"code": "var r = /[a\\uD83C\\uDFFB]/u"
+		},
+		{
+			"code": "var r = /[\\uD83D\\uDC76\\uD83C\\uDFFB]/u"
+		},
+		{
+			"code": "var r = /[\\u{1F476}\\u{1F3FB}]/u"
+		},
+		{
+			"code": "var r = /[🇯🇵]/"
+		},
+		{
+			"code": "var r = /[🇯🇵]/i"
+		},
+		{
+			"code": "var r = /[🇯🇵]/u"
+		},
+		{
+			"code": "var r = /[\\uD83C\\uDDEF\\uD83C\\uDDF5]/u"
+		},
+		{
+			"code": "var r = /[\\u{1F1EF}\\u{1F1F5}]/u"
+		},
+		{
+			"code": "var r = /[👨‍👩‍👦]/"
+		},
+		{
+			"code": "var r = /[👨‍👩‍👦]/u"
+		},
+		{
+			"code": "var r = /[👩‍👦]/u"
+		},
+		{
+			"code": "var r = /[👩‍👦][👩‍👦]/u"
+		},
+		{
+			"code": "var r = /[👨‍👩‍👦]foo[👨‍👩‍👦]/u"
+		},
+		{
+			"code": "var r = /[👨‍👩‍👦👩‍👦]/u"
+		},
+		{
+			"code": "var r = /[\\uD83D\\uDC68\\u200D\\uD83D\\uDC69\\u200D\\uD83D\\uDC66]/u"
+		},
+		{
+			"code": "var r = /[\\u{1F468}\\u{200D}\\u{1F469}\\u{200D}\\u{1F466}]/u"
+		},
+		{
+			"code": "var r = /[\\uD83D\\uDC68\\u200D\\uD83D\\uDC69]/u"
+		},
+		{
+			"code": "var r = /[\\u{1F468}\\u{200D}\\u{1F469}]/u"
+		},
+		{
+			"code": "var r = /[\\u{1F468}\\u{200D}\\u{1F469}\\u{200D}\\u{1F466}]foo[\\u{1F468}\\u{200D}\\u{1F469}\\u{200D}\\u{1F466}]/u"
+		},
+		{
+			"code": "var r = RegExp(\"[👍]\", \"\")"
+		},
+		{
+			"code": "var r = new RegExp(\"[👍]\", \"\")"
+		},
+		{
+			"code": "var r = new RegExp('[👍]', ``)"
+		},
+		{
+			"code": "var r = new RegExp(`\n                [👍]`)"
+		},
+		{
+			"code": "var r = new RegExp(`\n                [❇️]`)"
+		},
+		{
+			"code": "var r = new RegExp(`\r\n[❇️]`)"
+		},
+		{
+			"code": "const flags = \"\"; var r = new RegExp(\"[👍]\", flags)"
+		},
+		{
+			"code": "var r = RegExp(\"[\\\\uD83D\\\\uDC4D]\", \"\")"
+		},
+		{
+			"code": "var r = RegExp(\"before[\\\\uD83D\\\\uDC4D]after\", \"\")"
+		},
+		{
+			"code": "var r = RegExp(\"[before\\\\uD83D\\\\uDC4Dafter]\", \"\")"
+		},
+		{
+			"code": "var r = RegExp(\"\\t\\t\\t👍[👍]\")"
+		},
+		{
+			"code": "var r = new RegExp(\"\\u1234[\\\\uD83D\\\\uDC4D]\")"
+		},
+		{
+			"code": "var r = new RegExp(\"\\\\u1234\\\\u5678👎[👍]\")"
+		},
+		{
+			"code": "var r = new RegExp(\"\\\\u1234\\\\u5678👍[👍]\")"
+		},
+		{
+			"code": "var r = new RegExp(\"[👍]\\\\a\", \"\")"
+		},
+		{
+			"code": "var r = new RegExp(\"/(?<=[👍])\", \"\")"
+		},
+		{
+			"code": "var r = new RegExp(\"[Á]\", \"\")"
+		},
+		{
+			"code": "var r = new RegExp(\"[Á]\", \"u\")"
+		},
+		{
+			"code": "var r = new RegExp(\"[\\\\u0041\\\\u0301]\", \"\")"
+		},
+		{
+			"code": "var r = new RegExp(\"[\\\\u0041\\\\u0301]\", \"u\")"
+		},
+		{
+			"code": "var r = new RegExp(\"[\\\\u{41}\\\\u{301}]\", \"u\")"
+		},
+		{
+			"code": "var r = new RegExp(\"[❇️]\", \"\")"
+		},
+		{
+			"code": "var r = new RegExp(\"[❇️]\", \"u\")"
+		},
+		{
+			"code": "new RegExp(\"[ \\\\ufe0f]\", \"\")"
+		},
+		{
+			"code": "new RegExp(\"[ \\\\ufe0f]\", \"u\")"
+		},
+		{
+			"code": "new RegExp(\"[ \\\\ufe0f][ \\\\ufe0f]\")"
+		},
+		{
+			"code": "var r = new RegExp(\"[\\\\u2747\\\\uFE0F]\", \"\")"
+		},
+		{
+			"code": "var r = new RegExp(\"[\\\\u2747\\\\uFE0F]\", \"u\")"
+		},
+		{
+			"code": "var r = new RegExp(\"[\\\\u{2747}\\\\u{FE0F}]\", \"u\")"
+		},
+		{
+			"code": "var r = new RegExp(\"[👶🏻]\", \"\")"
+		},
+		{
+			"code": "var r = new RegExp(\"[👶🏻]\", \"u\")"
+		},
+		{
+			"code": "var r = new RegExp(\"[\\\\uD83D\\\\uDC76\\\\uD83C\\\\uDFFB]\", \"u\")"
+		},
+		{
+			"code": "var r = new RegExp(\"[\\\\u{1F476}\\\\u{1F3FB}]\", \"u\")"
+		},
+		{
+			"code": "var r = RegExp(`\t\t\t👍[👍]`)"
+		},
+		{
+			"code": "var r = RegExp(`\\t\\t\\t👍[👍]`)"
+		},
+		{
+			"code": "var r = new RegExp(\"[🇯🇵]\", \"\")"
+		},
+		{
+			"code": "var r = new RegExp(\"[🇯🇵]\", \"i\")"
+		},
+		{
+			"code": "var r = new RegExp('[🇯🇵]', `i`)"
+		},
+		{
+			"code": "var r = new RegExp(\"[🇯🇵]\")"
+		},
+		{
+			"code": "var r = new RegExp(\"[🇯🇵]\",)"
+		},
+		{
+			"code": "var r = new RegExp((\"[🇯🇵]\"))"
+		},
+		{
+			"code": "var r = new RegExp(((\"[🇯🇵]\")))"
+		},
+		{
+			"code": "var r = new RegExp((\"[🇯🇵]\"),)"
+		},
+		{
+			"code": "var r = new RegExp(\"[🇯🇵]\", \"u\")"
+		},
+		{
+			"code": "var r = new RegExp(\"[\\\\uD83C\\\\uDDEF\\\\uD83C\\\\uDDF5]\", \"u\")"
+		},
+		{
+			"code": "var r = new RegExp(\"[\\\\u{1F1EF}\\\\u{1F1F5}]\", \"u\")"
+		},
+		{
+			"code": "var r = new RegExp(\"[👨‍👩‍👦]\", \"\")"
+		},
+		{
+			"code": "var r = new RegExp(\"[👨‍👩‍👦]\", \"u\")"
+		},
+		{
+			"code": "var r = new RegExp(\"[👩‍👦]\", \"u\")"
+		},
+		{
+			"code": "var r = new RegExp(\"[👩‍👦][👩‍👦]\", \"u\")"
+		},
+		{
+			"code": "var r = new RegExp(\"[👨‍👩‍👦]foo[👨‍👩‍👦]\", \"u\")"
+		},
+		{
+			"code": "var r = new RegExp(\"[👨‍👩‍👦👩‍👦]\", \"u\")"
+		},
+		{
+			"code": "var r = new RegExp(\"[\\\\uD83D\\\\uDC68\\\\u200D\\\\uD83D\\\\uDC69\\\\u200D\\\\uD83D\\\\uDC66]\", \"u\")"
+		},
+		{
+			"code": "var r = new RegExp(\"[\\\\u{1F468}\\\\u{200D}\\\\u{1F469}\\\\u{200D}\\\\u{1F466}]\", \"u\")"
+		},
+		{
+			"code": "var r = new globalThis.RegExp(\"[❇️]\", \"\")"
+		},
+		{
+			"code": "var r = new globalThis.RegExp(\"[👶🏻]\", \"u\")"
+		},
+		{
+			"code": "var r = new globalThis.RegExp(\"[🇯🇵]\", \"\")"
+		},
+		{
+			"code": "var r = new globalThis.RegExp(\"[\\\\u{1F468}\\\\u{200D}\\\\u{1F469}\\\\u{200D}\\\\u{1F466}]\", \"u\")"
+		},
+		{
+			"code": "/[\\ud83d\\u{dc4d}]/u"
+		},
+		{
+			"code": "/[\\u{d83d}\\udc4d]/u"
+		},
+		{
+			"code": "/[\\u{d83d}\\u{dc4d}]/u"
+		},
+		{
+			"code": "/[\\uD83D\\u{DC4d}]/u"
+		},
+		{
+			"code": "new RegExp(`${\"[👍🇯🇵]\"}[😊]`);"
+		},
+		{
+			"code": "const pattern = \"[👍]\"; new RegExp(pattern);"
+		},
+		{
+			"code": "RegExp(/[a👍z]/u, '');"
+		},
+		{
+			"code": "RegExp(/[👍]/)"
+		},
+		{
+			"code": "RegExp(/[👍]/, 'i');"
+		},
+		{
+			"code": "RegExp(/[👍]/, 'g');",
+			"languageOptions": {
+				"globals": {
+					"RegExp": "off"
+				}
+			}
+		},
+		{
+			"code": "\n\n            // \"[\" and \"]\" escaped as \"\\x5B\" and \"\\u005D\"\n            new RegExp(\"\\x5B \\\\ufe0f\\u005D\")\n\n            "
+		},
+		{
+			"code": "\n\n            // backslash escaped as \"\\u{5c}\"\n            new RegExp(\"[ \\u{5c}ufe0f]\")\n\n            "
+		},
+		{
+			"code": "\n\n            // \"0\" escaped as \"\\60\"\n            new RegExp(\"[ \\\\ufe\\60f]\")\n\n            ",
+			"languageOptions": {
+				"sourceType": "script"
+			}
+		},
+		{
+			"code": "\n\n            // \"e\" escaped as \"\\e\"\n            new RegExp(\"[ \\\\uf\\e0f]\")\n\n            "
+		},
+		{
+			"code": "\n\n            // line continuation: backslash + <CR> + <LF>\n            new RegExp('[ \\\\u\\\r\nfe0f]')\n\n            "
+		},
+		{
+			"code": "\n\n            // just a backslash escaped as \"\\\\\"\n            new RegExp(`[.\\\\u200D.]`)\n\n            "
+		},
+		{
+			"code": "\n\n            // \"u\" escaped as \"\\x75\"\n            new RegExp(`[.\\\\\\x75200D.]`)\n\n            "
+		},
+		{
+			"code": "\n\n            // unescaped <CR> <LF> counts as a single character\n            new RegExp(`[\n\\\\u200D.]`)\n\n            "
+		},
+		{
+			"code": "var r = /[[👶🏻]]/v"
+		},
+		{
+			"code": "new RegExp(/^[👍]$/v, '')"
+		},
+		{
+			"code": "/[Á]/"
+		},
+		{
+			"code": "/[\\\\̶]/"
+		},
+		{
+			"code": "/[\\n̅]/"
+		},
+		{
+			"code": "/[\\👍]/"
+		},
+		{
+			"code": "RegExp('[\\è]')"
+		},
+		{
+			"code": "RegExp('[\\👍]')"
+		},
+		{
+			"code": "RegExp('[\\\\👍]')"
+		},
+		{
+			"code": "RegExp('[\\❇️]')"
+		},
+		{
+			"code": "RegExp(`[\\👍]`) // Backslash + U+D83D + U+DC4D"
+		},
+		{
+			"code": "const pattern = \"[\\x41\\u0301]\"; RegExp(pattern);"
+		}
+	],
+	"typescript": []
+}

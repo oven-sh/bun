@@ -1,0 +1,73 @@
+{"kind":"valid","code":"var foo = /foo/;","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = RegExp('foo')","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = / /;","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = RegExp(' ')","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = / a b c d /;","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = /bar {3}baz/g;","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = RegExp('bar {3}baz', 'g')","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = new RegExp('bar {3}baz')","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = /bar\t\t\tbaz/;","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = RegExp('bar\t\t\tbaz');","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = new RegExp('bar\t\t\tbaz');","type":"script","reports":[]}
+{"kind":"valid","code":"var RegExp = function() {}; var foo = new RegExp('bar   baz');","type":"script","reports":[]}
+{"kind":"valid","code":"var RegExp = function() {}; var foo = RegExp('bar   baz');","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = /  +/;","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = /  ?/;","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = /  */;","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = /  {2}/;","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = /bar \\ baz/;","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = /bar\\ \\ baz/;","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = /bar \\u0020 baz/;","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = /bar\\u0020\\u0020baz/;","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = new RegExp('bar \\ baz')","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = new RegExp('bar\\ \\ baz')","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = new RegExp('bar \\\\ baz')","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = new RegExp('bar \\u0020 baz')","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = new RegExp('bar\\u0020\\u0020baz')","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = new RegExp('bar \\\\u0020 baz')","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = /[  ]/;","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = /[   ]/;","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = / [  ] /;","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = / [  ] [  ] /;","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = new RegExp('[  ]');","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = new RegExp('[   ]');","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = new RegExp(' [  ] ');","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = RegExp(' [  ] [  ] ');","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = new RegExp(' \\[   ');","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = new RegExp(' \\[   \\] ');","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = /  {2}/v;","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = /[\\q{    }]/v;","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = new RegExp('[  ');","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = new RegExp('{  ', 'u');","type":"script","reports":[]}
+{"kind":"valid","code":"new RegExp('  ', flags)","type":"script","reports":[]}
+{"kind":"valid","code":"new RegExp('[[abc]  ]', flags + 'v')","type":"script","reports":[]}
+{"kind":"valid","code":"new RegExp('[[abc]\\\\q{  }]', flags + 'v')","type":"script","reports":[]}
+{"kind":"invalid","code":"var foo = /bar  baz/;","type":"script","reports":["1:11-1:21 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = /bar    baz/;","type":"script","reports":["1:11-1:23 Spaces are hard to count. Use {4}."]}
+{"kind":"invalid","code":"var foo = / a b  c d /;","type":"script","reports":["1:11-1:23 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = RegExp(' a b c d  ');","type":"script","reports":["1:11-1:31 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = RegExp('bar    baz');","type":"script","reports":["1:11-1:31 Spaces are hard to count. Use {4}."]}
+{"kind":"invalid","code":"var foo = new RegExp('bar    baz');","type":"script","reports":["1:11-1:35 Spaces are hard to count. Use {4}."]}
+{"kind":"invalid","code":"{ let RegExp = function() {}; } var foo = RegExp('bar    baz');","type":"script","reports":["1:43-1:63 Spaces are hard to count. Use {4}."]}
+{"kind":"invalid","code":"var foo = /bar   {3}baz/;","type":"script","reports":["1:11-1:25 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = /bar    ?baz/;","type":"script","reports":["1:11-1:24 Spaces are hard to count. Use {3}."]}
+{"kind":"invalid","code":"var foo = new RegExp('bar   *baz')","type":"script","reports":["1:11-1:35 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = RegExp('bar   +baz')","type":"script","reports":["1:11-1:31 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = new RegExp('bar    ');","type":"script","reports":["1:11-1:32 Spaces are hard to count. Use {4}."]}
+{"kind":"invalid","code":"var foo = /bar\\  baz/;","type":"script","reports":["1:11-1:22 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = /[   ]  /;","type":"script","reports":["1:11-1:20 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = /  [   ] /;","type":"script","reports":["1:11-1:21 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = new RegExp('[   ]  ');","type":"script","reports":["1:11-1:32 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = RegExp('  [ ]');","type":"script","reports":["1:11-1:26 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = /\\[  /;","type":"script","reports":["1:11-1:17 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = /\\[  \\]/;","type":"script","reports":["1:11-1:19 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = /(?:  )/;","type":"script","reports":["1:11-1:19 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = RegExp('^foo(?=   )');","type":"script","reports":["1:11-1:32 Spaces are hard to count. Use {3}."]}
+{"kind":"invalid","code":"var foo = /\\  /","type":"script","reports":["1:11-1:16 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = / \\  /","type":"script","reports":["1:11-1:17 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = /  foo   /;","type":"script","reports":["1:11-1:21 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = new RegExp('\\\\d  ')","type":"script","reports":["1:11-1:30 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = RegExp('\\u0041   ')","type":"script","reports":["1:11-1:30 Spaces are hard to count. Use {3}."]}
+{"kind":"invalid","code":"var foo = new RegExp('\\\\[  \\\\]');","type":"script","reports":["1:11-1:33 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = /[[    ]    ]    /v;","type":"script","reports":["1:11-1:30 Spaces are hard to count. Use {4}."]}
+{"kind":"invalid","code":"var foo = new RegExp('[[    ]    ]    ', 'v');","type":"script","reports":["1:11-1:46 Spaces are hard to count. Use {4}."]}

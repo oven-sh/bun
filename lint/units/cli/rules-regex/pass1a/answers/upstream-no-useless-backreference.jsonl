@@ -1,0 +1,190 @@
+{"kind":"valid","code":"'\\1(a)'","type":"script","reports":[]}
+{"kind":"valid","code":"regExp('\\\\1(a)')","type":"script","reports":[]}
+{"kind":"valid","code":"new Regexp('\\\\1(a)', 'u')","type":"script","reports":[]}
+{"kind":"valid","code":"RegExp.foo('\\\\1(a)', 'u')","type":"script","reports":[]}
+{"kind":"valid","code":"new foo.RegExp('\\\\1(a)')","type":"script","reports":[]}
+{"kind":"valid","code":"RegExp(p)","type":"script","reports":[]}
+{"kind":"valid","code":"new RegExp(p, 'u')","type":"script","reports":[]}
+{"kind":"valid","code":"RegExp('\\\\1(a)' + suffix)","type":"script","reports":[]}
+{"kind":"valid","code":"new RegExp(`${prefix}\\\\1(a)`)","type":"script","reports":[]}
+{"kind":"valid","code":"let RegExp; new RegExp('\\\\1(a)');","type":"script","reports":[]}
+{"kind":"valid","code":"function foo() { var RegExp; RegExp('\\\\1(a)', 'u'); }","type":"script","reports":[]}
+{"kind":"valid","code":"function foo(RegExp) { new RegExp('\\\\1(a)'); }","type":"script","reports":[]}
+{"kind":"valid","code":"if (foo) { const RegExp = bar; RegExp('\\\\1(a)'); }","type":"script","reports":[]}
+{"kind":"valid","code":"/* globals RegExp:off */ new RegExp('\\\\1(a)');","type":"script","reports":[]}
+{"kind":"valid","code":"RegExp('\\\\1(a)');","type":"script","reports":["1:1-1:17 Backreference '\\1' will be ignored. It references group '(a)' which appears later in the pattern."]}
+{"kind":"valid","code":"/(?:)/","type":"script","reports":[]}
+{"kind":"valid","code":"/(?:a)/","type":"script","reports":[]}
+{"kind":"valid","code":"new RegExp('')","type":"script","reports":[]}
+{"kind":"valid","code":"RegExp('(?:a)|(?:b)*')","type":"script","reports":[]}
+{"kind":"valid","code":"/^ab|[cd].\\n$/","type":"script","reports":[]}
+{"kind":"valid","code":"/(a)/","type":"script","reports":[]}
+{"kind":"valid","code":"RegExp('(a)|(b)')","type":"script","reports":[]}
+{"kind":"valid","code":"new RegExp('\\\\n\\\\d(a)')","type":"script","reports":[]}
+{"kind":"valid","code":"/\\0(a)/","type":"script","reports":[]}
+{"kind":"valid","code":"/\\0(a)/u","type":"script","reports":[]}
+{"kind":"valid","code":"/(?<=(a))(b)(?=(c))/","type":"script","reports":[]}
+{"kind":"valid","code":"/(?<!(a))(b)(?!(c))/","type":"script","reports":[]}
+{"kind":"valid","code":"/(?<foo>a)/","type":"script","reports":[]}
+{"kind":"valid","code":"RegExp('\\1(a)')","type":"script","reports":[]}
+{"kind":"valid","code":"RegExp('\\\\\\\\1(a)')","type":"script","reports":[]}
+{"kind":"valid","code":"/\\\\1(a)/","type":"script","reports":[]}
+{"kind":"valid","code":"/\\1/","type":"script","reports":[]}
+{"kind":"valid","code":"/^\\1$/","type":"script","reports":[]}
+{"kind":"valid","code":"/\\2(a)/","type":"script","reports":[]}
+{"kind":"valid","code":"/\\1(?:a)/","type":"script","reports":[]}
+{"kind":"valid","code":"/\\1(?=a)/","type":"script","reports":[]}
+{"kind":"valid","code":"/\\1(?!a)/","type":"script","reports":[]}
+{"kind":"valid","code":"/^[\\1](a)$/","type":"script","reports":[]}
+{"kind":"valid","code":"new RegExp('[\\\\1](a)')","type":"script","reports":[]}
+{"kind":"valid","code":"/\\11(a)/","type":"script","reports":[]}
+{"kind":"valid","code":"/\\k<foo>(a)/","type":"script","reports":[]}
+{"kind":"valid","code":"/^(a)\\1\\2$/","type":"script","reports":[]}
+{"kind":"valid","code":"/(a)\\1/","type":"script","reports":[]}
+{"kind":"valid","code":"/(a).\\1/","type":"script","reports":[]}
+{"kind":"valid","code":"RegExp('(a)\\\\1(b)')","type":"script","reports":[]}
+{"kind":"valid","code":"/(a)(b)\\2(c)/","type":"script","reports":[]}
+{"kind":"valid","code":"/(?<foo>a)\\k<foo>/","type":"script","reports":[]}
+{"kind":"valid","code":"new RegExp('(.)\\\\1')","type":"script","reports":[]}
+{"kind":"valid","code":"RegExp('(a)\\\\1(?:b)')","type":"script","reports":[]}
+{"kind":"valid","code":"/(a)b\\1/","type":"script","reports":[]}
+{"kind":"valid","code":"/((a)\\2)/","type":"script","reports":[]}
+{"kind":"valid","code":"/((a)b\\2c)/","type":"script","reports":[]}
+{"kind":"valid","code":"/^(?:(a)\\1)$/","type":"script","reports":[]}
+{"kind":"valid","code":"/^((a)\\2)$/","type":"script","reports":[]}
+{"kind":"valid","code":"/^(((a)\\3))|b$/","type":"script","reports":[]}
+{"kind":"valid","code":"/a(?<foo>(.)b\\2)/","type":"script","reports":[]}
+{"kind":"valid","code":"/(a)?(b)*(\\1)(c)/","type":"script","reports":[]}
+{"kind":"valid","code":"/(a)?(b)*(\\2)(c)/","type":"script","reports":[]}
+{"kind":"valid","code":"/(?<=(a))b\\1/","type":"script","reports":[]}
+{"kind":"valid","code":"/(?<=(?=(a)\\1))b/","type":"script","reports":[]}
+{"kind":"valid","code":"/(?<!\\1(a))b/","type":"script","reports":[]}
+{"kind":"valid","code":"/(?<=\\1(a))b/","type":"script","reports":[]}
+{"kind":"valid","code":"/(?<!\\1.(a))b/","type":"script","reports":[]}
+{"kind":"valid","code":"/(?<=\\1.(a))b/","type":"script","reports":[]}
+{"kind":"valid","code":"/(?<=(?:\\1.(a)))b/","type":"script","reports":[]}
+{"kind":"valid","code":"/(?<!(?:\\1)((a)))b/","type":"script","reports":[]}
+{"kind":"valid","code":"/(?<!(?:\\2)((a)))b/","type":"script","reports":[]}
+{"kind":"valid","code":"/(?=(?<=\\1(a)))b/","type":"script","reports":[]}
+{"kind":"valid","code":"/(?=(?<!\\1(a)))b/","type":"script","reports":[]}
+{"kind":"valid","code":"/(.)(?<=\\2(a))b/","type":"script","reports":[]}
+{"kind":"valid","code":"/^(a)\\1|b/","type":"script","reports":[]}
+{"kind":"valid","code":"/^a|(b)\\1/","type":"script","reports":[]}
+{"kind":"valid","code":"/^a|(b|c)\\1/","type":"script","reports":[]}
+{"kind":"valid","code":"/^(a)|(b)\\2/","type":"script","reports":[]}
+{"kind":"valid","code":"/^(?:(a)|(b)\\2)$/","type":"script","reports":[]}
+{"kind":"valid","code":"/^a|(?:.|(b)\\1)/","type":"script","reports":[]}
+{"kind":"valid","code":"/^a|(?:.|(b).(\\1))/","type":"script","reports":[]}
+{"kind":"valid","code":"/^a|(?:.|(?:(b)).(\\1))/","type":"script","reports":[]}
+{"kind":"valid","code":"/^a|(?:.|(?:(b)|c).(\\1))/","type":"script","reports":[]}
+{"kind":"valid","code":"/^a|(?:.|(?:(b)).(\\1|c))/","type":"script","reports":[]}
+{"kind":"valid","code":"/^a|(?:.|(?:(b)|c).(\\1|d))/","type":"script","reports":[]}
+{"kind":"valid","code":"/.(?=(b))\\1/","type":"script","reports":[]}
+{"kind":"valid","code":"/.(?<=(b))\\1/","type":"script","reports":[]}
+{"kind":"valid","code":"/a(?!(b)\\1)./","type":"script","reports":[]}
+{"kind":"valid","code":"/a(?<!\\1(b))./","type":"script","reports":[]}
+{"kind":"valid","code":"/a(?!(b)(\\1))./","type":"script","reports":[]}
+{"kind":"valid","code":"/a(?!(?:(b)\\1))./","type":"script","reports":[]}
+{"kind":"valid","code":"/a(?!(?:(b))\\1)./","type":"script","reports":[]}
+{"kind":"valid","code":"/a(?<!(?:\\1)(b))./","type":"script","reports":[]}
+{"kind":"valid","code":"/a(?<!(?:(?:\\1)(b)))./","type":"script","reports":[]}
+{"kind":"valid","code":"/(?<!(a))(b)(?!(c))\\2/","type":"script","reports":[]}
+{"kind":"valid","code":"/a(?!(b|c)\\1)./","type":"script","reports":[]}
+{"kind":"valid","code":"RegExp('\\\\1(a)[')","type":"script","reports":[]}
+{"kind":"valid","code":"new RegExp('\\\\1(a){', 'u')","type":"script","reports":[]}
+{"kind":"valid","code":"new RegExp('\\\\1(a)\\\\2', 'ug')","type":"script","reports":[]}
+{"kind":"valid","code":"const flags = 'gus'; RegExp('\\\\1(a){', flags);","type":"script","reports":[]}
+{"kind":"valid","code":"RegExp('\\\\1(a)\\\\k<foo>', 'u')","type":"script","reports":[]}
+{"kind":"valid","code":"new RegExp('\\\\k<foo>(?<foo>a)\\\\k<bar>')","type":"script","reports":[]}
+{"kind":"valid","code":"new RegExp('([[A--B]])\\\\1', 'v')","type":"script","reports":[]}
+{"kind":"valid","code":"new RegExp('[[]\\\\1](a)', 'v')","type":"script","reports":[]}
+{"kind":"valid","code":"/((?<foo>bar)\\k<foo>|(?<foo>baz))/","type":"script","reports":[]}
+{"kind":"invalid","code":"/(b)(\\2a)/","type":"script","reports":["1:1-1:11 Backreference '\\2' will be ignored. It references group '(\\2a)' from within that group."]}
+{"kind":"invalid","code":"/\\k<foo>(?<foo>bar)/","type":"script","reports":["1:1-1:21 Backreference '\\k<foo>' will be ignored. It references group '(?<foo>bar)' which appears later in the pattern."]}
+{"kind":"invalid","code":"RegExp('(a|bc)|\\\\1')","type":"script","reports":["1:1-1:21 Backreference '\\1' will be ignored. It references group '(a|bc)' which is in another alternative."]}
+{"kind":"invalid","code":"new RegExp('(?!(?<foo>\\\\n))\\\\1')","type":"script","reports":["1:1-1:33 Backreference '\\1' will be ignored. It references group '(?<foo>\\n)' which is in a negative lookaround."]}
+{"kind":"invalid","code":"/(?<!(a)\\1)b/","type":"script","reports":["1:1-1:14 Backreference '\\1' will be ignored. It references group '(a)' which appears before in the same lookbehind."]}
+{"kind":"invalid","code":"new RegExp('(\\\\1)')","type":"script","reports":["1:1-1:20 Backreference '\\1' will be ignored. It references group '(\\1)' from within that group."]}
+{"kind":"invalid","code":"/^(a\\1)$/","type":"script","reports":["1:1-1:10 Backreference '\\1' will be ignored. It references group '(a\\1)' from within that group."]}
+{"kind":"invalid","code":"/^((a)\\1)$/","type":"script","reports":["1:1-1:12 Backreference '\\1' will be ignored. It references group '((a)\\1)' from within that group."]}
+{"kind":"invalid","code":"new RegExp('^(a\\\\1b)$')","type":"script","reports":["1:1-1:24 Backreference '\\1' will be ignored. It references group '(a\\1b)' from within that group."]}
+{"kind":"invalid","code":"RegExp('^((\\\\1))$')","type":"script","reports":["1:1-1:20 Backreference '\\1' will be ignored. It references group '((\\1))' from within that group."]}
+{"kind":"invalid","code":"/((\\2))/","type":"script","reports":["1:1-1:9 Backreference '\\2' will be ignored. It references group '(\\2)' from within that group."]}
+{"kind":"invalid","code":"/a(?<foo>(.)b\\1)/","type":"script","reports":["1:1-1:18 Backreference '\\1' will be ignored. It references group '(?<foo>(.)b\\1)' from within that group."]}
+{"kind":"invalid","code":"/a(?<foo>\\k<foo>)b/","type":"script","reports":["1:1-1:20 Backreference '\\k<foo>' will be ignored. It references group '(?<foo>\\k<foo>)' from within that group."]}
+{"kind":"invalid","code":"/^(\\1)*$/","type":"script","reports":["1:1-1:10 Backreference '\\1' will be ignored. It references group '(\\1)' from within that group."]}
+{"kind":"invalid","code":"/^(?:a)(?:((?:\\1)))*$/","type":"script","reports":["1:1-1:23 Backreference '\\1' will be ignored. It references group '((?:\\1))' from within that group."]}
+{"kind":"invalid","code":"/(?!(\\1))/","type":"script","reports":["1:1-1:11 Backreference '\\1' will be ignored. It references group '(\\1)' from within that group."]}
+{"kind":"invalid","code":"/a|(b\\1c)/","type":"script","reports":["1:1-1:11 Backreference '\\1' will be ignored. It references group '(b\\1c)' from within that group."]}
+{"kind":"invalid","code":"/(a|(\\1))/","type":"script","reports":["1:1-1:11 Backreference '\\1' will be ignored. It references group '(a|(\\1))' from within that group."]}
+{"kind":"invalid","code":"/(a|(\\2))/","type":"script","reports":["1:1-1:11 Backreference '\\2' will be ignored. It references group '(\\2)' from within that group."]}
+{"kind":"invalid","code":"/(?:a|(\\1))/","type":"script","reports":["1:1-1:13 Backreference '\\1' will be ignored. It references group '(\\1)' from within that group."]}
+{"kind":"invalid","code":"/(a)?(b)*(\\3)/","type":"script","reports":["1:1-1:15 Backreference '\\3' will be ignored. It references group '(\\3)' from within that group."]}
+{"kind":"invalid","code":"/(?<=(a\\1))b/","type":"script","reports":["1:1-1:14 Backreference '\\1' will be ignored. It references group '(a\\1)' from within that group."]}
+{"kind":"invalid","code":"/\\1(a)/","type":"script","reports":["1:1-1:8 Backreference '\\1' will be ignored. It references group '(a)' which appears later in the pattern."]}
+{"kind":"invalid","code":"/\\1.(a)/","type":"script","reports":["1:1-1:9 Backreference '\\1' will be ignored. It references group '(a)' which appears later in the pattern."]}
+{"kind":"invalid","code":"/(?:\\1)(?:(a))/","type":"script","reports":["1:1-1:16 Backreference '\\1' will be ignored. It references group '(a)' which appears later in the pattern."]}
+{"kind":"invalid","code":"/(?:\\1)(?:((a)))/","type":"script","reports":["1:1-1:18 Backreference '\\1' will be ignored. It references group '((a))' which appears later in the pattern."]}
+{"kind":"invalid","code":"/(?:\\2)(?:((a)))/","type":"script","reports":["1:1-1:18 Backreference '\\2' will be ignored. It references group '(a)' which appears later in the pattern."]}
+{"kind":"invalid","code":"/(?:\\1)(?:((?:a)))/","type":"script","reports":["1:1-1:20 Backreference '\\1' will be ignored. It references group '((?:a))' which appears later in the pattern."]}
+{"kind":"invalid","code":"/(\\2)(a)/","type":"script","reports":["1:1-1:10 Backreference '\\2' will be ignored. It references group '(a)' which appears later in the pattern."]}
+{"kind":"invalid","code":"RegExp('(a)\\\\2(b)')","type":"script","reports":["1:1-1:20 Backreference '\\2' will be ignored. It references group '(b)' which appears later in the pattern."]}
+{"kind":"invalid","code":"/(?:a)(b)\\2(c)/","type":"script","reports":["1:1-1:16 Backreference '\\2' will be ignored. It references group '(c)' which appears later in the pattern."]}
+{"kind":"invalid","code":"/\\k<foo>(?<foo>a)/","type":"script","reports":["1:1-1:19 Backreference '\\k<foo>' will be ignored. It references group '(?<foo>a)' which appears later in the pattern."]}
+{"kind":"invalid","code":"/(?:a(b)\\2)(c)/","type":"script","reports":["1:1-1:16 Backreference '\\2' will be ignored. It references group '(c)' which appears later in the pattern."]}
+{"kind":"invalid","code":"new RegExp('(a)(b)\\\\3(c)')","type":"script","reports":["1:1-1:27 Backreference '\\3' will be ignored. It references group '(c)' which appears later in the pattern."]}
+{"kind":"invalid","code":"/\\1(?<=(a))./","type":"script","reports":["1:1-1:14 Backreference '\\1' will be ignored. It references group '(a)' which appears later in the pattern."]}
+{"kind":"invalid","code":"/\\1(?<!(a))./","type":"script","reports":["1:1-1:14 Backreference '\\1' will be ignored. It references group '(a)' which appears later in the pattern."]}
+{"kind":"invalid","code":"/(?<=\\1)(?<=(a))/","type":"script","reports":["1:1-1:18 Backreference '\\1' will be ignored. It references group '(a)' which appears later in the pattern."]}
+{"kind":"invalid","code":"/(?<!\\1)(?<!(a))/","type":"script","reports":["1:1-1:18 Backreference '\\1' will be ignored. It references group '(a)' which appears later in the pattern."]}
+{"kind":"invalid","code":"/(?=\\1(a))./","type":"script","reports":["1:1-1:13 Backreference '\\1' will be ignored. It references group '(a)' which appears later in the pattern."]}
+{"kind":"invalid","code":"/(?!\\1(a))./","type":"script","reports":["1:1-1:13 Backreference '\\1' will be ignored. It references group '(a)' which appears later in the pattern."]}
+{"kind":"invalid","code":"/(?<=(a)\\1)b/","type":"script","reports":["1:1-1:14 Backreference '\\1' will be ignored. It references group '(a)' which appears before in the same lookbehind."]}
+{"kind":"invalid","code":"/(?<!.(a).\\1.)b/","type":"script","reports":["1:1-1:17 Backreference '\\1' will be ignored. It references group '(a)' which appears before in the same lookbehind."]}
+{"kind":"invalid","code":"/(.)(?<!(b|c)\\2)d/","type":"script","reports":["1:1-1:19 Backreference '\\2' will be ignored. It references group '(b|c)' which appears before in the same lookbehind."]}
+{"kind":"invalid","code":"/(?<=(?:(a)\\1))b/","type":"script","reports":["1:1-1:18 Backreference '\\1' will be ignored. It references group '(a)' which appears before in the same lookbehind."]}
+{"kind":"invalid","code":"/(?<=(?:(a))\\1)b/","type":"script","reports":["1:1-1:18 Backreference '\\1' will be ignored. It references group '(a)' which appears before in the same lookbehind."]}
+{"kind":"invalid","code":"/(?<=(a)(?:\\1))b/","type":"script","reports":["1:1-1:18 Backreference '\\1' will be ignored. It references group '(a)' which appears before in the same lookbehind."]}
+{"kind":"invalid","code":"/(?<!(?:(a))(?:\\1))b/","type":"script","reports":["1:1-1:22 Backreference '\\1' will be ignored. It references group '(a)' which appears before in the same lookbehind."]}
+{"kind":"invalid","code":"/(?<!(?:(a))(?:\\1)|.)b/","type":"script","reports":["1:1-1:24 Backreference '\\1' will be ignored. It references group '(a)' which appears before in the same lookbehind."]}
+{"kind":"invalid","code":"/.(?!(?<!(a)\\1))./","type":"script","reports":["1:1-1:19 Backreference '\\1' will be ignored. It references group '(a)' which appears before in the same lookbehind."]}
+{"kind":"invalid","code":"/.(?=(?<!(a)\\1))./","type":"script","reports":["1:1-1:19 Backreference '\\1' will be ignored. It references group '(a)' which appears before in the same lookbehind."]}
+{"kind":"invalid","code":"/.(?!(?<=(a)\\1))./","type":"script","reports":["1:1-1:19 Backreference '\\1' will be ignored. It references group '(a)' which appears before in the same lookbehind."]}
+{"kind":"invalid","code":"/.(?=(?<=(a)\\1))./","type":"script","reports":["1:1-1:19 Backreference '\\1' will be ignored. It references group '(a)' which appears before in the same lookbehind."]}
+{"kind":"invalid","code":"/(a)|\\1b/","type":"script","reports":["1:1-1:10 Backreference '\\1' will be ignored. It references group '(a)' which is in another alternative."]}
+{"kind":"invalid","code":"/^(?:(a)|\\1b)$/","type":"script","reports":["1:1-1:16 Backreference '\\1' will be ignored. It references group '(a)' which is in another alternative."]}
+{"kind":"invalid","code":"/^(?:(a)|b(?:c|\\1))$/","type":"script","reports":["1:1-1:22 Backreference '\\1' will be ignored. It references group '(a)' which is in another alternative."]}
+{"kind":"invalid","code":"/^(?:a|b(?:(c)|\\1))$/","type":"script","reports":["1:1-1:22 Backreference '\\1' will be ignored. It references group '(c)' which is in another alternative."]}
+{"kind":"invalid","code":"/^(?:(a(?!b))|\\1b)+$/","type":"script","reports":["1:1-1:22 Backreference '\\1' will be ignored. It references group '(a(?!b))' which is in another alternative."]}
+{"kind":"invalid","code":"/^(?:(?:(a)(?!b))|\\1b)+$/","type":"script","reports":["1:1-1:26 Backreference '\\1' will be ignored. It references group '(a)' which is in another alternative."]}
+{"kind":"invalid","code":"/^(?:(a(?=a))|\\1b)+$/","type":"script","reports":["1:1-1:22 Backreference '\\1' will be ignored. It references group '(a(?=a))' which is in another alternative."]}
+{"kind":"invalid","code":"/^(?:(a)(?=a)|\\1b)+$/","type":"script","reports":["1:1-1:22 Backreference '\\1' will be ignored. It references group '(a)' which is in another alternative."]}
+{"kind":"invalid","code":"/.(?:a|(b)).|(?:(\\1)|c)./","type":"script","reports":["1:1-1:26 Backreference '\\1' will be ignored. It references group '(b)' which is in another alternative."]}
+{"kind":"invalid","code":"/.(?!(a)|\\1)./","type":"script","reports":["1:1-1:15 Backreference '\\1' will be ignored. It references group '(a)' which is in another alternative."]}
+{"kind":"invalid","code":"/.(?<=\\1|(a))./","type":"script","reports":["1:1-1:16 Backreference '\\1' will be ignored. It references group '(a)' which is in another alternative."]}
+{"kind":"invalid","code":"/a(?!(b)).\\1/","type":"script","reports":["1:1-1:14 Backreference '\\1' will be ignored. It references group '(b)' which is in a negative lookaround."]}
+{"kind":"invalid","code":"/(?<!(a))b\\1/","type":"script","reports":["1:1-1:14 Backreference '\\1' will be ignored. It references group '(a)' which is in a negative lookaround."]}
+{"kind":"invalid","code":"/(?<!(a))(?:\\1)/","type":"script","reports":["1:1-1:17 Backreference '\\1' will be ignored. It references group '(a)' which is in a negative lookaround."]}
+{"kind":"invalid","code":"/.(?<!a|(b)).\\1/","type":"script","reports":["1:1-1:17 Backreference '\\1' will be ignored. It references group '(b)' which is in a negative lookaround."]}
+{"kind":"invalid","code":"/.(?!(a)).(?!\\1)./","type":"script","reports":["1:1-1:19 Backreference '\\1' will be ignored. It references group '(a)' which is in a negative lookaround."]}
+{"kind":"invalid","code":"/.(?<!(a)).(?<!\\1)./","type":"script","reports":["1:1-1:21 Backreference '\\1' will be ignored. It references group '(a)' which is in a negative lookaround."]}
+{"kind":"invalid","code":"/.(?=(?!(a))\\1)./","type":"script","reports":["1:1-1:18 Backreference '\\1' will be ignored. It references group '(a)' which is in a negative lookaround."]}
+{"kind":"invalid","code":"/.(?<!\\1(?!(a)))/","type":"script","reports":["1:1-1:18 Backreference '\\1' will be ignored. It references group '(a)' which is in a negative lookaround."]}
+{"kind":"invalid","code":"/\\1(a)(b)\\2/","type":"script","reports":["1:1-1:13 Backreference '\\1' will be ignored. It references group '(a)' which appears later in the pattern."]}
+{"kind":"invalid","code":"/\\1(a)\\1/","type":"script","reports":["1:1-1:10 Backreference '\\1' will be ignored. It references group '(a)' which appears later in the pattern."]}
+{"kind":"invalid","code":"/\\1(a)\\2(b)/","type":"script","reports":["1:1-1:13 Backreference '\\1' will be ignored. It references group '(a)' which appears later in the pattern.","1:1-1:13 Backreference '\\2' will be ignored. It references group '(b)' which appears later in the pattern."]}
+{"kind":"invalid","code":"/\\1.(?<=(a)\\1)/","type":"script","reports":["1:1-1:16 Backreference '\\1' will be ignored. It references group '(a)' which appears later in the pattern.","1:1-1:16 Backreference '\\1' will be ignored. It references group '(a)' which appears before in the same lookbehind."]}
+{"kind":"invalid","code":"/(?!\\1(a)).\\1/","type":"script","reports":["1:1-1:15 Backreference '\\1' will be ignored. It references group '(a)' which appears later in the pattern.","1:1-1:15 Backreference '\\1' will be ignored. It references group '(a)' which is in a negative lookaround."]}
+{"kind":"invalid","code":"/(a)\\2(b)/; RegExp('(\\\\1)');","type":"script","reports":["1:1-1:11 Backreference '\\2' will be ignored. It references group '(b)' which appears later in the pattern.","1:13-1:28 Backreference '\\1' will be ignored. It references group '(\\1)' from within that group."]}
+{"kind":"invalid","code":"RegExp('\\\\1(a){', flags);","type":"script","reports":["1:1-1:25 Backreference '\\1' will be ignored. It references group '(a)' which appears later in the pattern."]}
+{"kind":"invalid","code":"const r = RegExp, p = '\\\\1', s = '(a)'; new r(p + s);","type":"script","reports":["1:41-1:53 Backreference '\\1' will be ignored. It references group '(a)' which appears later in the pattern."]}
+{"kind":"invalid","code":"new RegExp('\\\\1([[A--B]])', 'v')","type":"script","reports":["1:1-1:33 Backreference '\\1' will be ignored. It references group '([[A--B]])' which appears later in the pattern."]}
+{"kind":"invalid","code":"/\\k<foo>((?<foo>bar)|(?<foo>baz))/","type":"script","reports":["1:1-1:35 Backreference '\\k<foo>' will be ignored. It references group '(?<foo>bar)' and another group which appears later in the pattern."]}
+{"kind":"invalid","code":"/((?<foo>bar)|\\k<foo>(?<foo>baz))/","type":"script","reports":["1:1-1:35 Backreference '\\k<foo>' will be ignored. It references group '(?<foo>baz)' which appears later in the pattern."]}
+{"kind":"invalid","code":"/\\k<foo>((?<foo>bar)|(?<foo>baz)|(?<foo>qux))/","type":"script","reports":["1:1-1:47 Backreference '\\k<foo>' will be ignored. It references group '(?<foo>bar)' and other 2 groups which appears later in the pattern."]}
+{"kind":"invalid","code":"/((?<foo>bar)|\\k<foo>(?<foo>baz)|(?<foo>qux))/","type":"script","reports":["1:1-1:47 Backreference '\\k<foo>' will be ignored. It references group '(?<foo>baz)' which appears later in the pattern."]}
+{"kind":"invalid","code":"/((?<foo>bar)|\\k<foo>|(?<foo>baz))/","type":"script","reports":["1:1-1:36 Backreference '\\k<foo>' will be ignored. It references group '(?<foo>bar)' and another group which is in another alternative."]}
+{"kind":"invalid","code":"/((?<foo>bar)|\\k<foo>|(?<foo>baz)|(?<foo>qux))/","type":"script","reports":["1:1-1:48 Backreference '\\k<foo>' will be ignored. It references group '(?<foo>bar)' and other 2 groups which is in another alternative."]}
+{"kind":"invalid","code":"/((?<foo>bar)|(?<foo>baz\\k<foo>)|(?<foo>qux\\k<foo>))/","type":"script","reports":["1:1-1:54 Backreference '\\k<foo>' will be ignored. It references group '(?<foo>baz\\k<foo>)' from within that group.","1:1-1:54 Backreference '\\k<foo>' will be ignored. It references group '(?<foo>qux\\k<foo>)' from within that group."]}
+{"kind":"invalid","code":"/(?<=((?<foo>bar)|(?<foo>baz))\\k<foo>)/","type":"script","reports":["1:1-1:40 Backreference '\\k<foo>' will be ignored. It references group '(?<foo>bar)' and another group which appears before in the same lookbehind."]}
+{"kind":"invalid","code":"/((?!(?<foo>bar))|(?!(?<foo>baz)))\\k<foo>/","type":"script","reports":["1:1-1:43 Backreference '\\k<foo>' will be ignored. It references group '(?<foo>bar)' and another group which is in a negative lookaround."]}

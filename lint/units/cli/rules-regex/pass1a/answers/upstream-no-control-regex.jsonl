@@ -1,0 +1,49 @@
+{"kind":"valid","code":"var regex = /x1f/","type":"script","reports":[]}
+{"kind":"valid","code":"var regex = /\\\\x1f/","type":"script","reports":[]}
+{"kind":"valid","code":"var regex = new RegExp('x1f')","type":"script","reports":[]}
+{"kind":"valid","code":"var regex = RegExp('x1f')","type":"script","reports":[]}
+{"kind":"valid","code":"new RegExp('[')","type":"script","reports":[]}
+{"kind":"valid","code":"RegExp('[')","type":"script","reports":[]}
+{"kind":"valid","code":"function foo(RegExp) { RegExp(\"\\x1f\"); }","type":"script","reports":[]}
+{"kind":"valid","code":"function foo(RegExp) { new RegExp(\"\\x1f\"); }","type":"script","reports":[]}
+{"kind":"valid","code":"let RegExp; RegExp(\"\\x1f\");","type":"script","reports":[]}
+{"kind":"valid","code":"RegExp(\"\\x1f\")","type":"script","reports":["1:8-1:14 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"valid","code":"new (function foo(){})('\\x1f')","type":"script","reports":[]}
+{"kind":"valid","code":"/\\u{20}/u","type":"script","reports":[]}
+{"kind":"valid","code":"/\\u{1F}/","type":"script","reports":[]}
+{"kind":"valid","code":"/\\u{1F}/g","type":"script","reports":[]}
+{"kind":"valid","code":"new RegExp(\"\\\\u{20}\", \"u\")","type":"script","reports":[]}
+{"kind":"valid","code":"new RegExp(\"\\\\u{1F}\")","type":"script","reports":[]}
+{"kind":"valid","code":"new RegExp(\"\\\\u{1F}\", \"g\")","type":"script","reports":[]}
+{"kind":"valid","code":"new RegExp(\"\\\\u{1F}\", flags)","type":"script","reports":[]}
+{"kind":"valid","code":"new RegExp(\"[\\\\q{\\\\u{20}}]\", \"v\")","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\u{20}--B]/v","type":"script","reports":[]}
+{"kind":"valid","code":"var regex = /\\c1/","type":"script","reports":[]}
+{"kind":"valid","code":"var regex = /\\c$/","type":"script","reports":[]}
+{"kind":"valid","code":"var regex = new RegExp('\\\\c1')","type":"script","reports":[]}
+{"kind":"valid","code":"var regex = /\\cA/","type":"script","reports":[]}
+{"kind":"valid","code":"var regex = /\\cz/","type":"script","reports":[]}
+{"kind":"valid","code":"var regex = new RegExp('\\\\cA')","type":"script","reports":[]}
+{"kind":"valid","code":"/\\cA/u","type":"script","reports":[]}
+{"kind":"valid","code":"/\\cA/v","type":"script","reports":[]}
+{"kind":"invalid","code":"var regex = /\\x1f/","type":"script","reports":["1:13-1:19 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"var regex = /\\\\\\x1f\\\\x1e/","type":"script","reports":["1:13-1:26 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"var regex = /\\\\\\x1fFOO\\\\x00/","type":"script","reports":["1:13-1:29 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"var regex = /FOO\\\\\\x1fFOO\\\\x1f/","type":"script","reports":["1:13-1:32 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"var regex = new RegExp('\\x1f\\x1e')","type":"script","reports":["1:24-1:34 Unexpected control character(s) in regular expression: \\x1f, \\x1e."]}
+{"kind":"invalid","code":"var regex = new RegExp('\\x1fFOO\\x00')","type":"script","reports":["1:24-1:37 Unexpected control character(s) in regular expression: \\x1f, \\x00."]}
+{"kind":"invalid","code":"var regex = new RegExp('FOO\\x1fFOO\\x1f')","type":"script","reports":["1:24-1:40 Unexpected control character(s) in regular expression: \\x1f, \\x1f."]}
+{"kind":"invalid","code":"var regex = RegExp('\\x1f')","type":"script","reports":["1:20-1:26 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"var regex = /(?<a>\\x1f)/","type":"script","reports":["1:13-1:25 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"var regex = /(?<\\u{1d49c}>.)\\x1f/","type":"script","reports":["1:13-1:34 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"new RegExp(\"\\\\u001F\", flags)","type":"script","reports":["1:12-1:21 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"/\\u{1111}*\\x1F/u","type":"script","reports":["1:1-1:17 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"new RegExp(\"\\\\u{1111}*\\\\x1F\", \"u\")","type":"script","reports":["1:12-1:29 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"/\\u{1F}/u","type":"script","reports":["1:1-1:10 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"/\\u{1F}/gui","type":"script","reports":["1:1-1:12 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"new RegExp(\"\\\\u{1F}\", \"u\")","type":"script","reports":["1:12-1:21 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"new RegExp(\"\\\\u{1F}\", \"gui\")","type":"script","reports":["1:12-1:21 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"new RegExp(\"[\\\\q{\\\\u{1F}}]\", \"v\")","type":"script","reports":["1:12-1:28 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"/[\\u{1F}--B]/v","type":"script","reports":["1:1-1:15 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"/\\x11/; RegExp(\"foo\", \"uv\");","type":"script","reports":["1:1-1:7 Unexpected control character(s) in regular expression: \\x11."]}
+{"kind":"invalid","code":"var regex = /\\x1f\\cA/","type":"script","reports":["1:13-1:22 Unexpected control character(s) in regular expression: \\x1f."]}

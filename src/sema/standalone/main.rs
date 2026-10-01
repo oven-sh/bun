@@ -306,6 +306,10 @@ fn print_checked_sizes(program: &bun_sema::check::Program) {
     }
 }
 
+#[cfg(bun_sema_mimalloc)]
+#[global_allocator]
+static ALLOC: bun_alloc::Mimalloc = bun_alloc::Mimalloc;
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
@@ -546,6 +550,7 @@ fn main() {
                     lib_dir: lib_dir.as_deref(),
                     global_node_modules: None,
                     file_time_limit: std::time::Duration::from_secs(10),
+                    ends_the_process: true,
                     keeps_everything: args.iter().any(|a| a == "--keep"),
                     loaded: args.iter().any(|a| a == "--memory").then_some(
                         &print_loaded_sizes as &(dyn Fn(&bun_sema::check::Program) + Sync),
@@ -581,6 +586,12 @@ fn main() {
                     report.files_checked,
                     report.check_time.as_secs_f64(),
                     bun_sema_standalone::peak_rss() as f64 / (1u64 << 30) as f64
+                );
+                let (instructions, cycles) = bun_sema_standalone::instructions_and_cycles();
+                eprintln!(
+                    "instructions {:.2} G, cycles {:.2} G",
+                    instructions as f64 / 1e9,
+                    cycles as f64 / 1e9
                 );
             }
             std::process::exit(i32::from(report.error_count() > 0));

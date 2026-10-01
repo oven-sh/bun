@@ -112,8 +112,6 @@ struct Walk {
     initial: TypeId,
     auto: Auto,
     crossing: Crossing,
-    /// The bit of `Bound::flow_about` that stands for what the reference starts with. 0: every node is looked at.
-    about: u64,
     labels: Labels,
     /// The `finally` blocks being gone back through: where each starts, and the label whose edges count instead.
     reduced: Vec<(FlowId, FlowId)>,
@@ -253,7 +251,6 @@ impl Walk {
             } else {
                 Crossing::No
             },
-            about: 0,
             labels: Labels::default(),
             reduced: Vec::new(),
             loops: SmallVec::new(),
@@ -3278,9 +3275,6 @@ impl<'p> Checker<'p> {
             return declared;
         }
         let declared = self.narrowable_type(file, e, declared);
-        if self.bound(file).is_beyond_flow(e) {
-            return declared;
-        }
         // `checkIdentifier`: a variable that is not known to hold anything where its flow starts may be `undefined` there.
         let assume_initialized = self.assumes_initialized(file, e, declared);
         self.starts_unassigned = !assume_initialized;
@@ -3307,36 +3301,7 @@ impl<'p> Checker<'p> {
             return declared;
         }
         let declared = self.narrowable_type(file, e, declared);
-        if self.starts_beyond_flow(file, e) {
-            return declared;
-        }
         self.flow_type_of(file, e, declared)
-    }
-
-    /// `Bound::flow_bit` of the identifier that `e`, which is `a`, `a.b`, `a[0].c!.d` and so on, starts with.
-    fn flow_bit_of_reference(&self, file: FileId, mut e: ExprId) -> u64 {
-        let hir = self.hir(file);
-        loop {
-            e = match hir[e].kind {
-                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
-                ExprKind::NonNull(inner) => inner,
-                ExprKind::Ident(name) => return self.bound(file).flow_bit(name, e),
-                _ => return 0,
-            };
-        }
-    }
-
-    /// Whether the access `e` is `a.b`, `a[0].c!.d` and so on, with an `a` that the flow of control has nothing to say about.
-    fn starts_beyond_flow(&self, file: FileId, mut e: ExprId) -> bool {
-        let hir = self.hir(file);
-        loop {
-            e = match hir[e].kind {
-                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
-                ExprKind::NonNull(inner) => inner,
-                ExprKind::Ident(_) => return self.bound(file).is_beyond_flow_as_root(e),
-                _ => return false,
-            };
-        }
     }
 
     /// The type of `e`, the initializer of a variable that is declared by a pattern and without a type, for the `...rest` of the
@@ -3535,7 +3500,6 @@ impl<'p> Checker<'p> {
         }
         let mut walk = Walk::new(reference, declared, initial, auto, false);
         walk.crossing = crossing;
-        walk.about = self.flow_bit_of_reference(file, e);
         self.flow_depth += 1;
         let outer = std::mem::replace(&mut self.walk_declared, declared);
         let ty = self.flow_type(&mut walk, flow);
@@ -4395,49 +4359,16 @@ impl<'p> Checker<'p> {
         let mut pending: SmallVec<[Pending; 8]> = SmallVec::new();
         let mut flow = start;
         let depth = walk.depth;
-        // The tests that were passed over because they are about something else. TypeScript goes into each.
-        let mut passed_over = 0u32;
         let mut ty = loop {
             walk.steps += 1;
             if walk.steps >= MAX_STEPS {
                 break walk.declared;
             }
             // This is one invocation of `getTypeAtFlowNode`, and what is put off stands for one more each, inside it.
-            walk.depth = depth + 1 + pending.len() as u32 + passed_over;
+            walk.depth = depth + 1 + pending.len() as u32;
             if walk.depth > MAX_FLOW_DEPTH {
                 walk.too_deep = true;
                 break TypeId::ANY;
-            }
-            if walk.about != 0 {
-                let about = bound.flow_about[flow.idx()];
-                if about & walk.about == 0 {
-                    match bound.flow[flow.idx()] {
-                        Flow::Cond { before, .. } | Flow::Switch { before, .. } => {
-                            passed_over += 1;
-                            flow = before;
-                            continue;
-                        }
-                        Flow::ArrayMutation { before, .. } => {
-                            flow = before;
-                            continue;
-                        }
-                        Flow::Assign { before, .. } if before != UNREACHABLE => {
-                            flow = before;
-                            continue;
-                        }
-                        // Nothing between here and where the paths parted is about it, and none of them can end on the way.
-                        Flow::Label { .. } | Flow::Loop { .. }
-                            if about & crate::bind::FLOW_HAS_CALL == 0
-                                && walk.reduced.is_empty()
-                                && bound.flow_dominator[flow.idx()].is_some() =>
-                        {
-                            passed_over += 1;
-                            flow = bound.flow_dominator[flow.idx()];
-                            continue;
-                        }
-                        _ => {}
-                    }
-                }
             }
             match bound.flow[flow.idx()] {
                 Flow::Unreachable => break TypeId::NEVER,

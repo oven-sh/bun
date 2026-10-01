@@ -8,253 +8,259 @@ use core::ffi::{c_char, c_int, c_void};
 
 // ───────────────────────────── mimalloc ─────────────────────────────
 
-#[repr(C)]
-struct Header {
-    /// What `malloc` returned, for a block that is freed on its own. Null for one that goes with its heap.
-    base: *mut c_void,
-    size: usize,
-}
+// With `--cfg bun_sema_mimalloc` the real one is linked instead, to measure with the allocator Bun has.
+#[cfg(not(bun_sema_mimalloc))]
+mod fake_mimalloc {
+    use super::*;
 
-const HEADER: usize = core::mem::size_of::<Header>();
-const CHUNK: usize = 1 << 20;
-
-struct Heap {
-    chunks: Vec<*mut c_void>,
-    at: usize,
-    end: usize,
-}
-
-fn main_heap() -> *mut Heap {
-    core::ptr::without_provenance_mut(8)
-}
-
-unsafe fn place(
-    base: *mut c_void,
-    from: usize,
-    size: usize,
-    align: usize,
-    owned: bool,
-) -> *mut c_void {
-    let user = (from + HEADER).next_multiple_of(align.max(16));
-    // SAFETY: the caller reserved `size + align + HEADER` bytes from `from`.
-    unsafe {
-        let user_ptr = base.byte_add(user - base.addr());
-        user_ptr.cast::<Header>().sub(1).write(Header {
-            base: if owned { base } else { core::ptr::null_mut() },
-            size,
-        });
-        user_ptr
+    #[repr(C)]
+    struct Header {
+        /// What `malloc` returned, for a block that is freed on its own. Null for one that goes with its heap.
+        base: *mut c_void,
+        size: usize,
     }
-}
 
-unsafe fn global_alloc(size: usize, align: usize, zero: bool) -> *mut c_void {
-    let total = size + align.max(16) + HEADER;
-    // SAFETY: plain libc allocation.
-    let base = unsafe {
-        if zero {
-            libc::calloc(1, total)
-        } else {
-            libc::malloc(total)
+    const HEADER: usize = core::mem::size_of::<Header>();
+    const CHUNK: usize = 1 << 20;
+
+    struct Heap {
+        chunks: Vec<*mut c_void>,
+        at: usize,
+        end: usize,
+    }
+
+    fn main_heap() -> *mut Heap {
+        core::ptr::without_provenance_mut(8)
+    }
+
+    unsafe fn place(
+        base: *mut c_void,
+        from: usize,
+        size: usize,
+        align: usize,
+        owned: bool,
+    ) -> *mut c_void {
+        let user = (from + HEADER).next_multiple_of(align.max(16));
+        // SAFETY: the caller reserved `size + align + HEADER` bytes from `from`.
+        unsafe {
+            let user_ptr = base.byte_add(user - base.addr());
+            user_ptr.cast::<Header>().sub(1).write(Header {
+                base: if owned { base } else { core::ptr::null_mut() },
+                size,
+            });
+            user_ptr
         }
-    };
-    if base.is_null() {
-        return base;
     }
-    // SAFETY: `total` bytes were reserved.
-    unsafe { place(base, base.addr(), size, align, true) }
-}
 
-unsafe fn heap_alloc(heap: *mut Heap, size: usize, align: usize, zero: bool) -> *mut c_void {
-    if heap == main_heap() {
-        // SAFETY: forwarded.
-        return unsafe { global_alloc(size, align, zero) };
-    }
-    // SAFETY: a heap is used by the thread that made it.
-    let heap = unsafe { &mut *heap };
-    let total = size + align.max(16) + HEADER;
-    if heap.end - heap.at < total {
-        let chunk = total.max(CHUNK);
+    unsafe fn global_alloc(size: usize, align: usize, zero: bool) -> *mut c_void {
+        let total = size + align.max(16) + HEADER;
         // SAFETY: plain libc allocation.
-        let base = unsafe { libc::malloc(chunk) };
+        let base = unsafe {
+            if zero {
+                libc::calloc(1, total)
+            } else {
+                libc::malloc(total)
+            }
+        };
         if base.is_null() {
             return base;
         }
-        heap.chunks.push(base);
-        if total > CHUNK / 4 {
-            // On its own, so that the rest of the current chunk stays usable.
-            // SAFETY: `total` bytes were reserved.
-            let p = unsafe { place(base, base.addr(), size, align, false) };
-            if zero {
-                // SAFETY: `size` bytes at `p` are inside the chunk.
-                unsafe { core::ptr::write_bytes(p.cast::<u8>(), 0, size) };
+        // SAFETY: `total` bytes were reserved.
+        unsafe { place(base, base.addr(), size, align, true) }
+    }
+
+    unsafe fn heap_alloc(heap: *mut Heap, size: usize, align: usize, zero: bool) -> *mut c_void {
+        if heap == main_heap() {
+            // SAFETY: forwarded.
+            return unsafe { global_alloc(size, align, zero) };
+        }
+        // SAFETY: a heap is used by the thread that made it.
+        let heap = unsafe { &mut *heap };
+        let total = size + align.max(16) + HEADER;
+        if heap.end - heap.at < total {
+            let chunk = total.max(CHUNK);
+            // SAFETY: plain libc allocation.
+            let base = unsafe { libc::malloc(chunk) };
+            if base.is_null() {
+                return base;
             }
-            return p;
+            heap.chunks.push(base);
+            if total > CHUNK / 4 {
+                // On its own, so that the rest of the current chunk stays usable.
+                // SAFETY: `total` bytes were reserved.
+                let p = unsafe { place(base, base.addr(), size, align, false) };
+                if zero {
+                    // SAFETY: `size` bytes at `p` are inside the chunk.
+                    unsafe { core::ptr::write_bytes(p.cast::<u8>(), 0, size) };
+                }
+                return p;
+            }
+            heap.at = base.addr();
+            heap.end = base.addr() + chunk;
         }
-        heap.at = base.addr();
-        heap.end = base.addr() + chunk;
-    }
-    let base = *heap.chunks.last().unwrap();
-    let base = if heap.at >= base.addr() && heap.at < base.addr() + CHUNK {
-        base
-    } else {
-        *heap
-            .chunks
-            .iter()
-            .rev()
-            .find(|c| heap.at >= c.addr() && heap.end <= c.addr() + CHUNK)
-            .unwrap()
-    };
-    // SAFETY: `total` bytes are left in the chunk.
-    let p = unsafe { place(base, heap.at, size, align, false) };
-    heap.at = p.addr() + size;
-    if zero {
-        // SAFETY: `size` bytes at `p` are inside the chunk.
-        unsafe { core::ptr::write_bytes(p.cast::<u8>(), 0, size) };
-    }
-    p
-}
-
-unsafe fn header(p: *const c_void) -> *const Header {
-    // SAFETY: every block handed out has a header right before it.
-    unsafe { p.cast::<Header>().sub(1) }
-}
-
-unsafe fn release(p: *mut c_void) {
-    if p.is_null() {
-        return;
-    }
-    // SAFETY: see `header`.
-    let base = unsafe { (*header(p)).base };
-    if !base.is_null() {
-        // SAFETY: `base` came from `malloc`.
-        unsafe { libc::free(base) };
-    }
-}
-
-#[unsafe(no_mangle)]
-extern "C" fn mi_heap_new() -> *mut c_void {
-    Box::into_raw(Box::new(Heap {
-        chunks: Vec::new(),
-        at: 0,
-        end: 0,
-    }))
-    .cast()
-}
-#[unsafe(no_mangle)]
-unsafe extern "C" fn mi_heap_destroy(heap: *mut c_void) {
-    // SAFETY: made by `mi_heap_new`.
-    let heap = unsafe { Box::from_raw(heap.cast::<Heap>()) };
-    for &chunk in &heap.chunks {
-        // SAFETY: from `malloc`.
-        unsafe { libc::free(chunk) };
-    }
-}
-#[unsafe(no_mangle)]
-extern "C" fn mi_heap_main() -> *mut c_void {
-    main_heap().cast()
-}
-#[unsafe(no_mangle)]
-unsafe extern "C" fn mi_heap_malloc(heap: *mut c_void, size: usize) -> *mut c_void {
-    unsafe { heap_alloc(heap.cast(), size, 16, false) }
-}
-#[unsafe(no_mangle)]
-unsafe extern "C" fn mi_heap_zalloc(heap: *mut c_void, size: usize) -> *mut c_void {
-    unsafe { heap_alloc(heap.cast(), size, 16, true) }
-}
-#[unsafe(no_mangle)]
-unsafe extern "C" fn mi_heap_malloc_aligned(
-    heap: *mut c_void,
-    size: usize,
-    align: usize,
-) -> *mut c_void {
-    unsafe { heap_alloc(heap.cast(), size, align, false) }
-}
-#[unsafe(no_mangle)]
-unsafe extern "C" fn mi_heap_zalloc_aligned(
-    heap: *mut c_void,
-    size: usize,
-    align: usize,
-) -> *mut c_void {
-    unsafe { heap_alloc(heap.cast(), size, align, true) }
-}
-#[unsafe(no_mangle)]
-unsafe extern "C" fn mi_heap_realloc_aligned(
-    heap: *mut c_void,
-    p: *mut c_void,
-    size: usize,
-    align: usize,
-) -> *mut c_void {
-    unsafe {
-        let new = heap_alloc(heap.cast(), size, align, false);
-        if !p.is_null() && !new.is_null() {
-            core::ptr::copy_nonoverlapping(
-                p.cast::<u8>(),
-                new.cast::<u8>(),
-                (*header(p)).size.min(size),
-            );
-            release(p);
+        let base = *heap.chunks.last().unwrap();
+        let base = if heap.at >= base.addr() && heap.at < base.addr() + CHUNK {
+            base
+        } else {
+            *heap
+                .chunks
+                .iter()
+                .rev()
+                .find(|c| heap.at >= c.addr() && heap.end <= c.addr() + CHUNK)
+                .unwrap()
+        };
+        // SAFETY: `total` bytes are left in the chunk.
+        let p = unsafe { place(base, heap.at, size, align, false) };
+        heap.at = p.addr() + size;
+        if zero {
+            // SAFETY: `size` bytes at `p` are inside the chunk.
+            unsafe { core::ptr::write_bytes(p.cast::<u8>(), 0, size) };
         }
-        new
+        p
     }
-}
-#[unsafe(no_mangle)]
-extern "C" fn mi_malloc(size: usize) -> *mut c_void {
-    unsafe { global_alloc(size, 16, false) }
-}
-#[unsafe(no_mangle)]
-extern "C" fn mi_zalloc(size: usize) -> *mut c_void {
-    unsafe { global_alloc(size, 16, true) }
-}
-#[unsafe(no_mangle)]
-extern "C" fn mi_malloc_aligned(size: usize, align: usize) -> *mut c_void {
-    unsafe { global_alloc(size, align, false) }
-}
-#[unsafe(no_mangle)]
-extern "C" fn mi_zalloc_aligned(size: usize, align: usize) -> *mut c_void {
-    unsafe { global_alloc(size, align, true) }
-}
-#[unsafe(no_mangle)]
-unsafe extern "C" fn mi_free(p: *mut c_void) {
-    unsafe { release(p) }
-}
-#[unsafe(no_mangle)]
-unsafe extern "C" fn mi_free_size(p: *mut c_void, _size: usize) {
-    unsafe { release(p) }
-}
-#[unsafe(no_mangle)]
-unsafe extern "C" fn mi_free_size_aligned(p: *mut c_void, _size: usize, _align: usize) {
-    unsafe { release(p) }
-}
-#[unsafe(no_mangle)]
-extern "C" fn mi_expand(_p: *mut c_void, _size: usize) -> *mut c_void {
-    core::ptr::null_mut()
-}
-#[unsafe(no_mangle)]
-unsafe extern "C" fn mi_malloc_usable_size(p: *const c_void) -> usize {
-    if p.is_null() {
-        0
-    } else {
-        unsafe { (*header(p)).size }
+
+    unsafe fn header(p: *const c_void) -> *const Header {
+        // SAFETY: every block handed out has a header right before it.
+        unsafe { p.cast::<Header>().sub(1) }
     }
-}
-#[unsafe(no_mangle)]
-extern "C" fn mi_is_in_heap_region(_p: *const c_void) -> bool {
-    true
-}
-#[unsafe(no_mangle)]
-unsafe extern "C" fn mi_process_info(
-    a: *mut usize,
-    b: *mut usize,
-    c: *mut usize,
-    d: *mut usize,
-    e: *mut usize,
-    f: *mut usize,
-    g: *mut usize,
-    h: *mut usize,
-) {
-    for p in [a, b, c, d, e, f, g, h] {
-        if !p.is_null() {
-            unsafe { *p = 0 };
+
+    unsafe fn release(p: *mut c_void) {
+        if p.is_null() {
+            return;
+        }
+        // SAFETY: see `header`.
+        let base = unsafe { (*header(p)).base };
+        if !base.is_null() {
+            // SAFETY: `base` came from `malloc`.
+            unsafe { libc::free(base) };
+        }
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn mi_heap_new() -> *mut c_void {
+        Box::into_raw(Box::new(Heap {
+            chunks: Vec::new(),
+            at: 0,
+            end: 0,
+        }))
+        .cast()
+    }
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn mi_heap_destroy(heap: *mut c_void) {
+        // SAFETY: made by `mi_heap_new`.
+        let heap = unsafe { Box::from_raw(heap.cast::<Heap>()) };
+        for &chunk in &heap.chunks {
+            // SAFETY: from `malloc`.
+            unsafe { libc::free(chunk) };
+        }
+    }
+    #[unsafe(no_mangle)]
+    extern "C" fn mi_heap_main() -> *mut c_void {
+        main_heap().cast()
+    }
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn mi_heap_malloc(heap: *mut c_void, size: usize) -> *mut c_void {
+        unsafe { heap_alloc(heap.cast(), size, 16, false) }
+    }
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn mi_heap_zalloc(heap: *mut c_void, size: usize) -> *mut c_void {
+        unsafe { heap_alloc(heap.cast(), size, 16, true) }
+    }
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn mi_heap_malloc_aligned(
+        heap: *mut c_void,
+        size: usize,
+        align: usize,
+    ) -> *mut c_void {
+        unsafe { heap_alloc(heap.cast(), size, align, false) }
+    }
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn mi_heap_zalloc_aligned(
+        heap: *mut c_void,
+        size: usize,
+        align: usize,
+    ) -> *mut c_void {
+        unsafe { heap_alloc(heap.cast(), size, align, true) }
+    }
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn mi_heap_realloc_aligned(
+        heap: *mut c_void,
+        p: *mut c_void,
+        size: usize,
+        align: usize,
+    ) -> *mut c_void {
+        unsafe {
+            let new = heap_alloc(heap.cast(), size, align, false);
+            if !p.is_null() && !new.is_null() {
+                core::ptr::copy_nonoverlapping(
+                    p.cast::<u8>(),
+                    new.cast::<u8>(),
+                    (*header(p)).size.min(size),
+                );
+                release(p);
+            }
+            new
+        }
+    }
+    #[unsafe(no_mangle)]
+    extern "C" fn mi_malloc(size: usize) -> *mut c_void {
+        unsafe { global_alloc(size, 16, false) }
+    }
+    #[unsafe(no_mangle)]
+    extern "C" fn mi_zalloc(size: usize) -> *mut c_void {
+        unsafe { global_alloc(size, 16, true) }
+    }
+    #[unsafe(no_mangle)]
+    extern "C" fn mi_malloc_aligned(size: usize, align: usize) -> *mut c_void {
+        unsafe { global_alloc(size, align, false) }
+    }
+    #[unsafe(no_mangle)]
+    extern "C" fn mi_zalloc_aligned(size: usize, align: usize) -> *mut c_void {
+        unsafe { global_alloc(size, align, true) }
+    }
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn mi_free(p: *mut c_void) {
+        unsafe { release(p) }
+    }
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn mi_free_size(p: *mut c_void, _size: usize) {
+        unsafe { release(p) }
+    }
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn mi_free_size_aligned(p: *mut c_void, _size: usize, _align: usize) {
+        unsafe { release(p) }
+    }
+    #[unsafe(no_mangle)]
+    extern "C" fn mi_expand(_p: *mut c_void, _size: usize) -> *mut c_void {
+        core::ptr::null_mut()
+    }
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn mi_malloc_usable_size(p: *const c_void) -> usize {
+        if p.is_null() {
+            0
+        } else {
+            unsafe { (*header(p)).size }
+        }
+    }
+    #[unsafe(no_mangle)]
+    extern "C" fn mi_is_in_heap_region(_p: *const c_void) -> bool {
+        true
+    }
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn mi_process_info(
+        a: *mut usize,
+        b: *mut usize,
+        c: *mut usize,
+        d: *mut usize,
+        e: *mut usize,
+        f: *mut usize,
+        g: *mut usize,
+        h: *mut usize,
+    ) {
+        for p in [a, b, c, d, e, f, g, h] {
+            if !p.is_null() {
+                unsafe { *p = 0 };
+            }
         }
     }
 }
@@ -534,14 +540,18 @@ extern "C" fn Bun__StackCheck__initialize() {
 extern "C" fn WTF__numberOfProcessorCores() -> c_int {
     std::thread::available_parallelism().map_or(4, |n| n.get() as c_int)
 }
+#[cfg(not(bun_sema_mimalloc))]
 #[unsafe(no_mangle)]
 extern "C" fn mi_thread_set_in_threadpool() {}
+#[cfg(not(bun_sema_mimalloc))]
 #[unsafe(no_mangle)]
 extern "C" fn mi_on_thread_idle() {}
+#[cfg(not(bun_sema_mimalloc))]
 #[unsafe(no_mangle)]
 extern "C" fn mi_on_thread_idle_start() -> bool {
     false
 }
+#[cfg(not(bun_sema_mimalloc))]
 #[unsafe(no_mangle)]
 extern "C" fn mi_on_thread_idle_end() {}
 

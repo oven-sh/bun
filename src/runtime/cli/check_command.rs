@@ -130,7 +130,13 @@ fn global_node_modules() -> Option<String> {
         .map(|home| format!("{}/.bun/install/global/node_modules", text(home)))
 }
 
-fn run(cwd: &str, project: Option<&str>, paths: &[String], threads: usize) -> Report {
+fn run(
+    cwd: &str,
+    project: Option<&str>,
+    paths: &[String],
+    threads: usize,
+    ends_the_process: bool,
+) -> Report {
     let global = global_node_modules();
     bun_sema_driver::check(&Request {
         cwd,
@@ -140,6 +146,7 @@ fn run(cwd: &str, project: Option<&str>, paths: &[String], threads: usize) -> Re
         lib_dir: None,
         global_node_modules: global.as_deref(),
         file_time_limit: core::time::Duration::from_secs(10),
+        ends_the_process,
         keeps_everything: false,
         loaded: None,
         checked: None,
@@ -173,6 +180,7 @@ impl CheckCommand {
             options.project.as_deref(),
             &options.paths,
             options.threads,
+            true,
         );
         let shown_from = bun_sema_driver::host::from_native(&cwd);
         // The errors are the output, as they are of `tsc`. How it went is said on the side.
@@ -230,7 +238,7 @@ pub(crate) fn check_before(entry_points: &[&[u8]]) -> bool {
         return true;
     }
     let cwd = working_directory();
-    let report = run(&cwd, None, &paths, 0);
+    let report = run(&cwd, None, &paths, 0, false);
     if report.diagnostics.is_empty() && report.gave_up.is_empty() {
         return true;
     }

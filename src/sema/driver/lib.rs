@@ -70,6 +70,8 @@ pub struct Request<'a> {
     pub global_node_modules: Option<&'a str>,
     /// How long a single file may take. One that takes longer has run into a bug, and nothing is said about it but that.
     pub file_time_limit: Duration,
+    /// The process ends once the errors have been shown.
+    pub ends_the_process: bool,
     /// Nothing is forgotten once it is checked: for whoever goes on to ask about the program. It takes several times the memory.
     pub keeps_everything: bool,
     /// Called with everything that was loaded, before any of it is checked.
@@ -427,6 +429,11 @@ pub fn check(request: &Request) -> Report {
     report.check_time = checking.elapsed();
     if let Some(checked) = request.checked {
         checked(&program);
+    }
+    // Giving back millions of small pieces of memory one by one takes a while, and the system takes it all back at once.
+    if request.ends_the_process {
+        std::mem::forget(program);
+        std::mem::forget(disk);
     }
     report
 }

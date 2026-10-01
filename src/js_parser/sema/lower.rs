@@ -22,6 +22,8 @@ pub(crate) struct Lower<'p, 'a> {
     marks: Vec<(i32, Mark, i32)>,
     /// What is made of an expression, from the inside out.
     casts: HashMap<ExprKey, SmallVec<[(CastKind, i32); 2]>>,
+    /// A bit for each place in the source, set where an expression in `casts` starts. Hardly any expression is in there.
+    cast_starts: Vec<u64>,
     /// From the `<` of a JSX element, to the name in its closing tag. The `tag` of such an element is the name in its opening tag.
     closing_tags: HashMap<i32, Expr>,
     /// The statements being lowered are in a block or a function body, not directly in the file or in a namespace.
@@ -122,7 +124,11 @@ impl<'p, 'a> Lower<'p, 'a> {
         marks.sort_unstable();
         marks.dedup();
         let mut casts: HashMap<ExprKey, SmallVec<[(CastKind, i32); 2]>> = HashMap::default();
+        let mut cast_starts = vec![0u64; p.source.contents().len() / 64 + 1];
         for (key, kind, ty) in syntax.casts {
+            if let Some(word) = cast_starts.get_mut(key.start as u32 as usize / 64) {
+                *word |= 1 << (key.start as u32 % 64);
+            }
             let list = casts.entry(key).or_default();
             // An attempt that was abandoned and made again says everything twice.
             if !list.contains(&(kind, ty)) || kind == CastKind::NonNull {
@@ -147,6 +153,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             p,
             marks,
             casts,
+            cast_starts,
             closing_tags,
             in_block: false,
             source: p.source.contents(),
@@ -1818,7 +1825,12 @@ impl<'p, 'a> Lower<'p, 'a> {
             return self.b.file.expr(ExprKind::Missing, pos);
         }
         let mut id = self.expr_without_casts(expr);
-        if !self.casts.is_empty()
+        // Where it starts outside the source there is no telling.
+        let start = expr.loc.start as u32;
+        if self
+            .cast_starts
+            .get(start as usize / 64)
+            .is_none_or(|word| word & 1 << (start % 64) != 0)
             && let Some(casts) = self.casts.get(&ExprKey::of(expr))
         {
             for (kind, at) in casts.clone() {

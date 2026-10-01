@@ -26,6 +26,8 @@ impl std::fmt::Debug for Atom {
 pub struct Interner {
     shards: Box<[GrowingPlaces]>,
     texts: AppendVec<Box<[u8]>>,
+    /// Which interner it is, of all there have been.
+    number: u64,
 }
 
 macro_rules! known_atoms {
@@ -165,6 +167,41 @@ known_atoms! {
 /// it, so nothing that is written is such a name.
 pub const SYMBOL_NAME_PREFIX: &[u8] = b"\xFE@";
 
+/// The names a thread has come upon lately, with what they are spelled like right there: a file says the same few names over and over, and
+/// finding one in what all threads share takes going to three places in memory that are far apart.
+struct Recent {
+    /// `Interner::number`
+    of: u64,
+    entries: Box<[RecentEntry]>,
+}
+
+#[derive(Copy, Clone)]
+struct RecentEntry {
+    text: [u8; Recent::LONGEST],
+    len: u8,
+    atom: u32,
+}
+
+impl Recent {
+    const LONGEST: usize = 27;
+    const BITS: u32 = 11;
+    const NOTHING: RecentEntry = RecentEntry {
+        text: [0; Recent::LONGEST],
+        len: u8::MAX,
+        atom: 0,
+    };
+}
+
+thread_local! {
+    static RECENT: std::cell::UnsafeCell<Recent> = std::cell::UnsafeCell::new(Recent {
+        of: 0,
+        entries: vec![Recent::NOTHING; 1 << Recent::BITS].into_boxed_slice(),
+    });
+}
+
+/// From 1 on.
+static NEXT_NUMBER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 impl Default for Interner {
     fn default() -> Self {
         Self::new()
@@ -176,6 +213,7 @@ impl Interner {
         let this = Interner {
             shards: (0..SHARDS).map(|_| GrowingPlaces::default()).collect(),
             texts: AppendVec::new(),
+            number: NEXT_NUMBER.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         };
         for (i, text) in known::TEXTS.iter().enumerate() {
             let atom = this.intern(text.as_bytes());
@@ -191,6 +229,29 @@ impl Interner {
 
     pub fn intern(&self, text: &[u8]) -> Atom {
         let spread = spread_hash(text);
+        if text.len() > Recent::LONGEST {
+            return self.intern_shared(spread, text);
+        }
+        RECENT.with(|recent| {
+            // SAFETY: it is the thread's own, and nothing in here gets back here.
+            let recent = unsafe { &mut *recent.get() };
+            if recent.of != self.number {
+                recent.of = self.number;
+                recent.entries.fill(Recent::NOTHING);
+            }
+            let entry = &mut recent.entries[(spread >> (64 - Recent::BITS)) as usize];
+            if usize::from(entry.len) == text.len() && entry.text[..text.len()] == *text {
+                return Atom(entry.atom);
+            }
+            let atom = self.intern_shared(spread, text);
+            entry.len = text.len() as u8;
+            entry.text[..text.len()].copy_from_slice(text);
+            entry.atom = atom.0;
+            atom
+        })
+    }
+
+    fn intern_shared(&self, spread: u64, text: &[u8]) -> Atom {
         let shard = &self.shards[shard_of(spread)];
         if let Some(atom) = shard.find(spread, |i| &**self.texts.get(i) == text) {
             return Atom(atom);

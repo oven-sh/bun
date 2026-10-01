@@ -12,7 +12,9 @@ use crate::resolve::{
 use crate::table::{Bases, ByNode, ByNodeKept, RawWord};
 use crate::util::{FxHashMap, FxHashSet, List, ListIter};
 use smallvec::SmallVec;
+use std::borrow::Cow;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub struct FileId(pub u32);
@@ -116,6 +118,83 @@ impl Drop for AtHand<'_> {
         crate::local::end();
         crate::types::TypeStore::end_local();
     }
+}
+
+/// Reads the files at `paths` and hands what each says to `work`, on all the threads of the host. Where only a few had better read at a time,
+/// those few do nothing else, one file after the other, and the rest never wait for a turn to read: a turn that is handed from one
+/// thread that sleeps to the next is not made use of meanwhile.
+fn read_and_work(
+    host: &dyn Host,
+    paths: &[&str],
+    work: &(dyn Fn(usize, Cow<'static, [u8]>) + Sync),
+) {
+    let (threads, readers) = (host.threads(), host.readers());
+    if readers >= threads || paths.len() < 4 * threads {
+        host.parallel(paths.len(), &|i| {
+            work(i, host.read(paths[i]).unwrap_or_default());
+        });
+        return;
+    }
+    /// What is next to each other is in the same directory.
+    const RUN: usize = 16;
+    /// What has been read takes memory until it is worked on.
+    const AHEAD: usize = 256;
+    struct Shared {
+        ready: Vec<(usize, Cow<'static, [u8]>)>,
+        to_read: usize,
+    }
+    let shared = Mutex::new(Shared {
+        ready: Vec::new(),
+        to_read: paths.len(),
+    });
+    let is_more = std::sync::Condvar::new();
+    let (next, arrived) = (AtomicUsize::new(0), AtomicUsize::new(0));
+    host.parallel(threads, &|_| {
+        if arrived.fetch_add(1, Ordering::Relaxed) < readers {
+            loop {
+                let from = next.fetch_add(RUN, Ordering::Relaxed);
+                if from >= paths.len() {
+                    break;
+                }
+                for i in from..(from + RUN).min(paths.len()) {
+                    let text = host.read(paths[i]).unwrap_or_default();
+                    let mut shared = shared.lock().unwrap();
+                    shared.ready.push((i, text));
+                    shared.to_read -= 1;
+                    let (is_last, too_far_ahead) =
+                        (shared.to_read == 0, shared.ready.len() > AHEAD);
+                    let own = if too_far_ahead {
+                        shared.ready.pop()
+                    } else {
+                        None
+                    };
+                    drop(shared);
+                    if is_last {
+                        is_more.notify_all();
+                    } else {
+                        is_more.notify_one();
+                    }
+                    if let Some((i, text)) = own {
+                        work(i, text);
+                    }
+                }
+            }
+        }
+        loop {
+            let mut shared = shared.lock().unwrap();
+            let (i, text) = loop {
+                if let Some(ready) = shared.ready.pop() {
+                    break ready;
+                }
+                if shared.to_read == 0 {
+                    return;
+                }
+                shared = is_more.wait(shared).unwrap();
+            };
+            drop(shared);
+            work(i, text);
+        }
+    });
 }
 
 /// A guess at whether nothing refers to the file, from where it is and what it is called. It is only a matter of speed and memory: a file
@@ -668,11 +747,12 @@ fn output_path_errors(
 }
 
 /// `GetSymbolNameForPrivateIdentifier`: `#x` is a name of the class that declares it and of no other. From here on it is spelled
-/// `#x@<file>.<class>`, where it is declared and wherever it is meant. An `#x` that no class around declares stays `#x`, which names
+/// `#x@<hash of the path>.<class>`, where it is declared and wherever it is meant. An `#x` that no class around declares stays `#x`, which names
 /// nothing.
-fn rename_private_names(hir: &mut hir::File, bound: &Bound, atoms: &Interner, file: FileId) {
+fn rename_private_names(hir: &mut hir::File, bound: &Bound, atoms: &Interner, path: &str) {
+    let file = crate::util::spread_hash(path);
     let renamed = |class: u32, name: Atom| {
-        atoms.intern_str(&format!("{}@{}.{}", atoms.text(name), file.0, class))
+        atoms.intern_str(&format!("{}@{:x}.{}", atoms.text(name), file, class))
     };
     for class in 0..hir.classes.len() {
         for member in hir.classes[class].members.iter() {
@@ -859,14 +939,37 @@ impl Files {
         let mut only_found: Vec<(FileId, Atom, ResolutionMode, String)> = Vec::new();
         // Only what nothing has been seen to refer to: the files the program starts from.
         let mut may_drop = options.drops_what_nothing_refers_to;
+        let mut is_first = true;
+        let mut ahead: FxHashMap<String, Loaded> = FxHashMap::default();
         while !frontier.is_empty() {
             let batch = std::mem::take(&mut frontier);
-            let results: Vec<Mutex<Option<Loaded>>> =
-                batch.iter().map(|_| Mutex::new(None)).collect();
-            host.parallel(batch.len(), &|i| {
-                let (id, path, is_lib) = &batch[i];
-                *results[i].lock().unwrap() = Some(Self::load_one(
-                    host, &resolver, &options, &atoms, *id, path, *is_lib, may_drop,
+            if is_first {
+                is_first = false;
+                let seeds = batch
+                    .iter()
+                    .map(|(_, path, is_lib)| (path.clone(), *is_lib, may_drop))
+                    .collect();
+                ahead = Self::load_ahead(host, &resolver, &options, &atoms, seeds);
+            }
+            let results: Vec<Mutex<Option<Loaded>>> = batch
+                .iter()
+                .map(|(_, path, is_lib)| {
+                    Mutex::new(
+                        ahead
+                            .remove(path)
+                            .filter(|loaded| loaded.module.is_lib == *is_lib),
+                    )
+                })
+                .collect();
+            // What could not be told ahead to be part of the program.
+            let missing: Vec<usize> = (0..batch.len())
+                .filter(|&i| results[i].lock().unwrap().is_none())
+                .collect();
+            let paths: Vec<&str> = missing.iter().map(|&i| &batch[i].1[..]).collect();
+            read_and_work(host, &paths, &|at, text| {
+                let (_, path, is_lib) = &batch[missing[at]];
+                *results[missing[at]].lock().unwrap() = Some(Self::load_one(
+                    host, &resolver, &options, &atoms, path, *is_lib, may_drop, text,
                 ));
             });
             may_drop = false;
@@ -931,16 +1034,17 @@ impl Files {
                 .collect();
             let parsed: Vec<Mutex<Option<(hir::File, Bound)>>> =
                 back.iter().map(|_| Mutex::new(None)).collect();
-            host.parallel(back.len(), &|at| {
+            let paths: Vec<&str> = back.iter().map(|&i| &modules[i].path[..]).collect();
+            read_and_work(host, &paths, &|at, text| {
                 let module = &modules[back[at]];
                 *parsed[at].lock().unwrap() = Some(Self::parse_and_bind(
                     host,
                     &options,
                     &atoms,
-                    FileId(back[at] as u32),
                     &module.path,
                     module.is_lib,
                     module.says_esm,
+                    text,
                 ));
             });
             for (&i, parsed) in back.iter().zip(parsed) {
@@ -991,17 +1095,117 @@ impl Files {
         files
     }
 
+    /// Loads `seeds` (path, whether it is a lib, whether it may be dropped) and whatever can be told from there on to be part of the program,
+    /// each file as soon as something is seen to refer to it. Which number a file gets, and which of two that are the same package is taken,
+    /// goes by the order files refer to each other in. That is gone through afterwards, with all of this at hand.
+    fn load_ahead(
+        host: &dyn Host,
+        resolver: &Resolver,
+        options: &Options,
+        atoms: &Interner,
+        seeds: Vec<(String, bool, bool)>,
+    ) -> FxHashMap<String, Loaded> {
+        /// What is next to each other is in the same directory.
+        const RUN: usize = 16;
+        /// What has been read takes memory until it is worked on.
+        const AHEAD: usize = 256;
+        struct Shared {
+            to_read: std::collections::VecDeque<(String, bool, bool)>,
+            ready: Vec<((String, bool, bool), Cow<'static, [u8]>)>,
+            seen: FxHashSet<String>,
+            seen_packages: FxHashSet<String>,
+            /// Taken from `to_read` and not in `done` yet.
+            under_way: usize,
+            done: FxHashMap<String, Loaded>,
+        }
+        let shared = Mutex::new(Shared {
+            seen: seeds.iter().map(|seed| seed.0.clone()).collect(),
+            to_read: seeds.into(),
+            ready: Vec::new(),
+            seen_packages: FxHashSet::default(),
+            under_way: 0,
+            done: FxHashMap::default(),
+        });
+        let has_changed = std::sync::Condvar::new();
+        let threads = host.threads();
+        let readers = host.readers().min(threads);
+        let arrived = AtomicUsize::new(0);
+        host.parallel(threads, &|_| {
+            let reads = arrived.fetch_add(1, Ordering::Relaxed) < readers;
+            let mut state = shared.lock().unwrap();
+            loop {
+                if reads && !state.to_read.is_empty() && state.ready.len() <= AHEAD {
+                    let count = state.to_read.len().min(RUN);
+                    let run: Vec<_> = state.to_read.drain(..count).collect();
+                    state.under_way += count;
+                    drop(state);
+                    for file in run {
+                        let text = host.read(&file.0).unwrap_or_default();
+                        shared.lock().unwrap().ready.push((file, text));
+                        has_changed.notify_one();
+                    }
+                    state = shared.lock().unwrap();
+                } else if let Some(((path, is_lib, may_drop), text)) = state.ready.pop() {
+                    drop(state);
+                    let loaded = Self::load_one(
+                        host, resolver, options, atoms, &path, is_lib, may_drop, text,
+                    );
+                    // As the waves do, but for what goes by how deep in packages a file is.
+                    let found = loaded
+                        .references
+                        .iter()
+                        .map(|(path, is_lib, _)| (path, *is_lib))
+                        .chain(
+                            loaded
+                                .imports
+                                .iter()
+                                .filter(|(_, _, path, brings_in)| {
+                                    *brings_in
+                                        && !options.no_resolve
+                                        && !(is_javascript(path) && path.contains("/node_modules/"))
+                                })
+                                .map(|(_, _, path, _)| (path, false)),
+                        );
+                    let found: Vec<(&String, bool, Option<String>)> = found
+                        .map(|(path, is_lib)| (path, is_lib, resolver.package_id(path)))
+                        .collect();
+                    state = shared.lock().unwrap();
+                    let before = state.to_read.len();
+                    for (path, is_lib, package) in found {
+                        if !state.seen.contains(path)
+                            && package.is_none_or(|package| state.seen_packages.insert(package))
+                        {
+                            state.seen.insert(path.clone());
+                            state.to_read.push_back((path.clone(), is_lib, false));
+                        }
+                    }
+                    let has_more = state.to_read.len() > before;
+                    state.done.insert(path, loaded);
+                    state.under_way -= 1;
+                    if has_more || state.under_way == 0 {
+                        has_changed.notify_all();
+                    }
+                } else if state.under_way == 0 && state.to_read.is_empty() {
+                    has_changed.notify_all();
+                    return;
+                } else {
+                    state = has_changed.wait(state).unwrap();
+                }
+            }
+        });
+        shared.into_inner().unwrap().done
+    }
+
     /// All that goes by the file alone.
     fn parse_and_bind(
         host: &dyn Host,
         options: &Options,
         atoms: &Interner,
-        id: FileId,
         path: &str,
         is_lib: bool,
         says_esm: bool,
+        text: Cow<'static, [u8]>,
     ) -> (hir::File, Bound) {
-        let text = host.read(path).unwrap_or_default();
         let mut hir = if path.ends_with(".json") {
             json_to_hir(&text, atoms)
         } else {
@@ -1049,7 +1253,7 @@ impl Files {
             },
             atoms,
         );
-        rename_private_names(&mut hir, &bound, atoms, id);
+        rename_private_names(&mut hir, &bound, atoms, path);
         (hir, bound)
     }
 
@@ -1064,10 +1268,10 @@ impl Files {
             host,
             &self.options,
             &self.atoms,
-            file,
             &cell.path,
             cell.is_lib,
             cell.says_esm,
+            host.read(&cell.path).unwrap_or_default(),
         );
         // SAFETY: nothing refers to the file, so no other thread looks at the module.
         let module = unsafe { &mut *cell.0.get() };
@@ -1082,10 +1286,10 @@ impl Files {
         resolver: &Resolver,
         options: &Options,
         atoms: &Interner,
-        id: FileId,
         path: &str,
         is_lib: bool,
         may_drop: bool,
+        text: Cow<'static, [u8]>,
     ) -> Loaded {
         // `GetImpliedNodeFormatForFile`: a JSON file is neither kind of module, whatever its package says.
         let says_esm = !path.ends_with(".json")
@@ -1094,7 +1298,7 @@ impl Files {
         let is_esm = options.resolves_like_node && says_esm;
         let implied_format = resolver.implied_format(path);
         let default_mode = options.default_mode(implied_format);
-        let (hir, bound) = Self::parse_and_bind(host, options, atoms, id, path, is_lib, says_esm);
+        let (hir, bound) = Self::parse_and_bind(host, options, atoms, path, is_lib, says_esm, text);
         let mut imports = Vec::new();
         let (mut untyped_imports, mut jsx_imports, mut untyped_package_imports) =
             (Vec::new(), Vec::new(), Vec::new());

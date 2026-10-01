@@ -15,6 +15,7 @@ bun_sema.workspace = true
 bun_sema_driver.workspace = true
 bun_js_parser.workspace = true
 bun_threading.workspace = true
+bun_alloc.workspace = true
 libc.workspace = true
 
 [lints]

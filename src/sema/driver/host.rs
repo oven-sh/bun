@@ -137,6 +137,10 @@ pub struct Disk {
 }
 
 /// One of the few places there are for reading a file.
+/// How many threads read at a time on macOS, where opening a file goes through locks all threads meet at. With 16 threads and 45,000 files, 4 to
+/// 10 are as good as each other when the system is quick to open a file. When it is slow to, which comes and goes, 5 or 6 do best.
+const READERS: usize = 6;
+
 struct Turn<'a>(&'a bun_threading::Semaphore);
 
 impl<'a> Turn<'a> {
@@ -174,7 +178,7 @@ impl Disk {
             real_directories: ShardedMap::default(),
             reading: cfg!(target_os = "macos").then(|| {
                 let places = bun_threading::Semaphore::default();
-                for _ in 0..4 {
+                for _ in 0..READERS {
                     places.post();
                 }
                 places
@@ -393,6 +397,16 @@ impl Host for Disk {
             options.experimental_decorators,
             options.module_detection == ModuleDetection::Force,
         )
+    }
+    fn threads(&self) -> usize {
+        self.threads
+    }
+    fn readers(&self) -> usize {
+        if self.reading.is_some() {
+            READERS
+        } else {
+            usize::MAX
+        }
     }
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
         // In runs: what is next to each other is in the same directory.

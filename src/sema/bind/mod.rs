@@ -623,19 +623,6 @@ pub struct Bound {
     pub alias_idents: Vec<(ExprId, ScopeId)>,
     /// The identifiers `arguments` that mean the arguments of a function around them. Sorted.
     pub arguments_objects: Vec<ExprId>,
-    /// For each node of `flow`, which names it may say something about: see `flow_bit`. For where paths meet, which names anything may say
-    /// something about between there and `flow_dominator`. Empty: not worked out, everything may be about anything.
-    pub flow_about: Vec<u64>,
-    /// For each node of `flow` where paths meet, the last node all of them have come through. For any other node, the one before.
-    pub flow_dominator: Vec<FlowId>,
-    /// For each symbol, which of the 64 bits of `flow_about` stands for it.
-    pub symbol_flow_bit: Vec<u8>,
-    /// A bit for each expression, set for the identifiers whose name is written nowhere the flow of control looks: not in a condition, a
-    /// `switch`, the target of an assignment, a call that may assert something, or what a constant written in one of those is
-    /// initialized with. Of a reference that starts with one of them the flow of control has nothing to say.
-    pub beyond_flow_as_root: Vec<u32>,
-    /// Those of them of which it has nothing to say either when they stand alone: see `Binder::mark_what_is_beyond_flow`.
-    pub beyond_flow: Vec<u32>,
     /// `checkUnmatchedJSDocParameters`: the `@param` tags that match no parameter, as start and code.
     pub jsdoc_param_errors: Vec<(u32, u32)>,
 
@@ -646,38 +633,6 @@ pub struct Bound {
 pub const UNREACHABLE: FlowId = FlowId(0);
 
 impl Bound {
-    /// The bit of `flow_about` that stands for the identifier `e`, which a reference starts with. 0: there is none, every node has to be
-    /// looked at.
-    #[inline]
-    pub fn flow_bit(&self, name: Atom, e: ExprId) -> u64 {
-        if self.flow_about.is_empty() {
-            return 0;
-        }
-        let symbol = self.expr_symbol[e.idx()];
-        1 << if symbol.is_some() {
-            self.symbol_flow_bit[symbol.idx()]
-        } else {
-            flow_bit_of_free_name(name)
-        }
-    }
-
-    /// Whether `e` is an identifier such that the flow of control knows no more about a reference that starts with it than how what is
-    /// referred to is declared.
-    #[inline]
-    pub fn is_beyond_flow_as_root(&self, e: ExprId) -> bool {
-        self.beyond_flow_as_root
-            .get(e.idx() / 32)
-            .is_some_and(|word| word & 1 << (e.idx() % 32) != 0)
-    }
-
-    /// Whether `e` is an identifier of which the flow of control knows no more than how it is declared.
-    #[inline]
-    pub fn is_beyond_flow(&self, e: ExprId) -> bool {
-        self.beyond_flow
-            .get(e.idx() / 32)
-            .is_some_and(|word| word & 1 << (e.idx() % 32) != 0)
-    }
-
     /// `IsInTypeQuery`: it is asked what `e` is, but `e` is not read.
     pub fn is_in_type_query(&self, e: ExprId) -> bool {
         self.type_query_operands.binary_search(&e).is_ok()
@@ -859,21 +814,6 @@ pub struct BindOptions {
     /// `GetEmitScriptTarget` is older than that.
     pub before_es2020: bool,
     pub before_es2017: bool,
-}
-
-/// The bit of `Bound::flow_about` that stands for no name: there is a call that may never return, which is everybody's business.
-pub const FLOW_HAS_CALL: u64 = 1 << 63;
-
-/// One of the other 63.
-#[inline]
-pub fn flow_bit_of_number(n: u32) -> u8 {
-    ((u64::from(n.wrapping_mul(0x9E37_79B1)) * 63) >> 32) as u8
-}
-
-/// Which bit of `Bound::flow_about` stands for a name that means nothing declared in the file.
-#[inline]
-pub fn flow_bit_of_free_name(name: Atom) -> u8 {
-    flow_bit_of_number(name.0)
 }
 
 pub fn bind(file: &File, options: BindOptions) -> Bound {

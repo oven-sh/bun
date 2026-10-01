@@ -41,6 +41,15 @@ pub trait Host: Sync {
     ) -> crate::hir::File;
     /// Calls `work` with every number below `count`, on as many threads as it likes.
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync));
+    /// How many threads `parallel` works on.
+    fn threads(&self) -> usize {
+        1
+    }
+    /// How many threads had better read files at a time. Where opening a file goes through a lock in the kernel, more of them only get in each
+    /// other's way.
+    fn readers(&self) -> usize {
+        usize::MAX
+    }
 }
 
 #[derive(Default, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]

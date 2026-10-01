@@ -174,6 +174,24 @@ pub fn load_tree(tree: &str, roots: &[&str], threads: usize) -> bun_sema::progra
 }
 
 /// The most memory the process has had resident, in bytes.
+/// How many instructions the process has gone through and how many cycles that took, on all threads. The first hardly differs from one run to
+/// the next, which the time taken does. (0, 0) where it cannot be told.
+pub fn instructions_and_cycles() -> (u64, u64) {
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: all zeros is a `rusage_info_v4`.
+        let mut info: libc::rusage_info_v4 = unsafe { core::mem::zeroed() };
+        // SAFETY: `info` is what `RUSAGE_INFO_V4` fills in, and outlives the call.
+        let failed = unsafe {
+            libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast())
+        };
+        if failed == 0 {
+            return (info.ri_instructions, info.ri_cycles);
+        }
+    }
+    (0, 0)
+}
+
 pub fn peak_rss() -> u64 {
     #[repr(C)]
     struct Rusage {

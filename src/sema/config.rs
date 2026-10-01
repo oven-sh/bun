@@ -1116,19 +1116,54 @@ fn match_files(
     includes: &[String],
     case_sensitive: bool,
 ) -> Vec<String> {
-    struct Visitor<'a> {
+    /// What of a directory matches: the files, each with the include pattern it goes by, and the directories.
+    struct Listed {
+        files: Vec<(usize, String)>,
+        directories: Vec<String>,
+    }
+    struct Matchers<'a> {
         host: &'a dyn Host,
         files: GlobMatcher,
         directories: GlobMatcher,
         extensions: &'a [&'a str],
+    }
+    impl Matchers<'_> {
+        fn list(&self, path: &str) -> Listed {
+            let (files, directories) = self.host.entries(path);
+            let prefix = if path.ends_with('/') {
+                path.to_owned()
+            } else {
+                format!("{path}/")
+            };
+            Listed {
+                files: files
+                    .into_iter()
+                    .filter(|file| self.extensions.iter().any(|e| file.ends_with(e)))
+                    .filter_map(|file| {
+                        let index = self.files.matches_file(&prefix, &file)?;
+                        Some((index, format!("{prefix}{file}")))
+                    })
+                    .collect(),
+                directories: directories
+                    .into_iter()
+                    .filter(|directory| self.directories.matches_directory(&prefix, directory))
+                    .map(|directory| format!("{prefix}{directory}"))
+                    .collect(),
+            }
+        }
+    }
+    struct Visitor<'a> {
+        matchers: Matchers<'a>,
         case_sensitive: bool,
         visited: crate::util::FxHashSet<String>,
+        /// What has been found out ahead of the walk.
+        listed: crate::util::FxHashMap<String, Listed>,
         results: Vec<Vec<String>>,
     }
     impl Visitor<'_> {
         fn visit(&mut self, path: &str) {
             // A link can lead back to where it is.
-            let real = self.host.realpath(path);
+            let real = self.matchers.host.realpath(path);
             let canonical = if self.case_sensitive {
                 real
             } else {
@@ -1137,24 +1172,15 @@ fn match_files(
             if !self.visited.insert(canonical) {
                 return;
             }
-            let (files, directories) = self.host.entries(path);
-            let prefix = if path.ends_with('/') {
-                path.to_owned()
-            } else {
-                format!("{path}/")
+            let listed = match self.listed.remove(path) {
+                Some(listed) => listed,
+                None => self.matchers.list(path),
             };
-            for file in files {
-                if !self.extensions.iter().any(|e| file.ends_with(e)) {
-                    continue;
-                }
-                if let Some(index) = self.files.matches_file(&prefix, &file) {
-                    self.results[index].push(format!("{prefix}{file}"));
-                }
+            for (index, file) in listed.files {
+                self.results[index].push(file);
             }
-            for directory in directories {
-                if self.directories.matches_directory(&prefix, &directory) {
-                    self.visit(&format!("{prefix}{directory}"));
-                }
+            for directory in listed.directories {
+                self.visit(&directory);
             }
         }
     }
@@ -1169,43 +1195,40 @@ fn match_files(
     );
     let buckets = files.includes.len().max(1);
     let mut visitor = Visitor {
-        host,
-        files,
-        directories,
-        extensions,
+        matchers: Matchers {
+            host,
+            files,
+            directories,
+            extensions,
+        },
         case_sensitive,
         visited: Default::default(),
+        listed: Default::default(),
         results: (0..buckets).map(|_| Vec::new()).collect(),
     };
     let bases = base_paths(&path, includes, case_sensitive);
-    // The walk goes through the directories one after the other, in the order that decides the order of the files. A host that remembers what
-    // it is asked has been asked everything by then, about many directories at once.
+    // The walk goes through the directories one after the other, in the order that decides the order of the files. What there is in each and
+    // what of it matches has been found out by then, for many directories at once.
     let mut level: Vec<String> = bases.clone();
     let mut asked: crate::util::FxHashSet<String> = Default::default();
     while !level.is_empty() {
-        let found: Vec<std::sync::Mutex<Vec<String>>> =
+        let found: Vec<std::sync::Mutex<Option<Listed>>> =
             level.iter().map(|_| Default::default()).collect();
         host.parallel(level.len(), &|i| {
-            let path = &level[i];
-            host.realpath(path);
-            let prefix = if path.ends_with('/') {
-                path.clone()
-            } else {
-                format!("{path}/")
-            };
-            *found[i].lock().unwrap() = host
-                .entries(path)
-                .1
-                .into_iter()
-                .filter(|directory| visitor.directories.matches_directory(&prefix, directory))
-                .map(|directory| format!("{prefix}{directory}"))
-                .collect();
+            host.realpath(&level[i]);
+            *found[i].lock().unwrap() = Some(visitor.matchers.list(&level[i]));
         });
-        level = found
-            .into_iter()
-            .flat_map(|found| found.into_inner().unwrap())
-            .filter(|path| asked.insert(host.realpath(path)))
-            .collect();
+        let mut next = Vec::new();
+        for (path, listed) in level.into_iter().zip(found) {
+            let listed = listed.into_inner().unwrap().unwrap();
+            for directory in &listed.directories {
+                if asked.insert(host.realpath(directory)) {
+                    next.push(directory.clone());
+                }
+            }
+            visitor.listed.insert(path, listed);
+        }
+        level = next;
     }
     for base in bases {
         visitor.visit(&base);

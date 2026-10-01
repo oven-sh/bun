@@ -1947,7 +1947,7 @@ describe("the response body is framed by the value of Transfer-Encoding", () => 
   // A run of 1000 or more `a` bytes prints as `<a x count>`.
   function squash(text: string) {
     let out = "";
-    for (let i = 0; i < text.length; ) {
+    for (let i = 0; i < text.length;) {
       let end = i + 1;
       if (text[i] === "a") while (end < text.length && text[end] === "a") end++;
       out += end - i >= 1000 ? `<a x ${end - i}>` : text.slice(i, end);
@@ -4241,6 +4241,48 @@ describe("differences from Node in the framing of a response body that stay", ()
         chunkedEncoding = res.chunkedEncoding;
       }, "0\r\n\r\n");
       expect({ chunkedEncoding, sent }).toEqual({ chunkedEncoding: true, sent: expected + probeResponse });
+    },
+  );
+
+  // Node has no setter for headersSent: the assignment throws a TypeError. In Bun it takes back the head that
+  // writeHead() stored, so the next head is decided from the headers that the response has then.
+  test.concurrent.each([
+    [
+      "removeHeader(Content-Length), write() + end()",
+      (res: any) => {
+        res.setHeader("Content-Length", "2");
+        res.writeHead(200);
+        res.headersSent = false;
+        res.removeHeader("Content-Length");
+        res.write("ok");
+        res.end();
+      },
+      "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n",
+    ],
+    [
+      "setHeader(Content-Length), end(data)",
+      (res: any) => {
+        res.writeHead(200);
+        res.headersSent = false;
+        res.setHeader("Content-Length", "2");
+        res.end("ok");
+      },
+      "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nDate: <D>\r\nConnection: close\r\n\r\nok",
+    ],
+    [
+      "identity in place of chunked, end(data)",
+      (res: any) => {
+        res.writeHead(200, { "Transfer-Encoding": "chunked" });
+        res.headersSent = false;
+        res.setHeader("Transfer-Encoding", "identity");
+        res.end("ok");
+      },
+      "HTTP/1.1 200 OK\r\nTransfer-Encoding: identity\r\nDate: <D>\r\nConnection: close\r\n\r\nok",
+    ],
+  ] as [string, (res: any) => void, string][])(
+    "after res.headersSent = false the head is decided again: %s",
+    async (_, respond, expected) => {
+      expect(await wire(respond)).toBe(expected);
     },
   );
 });

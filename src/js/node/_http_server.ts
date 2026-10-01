@@ -3302,6 +3302,11 @@ Object.defineProperty(ServerResponse.prototype, "headersSent", {
   },
   set(value) {
     this[headerStateSymbol] = value ? NodeHTTPHeaderState.sent : NodeHTTPHeaderState.none;
+    // The head that writeHead() stored is not stored any more. The next one is decided from the headers that the response has then.
+    if (!value && this[kHeadFraming] & kHeadDecided) {
+      this.chunkedEncoding = false;
+      this[kHeadFraming] = 0;
+    }
   },
 });
 

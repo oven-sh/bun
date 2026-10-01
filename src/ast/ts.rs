@@ -175,9 +175,8 @@ pub enum Metadata {
     MSymbol,
     MPromise,
     MIdentifier(Ref),
-    // A heap `Vec` is used here because `Metadata` is lifetime-free.
-    // Decorator metadata is rare and the lists are tiny.
-    MDot(Vec<Ref>),
+    /// The names of `a.b.c`, in the arena of the parse: a node that an arena holds is never dropped.
+    MDot(crate::StoreSlice<Ref>),
 }
 
 impl Metadata {
@@ -290,6 +289,7 @@ impl Metadata {
         match (self, other) {
             (Metadata::MIdentifier(name), Metadata::MIdentifier(other)) => name.eql(*other),
             (Metadata::MDot(names), Metadata::MDot(others)) => {
+                let (names, others) = (names.slice(), others.slice());
                 names.len() == others.len()
                     && names
                         .iter()

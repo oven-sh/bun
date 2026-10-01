@@ -1510,7 +1510,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let is_name = self.lexer.is_identifier_or_keyword();
-        S::member(out, self.lexer.identifier, is_name, |name| {
+        let arena = self.arena;
+        S::member(out, arena, self.lexer.identifier, is_name, |name| {
             self.find_symbol(bun_ast::Loc::EMPTY, name)
                 .map(|found| found.r#ref)
         })?;

@@ -3,6 +3,7 @@ use crate::lexer::{Lexer, T};
 use crate::p::P;
 use crate::parser::ParseBindingOptions;
 use crate::typescript::{SkipTypeOptions, SkipTypeOptionsBitset};
+use bun_alloc::Arena;
 use bun_ast::op::Level;
 use bun_ast::ts;
 use bun_ast::ts::{IntoTypeData as _, Metadata};
@@ -43,6 +44,7 @@ pub(crate) trait TypeSink {
     /// `.name` after a type. `is_name` is false when the lexer logged that it is not on a name.
     fn member<'a, E>(
         out: &mut Self::Out,
+        arena: &Arena,
         name: &'a [u8],
         is_name: bool,
         find: impl FnOnce(&'a [u8]) -> Result<Ref, E>,
@@ -340,6 +342,7 @@ impl TypeSink for Discard {
     #[inline]
     fn member<'a, E>(
         _out: &mut (),
+        _arena: &Arena,
         _name: &'a [u8],
         _is_name: bool,
         _find: impl FnOnce(&'a [u8]) -> Result<Ref, E>,
@@ -525,6 +528,7 @@ impl TypeSink for DecoratorMetadata {
     #[inline]
     fn member<'a, E>(
         out: &mut Tag,
+        arena: &Arena,
         name: &'a [u8],
         is_name: bool,
         find: impl FnOnce(&'a [u8]) -> Result<Ref, E>,
@@ -533,15 +537,17 @@ impl TypeSink for DecoratorMetadata {
         match metadata {
             Metadata::MIdentifier(id) => {
                 let id = *id;
-                let mut dot: Vec<Ref> = Vec::with_capacity(2);
-                dot.push(id);
                 let member = find(name)?;
-                dot.push(member);
-                *metadata = Metadata::MDot(dot);
+                *metadata = Metadata::MDot(StoreSlice::new(arena.alloc_slice_copy(&[id, member])));
             }
             Metadata::MDot(dot) => {
                 if is_name {
-                    dot.push(find(name)?);
+                    let member = find(name)?;
+                    let names = dot.slice();
+                    let longer = arena.alloc_slice_fill_with(names.len() + 1, |i| {
+                        names.get(i).copied().unwrap_or(member)
+                    });
+                    *dot = StoreSlice::new(longer);
                 }
             }
             _ => {}
@@ -913,6 +919,7 @@ impl TypeSink for Build {
     #[inline]
     fn member<'a, E>(
         _out: &mut Self::Out,
+        _arena: &Arena,
         _name: &'a [u8],
         _is_name: bool,
         _find: impl FnOnce(&'a [u8]) -> Result<Ref, E>,

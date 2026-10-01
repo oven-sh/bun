@@ -1,7 +1,6 @@
 //! Statements and class members that the parse pass leaves out of the tree, kept for a lint parse.
 
 use bun_alloc::Arena;
-use bun_ast::ts::Metadata;
 use bun_ast::{
     ClauseItem, Expr, ExprData, G, Loc, Range, Scope, Source, Stmt, StmtData, StoreRef, StoreSlice,
     StoreStr,
@@ -720,13 +719,9 @@ impl ErasedTables {
     pub(crate) fn member_property(
         &mut self,
         arena: &Arena,
-        mut property: G::Property,
+        property: G::Property,
         flags: ErasedFlags,
     ) {
-        // This tag owns memory of the global heap, which an arena does not free.
-        if matches!(property.ts_metadata, Metadata::MDot(_)) {
-            property.ts_metadata = Metadata::MNone;
-        }
         let property = StoreRef::from_bump(arena.alloc(property));
         self.member(flags, ErasedMemberData::Property(property));
     }

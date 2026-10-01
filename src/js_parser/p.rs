@@ -8008,8 +8008,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return self.maybe_defined_helper(e);
             }
             M::MDot(refs) => {
+                let refs = refs.slice();
                 debug_assert!(refs.len() >= 2);
-                // (refs.deinit(p.arena) — arena-backed; nothing to free in Rust)
 
                 macro_rules! ref_name {
                     ($r:expr) => {

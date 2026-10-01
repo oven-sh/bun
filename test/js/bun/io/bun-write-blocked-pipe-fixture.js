@@ -7,7 +7,8 @@
 import { once } from "node:events";
 import { closeSync, constants, openSync, readSync, writeSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { isMainThread, Worker, workerData } from "node:worker_threads";
+import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
+import { createSocketPair } from "bun:internal-for-testing";
 
 const { O_RDONLY, O_WRONLY, O_NONBLOCK } = constants;
 
@@ -391,6 +392,38 @@ const modes = {
       left += n;
     }
   },
+
+  // A Worker's write waits on a socket that is full. Then Bun.spawn gets the
+  // socket as the stdout of a child, which clears O_NONBLOCK on it, and this
+  // process reads what filled the socket, so the write goes on. The socket
+  // does not take all of it. A write(2) would now wait for a reader with the
+  // pool thread, and terminate() would wait for that write.
+  async nonblockCleared() {
+    const [rfd, wfd] = createSocketPair();
+    const filled = fill(wfd);
+    const worker = new Worker(new URL(import.meta.url), { workerData: { writeThenSay: wfd } });
+    const failed = Promise.withResolvers();
+    worker.once("error", failed.reject);
+    await Promise.race([once(worker, "message"), failed.promise]);
+
+    Bun.spawnSync({ cmd: ["true"], stdin: "ignore", stdout: wfd, stderr: "ignore" });
+
+    // What filled the socket, and one byte more: the first byte of the
+    // write, which is on its way again.
+    const buf = Buffer.alloc(65536);
+    for (let want = filled + 1; want > 0; ) {
+      try {
+        want -= readSync(rfd, buf, 0, Math.min(want, buf.length), null);
+      } catch (e) {
+        if (e.code !== "EAGAIN") throw e;
+        await new Promise(setImmediate);
+      }
+    }
+
+    const exitCode = await Promise.race([worker.terminate(), failed.promise]);
+    closeSync(rfd), closeSync(wfd);
+    return { terminated: typeof exitCode === "number" };
+  },
 };
 
 if (!isMainThread) {
@@ -398,7 +431,12 @@ if (!isMainThread) {
     Bun.write(workerData.exitAfterWriteTo, stamped(size));
     process.exit(0);
   }
-  write(destination(workerData.wfd, workerData.sized), workerPayload());
+  if (workerData.writeThenSay) {
+    Bun.write(workerData.writeThenSay, stamped(256 * 1024 - 1)).catch(() => {});
+    parentPort.postMessage("under way");
+  } else {
+    write(destination(workerData.wfd, workerData.sized), workerPayload());
+  }
 } else {
   const [mode, ...paths] = process.argv.slice(2);
   if (mode in modes) {

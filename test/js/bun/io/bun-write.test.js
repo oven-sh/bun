@@ -1719,5 +1719,15 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       },
       timeout,
     );
+
+    // Bun.spawn clears O_NONBLOCK on a fd that it gives to a child as stdio.
+    // A write that waits on that fd stays off the pool and can be cancelled.
+    it(
+      "does not wait in write(2) after Bun.spawn made its fd blocking",
+      async () => {
+        expect(await run("nonblockCleared", { fifos: 0 })).toEqual(printed({ terminated: true }));
+      },
+      timeout,
+    );
   });
 });

@@ -258,7 +258,7 @@ fn write_to_blocking_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
 
 /// `send(2)` stands in for `write(2)` on the socketpair behind a child's stdio,
 /// only to pass `MSG_NOSIGNAL`. The error names `write`, as Node does.
-fn write_to_socket(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
+pub fn write_to_socket(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
     sys::send_non_block(fd, buf).map_err(|err| sys::Error {
         syscall: sys::Tag::write,
         // XNU's send() says ENOTCONN once a stream peer is fully gone; write(2) on the same fd (and Node) say EPIPE.

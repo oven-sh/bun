@@ -34,6 +34,32 @@ pub(crate) enum WriteStep {
     Failed,
 }
 
+/// Which call `do_write` makes. A job starts with `write(2)`. Once it has had
+/// to wait for the fd, it uses a call that does not wait in the kernel
+/// whatever `O_NONBLOCK` says on the fd: `Bun.spawn` clears that flag on a fd
+/// it gives to a child as stdio, and a `write(2)` of the rest would then keep
+/// the pool thread, out of reach of a cancel, until a reader took all of it.
+#[cfg(not(windows))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WriteCall {
+    Write,
+    /// `pwritev2(RWF_NOWAIT)`, for a pipe or a socket where the kernel has it.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    NoWait,
+    /// `send(MSG_DONTWAIT)`, for a socket.
+    Send,
+    /// `write(2)` again: the fd takes neither of the two.
+    WriteOnly,
+}
+
+#[cfg(not(windows))]
+impl WriteCall {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    const FIRST_WITHOUT_WAIT: Self = Self::NoWait;
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    const FIRST_WITHOUT_WAIT: Self = Self::Send;
+}
+
 pub(crate) enum WriteFileResultType {
     Result(SizeType),
     Err(Box<SystemError>),
@@ -126,6 +152,8 @@ pub(crate) struct WriteFile {
 
     #[cfg(not(windows))]
     pub(crate) could_block: bool,
+    #[cfg(not(windows))]
+    pub(crate) write_call: WriteCall,
     /// Wait on a duplicate of the caller's fd that this job owns. The io
     /// thread keys its interest list by fd number: epoll refuses a second job
     /// on one number (`EEXIST`, which sets this), and kqueue lets the second
@@ -256,6 +284,7 @@ impl WriteFile {
             // epoll does not take a regular file, and one is always writable.
             sys::E::EPERM => {
                 this.could_block = false;
+                this.write_call = WriteCall::WriteOnly;
                 false
             }
             _ => true,
@@ -326,6 +355,9 @@ impl WriteFile {
             self.fail_cancelled();
             return self.on_finish();
         }
+        if self.write_call == WriteCall::Write {
+            self.write_call = WriteCall::FIRST_WITHOUT_WAIT;
+        }
         self.close_after_io = true;
         self.io_request
             .store_callback_seq_cst(Self::on_request_writable);
@@ -358,6 +390,7 @@ impl WriteFile {
             adopted_fd: None,
             truncate_on_finish: false,
             could_block: false,
+            write_call: WriteCall::Write,
             park_on_private_fd: bun_core::Environment::IS_KQUEUE,
             close_after_io: false,
             mkdirp_if_not_exists,
@@ -374,6 +407,7 @@ impl WriteFile {
         self.base_written = written;
         self.adopted_fd = fd;
         self.could_block = true;
+        self.write_call = WriteCall::FIRST_WITHOUT_WAIT;
     }
 
     // reshaped for borrowck — take (off, len) here and re-derive the slice
@@ -388,7 +422,26 @@ impl WriteFile {
         //
         // On macOS, it is an error to use pwrite() on a
         // non-seekable file.
-        match sys::write(fd, &self.bytes_blob.shared_view()[off..off + len]) {
+        let bytes = &self.bytes_blob.shared_view()[off..off + len];
+        let result = loop {
+            match self.write_call {
+                WriteCall::Write | WriteCall::WriteOnly => break sys::write(fd, bytes),
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                WriteCall::NoWait => match sys::write_nowait(fd, bytes) {
+                    Ok(Some(wrote)) => break Ok(wrote),
+                    // Not for this kind of file, or not on this kernel.
+                    Ok(None) => self.write_call = WriteCall::Send,
+                    Err(err) => break Err(err),
+                },
+                WriteCall::Send => match io::pipe_writer::write_to_socket(fd, bytes) {
+                    Err(err) if err.get_errno() == sys::E::ENOTSOCK => {
+                        self.write_call = WriteCall::WriteOnly;
+                    }
+                    result => break result,
+                },
+            }
+        };
+        match result {
             Ok(wrote) => {
                 self.total_written += wrote;
                 WriteStep::Wrote(wrote)

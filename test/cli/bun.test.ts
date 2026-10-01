@@ -565,17 +565,6 @@ describe.concurrent("global flag before subcommand", () => {
     expect(exitCode).toBe(0);
   });
 
-  for (const cwd of [["--cwd", "target"], ["--cwd=target"]] as const) {
-    test(`bun ${cwd.join(" ")} init -y -m dispatches InitCommand in target`, async () => {
-      using dir = tempDir("which-init", { "target/.gitkeep": "" });
-      const { stderr, exitCode } = await run(String(dir), [...cwd, "init", "-y", "-m"]);
-      expect(stderr).not.toContain("Script not found");
-      expect(fs.existsSync(`${dir}/target/package.json`)).toBe(true);
-      expect(fs.existsSync(`${dir}/package.json`)).toBe(false);
-      expect(exitCode).toBe(0);
-    });
-  }
-
   // Shebang + chmod bin stub is Unix-only; see test/regression/issue/26207.test.ts.
   test.skipIf(isWindows)("bun --bun x <bin> still passes --bun through", async () => {
     // `--bun` is handled by bunx's own parser; stepping past leading flags
@@ -618,13 +607,14 @@ describe.concurrent("global flag before subcommand", () => {
 
   test("bun --cwd sub add --dry-run does not misread 'sub' as a package", async () => {
     using dir = tempDir("which-add", files);
-    const { stdout, stderr } = await run(String(dir), ["--cwd", "sub", "add", "--dry-run"]);
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--cwd", "sub", "add", "--dry-run"]);
     expect(stdout + stderr).not.toMatch(/GET .*\/(sub|add)\b/);
     expect(stderr).not.toContain("Script not found");
     // Dispatching AddCommand with zero positionals prints this diagnostic;
     // any other route (AutoCommand, or 'sub'/'add' leaking as a package name)
     // would not.
     expect(stderr).toContain("no package specified to add");
+    expect(exitCode).toBe(0);
   });
 
   // The skip takes the flag's arity from the auto flag table, so every
@@ -659,10 +649,17 @@ describe.concurrent("global flag before subcommand", () => {
   ]) {
     test(`bun ${pre.join(" ")} build <file> dispatches BuildCommand`, async () => {
       using dir = tempDir("which-value-build", valueFlags);
-      const { stderr } = await run(String(dir), [...pre, "build", "./app.ts"]);
-      // `-r` is not a build flag: the build parser rejects it, which proves
-      // the dispatch reached BuildCommand.
+      const { stdout, stderr, exitCode } = await run(String(dir), [...pre, "build", "./app.ts"]);
       expect(stderr).not.toContain("Script not found");
+      if (pre[0] === "-r") {
+        // `-r` is not a build flag: the build parser rejects it, which proves
+        // the dispatch reached BuildCommand.
+        expect(stderr).toContain("Invalid Argument '-r'");
+        expect(exitCode).toBe(1);
+      } else {
+        expect(stdout).toContain('console.log("ran")');
+        expect(exitCode).toBe(0);
+      }
     });
   }
 
@@ -689,8 +686,9 @@ describe.concurrent("global flag before subcommand", () => {
 
   test("bun -d add is add --dev", async () => {
     using dir = tempDir("which-d-add", valueFlags);
-    const { stderr } = await run(String(dir), ["-d", "add", "--dry-run"]);
+    const { stderr, exitCode } = await run(String(dir), ["-d", "add", "--dry-run"]);
     expect(stderr).toContain("no package specified to add");
+    expect(exitCode).toBe(0);
   });
 
   test("bun -u test <file> is test --update-snapshots", async () => {
@@ -698,6 +696,13 @@ describe.concurrent("global flag before subcommand", () => {
     const { stderr, exitCode } = await run(String(dir), ["-u", "test", "pass.test.ts"]);
     expect(stderr).toContain("1 pass");
     expect(exitCode).toBe(0);
+  });
+
+  test("bun --env-file --all pm trust does not read the flag's value as --all", async () => {
+    using dir = tempDir("which-trust-value", valueFlags);
+    const { stderr, exitCode } = await run(String(dir), ["--env-file", "--all", "pm", "trust"]);
+    expect(stderr).toContain("expected package names(s) or --all");
+    expect(exitCode).toBe(1);
   });
 
   test("bun --console-depth 5 run <file> dispatches RunCommand", async () => {

@@ -235,10 +235,13 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
 
     pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
         // `args` starts at the `pm` keyword (TrustCommand indexes `args[2..]`).
-        // Flag probes scan `all_args` so a flag before the keyword is seen.
+        // `all_args` also has the flags in front of it, without their values.
         let cmd_idx = Command::subcommand_argv_index();
-        let all_args: Vec<&'static [u8]> = bun_core::argv().into_iter().skip(1).collect();
-        let args: &[&[u8]] = &all_args[(cmd_idx - 1).min(all_args.len())..];
+        let mut all_args: Vec<&'static [u8]> =
+            Command::leading_flags().map(|(flag, _)| flag).collect();
+        let leading = all_args.len();
+        all_args.extend(bun_core::argv().into_iter().skip(cmd_idx));
+        let args: &[&[u8]] = &all_args[leading..];
 
         // Check if we're being invoked directly as "bun whoami" instead of "bun pm whoami"
         let is_direct_whoami = bun_core::argv()

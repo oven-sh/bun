@@ -255,8 +255,9 @@ impl TrustCommand {
                 packages_to_trust.push(arg);
             }
         }
-        let trust_all = bun_core::argv()
-            .iter()
+        let trust_all = Command::leading_flags()
+            .map(|(flag, _)| flag)
+            .chain(args.iter().copied())
             .any(|a| matches!(a, b"-a" | b"--all"));
 
         if !trust_all && packages_to_trust.is_empty() {

@@ -805,7 +805,6 @@ pub(crate) mod command {
     }
 
     /// The flags in front of the keyword, each with the value it consumed.
-    /// The same walk `which()` did, for handlers that read raw argv.
     pub(crate) fn leading_flags() -> impl Iterator<Item = (&'static [u8], Option<&'static [u8]>)> {
         let argv = bun::argv();
         let end = subcommand_argv_index().min(argv.len());
@@ -1601,14 +1600,11 @@ pub(crate) mod command {
     fn exec_bunx(log: &mut bun_ast::Log) -> CmdResult {
         apply_leading_cwd();
         let ctx = init(Tag::BunxCommand, log)?;
-        // The flags in front of `x` (`bun --bun x probe`), then `x` and the
-        // rest. For the `bunx` executable argv[0] plays the part of `x`.
-        let argv = bun::argv();
-        let mut tokens: Vec<&'static [u8]> = leading_flags().map(|(flag, _)| flag).collect();
-        tokens.extend(
-            (subcommand_argv_index()..argv.len()).filter_map(|i| argv.get(i).map(|z| z.as_bytes())),
-        );
-        super::bunx_command::BunxCommand::exec(ctx, &tokens)
+        let keyword_index = subcommand_argv_index();
+        // The `bunx` executable is its own keyword at argv[0].
+        let start_idx = keyword_index.min(1);
+        let argv = argv_zslice();
+        super::bunx_command::BunxCommand::exec(ctx, &argv[start_idx..], keyword_index - start_idx)
     }
 
     #[cold]
@@ -1841,6 +1837,7 @@ pub(crate) mod command {
     fn bun_create(log: &mut bun_ast::Log) -> crate::Result<()> {
         use super::bunx_command::BunxCommand;
         use super::create_command::{CreateCommand, ExampleTag};
+        use bun_core::ZStr;
 
         // These are templates from the legacy `bun create`
         // most of them aren't useful but these few are kinda nice.
@@ -1945,11 +1942,11 @@ To create a project with the official Next.js scaffolding tool, run\n\
             && example_tag != ExampleTag::LocalFolder;
 
         if use_bunx {
-            let mut bunx_args: Vec<&[u8]> =
+            let mut bunx_args: Vec<&ZStr> =
                 Vec::with_capacity(2 + args.len() - template_name_start + (dash_dash_bun as usize));
-            bunx_args.push(b"bunx");
+            bunx_args.push(bun_core::zstr!("bunx"));
             if dash_dash_bun {
-                bunx_args.push(b"--bun");
+                bunx_args.push(bun_core::zstr!("--bun"));
             }
             // `add_create_prefix` returns an owned NUL-terminated buffer.
             // `bun create` is a one-shot CLI subcommand (ends in exec/exit), so
@@ -1958,11 +1955,11 @@ To create a project with the official Next.js scaffolding tool, run\n\
             // without leaking (PORTING.md §Forbidden patterns).
             static CREATE_PREFIX: std::sync::OnceLock<bun_core::ZBox> = std::sync::OnceLock::new();
             let prefixed = BunxCommand::add_create_prefix(template_name)?;
-            bunx_args.push(CREATE_PREFIX.get_or_init(|| prefixed).as_bytes());
+            bunx_args.push(CREATE_PREFIX.get_or_init(|| prefixed).as_zstr());
             for src in &args[template_name_start..] {
-                bunx_args.push(src.as_bytes());
+                bunx_args.push(*src);
             }
-            return BunxCommand::exec(ctx, &bunx_args);
+            return BunxCommand::exec(ctx, &bunx_args, 0);
         }
 
         CreateCommand::exec(&ctx, example_tag, template)

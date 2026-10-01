@@ -1,0 +1,30 @@
+base 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (209628 sources)
+next 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (209628 sources)
+3144420 records compared, 67095 differ, in 5009 sources
+!!    13965 records    1040 sources  A>R          unexplained
+              t.ts.plain       "type X = [a: A?];"
+                base ["o",""]
+                next ["e",[["Expected \"]\" but found \"?\"",1,15],["Expected \";\" but found \"]\"",1,16]]]
+              t.ts.exp         "type X = [a: A?];"
+                base ["o",""]
+                next ["e",[["Expected \"]\" but found \"?\"",1,15],["Expected \";\" but found \"]\"",1,16]]]
+              t.ts.deco        "type X = [a: A?];"
+                base ["o",""]
+                next ["e",[["Expected \"]\" but found \"?\"",1,15],["Expected \";\" but found \"]\"",1,16]]]
+              t.tsx.plain      "type X = [a: A?];"
+                base ["o",""]
+                next ["e",[["Expected \"]\" but found \"?\"",1,15],["Expected \";\" but found \"]\"",1,16]]]
+!!    53130 records    3970 sources  R>R          unexplained
+              t.ts.plain       "class C { @d m(): keyof<A> { return x; } }"
+                base ["e",[["Expected \"(\" but found \"{\"",1,28],["Expected \")\" but found \"x\"",1,37],["Unexpected }",1,42]]]
+                next ["e",[["Expected \"(\" but found \"{\"",1,28],["Unexpected return",1,30],["Expected \";\" but found \"x\"",1,37],["Unexpected }",1,42]]]
+              t.ts.exp         "class C { @d m(): keyof<A> { return x; } }"
+                base ["e",[["Expected \"(\" but found \"{\"",1,28],["Expected \")\" but found \"x\"",1,37],["Unexpected }",1,42]]]
+                next ["e",[["Expected \"(\" but found \"{\"",1,28],["Unexpected return",1,30],["Expected \";\" but found \"x\"",1,37],["Unexpected }",1,42]]]
+              t.ts.deco        "class C { @d m(): keyof<A> { return x; } }"
+                base ["e",[["Expected \"(\" but found \"{\"",1,28],["Expected \")\" but found \"x\"",1,37],["Unexpected }",1,42]]]
+                next ["e",[["Expected \"(\" but found \"{\"",1,28],["Unexpected return",1,30],["Expected \";\" but found \"x\"",1,37],["Unexpected }",1,42]]]
+              t.tsx.plain      "class C { @d m(): keyof<A> { return x; } }"
+                base ["e",[["Expected \"(\" but found \"{\"",1,28],["Expected \")\" but found \"x\"",1,37],["Unexpected }",1,42]]]
+                next ["e",[["Expected \"(\" but found \"{\"",1,28],["Unexpected return",1,30],["Expected \";\" but found \"x\"",1,37],["Unexpected }",1,42]]]
+67095 records with the mark !!, 0 with the mark ??

@@ -1,0 +1,30 @@
+base 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (3952 sources)
+next 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (3952 sources)
+59280 records compared, 1125 differ, in 86 sources
+!!      705 records      54 sources  A>R          unexplained
+              t.ts.plain       "const v = <in>x;"
+                base ["o","const v = x;\n"]
+                next ["e",[["Unexpected in",1,12]]]
+              t.ts.exp         "const v = <in>x;"
+                base ["o","const v = x;\n"]
+                next ["e",[["Unexpected in",1,12]]]
+              t.ts.deco        "const v = <in>x;"
+                base ["o","const v = x;\n"]
+                next ["e",[["Unexpected in",1,12]]]
+              t.ts.deco.keep   "const v = <in>x;"
+                base ["o","const v = x;\n"]
+                next ["e",[["Unexpected in",1,12]]]
+!!      420 records      32 sources  R>R          unexplained
+              t.ts.plain       "const v = <in>x</in>;"
+                base ["e",[["Syntax Error",1,17]]]
+                next ["e",[["Unexpected in",1,12]]]
+              t.ts.exp         "const v = <in>x</in>;"
+                base ["e",[["Syntax Error",1,17]]]
+                next ["e",[["Unexpected in",1,12]]]
+              t.ts.deco        "const v = <in>x</in>;"
+                base ["e",[["Syntax Error",1,17]]]
+                next ["e",[["Unexpected in",1,12]]]
+              t.ts.deco.keep   "const v = <in>x</in>;"
+                base ["e",[["Syntax Error",1,17]]]
+                next ["e",[["Unexpected in",1,12]]]
+1125 records with the mark !!, 0 with the mark ??

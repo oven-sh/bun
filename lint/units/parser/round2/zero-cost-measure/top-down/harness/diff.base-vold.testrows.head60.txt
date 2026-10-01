@@ -1,0 +1,43 @@
+base 1.4.3 e3566be889995ffff8b08823b9233617f979c889 (301 sources)
+next 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (301 sources)
+4515 records compared, 2761 differ, in 247 sources
+!!      352 records      73 sources  A>A          unexplained
+              t.ts.plain       "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+              t.ts.exp         "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+              t.ts.deco        "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+              t.tsx.plain      "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+!!     2389 records     172 sources  R>A          unexplained
+              t.ts.plain       "let x: import(\"x\", { with: { a: \"b\" + \"c\" } });"
+                base ["e",[["Unexpected +",1,37]]]
+                next ["o","let x;\n"]
+              t.ts.exp         "let x: import(\"x\", { with: { a: \"b\" + \"c\" } });"
+                base ["e",[["Unexpected +",1,37]]]
+                next ["o","let x;\n"]
+              t.ts.deco        "let x: import(\"x\", { with: { a: \"b\" + \"c\" } });"
+                base ["e",[["Unexpected +",1,37]]]
+                next ["o","let x;\n"]
+              t.tsx.plain      "let x: import(\"x\", { with: { a: \"b\" + \"c\" } });"
+                base ["e",[["Unexpected +",1,37]]]
+                next ["o","let x;\n"]
+!!       20 records       2 sources  R>R          unexplained
+              t.ts.plain       "const v = <in>x;"
+                base ["e",[["The modifier \"in\" is not valid here",1,12],["Unexpected in",1,12]]]
+                next ["e",[["Unexpected in",1,12]]]
+              t.ts.exp         "const v = <in>x;"
+                base ["e",[["The modifier \"in\" is not valid here",1,12],["Unexpected in",1,12]]]
+                next ["e",[["Unexpected in",1,12]]]
+              t.ts.deco        "const v = <in>x;"
+                base ["e",[["The modifier \"in\" is not valid here",1,12],["Unexpected in",1,12]]]
+                next ["e",[["Unexpected in",1,12]]]
+              t.ts.deco.keep   "const v = <in>x;"
+                base ["e",[["The modifier \"in\" is not valid here",1,12],["Unexpected in",1,12]]]
+                next ["e",[["Unexpected in",1,12]]]
+2761 records with the mark !!, 0 with the mark ??

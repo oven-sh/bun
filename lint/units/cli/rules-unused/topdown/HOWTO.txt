@@ -28,6 +28,8 @@ no-unused-private-class-members
                        of this rule from ESLint (seed/no-unused-private-class-members.cross.json: add them to its fixture); 1 case of
                        the seed gets a line of no-self-assign (`this.#x = this.#x`: add it to that fixture).
   Bun's lint parse takes all 836 cases of the seed (checked with the parse of /tmp/nuv/sitesprobe, a probe of the other unit).
+  The generated cases of the fixture (--small) export the class and read the parameters: 321 of the 836 get a line of
+                       no-unused-vars from ESLint (830 when they did not), 22 a line of no-undef.
 
 no-unused-vars (the rule itself is modelled in ../../rule-no-unused-vars/topdown: nuv-sim.cjs, nuv-sim-ts.cjs, oracle.cjs)
   extract-tseslint-cases.cjs   node extract-tseslint-cases.cjs <test.ts> [--all] > cases.json : the cases of a test file of

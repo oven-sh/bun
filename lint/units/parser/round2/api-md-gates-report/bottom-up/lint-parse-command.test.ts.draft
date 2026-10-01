@@ -1,0 +1,40 @@
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+
+// DRAFT, not run. It belongs in test/bundler/transpiler/lint-parse-command.test.ts once
+// `git grep -n parse_for_lint -- src/runtime/cli/lint_command.rs` finds the call of the lint parse.
+// Every expected stderr below is a prediction: replace it with what the first run prints, after comparing it with the
+// row of the Rust test that has the same source (src/js_parser/parse/syntax_errors.rs).
+// Measured at be1ebe5295, where a TypeScript file goes through `Parser::parse` (bun-debug --lint, stderr is a pipe):
+//   let x: (a: ) => void;   no output, exit code 0            (only a lint parse rejects it: this row fails without the switch)
+//   let x = ;               b.ts(1,9): error syntax: Unexpected ;                exit code 2
+//   a + b = c;              d.ts(1,1): error syntax: Invalid assignment target   exit code 2 (reported by the visit pass)
+
+const lintEnv = { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_LINT: "1" };
+
+async function lint(name: string, text: string) {
+  using dir = tempDir("lint-parse-command", { [name]: text });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--lint", name],
+    env: lintEnv,
+    cwd: String(dir),
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+test.concurrent.each([
+  // A type that is missing inside an attempt: a parse without lint takes it.
+  ["a.ts", "let x: (a: ) => void;\n", "a.ts(1,12): error TS1110: Type expected.\n", 2],
+  ["b.ts", "let x = ;\n", "b.ts(1,9): error TS1109: Expression expected.\n", 2],
+  ["c.tsx", "const e = <A<number> b={(1 as number)!} />;\n", "", 0],
+  ["d.ts", "const y = (1 as number)!;\nexport {};\n", "", 0],
+])("bun --lint %s", async (name, text, stderr, exitCode) => {
+  const result = await lint(name, text);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).toBe(stderr);
+  expect(result.exitCode).toBe(exitCode);
+});

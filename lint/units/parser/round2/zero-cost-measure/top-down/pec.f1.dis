@@ -1,0 +1,97 @@
+               	pushq	%rbp
+               	movq	%rsp, %rbp
+               	pushq	%r15
+               	pushq	%r14
+               	pushq	%r13
+               	pushq	%r12
+               	pushq	%rbx
+               	subq	$0x28, %rsp
+               	movq	%r8, %rbx
+               	movq	%rdx, %rax
+               	movl	%esi, %r13d
+               	movq	%rdi, %r14
+               	movq	0xcd8(%rdi), %rdx
+               	movq	%rsp, %rsi
+               	xorl	%edi, %edi
+               	subq	%rdx, %rsi
+               	cmovaeq	%rsi, %rdi
+               	cmpq	$0x20000, %rdi          # imm = 0x20000
+               	jbe	0x2945124 <parse_expr_common+0x114>
+               	movzbl	0x16a(%r14), %edx
+               	movb	%dl, -0x29(%rbp)
+               	movzbl	0x345(%r14), %edx
+               	movb	%dl, -0x2a(%rbp)
+               	movzbl	%r13b, %r15d
+               	movzbl	%cl, %r12d
+               	leaq	-0x3c(%rbp), %rdi
+               	movq	%r14, %rsi
+               	movl	%r15d, %edx
+               	movq	%rax, %rcx
+               	movl	%r12d, %r8d
+               	callq	0x2982cb0 <parse_prefix>
+               	movzbl	-0x3c(%rbp), %eax
+               	cmpb	$-0x1, %al
+               	je	0x29450f2 <parse_expr_common+0xe2>
+               	movzwl	-0x3b(%rbp), %ecx
+               	movq	-0x39(%rbp), %rdx
+               	movq	%rdx, -0x50(%rbp)
+               	movq	-0x34(%rbp), %rdx
+               	movq	%rdx, -0x4b(%rbp)
+               	movb	%al, (%rbx)
+               	movw	%cx, 0x1(%rbx)
+               	movq	-0x50(%rbp), %rax
+               	movq	-0x4b(%rbp), %rcx
+               	movq	%rax, 0x3(%rbx)
+               	movq	%rcx, 0x8(%rbx)
+               	cmpb	$0x14, %r13b
+               	ja	0x2945104 <parse_expr_common+0xf4>
+               	cmpb	$0x0, -0x2a(%rbp)
+               	je	0x2945104 <parse_expr_common+0xf4>
+               	cmpb	$0x0, -0x29(%rbp)
+               	jne	0x2945104 <parse_expr_common+0xf4>
+               	movq	%r14, %rdi
+               	movq	%rbx, %rsi
+               	movl	$0x14, %edx
+               	movl	%r12d, %ecx
+               	callq	0x29926e0 <parse_suffix>
+               	cmpb	$-0x1, %al
+               	jne	0x2945115 <parse_expr_common+0x105>
+               	movzbl	(%rbx), %eax
+               	cmpl	$0x6, %eax
+               	je	0x29450fc <parse_expr_common+0xec>
+               	cmpl	$0x4, %eax
+               	jne	0x2945104 <parse_expr_common+0xf4>
+               	movq	0x4(%rbx), %rax
+               	movb	$0x1, 0x2c(%rax)
+               	jmp	0x2945104 <parse_expr_common+0xf4>
+               	movzbl	-0x3b(%rbp), %eax
+               	movzbl	-0x3a(%rbp), %edx
+               	jmp	0x2945115 <parse_expr_common+0x105>
+               	movq	0x4(%rbx), %rax
+               	movb	$0x1, 0x2f(%rax)
+               	movq	%r14, %rdi
+               	movq	%rbx, %rsi
+               	movl	%r15d, %edx
+               	movl	%r12d, %ecx
+               	callq	0x29926e0 <parse_suffix>
+               	addq	$0x28, %rsp
+               	popq	%rbx
+               	popq	%r12
+               	popq	%r13
+               	popq	%r14
+               	popq	%r15
+               	popq	%rbp
+               	retq
+               	movzbl	%r13b, %esi
+               	movzbl	%cl, %ecx
+               	movq	%r14, %rdi
+               	movq	%rax, %rdx
+               	movq	%rbx, %r8
+               	addq	$0x28, %rsp
+               	popq	%rbx
+               	popq	%r12
+               	popq	%r13
+               	popq	%r14
+               	popq	%r15
+               	popq	%rbp
+               	jmp	0x29477a0 <parse_expr_past_stack_bound>

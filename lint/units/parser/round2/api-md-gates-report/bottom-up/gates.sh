@@ -125,7 +125,10 @@ case "${1:-}" in
     for side in base head; do
       python3 /workspace/notes/lint/tools/symsizes.py "$M/$side/bun-profile" > "$OUT/symsizes.$side.txt" 2>&1
       python3 /workspace/notes/lint/tools/symsizes.py "$M/$side/bun-profile" --json > "$OUT/symsizes.$side.json" 2>&1
+      # symsizes.py looks for skip_type_script_type_with_opts, which the head no longer has: the bytes by sink are in this table.
+      python3 "$N/measure/sizeprobe-a/bysink.py" "$M/$side/bun-profile" > "$OUT/bysink.$side.txt" 2>&1
     done
+    python3 "$N/measure/symdiff.py" "$M/base/bun-profile" "$M/head/bun-profile" > "$OUT/symdiff.base-head.txt" 2>&1
     paste "$OUT/symsizes.base.txt" "$OUT/symsizes.head.txt" | tee -a "$OUT/summary.txt" ;;
   sizes)
     run sizes "$N/measure/sizeprobe/run.sh" "$WT" final "$WT/build/debug/codegen" "$OUT/sizes"

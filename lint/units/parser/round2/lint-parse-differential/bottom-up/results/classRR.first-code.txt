@@ -1,0 +1,1156 @@
+   4534  small ts no-code
+  26034  small ts other-code
+ 116597  small ts same
+  12003  small ts same-code-other-range
+     96  small ts same-code-same-start
+  13481  small tsx no-code
+  27227  small tsx other-code
+ 109616  small tsx same
+  11626  small tsx same-code-other-range
+     89  small tsx same-code-same-start
+     27  targeted ts no-code
+     51  targeted ts other-code
+    172  targeted ts same
+     16  targeted ts same-code-same-start
+     69  targeted tsx no-code
+     52  targeted tsx other-code
+    122  targeted tsx same
+     16  targeted tsx same-code-same-start
+     42  targeted09 tsx no-code
+     12  targeted09 tsx other-code
+     19  targeted09 tsx same
+409 groups
+ 74758 ts  70471 tsx  74966 src  same | TS1005
+        texts that differ: ',' expected. / ')' expected.: 20253 | ',' expected. / ';' expected.: 17336 | ',' expected. / ']' expected.: 14416 | ',' expected. / '{' expected.: 5956 | ',' expected. / '>' expected.: 3366
+ 22211 ts  20588 tsx  22210 src  same | TS1110
+  8960 ts   8737 tsx   9000 src  same-code-other-range | TS1005 '_' expected. | lint '_' expected. before
+        [ts] "let x: A?];"  tsc TS1005@9..10 "',' expected." | lint TS1005@8..9 "Expected \";\" but found \"?\""
+        [ts] "let x: A?);"  tsc TS1005@9..10 "',' expected." | lint TS1005@8..9 "Expected \";\" but found \"?\""
+  8622 ts   7968 tsx   8622 src  same | TS1131
+  5744 ts   5565 tsx   5753 src  same | TS1109
+  4744 ts   4530 tsx   4753 src  other-code | tsc TS1005 '_' expected. | lint TS1110 Type expected.
+        [ts] "let x: A[;"  tsc TS1005@9..10 "']' expected." | lint TS1110@9..10 "Unexpected ;"
+        [ts] "let x: 1[;"  tsc TS1005@9..10 "']' expected." | lint TS1110@9..10 "Unexpected ;"
+  3561 ts   3350 tsx   3561 src  other-code | tsc TS1138 Parameter declaration expected. | lint TS1003 Identifier expected.
+        [ts] "let x: (A,;"  tsc TS1138@10..11 "Parameter declaration expected." | lint TS1003@10..11 "Expected identifier but found \";\""
+        [ts] "f<{ ( }>(x);"  tsc TS1138@6..7 "Parameter declaration expected." | lint TS1003@4..5 "Expected identifier but found \"(\""
+  3384 ts   3384 tsx   3384 src  other-code | tsc TS1144 '_' or '_' expected. | lint TS1005 '_' expected.
+        [ts] "function f(a: A)) {}"  tsc TS1144@16..17 "'{' or ';' expected." | lint TS1005@16..17 "Expected \";\" but found \")\""
+        [ts] "function f(a: 1)) {}"  tsc TS1144@16..17 "'{' or ';' expected." | lint TS1005@16..17 "Expected \";\" but found \")\""
+  2985 ts   2913 tsx   2988 src  other-code | tsc TS1110 Type expected. | lint TS1005 '_' expected.
+        [ts] "let x: [in;"  tsc TS1110@8..10 "Type expected." | lint TS1005@10..11 "Expected \"]\" but found \";\""
+        [ts] "f<[A,,B>(x);"  tsc TS1110@5..6 "Type expected." | lint TS1005@11..12 "Expected \"]\" but found \";\""
+  2884 ts   2754 tsx   2893 src  same | TS1003
+  2332 ts   2287 tsx   2352 src  same-code-other-range | TS1005 '_' expected. | lint '_' expected. after
+        [ts] "f<(A>(x);"  tsc TS1005@4..5 "')' expected." | lint TS1005@8..9 "Expected \")\" but found \";\""
+        [ts] "f<[A>(x);"  tsc TS1005@4..5 "',' expected." | lint TS1005@8..9 "Expected \"]\" but found \";\""
+  1863 ts   1734 tsx   1864 src  same | TS1359
+  1806 ts   1733 tsx   1813 src  other-code | tsc TS1109 Expression expected. | lint TS1005 '_' expected.
+        [ts] "f<import]>(x);"  tsc TS1109@2..8 "Expression expected." | lint TS1005@8..9 "Expected \"(\" but found \"]\""
+        [ts] "f<{ a!:  }>(x);"  tsc TS1109@9..10 "Expression expected." | lint TS1005@5..6 "Expected \"}\" but found \"!\""
+     0 ts   3388 tsx   3388 src  no-code | tsc TS1109 Expression expected. | lint: Expected JSX element name but found "{"
+        [tsx] "let v = <{>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \"{\""
+        [tsx] "let v = <{}>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \"{\""
+  1580 ts   1524 tsx   1580 src  other-code | tsc TS1109 Expression expected. | lint TS1110 Type expected.
+        [ts] "type X = { [.b]: A };"  tsc TS1109@12..13 "Expression expected." | lint TS1110@12..13 "Unexpected ."
+        [ts] "type X = { [ in]: V };"  tsc TS1109@13..15 "Expression expected." | lint TS1110@13..15 "Unexpected in"
+  1542 ts   1496 tsx   1542 src  other-code | tsc TS1005 '_' expected. | lint TS1109 Expression expected.
+        [ts] "f<A[>(x);"  tsc TS1005@4..5 "']' expected." | lint TS1109@4..5 "Unexpected >"
+        [ts] "f<()>(x);"  tsc TS1005@4..5 "'=>' expected." | lint TS1109@3..4 "Unexpected )"
+  1410 ts   1410 tsx   1410 src  other-code | tsc TS1442 Expected '_' for property initializer. | lint TS1005 '_' expected.
+        [ts] "class C { @d x: A); }"  tsc TS1442@17..18 "Expected '=' for property initializer." | lint TS1005@17..18 "Expected \";\" but found \")\""
+        [ts] "class C { @d x: A>; }"  tsc TS1442@17..18 "Expected '=' for property initializer." | lint TS1005@17..18 "Expected \";\" but found \">\""
+   263 ts   2187 tsx   2191 src  other-code | tsc TS1003 Identifier expected. | lint TS1005 '_' expected.
+        [tsx] "<A?>x"  tsc TS1003@2..3 "Identifier expected." | lint TS1005@2..3 "Expected \">\" but found \"?\""
+        [tsx] "let x: A\n<B;"  tsc TS1003@11..12 "Identifier expected." | lint TS1005@11..12 "Expected \">\" but found \";\""
+     0 ts   2399 tsx   2399 src  no-code | tsc TS1109 Expression expected. | lint: Expected JSX element name but found "("
+        [tsx] "let v = <(>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \"(\""
+        [tsx] "let v = <()>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \"(\""
+   818 ts    792 tsx    818 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected <name>
+        [ts] "let x: A!.B;"  tsc TS1005@9..10 "',' expected." | lint @10+1 "Unexpected B"
+        [ts] "let x: (A).B;"  tsc TS1005@10..11 "',' expected." | lint @11+1 "Unexpected B"
+   805 ts    804 tsx    805 src  other-code | tsc TS1110 Type expected. | lint TS1109 Expression expected.
+        [ts] "f<[>(x);"  tsc TS1110@3..4 "Type expected." | lint TS1109@3..4 "Unexpected >"
+        [ts] "f<[,>(x);"  tsc TS1110@3..4 "Type expected." | lint TS1109@4..5 "Unexpected >"
+     0 ts   1286 tsx   1286 src  no-code | tsc TS1109 Expression expected. | lint: Expected JSX element name but found "["
+        [tsx] "let v = <[>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \"[\""
+        [tsx] "let v = <[]>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \"[\""
+   554 ts    553 tsx    554 src  other-code | tsc TS1136 Property assignment expected. | lint TS1003 Identifier expected.
+        [ts] "f<{ ; >(x);"  tsc TS1136@4..5 "Property assignment expected." | lint TS1003@4..5 "Expected identifier but found \";\""
+        [ts] "f<{ ; }>(x);"  tsc TS1136@4..5 "Property assignment expected." | lint TS1003@4..5 "Expected identifier but found \";\""
+   546 ts    546 tsx    546 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected end of file
+        [ts] "type X = { a ;"  tsc TS1005@14..14 "'}' expected." | lint @14+0 "Unexpected end of file"
+        [ts] "type X = { a? ;"  tsc TS1005@15..15 "'}' expected." | lint @15+0 "Unexpected end of file"
+   532 ts    532 tsx    532 src  same | TS1128
+   466 ts    466 tsx    466 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected {
+        [ts] "type X = class {};"  tsc TS1005@15..16 "';' expected." | lint @15+1 "Unexpected {"
+        [ts] "interface I extends { a  {}"  tsc TS1005@25..26 "',' expected." | lint @25+1 "Unexpected {"
+   372 ts    365 tsx    373 src  other-code | tsc TS1005 '_' expected. | lint TS1003 Identifier expected.
+        [ts] "type X = <>;"  tsc TS1005@11..12 "'(' expected." | lint TS1003@10..11 "Expected identifier but found \">\""
+        [ts] "let x: (A).;"  tsc TS1005@10..11 "',' expected." | lint TS1003@11..12 "Expected identifier but found \";\""
+     0 ts    695 tsx    695 src  no-code | tsc TS17008 JSX element '_' has no corresponding closing tag. | lint: Syntax Error
+        [tsx] "<T>x;"  tsc TS17008@1..2 "JSX element 'T' has no corresponding closing tag." | lint @3+0 "Syntax Error"
+        [tsx] "<T>(x);"  tsc TS17008@1..2 "JSX element 'T' has no corresponding closing tag." | lint @3+0 "Syntax Error"
+   342 ts    341 tsx    342 src  other-code | tsc TS1138 Parameter declaration expected. | lint TS1005 '_' expected.
+        [ts] "type X = (A,;"  tsc TS1138@12..13 "Parameter declaration expected." | lint TS1005@11..12 "Expected \")\" but found \",\""
+        [ts] "f<{\na()\nb(\n}>(x);"  tsc TS1138@11..12 "Parameter declaration expected." | lint TS1005@8..9 "Expected \"{\" but found \"b\""
+   309 ts    309 tsx    309 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected )
+        [ts] "(a?);"  tsc TS1005@4..5 "'=>' expected." | lint @3+1 "Unexpected )"
+        [ts] "(a?) = 1;"  tsc TS1005@5..6 "'=>' expected." | lint @3+1 "Unexpected )"
+   303 ts    303 tsx    303 src  no-code | tsc TS1138 Parameter declaration expected. | lint: Unexpected :
+        [ts] "type X = { 1(: A };"  tsc TS1138@13..14 "Parameter declaration expected." | lint @13+1 "Unexpected :"
+        [ts] "type X = { as(: A };"  tsc TS1138@14..15 "Parameter declaration expected." | lint @14+1 "Unexpected :"
+   290 ts    268 tsx    290 src  same-code-other-range | TS1110 Type expected. | lint Type expected. before
+        [ts] "let x: ?;"  tsc TS1110@8..9 "Type expected." | lint TS1110@7..8 "Unexpected ?"
+        [ts] "type X = ?;"  tsc TS1110@10..11 "Type expected." | lint TS1110@9..10 "Unexpected ?"
+   232 ts    220 tsx    232 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected ":"
+        [ts] "(a: A);"  tsc TS1005@6..7 "'=>' expected." | lint @2+1 "Unexpected \":\""
+        [ts] "(a?: A);"  tsc TS1005@7..8 "'=>' expected." | lint @3+1 "Unexpected \":\""
+   228 ts    216 tsx    228 src  other-code | tsc TS1110 Type expected. | lint TS1003 Identifier expected.
+        [ts] "f<keyof.>(x);"  tsc TS1110@7..8 "Type expected." | lint TS1003@8..9 "Expected identifier but found \">\""
+        [ts] "f<unique.>(x);"  tsc TS1110@8..9 "Type expected." | lint TS1003@9..10 "Expected identifier but found \">\""
+   218 ts    202 tsx    218 src  same-code-other-range | TS1110 Type expected. | lint Type expected. after
+        [ts] "let x: [in: ];"  tsc TS1110@8..10 "Type expected." | lint TS1110@12..13 "Unexpected ]"
+        [ts] "let x: [in?: ];"  tsc TS1110@8..10 "Type expected." | lint TS1110@13..14 "Unexpected ]"
+   162 ts    160 tsx    162 src  other-code | tsc TS1359 Identifier expected. '_' is a reserved word that cannot be used here. | lint TS1005 '_' expected.
+        [ts] "f<infer  extends A>(x);"  tsc TS1359@9..16 "Identifier expected. 'extends' is a reserved word that cannot be used here." | lint TS1005@9..16 "Expected \";\" but found \"extends\""
+        [ts] "f<[infer  extends A]>(x);"  tsc TS1359@10..17 "Identifier expected. 'extends' is a reserved word that cannot be used here." | lint TS1005@10..17 "Expected \"]\" but found \"extends\""
+   157 ts    157 tsx    157 src  other-code | tsc TS1137 Expression or comma expected. | lint TS1109 Expression expected.
+        [ts] "let x: A\n[;"  tsc TS1137@10..11 "Expression or comma expected." | lint TS1109@10..11 "Unexpected ;"
+        [ts] "f<[var>(x);"  tsc TS1137@3..6 "Expression or comma expected." | lint TS1109@3..6 "Unexpected var"
+   149 ts    149 tsx    149 src  other-code | tsc TS1131 Property or signature expected. | lint TS1005 '_' expected.
+        [ts] "f<{ a?; >(x);"  tsc TS1131@8..9 "Property or signature expected." | lint TS1005@5..6 "Expected \"}\" but found \"?\""
+        [ts] "f<{\na\nb\n>(x);"  tsc TS1131@8..9 "Property or signature expected." | lint TS1005@6..7 "Expected \"}\" but found \"b\""
+   148 ts    147 tsx    150 src  other-code | tsc TS1109 Expression expected. | lint TS1003 Identifier expected.
+        [ts] "f<@>(x);"  tsc TS1109@3..4 "Expression expected." | lint TS1003@3..4 "Expected identifier but found \">\""
+        [ts] "class C implements @ {}"  tsc TS1109@19..20 "Expression expected." | lint TS1003@21..22 "Expected identifier but found \"{\""
+   147 ts    145 tsx    146 src  other-code | tsc TS1011 An element access expression should take an argument. | lint TS1109 Expression expected.
+        [ts] "f<A\n[]>(x);"  tsc TS1011@5..5 "An element access expression should take an argument." | lint TS1109@5..6 "Unexpected ]"
+        [ts] "f<A[]]>(x);"  tsc TS1011@4..4 "An element access expression should take an argument." | lint TS1109@4..5 "Unexpected ]"
+     0 ts    283 tsx    283 src  no-code | tsc TS1109 Expression expected. | lint: Unexpected end of file
+        [tsx] "class C implements <> {}"  tsc TS1109@19..20 "Expression expected." | lint @24+0 "Unexpected end of file"
+        [tsx] "class C implements <B> {}"  tsc TS1109@19..20 "Expression expected." | lint @25+0 "Unexpected end of file"
+   138 ts    128 tsx    138 src  other-code | tsc TS1478 Identifier or string literal expected. | lint TS1003 Identifier expected.
+        [ts] "let x: import('x', { with: { : 1 } });"  tsc TS1478@29..30 "Identifier or string literal expected." | lint TS1003@29..30 "Expected identifier but found \":\""
+        [ts] "type X = import('x', { with: { : 1 } });"  tsc TS1478@31..32 "Identifier or string literal expected." | lint TS1003@31..32 "Expected identifier but found \":\""
+   130 ts    130 tsx    130 src  other-code | tsc TS1359 Identifier expected. '_' is a reserved word that cannot be used here. | lint TS1110 Type expected.
+        [ts] "type X = (...in: A[]) => ;"  tsc TS1359@13..15 "Identifier expected. 'in' is a reserved word that cannot be used here." | lint TS1110@10..13 "Unexpected ..."
+        [ts] "type X = (...new: A[]) => ;"  tsc TS1359@13..16 "Identifier expected. 'new' is a reserved word that cannot be used here." | lint TS1110@10..13 "Unexpected ..."
+   141 ts    105 tsx    141 src  other-code | tsc TS1138 Parameter declaration expected. | lint TS1109 Expression expected.
+        [ts] "f<(A,>(x);"  tsc TS1138@5..6 "Parameter declaration expected." | lint TS1109@5..6 "Unexpected >"
+        [ts] "f<new (>(x);"  tsc TS1138@7..8 "Parameter declaration expected." | lint TS1109@7..8 "Unexpected >"
+     0 ts    244 tsx    244 src  no-code | tsc TS1382 Unexpected token. Did you mean `{'_'}` or `&gt;`? | lint: Syntax Error
+        [tsx] "let v = <>>x;"  tsc TS1382@10..11 "Unexpected token. Did you mean `{'>'}` or `&gt;`?" | lint @10+0 "Syntax Error"
+        [tsx] "let v = <A>>x;"  tsc TS1382@11..12 "Unexpected token. Did you mean `{'>'}` or `&gt;`?" | lint @11+0 "Syntax Error"
+   114 ts    114 tsx    114 src  other-code | tsc TS1441 Cannot start a function call in a type annotation. | lint TS1005 '_' expected.
+        [ts] "class C { @d x:  a(); }"  tsc TS1441@18..19 "Cannot start a function call in a type annotation." | lint TS1005@18..19 "Expected \";\" but found \"(\""
+        [ts] "class C { @d x:  A(); }"  tsc TS1441@18..19 "Cannot start a function call in a type annotation." | lint TS1005@18..19 "Expected \";\" but found \"(\""
+   150 ts     77 tsx    150 src  same-code-other-range | TS1109 Expression expected. | lint Expression expected. after
+        [ts] "f<new <T>(: T) => A>(x);"  tsc TS1109@6..7 "Expression expected." | lint TS1109@10..11 "Unexpected :"
+        [ts] "class C implements -->A {}"  tsc TS1109@19..21 "Expression expected." | lint TS1109@21..22 "Unexpected >"
+   110 ts    110 tsx    110 src  other-code | tsc TS1131 Property or signature expected. | lint TS1003 Identifier expected.
+        [ts] "f<{>(x);"  tsc TS1131@3..4 "Property or signature expected." | lint TS1003@3..4 "Expected identifier but found \">\""
+        [ts] "f<{ , >(x);"  tsc TS1131@4..5 "Property or signature expected." | lint TS1003@4..5 "Expected identifier but found \",\""
+   109 ts    109 tsx    110 src  other-code | tsc TS1005 '_' expected. | lint TS1359 Identifier expected. '_' is a reserved word that cannot be used here.
+        [ts] "let x: < extends A>(a: T) => T;"  tsc TS1005@9..16 "'>' expected." | lint TS1359@9..16 "Expected identifier but found \"extends\""
+        [ts] "let x: < extends A = B>() => T;"  tsc TS1005@9..16 "'>' expected." | lint TS1359@9..16 "Expected identifier but found \"extends\""
+   105 ts    105 tsx    105 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected ]
+        [ts] "type X = [{ a: A ];"  tsc TS1005@17..18 "';' expected." | lint @17+1 "Unexpected ]"
+        [ts] "type X = [a: { a: A ];"  tsc TS1005@20..21 "';' expected." | lint @20+1 "Unexpected ]"
+   103 ts    103 tsx    103 src  other-code | tsc TS1359 Identifier expected. '_' is a reserved word that cannot be used here. | lint TS1109 Expression expected.
+        [ts] "f<<in >() => T>(x);"  tsc TS1359@3..5 "Identifier expected. 'in' is a reserved word that cannot be used here." | lint TS1109@3..5 "Unexpected in"
+        [ts] "f<<const >() => T>(x);"  tsc TS1359@3..8 "Identifier expected. 'const' is a reserved word that cannot be used here." | lint TS1109@3..8 "Unexpected const"
+    92 ts     88 tsx     92 src  other-code | tsc TS1003 Identifier expected. | lint TS1109 Expression expected.
+        [ts] "f<(...)>(x);"  tsc TS1003@6..7 "Identifier expected." | lint TS1109@3..6 "Unexpected ..."
+        [ts] "f<typeof>(x);"  tsc TS1003@8..9 "Identifier expected." | lint TS1109@8..9 "Unexpected >"
+     0 ts    177 tsx    177 src  no-code | tsc TS1109 Expression expected. | lint: Expected JSX element name but found "."
+        [tsx] "let v = <.>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \".\""
+        [tsx] "let v = <.5>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \".\""
+    90 ts     80 tsx     90 src  no-code | tsc TS1005 '_' expected. | lint: Cannot use "yield" or "await" here.
+        [ts] "let x: (await: A)  void;"  tsc TS1005@19..23 "'=>' expected." | lint @8+5 "Cannot use \"yield\" or \"await\" here."
+        [ts] "let x: (await: A => void;"  tsc TS1005@17..19 "',' expected." | lint @8+5 "Cannot use \"yield\" or \"await\" here."
+    81 ts     81 tsx     81 src  no-code | tsc TS1131 Property or signature expected. | lint: Unexpected )
+        [ts] "type X = { ) };"  tsc TS1131@11..12 "Property or signature expected." | lint @11+1 "Unexpected )"
+        [ts] "type X = { a) };"  tsc TS1131@11..12 "Property or signature expected." | lint @12+1 "Unexpected )"
+    81 ts     74 tsx     81 src  same-code-same-start | TS1005 '_' expected. | lint '_' expected. longer
+        [ts] "let a: A<B>>= c;"  tsc TS1005@11..12 "',' expected." | lint TS1005@11..13 "Expected \";\" but found \">=\""
+        [ts] "let x: A<B<<D>>>;"  tsc TS1005@14..15 "'(' expected." | lint TS1005@14..16 "Expected \"(\" but found \">>\""
+    75 ts     74 tsx     75 src  other-code | tsc TS1138 Parameter declaration expected. | lint TS1110 Type expected.
+        [ts] "type X = new (;"  tsc TS1138@14..15 "Parameter declaration expected." | lint TS1110@14..15 "Unexpected ;"
+        [ts] "type X = new ( =>;"  tsc TS1138@15..17 "Parameter declaration expected." | lint TS1110@15..17 "Unexpected =>"
+   113 ts     35 tsx    113 src  no-code | tsc TS1109 Expression expected. | lint: Unexpected =>
+        [ts] "class C implements <T,>() =>  {}"  tsc TS1109@19..20 "Expression expected." | lint @26+2 "Unexpected =>"
+        [ts] "class C implements <as>() =>  {}"  tsc TS1109@19..20 "Expression expected." | lint @26+2 "Unexpected =>"
+     0 ts    146 tsx    146 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "a:" in namespaced JSX name
+        [tsx] "let v = <a: A]>x;"  tsc TS1003@13..14 "Identifier expected." | lint @11+0 "Expected identifier after \"a:\" in namespaced JSX name"
+        [tsx] "let v = <a: A)>x;"  tsc TS1003@13..14 "Identifier expected." | lint @11+0 "Expected identifier after \"a:\" in namespaced JSX name"
+    65 ts     72 tsx     72 src  other-code | tsc TS1139 Type parameter declaration expected. | lint TS1003 Identifier expected.
+        [tsx] "let v = <A,]>x;"  tsc TS1139@11..12 "Type parameter declaration expected." | lint TS1003@11..12 "Expected identifier but found \"]\""
+        [tsx] "let v = <A,)>x;"  tsc TS1139@11..12 "Type parameter declaration expected." | lint TS1003@11..12 "Expected identifier but found \")\""
+    64 ts     66 tsx     66 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected :
+        [ts] "type X = { a:  b: B };"  tsc TS1005@16..17 "';' expected." | lint @16+1 "Unexpected :"
+        [ts] "type X = { a: A : B };"  tsc TS1005@16..17 "';' expected." | lint @16+1 "Unexpected :"
+    60 ts     60 tsx     60 src  other-code | tsc TS1434 Unexpected keyword or identifier. | lint TS1005 '_' expected.
+        [ts] "x\nas A;"  tsc TS1434@2..4 "Unexpected keyword or identifier." | lint TS1005@5..6 "Expected \";\" but found \"A\""
+        [ts] "f<A\nB]>(x);"  tsc TS1434@4..5 "Unexpected keyword or identifier." | lint TS1005@5..6 "Expected \";\" but found \"]\""
+    57 ts     53 tsx     57 src  same | TS1385
+    54 ts     54 tsx     54 src  other-code | tsc TS1135 Argument expression expected. | lint TS1109 Expression expected.
+        [ts] "f<import(, A)>(x);"  tsc TS1135@9..10 "Argument expression expected." | lint TS1109@9..10 "Unexpected ,"
+        [ts] "f<keyof ( => void>(x);"  tsc TS1135@10..12 "Argument expression expected." | lint TS1109@10..12 "Unexpected =>"
+    51 ts     51 tsx     51 src  other-code | tsc TS1011 An element access expression should take an argument. | lint TS1005 '_' expected.
+        [ts] "interface I extends A\n[] {}"  tsc TS1011@23..23 "An element access expression should take an argument." | lint TS1005@22..23 "Expected \"{\" but found \"[\""
+        [ts] "interface I extends A[]] {}"  tsc TS1011@22..22 "An element access expression should take an argument." | lint TS1005@23..24 "Expected \"{\" but found \"]\""
+    51 ts     51 tsx     51 src  no-code | tsc TS1005 '_' expected. | lint: Invalid binding pattern
+        [ts] "(a ? b : c) => d;"  tsc TS1005@12..14 "';' expected." | lint @1+0 "Invalid binding pattern"
+        [ts] "let v = a ? (b): (a<B) => c : d;"  tsc TS1005@21..22 "'>' expected." | lint @18+0 "Invalid binding pattern"
+    48 ts     48 tsx     48 src  no-code | tsc TS1131 Property or signature expected. | lint: Unexpected ]
+        [ts] "type X = { k]: A };"  tsc TS1131@11..12 "Property or signature expected." | lint @12+1 "Unexpected ]"
+        [ts] "type X = { a]: A };"  tsc TS1131@11..12 "Property or signature expected." | lint @12+1 "Unexpected ]"
+    47 ts     47 tsx     47 src  other-code | tsc TS1131 Property or signature expected. | lint TS1110 Type expected.
+        [ts] "type X = { a!:  };"  tsc TS1131@11..12 "Property or signature expected." | lint TS1110@16..17 "Unexpected }"
+        [ts] "type X = { -1:  };"  tsc TS1131@11..12 "Property or signature expected." | lint TS1110@16..17 "Unexpected }"
+    45 ts     45 tsx     45 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected void
+        [ts] "type X = { () void };"  tsc TS1005@14..18 "';' expected." | lint @14+4 "Unexpected void"
+        [ts] "type X = { a() void };"  tsc TS1005@15..19 "';' expected." | lint @15+4 "Unexpected void"
+    46 ts     40 tsx     46 src  no-code | tsc TS1110 Type expected. | lint: Cannot use "yield" or "await" here.
+        [ts] "let x: (await) => ;"  tsc TS1110@18..19 "Type expected." | lint @8+5 "Cannot use \"yield\" or \"await\" here."
+        [ts] "let x: (await: A) => ;"  tsc TS1110@21..22 "Type expected." | lint @8+5 "Cannot use \"yield\" or \"await\" here."
+     0 ts     84 tsx     84 src  no-code | tsc TS1109 Expression expected. | lint: Expected JSX element name but found <literal>
+        [tsx] "let v = <1>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \"1\""
+        [tsx] "let v = <5>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \"5\""
+    40 ts     40 tsx     40 src  no-code | tsc TS1131 Property or signature expected. | lint: Unexpected end of file
+        [ts] "type X = { a A;"  tsc TS1131@11..12 "Property or signature expected." | lint @15+0 "Unexpected end of file"
+        [ts] "type X = { a!: A ;"  tsc TS1131@11..12 "Property or signature expected." | lint @18+0 "Unexpected end of file"
+    36 ts     36 tsx     36 src  same-code-other-range | TS1109 Expression expected. | lint Expression expected. before
+        [ts] "f<await?: A]>(x);"  tsc TS1109@8..9 "Expression expected." | lint TS1109@7..8 "Unexpected ?"
+        [ts] "f< await?: A }>(x);"  tsc TS1109@9..10 "Expression expected." | lint TS1109@8..9 "Unexpected ?"
+    36 ts     33 tsx     36 src  no-code | tsc TS1110 Type expected. | lint: Expected number but found "readonly"
+        [ts] "let x:  -readonly a: A };"  tsc TS1110@8..9 "Type expected." | lint @9+8 "Expected number but found \"readonly\""
+        [ts] "type X =  -readonly a: A };"  tsc TS1110@10..11 "Type expected." | lint @11+8 "Expected number but found \"readonly\""
+    34 ts     34 tsx     34 src  no-code | tsc TS1144 '_' or '_' expected. | lint: Unexpected <name>
+        [ts] "function f(): A!.B { return x; }"  tsc TS1144@16..17 "'{' or ';' expected." | lint @17+1 "Unexpected B"
+        [ts] "function f(): (A).B { return x; }"  tsc TS1144@17..18 "'{' or ';' expected." | lint @18+1 "Unexpected B"
+    33 ts     33 tsx     33 src  other-code | tsc TS1068 Unexpected token. A constructor, method, accessor, or property was expected. | lint TS1003 Identifier expected.
+        [ts] "class C { (): void }"  tsc TS1068@10..11 "Unexpected token. A constructor, method, accessor, or property was expected." | lint TS1003@10..11 "Expected identifier but found \"(\""
+        [ts] "class C { @d x: A\n]; }"  tsc TS1068@18..19 "Unexpected token. A constructor, method, accessor, or property was expected." | lint TS1003@18..19 "Expected identifier but found \"]\""
+    34 ts     32 tsx     34 src  same | TS1002
+    34 ts     32 tsx     34 src  same | TS1160
+     0 ts     66 tsx     66 src  no-code | tsc TS1005 '_' expected. | lint: Syntax Error
+        [tsx] "f<\n<B>>(x);"  tsc TS1005@6..7 "'(' expected." | lint @6+0 "Syntax Error"
+        [tsx] "f<[<B>]>(x);"  tsc TS1005@6..7 "'(' expected." | lint @6+0 "Syntax Error"
+    33 ts     33 tsx     33 src  other-code | tsc TS1136 Property assignment expected. | lint TS1110 Type expected.
+        [ts] "interface I extends { ():  } {}"  tsc TS1136@22..23 "Property assignment expected." | lint TS1110@27..28 "Unexpected }"
+        [ts] "interface I extends { -1:  } {}"  tsc TS1136@22..23 "Property assignment expected." | lint TS1110@27..28 "Unexpected }"
+    32 ts     32 tsx     32 src  other-code | tsc TS1137 Expression or comma expected. | lint TS1110 Type expected.
+        [ts] "interface I extends [?] {}"  tsc TS1137@21..22 "Expression or comma expected." | lint TS1110@21..22 "Unexpected ?"
+        [ts] "interface I extends [: A] {}"  tsc TS1137@21..22 "Expression or comma expected." | lint TS1110@21..22 "Unexpected :"
+    30 ts     30 tsx     30 src  other-code | tsc TS1228 A type predicate is only allowed in return type position for functions and methods. | lint TS1005 '_' expected.
+        [ts] "f< a\nis A>(x);"  tsc TS1228@5..8 "A type predicate is only allowed in return type position for functions and methods." | lint TS1005@8..9 "Expected \";\" but found \"A\""
+        [ts] "let x:  a\nis A;"  tsc TS1228@10..13 "A type predicate is only allowed in return type position for functions and methods." | lint TS1005@13..14 "Expected \";\" but found \"A\""
+    30 ts     28 tsx     30 src  same | TS1386
+    28 ts     28 tsx     28 src  other-code | tsc TS1134 Variable declaration expected. | lint TS1003 Identifier expected.
+        [ts] "let x: A,];"  tsc TS1134@9..10 "Variable declaration expected." | lint TS1003@9..10 "Expected identifier but found \"]\""
+        [ts] "let x: A,);"  tsc TS1134@9..10 "Variable declaration expected." | lint TS1003@9..10 "Expected identifier but found \")\""
+    28 ts     28 tsx     28 src  other-code | tsc TS1136 Property assignment expected. | lint TS1005 '_' expected.
+        [ts] "interface I extends { (a A): B } {}"  tsc TS1136@22..23 "Property assignment expected." | lint TS1005@25..26 "Expected \")\" but found \"A\""
+        [ts] "interface I extends { (a: A: B } {}"  tsc TS1136@22..23 "Property assignment expected." | lint TS1005@27..28 "Expected \")\" but found \":\""
+    27 ts     27 tsx     27 src  no-code | tsc TS1005 '_' expected. | lint: Cannot use "await" here
+        [ts] "f<{ await >(x);"  tsc TS1005@10..11 "',' expected." | lint @4+5 "Cannot use \"await\" here"
+        [ts] "f<{ await A }>(x);"  tsc TS1005@10..11 "',' expected." | lint @4+5 "Cannot use \"await\" here"
+    26 ts     26 tsx     26 src  no-code | tsc TS1109 Expression expected. | lint: Unexpected in
+        [ts] "interface I extends in] {}"  tsc TS1109@20..22 "Expression expected." | lint @20+2 "Unexpected in"
+        [ts] "interface I extends [in {}"  tsc TS1109@21..23 "Expression expected." | lint @21+2 "Unexpected in"
+    23 ts     23 tsx     23 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected class
+        [ts] "interface I extends class] {}"  tsc TS1005@25..26 "'{' expected." | lint @20+5 "Unexpected class"
+        [ts] "interface I extends [class {}"  tsc TS1005@29..29 "']' expected." | lint @21+5 "Unexpected class"
+    23 ts     23 tsx     23 src  other-code | tsc TS1068 Unexpected token. A constructor, method, accessor, or property was expected. | lint TS1005 '_' expected.
+        [ts] "class C { @d x:  a\nis A; }"  tsc TS1068@19..21 "Unexpected token. A constructor, method, accessor, or property was expected." | lint TS1005@22..23 "Expected \";\" but found \"A\""
+        [ts] "class C { @d x: this\nis A; }"  tsc TS1068@21..23 "Unexpected token. A constructor, method, accessor, or property was expected." | lint TS1005@24..25 "Expected \";\" but found \"A\""
+    23 ts     23 tsx     23 src  no-code | tsc TS1131 Property or signature expected. | lint: Unexpected ;
+        [ts] "type X = {;"  tsc TS1131@10..11 "Property or signature expected." | lint @10+1 "Unexpected ;"
+        [ts] "type X = { ; ;"  tsc TS1131@11..12 "Property or signature expected." | lint @11+1 "Unexpected ;"
+    22 ts     22 tsx     22 src  other-code | tsc TS1128 Declaration or statement expected. | lint TS1005 '_' expected.
+        [ts] "let x:  a? };"  tsc TS1128@11..12 "Declaration or statement expected." | lint TS1005@9..10 "Expected \";\" but found \"?\""
+        [ts] "let x:  a?; };"  tsc TS1128@12..13 "Declaration or statement expected." | lint TS1005@9..10 "Expected \";\" but found \"?\""
+     0 ts     43 tsx     43 src  no-code | tsc TS1109 Expression expected. | lint: Expected JSX element name but found "|"
+        [tsx] "let v = <|>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \"|\""
+        [tsx] "let v = <| >x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \"|\""
+    21 ts     21 tsx     21 src  other-code | tsc TS1137 Expression or comma expected. | lint TS1005 '_' expected.
+        [ts] "class C implements [import {}"  tsc TS1137@20..26 "Expression or comma expected." | lint TS1005@27..28 "Expected \"(\" but found \"{\""
+        [ts] "interface I extends [const {}"  tsc TS1137@21..26 "Expression or comma expected." | lint TS1005@27..28 "Expected \"]\" but found \"{\""
+    21 ts     21 tsx     21 src  no-code | tsc TS1109 Expression expected. | lint: Unexpected delete
+        [ts] "interface I extends delete] {}"  tsc TS1109@20..26 "Expression expected." | lint @20+6 "Unexpected delete"
+        [ts] "interface I extends  delete {}"  tsc TS1109@21..27 "Expression expected." | lint @21+6 "Unexpected delete"
+    21 ts     21 tsx     21 src  no-code | tsc TS1110 Type expected. | lint: Expected string but found ")"
+        [ts] "type X = import();"  tsc TS1110@16..17 "Type expected." | lint @16+1 "Expected string but found \")\""
+        [ts] "type X = import\n();"  tsc TS1110@17..18 "Type expected." | lint @17+1 "Expected string but found \")\""
+    21 ts     21 tsx     21 src  no-code | tsc TS1136 Property assignment expected. | lint: Unexpected {
+        [ts] "interface I extends { {}"  tsc TS1136@22..23 "Property assignment expected." | lint @22+1 "Unexpected {"
+        [ts] "interface I extends { ()  {}"  tsc TS1136@22..23 "Property assignment expected." | lint @26+1 "Unexpected {"
+    25 ts     15 tsx     25 src  no-code | tsc TS1109 Expression expected. | lint: The modifier "in" is not valid here
+        [ts] "class C implements <in T>()  T {}"  tsc TS1109@19..20 "Expression expected." | lint @20+2 "The modifier \"in\" is not valid here"
+        [ts] "class C implements <in T>( => T {}"  tsc TS1109@19..20 "Expression expected." | lint @20+2 "The modifier \"in\" is not valid here"
+    21 ts     19 tsx     21 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected default
+        [ts] "let x: ('x').default;"  tsc TS1005@12..13 "',' expected." | lint @13+7 "Unexpected default"
+        [ts] "let v = <('x').default>x;"  tsc TS1005@14..15 "'>' expected." | lint @15+7 "Unexpected default"
+    21 ts     19 tsx     21 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected new
+        [ts] "let x: ('x').new;"  tsc TS1005@12..13 "',' expected." | lint @13+3 "Unexpected new"
+        [ts] "let v = <('x').new>x;"  tsc TS1005@14..15 "'>' expected." | lint @15+3 "Unexpected new"
+     0 ts     40 tsx     40 src  no-code | tsc TS1138 Parameter declaration expected. | lint: Syntax Error
+        [tsx] "let v = a ? (b): <>( => void => c : d;"  tsc TS1138@21..23 "Parameter declaration expected." | lint @19+0 "Syntax Error"
+        [tsx] "let v = a ? (b): <as>( => as => c : d;"  tsc TS1138@23..25 "Parameter declaration expected." | lint @21+0 "Syntax Error"
+    20 ts     19 tsx     20 src  no-code | tsc TS1110 Type expected. | lint: Expected number but found ")"
+        [ts] "let x: (-);"  tsc TS1110@8..9 "Type expected." | lint @9+1 "Expected number but found \")\""
+        [ts] "type X = (-);"  tsc TS1110@10..11 "Type expected." | lint @11+1 "Expected number but found \")\""
+    17 ts     18 tsx     18 src  same-code-other-range | TS1003 Identifier expected. | lint Identifier expected. before
+        [ts] "f< a.#b>(x);"  tsc TS1003@7..7 "Identifier expected." | lint TS1003@5..7 "Expected identifier but found \"#b\""
+        [ts] "let x:  a.#b;"  tsc TS1003@12..12 "Identifier expected." | lint TS1003@10..12 "Expected identifier but found \"#b\""
+    17 ts     16 tsx     17 src  no-code | tsc TS1125 Hexadecimal digit expected. | lint: Syntax Error
+        [ts] "f<0xg>(x);"  tsc TS1125@4..4 "Hexadecimal digit expected." | lint @2+0 "Syntax Error"
+        [ts] "let x: 0xg;"  tsc TS1125@9..9 "Hexadecimal digit expected." | lint @7+0 "Syntax Error"
+    17 ts     16 tsx     17 src  no-code | tsc TS1351 An identifier or keyword cannot immediately follow a numeric literal. | lint: Syntax Error
+        [ts] "f<1a>(x);"  tsc TS1351@3..4 "An identifier or keyword cannot immediately follow a numeric literal." | lint @2+0 "Syntax Error"
+        [ts] "let x: 1a;"  tsc TS1351@8..9 "An identifier or keyword cannot immediately follow a numeric literal." | lint @7+0 "Syntax Error"
+    17 ts     16 tsx     17 src  other-code | tsc TS1003 Identifier expected. | lint TS1110 Type expected.
+        [ts] "type X = (...);"  tsc TS1003@13..14 "Identifier expected." | lint TS1110@10..13 "Unexpected ..."
+        [ts] "type X = (...) => B;"  tsc TS1003@13..14 "Identifier expected." | lint TS1110@10..13 "Unexpected ..."
+    16 ts     16 tsx     16 src  no-code | tsc TS1442 Expected '_' for property initializer. | lint: Unexpected <name>
+        [ts] "class C { @d x: A!.B; }"  tsc TS1442@18..19 "Expected '=' for property initializer." | lint @19+1 "Unexpected B"
+        [ts] "class C { @d x: (A).B; }"  tsc TS1442@19..20 "Expected '=' for property initializer." | lint @20+1 "Unexpected B"
+    16 ts     16 tsx     16 src  other-code | tsc TS1442 Expected '_' for property initializer. | lint TS1110 Type expected.
+        [ts] "class C { @d x: a is; }"  tsc TS1442@18..20 "Expected '=' for property initializer." | lint TS1110@20..21 "Unexpected ;"
+        [ts] "class C { @d x: a is ; }"  tsc TS1442@18..20 "Expected '=' for property initializer." | lint TS1110@21..22 "Unexpected ;"
+    16 ts     15 tsx     16 src  no-code | tsc TS1110 Type expected. | lint: Unsupported syntax: Legacy HTML comments not implemented yet!
+        [ts] "let x: A<!--B;"  tsc TS1110@10..12 "Type expected." | lint @9+0 "Unsupported syntax: Legacy HTML comments not implemented yet!"
+        [ts] "type X = A<!--B;"  tsc TS1110@12..14 "Type expected." | lint @11+0 "Unsupported syntax: Legacy HTML comments not implemented yet!"
+    14 ts     14 tsx     14 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected =>
+        [ts] "f<async () => >(x);"  tsc TS1005@11..13 "';' expected." | lint @11+2 "Unexpected =>"
+        [ts] "f<async () => {}>(x);"  tsc TS1005@11..13 "';' expected." | lint @11+2 "Unexpected =>"
+    14 ts     14 tsx     14 src  no-code | tsc TS1131 Property or signature expected. | lint: Unexpected =
+        [ts] "type X = {  = 1 };"  tsc TS1131@12..13 "Property or signature expected." | lint @12+1 "Unexpected ="
+        [ts] "type X = { a =  };"  tsc TS1131@11..12 "Property or signature expected." | lint @13+1 "Unexpected ="
+    14 ts     14 tsx     14 src  other-code | tsc TS1144 '_' or '_' expected. | lint TS1003 Identifier expected.
+        [ts] "function f(): (A). { return x; }"  tsc TS1144@17..18 "'{' or ';' expected." | lint TS1003@19..20 "Expected identifier but found \"{\""
+        [ts] "function f(): A<B>. { return x; }"  tsc TS1144@18..19 "'{' or ';' expected." | lint TS1003@20..21 "Expected identifier but found \"{\""
+    14 ts     14 tsx     14 src  no-code | tsc TS1110 Type expected. | lint: Expected string but found ","
+        [ts] "type X = import(,);"  tsc TS1110@16..17 "Type expected." | lint @16+1 "Expected string but found \",\""
+        [ts] "type X = import(, A);"  tsc TS1110@16..17 "Type expected." | lint @16+1 "Expected string but found \",\""
+    14 ts     14 tsx     14 src  no-code | tsc TS1135 Argument expression expected. | lint: Expected string but found ","
+        [ts] "interface I extends import(,) {}"  tsc TS1135@27..28 "Argument expression expected." | lint @27+1 "Expected string but found \",\""
+        [ts] "interface I extends import(, A) {}"  tsc TS1135@27..28 "Argument expression expected." | lint @27+1 "Expected string but found \",\""
+    14 ts     14 tsx     14 src  other-code | tsc TS1135 Argument expression expected. | lint TS1005 '_' expected.
+        [ts] "interface I extends import('x', }) {}"  tsc TS1135@32..33 "Argument expression expected." | lint TS1005@32..33 "Expected \"{\" but found \"}\""
+        [ts] "interface I extends async ( => void {}"  tsc TS1135@28..30 "Argument expression expected." | lint TS1005@26..27 "Expected \"{\" but found \"(\""
+    14 ts     14 tsx     14 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected =
+        [ts] "type X = ({ a = 1 }: A)  void;"  tsc TS1005@25..29 "'=>' expected." | lint @14+1 "Unexpected ="
+        [ts] "type X = ({ a = 1 }: A => void;"  tsc TS1005@23..25 "',' expected." | lint @14+1 "Unexpected ="
+    13 ts     13 tsx     13 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected "="
+        [ts] "f<({ a = 1 }: A)  void>(x);"  tsc TS1005@18..22 "'=>' expected." | lint @7+1 "Unexpected \"=\""
+        [ts] "f<{ a = 1 }: A) => void>(x);"  tsc TS1005@11..12 "';' expected." | lint @6+1 "Unexpected \"=\""
+    13 ts     13 tsx     13 src  no-code | tsc TS1136 Property assignment expected. | lint: Unexpected <name>
+        [ts] "interface I extends { (a: A) B } {}"  tsc TS1136@22..23 "Property assignment expected." | lint @29+1 "Unexpected B"
+        [ts] "interface I extends { <T>x: T): T } {}"  tsc TS1136@22..23 "Property assignment expected." | lint @25+1 "Unexpected x"
+    13 ts     13 tsx     13 src  no-code | tsc TS1136 Property assignment expected. | lint: Unexpected )
+        [ts] "interface I extends { ) } {}"  tsc TS1136@22..23 "Property assignment expected." | lint @22+1 "Unexpected )"
+        [ts] "interface I extends { ); } {}"  tsc TS1136@22..23 "Property assignment expected." | lint @22+1 "Unexpected )"
+    12 ts     13 tsx     13 src  same-code-same-start | TS1005 '_' expected. | lint '_' expected. shorter
+        [ts] "export as;"  tsc TS1005@9..10 "'namespace' expected." | lint TS1005@9..9 "Expected \"namespace\" but found \";\" (token: TSemicolon)"
+        [ts] "export as N;"  tsc TS1005@10..11 "'namespace' expected." | lint TS1005@10..10 "Expected \"namespace\" but found \"N\" (token: TIdentifier)"
+    13 ts     12 tsx     13 src  no-code | tsc TS1110 Type expected. | lint: Expected number but found "]"
+        [ts] "let x: [-];"  tsc TS1110@8..9 "Type expected." | lint @9+1 "Expected number but found \"]\""
+        [ts] "type X = [-];"  tsc TS1110@10..11 "Type expected." | lint @11+1 "Expected number but found \"]\""
+    13 ts     12 tsx     13 src  no-code | tsc TS1110 Type expected. | lint: Expected number but found "|"
+        [ts] "let x: A | 'a' | 1 | - | true | null | undefined;"  tsc TS1110@21..22 "Type expected." | lint @23+1 "Expected number but found \"|\""
+        [ts] "type X = A | 'a' | 1 | - | true | null | undefined;"  tsc TS1110@23..24 "Type expected." | lint @25+1 "Expected number but found \"|\""
+    13 ts     12 tsx     13 src  no-code | tsc TS1005 '_' expected. | lint: Expected number but found "]"
+        [ts] "let x: A[-];"  tsc TS1005@9..10 "']' expected." | lint @10+1 "Expected number but found \"]\""
+        [ts] "type X = A[-];"  tsc TS1005@11..12 "']' expected." | lint @12+1 "Expected number but found \"]\""
+     0 ts     24 tsx     24 src  no-code | tsc TS1109 Expression expected. | lint: Expected JSX element name but found "-"
+        [tsx] "let v = <->x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \"-\""
+        [tsx] "let v = <-1>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \"-\""
+    12 ts     12 tsx     12 src  no-code | tsc TS1110 Type expected. | lint: Unexpected in
+        [ts] "type X = [in;"  tsc TS1110@10..12 "Type expected." | lint @10+2 "Unexpected in"
+        [ts] "type X = [in];"  tsc TS1110@10..12 "Type expected." | lint @10+2 "Unexpected in"
+    12 ts     12 tsx     12 src  no-code | tsc TS1110 Type expected. | lint: Unexpected extends
+        [ts] "type X = [extends;"  tsc TS1110@10..17 "Type expected." | lint @10+7 "Unexpected extends"
+        [ts] "type X = [extends];"  tsc TS1110@10..17 "Type expected." | lint @10+7 "Unexpected extends"
+    12 ts     12 tsx     12 src  no-code | tsc TS1137 Expression or comma expected. | lint: Unexpected extends
+        [ts] "interface I extends [extends {}"  tsc TS1137@21..28 "Expression or comma expected." | lint @21+7 "Unexpected extends"
+        [ts] "interface I extends [extends] {}"  tsc TS1137@21..28 "Expression or comma expected." | lint @21+7 "Unexpected extends"
+    12 ts     12 tsx     12 src  no-code | tsc TS1359 Identifier expected. '_' is a reserved word that cannot be used here. | lint: Invalid binding pattern
+        [ts] "let v = a ? (b): (...this: A[]) =>  => c : d;"  tsc TS1359@21..25 "Identifier expected. 'this' is a reserved word that cannot be used here." | lint @21+0 "Invalid binding pattern"
+        [ts] "let v = a ? (b): (...null: A[]) =>  => c : d;"  tsc TS1359@21..25 "Identifier expected. 'null' is a reserved word that cannot be used here." | lint @21+0 "Invalid binding pattern"
+    12 ts     12 tsx     12 src  no-code | tsc TS1139 Type parameter declaration expected. | lint: Unsupported syntax: Legacy HTML comments not implemented yet!
+        [ts] "let x: <!--A;"  tsc TS1139@8..9 "Type parameter declaration expected." | lint @8+0 "Unsupported syntax: Legacy HTML comments not implemented yet!"
+        [ts] "type X = <!--A;"  tsc TS1139@10..11 "Type parameter declaration expected." | lint @10+0 "Unsupported syntax: Legacy HTML comments not implemented yet!"
+    12 ts     12 tsx     12 src  other-code | tsc TS1139 Type parameter declaration expected. | lint TS1359 Identifier expected. '_' is a reserved word that cannot be used here.
+        [ts] "let x: <typeof b>;"  tsc TS1139@8..14 "Type parameter declaration expected." | lint TS1359@8..14 "Expected identifier but found \"typeof\""
+        [ts] "type X = <typeof b>;"  tsc TS1139@10..16 "Type parameter declaration expected." | lint TS1359@10..16 "Expected identifier but found \"typeof\""
+    12 ts     12 tsx     12 src  no-code | tsc TS1109 Expression expected. | lint: Unexpected var
+        [ts] "interface I extends var] {}"  tsc TS1109@20..23 "Expression expected." | lint @20+3 "Unexpected var"
+        [ts] "interface I extends  var {}"  tsc TS1109@21..24 "Expression expected." | lint @21+3 "Unexpected var"
+    12 ts     12 tsx     12 src  no-code | tsc TS1109 Expression expected. | lint: Unexpected enum
+        [ts] "interface I extends enum] {}"  tsc TS1109@20..24 "Expression expected." | lint @20+4 "Unexpected enum"
+        [ts] "interface I extends  enum {}"  tsc TS1109@21..25 "Expression expected." | lint @21+4 "Unexpected enum"
+    12 ts     12 tsx     12 src  other-code | tsc TS1144 '_' or '_' expected. | lint TS1110 Type expected.
+        [ts] "function f(): ! is A { return x; }"  tsc TS1144@19..20 "'{' or ';' expected." | lint TS1110@14..15 "Unexpected !"
+        [ts] "function f(): ? is A { return x; }"  tsc TS1144@19..20 "'{' or ';' expected." | lint TS1110@14..15 "Unexpected ?"
+    12 ts     12 tsx     12 src  no-code | tsc TS1003 Identifier expected. | lint: Unexpected {
+        [ts] "interface I extends { in  {}"  tsc TS1003@26..27 "Identifier expected." | lint @26+1 "Unexpected {"
+        [ts] "interface I extends { out  {}"  tsc TS1003@27..28 "Identifier expected." | lint @27+1 "Unexpected {"
+    12 ts     11 tsx     12 src  no-code | tsc TS1110 Type expected. | lint: Expected number but found <name>
+        [ts] "let x: -a;"  tsc TS1110@7..8 "Type expected." | lint @8+1 "Expected number but found \"a\""
+        [ts] "type X = -a;"  tsc TS1110@9..10 "Type expected." | lint @10+1 "Expected number but found \"a\""
+    12 ts     11 tsx     12 src  no-code | tsc TS1110 Type expected. | lint: Expected number but found "true"
+        [ts] "let x: -true;"  tsc TS1110@7..8 "Type expected." | lint @8+4 "Expected number but found \"true\""
+        [ts] "type X = -true;"  tsc TS1110@9..10 "Type expected." | lint @10+4 "Expected number but found \"true\""
+    11 ts     12 tsx     12 src  other-code | tsc TS1109 Expression expected. | lint TS1359 Identifier expected. '_' is a reserved word that cannot be used here.
+        [ts] "interface I extends <typeof b> {}"  tsc TS1109@20..21 "Expression expected." | lint TS1359@21..27 "Expected identifier but found \"typeof\""
+        [ts] "interface I extends < extends A>(a: T) => T {}"  tsc TS1109@20..21 "Expression expected." | lint TS1359@22..29 "Expected identifier but found \"extends\""
+    12 ts     11 tsx     12 src  no-code | tsc TS1110 Type expected. | lint: Expected number but found "extends"
+        [ts] "let x: - extends A ? B : C;"  tsc TS1110@7..8 "Type expected." | lint @9+7 "Expected number but found \"extends\""
+        [ts] "type X = - extends A ? B : C;"  tsc TS1110@9..10 "Type expected." | lint @11+7 "Expected number but found \"extends\""
+    12 ts     11 tsx     12 src  no-code | tsc TS1110 Type expected. | lint: Expected number but found "["
+        [ts] "let x:  - [K in T]: V };"  tsc TS1110@8..9 "Type expected." | lint @10+1 "Expected number but found \"[\""
+        [ts] "type X =  - [K in T]: V };"  tsc TS1110@10..11 "Type expected." | lint @12+1 "Expected number but found \"[\""
+    11 ts     11 tsx     11 src  no-code | tsc TS1110 Type expected. | lint: Unexpected class
+        [ts] "type X = [class;"  tsc TS1110@10..15 "Type expected." | lint @10+5 "Unexpected class"
+        [ts] "type X = [class];"  tsc TS1110@10..15 "Type expected." | lint @10+5 "Unexpected class"
+    11 ts     11 tsx     11 src  no-code | tsc TS1110 Type expected. | lint: Unexpected delete
+        [ts] "type X = [delete;"  tsc TS1110@10..16 "Type expected." | lint @10+6 "Unexpected delete"
+        [ts] "type X = [delete];"  tsc TS1110@10..16 "Type expected." | lint @10+6 "Unexpected delete"
+    11 ts     11 tsx     11 src  no-code | tsc TS1110 Type expected. | lint: Unexpected var
+        [ts] "type X = [var;"  tsc TS1110@10..13 "Type expected." | lint @10+3 "Unexpected var"
+        [ts] "type X = [var];"  tsc TS1110@10..13 "Type expected." | lint @10+3 "Unexpected var"
+    11 ts     11 tsx     11 src  no-code | tsc TS1137 Expression or comma expected. | lint: Unexpected var
+        [ts] "interface I extends [var {}"  tsc TS1137@21..24 "Expression or comma expected." | lint @21+3 "Unexpected var"
+        [ts] "interface I extends [var] {}"  tsc TS1137@21..24 "Expression or comma expected." | lint @21+3 "Unexpected var"
+    11 ts     11 tsx     11 src  no-code | tsc TS1110 Type expected. | lint: Unexpected enum
+        [ts] "type X = [enum;"  tsc TS1110@10..14 "Type expected." | lint @10+4 "Unexpected enum"
+        [ts] "type X = [enum];"  tsc TS1110@10..14 "Type expected." | lint @10+4 "Unexpected enum"
+    11 ts     11 tsx     11 src  no-code | tsc TS1137 Expression or comma expected. | lint: Unexpected enum
+        [ts] "interface I extends [enum {}"  tsc TS1137@21..25 "Expression or comma expected." | lint @21+4 "Unexpected enum"
+        [ts] "interface I extends [enum] {}"  tsc TS1137@21..25 "Expression or comma expected." | lint @21+4 "Unexpected enum"
+    11 ts     11 tsx     11 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected >
+        [ts] "type X = { get aT>(): A };"  tsc TS1005@17..18 "'(' expected." | lint @17+1 "Unexpected >"
+        [ts] "interface I extends { newT>(): A } {}"  tsc TS1005@26..27 "',' expected." | lint @26+1 "Unexpected >"
+    10 ts     10 tsx     10 src  no-code | tsc TS1131 Property or signature expected. | lint: Unexpected +
+        [ts] "type X = { a + b]: A };"  tsc TS1131@11..12 "Property or signature expected." | lint @13+1 "Unexpected +"
+        [ts] "type X = { readonly +[K  T]: V };"  tsc TS1131@11..19 "Property or signature expected." | lint @20+1 "Unexpected +"
+    10 ts     10 tsx     10 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected +
+        [ts] "interface I extends { a + b]: A } {}"  tsc TS1005@24..25 "',' expected." | lint @24+1 "Unexpected +"
+        [ts] "interface I extends { readonly +[K  T]: V } {}"  tsc TS1005@31..32 "',' expected." | lint @31+1 "Unexpected +"
+    10 ts     10 tsx     10 src  no-code | tsc TS1131 Property or signature expected. | lint: Unexpected ,
+        [ts] "type X = { , ;"  tsc TS1131@11..12 "Property or signature expected." | lint @11+1 "Unexpected ,"
+        [ts] "type X = { , };"  tsc TS1131@11..12 "Property or signature expected." | lint @11+1 "Unexpected ,"
+    10 ts     10 tsx     10 src  no-code | tsc TS1110 Type expected. | lint: Expected number but found ";"
+        [ts] "let x: -;"  tsc TS1110@7..8 "Type expected." | lint @8+1 "Expected number but found \";\""
+        [ts] "let x: - ;"  tsc TS1110@7..8 "Type expected." | lint @9+1 "Expected number but found \";\""
+    10 ts     10 tsx     10 src  no-code | tsc TS1136 Property assignment expected. | lint: Unexpected ]
+        [ts] "interface I extends { + K in T]: V } {}"  tsc TS1136@22..23 "Property assignment expected." | lint @30+1 "Unexpected ]"
+        [ts] "interface I extends { - K in T]: V } {}"  tsc TS1136@22..23 "Property assignment expected." | lint @30+1 "Unexpected ]"
+    10 ts     10 tsx     10 src  no-code | tsc TS1131 Property or signature expected. | lint: Unexpected ?
+        [ts] "type X = { ? };"  tsc TS1131@11..12 "Property or signature expected." | lint @11+1 "Unexpected ?"
+        [ts] "type X = { ?; };"  tsc TS1131@11..12 "Property or signature expected." | lint @11+1 "Unexpected ?"
+    10 ts     10 tsx     10 src  no-code | tsc TS1138 Parameter declaration expected. | lint: Unexpected }
+        [ts] "type X = { ( };"  tsc TS1138@13..14 "Parameter declaration expected." | lint @13+1 "Unexpected }"
+        [ts] "type X = { a( };"  tsc TS1138@14..15 "Parameter declaration expected." | lint @14+1 "Unexpected }"
+    10 ts     10 tsx     10 src  no-code | tsc TS1136 Property assignment expected. | lint: Unexpected :
+        [ts] "interface I extends { (: void } {}"  tsc TS1136@22..23 "Property assignment expected." | lint @23+1 "Unexpected :"
+        [ts] "interface I extends { (: A): B } {}"  tsc TS1136@22..23 "Property assignment expected." | lint @23+1 "Unexpected :"
+    12 ts      7 tsx     12 src  no-code | tsc TS1109 Expression expected. | lint: The modifier "out" is not valid here
+        [ts] "class C implements <out T>()  T {}"  tsc TS1109@19..20 "Expression expected." | lint @20+3 "The modifier \"out\" is not valid here"
+        [ts] "class C implements <out T>( => T {}"  tsc TS1109@19..20 "Expression expected." | lint @20+3 "The modifier \"out\" is not valid here"
+    13 ts      6 tsx     13 src  no-code | tsc TS1005 '_' expected. | lint: The modifier "in" is not valid here
+        [ts] "type X = <in T>()  T;"  tsc TS1005@19..20 "'=>' expected." | lint @10+2 "The modifier \"in\" is not valid here"
+        [ts] "type X = <in T() => T;"  tsc TS1005@14..15 "'>' expected." | lint @10+2 "The modifier \"in\" is not valid here"
+     9 ts      9 tsx      9 src  no-code | tsc TS1136 Property assignment expected. | lint: Unexpected ,
+        [ts] "interface I extends { ,  {}"  tsc TS1136@22..23 "Property assignment expected." | lint @22+1 "Unexpected ,"
+        [ts] "interface I extends { , } {}"  tsc TS1136@22..23 "Property assignment expected." | lint @22+1 "Unexpected ,"
+     9 ts      9 tsx      9 src  no-code | tsc TS1131 Property or signature expected. | lint: Unexpected <name>
+        [ts] "type X = { a! A };"  tsc TS1131@11..12 "Property or signature expected." | lint @14+1 "Unexpected A"
+        [ts] "type X = { 1n A };"  tsc TS1131@11..13 "Property or signature expected." | lint @14+1 "Unexpected A"
+     9 ts      9 tsx      9 src  other-code | tsc TS1180 Property destructuring pattern expected. | lint TS1003 Identifier expected.
+        [ts] "let v = a ? (b): ({: A) => void => c : d;"  tsc TS1180@19..20 "Property destructuring pattern expected." | lint TS1003@19..20 "Expected identifier but found \":\""
+        [ts] "let v = a ? (b): ({ , b }) => void => c : d;"  tsc TS1180@20..21 "Property destructuring pattern expected." | lint TS1003@20..21 "Expected identifier but found \",\""
+     9 ts      9 tsx      9 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected ...
+        [ts] "type X = ({ ...a }: A)  void;"  tsc TS1005@24..28 "'=>' expected." | lint @12+3 "Unexpected ..."
+        [ts] "type X = ({ ...a }: A => void;"  tsc TS1005@22..24 "',' expected." | lint @12+3 "Unexpected ..."
+     9 ts      9 tsx      9 src  no-code | tsc TS1136 Property assignment expected. | lint: Unexpected ?
+        [ts] "interface I extends { ? } {}"  tsc TS1136@22..23 "Property assignment expected." | lint @22+1 "Unexpected ?"
+        [ts] "interface I extends { ?; } {}"  tsc TS1136@22..23 "Property assignment expected." | lint @22+1 "Unexpected ?"
+     9 ts      9 tsx      9 src  no-code | tsc TS1131 Property or signature expected. | lint: Unexpected >
+        [ts] "type X = { newT>(): A };"  tsc TS1131@11..15 "Property or signature expected." | lint @15+1 "Unexpected >"
+        [ts] "type X = { getT>(): T };"  tsc TS1131@11..15 "Property or signature expected." | lint @15+1 "Unexpected >"
+     0 ts     17 tsx     17 src  no-code | tsc TS1109 Expression expected. | lint: Expected JSX element name but found "&"
+        [tsx] "let v = <& >x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \"&\""
+        [tsx] "let v = < &>x;"  tsc TS1109@8..9 "Expression expected." | lint @10+1 "Expected JSX element name but found \"&\""
+     9 ts      8 tsx      9 src  same-code-same-start | TS1110 Type expected. | lint Type expected. longer
+        [ts] "let v = <>>x;"  tsc TS1110@9..10 "Type expected." | lint TS1110@9..11 "Unexpected >>"
+        [ts] "f<A<B | >>(x);"  tsc TS1110@8..9 "Type expected." | lint TS1110@8..10 "Unexpected >>"
+     0 ts     17 tsx     17 src  other-code | tsc TS17008 JSX element '_' has no corresponding closing tag. | lint TS1005 '_' expected.
+        [tsx] "let v = <A<?B>>x;"  tsc TS17008@9..10 "JSX element 'A' has no corresponding closing tag." | lint TS1005@11..12 "Expected \">\" but found \"?\""
+        [tsx] "let v = <A<B?>>x;"  tsc TS17008@9..10 "JSX element 'A' has no corresponding closing tag." | lint TS1005@12..13 "Expected \">\" but found \"?\""
+     9 ts      8 tsx      9 src  no-code | tsc TS1109 Expression expected. | lint: Unexpected <name>
+        [ts] "class C implements <const T>()  T {}"  tsc TS1109@19..20 "Expression expected." | lint @32+1 "Unexpected T"
+        [ts] "class C implements <T = A>(a: T)  T {}"  tsc TS1109@19..20 "Expression expected." | lint @34+1 "Unexpected T"
+     8 ts      8 tsx      8 src  no-code | tsc TS1109 Expression expected. | lint: Invalid binding pattern
+        [ts] "let v = a ? (b): ('x',) => c : d;"  tsc TS1109@22..23 "Expression expected." | lint @18+0 "Invalid binding pattern"
+        [ts] "let v = a ? (b): (null?: A) =>  => c : d;"  tsc TS1109@23..24 "Expression expected." | lint @18+0 "Invalid binding pattern"
+     8 ts      8 tsx      8 src  same-code-same-start | TS1109 Expression expected. | lint Expression expected. longer
+        [ts] "f<>>(x);"  tsc TS1109@2..3 "Expression expected." | lint TS1109@2..4 "Unexpected >>"
+        [ts] "f<=>>(x);"  tsc TS1109@3..4 "Expression expected." | lint TS1109@3..5 "Unexpected >>"
+     8 ts      8 tsx      8 src  other-code | tsc TS1478 Identifier or string literal expected. | lint TS1005 '_' expected.
+        [ts] "let f = (a): import('x', { with: { : 'import' } }) => a;"  tsc TS1478@35..36 "Identifier or string literal expected." | lint TS1005@11..12 "Expected \";\" but found \":\""
+        [ts] "let f = (a): import('x', { with: { : 'import', } }) => a;"  tsc TS1478@35..36 "Identifier or string literal expected." | lint TS1005@11..12 "Expected \";\" but found \":\""
+     8 ts      8 tsx      8 src  no-code | tsc TS1131 Property or signature expected. | lint: Cannot use "yield" or "await" here.
+        [ts] "function f(): (await) =>  { return x; }"  tsc TS1131@28..34 "Property or signature expected." | lint @15+5 "Cannot use \"yield\" or \"await\" here."
+        [ts] "function f(): (await: A) =>  { return x; }"  tsc TS1131@31..37 "Property or signature expected." | lint @15+5 "Cannot use \"yield\" or \"await\" here."
+     8 ts      8 tsx      8 src  other-code | tsc TS1128 Declaration or statement expected. | lint TS1109 Expression expected.
+        [ts] "f< await }>(x);"  tsc TS1128@9..10 "Declaration or statement expected." | lint TS1109@9..10 "Unexpected }"
+        [ts] "let v = x as  a? };"  tsc TS1128@17..18 "Declaration or statement expected." | lint TS1109@17..18 "Unexpected }"
+     7 ts      7 tsx      7 src  no-code | tsc TS1131 Property or signature expected. | lint: Unexpected *
+        [ts] "type X = { *(): A };"  tsc TS1131@11..12 "Property or signature expected." | lint @11+1 "Unexpected *"
+        [ts] "type X = { *a): A };"  tsc TS1131@11..12 "Property or signature expected." | lint @11+1 "Unexpected *"
+     7 ts      7 tsx      7 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected ?
+        [ts] "type X = { []?: A };"  tsc TS1005@13..14 "';' expected." | lint @13+1 "Unexpected ?"
+        [ts] "type X = { []?(): A };"  tsc TS1005@13..14 "';' expected." | lint @13+1 "Unexpected ?"
+    11 ts      3 tsx     11 src  no-code | tsc TS1109 Expression expected. | lint: Unexpected ":"
+        [ts] "f< new <T>(x: T): A }>(x);"  tsc TS1109@7..8 "Expression expected." | lint @12+1 "Unexpected \":\""
+        [ts] "class C implements <T>(a: T)  T {}"  tsc TS1109@19..20 "Expression expected." | lint @24+1 "Unexpected \":\""
+     7 ts      7 tsx      7 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected (
+        [ts] "type X = { a():  b(): void };"  tsc TS1005@18..19 "';' expected." | lint @18+1 "Unexpected ("
+        [ts] "type X = { a(): \n b(): void };"  tsc TS1005@19..20 "';' expected." | lint @19+1 "Unexpected ("
+     7 ts      7 tsx      7 src  other-code | tsc TS1110 Type expected. | lint TS1128 Declaration or statement expected.
+        [ts] "let x:  unique };"  tsc TS1110@15..16 "Type expected." | lint TS1128@15..16 "Unexpected }"
+        [ts] "type X =  unique };"  tsc TS1110@17..18 "Type expected." | lint TS1128@17..18 "Unexpected }"
+     0 ts     12 tsx     12 src  no-code | tsc TS1109 Expression expected. | lint: Syntax Error
+        [tsx] "let v = <1a>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+0 "Syntax Error"
+        [tsx] "let v = <0xg>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+0 "Syntax Error"
+     6 ts      6 tsx      6 src  no-code | tsc TS1131 Property or signature expected. | lint: Unexpected ...
+        [ts] "type X = { ...a }: A) => void;"  tsc TS1131@11..14 "Property or signature expected." | lint @11+3 "Unexpected ..."
+        [ts] "type X = ({ ... }: A) => void;"  tsc TS1131@12..15 "Property or signature expected." | lint @12+3 "Unexpected ..."
+     0 ts     11 tsx     11 src  no-code | tsc TS1109 Expression expected. | lint: Expected JSX element name but found ")"
+        [tsx] "let v = <)>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \")\""
+        [tsx] "let v = <) => is>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \")\""
+     6 ts      5 tsx      6 src  no-code | tsc TS1109 Expression expected. | lint: Unexpected =
+        [ts] "type X = { a: A =  };"  tsc TS1109@19..20 "Expression expected." | lint @16+1 "Unexpected ="
+        [ts] "interface I extends { a =  } {}"  tsc TS1109@27..28 "Expression expected." | lint @24+1 "Unexpected ="
+     5 ts      5 tsx      5 src  other-code | tsc TS1477 An instantiation expression cannot be followed by a property access. | lint TS1005 '_' expected.
+        [ts] "let v = a ? (b): A<>.C => c : d;"  tsc TS1477@18..20 "An instantiation expression cannot be followed by a property access." | lint TS1005@23..25 "Expected \";\" but found \"=>\""
+        [ts] "let v = a ? (b): A<B>.C => c : d;"  tsc TS1477@18..21 "An instantiation expression cannot be followed by a property access." | lint TS1005@24..26 "Expected \";\" but found \"=>\""
+     5 ts      5 tsx      5 src  no-code | tsc TS1136 Property assignment expected. | lint: Unexpected ;
+        [ts] "interface I extends { ;  {}"  tsc TS1136@22..23 "Property assignment expected." | lint @22+1 "Unexpected ;"
+        [ts] "interface I extends { ; } {}"  tsc TS1136@22..23 "Property assignment expected." | lint @22+1 "Unexpected ;"
+     5 ts      5 tsx      5 src  other-code | tsc TS1442 Expected '_' for property initializer. | lint TS1003 Identifier expected.
+        [ts] "class C { @d x: (A).; }"  tsc TS1442@19..20 "Expected '=' for property initializer." | lint TS1003@20..21 "Expected identifier but found \";\""
+        [ts] "class C { @d x: A<B>.; }"  tsc TS1442@20..21 "Expected '=' for property initializer." | lint TS1003@21..22 "Expected identifier but found \";\""
+     5 ts      5 tsx      5 src  other-code | tsc TS1005 '_' expected. | lint TS1128 Declaration or statement expected.
+        [ts] "f< a = 1 }>(x);"  tsc TS1005@5..6 "';' expected." | lint TS1128@9..10 "Unexpected }"
+        [ts] "let v = a ? (b): A<\nB\n => c : d;"  tsc TS1005@23..25 "'>' expected." | lint TS1128@23..25 "Unexpected =>"
+     5 ts      5 tsx      5 src  other-code | tsc TS1011 An element access expression should take an argument. | lint TS1110 Type expected.
+        [ts] "interface I extends (keyof )[] {}"  tsc TS1011@29..29 "An element access expression should take an argument." | lint TS1110@27..28 "Unexpected )"
+        [ts] "interface I extends [, ...B[], C] {}"  tsc TS1011@28..28 "An element access expression should take an argument." | lint TS1110@21..22 "Unexpected ,"
+     5 ts      5 tsx      5 src  other-code | tsc TS1441 Cannot start a function call in a type annotation. | lint TS1003 Identifier expected.
+        [ts] "class C { a: A\n(b) {} }"  tsc TS1441@15..16 "Cannot start a function call in a type annotation." | lint TS1003@15..16 "Expected identifier but found \"(\""
+        [ts] "class C { a: A\n(): void }"  tsc TS1441@15..16 "Cannot start a function call in a type annotation." | lint TS1003@15..16 "Expected identifier but found \"(\""
+     5 ts      5 tsx      5 src  no-code | tsc TS1128 Declaration or statement expected. | lint: Unexpected <name>
+        [ts] "let x: ('x')\n.A;"  tsc TS1128@13..14 "Declaration or statement expected." | lint @14+1 "Unexpected A"
+        [ts] "export declare a;"  tsc TS1128@0..6 "Declaration or statement expected." | lint @15+1 "Unexpected \"a\""
+     5 ts      5 tsx      5 src  no-code | tsc TS1131 Property or signature expected. | lint: Unexpected {
+        [ts] "type X = { a { b: B } };"  tsc TS1131@11..12 "Property or signature expected." | lint @13+1 "Unexpected {"
+        [ts] "type X = { a{ b }: B): void };"  tsc TS1131@11..12 "Property or signature expected." | lint @12+1 "Unexpected {"
+     5 ts      5 tsx      5 src  no-code | tsc TS1109 Expression expected. | lint: Unexpected void
+        [ts] "class C implements <T,>()  void {}"  tsc TS1109@19..20 "Expression expected." | lint @27+4 "Unexpected void"
+        [ts] "class C implements <T = A<B>>()  void {}"  tsc TS1109@19..20 "Expression expected." | lint @33+4 "Unexpected void"
+     5 ts      5 tsx      5 src  no-code | tsc TS1138 Parameter declaration expected. | lint: Unexpected ;
+        [ts] "type X = { (; };"  tsc TS1138@12..13 "Parameter declaration expected." | lint @12+1 "Unexpected ;"
+        [ts] "type X = { a(; };"  tsc TS1138@13..14 "Parameter declaration expected." | lint @13+1 "Unexpected ;"
+     5 ts      5 tsx      5 src  no-code | tsc TS1136 Property assignment expected. | lint: Unexpected void
+        [ts] "interface I extends { () void } {}"  tsc TS1136@22..23 "Property assignment expected." | lint @25+4 "Unexpected void"
+        [ts] "interface I extends { () void\n(a: A): void } {}"  tsc TS1136@22..23 "Property assignment expected." | lint @25+4 "Unexpected void"
+     5 ts      5 tsx      5 src  other-code | tsc TS1132 Enum member expected. | lint TS1003 Identifier expected.
+        [ts] "enum E { , }"  tsc TS1132@9..10 "Enum member expected." | lint TS1003@9..10 "Expected identifier but found \",\""
+        [ts] "enum E { ,A }"  tsc TS1132@9..10 "Enum member expected." | lint TS1003@9..10 "Expected identifier but found \",\""
+    10 ts      0 tsx     10 src  no-code | tsc TS1161 Unterminated regular expression literal. | lint: Syntax Error
+        [ts] "const v = <T>x</T>;"  tsc TS1161@15..18 "Unterminated regular expression literal." | lint @15+0 "Syntax Error"
+        [ts] "const v = <in>x</in>;"  tsc TS1161@16..20 "Unterminated regular expression literal." | lint @16+0 "Syntax Error"
+     0 ts      9 tsx      9 src  no-code | tsc TS1003 Identifier expected. | lint: Syntax Error
+        [tsx] "f<typeof <B>>(x);"  tsc TS1003@9..10 "Identifier expected." | lint @12+0 "Syntax Error"
+        [tsx] "f<typeof <B>[]>(x);"  tsc TS1003@9..10 "Identifier expected." | lint @12+0 "Syntax Error"
+     4 ts      4 tsx      4 src  no-code | tsc TS1110 Type expected. | lint: Unexpected "const"
+        [ts] "type X = [const: ];"  tsc TS1110@10..15 "Type expected." | lint @10+5 "Unexpected \"const\""
+        [ts] "type X = [const: A;"  tsc TS1110@10..15 "Type expected." | lint @10+5 "Unexpected \"const\""
+     4 ts      4 tsx      4 src  no-code | tsc TS1137 Expression or comma expected. | lint: Unexpected "const"
+        [ts] "interface I extends [const: ] {}"  tsc TS1137@21..26 "Expression or comma expected." | lint @21+5 "Unexpected \"const\""
+        [ts] "interface I extends [const: A {}"  tsc TS1137@21..26 "Expression or comma expected." | lint @21+5 "Unexpected \"const\""
+     0 ts      8 tsx      8 src  no-code | tsc TS1110 Type expected. | lint: Syntax Error
+        [tsx] "f<new <T>(a: ) => A>(x);"  tsc TS1110@13..14 "Type expected." | lint @9+0 "Syntax Error"
+        [tsx] "let v = a ? (b): <T>(a: ) => T => c : d;"  tsc TS1110@24..25 "Type expected." | lint @20+0 "Syntax Error"
+     4 ts      4 tsx      4 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected ;
+        [ts] "type X = { [K in T]: V, ;"  tsc TS1005@22..23 "';' expected." | lint @24+1 "Unexpected ;"
+        [ts] "interface I extends { a A;; } {}"  tsc TS1005@24..25 "',' expected." | lint @26+1 "Unexpected ;"
+     4 ts      4 tsx      4 src  no-code | tsc TS1131 Property or signature expected. | lint: Unexpected `a`
+        [ts] "type X = { `a` A };"  tsc TS1131@11..14 "Property or signature expected." | lint @11+3 "Unexpected `a`"
+        [ts] "type X = { `a`:  };"  tsc TS1131@11..14 "Property or signature expected." | lint @11+3 "Unexpected `a`"
+     4 ts      4 tsx      4 src  no-code | tsc TS1136 Property assignment expected. | lint: Unexpected `a`
+        [ts] "interface I extends { `a` A } {}"  tsc TS1136@22..25 "Property assignment expected." | lint @22+3 "Unexpected `a`"
+        [ts] "interface I extends { `a`:  } {}"  tsc TS1136@22..25 "Property assignment expected." | lint @22+3 "Unexpected `a`"
+     0 ts      8 tsx      8 src  no-code | tsc TS1109 Expression expected. | lint: Expected JSX element name but found "?"
+        [tsx] "<?A>x"  tsc TS1109@0..1 "Expression expected." | lint @1+1 "Expected JSX element name but found \"?\""
+        [tsx] "let v = <?>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \"?\""
+     4 ts      4 tsx      4 src  no-code | tsc TS1110 Type expected. | lint: Expected number but found "{"
+        [ts] "function f(): - { return x; }"  tsc TS1110@14..15 "Type expected." | lint @16+1 "Expected number but found \"{\""
+        [ts] "function f(): -  { return x; }"  tsc TS1110@14..15 "Type expected." | lint @17+1 "Expected number but found \"{\""
+     4 ts      4 tsx      4 src  other-code | tsc TS1110 Type expected. | lint TS1131 Property or signature expected.
+        [ts] "function f(): keyof () =>  { return x; }"  tsc TS1110@21..22 "Type expected." | lint TS1131@29..35 "Unexpected return"
+        [ts] "function f(): readonly () =>  { return x; }"  tsc TS1110@24..25 "Type expected." | lint TS1131@32..38 "Unexpected return"
+     4 ts      4 tsx      4 src  other-code | tsc TS1144 '_' or '_' expected. | lint TS1131 Property or signature expected.
+        [ts] "function f(): a is a is  { return x; }"  tsc TS1144@21..23 "'{' or ';' expected." | lint TS1131@27..33 "Unexpected return"
+        [ts] "function f(): keyof new () =>  { return x; }"  tsc TS1144@24..25 "'{' or ';' expected." | lint TS1131@33..39 "Unexpected return"
+     4 ts      4 tsx      4 src  no-code | tsc TS1109 Expression expected. | lint: Expected string but found ")"
+        [ts] "import A = require();"  tsc TS1109@19..20 "Expression expected." | lint @19+1 "Expected string but found \")\""
+        [ts] "interface I extends typeof import() {}"  tsc TS1109@20..26 "Expression expected." | lint @34+1 "Expected string but found \")\""
+     4 ts      4 tsx      4 src  no-code | tsc TS1005 '_' expected. | lint: Expected string but found <name>
+        [ts] "type X = import(x;"  tsc TS1005@17..18 "')' expected." | lint @16+1 "Expected string but found \"x\""
+        [ts] "type X = import(A.B;"  tsc TS1005@19..20 "')' expected." | lint @16+1 "Expected string but found \"A\""
+     4 ts      4 tsx      4 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected 1
+        [ts] "type X = { a: A  1 };"  tsc TS1005@17..18 "';' expected." | lint @17+1 "Unexpected 1"
+        [ts] "type X = ({ a: b  1 }: A) => void;"  tsc TS1005@18..19 "';' expected." | lint @18+1 "Unexpected 1"
+     4 ts      4 tsx      4 src  other-code | tsc TS1139 Type parameter declaration expected. | lint TS1005 '_' expected.
+        [ts] "let f = (a): <,>() => void => a;"  tsc TS1139@14..15 "Type parameter declaration expected." | lint TS1005@11..12 "Expected \";\" but found \":\""
+        [ts] "let f = (a): < = A>(a: T) => T => a;"  tsc TS1139@15..16 "Type parameter declaration expected." | lint TS1005@11..12 "Expected \";\" but found \":\""
+     5 ts      3 tsx      5 src  no-code | tsc TS1005 '_' expected. | lint: The modifier "out" is not valid here
+        [ts] "type X = <out T>()  T;"  tsc TS1005@20..21 "'=>' expected." | lint @10+3 "The modifier \"out\" is not valid here"
+        [ts] "type X = <out T() => T;"  tsc TS1005@15..16 "'>' expected." | lint @10+3 "The modifier \"out\" is not valid here"
+     4 ts      4 tsx      4 src  no-code | tsc TS1359 Identifier expected. '_' is a reserved word that cannot be used here. | lint: Unexpected ":"
+        [ts] "let v = a ? (b): (...this: A[])  void => c : d;"  tsc TS1359@21..25 "Identifier expected. 'this' is a reserved word that cannot be used here." | lint @25+1 "Unexpected \":\""
+        [ts] "let v = a ? (b): (...null: A[])  void => c : d;"  tsc TS1359@21..25 "Identifier expected. 'null' is a reserved word that cannot be used here." | lint @25+1 "Unexpected \":\""
+     4 ts      4 tsx      4 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected this
+        [ts] "type X = { a() this };"  tsc TS1005@15..19 "';' expected." | lint @15+4 "Unexpected this"
+        [ts] "type X = { a() this is B };"  tsc TS1005@15..19 "';' expected." | lint @15+4 "Unexpected this"
+     0 ts      7 tsx      7 src  no-code | tsc TS1109 Expression expected. | lint: Expected JSX element name but found ","
+        [tsx] "let v = <,>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \",\""
+        [tsx] "let v = <,]>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \",\""
+     0 ts      7 tsx      7 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "this:" in namespaced JSX name
+        [tsx] "let v = <this: A]>x;"  tsc TS1003@16..17 "Identifier expected." | lint @14+0 "Expected identifier after \"this:\" in namespaced JSX name"
+        [tsx] "let v = < this: A }>x;"  tsc TS1003@18..19 "Identifier expected." | lint @15+0 "Expected identifier after \"this:\" in namespaced JSX name"
+     0 ts      7 tsx      7 src  no-code | tsc TS1381 Unexpected token. Did you mean `{'_'}` or `&rbrace;`? | lint: Syntax Error
+        [tsx] "f< <T>(x: T): T }>(x);"  tsc TS1381@16..17 "Unexpected token. Did you mean `{'}'}` or `&rbrace;`?" | lint @6+0 "Syntax Error"
+        [tsx] "f< a?<T>(x: T): T }>(x);"  tsc TS1381@18..19 "Unexpected token. Did you mean `{'}'}` or `&rbrace;`?" | lint @8+0 "Syntax Error"
+     0 ts      6 tsx      6 src  no-code | tsc TS1109 Expression expected. | lint: Expected JSX element name but found "+"
+        [tsx] "let v = <+>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \"+\""
+        [tsx] "let v = <+1>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \"+\""
+     0 ts      6 tsx      6 src  no-code | tsc TS1109 Expression expected. | lint: Expected JSX element name but found "*"
+        [tsx] "<*>x"  tsc TS1109@0..1 "Expression expected." | lint @1+1 "Expected JSX element name but found \"*\""
+        [tsx] "let v = <*>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \"*\""
+     0 ts      6 tsx      6 src  no-code | tsc TS17014 JSX fragment has no corresponding closing tag. | lint: Syntax Error
+        [tsx] "let v = <>x;"  tsc TS17014@7..10 "JSX fragment has no corresponding closing tag." | lint @10+0 "Syntax Error"
+        [tsx] "let x: A\n<>;"  tsc TS17014@8..11 "JSX fragment has no corresponding closing tag." | lint @11+0 "Syntax Error"
+     3 ts      3 tsx      3 src  no-code | tsc TS1109 Expression expected. | lint: Unexpected #a
+        [ts] "interface I extends #a {}"  tsc TS1109@20..22 "Expression expected." | lint @20+2 "Unexpected #a"
+        [ts] "class C implements  #a: A } {}"  tsc TS1109@20..22 "Expression expected." | lint @20+2 "Unexpected #a"
+     3 ts      3 tsx      3 src  no-code | tsc TS1005 '_' expected. | lint: Cannot use "yield" outside a generator function
+        [ts] "f<yield A>(x);"  tsc TS1005@8..9 "';' expected." | lint @2+5 "Cannot use \"yield\" outside a generator function"
+        [ts] "class C implements yield A {}"  tsc TS1005@25..26 "',' expected." | lint @19+5 "Cannot use \"yield\" outside a generator function"
+     0 ts      6 tsx      6 src  no-code | tsc TS17008 JSX element '_' has no corresponding closing tag. | lint: Unexpected end of file
+        [tsx] "function f(): A\n<B>{}"  tsc TS17008@17..18 "JSX element 'B' has no corresponding closing tag." | lint @21+0 "Unexpected end of file"
+        [tsx] "class C implements [<B>] {}"  tsc TS17008@21..22 "JSX element 'B' has no corresponding closing tag." | lint @27+0 "Unexpected end of file"
+     3 ts      3 tsx      3 src  no-code | tsc TS1005 '_' expected. | lint: Expected string but found ")"
+        [ts] "interface I extends import() | A {}"  tsc TS1005@29..30 "',' expected." | lint @27+1 "Expected string but found \")\""
+        [ts] "interface I extends  import(): A } {}"  tsc TS1005@29..30 "',' expected." | lint @28+1 "Expected string but found \")\""
+     3 ts      3 tsx      3 src  no-code | tsc TS1005 '_' expected. | lint: Expected number but found "readonly"
+        [ts] "function f<U extends  -readonly a: A }>() {}"  tsc TS1005@32..33 "',' expected." | lint @23+8 "Expected number but found \"readonly\""
+        [ts] "function f<U extends  -readonly [K in T]: V }>() {}"  tsc TS1005@40..41 "',' expected." | lint @23+8 "Expected number but found \"readonly\""
+     3 ts      3 tsx      3 src  no-code | tsc TS1109 Expression expected. | lint: Expected number but found "readonly"
+        [ts] "interface I extends  -readonly a: A } {}"  tsc TS1109@21..22 "Expression expected." | lint @22+8 "Expected number but found \"readonly\""
+        [ts] "interface I extends  -readonly [K in T]: V } {}"  tsc TS1109@21..22 "Expression expected." | lint @22+8 "Expected number but found \"readonly\""
+     3 ts      3 tsx      3 src  no-code | tsc TS1110 Type expected. | lint: Unexpected ":"
+        [ts] "(a: A): => a;"  tsc TS1110@8..10 "Type expected." | lint @2+1 "Unexpected \":\""
+        [ts] "let v = a ? (b): (a: A):  => c : d;"  tsc TS1110@26..28 "Type expected." | lint @19+1 "Unexpected \":\""
+     3 ts      3 tsx      3 src  no-code | tsc TS1110 Type expected. | lint: Unexpected newline before "=>"
+        [ts] "let f = (a): unique\n => a;"  tsc TS1110@21..23 "Type expected." | lint @21+2 "Unexpected newline before \"=>\""
+        [ts] "let v = a ? (b): keyof\n => c : d;"  tsc TS1110@24..26 "Type expected." | lint @24+2 "Unexpected newline before \"=>\""
+     3 ts      3 tsx      3 src  other-code | tsc TS1139 Type parameter declaration expected. | lint TS1109 Expression expected.
+        [ts] "f<<,>() => void>(x);"  tsc TS1139@3..4 "Type parameter declaration expected." | lint TS1109@3..4 "Unexpected ,"
+        [ts] "f<<, U extends T>() => void>(x);"  tsc TS1139@3..4 "Type parameter declaration expected." | lint TS1109@3..4 "Unexpected ,"
+     4 ts      2 tsx      4 src  no-code | tsc TS1138 Parameter declaration expected. | lint: The modifier "in" is not valid here
+        [ts] "type X = <in T>( => T;"  tsc TS1138@17..19 "Parameter declaration expected." | lint @10+2 "The modifier \"in\" is not valid here"
+        [ts] "type X = <in out T>( => T;"  tsc TS1138@21..23 "Parameter declaration expected." | lint @10+2 "The modifier \"in\" is not valid here"
+     3 ts      3 tsx      3 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected *
+        [ts] "interface I extends { *a): A } {}"  tsc TS1005@24..25 "'(' expected." | lint @22+1 "Unexpected *"
+        [ts] "interface I extends { *a() A } {}"  tsc TS1005@27..28 "'{' expected." | lint @22+1 "Unexpected *"
+     3 ts      3 tsx      3 src  no-code | tsc TS1135 Argument expression expected. | lint: Unexpected :
+        [ts] "interface I extends { a: A\n(: void } {}"  tsc TS1135@28..29 "Argument expression expected." | lint @28+1 "Unexpected :"
+        [ts] "interface I extends { a: A\n<T>(: void } {}"  tsc TS1135@31..32 "Argument expression expected." | lint @31+1 "Unexpected :"
+     3 ts      3 tsx      3 src  other-code | tsc TS2457 Type alias name cannot be '_'. | lint TS1005 '_' expected.
+        [ts] "type 1 = 1;"  tsc TS2457@5..6 "Type alias name cannot be '1'." | lint TS1005@5..6 "Expected \";\" but found \"1\""
+        [ts] "type 'a' = 1;"  tsc TS2457@5..8 "Type alias name cannot be 'a'." | lint TS1005@5..8 "Expected \";\" but found \"'a'\""
+     3 ts      3 tsx      3 src  other-code | tsc TS1357 An enum member name must be followed by a '_', '_', or '_'. | lint TS1005 '_' expected.
+        [ts] "enum E { A\nB }"  tsc TS1357@11..12 "An enum member name must be followed by a ',', '=', or '}'." | lint TS1005@11..12 "Expected \"}\" but found \"B\""
+        [ts] "enum E { A: 1 }"  tsc TS1357@10..11 "An enum member name must be followed by a ',', '=', or '}'." | lint TS1005@10..11 "Expected \"}\" but found \":\""
+     3 ts      3 tsx      3 src  other-code | tsc TS1146 Declaration expected. | lint TS1003 Identifier expected.
+        [ts] "class C { @d }"  tsc TS1146@12..12 "Declaration expected." | lint TS1003@13..14 "Expected identifier but found \"}\""
+        [ts] "class C { @d; }"  tsc TS1146@12..12 "Declaration expected." | lint TS1003@12..13 "Expected identifier but found \";\""
+     1 ts      4 tsx      4 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected }
+        [tsx] "let v = <class {}>x;"  tsc TS1005@16..17 "'...' expected." | lint @16+1 "Unexpected }"
+        [tsx] "let v = <string  {}>x;"  tsc TS1005@18..19 "'...' expected." | lint @18+1 "Unexpected }"
+     2 ts      3 tsx      3 src  no-code | tsc TS1109 Expression expected. | lint: Unsupported syntax: Legacy HTML comments not implemented yet!
+        [ts] "class C implements <!--A {}"  tsc TS1109@19..20 "Expression expected." | lint @20+0 "Unsupported syntax: Legacy HTML comments not implemented yet!"
+        [ts] "interface I extends <!--A {}"  tsc TS1109@20..21 "Expression expected." | lint @21+0 "Unsupported syntax: Legacy HTML comments not implemented yet!"
+     0 ts      5 tsx      5 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "is:" in namespaced JSX name
+        [tsx] "let v = <is: A]>x;"  tsc TS1003@14..15 "Identifier expected." | lint @12+0 "Expected identifier after \"is:\" in namespaced JSX name"
+        [tsx] "let v = < is: A }>x;"  tsc TS1003@16..17 "Identifier expected." | lint @13+0 "Expected identifier after \"is:\" in namespaced JSX name"
+     0 ts      5 tsx      5 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "asserts:" in namespaced JSX name
+        [tsx] "let v = <asserts: A]>x;"  tsc TS1003@19..20 "Identifier expected." | lint @17+0 "Expected identifier after \"asserts:\" in namespaced JSX name"
+        [tsx] "let v = < asserts: A }>x;"  tsc TS1003@21..22 "Identifier expected." | lint @18+0 "Expected identifier after \"asserts:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1109 Expression expected. | lint: Expected JSX element name but found ":"
+        [tsx] "let v = <:>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \":\""
+        [tsx] "let v = <: A }>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \":\""
+     2 ts      2 tsx      2 src  no-code | tsc TS1109 Expression expected. | lint: Expected number but found ">"
+        [ts] "function f<U extends ->() {}"  tsc TS1109@22..23 "Expression expected." | lint @22+1 "Expected number but found \">\""
+        [ts] "function f<U extends - >() {}"  tsc TS1109@23..24 "Expression expected." | lint @23+1 "Expected number but found \">\""
+     2 ts      2 tsx      2 src  no-code | tsc TS1109 Expression expected. | lint: Expected number but found "{"
+        [ts] "interface I extends - {}"  tsc TS1109@20..21 "Expression expected." | lint @22+1 "Expected number but found \"{\""
+        [ts] "interface I extends -  {}"  tsc TS1109@20..21 "Expression expected." | lint @23+1 "Expected number but found \"{\""
+     0 ts      4 tsx      4 src  other-code | tsc TS1382 Unexpected token. Did you mean `{'_'}` or `&gt;`? | lint TS1005 '_' expected.
+        [tsx] "let v = <AB<C>>>x;"  tsc TS1382@15..16 "Unexpected token. Did you mean `{'>'}` or `&gt;`?" | lint TS1005@14..16 "Expected \">\" but found \">>\""
+        [tsx] "let v = <A<BC>>>x;"  tsc TS1382@15..16 "Unexpected token. Did you mean `{'>'}` or `&gt;`?" | lint TS1005@14..16 "Expected \">\" but found \">>\""
+     2 ts      2 tsx      2 src  same-code-same-start | TS1003 Identifier expected. | lint Identifier expected. longer
+        [ts] "let v = <A<typeof >>x;"  tsc TS1003@18..19 "Identifier expected." | lint TS1003@18..20 "Expected identifier but found \">>\""
+        [ts] "function f<U extends A<typeof >>() {}"  tsc TS1003@30..31 "Identifier expected." | lint TS1003@30..32 "Expected identifier but found \">>\""
+     0 ts      4 tsx      4 src  no-code | tsc TS1109 Expression expected. | lint: Expected JSX element name but found "<"
+        [tsx] "let v = <\n<B>>x;"  tsc TS1109@8..9 "Expression expected." | lint @10+1 "Expected JSX element name but found \"<\""
+        [tsx] "let v = < <T>(a: T) => A>x;"  tsc TS1109@8..9 "Expression expected." | lint @10+1 "Expected JSX element name but found \"<\""
+     2 ts      2 tsx      2 src  no-code | tsc TS1109 Expression expected. | lint: Expected number but found "]"
+        [ts] "interface I extends [-] {}"  tsc TS1109@22..23 "Expression expected." | lint @22+1 "Expected number but found \"]\""
+        [ts] "interface I extends A[-] {}"  tsc TS1109@23..24 "Expression expected." | lint @23+1 "Expected number but found \"]\""
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "type:" in namespaced JSX name
+        [tsx] "let v = <type: A]>x;"  tsc TS1003@16..17 "Identifier expected." | lint @14+0 "Expected identifier after \"type:\" in namespaced JSX name"
+        [tsx] "let v = < type: A }>x;"  tsc TS1003@18..19 "Identifier expected." | lint @15+0 "Expected identifier after \"type:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "as:" in namespaced JSX name
+        [tsx] "let v = <as: A]>x;"  tsc TS1003@14..15 "Identifier expected." | lint @12+0 "Expected identifier after \"as:\" in namespaced JSX name"
+        [tsx] "let v = < as: A }>x;"  tsc TS1003@16..17 "Identifier expected." | lint @13+0 "Expected identifier after \"as:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "infer:" in namespaced JSX name
+        [tsx] "let v = <infer: A]>x;"  tsc TS1003@17..18 "Identifier expected." | lint @15+0 "Expected identifier after \"infer:\" in namespaced JSX name"
+        [tsx] "let v = < infer: A }>x;"  tsc TS1003@19..20 "Identifier expected." | lint @16+0 "Expected identifier after \"infer:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "keyof:" in namespaced JSX name
+        [tsx] "let v = <keyof: A]>x;"  tsc TS1003@17..18 "Identifier expected." | lint @15+0 "Expected identifier after \"keyof:\" in namespaced JSX name"
+        [tsx] "let v = < keyof: A }>x;"  tsc TS1003@19..20 "Identifier expected." | lint @16+0 "Expected identifier after \"keyof:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "readonly:" in namespaced JSX name
+        [tsx] "let v = <readonly: A]>x;"  tsc TS1003@20..21 "Identifier expected." | lint @18+0 "Expected identifier after \"readonly:\" in namespaced JSX name"
+        [tsx] "let v = < readonly: A }>x;"  tsc TS1003@22..23 "Identifier expected." | lint @19+0 "Expected identifier after \"readonly:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "unique:" in namespaced JSX name
+        [tsx] "let v = <unique: A]>x;"  tsc TS1003@18..19 "Identifier expected." | lint @16+0 "Expected identifier after \"unique:\" in namespaced JSX name"
+        [tsx] "let v = < unique: A }>x;"  tsc TS1003@20..21 "Identifier expected." | lint @17+0 "Expected identifier after \"unique:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "abstract:" in namespaced JSX name
+        [tsx] "let v = <abstract: A]>x;"  tsc TS1003@20..21 "Identifier expected." | lint @18+0 "Expected identifier after \"abstract:\" in namespaced JSX name"
+        [tsx] "let v = < abstract: A }>x;"  tsc TS1003@22..23 "Identifier expected." | lint @19+0 "Expected identifier after \"abstract:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "declare:" in namespaced JSX name
+        [tsx] "let v = <declare: A]>x;"  tsc TS1003@19..20 "Identifier expected." | lint @17+0 "Expected identifier after \"declare:\" in namespaced JSX name"
+        [tsx] "let v = < declare: A }>x;"  tsc TS1003@21..22 "Identifier expected." | lint @18+0 "Expected identifier after \"declare:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "namespace:" in namespaced JSX name
+        [tsx] "let v = <namespace: A]>x;"  tsc TS1003@21..22 "Identifier expected." | lint @19+0 "Expected identifier after \"namespace:\" in namespaced JSX name"
+        [tsx] "let v = < namespace: A }>x;"  tsc TS1003@23..24 "Identifier expected." | lint @20+0 "Expected identifier after \"namespace:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "module:" in namespaced JSX name
+        [tsx] "let v = <module: A]>x;"  tsc TS1003@18..19 "Identifier expected." | lint @16+0 "Expected identifier after \"module:\" in namespaced JSX name"
+        [tsx] "let v = < module: A }>x;"  tsc TS1003@20..21 "Identifier expected." | lint @17+0 "Expected identifier after \"module:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "global:" in namespaced JSX name
+        [tsx] "let v = <global: A]>x;"  tsc TS1003@18..19 "Identifier expected." | lint @16+0 "Expected identifier after \"global:\" in namespaced JSX name"
+        [tsx] "let v = < global: A }>x;"  tsc TS1003@20..21 "Identifier expected." | lint @17+0 "Expected identifier after \"global:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "out:" in namespaced JSX name
+        [tsx] "let v = <out: A]>x;"  tsc TS1003@15..16 "Identifier expected." | lint @13+0 "Expected identifier after \"out:\" in namespaced JSX name"
+        [tsx] "let v = < out: A }>x;"  tsc TS1003@17..18 "Identifier expected." | lint @14+0 "Expected identifier after \"out:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "satisfies:" in namespaced JSX name
+        [tsx] "let v = <satisfies: A]>x;"  tsc TS1003@21..22 "Identifier expected." | lint @19+0 "Expected identifier after \"satisfies:\" in namespaced JSX name"
+        [tsx] "let v = < satisfies: A }>x;"  tsc TS1003@23..24 "Identifier expected." | lint @20+0 "Expected identifier after \"satisfies:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "accessor:" in namespaced JSX name
+        [tsx] "let v = <accessor: A]>x;"  tsc TS1003@20..21 "Identifier expected." | lint @18+0 "Expected identifier after \"accessor:\" in namespaced JSX name"
+        [tsx] "let v = < accessor: A }>x;"  tsc TS1003@22..23 "Identifier expected." | lint @19+0 "Expected identifier after \"accessor:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "override:" in namespaced JSX name
+        [tsx] "let v = <override: A]>x;"  tsc TS1003@20..21 "Identifier expected." | lint @18+0 "Expected identifier after \"override:\" in namespaced JSX name"
+        [tsx] "let v = < override: A }>x;"  tsc TS1003@22..23 "Identifier expected." | lint @19+0 "Expected identifier after \"override:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "get:" in namespaced JSX name
+        [tsx] "let v = <get: A]>x;"  tsc TS1003@15..16 "Identifier expected." | lint @13+0 "Expected identifier after \"get:\" in namespaced JSX name"
+        [tsx] "let v = < get: A }>x;"  tsc TS1003@17..18 "Identifier expected." | lint @14+0 "Expected identifier after \"get:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "set:" in namespaced JSX name
+        [tsx] "let v = <set: A]>x;"  tsc TS1003@15..16 "Identifier expected." | lint @13+0 "Expected identifier after \"set:\" in namespaced JSX name"
+        [tsx] "let v = < set: A }>x;"  tsc TS1003@17..18 "Identifier expected." | lint @14+0 "Expected identifier after \"set:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "async:" in namespaced JSX name
+        [tsx] "let v = <async: A]>x;"  tsc TS1003@17..18 "Identifier expected." | lint @15+0 "Expected identifier after \"async:\" in namespaced JSX name"
+        [tsx] "let v = < async: A }>x;"  tsc TS1003@19..20 "Identifier expected." | lint @16+0 "Expected identifier after \"async:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "await:" in namespaced JSX name
+        [tsx] "let v = <await: A]>x;"  tsc TS1003@17..18 "Identifier expected." | lint @15+0 "Expected identifier after \"await:\" in namespaced JSX name"
+        [tsx] "let v = < await: A }>x;"  tsc TS1003@19..20 "Identifier expected." | lint @16+0 "Expected identifier after \"await:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "of:" in namespaced JSX name
+        [tsx] "let v = <of: A]>x;"  tsc TS1003@14..15 "Identifier expected." | lint @12+0 "Expected identifier after \"of:\" in namespaced JSX name"
+        [tsx] "let v = < of: A }>x;"  tsc TS1003@16..17 "Identifier expected." | lint @13+0 "Expected identifier after \"of:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "from:" in namespaced JSX name
+        [tsx] "let v = <from: A]>x;"  tsc TS1003@16..17 "Identifier expected." | lint @14+0 "Expected identifier after \"from:\" in namespaced JSX name"
+        [tsx] "let v = < from: A }>x;"  tsc TS1003@18..19 "Identifier expected." | lint @15+0 "Expected identifier after \"from:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "using:" in namespaced JSX name
+        [tsx] "let v = <using: A]>x;"  tsc TS1003@17..18 "Identifier expected." | lint @15+0 "Expected identifier after \"using:\" in namespaced JSX name"
+        [tsx] "let v = < using: A }>x;"  tsc TS1003@19..20 "Identifier expected." | lint @16+0 "Expected identifier after \"using:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "defer:" in namespaced JSX name
+        [tsx] "let v = <defer: A]>x;"  tsc TS1003@17..18 "Identifier expected." | lint @15+0 "Expected identifier after \"defer:\" in namespaced JSX name"
+        [tsx] "let v = < defer: A }>x;"  tsc TS1003@19..20 "Identifier expected." | lint @16+0 "Expected identifier after \"defer:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "static:" in namespaced JSX name
+        [tsx] "let v = <static: A]>x;"  tsc TS1003@18..19 "Identifier expected." | lint @16+0 "Expected identifier after \"static:\" in namespaced JSX name"
+        [tsx] "let v = < static: A }>x;"  tsc TS1003@20..21 "Identifier expected." | lint @17+0 "Expected identifier after \"static:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "public:" in namespaced JSX name
+        [tsx] "let v = <public: A]>x;"  tsc TS1003@18..19 "Identifier expected." | lint @16+0 "Expected identifier after \"public:\" in namespaced JSX name"
+        [tsx] "let v = < public: A }>x;"  tsc TS1003@20..21 "Identifier expected." | lint @17+0 "Expected identifier after \"public:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "private:" in namespaced JSX name
+        [tsx] "let v = <private: A]>x;"  tsc TS1003@19..20 "Identifier expected." | lint @17+0 "Expected identifier after \"private:\" in namespaced JSX name"
+        [tsx] "let v = < private: A }>x;"  tsc TS1003@21..22 "Identifier expected." | lint @18+0 "Expected identifier after \"private:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "protected:" in namespaced JSX name
+        [tsx] "let v = <protected: A]>x;"  tsc TS1003@21..22 "Identifier expected." | lint @19+0 "Expected identifier after \"protected:\" in namespaced JSX name"
+        [tsx] "let v = < protected: A }>x;"  tsc TS1003@23..24 "Identifier expected." | lint @20+0 "Expected identifier after \"protected:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "constructor:" in namespaced JSX name
+        [tsx] "let v = <constructor: A]>x;"  tsc TS1003@23..24 "Identifier expected." | lint @21+0 "Expected identifier after \"constructor:\" in namespaced JSX name"
+        [tsx] "let v = < constructor: A }>x;"  tsc TS1003@25..26 "Identifier expected." | lint @22+0 "Expected identifier after \"constructor:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "require:" in namespaced JSX name
+        [tsx] "let v = <require: A]>x;"  tsc TS1003@19..20 "Identifier expected." | lint @17+0 "Expected identifier after \"require:\" in namespaced JSX name"
+        [tsx] "let v = < require: A }>x;"  tsc TS1003@21..22 "Identifier expected." | lint @18+0 "Expected identifier after \"require:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "intrinsic:" in namespaced JSX name
+        [tsx] "let v = <intrinsic: A]>x;"  tsc TS1003@21..22 "Identifier expected." | lint @19+0 "Expected identifier after \"intrinsic:\" in namespaced JSX name"
+        [tsx] "let v = < intrinsic: A }>x;"  tsc TS1003@23..24 "Identifier expected." | lint @20+0 "Expected identifier after \"intrinsic:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "in:" in namespaced JSX name
+        [tsx] "let v = <in: A]>x;"  tsc TS1003@14..15 "Identifier expected." | lint @12+0 "Expected identifier after \"in:\" in namespaced JSX name"
+        [tsx] "let v = < in: A }>x;"  tsc TS1003@16..17 "Identifier expected." | lint @13+0 "Expected identifier after \"in:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "new:" in namespaced JSX name
+        [tsx] "let v = <new: A]>x;"  tsc TS1003@15..16 "Identifier expected." | lint @13+0 "Expected identifier after \"new:\" in namespaced JSX name"
+        [tsx] "let v = < new: A }>x;"  tsc TS1003@17..18 "Identifier expected." | lint @14+0 "Expected identifier after \"new:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "function:" in namespaced JSX name
+        [tsx] "let v = <function: A]>x;"  tsc TS1003@20..21 "Identifier expected." | lint @18+0 "Expected identifier after \"function:\" in namespaced JSX name"
+        [tsx] "let v = < function: A }>x;"  tsc TS1003@22..23 "Identifier expected." | lint @19+0 "Expected identifier after \"function:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "void:" in namespaced JSX name
+        [tsx] "let v = <void: A]>x;"  tsc TS1003@16..17 "Identifier expected." | lint @14+0 "Expected identifier after \"void:\" in namespaced JSX name"
+        [tsx] "let v = < void: A }>x;"  tsc TS1003@18..19 "Identifier expected." | lint @15+0 "Expected identifier after \"void:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "typeof:" in namespaced JSX name
+        [tsx] "let v = <typeof: A]>x;"  tsc TS1003@18..19 "Identifier expected." | lint @16+0 "Expected identifier after \"typeof:\" in namespaced JSX name"
+        [tsx] "let v = < typeof: A }>x;"  tsc TS1003@20..21 "Identifier expected." | lint @17+0 "Expected identifier after \"typeof:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "import:" in namespaced JSX name
+        [tsx] "let v = <import: A]>x;"  tsc TS1003@18..19 "Identifier expected." | lint @16+0 "Expected identifier after \"import:\" in namespaced JSX name"
+        [tsx] "let v = < import: A }>x;"  tsc TS1003@20..21 "Identifier expected." | lint @17+0 "Expected identifier after \"import:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "null:" in namespaced JSX name
+        [tsx] "let v = <null: A]>x;"  tsc TS1003@16..17 "Identifier expected." | lint @14+0 "Expected identifier after \"null:\" in namespaced JSX name"
+        [tsx] "let v = < null: A }>x;"  tsc TS1003@18..19 "Identifier expected." | lint @15+0 "Expected identifier after \"null:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "true:" in namespaced JSX name
+        [tsx] "let v = <true: A]>x;"  tsc TS1003@16..17 "Identifier expected." | lint @14+0 "Expected identifier after \"true:\" in namespaced JSX name"
+        [tsx] "let v = < true: A }>x;"  tsc TS1003@18..19 "Identifier expected." | lint @15+0 "Expected identifier after \"true:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "false:" in namespaced JSX name
+        [tsx] "let v = <false: A]>x;"  tsc TS1003@17..18 "Identifier expected." | lint @15+0 "Expected identifier after \"false:\" in namespaced JSX name"
+        [tsx] "let v = < false: A }>x;"  tsc TS1003@19..20 "Identifier expected." | lint @16+0 "Expected identifier after \"false:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "class:" in namespaced JSX name
+        [tsx] "let v = <class: A]>x;"  tsc TS1003@17..18 "Identifier expected." | lint @15+0 "Expected identifier after \"class:\" in namespaced JSX name"
+        [tsx] "let v = < class: A }>x;"  tsc TS1003@19..20 "Identifier expected." | lint @16+0 "Expected identifier after \"class:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "delete:" in namespaced JSX name
+        [tsx] "let v = <delete: A]>x;"  tsc TS1003@18..19 "Identifier expected." | lint @16+0 "Expected identifier after \"delete:\" in namespaced JSX name"
+        [tsx] "let v = < delete: A }>x;"  tsc TS1003@20..21 "Identifier expected." | lint @17+0 "Expected identifier after \"delete:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "var:" in namespaced JSX name
+        [tsx] "let v = <var: A]>x;"  tsc TS1003@15..16 "Identifier expected." | lint @13+0 "Expected identifier after \"var:\" in namespaced JSX name"
+        [tsx] "let v = < var: A }>x;"  tsc TS1003@17..18 "Identifier expected." | lint @14+0 "Expected identifier after \"var:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "let:" in namespaced JSX name
+        [tsx] "let v = <let: A]>x;"  tsc TS1003@15..16 "Identifier expected." | lint @13+0 "Expected identifier after \"let:\" in namespaced JSX name"
+        [tsx] "let v = < let: A }>x;"  tsc TS1003@17..18 "Identifier expected." | lint @14+0 "Expected identifier after \"let:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "const:" in namespaced JSX name
+        [tsx] "let v = <const: A]>x;"  tsc TS1003@17..18 "Identifier expected." | lint @15+0 "Expected identifier after \"const:\" in namespaced JSX name"
+        [tsx] "let v = < const: A }>x;"  tsc TS1003@19..20 "Identifier expected." | lint @16+0 "Expected identifier after \"const:\" in namespaced JSX name"
+     0 ts      4 tsx      4 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "enum:" in namespaced JSX name
+        [tsx] "let v = <enum: A]>x;"  tsc TS1003@16..17 "Identifier expected." | lint @14+0 "Expected identifier after \"enum:\" in namespaced JSX name"
+        [tsx] "let v = < enum: A }>x;"  tsc TS1003@18..19 "Identifier expected." | lint @15+0 "Expected identifier after \"enum:\" in namespaced JSX name"
+     2 ts      2 tsx      2 src  no-code | tsc TS1109 Expression expected. | lint: Expected number but found "extends"
+        [ts] "interface I extends - extends A ? B : C {}"  tsc TS1109@20..21 "Expression expected." | lint @22+7 "Expected number but found \"extends\""
+        [ts] "function f<U extends - extends A ? B : C>() {}"  tsc TS1109@23..30 "Expression expected." | lint @23+7 "Expected number but found \"extends\""
+     2 ts      2 tsx      2 src  other-code | tsc TS1011 An element access expression should take an argument. | lint TS1003 Identifier expected.
+        [ts] "interface I extends A extends infer [] ? U : never {}"  tsc TS1011@37..37 "An element access expression should take an argument." | lint TS1003@36..37 "Expected identifier but found \"[\""
+        [ts] "interface I extends A extends (infer )[] ? U : never {}"  tsc TS1011@39..39 "An element access expression should take an argument." | lint TS1003@37..38 "Expected identifier but found \")\""
+     2 ts      2 tsx      2 src  other-code | tsc TS1005 '_' expected. | lint TS1131 Property or signature expected.
+        [ts] "function f(): A extends infer U[] ? U :  { return x; }"  tsc TS1005@31..32 "'?' expected." | lint TS1131@43..49 "Unexpected return"
+        [ts] "class C { @d m(): A extends infer U[] ? U :  { return x; } }"  tsc TS1005@35..36 "'?' expected." | lint TS1131@47..53 "Unexpected return"
+     2 ts      2 tsx      2 src  no-code | tsc TS1131 Property or signature expected. | lint: Unexpected |
+        [ts] "type X = { a A | B; };"  tsc TS1131@11..12 "Property or signature expected." | lint @15+1 "Unexpected |"
+        [ts] "type X = { K in A | B]: V };"  tsc TS1131@11..12 "Property or signature expected." | lint @18+1 "Unexpected |"
+     2 ts      2 tsx      2 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected |
+        [ts] "interface I extends { a A | B; } {}"  tsc TS1005@24..25 "',' expected." | lint @26+1 "Unexpected |"
+        [ts] "interface I extends { K in A | B]: V } {}"  tsc TS1005@24..26 "',' expected." | lint @29+1 "Unexpected |"
+     2 ts      2 tsx      2 src  other-code | tsc TS1135 Argument expression expected. | lint TS1110 Type expected.
+        [ts] "interface I extends keyof ( => void {}"  tsc TS1135@28..30 "Argument expression expected." | lint TS1110@28..30 "Unexpected =>"
+        [ts] "interface I extends readonly ( => void {}"  tsc TS1135@31..33 "Argument expression expected." | lint TS1110@31..33 "Unexpected =>"
+     2 ts      2 tsx      2 src  no-code | tsc TS1011 An element access expression should take an argument. | lint: Expected string but found ")"
+        [ts] "interface I extends import()[] {}"  tsc TS1011@29..29 "An element access expression should take an argument." | lint @27+1 "Expected string but found \")\""
+        [ts] "interface I extends import().A[] {}"  tsc TS1011@31..31 "An element access expression should take an argument." | lint @27+1 "Expected string but found \")\""
+     2 ts      2 tsx      2 src  no-code | tsc TS1005 '_' expected. | lint: Expected string but found <literal>
+        [ts] "type X = import(`x`;"  tsc TS1005@19..20 "')' expected." | lint @16+3 "Expected string but found \"`x`\""
+        [ts] "interface I extends import(`x` {}"  tsc TS1005@31..32 "',' expected." | lint @27+3 "Expected string but found \"`x`\""
+     2 ts      2 tsx      2 src  no-code | tsc TS1003 Identifier expected. | lint: Expected string but found <name>
+        [ts] "type X = import(A.);"  tsc TS1003@18..19 "Identifier expected." | lint @16+1 "Expected string but found \"A\""
+        [ts] "interface I extends import(A.) {}"  tsc TS1003@29..30 "Identifier expected." | lint @27+1 "Expected string but found \"A\""
+     2 ts      2 tsx      2 src  no-code | tsc TS1144 '_' or '_' expected. | lint: Unexpected default
+        [ts] "function f(): ('x').default { return x; }"  tsc TS1144@19..20 "'{' or ';' expected." | lint @20+7 "Unexpected default"
+        [ts] "class C { @d m(): ('x').default { return x; } }"  tsc TS1144@23..24 "'{' or ';' expected." | lint @24+7 "Unexpected default"
+     2 ts      2 tsx      2 src  no-code | tsc TS1144 '_' or '_' expected. | lint: Unexpected new
+        [ts] "function f(): ('x').new { return x; }"  tsc TS1144@19..20 "'{' or ';' expected." | lint @20+3 "Unexpected new"
+        [ts] "class C { @d m(): ('x').new { return x; } }"  tsc TS1144@23..24 "'{' or ';' expected." | lint @24+3 "Unexpected new"
+     2 ts      2 tsx      2 src  no-code | tsc TS1068 Unexpected token. A constructor, method, accessor, or property was expected. | lint: Unexpected <name>
+        [ts] "class C { @d x: ('x')\n.A; }"  tsc TS1068@22..23 "Unexpected token. A constructor, method, accessor, or property was expected." | lint @23+1 "Unexpected A"
+        [ts] "class C { @d m(): ('x')\n.A { return x; } }"  tsc TS1068@24..25 "Unexpected token. A constructor, method, accessor, or property was expected." | lint @25+1 "Unexpected A"
+     2 ts      2 tsx      2 src  no-code | tsc TS1136 Property assignment expected. | lint: Unexpected =
+        [ts] "interface I extends {  = 1 } {}"  tsc TS1136@23..24 "Property assignment expected." | lint @23+1 "Unexpected ="
+        [ts] "interface I extends ({  = 1 }: A) => void {}"  tsc TS1136@24..25 "Property assignment expected." | lint @24+1 "Unexpected ="
+     2 ts      2 tsx      2 src  no-code | tsc TS1110 Type expected. | lint: Unexpected =
+        [ts] "type X = ({ a = 1 }: A) => ;"  tsc TS1110@27..28 "Type expected." | lint @14+1 "Unexpected ="
+        [ts] "type X = ({ a = 1 }: ) => void;"  tsc TS1110@21..22 "Type expected." | lint @14+1 "Unexpected ="
+     2 ts      2 tsx      2 src  no-code | tsc TS1110 Type expected. | lint: Unexpected "="
+        [ts] "f<({ a = 1 }: A) => >(x);"  tsc TS1110@20..21 "Type expected." | lint @7+1 "Unexpected \"=\""
+        [ts] "f<({ a = 1 }: ) => void>(x);"  tsc TS1110@14..15 "Type expected." | lint @7+1 "Unexpected \"=\""
+     4 ts      0 tsx      4 src  other-code | tsc TS1139 Type parameter declaration expected. | lint TS1110 Type expected.
+        [ts] "let v = a ? (b): <,>() => void => c : d;"  tsc TS1139@18..19 "Type parameter declaration expected." | lint TS1110@18..19 "Unexpected ,"
+        [ts] "let v = a ? (b): < = A>(a: T) => T => c : d;"  tsc TS1139@19..20 "Type parameter declaration expected." | lint TS1110@19..20 "Unexpected ="
+     2 ts      2 tsx      2 src  no-code | tsc TS1110 Type expected. | lint: The modifier "in" is not valid here
+        [ts] "type X = <in T>() => ;"  tsc TS1110@21..22 "Type expected." | lint @10+2 "The modifier \"in\" is not valid here"
+        [ts] "type X = <in out T>() => ;"  tsc TS1110@25..26 "Type expected." | lint @10+2 "The modifier \"in\" is not valid here"
+     2 ts      2 tsx      2 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected newline before "=>"
+        [ts] "let v = a ? (b): (\nA\n => c : d;"  tsc TS1005@22..24 "')' expected." | lint @22+2 "Unexpected newline before \"=>\""
+        [ts] "let v = a ? (b): (a: A)\n=>  => c : d;"  tsc TS1005@28..30 "'(' expected." | lint @24+2 "Unexpected newline before \"=>\""
+     2 ts      2 tsx      2 src  no-code | tsc TS1109 Expression expected. | lint: Expected number but found ")"
+        [ts] "interface I extends (-) {}"  tsc TS1109@22..23 "Expression expected." | lint @22+1 "Expected number but found \")\""
+        [ts] "function f<U extends (-)>() {}"  tsc TS1109@23..24 "Expression expected." | lint @23+1 "Expected number but found \")\""
+     2 ts      2 tsx      2 src  no-code | tsc TS1138 Parameter declaration expected. | lint: Unexpected ,
+        [ts] "type X = { a(, c?) };"  tsc TS1138@13..14 "Parameter declaration expected." | lint @13+1 "Unexpected ,"
+        [ts] "interface I extends { a(, c?) } {}"  tsc TS1138@24..25 "Parameter declaration expected." | lint @24+1 "Unexpected ,"
+     2 ts      2 tsx      2 src  no-code | tsc TS1003 Identifier expected. | lint: Unexpected ?
+        [ts] "type X = { a(b, ?) };"  tsc TS1003@16..17 "Identifier expected." | lint @16+1 "Unexpected ?"
+        [ts] "interface I extends { a(b, ?) } {}"  tsc TS1003@27..28 "Identifier expected." | lint @27+1 "Unexpected ?"
+     2 ts      2 tsx      2 src  no-code | tsc TS1138 Parameter declaration expected. | lint: Unexpected =
+        [ts] "type X = { a( = 1): void };"  tsc TS1138@14..15 "Parameter declaration expected." | lint @14+1 "Unexpected ="
+        [ts] "interface I extends { a( = 1): void } {}"  tsc TS1138@25..26 "Parameter declaration expected." | lint @25+1 "Unexpected ="
+     2 ts      2 tsx      2 src  no-code | tsc TS1003 Identifier expected. | lint: Unexpected :
+        [ts] "type X = { a(...: B[]): void };"  tsc TS1003@16..17 "Identifier expected." | lint @16+1 "Unexpected :"
+        [ts] "interface I extends { a(...: B[]): void } {}"  tsc TS1003@27..28 "Identifier expected." | lint @27+1 "Unexpected :"
+     2 ts      2 tsx      2 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected asserts
+        [ts] "type X = { a(b: B) asserts b };"  tsc TS1005@19..26 "';' expected." | lint @19+7 "Unexpected asserts"
+        [ts] "interface I extends { a(b: B) asserts b } {}"  tsc TS1005@30..37 "'{' expected." | lint @30+7 "Unexpected asserts"
+     2 ts      2 tsx      2 src  no-code | tsc TS1109 Expression expected. | lint: Unexpected {
+        [ts] "interface I extends { [k?: string]: A  {}"  tsc TS1109@25..26 "Expression expected." | lint @39+1 "Unexpected {"
+        [ts] "interface I extends { [...k: string[]]: A  {}"  tsc TS1109@23..26 "Expression expected." | lint @43+1 "Unexpected {"
+     2 ts      2 tsx      2 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected set
+        [ts] "type X = { get a(): A set a(v: A) };"  tsc TS1005@22..25 "';' expected." | lint @22+3 "Unexpected set"
+        [ts] "interface I extends { get a(): A set a(v: A) } {}"  tsc TS1005@33..36 "'{' expected." | lint @33+3 "Unexpected set"
+     2 ts      2 tsx      2 src  no-code | tsc TS1131 Property or signature expected. | lint: Unexpected .
+        [ts] "type X = { a.b]: A };"  tsc TS1131@11..12 "Property or signature expected." | lint @12+1 "Unexpected ."
+        [ts] "type X = { Symbol.iterator](): A };"  tsc TS1131@11..17 "Property or signature expected." | lint @17+1 "Unexpected ."
+     2 ts      2 tsx      2 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected .
+        [ts] "interface I extends { a.b]: A } {}"  tsc TS1005@23..24 "',' expected." | lint @23+1 "Unexpected ."
+        [ts] "interface I extends { Symbol.iterator](): A } {}"  tsc TS1005@28..29 "',' expected." | lint @28+1 "Unexpected ."
+     2 ts      2 tsx      2 src  no-code | tsc TS1109 Expression expected. | lint: Unexpected ?
+        [ts] "interface I extends { []?: A } {}"  tsc TS1109@23..24 "Expression expected." | lint @24+1 "Unexpected ?"
+        [ts] "interface I extends { []?(): A } {}"  tsc TS1109@23..24 "Expression expected." | lint @24+1 "Unexpected ?"
+     2 ts      2 tsx      2 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected #a
+        [ts] "f< #a: A }>(x);"  tsc TS1005@5..6 "';' expected." | lint @3+2 "Unexpected #a"
+        [ts] "let v = a ? (b):  #a: A } => c : d;"  tsc TS1005@20..21 "',' expected." | lint @18+2 "Unexpected #a"
+     2 ts      2 tsx      2 src  no-code | tsc TS1110 Type expected. | lint: Cannot use "await" here
+        [ts] "f<{ await?:  }>(x);"  tsc TS1110@13..14 "Type expected." | lint @4+5 "Cannot use \"await\" here"
+        [ts] "let v = a ? (b): { await?:  } => c : d;"  tsc TS1110@28..29 "Type expected." | lint @19+5 "Cannot use \"await\" here"
+     2 ts      2 tsx      2 src  no-code | tsc TS1109 Expression expected. | lint: Expected string but found ";"
+        [ts] "import type A from;"  tsc TS1109@18..19 "Expression expected." | lint @18+1 "Expected string but found \";\""
+        [ts] "export type { A } from;"  tsc TS1109@22..23 "Expression expected." | lint @22+1 "Expected string but found \";\""
+     0 ts      3 tsx      3 src  no-code | tsc TS1109 Expression expected. | lint: Expected JSX element name but found "!"
+        [tsx] "let v = <!A>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \"!\""
+        [tsx] "let v = <!A[]>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \"!\""
+     0 ts      3 tsx      3 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "extends:" in namespaced JSX name
+        [tsx] "let v = <extends: A]>x;"  tsc TS1003@19..20 "Identifier expected." | lint @17+0 "Expected identifier after \"extends:\" in namespaced JSX name"
+        [tsx] "let v = < extends: A }>x;"  tsc TS1003@21..22 "Identifier expected." | lint @18+0 "Expected identifier after \"extends:\" in namespaced JSX name"
+     0 ts      3 tsx      3 src  no-code | tsc TS1109 Expression expected. | lint: Expected JSX element name but found "="
+        [tsx] "class C implements < = A>(a: T) => T {}"  tsc TS1109@19..20 "Expression expected." | lint @21+1 "Expected JSX element name but found \"=\""
+        [tsx] "class C implements < = A<B>>() => void {}"  tsc TS1109@19..20 "Expression expected." | lint @21+1 "Expected JSX element name but found \"=\""
+     0 ts      3 tsx      3 src  other-code | tsc TS1145 '_' or JSX element expected. | lint TS1005 '_' expected.
+        [tsx] "let v = <new a = 1) => A>x;"  tsc TS1145@17..18 "'{' or JSX element expected." | lint TS1005@17..18 "Expected \"{\" but found \"1\""
+        [tsx] "let v = <new T extends A = B>() => T>x;"  tsc TS1145@27..28 "'{' or JSX element expected." | lint TS1005@27..28 "Expected \"{\" but found \"B\""
+     0 ts      3 tsx      3 src  no-code | tsc TS1139 Type parameter declaration expected. | lint: Expected JSX element name but found ","
+        [tsx] "let v = a ? (b): <,>() => void => c : d;"  tsc TS1139@18..19 "Type parameter declaration expected." | lint @18+1 "Expected JSX element name but found \",\""
+        [tsx] "let v = a ? (b): <, U extends T>() => void => c : d;"  tsc TS1139@18..19 "Type parameter declaration expected." | lint @18+1 "Expected JSX element name but found \",\""
+     2 ts      1 tsx      2 src  no-code | tsc TS1138 Parameter declaration expected. | lint: The modifier "out" is not valid here
+        [ts] "type X = <out T>( => T;"  tsc TS1138@18..20 "Parameter declaration expected." | lint @10+3 "The modifier \"out\" is not valid here"
+        [ts] "let v = a ? (b): <out T>( => T => c : d;"  tsc TS1138@26..28 "Parameter declaration expected." | lint @18+3 "The modifier \"out\" is not valid here"
+     2 ts      1 tsx      2 src  no-code | tsc TS1110 Type expected. | lint: Unexpected =>
+        [ts] "f<new <T>(a: T) => >(x);"  tsc TS1110@19..20 "Type expected." | lint @16+2 "Unexpected =>"
+        [ts] "f<new <T extends A = B>() => >(x);"  tsc TS1110@29..30 "Type expected." | lint @26+2 "Unexpected =>"
+     0 ts      2 tsx      2 src  no-code | tsc TS1109 Expression expected. | lint: Expected JSX element name but found ""a""
+        [tsx] "let v = <\"a\">x;"  tsc TS1109@8..9 "Expression expected." | lint @9+3 "Expected JSX element name but found \"\"a\"\""
+        [tsx] "let v = < \"a\": A }>x;"  tsc TS1109@8..9 "Expression expected." | lint @10+3 "Expected JSX element name but found \"\"a\"\""
+     0 ts      2 tsx      2 src  no-code | tsc TS1109 Expression expected. | lint: Expected JSX element name but found ";"
+        [tsx] "let v = <;>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \";\""
+        [tsx] "let v = < ; }>x;"  tsc TS1109@8..9 "Expression expected." | lint @10+1 "Expected JSX element name but found \";\""
+     0 ts      2 tsx      2 src  no-code | tsc TS1109 Expression expected. | lint: Expected JSX element name but found "/"
+        [tsx] "let v = </a/>x;"  tsc TS1109@8..10 "Expression expected." | lint @9+1 "Expected JSX element name but found \"/\""
+        [tsx] "let v = </a/g>x;"  tsc TS1109@8..10 "Expression expected." | lint @9+1 "Expected JSX element name but found \"/\""
+     1 ts      1 tsx      1 src  no-code | tsc TS1034 '_' must be followed by an argument list or member access. | lint: Unexpected "super"
+        [ts] "f<super>(x);"  tsc TS1034@7..8 "'super' must be followed by an argument list or member access." | lint @2+5 "Unexpected \"super\""
+     1 ts      1 tsx      1 src  no-code | tsc TS1034 '_' must be followed by an argument list or member access. | lint: Unexpected super
+        [ts] "interface I extends super {}"  tsc TS1034@26..27 "'super' must be followed by an argument list or member access." | lint @20+5 "Unexpected super"
+     0 ts      2 tsx      2 src  other-code | tsc TS1109 Expression expected. | lint TS1002 Unterminated string literal.
+        [tsx] "let v = <'a>x;"  tsc TS1109@8..9 "Expression expected." | lint TS1002@14..14 "Unterminated string literal"
+        [tsx] "let v = <\"a>x;"  tsc TS1109@8..9 "Expression expected." | lint TS1002@14..14 "Unterminated string literal"
+     1 ts      1 tsx      1 src  no-code | tsc TS1005 '_' expected. | lint: Unsupported syntax: Legacy HTML comments not implemented yet!
+        [ts] "let v = a ? (b): A<!--B => c : d;"  tsc TS1005@24..26 "';' expected." | lint @19+0 "Unsupported syntax: Legacy HTML comments not implemented yet!"
+     2 ts      0 tsx      2 src  no-code | tsc TS1110 Type expected. | lint: Expected number but found ">"
+        [ts] "let v = <->x;"  tsc TS1110@9..10 "Type expected." | lint @10+1 "Expected number but found \">\""
+        [ts] "let v = <- >x;"  tsc TS1110@9..10 "Type expected." | lint @11+1 "Expected number but found \">\""
+     0 ts      2 tsx      2 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected return
+        [tsx] "function f(): A\n<B { return x; }"  tsc TS1005@21..27 "'...' expected." | lint @21+6 "Unexpected return"
+        [tsx] "function f(): typeof a\n<B { return x; }"  tsc TS1005@28..34 "'...' expected." | lint @28+6 "Unexpected return"
+     0 ts      2 tsx      2 src  no-code | tsc TS1003 Identifier expected. | lint: Expected identifier after "b:" in namespaced JSX name
+        [tsx] "let v = <a.b: A]>x;"  tsc TS1003@12..13 "Identifier expected." | lint @13+0 "Expected identifier after \"b:\" in namespaced JSX name"
+        [tsx] "let v = <a.b: A) => void>x;"  tsc TS1003@12..13 "Identifier expected." | lint @13+0 "Expected identifier after \"b:\" in namespaced JSX name"
+     1 ts      1 tsx      1 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected delete
+        [ts] "interface I extends [delete {}"  tsc TS1005@30..30 "']' expected." | lint @21+6 "Unexpected delete"
+     1 ts      1 tsx      1 src  other-code | tsc TS1385 Function type notation must be parenthesized when used in a union type. | lint TS1005 '_' expected.
+        [ts] "type X = A | () => void);"  tsc TS1385@12..23 "Function type notation must be parenthesized when used in a union type." | lint TS1005@23..24 "Expected \";\" but found \")\""
+     1 ts      1 tsx      1 src  no-code | tsc TS1005 '_' expected. | lint: Expected number but found "|"
+        [ts] "interface I extends A | 'a' | 1 | - | true | null | undefined {}"  tsc TS1005@22..23 "',' expected." | lint @36+1 "Expected number but found \"|\""
+     0 ts      2 tsx      2 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected [
+        [tsx] "let v = <A  { [K in infer U]: V } ? U : never>x;"  tsc TS1005@14..15 "'...' expected." | lint @14+1 "Unexpected ["
+        [tsx] "let v = < extends { [K in infer U]: V } ? U : never>x;"  tsc TS1005@20..21 "'...' expected." | lint @20+1 "Unexpected ["
+     1 ts      1 tsx      1 src  no-code | tsc TS1131 Property or signature expected. | lint: Unexpected `a${
+        [ts] "type X = { K in keyof T as `a${K}`]: T[K] };"  tsc TS1131@11..12 "Property or signature expected." | lint @27+4 "Unexpected `a${"
+     1 ts      1 tsx      1 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected `a${
+        [ts] "interface I extends { K in keyof T as `a${K}`]: T[K] } {}"  tsc TS1005@24..26 "',' expected." | lint @38+4 "Unexpected `a${"
+     1 ts      1 tsx      1 src  no-code | tsc TS1005 '_' expected. | lint: Expected number but found "["
+        [ts] "function f<U extends  - [K in T]: V }>() {}"  tsc TS1005@32..33 "',' expected." | lint @24+1 "Expected number but found \"[\""
+     1 ts      1 tsx      1 src  no-code | tsc TS1109 Expression expected. | lint: Expected number but found "["
+        [ts] "interface I extends  - [K in T]: V } {}"  tsc TS1109@21..22 "Expression expected." | lint @23+1 "Expected number but found \"[\""
+     1 ts      1 tsx      1 src  no-code | tsc TS1131 Property or signature expected. | lint: Unexpected newline before "=>"
+        [ts] "let v = a ? (b): {\n[K in T]: V\n => c : d;"  tsc TS1131@32..34 "Property or signature expected." | lint @32+2 "Unexpected newline before \"=>\""
+     1 ts      1 tsx      1 src  no-code | tsc TS1011 An element access expression should take an argument. | lint: Unexpected {
+        [ts] "interface I extends { [K in T]: V [] {}"  tsc TS1011@35..35 "An element access expression should take an argument." | lint @37+1 "Unexpected {"
+     1 ts      1 tsx      1 src  other-code | tsc TS1441 Cannot start a function call in a type annotation. | lint TS1110 Type expected.
+        [ts] "class C { @d x: keyof new () => ; }"  tsc TS1441@26..27 "Cannot start a function call in a type annotation." | lint TS1110@32..33 "Unexpected ;"
+     1 ts      1 tsx      1 src  no-code | tsc TS1110 Type expected. | lint: Expected string but found "."
+        [ts] "type X = import(.B);"  tsc TS1110@16..17 "Type expected." | lint @16+1 "Expected string but found \".\""
+     1 ts      1 tsx      1 src  no-code | tsc TS1135 Argument expression expected. | lint: Expected string but found "."
+        [ts] "interface I extends import(.B) {}"  tsc TS1135@27..28 "Argument expression expected." | lint @27+1 "Expected string but found \".\""
+     1 ts      1 tsx      1 src  no-code | tsc TS1109 Expression expected. | lint: Expected string but found "|"
+        [ts] "interface I extends import( | 'y') {}"  tsc TS1109@28..29 "Expression expected." | lint @28+1 "Expected string but found \"|\""
+     1 ts      1 tsx      1 src  no-code | tsc TS1110 Type expected. | lint: Expected string but found ";"
+        [ts] "type X = import(;"  tsc TS1110@16..17 "Type expected." | lint @16+1 "Expected string but found \";\""
+     1 ts      1 tsx      1 src  no-code | tsc TS1005 '_' expected. | lint: Expected string but found "{"
+        [ts] "interface I extends import( {}"  tsc TS1005@30..30 "')' expected." | lint @28+1 "Expected string but found \"{\""
+     1 ts      1 tsx      1 src  no-code | tsc TS1442 Expected '_' for property initializer. | lint: Unexpected default
+        [ts] "class C { @d x: ('x').default; }"  tsc TS1442@21..22 "Expected '=' for property initializer." | lint @22+7 "Unexpected default"
+     1 ts      1 tsx      1 src  no-code | tsc TS1442 Expected '_' for property initializer. | lint: Unexpected new
+        [ts] "class C { @d x: ('x').new; }"  tsc TS1442@21..22 "Expected '=' for property initializer." | lint @22+3 "Unexpected new"
+     1 ts      1 tsx      1 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected "..."
+        [ts] "let v = a ? (b): (...a)  B => c : d;"  tsc TS1005@25..26 "'=>' expected." | lint @0+0 "Unexpected \"...\""
+     1 ts      1 tsx      1 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected "," after rest pattern
+        [ts] "let v = a ? (b): (...a: A[], b: B) =>  => c : d;"  tsc TS1005@39..41 "'(' expected." | lint @27+1 "Unexpected \",\" after rest pattern"
+     1 ts      1 tsx      1 src  no-code | tsc TS1109 Expression expected. | lint: Unexpected ...
+        [ts] "interface I extends ({ ... }: A) => void {}"  tsc TS1109@27..28 "Expression expected." | lint @23+3 "Unexpected ..."
+     1 ts      1 tsx      1 src  other-code | tsc TS1181 Array element destructuring pattern expected. | lint TS1109 Expression expected.
+        [ts] "let v = a ? (b): ([: A) => void => c : d;"  tsc TS1181@19..20 "Array element destructuring pattern expected." | lint TS1109@19..20 "Unexpected :"
+     1 ts      1 tsx      1 src  other-code | tsc TS1359 Identifier expected. '_' is a reserved word that cannot be used here. | lint TS1003 Identifier expected.
+        [ts] "type X = <const >() => T;"  tsc TS1359@10..15 "Identifier expected. 'const' is a reserved word that cannot be used here." | lint TS1003@16..17 "Expected identifier but found \">\""
+     0 ts      2 tsx      2 src  no-code | tsc TS1359 Identifier expected. '_' is a reserved word that cannot be used here. | lint: Syntax Error
+        [tsx] "let v = a ? (b): <in >() => T => c : d;"  tsc TS1359@18..20 "Identifier expected. 'in' is a reserved word that cannot be used here." | lint @22+0 "Syntax Error"
+        [tsx] "let v = a ? (b): <const >() => T => c : d;"  tsc TS1359@18..23 "Identifier expected. 'const' is a reserved word that cannot be used here." | lint @25+0 "Syntax Error"
+     1 ts      1 tsx      1 src  no-code | tsc TS1359 Identifier expected. '_' is a reserved word that cannot be used here. | lint: The modifier "in" is not valid here
+        [ts] "type X = <in >() => T;"  tsc TS1359@10..12 "Identifier expected. 'in' is a reserved word that cannot be used here." | lint @10+2 "The modifier \"in\" is not valid here"
+     1 ts      1 tsx      1 src  no-code | tsc TS1110 Type expected. | lint: The modifier "out" is not valid here
+        [ts] "type X = <out T>() => ;"  tsc TS1110@22..23 "Type expected." | lint @10+3 "The modifier \"out\" is not valid here"
+     1 ts      1 tsx      1 src  other-code | tsc TS1131 Property or signature expected. | lint TS1128 Declaration or statement expected.
+        [ts] "let v = a ? (b): (a: A) => { : A } => c : d;"  tsc TS1131@29..30 "Property or signature expected." | lint TS1128@29..30 "Unexpected :"
+     1 ts      1 tsx      1 src  no-code | tsc TS1005 '_' expected. | lint: Unexpected ,
+        [ts] "interface I extends { a A,, } {}"  tsc TS1005@24..25 "',' expected." | lint @26+1 "Unexpected ,"
+     1 ts      1 tsx      1 src  no-code | tsc TS1131 Property or signature expected. | lint: Unexpected !
+        [ts] "type X = { !: A };"  tsc TS1131@11..12 "Property or signature expected." | lint @11+1 "Unexpected !"
+     1 ts      1 tsx      1 src  no-code | tsc TS1136 Property assignment expected. | lint: Unexpected !
+        [ts] "interface I extends { !: A } {}"  tsc TS1136@22..23 "Property assignment expected." | lint @22+1 "Unexpected !"
+     1 ts      1 tsx      1 src  no-code | tsc TS1136 Property assignment expected. | lint: Unexpected }
+        [ts] "interface I extends { ( } {}"  tsc TS1136@22..23 "Property assignment expected." | lint @24+1 "Unexpected }"
+     1 ts      1 tsx      1 src  no-code | tsc TS1136 Property assignment expected. | lint: Unexpected (
+        [ts] "interface I extends { (): void (a: A): void } {}"  tsc TS1136@22..23 "Property assignment expected." | lint @31+1 "Unexpected ("
+     1 ts      1 tsx      1 src  no-code | tsc TS1109 Expression expected. | lint: Unexpected ]
+        [ts] "interface I extends { [...k: string]]: A } {}"  tsc TS1109@23..26 "Expression expected." | lint @36+1 "Unexpected ]"
+     1 ts      1 tsx      1 src  no-code | tsc TS1005 '_' expected. | lint: Getter a must have zero arguments
+        [ts] "class C implements { get a(b: B): A  {}"  tsc TS1005@39..39 "'}' expected." | lint @27+1 "Getter a must have zero arguments"
+     1 ts      1 tsx      1 src  no-code | tsc TS1005 '_' expected. | lint: Setter a must have exactly 1 argument (there are 0)
+        [ts] "class C implements { set a()  {}"  tsc TS1005@32..32 "'}' expected." | lint @26+0 "Setter a must have exactly 1 argument (there are 0)"
+     1 ts      1 tsx      1 src  no-code | tsc TS1131 Property or signature expected. | lint: Unexpected :
+        [ts] "type X = { readonly get a(: A };"  tsc TS1131@11..19 "Property or signature expected." | lint @26+1 "Unexpected :"
+     1 ts      1 tsx      1 src  no-code | tsc TS1109 Expression expected. | lint: Unexpected export
+        [ts] "interface I extends  export a: A } {}"  tsc TS1109@21..27 "Expression expected." | lint @21+6 "Unexpected export"
+     1 ts      1 tsx      1 src  no-code | tsc TS1003 Identifier expected. | lint: Unexpected *
+        [ts] "interface I extends { *(): A } {}"  tsc TS1003@23..24 "Identifier expected." | lint @22+1 "Unexpected *"
+     1 ts      1 tsx      1 src  no-code | tsc TS1138 Parameter declaration expected. | lint: Unexpected *
+        [ts] "interface I extends { *a(: A } {}"  tsc TS1138@25..26 "Parameter declaration expected." | lint @22+1 "Unexpected *"
+     1 ts      1 tsx      1 src  no-code | tsc TS1110 Type expected. | lint: Unexpected *
+        [ts] "interface I extends { *a():  } {}"  tsc TS1110@29..30 "Type expected." | lint @22+1 "Unexpected *"
+     0 ts      2 tsx      2 src  no-code | tsc TS17008 JSX element '_' has no corresponding closing tag. | lint: Expected identifier after "a:" in namespaced JSX name
+        [tsx] "let v = < a: A>x;"  tsc TS17008@10..14 "JSX element 'a: A' has no corresponding closing tag." | lint @12+0 "Expected identifier after \"a:\" in namespaced JSX name"
+        [tsx] "let v = <a: A >x;"  tsc TS17008@9..13 "JSX element 'a: A' has no corresponding closing tag." | lint @11+0 "Expected identifier after \"a:\" in namespaced JSX name"
+     1 ts      1 tsx      1 src  no-code | tsc TS1131 Property or signature expected. | lint: Unexpected =>
+        [ts] "type X = { a: [A]; b: () => void; c new () => A };"  tsc TS1131@34..35 "Property or signature expected." | lint @43+2 "Unexpected =>"
+     0 ts      2 tsx      2 src  no-code | tsc TS1381 Unexpected token. Did you mean `{'_'}` or `&rbrace;`? | lint: Unexpected end of file
+        [tsx] "class C implements { a: \n<T>(): void } {}"  tsc TS1381@37..38 "Unexpected token. Did you mean `{'}'}` or `&rbrace;`?" | lint @41+0 "Unexpected end of file"
+        [tsx] "class C implements { a: typeof \n<T>(): void } {}"  tsc TS1381@44..45 "Unexpected token. Did you mean `{'}'}` or `&rbrace;`?" | lint @48+0 "Unexpected end of file"
+     1 ts      1 tsx      1 src  no-code | tsc TS1109 Expression expected. | lint: Cannot use "await" here
+        [ts] "class C implements { await?:  } {}"  tsc TS1109@30..31 "Expression expected." | lint @21+5 "Cannot use \"await\" here"
+     1 ts      1 tsx      1 src  no-code | tsc TS1128 Declaration or statement expected. | lint: Unexpected newline after "type"
+        [ts] "export type\nA = 1;"  tsc TS1128@0..6 "Declaration or statement expected." | lint @11+0 "Unexpected newline after \"type\""
+     1 ts      1 tsx      1 src  no-code | tsc TS1005 '_' expected. | lint: Invalid field name
+        [ts] "class C { constructor: A }"  tsc TS1005@21..22 "'(' expected." | lint @10+11 "Invalid field name"
+     1 ts      1 tsx      1 src  other-code | tsc TS1433 Neither decorators nor modifiers may be applied to '_' parameters. | lint TS1005 '_' expected.
+        [ts] "class C { constructor(public this: A) {} }"  tsc TS1433@22..28 "Neither decorators nor modifiers may be applied to 'this' parameters." | lint TS1005@29..33 "Expected \")\" but found \"this\""
+     1 ts      1 tsx      1 src  other-code | tsc TS1437 Namespace must be given a name. | lint TS1005 '_' expected.
+        [ts] "namespace {}"  tsc TS1437@10..11 "Namespace must be given a name." | lint TS1005@10..11 "Expected \";\" but found \"{\""
+     1 ts      1 tsx      1 src  other-code | tsc TS1443 Module declaration names may only use ' or " quoted strings. | lint TS1005 '_' expected.
+        [ts] "declare module `m` {}"  tsc TS1443@15..18 "Module declaration names may only use ' or \" quoted strings." | lint TS1005@19..20 "Expected \";\" but found \"{\""
+     1 ts      1 tsx      1 src  other-code | tsc TS1438 Interface must be given a name. | lint TS1003 Identifier expected.
+        [ts] "interface {}"  tsc TS1438@10..11 "Interface must be given a name." | lint TS1003@10..11 "Expected identifier but found \"{\""
+     1 ts      1 tsx      1 src  other-code | tsc TS2427 Interface name cannot be '_'. | lint TS1003 Identifier expected.
+        [ts] "interface 'a' {}"  tsc TS2427@10..13 "Interface name cannot be 'a'." | lint TS1003@10..13 "Expected identifier but found \"'a'\""
+     1 ts      1 tsx      1 src  other-code | tsc TS1003 Identifier expected. | lint TS1359 Identifier expected. '_' is a reserved word that cannot be used here.
+        [ts] "import { type A as if } from 'a';"  tsc TS1003@19..21 "Identifier expected." | lint TS1359@19..21 "Expected identifier but found \"if\""
+     1 ts      1 tsx      1 src  other-code | tsc TS1128 Declaration or statement expected. | lint TS1003 Identifier expected.
+        [ts] "export type;"  tsc TS1128@0..6 "Declaration or statement expected." | lint TS1003@11..12 "Expected identifier but found \";\""
+     1 ts      1 tsx      1 src  other-code | tsc TS1146 Declaration expected. | lint TS1005 '_' expected.
+        [ts] "@d[e] class C {}"  tsc TS1146@2..2 "Declaration expected." | lint TS1005@2..3 "Expected \"class\" but found \"[\""
+     1 ts      1 tsx      1 src  other-code | tsc TS1436 Decorators must precede the name and all keywords of property declarations. | lint TS1005 '_' expected.
+        [ts] "class C { @d a: A @e b: B }"  tsc TS1436@18..19 "Decorators must precede the name and all keywords of property declarations." | lint TS1005@18..19 "Expected \";\" but found \"@\""
+     0 ts      1 tsx      1 src  no-code | tsc TS1109 Expression expected. | lint: Expected JSX element name but found "]"
+        [tsx] "let v = <]>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \"]\""
+     0 ts      1 tsx      1 src  no-code | tsc TS1109 Expression expected. | lint: Expected JSX element name but found "}"
+        [tsx] "let v = <}>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \"}\""
+     0 ts      1 tsx      1 src  no-code | tsc TS1109 Expression expected. | lint: Expected JSX element name but found "@"
+        [tsx] "let v = <@>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \"@\""
+     0 ts      1 tsx      1 src  no-code | tsc TS17008 JSX element '_' has no corresponding closing tag. | lint: Expected JSX element name but found <#name>
+        [tsx] "let v = <#a>x;"  tsc TS17008@9..11 "JSX element '#a' has no corresponding closing tag." | lint @9+1 "Expected JSX element name but found \"#\""
+     0 ts      1 tsx      1 src  no-code | tsc TS17008 JSX element '_' has no corresponding closing tag. | lint: Expected identifier after "A:" in namespaced JSX name
+        [tsx] "let v = <A: B>x;"  tsc TS17008@9..13 "JSX element 'A: B' has no corresponding closing tag." | lint @11+0 "Expected identifier after \"A:\" in namespaced JSX name"
+     0 ts      1 tsx      1 src  no-code | tsc TS1109 Expression expected. | lint: Expected JSX element name but found "~"
+        [tsx] "let v = <~A>x;"  tsc TS1109@8..9 "Expression expected." | lint @9+1 "Expected JSX element name but found \"~\""
+     0 ts      1 tsx      1 src  other-code | tsc TS1109 Expression expected. | lint TS1160 Unterminated template literal.
+        [tsx] "let v = <`a>x;"  tsc TS1109@8..9 "Expression expected." | lint TS1160@14..14 "Unterminated string literal"
+     0 ts      1 tsx      1 src  no-code | tsc TS17021 Unicode escape sequence cannot appear here. | lint: Expected JSX element name but found "\"
+        [tsx] "let v = <\\u0041>x;"  tsc TS17021@9..15 "Unicode escape sequence cannot appear here." | lint @9+1 "Expected JSX element name but found \"\\\""
+     0 ts      1 tsx      1 src  other-code | tsc TS17021 Unicode escape sequence cannot appear here. | lint TS1005 '_' expected.
+        [tsx] "let v = <A\\u0042>x;"  tsc TS17021@9..16 "Unicode escape sequence cannot appear here." | lint TS1005@10..11 "Expected \">\" but found \"\\\""
+     0 ts      1 tsx      1 src  same-code-other-range | TS1003 Identifier expected. | lint Identifier expected. after
+        [tsx] "let v = <A...B]>x;"  tsc TS1003@10..13 "Identifier expected." | lint TS1003@11..12 "Expected identifier but found \".\""
+     0 ts      1 tsx      1 src  no-code | tsc TS1139 Type parameter declaration expected. | lint: Expected JSX element name but found "="
+        [tsx] "let v = a ? (b): < = A>(a: T) => T => c : d;"  tsc TS1139@19..20 "Type parameter declaration expected." | lint @19+1 "Expected JSX element name but found \"=\""
+     0 ts      1 tsx      1 src  no-code | tsc TS1109 Expression expected. | lint: Unexpected [
+        [tsx] "class C implements <T, U>(a: T, b: U)  [T, U] {}"  tsc TS1109@19..20 "Expression expected." | lint @39+1 "Unexpected ["
+     0 ts      1 tsx      1 src  no-code | tsc TS1005 '_' expected. | lint: Expected JSX element name but found "("
+        [tsx] "let v = a ? (b): <() => void => c : d;"  tsc TS1005@18..19 "'>' expected." | lint @18+1 "Expected JSX element name but found \"(\""
+     0 ts      1 tsx      1 src  no-code | tsc TS1382 Unexpected token. Did you mean `{'_'}` or `&gt;`? | lint: Unexpected end of file
+        [tsx] "class C implements (<B>) => void {}"  tsc TS1382@26..27 "Unexpected token. Did you mean `{'>'}` or `&gt;`?" | lint @35+0 "Unexpected end of file"
+     0 ts      1 tsx      1 src  no-code | tsc TS1003 Identifier expected. | lint: Expected JSX element name but found <#name>
+        [tsx] "let v = < #a: A }>x;"  tsc TS1003@16..17 "Identifier expected." | lint @10+1 "Expected JSX element name but found \"#\""
+     0 ts      1 tsx      1 src  other-code | tsc TS1381 Unexpected token. Did you mean `{'_'}` or `&rbrace;`? | lint TS1110 Type expected.
+        [tsx] "interface I extends { a: \n<T>(): void } {}"  tsc TS1381@38..39 "Unexpected token. Did you mean `{'}'}` or `&rbrace;`?" | lint TS1110@30..31 "Unexpected )"
+     0 ts      1 tsx      1 src  other-code | tsc TS1381 Unexpected token. Did you mean `{'_'}` or `&rbrace;`? | lint TS1003 Identifier expected.
+        [tsx] "interface I extends { a: typeof \n<T>(): void } {}"  tsc TS1381@45..46 "Unexpected token. Did you mean `{'}'}` or `&rbrace;`?" | lint TS1003@33..34 "Expected identifier but found \"<\""
+     1 ts      0 tsx      1 src  other-code | tsc TS1161 Unterminated regular expression literal. | lint TS1005 '_' expected.
+        [ts] "const v = <div>{x!}</div>;"  tsc TS1161@20..25 "Unterminated regular expression literal." | lint TS1005@17..18 "Expected \"}\" but found \"!\""

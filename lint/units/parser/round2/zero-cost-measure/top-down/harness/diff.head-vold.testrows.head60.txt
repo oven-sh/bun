@@ -1,0 +1,17 @@
+base 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (301 sources)
+next 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (301 sources)
+4515 records compared, 815 differ, in 56 sources
+!!      815 records      56 sources  A>R          unexplained
+              t.ts.plain       "let x: if;"
+                base ["o","let x;\n"]
+                next ["e",[["Unexpected if",1,8]]]
+              t.ts.exp         "let x: if;"
+                base ["o","let x;\n"]
+                next ["e",[["Unexpected if",1,8]]]
+              t.ts.deco        "let x: if;"
+                base ["o","let x;\n"]
+                next ["e",[["Unexpected if",1,8]]]
+              t.tsx.plain      "let x: if;"
+                base ["o","let x;\n"]
+                next ["e",[["Unexpected if",1,8]]]
+815 records with the mark !!, 0 with the mark ??

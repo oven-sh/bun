@@ -40,12 +40,13 @@ for (const d of decls) for (const p of places) for (const m of members) {
 	}
 	// A place that does not hold the member twice is tried with each form of the member; the others only with the plain one.
 	const body = p.split("M").join(m);
-	out.push({ code: `class A { ${d} m(a, x, f, y) { ${body} } }`, ext: ts ? "ts" : "js" });
+	// For the fixture the class is exported and the parameters are read: no-unused-vars and no-undef then stay out of most cases.
+	out.push({ code: small ? `export class A { ${d} m(a, x, f, y) { a, x, f, y; ${body} } }` : `class A { ${d} m(a, x, f, y) { ${body} } }`, ext: ts ? "ts" : "js" });
 }
 // Where the member stands outside a method.
 for (const d of decls) for (const m of members.slice(0, 2)) {
 	if (small && (ts || !(d === "#x = 1;" || d === "static #x;") || m !== "this.#x")) continue;
-	for (const body of [`y = ${m};`, `static y = A.#x;`, `static { ${m.replace("this", "A")}++; }`, `static { ${m} = 1; }`, `[${m.replace("this", "A")}] = 1;`, `m(p = ${m}) {}`, `m([p = ${m}]) {}`, `m({ q = ${m} }) {}`, `get y() { return ${m}; }`, `set y(v) { ${m} = v; }`, `constructor() { ${m} = 1; }`, `constructor() { ${m}++; }`]) out.push({ code: `class A { ${d} ${body} }`, ext: ts ? "ts" : "js" });
+	for (const body of [`y = ${m};`, `static y = A.#x;`, `static { ${m.replace("this", "A")}++; }`, `static { ${m} = 1; }`, `[${m.replace("this", "A")}] = 1;`, `m(p = ${m}) {}`, `m([p = ${m}]) {}`, `m({ q = ${m} }) {}`, `get y() { return ${m}; }`, `set y(v) { ${m} = v; }`, `constructor() { ${m} = 1; }`, `constructor() { ${m}++; }`]) out.push({ code: `${small ? "export " : ""}class A { ${d} ${body} }`, ext: ts ? "ts" : "js" });
 }
 process.stdout.write(JSON.stringify(out));
 process.stderr.write(`${out.length} cases\n`);

@@ -1,0 +1,43 @@
+base 1.4.3 e3566be889995ffff8b08823b9233617f979c889 (3952 sources)
+next 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (3952 sources)
+59280 records compared, 1318 differ, in 124 sources
+!!       55 records      13 sources  A>A          unexplained
+              t.ts.plain       "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+              t.ts.exp         "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+              t.ts.deco        "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+              t.tsx.plain      "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+!!     1010 records      86 sources  R>A          unexplained
+              t.ts.plain       "type as = 1;"
+                base ["e",[["Unexpected =",1,9]]]
+                next ["o",""]
+              t.ts.exp         "type as = 1;"
+                base ["e",[["Unexpected =",1,9]]]
+                next ["o",""]
+              t.ts.deco        "type as = 1;"
+                base ["e",[["Unexpected =",1,9]]]
+                next ["o",""]
+              t.tsx.plain      "type as = 1;"
+                base ["e",[["Unexpected =",1,9]]]
+                next ["o",""]
+!!      253 records      26 sources  R>R          unexplained
+              t.ts.plain       "const v = <in>x;"
+                base ["e",[["The modifier \"in\" is not valid here",1,12],["Unexpected in",1,12]]]
+                next ["e",[["Unexpected in",1,12]]]
+              t.ts.exp         "const v = <in>x;"
+                base ["e",[["The modifier \"in\" is not valid here",1,12],["Unexpected in",1,12]]]
+                next ["e",[["Unexpected in",1,12]]]
+              t.ts.deco        "const v = <in>x;"
+                base ["e",[["The modifier \"in\" is not valid here",1,12],["Unexpected in",1,12]]]
+                next ["e",[["Unexpected in",1,12]]]
+              t.ts.deco.keep   "const v = <in>x;"
+                base ["e",[["The modifier \"in\" is not valid here",1,12],["Unexpected in",1,12]]]
+                next ["e",[["Unexpected in",1,12]]]
+1318 records with the mark !!, 0 with the mark ??

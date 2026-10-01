@@ -1,0 +1,2115 @@
+
+/workspace/notes/lint/measure/parser/base/bun-profile:	file format elf64-x86-64
+
+Disassembly of section .text:
+
+00000000029b5ff0 <<bun_js_parser::p::P<false, false>>::s_local>:
+; <bun_js_parser::p::P<false, false>>::s_local():
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1127
+ 29b5ff0:      	pushq	%rbp
+ 29b5ff1:      	movq	%rsp, %rbp
+ 29b5ff4:      	pushq	%r15
+ 29b5ff6:      	pushq	%r14
+ 29b5ff8:      	pushq	%r13
+ 29b5ffa:      	pushq	%r12
+ 29b5ffc:      	pushq	%rbx
+ 29b5ffd:      	subq	$0x178, %rsp            # imm = 0x178
+ 29b6004:      	movq	%rcx, %r9
+ 29b6007:      	movq	%rdx, -0x118(%rbp)
+ 29b600e:      	movq	%rsi, -0x60(%rbp)
+ 29b6012:      	movq	%rdi, %rbx
+; /workspace/wt/parser-base/src/ast/nodes.rs:108
+ 29b6015:      	movq	0x9f0(%rdi), %rax
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1138
+ 29b601c:      	movb	%r8b, 0x7b(%rax)
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1141
+ 29b6020:      	movzbl	0x18(%rcx), %ecx
+ 29b6024:      	testb	%cl, %cl
+ 29b6026:      	movq	%r9, -0x88(%rbp)
+ 29b602d:      	je	0x29b6067 <<bun_js_parser::p::P<false, false>>::s_local+0x77>
+ 29b602f:      	cmpq	$0x0, 0xc8(%rbx)
+ 29b6037:      	je	0x29b6067 <<bun_js_parser::p::P<false, false>>::s_local+0x77>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:1912
+ 29b6039:      	movq	0x10(%r9), %rax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:287
+ 29b603d:      	testq	%rax, %rax
+ 29b6040:      	je	0x29b6c5c <<bun_js_parser::p::P<false, false>>::s_local+0xc6c>
+ 29b6046:      	movq	0x8(%r9), %r14
+ 29b604a:      	movzbl	0x1a(%r9), %ecx
+ 29b604f:      	movb	%cl, -0x29(%rbp)
+ 29b6052:      	leaq	-0xf0(%rbp), %r12
+ 29b6059:      	xorl	%esi, %esi
+ 29b605b:      	xorl	%r13d, %r13d
+ 29b605e:      	movq	%r14, -0x40(%rbp)
+ 29b6062:      	jmp	0x29b6c87 <<bun_js_parser::p::P<false, false>>::s_local+0xc97>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:1912
+ 29b6067:      	movq	0x10(%r9), %rax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:287
+ 29b606b:      	testq	%rax, %rax
+ 29b606e:      	je	0x29b6c5c <<bun_js_parser::p::P<false, false>>::s_local+0xc6c>
+ 29b6074:      	movq	0x8(%r9), %rdx
+ 29b6078:      	movq	%rdx, -0x58(%rbp)
+ 29b607c:      	movzbl	0x1a(%r9), %edx
+ 29b6081:      	movb	%dl, -0x29(%rbp)
+ 29b6084:      	testb	%dl, %dl
+ 29b6086:      	sete	%dl
+ 29b6089:      	movb	%cl, -0x78(%rbp)
+ 29b608c:      	orb	%cl, %dl
+ 29b608e:      	movb	%dl, -0x44(%rbp)
+ 29b6091:      	leaq	-0xf0(%rbp), %r13
+ 29b6098:      	xorl	%esi, %esi
+ 29b609a:      	xorl	%r14d, %r14d
+ 29b609d:      	movq	%rax, -0x50(%rbp)
+ 29b60a1:      	jmp	0x29b60c3 <<bun_js_parser::p::P<false, false>>::s_local+0xd3>
+ 29b60a3:      	nopw	%cs:(%rax,%rax)
+ 29b60ad:      	nopl	(%rax)
+ 29b60b0:      	incq	%r14
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:643
+ 29b60b3:      	incq	%rsi
+ 29b60b6:      	movq	-0x50(%rbp), %rax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:287
+ 29b60ba:      	cmpq	%rax, %r14
+ 29b60bd:      	jae	0x29b7524 <<bun_js_parser::p::P<false, false>>::s_local+0x1534>
+ 29b60c3:      	movq	%rsi, -0x108(%rbp)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:287
+ 29b60ca:      	movq	%r14, %r15
+ 29b60cd:      	shlq	$0x5, %r15
+ 29b60d1:      	addq	-0x58(%rbp), %r15
+ 29b60d5:      	jmp	0x29b60f8 <<bun_js_parser::p::P<false, false>>::s_local+0x108>
+ 29b60d7:      	nopw	(%rax,%rax)
+ 29b60e0:      	movq	-0x68(%rbp), %r14
+ 29b60e4:      	incq	%r14
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:287
+ 29b60e7:      	addq	$0x20, %r15
+ 29b60eb:      	movq	-0x50(%rbp), %rax
+ 29b60ef:      	cmpq	%rax, %r14
+ 29b60f2:      	jae	0x29b7516 <<bun_js_parser::p::P<false, false>>::s_local+0x1526>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:293
+ 29b60f8:      	movups	(%r15), %xmm0
+ 29b60fc:      	movaps	%xmm0, -0xf0(%rbp)
+ 29b6103:      	movq	%rbx, %rdi
+ 29b6106:      	movq	%r13, %rsi
+ 29b6109:      	xorl	%edx, %edx
+ 29b610b:      	callq	0x293e280 <<bun_js_parser::p::P<false, false>>::visit_binding>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:295
+ 29b6110:      	cmpb	$-0x1, 0x10(%r15)
+ 29b6115:      	je	0x29b6c23 <<bun_js_parser::p::P<false, false>>::s_local+0xc33>
+ 29b611b:      	movq	%r14, -0x68(%rbp)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:295
+ 29b611f:      	leaq	0x10(%r15), %rax
+ 29b6123:      	movups	(%rax), %xmm0
+ 29b6126:      	movaps	%xmm0, -0xa0(%rbp)
+; /workspace/wt/parser-base/src/ast/expr.rs:45
+ 29b612d:      	movzbl	-0xa0(%rbp), %r14d
+ 29b6135:      	cmpl	$0x9, %r14d
+ 29b6139:      	je	0x29b6240 <<bun_js_parser::p::P<false, false>>::s_local+0x250>
+ 29b613f:      	cmpl	$0x5, %r14d
+ 29b6143:      	je	0x29b614f <<bun_js_parser::p::P<false, false>>::s_local+0x15f>
+ 29b6145:      	cmpl	$0x3, %r14d
+ 29b6149:      	jne	0x29b6260 <<bun_js_parser::p::P<false, false>>::s_local+0x270>
+ 29b614f:      	movq	-0x9c(%rbp), %rax
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:634
+ 29b6156:      	movzbl	0x18(%rax), %eax
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:683
+ 29b615a:      	xorb	$0x1, %al
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:327
+ 29b615c:      	cmpb	$0x0, 0x120(%rbx)
+ 29b6163:      	je	0x29b6170 <<bun_js_parser::p::P<false, false>>::s_local+0x180>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:328
+ 29b6165:      	movq	$0x0, 0x180(%rbx)
+ 29b6170:      	movl	0xa68(%rbx), %ecx
+ 29b6176:      	movl	%ecx, -0x40(%rbp)
+ 29b6179:      	movl	0xe98(%rbx), %ecx
+ 29b617f:      	movl	%ecx, -0x6c(%rbp)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:336
+ 29b6182:      	movq	0xdb8(%rbx), %r13
+ 29b6189:      	movq	0xdc0(%rbx), %r12
+ 29b6190:      	cmpb	$0x3, %r14b
+ 29b6194:      	movl	%eax, -0x110(%rbp)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:337
+ 29b619a:      	jne	0x29b61c0 <<bun_js_parser::p::P<false, false>>::s_local+0x1d0>
+ 29b619c:      	testb	%al, %al
+ 29b619e:      	je	0x29b61c0 <<bun_js_parser::p::P<false, false>>::s_local+0x1d0>
+; /workspace/wt/parser-base/src/ast/nodes.rs:99
+ 29b61a0:      	movq	-0x9c(%rbp), %rax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:339
+ 29b61a7:      	cmpb	$0x1, 0x55(%rax)
+ 29b61ab:      	jne	0x29b61c0 <<bun_js_parser::p::P<false, false>>::s_local+0x1d0>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:340
+ 29b61ad:      	cmpl	$0x0, (%r15)
+ 29b61b1:      	je	0x29b6274 <<bun_js_parser::p::P<false, false>>::s_local+0x284>
+ 29b61b7:      	nopw	(%rax,%rax)
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:634
+ 29b61c0:      	cmpq	$0x0, 0xce8(%rbx)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:347
+ 29b61c8:      	je	0x29b62a0 <<bun_js_parser::p::P<false, false>>::s_local+0x2b0>
+; /workspace/wt/parser-base/src/ast/nodes.rs:123
+ 29b61ce:      	movq	0x9f0(%rbx), %rcx
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:360
+ 29b61d5:      	movl	(%r15), %eax
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs:1663
+ 29b61d8:      	cmpq	0xb00(%rbx), %rcx
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:348
+ 29b61df:      	jne	0x29b62a3 <<bun_js_parser::p::P<false, false>>::s_local+0x2b3>
+ 29b61e5:      	testl	%eax, %eax
+ 29b61e7:      	jne	0x29b62a3 <<bun_js_parser::p::P<false, false>>::s_local+0x2b3>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:349
+ 29b61ed:      	movq	0x4(%r15), %rax
+ 29b61f1:      	movq	%rax, -0x38(%rbp)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:350
+ 29b61f5:      	movq	-0x9c(%rbp), %rdx
+ 29b61fc:      	movzbl	%r14b, %esi
+ 29b6200:      	movq	%rbx, %rdi
+ 29b6203:      	callq	0x29c4700 <<bun_js_parser::p::P<true, false>>::react_compiler_candidate_expr>
+ 29b6208:      	movl	$0x1, %edx
+ 29b620d:      	cmpb	$0x2, %al
+ 29b620f:      	je	0x29b62b0 <<bun_js_parser::p::P<false, false>>::s_local+0x2c0>
+ 29b6215:      	movq	-0x38(%rbp), %rcx
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:352
+ 29b6219:      	movq	(%rcx), %rcx
+ 29b621c:      	movl	$0x1, 0xdd4(%rbx)
+ 29b6226:      	movq	%rcx, 0xdd8(%rbx)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:353
+ 29b622d:      	movb	%al, 0xed0(%rbx)
+ 29b6233:      	jmp	0x29b62b0 <<bun_js_parser::p::P<false, false>>::s_local+0x2c0>
+ 29b6235:      	nopw	%cs:(%rax,%rax)
+ 29b623f:      	nop
+ 29b6240:      	movb	$0x1, %al
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:327
+ 29b6242:      	cmpb	$0x0, 0x120(%rbx)
+ 29b6249:      	je	0x29b6170 <<bun_js_parser::p::P<false, false>>::s_local+0x180>
+ 29b624f:      	jmp	0x29b6165 <<bun_js_parser::p::P<false, false>>::s_local+0x175>
+ 29b6254:      	nopw	%cs:(%rax,%rax)
+ 29b625e:      	nop
+ 29b6260:      	xorl	%eax, %eax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:327
+ 29b6262:      	cmpb	$0x0, 0x120(%rbx)
+ 29b6269:      	jne	0x29b6165 <<bun_js_parser::p::P<false, false>>::s_local+0x175>
+ 29b626f:      	jmp	0x29b6170 <<bun_js_parser::p::P<false, false>>::s_local+0x180>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:340
+ 29b6274:      	movq	0x4(%r15), %rax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:342
+ 29b6278:      	movq	(%rax), %rsi
+ 29b627b:      	movq	%rbx, %rdi
+ 29b627e:      	callq	0x29da8b0 <<bun_js_parser::p::P<true, false>>::load_name_from_ref>
+ 29b6283:      	movq	%rax, 0xdb8(%rbx)
+ 29b628a:      	movq	%rdx, 0xdc0(%rbx)
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:634
+ 29b6291:      	cmpq	$0x0, 0xce8(%rbx)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:347
+ 29b6299:      	jne	0x29b61ce <<bun_js_parser::p::P<false, false>>::s_local+0x1de>
+ 29b629f:      	nop
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:360
+ 29b62a0:      	movl	(%r15), %eax
+ 29b62a3:      	xorl	%edx, %edx
+ 29b62a5:      	cmpl	$0x2, %eax
+ 29b62a8:      	sete	%dl
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:355
+ 29b62ab:      	shll	$0x10, %edx
+ 29b62ae:      	incl	%edx
+ 29b62b0:      	leaq	-0x170(%rbp), %r14
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:355
+ 29b62b7:      	movq	%rbx, %rdi
+ 29b62ba:      	leaq	-0xa0(%rbp), %rsi
+ 29b62c1:      	callq	0x29a1b80 <<bun_js_parser::p::P<false, false>>::visit_expr_in_out>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:364
+ 29b62c6:      	movl	$0x0, 0xdd4(%rbx)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:365
+ 29b62d0:      	movb	$0x0, 0xed0(%rbx)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:366
+ 29b62d7:      	movaps	-0xa0(%rbp), %xmm0
+ 29b62de:      	leaq	0x10(%r15), %rax
+ 29b62e2:      	movups	%xmm0, (%rax)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:367
+ 29b62e5:      	movq	%r13, 0xdb8(%rbx)
+ 29b62ec:      	movq	%r12, 0xdc0(%rbx)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:369
+ 29b62f3:      	cmpb	$0x1, 0x120(%rbx)
+ 29b62fa:      	leaq	-0xf0(%rbp), %r13
+ 29b6301:      	jne	0x29b6360 <<bun_js_parser::p::P<false, false>>::s_local+0x370>
+ 29b6303:      	cmpb	$0x0, 0x180(%rbx)
+ 29b630a:      	je	0x29b6360 <<bun_js_parser::p::P<false, false>>::s_local+0x370>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:372
+ 29b630c:      	movzbl	(%rax), %eax
+ 29b630f:      	cmpl	$0x6, %eax
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:1014
+ 29b6312:      	je	0x29b6320 <<bun_js_parser::p::P<false, false>>::s_local+0x330>
+ 29b6314:      	cmpl	$0xff, %eax
+ 29b6319:      	jne	0x29b6360 <<bun_js_parser::p::P<false, false>>::s_local+0x370>
+ 29b631b:      	jmp	0x29b7ada <<bun_js_parser::p::P<false, false>>::s_local+0x1aea>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:371
+ 29b6320:      	movq	0x188(%rbx), %rax
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:2511
+ 29b6327:      	cmpq	0x14(%r15), %rax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:373
+ 29b632b:      	jne	0x29b6360 <<bun_js_parser::p::P<false, false>>::s_local+0x370>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:379
+ 29b632d:      	movq	0x1a0(%rbx), %rsi
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:1014
+ 29b6334:      	testq	%rsi, %rsi
+ 29b6337:      	je	0x29b7ada <<bun_js_parser::p::P<false, false>>::s_local+0x1aea>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:767
+ 29b633d:      	cmpq	$-0x1, (%rsi)
+ 29b6341:      	je	0x29b7ada <<bun_js_parser::p::P<false, false>>::s_local+0x1aea>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:377
+ 29b6347:      	addq	$0x50, %rsi
+; /workspace/wt/parser-base/src/bun_alloc/baby_vec.rs:99
+ 29b634b:      	movq	0xa10(%rbx), %rdx
+ 29b6352:      	movl	0xa20(%rbx), %ecx
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:386
+ 29b6358:      	movq	%r15, %rdi
+ 29b635b:      	callq	0x28ec8e0 <<bun_ast::b::B>::write_to_hasher::<bun_wyhash::Wyhash, [bun_ast::symbol::Symbol]>>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:392
+ 29b6360:      	cmpb	$0x1, 0x135(%rbx)
+ 29b6367:      	jne	0x29b6440 <<bun_js_parser::p::P<false, false>>::s_local+0x450>
+ 29b636d:      	movl	0xa68(%rbx), %esi
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:392
+ 29b6373:      	cmpl	%esi, -0x40(%rbp)
+ 29b6376:      	jae	0x29b6440 <<bun_js_parser::p::P<false, false>>::s_local+0x450>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:394
+ 29b637c:      	cmpl	$0x0, (%r15)
+ 29b6380:      	jne	0x29b6440 <<bun_js_parser::p::P<false, false>>::s_local+0x450>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:396
+ 29b6386:      	movzbl	0x10(%r15), %eax
+ 29b638b:      	cmpb	$-0x1, %al
+ 29b638d:      	je	0x29b6440 <<bun_js_parser::p::P<false, false>>::s_local+0x450>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:397
+ 29b6393:      	cmpb	$0x1e, %al
+ 29b6395:      	jne	0x29b6440 <<bun_js_parser::p::P<false, false>>::s_local+0x450>
+ 29b639b:      	movl	0x18(%r15), %edi
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:397
+ 29b639f:      	cmpl	$-0x1, %edi
+ 29b63a2:      	je	0x29b6440 <<bun_js_parser::p::P<false, false>>::s_local+0x450>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:399
+ 29b63a8:      	cmpl	%esi, %edi
+ 29b63aa:      	jae	0x29b7b5d <<bun_js_parser::p::P<false, false>>::s_local+0x1b6d>
+ 29b63b0:      	movq	0x4(%r15), %rax
+ 29b63b4:      	movq	(%rax), %rdx
+; /workspace/wt/parser-base/src/bun_alloc/baby_vec.rs:99
+ 29b63b7:      	movq	0xa58(%rbx), %rax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:399
+ 29b63be:      	leaq	(%rdi,%rdi,2), %rcx
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:401
+ 29b63c2:      	movq	%rdx, 0x8(%rax,%rcx,8)
+ 29b63c7:      	leaq	-0xe0(%rbp), %rax
+ 29b63ce:      	xorps	%xmm0, %xmm0
+; /workspace/wt/parser-base/src/collections/array_hash_map.rs:436
+ 29b63d1:      	movups	%xmm0, (%rax)
+ 29b63d4:      	movups	%xmm0, 0x18(%rax)
+ 29b63d8:      	movups	%xmm0, 0x30(%rax)
+; /workspace/wt/parser-base/src/collections/array_hash_map.rs:1259
+ 29b63dc:      	movq	$0x0, -0xf0(%rbp)
+ 29b63e7:      	movq	$0x8, -0xe8(%rbp)
+ 29b63f2:      	movq	$0x4, -0xd0(%rbp)
+ 29b63fd:      	movq	$0x4, -0xb8(%rbp)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:403
+ 29b6408:      	movq	%r14, %rdi
+ 29b640b:      	leaq	0x6f0(%rbx), %rsi
+ 29b6412:      	movq	%r13, %rcx
+ 29b6415:      	callq	0x29d7090 <<bun_collections::zig_hash_map::HashMap<bun_ast::Ref, bun_collections::array_hash_map::StringArrayHashMap<bun_ast::nodes::LocRef>>>::insert>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:848
+ 29b641a:      	cmpq	$-0x1, -0x170(%rbp)
+ 29b6422:      	je	0x29b60e0 <<bun_js_parser::p::P<false, false>>::s_local+0xf0>
+ 29b6428:      	movq	%r14, %rdi
+ 29b642b:      	callq	0x2010030 <core::ptr::drop_glue::<bun_bundler::bundle_v2::bv2_impl::bake_types::EntryPointList>>
+ 29b6430:      	jmp	0x29b60e0 <<bun_js_parser::p::P<false, false>>::s_local+0xf0>
+ 29b6435:      	nopw	%cs:(%rax,%rax)
+ 29b643f:      	nop
+ 29b6440:      	movzbl	-0xa0(%rbp), %esi
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:416
+ 29b6447:      	cmpb	$0x0, 0x16f(%rbx)
+ 29b644e:      	je	0x29b6790 <<bun_js_parser::p::P<false, false>>::s_local+0x7a0>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:421
+ 29b6454:      	cmpl	$0x11, %esi
+ 29b6457:      	je	0x29b6527 <<bun_js_parser::p::P<false, false>>::s_local+0x537>
+ 29b645d:      	cmpl	$0x15, %esi
+ 29b6460:      	jne	0x29b6790 <<bun_js_parser::p::P<false, false>>::s_local+0x7a0>
+ 29b6466:      	movl	%esi, %r12d
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:428
+ 29b6469:      	movq	-0x9c(%rbp), %r14
+ 29b6470:      	movq	%r14, -0xf0(%rbp)
+; /workspace/wt/parser-base/src/collections/zig_hash_map.rs:338
+ 29b6477:      	leaq	0x460(%rbx), %rdi
+ 29b647e:      	movq	%r13, %rsi
+ 29b6481:      	callq	0x28ecdb0 <<bun_collections::zig_hash_map::HashMap<bun_ast::Ref, alloc::vec::Vec<u32>>>::get_index::<bun_ast::Ref>>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:1543
+ 29b6486:      	cmpq	$0x1, %rax
+ 29b648a:      	jne	0x29b6590 <<bun_js_parser::p::P<false, false>>::s_local+0x5a0>
+ 29b6490:      	movq	%rdx, %rdi
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:1873
+ 29b6493:      	movq	0x488(%rbx), %rsi
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:238
+ 29b649a:      	cmpq	%rsi, %rdx
+ 29b649d:      	jae	0x29b7b5d <<bun_js_parser::p::P<false, false>>::s_local+0x1b6d>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:627
+ 29b64a3:      	movq	0x480(%rbx), %rax
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:238
+ 29b64aa:      	shlq	$0x5, %rdi
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:744
+ 29b64ae:      	cmpq	$-0x1, 0x8(%rax,%rdi)
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:1168
+ 29b64b4:      	je	0x29b6590 <<bun_js_parser::p::P<false, false>>::s_local+0x5a0>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:430
+ 29b64ba:      	cmpl	$0x2, (%r15)
+ 29b64be:      	jne	0x29b6590 <<bun_js_parser::p::P<false, false>>::s_local+0x5a0>
+ 29b64c4:      	movq	%r14, -0x40(%rbp)
+ 29b64c8:      	addq	%rdi, %rax
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:1873
+ 29b64cb:      	movq	0x18(%rax), %r14
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/num/uint_macros.rs:3242
+ 29b64cf:      	leaq	(,%r14,4), %r13
+ 29b64d7:      	movq	%r14, %rcx
+ 29b64da:      	shrq	$0x3e, %rcx
+ 29b64de:      	setne	%cl
+ 29b64e1:      	movabsq	$0x7ffffffffffffffc, %rdx # imm = 0x7FFFFFFFFFFFFFFC
+ 29b64eb:      	cmpq	%rdx, %r13
+ 29b64ee:      	seta	%dl
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/intrinsics/mod.rs:511
+ 29b64f1:      	orb	%cl, %dl
+ 29b64f3:      	jne	0x29b7ac4 <<bun_js_parser::p::P<false, false>>::s_local+0x1ad4>
+ 29b64f9:      	movq	0x10(%rax), %rsi
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:472
+ 29b64fd:      	testq	%r13, %r13
+ 29b6500:      	je	0x29b65e6 <<bun_js_parser::p::P<false, false>>::s_local+0x5f6>
+ 29b6506:      	movq	%rsi, -0x38(%rbp)
+; /workspace/wt/parser-base/src/mimalloc_sys/mimalloc.rs:184
+ 29b650a:      	movq	%r13, %rdi
+ 29b650d:      	callq	0x4b5ecd0 <mi_malloc>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:481
+ 29b6512:      	testq	%rax, %rax
+ 29b6515:      	je	0x29b7b8f <<bun_js_parser::p::P<false, false>>::s_local+0x1b9f>
+ 29b651b:      	movq	%r14, %rcx
+ 29b651e:      	movq	-0x38(%rbp), %rsi
+ 29b6522:      	jmp	0x29b65ed <<bun_js_parser::p::P<false, false>>::s_local+0x5fd>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:422
+ 29b6527:      	movq	-0x9c(%rbp), %rax
+ 29b652e:      	cmpb	$0x14, (%rax)
+ 29b6531:      	jne	0x29b6790 <<bun_js_parser::p::P<false, false>>::s_local+0x7a0>
+; /workspace/wt/parser-base/src/ast/nodes.rs:99
+ 29b6537:      	movq	0x4(%rax), %r14
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:423
+ 29b653b:      	movq	0x24(%r14), %rcx
+; /workspace/wt/parser-base/src/ast/lib.rs:262
+ 29b653f:      	movabsq	$0x180000000, %rax      # imm = 0x180000000
+ 29b6549:      	movq	%rcx, -0x40(%rbp)
+ 29b654d:      	testq	%rax, %rcx
+ 29b6550:      	je	0x29b6790 <<bun_js_parser::p::P<false, false>>::s_local+0x7a0>
+ 29b6556:      	movl	%esi, %r12d
+; /workspace/wt/parser-base/src/mimalloc_sys/mimalloc.rs:184
+ 29b6559:      	movl	$0x4, %edi
+ 29b655e:      	callq	0x4b5ecd0 <mi_malloc>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/boxed.rs:251
+ 29b6563:      	testq	%rax, %rax
+ 29b6566:      	je	0x29b7b37 <<bun_js_parser::p::P<false, false>>::s_local+0x1b47>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:424
+ 29b656c:      	movl	0x20(%r14), %ecx
+ 29b6570:      	movl	%ecx, (%rax)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:438
+ 29b6572:      	movl	(%r15), %ecx
+ 29b6575:      	testl	%ecx, %ecx
+ 29b6577:      	je	0x29b6598 <<bun_js_parser::p::P<false, false>>::s_local+0x5a8>
+ 29b6579:      	cmpl	$0x2, %ecx
+ 29b657c:      	jne	0x29b659e <<bun_js_parser::p::P<false, false>>::s_local+0x5ae>
+ 29b657e:      	movl	$0x1, %r14d
+ 29b6584:      	movl	$0x0, -0x80(%rbp)
+ 29b658b:      	jmp	0x29b6615 <<bun_js_parser::p::P<false, false>>::s_local+0x625>
+ 29b6590:      	movl	%r12d, %esi
+ 29b6593:      	jmp	0x29b6790 <<bun_js_parser::p::P<false, false>>::s_local+0x7a0>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:459
+ 29b6598:      	cmpb	$0x0, -0x44(%rbp)
+ 29b659c:      	je	0x29b65a6 <<bun_js_parser::p::P<false, false>>::s_local+0x5b6>
+ 29b659e:      	movl	%r12d, %esi
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:459
+ 29b65a1:      	jmp	0x29b677e <<bun_js_parser::p::P<false, false>>::s_local+0x78e>
+ 29b65a6:      	movq	%rax, -0x38(%rbp)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:459
+ 29b65aa:      	movq	0x4(%r15), %rax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:460
+ 29b65ae:      	movq	(%rax), %r14
+ 29b65b1:      	movq	%r14, -0x180(%rbp)
+; /workspace/wt/parser-base/src/collections/zig_hash_map.rs:369
+ 29b65b8:      	leaq	0x6f0(%rbx), %rdi
+ 29b65bf:      	leaq	-0x180(%rbp), %rsi
+ 29b65c6:      	callq	0x28ecc70 <<bun_collections::zig_hash_map::HashMap<bun_ast::Ref, bun_collections::array_hash_map::StringArrayHashMap<bun_ast::nodes::LocRef>>>::get_index::<bun_ast::Ref>>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/macros/mod.rs:434
+ 29b65cb:      	cmpq	$0x1, %rax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:461
+ 29b65cf:      	jne	0x29b66f5 <<bun_js_parser::p::P<false, false>>::s_local+0x705>
+ 29b65d5:      	movq	-0x38(%rbp), %rdi
+; /workspace/wt/parser-base/src/bun_alloc/lib.rs:548
+ 29b65d9:      	callq	0x4b5ee60 <mi_free>
+ 29b65de:      	movl	%r12d, %esi
+ 29b65e1:      	jmp	0x29b6790 <<bun_js_parser::p::P<false, false>>::s_local+0x7a0>
+ 29b65e6:      	movl	$0x4, %eax
+ 29b65eb:      	xorl	%ecx, %ecx
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/slice.rs:449
+ 29b65ed:      	testq	%r14, %r14
+ 29b65f0:      	je	0x29b660c <<bun_js_parser::p::P<false, false>>::s_local+0x61c>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:574
+ 29b65f2:      	movq	%rax, %rdi
+ 29b65f5:      	movq	%rax, -0x38(%rbp)
+ 29b65f9:      	movq	%r13, %rdx
+ 29b65fc:      	movq	%rcx, %r13
+ 29b65ff:      	callq	*0x255ac63(%rip)        # 0x4f11268 <F_1_772+0x4ef4cc6>
+ 29b6605:      	movq	%r13, %rcx
+ 29b6608:      	movq	-0x38(%rbp), %rax
+ 29b660c:      	testq	%rcx, %rcx
+ 29b660f:      	sete	%cl
+ 29b6612:      	movl	%ecx, -0x80(%rbp)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:439
+ 29b6615:      	movq	0x4(%r15), %r13
+; /workspace/wt/parser-base/src/ast/b.rs:109
+ 29b6619:      	movq	(%r13), %r8
+ 29b661d:      	movl	0x8(%r13), %r9d
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:441
+ 29b6621:      	movzbl	-0x78(%rbp), %ecx
+ 29b6625:      	movl	%ecx, (%rsp)
+ 29b6628:      	movq	%rbx, %rdi
+ 29b662b:      	movq	-0x40(%rbp), %rsi
+ 29b662f:      	movq	%rax, -0x38(%rbp)
+ 29b6633:      	movq	%rax, %rdx
+ 29b6636:      	movq	%r14, %rcx
+ 29b6639:      	callq	0x29eaf20 <<bun_js_parser::p::P<true, false>>::try_track_dynamic_import_destructure>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:440
+ 29b663e:      	testb	%al, %al
+ 29b6640:      	movl	%r12d, %esi
+ 29b6643:      	je	0x29b66db <<bun_js_parser::p::P<false, false>>::s_local+0x6eb>
+; /workspace/wt/parser-base/src/js_parser/p.rs:1293
+ 29b6649:      	cmpb	$0x0, 0xed6(%rbx)
+ 29b6650:      	jne	0x29b66bf <<bun_js_parser::p::P<false, false>>::s_local+0x6cf>
+ 29b6652:      	cmpb	$0x0, 0xed3(%rbx)
+ 29b6659:      	jne	0x29b66bf <<bun_js_parser::p::P<false, false>>::s_local+0x6cf>
+ 29b665b:      	movq	-0x40(%rbp), %r14
+ 29b665f:      	movq	%r14, -0x170(%rbp)
+ 29b6666:      	leaq	0x578(%rbx), %rdi
+ 29b666d:      	movl	%esi, %r12d
+; /workspace/wt/parser-base/src/collections/zig_hash_map.rs:514
+ 29b6670:      	leaq	-0x170(%rbp), %rsi
+ 29b6677:      	callq	0x28ed030 <<bun_collections::zig_hash_map::HashMap<bun_ast::Ref, u32>>::get_index::<bun_ast::Ref>>
+ 29b667c:      	testb	$0x1, %al
+ 29b667e:      	cmoveq	%r14, %rdx
+ 29b6682:      	xorq	$0x1, %rax
+ 29b6686:      	leaq	0x578(%rbx), %rcx
+ 29b668d:      	movq	%rcx, -0xe8(%rbp)
+ 29b6694:      	movq	%rdx, -0xe0(%rbp)
+ 29b669b:      	movq	%rax, -0xf0(%rbp)
+; /workspace/wt/parser-base/src/collections/zig_hash_map.rs:670
+ 29b66a2:      	leaq	-0xf0(%rbp), %rdi
+ 29b66a9:      	callq	0x290ffa0 <<bun_collections::zig_hash_map::MapEntry<bun_ast::Ref, u32, bun_collections::zig_hash_map::AutoHashContext>>::or_insert_with::<<u32 as core::default::Default>::default>>
+ 29b66ae:      	movl	%r12d, %esi
+; /workspace/wt/parser-base/src/js_parser/p.rs:1297
+ 29b66b1:      	movl	(%rax), %ecx
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/num/uint_macros.rs:2526
+ 29b66b3:      	incl	%ecx
+ 29b66b5:      	movl	$0xffffffff, %edx       # imm = 0xFFFFFFFF
+ 29b66ba:      	cmovel	%edx, %ecx
+; /workspace/wt/parser-base/src/js_parser/p.rs:1297
+ 29b66bd:      	movl	%ecx, (%rax)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:451
+ 29b66bf:      	cmpb	$0x0, -0x44(%rbp)
+ 29b66c3:      	jne	0x29b66db <<bun_js_parser::p::P<false, false>>::s_local+0x6eb>
+ 29b66c5:      	movl	%esi, %r14d
+; /workspace/wt/parser-base/src/ast/b.rs:109
+ 29b66c8:      	movq	(%r13), %rsi
+ 29b66cc:      	movl	0x8(%r13), %edx
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:452
+ 29b66d0:      	movq	%rbx, %rdi
+ 29b66d3:      	callq	0x29e45d0 <<bun_js_parser::p::P<true, false>>::note_destructured_locals>
+ 29b66d8:      	movl	%r14d, %esi
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:647
+ 29b66db:      	cmpb	$0x0, -0x80(%rbp)
+ 29b66df:      	leaq	-0xf0(%rbp), %r13
+ 29b66e6:      	movq	-0x38(%rbp), %rax
+ 29b66ea:      	je	0x29b677e <<bun_js_parser::p::P<false, false>>::s_local+0x78e>
+ 29b66f0:      	jmp	0x29b6790 <<bun_js_parser::p::P<false, false>>::s_local+0x7a0>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:466
+ 29b66f5:      	movl	0xc(%r15), %edx
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:464
+ 29b66f9:      	movl	$0x1, %r8d
+ 29b66ff:      	movq	%rbx, %rdi
+ 29b6702:      	movq	%r14, %rsi
+ 29b6705:      	movq	-0x38(%rbp), %rcx
+ 29b6709:      	callq	0x29ec040 <<bun_js_parser::p::P<true, false>>::register_dynamic_import_namespace_local_multi>
+; /workspace/wt/parser-base/src/js_parser/p.rs:1293
+ 29b670e:      	cmpb	$0x0, 0xed6(%rbx)
+ 29b6715:      	jne	0x29b6777 <<bun_js_parser::p::P<false, false>>::s_local+0x787>
+ 29b6717:      	cmpb	$0x0, 0xed3(%rbx)
+ 29b671e:      	jne	0x29b6777 <<bun_js_parser::p::P<false, false>>::s_local+0x787>
+ 29b6720:      	movq	-0x40(%rbp), %rax
+ 29b6724:      	movq	%rax, -0x170(%rbp)
+ 29b672b:      	leaq	0x578(%rbx), %r14
+; /workspace/wt/parser-base/src/collections/zig_hash_map.rs:514
+ 29b6732:      	movq	%r14, %rdi
+ 29b6735:      	leaq	-0x170(%rbp), %rsi
+ 29b673c:      	callq	0x28ed030 <<bun_collections::zig_hash_map::HashMap<bun_ast::Ref, u32>>::get_index::<bun_ast::Ref>>
+ 29b6741:      	testb	$0x1, %al
+ 29b6743:      	cmoveq	-0x40(%rbp), %rdx
+ 29b6748:      	xorq	$0x1, %rax
+ 29b674c:      	movq	%r14, -0xe8(%rbp)
+ 29b6753:      	movq	%rdx, -0xe0(%rbp)
+ 29b675a:      	movq	%rax, -0xf0(%rbp)
+; /workspace/wt/parser-base/src/collections/zig_hash_map.rs:670
+ 29b6761:      	movq	%r13, %rdi
+ 29b6764:      	callq	0x290ffa0 <<bun_collections::zig_hash_map::MapEntry<bun_ast::Ref, u32, bun_collections::zig_hash_map::AutoHashContext>>::or_insert_with::<<u32 as core::default::Default>::default>>
+; /workspace/wt/parser-base/src/js_parser/p.rs:1297
+ 29b6769:      	movl	(%rax), %ecx
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/num/uint_macros.rs:2526
+ 29b676b:      	incl	%ecx
+ 29b676d:      	movl	$0xffffffff, %edx       # imm = 0xFFFFFFFF
+ 29b6772:      	cmovel	%edx, %ecx
+; /workspace/wt/parser-base/src/js_parser/p.rs:1297
+ 29b6775:      	movl	%ecx, (%rax)
+ 29b6777:      	movl	%r12d, %esi
+ 29b677a:      	movq	-0x38(%rbp), %rax
+; /workspace/wt/parser-base/src/bun_alloc/lib.rs:548
+ 29b677e:      	movq	%rax, %rdi
+ 29b6781:      	movl	%esi, %r14d
+ 29b6784:      	callq	0x4b5ee60 <mi_free>
+ 29b6789:      	movl	%r14d, %esi
+ 29b678c:      	nopl	(%rax)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:478
+ 29b6790:      	movzbl	0x16f(%rbx), %eax
+ 29b6797:      	movl	%eax, %ecx
+ 29b6799:      	xorb	$0x1, %cl
+ 29b679c:      	orb	-0x44(%rbp), %cl
+ 29b679f:      	jne	0x29b69de <<bun_js_parser::p::P<false, false>>::s_local+0x9ee>
+ 29b67a5:      	movb	$0x1, %al
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:481
+ 29b67a7:      	cmpl	$0x13, %esi
+ 29b67aa:      	jne	0x29b69de <<bun_js_parser::p::P<false, false>>::s_local+0x9ee>
+ 29b67b0:      	cmpl	$0x0, (%r15)
+ 29b67b4:      	jne	0x29b69de <<bun_js_parser::p::P<false, false>>::s_local+0x9ee>
+ 29b67ba:      	movl	%esi, -0x38(%rbp)
+ 29b67bd:      	movq	0x4(%r15), %r14
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:465
+ 29b67c1:      	movq	$0x0, -0xf0(%rbp)
+ 29b67cc:      	movq	$0x4, -0xe8(%rbp)
+ 29b67d7:      	movq	$0x0, -0xe0(%rbp)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:487
+ 29b67e2:      	movq	%rbx, %rdi
+ 29b67e5:      	leaq	-0xa0(%rbp), %rsi
+ 29b67ec:      	movq	%r13, %rdx
+ 29b67ef:      	callq	0x29e7780 <<bun_js_parser::p::P<true, false>>::conditional_namespace_records>
+ 29b67f4:      	movq	-0xe8(%rbp), %rcx
+ 29b67fb:      	movq	%rcx, -0x40(%rbp)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:486
+ 29b67ff:      	testb	%al, %al
+ 29b6801:      	je	0x29b68ae <<bun_js_parser::p::P<false, false>>::s_local+0x8be>
+ 29b6807:      	movq	%r14, -0x80(%rbp)
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:1873
+ 29b680b:      	movq	-0xe0(%rbp), %r14
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs:1663
+ 29b6812:      	testq	%r14, %r14
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/iter/macros.rs:180
+ 29b6815:      	je	0x29b69b6 <<bun_js_parser::p::P<false, false>>::s_local+0x9c6>
+ 29b681b:      	shlq	$0x2, %r14
+ 29b681f:      	xorl	%r13d, %r13d
+ 29b6822:      	jmp	0x29b683d <<bun_js_parser::p::P<false, false>>::s_local+0x84d>
+ 29b6824:      	nopw	%cs:(%rax,%rax)
+ 29b682e:      	nop
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs:1663
+ 29b6830:      	addq	$0x4, %r13
+ 29b6834:      	cmpq	%r13, %r14
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/iter/macros.rs:180
+ 29b6837:      	je	0x29b696e <<bun_js_parser::p::P<false, false>>::s_local+0x97e>
+ 29b683d:      	movq	-0x40(%rbp), %rax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:497
+ 29b6841:      	movl	(%rax,%r13), %r12d
+ 29b6845:      	movl	%r12d, -0x170(%rbp)
+; /workspace/wt/parser-base/src/collections/zig_hash_map.rs:452
+ 29b684c:      	leaq	0x4d0(%rbx), %rdi
+ 29b6853:      	leaq	-0x170(%rbp), %rsi
+ 29b685a:      	callq	0x29d9810 <<bun_collections::zig_hash_map::HashMap<u32, ()>>::get_or_put_slot>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:1912
+ 29b685f:      	movq	0x4f8(%rbx), %rsi
+; /workspace/wt/parser-base/src/collections/zig_hash_map.rs:453
+ 29b6866:      	testb	$0x1, %dl
+ 29b6869:      	je	0x29b6890 <<bun_js_parser::p::P<false, false>>::s_local+0x8a0>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:245
+ 29b686b:      	cmpq	%rsi, %rax
+ 29b686e:      	jae	0x29b7b67 <<bun_js_parser::p::P<false, false>>::s_local+0x1b77>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:627
+ 29b6874:      	movq	0x4f0(%rbx), %rcx
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:767
+ 29b687b:      	cmpb	$0x0, (%rcx,%rax,8)
+ 29b687f:      	jne	0x29b6830 <<bun_js_parser::p::P<false, false>>::s_local+0x840>
+ 29b6881:      	jmp	0x29b7ada <<bun_js_parser::p::P<false, false>>::s_local+0x1aea>
+ 29b6886:      	nopw	%cs:(%rax,%rax)
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:245
+ 29b6890:      	cmpq	%rsi, %rax
+ 29b6893:      	jae	0x29b7b67 <<bun_js_parser::p::P<false, false>>::s_local+0x1b77>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:627
+ 29b6899:      	movq	0x4f0(%rbx), %rcx
+; /workspace/wt/parser-base/src/collections/zig_hash_map.rs:457
+ 29b68a0:      	movl	$0x1, (%rcx,%rax,8)
+ 29b68a7:      	movl	%r12d, 0x4(%rcx,%rax,8)
+; /workspace/wt/parser-base/src/collections/zig_hash_map.rs:460
+ 29b68ac:      	jmp	0x29b6830 <<bun_js_parser::p::P<false, false>>::s_local+0x840>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:491
+ 29b68ae:      	movq	-0xf0(%rbp), %rax
+ 29b68b5:      	movq	%rax, -0x80(%rbp)
+ 29b68b9:      	movq	-0xe0(%rbp), %r13
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs:1663
+ 29b68c0:      	testq	%r13, %r13
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/into_iter.rs:279
+ 29b68c3:      	je	0x29b695e <<bun_js_parser::p::P<false, false>>::s_local+0x96e>
+ 29b68c9:      	shlq	$0x2, %r13
+ 29b68cd:      	xorl	%r14d, %r14d
+ 29b68d0:      	jmp	0x29b68e9 <<bun_js_parser::p::P<false, false>>::s_local+0x8f9>
+ 29b68d2:      	nopw	%cs:(%rax,%rax)
+ 29b68dc:      	nopl	(%rax)
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs:1663
+ 29b68e0:      	addq	$0x4, %r14
+ 29b68e4:      	cmpq	%r14, %r13
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/into_iter.rs:279
+ 29b68e7:      	je	0x29b695e <<bun_js_parser::p::P<false, false>>::s_local+0x96e>
+ 29b68e9:      	movq	-0x40(%rbp), %rax
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:1758
+ 29b68ed:      	movl	(%rax,%r14), %r12d
+ 29b68f1:      	movl	%r12d, -0x170(%rbp)
+; /workspace/wt/parser-base/src/collections/zig_hash_map.rs:452
+ 29b68f8:      	leaq	0x498(%rbx), %rdi
+ 29b68ff:      	leaq	-0x170(%rbp), %rsi
+ 29b6906:      	callq	0x29d9810 <<bun_collections::zig_hash_map::HashMap<u32, ()>>::get_or_put_slot>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:1912
+ 29b690b:      	movq	0x4c0(%rbx), %rsi
+; /workspace/wt/parser-base/src/collections/zig_hash_map.rs:453
+ 29b6912:      	testb	$0x1, %dl
+ 29b6915:      	je	0x29b6940 <<bun_js_parser::p::P<false, false>>::s_local+0x950>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:245
+ 29b6917:      	cmpq	%rsi, %rax
+ 29b691a:      	jae	0x29b7b67 <<bun_js_parser::p::P<false, false>>::s_local+0x1b77>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:627
+ 29b6920:      	movq	0x4b8(%rbx), %rcx
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:767
+ 29b6927:      	cmpb	$0x0, (%rcx,%rax,8)
+ 29b692b:      	jne	0x29b68e0 <<bun_js_parser::p::P<false, false>>::s_local+0x8f0>
+ 29b692d:      	jmp	0x29b7ada <<bun_js_parser::p::P<false, false>>::s_local+0x1aea>
+ 29b6932:      	nopw	%cs:(%rax,%rax)
+ 29b693c:      	nopl	(%rax)
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:245
+ 29b6940:      	cmpq	%rsi, %rax
+ 29b6943:      	jae	0x29b7b67 <<bun_js_parser::p::P<false, false>>::s_local+0x1b77>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:627
+ 29b6949:      	movq	0x4b8(%rbx), %rcx
+; /workspace/wt/parser-base/src/collections/zig_hash_map.rs:457
+ 29b6950:      	movl	$0x1, (%rcx,%rax,8)
+ 29b6957:      	movl	%r12d, 0x4(%rcx,%rax,8)
+; /workspace/wt/parser-base/src/collections/zig_hash_map.rs:460
+ 29b695c:      	jmp	0x29b68e0 <<bun_js_parser::p::P<false, false>>::s_local+0x8f0>
+ 29b695e:      	cmpq	$0x0, -0x80(%rbp)
+ 29b6963:      	leaq	-0xf0(%rbp), %r13
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:647
+ 29b696a:      	jne	0x29b69cb <<bun_js_parser::p::P<false, false>>::s_local+0x9db>
+ 29b696c:      	jmp	0x29b69d4 <<bun_js_parser::p::P<false, false>>::s_local+0x9e4>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:3161
+ 29b696e:      	cmpq	$0x0, -0xe0(%rbp)
+ 29b6976:      	leaq	-0xf0(%rbp), %r13
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:500
+ 29b697d:      	je	0x29b69b6 <<bun_js_parser::p::P<false, false>>::s_local+0x9c6>
+; /workspace/wt/parser-base/src/collections/zig_hash_map.rs:369
+ 29b697f:      	leaq	0x6f0(%rbx), %rdi
+ 29b6986:      	movq	-0x80(%rbp), %rsi
+ 29b698a:      	callq	0x28ecc70 <<bun_collections::zig_hash_map::HashMap<bun_ast::Ref, bun_collections::array_hash_map::StringArrayHashMap<bun_ast::nodes::LocRef>>>::get_index::<bun_ast::Ref>>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/macros/mod.rs:434
+ 29b698f:      	cmpq	$0x1, %rax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:501
+ 29b6993:      	je	0x29b69b6 <<bun_js_parser::p::P<false, false>>::s_local+0x9c6>
+ 29b6995:      	movq	-0x80(%rbp), %rax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:504
+ 29b6999:      	movq	(%rax), %rsi
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:505
+ 29b699c:      	movl	0xc(%r15), %edx
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:627
+ 29b69a0:      	movq	-0xe8(%rbp), %rcx
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:1873
+ 29b69a7:      	movq	-0xe0(%rbp), %r8
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:503
+ 29b69ae:      	movq	%rbx, %rdi
+ 29b69b1:      	callq	0x29ec040 <<bun_js_parser::p::P<true, false>>::register_dynamic_import_namespace_local_multi>
+ 29b69b6:      	cmpq	$0x0, -0xf0(%rbp)
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:647
+ 29b69be:      	je	0x29b69d4 <<bun_js_parser::p::P<false, false>>::s_local+0x9e4>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:658
+ 29b69c0:      	movq	-0xe8(%rbp), %rax
+ 29b69c7:      	movq	%rax, -0x40(%rbp)
+ 29b69cb:      	movq	-0x40(%rbp), %rdi
+ 29b69cf:      	callq	0x4b5ee60 <mi_free>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:513
+ 29b69d4:      	movzbl	0x16f(%rbx), %eax
+ 29b69db:      	movl	-0x38(%rbp), %esi
+ 29b69de:      	xorb	$0x1, %al
+ 29b69e0:      	cmpb	$0x11, %sil
+ 29b69e4:      	setne	%cl
+ 29b69e7:      	orb	-0x44(%rbp), %cl
+ 29b69ea:      	orb	%al, %cl
+ 29b69ec:      	je	0x29b6aa0 <<bun_js_parser::p::P<false, false>>::s_local+0xab0>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:533
+ 29b69f2:      	cmpl	$0x1e, %esi
+ 29b69f5:      	jne	0x29b6bd0 <<bun_js_parser::p::P<false, false>>::s_local+0xbe0>
+ 29b69fb:      	movl	-0x9c(%rbp), %r14d
+ 29b6a02:      	movl	-0x98(%rbp), %r12d
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:536
+ 29b6a09:      	movl	(%r15), %eax
+ 29b6a0c:      	cmpl	$0x2, %eax
+ 29b6a0f:      	je	0x29b6af0 <<bun_js_parser::p::P<false, false>>::s_local+0xb00>
+ 29b6a15:      	testl	%eax, %eax
+ 29b6a17:      	jne	0x29b6bd0 <<bun_js_parser::p::P<false, false>>::s_local+0xbe0>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:556
+ 29b6a1d:      	cmpb	$0x0, -0x44(%rbp)
+ 29b6a21:      	jne	0x29b6bd0 <<bun_js_parser::p::P<false, false>>::s_local+0xbe0>
+ 29b6a27:      	movq	0x4(%r15), %rax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:557
+ 29b6a2b:      	movq	(%rax), %rax
+ 29b6a2e:      	movq	%rax, -0x40(%rbp)
+ 29b6a32:      	movq	%rax, -0xf0(%rbp)
+; /workspace/wt/parser-base/src/collections/zig_hash_map.rs:369
+ 29b6a39:      	leaq	0x6f0(%rbx), %rdi
+ 29b6a40:      	movq	%r13, %rsi
+ 29b6a43:      	callq	0x28ecc70 <<bun_collections::zig_hash_map::HashMap<bun_ast::Ref, bun_collections::array_hash_map::StringArrayHashMap<bun_ast::nodes::LocRef>>>::get_index::<bun_ast::Ref>>
+ 29b6a48:      	cmpl	$-0x1, %r12d
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:558
+ 29b6a4c:      	jne	0x29b6bd0 <<bun_js_parser::p::P<false, false>>::s_local+0xbe0>
+ 29b6a52:      	cmpq	$0x1, %rax
+ 29b6a56:      	je	0x29b6bd0 <<bun_js_parser::p::P<false, false>>::s_local+0xbe0>
+ 29b6a5c:      	cmpb	$0x0, 0x16f(%rbx)
+ 29b6a63:      	je	0x29b6bd0 <<bun_js_parser::p::P<false, false>>::s_local+0xbe0>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:566
+ 29b6a69:      	movl	0xc(%r15), %edx
+; /workspace/wt/parser-base/src/js_parser/p.rs:1240
+ 29b6a6d:      	movl	%r14d, -0x170(%rbp)
+ 29b6a74:      	movl	$0x1, %r8d
+ 29b6a7a:      	movq	%rbx, %rdi
+ 29b6a7d:      	movq	-0x40(%rbp), %rsi
+ 29b6a81:      	leaq	-0x170(%rbp), %rcx
+ 29b6a88:      	callq	0x29ec040 <<bun_js_parser::p::P<true, false>>::register_dynamic_import_namespace_local_multi>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:569
+ 29b6a8d:      	jmp	0x29b6bd0 <<bun_js_parser::p::P<false, false>>::s_local+0xbe0>
+ 29b6a92:      	nopw	%cs:(%rax,%rax)
+ 29b6a9c:      	nopl	(%rax)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:516
+ 29b6aa0:      	movq	-0x9c(%rbp), %rax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:519
+ 29b6aa7:      	cmpb	$0x6, (%rax)
+ 29b6aaa:      	jne	0x29b6bd0 <<bun_js_parser::p::P<false, false>>::s_local+0xbe0>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:522
+ 29b6ab0:      	cmpl	$0x1, (%r15)
+ 29b6ab4:      	jne	0x29b6bd0 <<bun_js_parser::p::P<false, false>>::s_local+0xbe0>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:519
+ 29b6aba:      	movq	0x4(%rax), %rdx
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:522
+ 29b6abe:      	movq	0x4(%r15), %r12
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:525
+ 29b6ac2:      	movq	0xa10(%rbx), %rdi
+ 29b6ac9:      	movl	0xa20(%rbx), %esi
+ 29b6acf:      	callq	0x29e5d80 <<bun_js_parser::p::P<true, false>>::promise_all_import_items>
+ 29b6ad4:      	testq	%rax, %rax
+ 29b6ad7:      	je	0x29b6bd0 <<bun_js_parser::p::P<false, false>>::s_local+0xbe0>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:528
+ 29b6add:      	movq	%rbx, %rdi
+ 29b6ae0:      	movq	%rax, %rsi
+ 29b6ae3:      	movq	%r12, %rdx
+ 29b6ae6:      	callq	0x29e7e70 <<bun_js_parser::p::P<true, false>>::track_promise_all_destructure>
+ 29b6aeb:      	jmp	0x29b6bd0 <<bun_js_parser::p::P<false, false>>::s_local+0xbe0>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:537
+ 29b6af0:      	movq	0x4(%r15), %rax
+ 29b6af4:      	movq	%rax, -0x40(%rbp)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:538
+ 29b6af8:      	movq	%r13, %rdi
+ 29b6afb:      	movq	%rbx, %rsi
+ 29b6afe:      	movl	%r14d, %edx
+ 29b6b01:      	movl	%r12d, %ecx
+ 29b6b04:      	callq	0x29e1700 <<bun_js_parser::p::P<false, false>>::require_namespace_ref>
+ 29b6b09:      	cmpb	$0x0, -0xf0(%rbp)
+ 29b6b10:      	je	0x29b6bd0 <<bun_js_parser::p::P<false, false>>::s_local+0xbe0>
+ 29b6b16:      	movq	-0xec(%rbp), %rsi
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:544
+ 29b6b1d:      	movl	%r14d, -0xf0(%rbp)
+ 29b6b24:      	movq	-0x40(%rbp), %r12
+; /workspace/wt/parser-base/src/ast/b.rs:109
+ 29b6b28:      	movq	(%r12), %r8
+ 29b6b2c:      	movl	0x8(%r12), %r9d
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:542
+ 29b6b31:      	movzbl	-0x78(%rbp), %eax
+ 29b6b35:      	movl	%eax, (%rsp)
+ 29b6b38:      	movl	$0x1, %ecx
+ 29b6b3d:      	movq	%rbx, %rdi
+ 29b6b40:      	movq	%r13, %rdx
+ 29b6b43:      	callq	0x29eaf20 <<bun_js_parser::p::P<true, false>>::try_track_dynamic_import_destructure>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:541
+ 29b6b48:      	testb	%al, %al
+ 29b6b4a:      	je	0x29b6b65 <<bun_js_parser::p::P<false, false>>::s_local+0xb75>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:552
+ 29b6b4c:      	cmpb	$0x0, -0x44(%rbp)
+ 29b6b50:      	jne	0x29b6bd0 <<bun_js_parser::p::P<false, false>>::s_local+0xbe0>
+; /workspace/wt/parser-base/src/ast/b.rs:109
+ 29b6b52:      	movq	(%r12), %rsi
+ 29b6b56:      	movl	0x8(%r12), %edx
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:553
+ 29b6b5b:      	movq	%rbx, %rdi
+ 29b6b5e:      	callq	0x29e45d0 <<bun_js_parser::p::P<true, false>>::note_destructured_locals>
+ 29b6b63:      	jmp	0x29b6bd0 <<bun_js_parser::p::P<false, false>>::s_local+0xbe0>
+ 29b6b65:      	movl	%r14d, %r12d
+ 29b6b68:      	movl	%r14d, -0xf0(%rbp)
+; /workspace/wt/parser-base/src/collections/zig_hash_map.rs:452
+ 29b6b6f:      	leaq	0x498(%rbx), %rdi
+ 29b6b76:      	movq	%r13, %rsi
+ 29b6b79:      	callq	0x29d9810 <<bun_collections::zig_hash_map::HashMap<u32, ()>>::get_or_put_slot>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:1912
+ 29b6b7e:      	movq	0x4c0(%rbx), %rsi
+; /workspace/wt/parser-base/src/collections/zig_hash_map.rs:453
+ 29b6b85:      	testb	$0x1, %dl
+ 29b6b88:      	je	0x29b6ba5 <<bun_js_parser::p::P<false, false>>::s_local+0xbb5>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:245
+ 29b6b8a:      	cmpq	%rsi, %rax
+ 29b6b8d:      	jae	0x29b7b67 <<bun_js_parser::p::P<false, false>>::s_local+0x1b77>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:627
+ 29b6b93:      	movq	0x4b8(%rbx), %rcx
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:767
+ 29b6b9a:      	cmpb	$0x0, (%rcx,%rax,8)
+ 29b6b9e:      	jne	0x29b6bd0 <<bun_js_parser::p::P<false, false>>::s_local+0xbe0>
+ 29b6ba0:      	jmp	0x29b7ada <<bun_js_parser::p::P<false, false>>::s_local+0x1aea>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:245
+ 29b6ba5:      	cmpq	%rsi, %rax
+ 29b6ba8:      	jae	0x29b7b67 <<bun_js_parser::p::P<false, false>>::s_local+0x1b77>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:627
+ 29b6bae:      	movq	0x4b8(%rbx), %rcx
+; /workspace/wt/parser-base/src/collections/zig_hash_map.rs:457
+ 29b6bb5:      	movl	$0x1, (%rcx,%rax,8)
+ 29b6bbc:      	movl	%r12d, 0x4(%rcx,%rax,8)
+ 29b6bc1:      	nopw	%cs:(%rax,%rax)
+ 29b6bcb:      	nopl	(%rax,%rax)
+; /workspace/wt/parser-base/src/ast/s.rs:294
+ 29b6bd0:      	cmpb	$0x2, -0x29(%rbp)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:593
+ 29b6bd4:      	jne	0x29b6bf0 <<bun_js_parser::p::P<false, false>>::s_local+0xc00>
+; /workspace/wt/parser-base/src/ast/nodes.rs:108
+ 29b6bd6:      	movq	0x9f0(%rbx), %rax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:588
+ 29b6bdd:      	movzbl	0x7b(%rax), %eax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:593
+ 29b6be1:      	xorb	$0x1, %al
+ 29b6be3:      	jmp	0x29b6bf2 <<bun_js_parser::p::P<false, false>>::s_local+0xc02>
+ 29b6be5:      	nopw	%cs:(%rax,%rax)
+ 29b6bef:      	nop
+ 29b6bf0:      	xorl	%eax, %eax
+ 29b6bf2:      	movq	-0x68(%rbp), %r14
+ 29b6bf6:      	movl	-0x6c(%rbp), %ecx
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:595
+ 29b6bf9:      	xorl	%edx, %edx
+ 29b6bfb:      	cmpl	0xe98(%rbx), %ecx
+ 29b6c01:      	setne	%dl
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:589
+ 29b6c04:      	movzbl	-0x110(%rbp), %ecx
+ 29b6c0b:      	movzbl	%al, %eax
+ 29b6c0e:      	shll	$0x8, %eax
+ 29b6c11:      	orl	%ecx, %eax
+ 29b6c13:      	shll	$0x10, %edx
+ 29b6c16:      	orl	%eax, %edx
+ 29b6c18:      	movq	%rbx, %rdi
+ 29b6c1b:      	movq	%r15, %rsi
+ 29b6c1e:      	callq	0x293a610 <<bun_js_parser::p::P<true, false>>::visit_decl>
+ 29b6c23:      	movq	-0x108(%rbp), %rsi
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:633
+ 29b6c2a:      	cmpq	%r14, %rsi
+ 29b6c2d:      	movq	-0x88(%rbp), %r9
+ 29b6c34:      	je	0x29b60b0 <<bun_js_parser::p::P<false, false>>::s_local+0xc0>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mut_ptr.rs:971
+ 29b6c3a:      	movq	%rsi, %rax
+ 29b6c3d:      	shlq	$0x5, %rax
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:574
+ 29b6c41:      	movups	(%r15), %xmm0
+ 29b6c45:      	movups	0x10(%r15), %xmm1
+ 29b6c4a:      	movq	-0x58(%rbp), %rcx
+ 29b6c4e:      	movups	%xmm1, 0x10(%rcx,%rax)
+ 29b6c53:      	movups	%xmm0, (%rcx,%rax)
+ 29b6c57:      	jmp	0x29b60b0 <<bun_js_parser::p::P<false, false>>::s_local+0xc0>
+ 29b6c5c:      	xorl	%esi, %esi
+ 29b6c5e:      	jmp	0x29b7542 <<bun_js_parser::p::P<false, false>>::s_local+0x1552>
+ 29b6c63:      	nopw	%cs:(%rax,%rax)
+ 29b6c6d:      	nopl	(%rax)
+ 29b6c70:      	movq	-0x68(%rbp), %r13
+ 29b6c74:      	incq	%r13
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:643
+ 29b6c77:      	incq	%rsi
+ 29b6c7a:      	movq	-0x50(%rbp), %rax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:287
+ 29b6c7e:      	cmpq	%rax, %r13
+ 29b6c81:      	jae	0x29b7ace <<bun_js_parser::p::P<false, false>>::s_local+0x1ade>
+ 29b6c87:      	movq	%rsi, -0x108(%rbp)
+ 29b6c8e:      	movq	%r13, -0x68(%rbp)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:287
+ 29b6c92:      	shlq	$0x5, %r13
+ 29b6c96:      	addq	%r14, %r13
+ 29b6c99:      	jmp	0x29b6cbc <<bun_js_parser::p::P<false, false>>::s_local+0xccc>
+ 29b6c9b:      	nopl	(%rax,%rax)
+ 29b6ca0:      	movq	-0x68(%rbp), %rcx
+ 29b6ca4:      	incq	%rcx
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:287
+ 29b6ca7:      	addq	$0x20, %r13
+ 29b6cab:      	movq	-0x50(%rbp), %rax
+ 29b6caf:      	movq	%rcx, -0x68(%rbp)
+ 29b6cb3:      	cmpq	%rax, %rcx
+ 29b6cb6:      	jae	0x29b7516 <<bun_js_parser::p::P<false, false>>::s_local+0x1526>
+ 29b6cbc:      	movq	%rax, -0x50(%rbp)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:293
+ 29b6cc0:      	movups	(%r13), %xmm0
+ 29b6cc5:      	movaps	%xmm0, -0xf0(%rbp)
+ 29b6ccc:      	movq	%rbx, %rdi
+ 29b6ccf:      	movq	%r12, %rsi
+ 29b6cd2:      	xorl	%edx, %edx
+ 29b6cd4:      	callq	0x293e280 <<bun_js_parser::p::P<false, false>>::visit_binding>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:295
+ 29b6cd9:      	cmpb	$-0x1, 0x10(%r13)
+ 29b6cde:      	je	0x29b6d30 <<bun_js_parser::p::P<false, false>>::s_local+0xd40>
+ 29b6ce0:      	leaq	0x10(%r13), %rax
+ 29b6ce4:      	movups	(%rax), %xmm0
+ 29b6ce7:      	movaps	%xmm0, -0x100(%rbp)
+; /workspace/wt/parser-base/src/ast/expr.rs:45
+ 29b6cee:      	movzbl	-0x100(%rbp), %r14d
+ 29b6cf6:      	cmpl	$0x9, %r14d
+ 29b6cfa:      	je	0x29b6dc5 <<bun_js_parser::p::P<false, false>>::s_local+0xdd5>
+ 29b6d00:      	cmpl	$0x5, %r14d
+ 29b6d04:      	je	0x29b6d10 <<bun_js_parser::p::P<false, false>>::s_local+0xd20>
+ 29b6d06:      	cmpl	$0x3, %r14d
+ 29b6d0a:      	jne	0x29b6dcc <<bun_js_parser::p::P<false, false>>::s_local+0xddc>
+ 29b6d10:      	movq	-0xfc(%rbp), %rax
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:634
+ 29b6d17:      	movzbl	0x18(%rax), %eax
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:683
+ 29b6d1b:      	xorb	$0x1, %al
+ 29b6d1d:      	jmp	0x29b6dc7 <<bun_js_parser::p::P<false, false>>::s_local+0xdd7>
+ 29b6d22:      	nopw	%cs:(%rax,%rax)
+ 29b6d2c:      	nopl	(%rax)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:602
+ 29b6d30:      	cmpl	$0x0, (%r13)
+ 29b6d35:      	jne	0x29b74e4 <<bun_js_parser::p::P<false, false>>::s_local+0x14f4>
+ 29b6d3b:      	movq	0x4(%r13), %rax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:603
+ 29b6d3f:      	movq	(%rax), %rsi
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:604
+ 29b6d42:      	movq	%rbx, %rdi
+ 29b6d45:      	callq	0x29da8b0 <<bun_js_parser::p::P<true, false>>::load_name_from_ref>
+ 29b6d4a:      	movq	%rax, %r15
+ 29b6d4d:      	movq	%rdx, %r12
+; /workspace/wt/parser-base/src/collections/array_hash_map.rs:1302
+ 29b6d50:      	movq	%rax, %rdi
+ 29b6d53:      	movq	%rdx, %rsi
+ 29b6d56:      	callq	0x2482600 <<bun_collections::array_hash_map::StringContext as bun_collections::array_hash_map::ArrayHashContext<[u8]>>::hash (.llvm.7145045190680795073)>
+ 29b6d5b:      	leaq	0xb8(%rbx), %rdi
+; /workspace/wt/parser-base/src/collections/array_hash_map.rs:1303
+ 29b6d62:      	movq	%rdi, -0xf0(%rbp)
+ 29b6d69:      	movq	%r15, -0xe8(%rbp)
+ 29b6d70:      	movq	%r12, -0xe0(%rbp)
+ 29b6d77:      	leaq	-0xf0(%rbp), %r12
+ 29b6d7e:      	movl	%eax, %esi
+ 29b6d80:      	movq	%r12, %rdx
+ 29b6d83:      	callq	0x1fd82a0 <<bun_collections::array_hash_map::ArrayHashMap<alloc::boxed::Box<[u8], bun_alloc::ast_alloc::AstAlloc>, bun_bundler::linker_graph::js_meta::ExportData, bun_collections::array_hash_map::BoxedSliceContext<bun_collections::array_hash_map::StringContext>, bun_alloc::ast_alloc::AstAlloc>>::find_hash::<<bun_collections::array_hash_map::StringArrayHashMap<bun_bundler::linker_graph::js_meta::ExportData, bun_collections::array_hash_map::StringContext, bun_alloc::ast_alloc::AstAlloc>>::find::{closure#0}>>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:1164
+ 29b6d88:      	cmpq	$0x1, %rax
+ 29b6d8c:      	jne	0x29b74e4 <<bun_js_parser::p::P<false, false>>::s_local+0x14f4>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:1873
+ 29b6d92:      	movq	0xe0(%rbx), %rsi
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:238
+ 29b6d99:      	cmpq	%rsi, %rdx
+ 29b6d9c:      	jae	0x29b7b74 <<bun_js_parser::p::P<false, false>>::s_local+0x1b84>
+ 29b6da2:      	shlq	$0x5, %rdx
+ 29b6da6:      	addq	0xd8(%rbx), %rdx
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:615
+ 29b6dad:      	movq	%rbx, %rdi
+ 29b6db0:      	movq	%r13, %rsi
+ 29b6db3:      	callq	0x29e9b90 <<bun_js_parser::p::P<false, false>>::replace_decl_and_possibly_remove>
+ 29b6db8:      	testb	%al, %al
+ 29b6dba:      	jne	0x29b6ca0 <<bun_js_parser::p::P<false, false>>::s_local+0xcb0>
+ 29b6dc0:      	jmp	0x29b74bc <<bun_js_parser::p::P<false, false>>::s_local+0x14cc>
+ 29b6dc5:      	movb	$0x1, %al
+ 29b6dc7:      	movl	%eax, -0x38(%rbp)
+ 29b6dca:      	jmp	0x29b6dd3 <<bun_js_parser::p::P<false, false>>::s_local+0xde3>
+ 29b6dcc:      	movl	$0x0, -0x38(%rbp)
+; /workspace/wt/parser-base/src/bun_alloc/baby_vec.rs:72
+ 29b6dd3:      	movl	0xa68(%rbx), %eax
+ 29b6dd9:      	movl	%eax, -0x58(%rbp)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:299
+ 29b6ddc:      	movl	0xe98(%rbx), %eax
+ 29b6de2:      	movl	%eax, -0x44(%rbp)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:300
+ 29b6de5:      	movzbl	0xed3(%rbx), %eax
+ 29b6dec:      	movb	%al, -0x6c(%rbp)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:309
+ 29b6def:      	cmpl	$0x0, (%r13)
+ 29b6df4:      	jne	0x29b6e90 <<bun_js_parser::p::P<false, false>>::s_local+0xea0>
+ 29b6dfa:      	movq	0x4(%r13), %rax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:310
+ 29b6dfe:      	movq	(%rax), %rsi
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:311
+ 29b6e01:      	movq	%rbx, %rdi
+ 29b6e04:      	callq	0x29da8b0 <<bun_js_parser::p::P<true, false>>::load_name_from_ref>
+ 29b6e09:      	movq	%rax, %r15
+ 29b6e0c:      	movq	%rdx, %r12
+; /workspace/wt/parser-base/src/collections/array_hash_map.rs:1302
+ 29b6e0f:      	movq	%rax, %rdi
+ 29b6e12:      	movq	%rdx, %rsi
+ 29b6e15:      	callq	0x2482600 <<bun_collections::array_hash_map::StringContext as bun_collections::array_hash_map::ArrayHashContext<[u8]>>::hash (.llvm.7145045190680795073)>
+ 29b6e1a:      	leaq	0xb8(%rbx), %rdi
+; /workspace/wt/parser-base/src/collections/array_hash_map.rs:1303
+ 29b6e21:      	movq	%rdi, -0xf0(%rbp)
+ 29b6e28:      	movq	%r15, -0xe8(%rbp)
+ 29b6e2f:      	movq	%r12, -0xe0(%rbp)
+ 29b6e36:      	movl	%eax, %esi
+ 29b6e38:      	leaq	-0xf0(%rbp), %rdx
+ 29b6e3f:      	callq	0x1fd82a0 <<bun_collections::array_hash_map::ArrayHashMap<alloc::boxed::Box<[u8], bun_alloc::ast_alloc::AstAlloc>, bun_bundler::linker_graph::js_meta::ExportData, bun_collections::array_hash_map::BoxedSliceContext<bun_collections::array_hash_map::StringContext>, bun_alloc::ast_alloc::AstAlloc>>::find_hash::<<bun_collections::array_hash_map::StringArrayHashMap<bun_bundler::linker_graph::js_meta::ExportData, bun_collections::array_hash_map::StringContext, bun_alloc::ast_alloc::AstAlloc>>::find::{closure#0}>>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:1164
+ 29b6e44:      	cmpq	$0x1, %rax
+ 29b6e48:      	jne	0x29b6e90 <<bun_js_parser::p::P<false, false>>::s_local+0xea0>
+; /workspace/wt/parser-base/src/collections/array_hash_map.rs:1322
+ 29b6e4a:      	movq	%rdx, %rdi
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:1873
+ 29b6e4d:      	movq	0xe0(%rbx), %rsi
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:238
+ 29b6e54:      	cmpq	%rsi, %rdx
+ 29b6e57:      	jae	0x29b7b5d <<bun_js_parser::p::P<false, false>>::s_local+0x1b6d>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:627
+ 29b6e5d:      	movq	0xd8(%rbx), %rax
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:238
+ 29b6e64:      	shlq	$0x5, %rdi
+ 29b6e68:      	leaq	(%rax,%rdi), %rcx
+; /workspace/wt/parser-base/src/ast/runtime.rs:40
+ 29b6e6c:      	cmpb	$0x2f, (%rax,%rdi)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:320
+ 29b6e70:      	je	0x29b6e92 <<bun_js_parser::p::P<false, false>>::s_local+0xea2>
+ 29b6e72:      	cmpb	$0x0, 0x12f(%rbx)
+ 29b6e79:      	je	0x29b6e92 <<bun_js_parser::p::P<false, false>>::s_local+0xea2>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:321
+ 29b6e7b:      	movb	$0x1, 0xed3(%rbx)
+ 29b6e82:      	jmp	0x29b6e92 <<bun_js_parser::p::P<false, false>>::s_local+0xea2>
+ 29b6e84:      	nopw	%cs:(%rax,%rax)
+ 29b6e8e:      	nop
+ 29b6e90:      	xorl	%ecx, %ecx
+ 29b6e92:      	movq	%rcx, -0x110(%rbp)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:327
+ 29b6e99:      	cmpb	$0x0, 0x120(%rbx)
+ 29b6ea0:      	je	0x29b6ead <<bun_js_parser::p::P<false, false>>::s_local+0xebd>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:328
+ 29b6ea2:      	movq	$0x0, 0x180(%rbx)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:336
+ 29b6ead:      	movq	0xdb8(%rbx), %r15
+ 29b6eb4:      	movq	0xdc0(%rbx), %r12
+ 29b6ebb:      	cmpb	$0x3, %r14b
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:337
+ 29b6ebf:      	jne	0x29b6f00 <<bun_js_parser::p::P<false, false>>::s_local+0xf10>
+ 29b6ec1:      	cmpb	$0x0, -0x38(%rbp)
+ 29b6ec5:      	je	0x29b6f00 <<bun_js_parser::p::P<false, false>>::s_local+0xf10>
+; /workspace/wt/parser-base/src/ast/nodes.rs:99
+ 29b6ec7:      	movq	-0xfc(%rbp), %rax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:339
+ 29b6ece:      	cmpb	$0x1, 0x55(%rax)
+ 29b6ed2:      	jne	0x29b6f00 <<bun_js_parser::p::P<false, false>>::s_local+0xf10>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:340
+ 29b6ed4:      	cmpl	$0x0, (%r13)
+ 29b6ed9:      	jne	0x29b6f00 <<bun_js_parser::p::P<false, false>>::s_local+0xf10>
+ 29b6edb:      	movq	0x4(%r13), %rax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:342
+ 29b6edf:      	movq	(%rax), %rsi
+ 29b6ee2:      	movq	%rbx, %rdi
+ 29b6ee5:      	callq	0x29da8b0 <<bun_js_parser::p::P<true, false>>::load_name_from_ref>
+ 29b6eea:      	movq	%rax, 0xdb8(%rbx)
+ 29b6ef1:      	movq	%rdx, 0xdc0(%rbx)
+ 29b6ef8:      	nopl	(%rax,%rax)
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:634
+ 29b6f00:      	cmpq	$0x0, 0xce8(%rbx)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:347
+ 29b6f08:      	je	0x29b6f60 <<bun_js_parser::p::P<false, false>>::s_local+0xf70>
+; /workspace/wt/parser-base/src/ast/nodes.rs:123
+ 29b6f0a:      	movq	0x9f0(%rbx), %rax
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs:1663
+ 29b6f11:      	cmpq	0xb00(%rbx), %rax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:348
+ 29b6f18:      	jne	0x29b6f60 <<bun_js_parser::p::P<false, false>>::s_local+0xf70>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:349
+ 29b6f1a:      	cmpl	$0x0, (%r13)
+ 29b6f1f:      	jne	0x29b6f60 <<bun_js_parser::p::P<false, false>>::s_local+0xf70>
+ 29b6f21:      	movq	0x4(%r13), %rax
+ 29b6f25:      	movq	%rax, -0x78(%rbp)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:350
+ 29b6f29:      	movq	-0xfc(%rbp), %rdx
+ 29b6f30:      	movzbl	%r14b, %esi
+ 29b6f34:      	movq	%rbx, %rdi
+ 29b6f37:      	callq	0x29c4700 <<bun_js_parser::p::P<true, false>>::react_compiler_candidate_expr>
+ 29b6f3c:      	cmpb	$0x2, %al
+ 29b6f3e:      	je	0x29b6f60 <<bun_js_parser::p::P<false, false>>::s_local+0xf70>
+ 29b6f40:      	movq	-0x78(%rbp), %rcx
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:352
+ 29b6f44:      	movq	(%rcx), %rcx
+ 29b6f47:      	movl	$0x1, 0xdd4(%rbx)
+ 29b6f51:      	movq	%rcx, 0xdd8(%rbx)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:353
+ 29b6f58:      	movb	%al, 0xed0(%rbx)
+ 29b6f5e:      	nop
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:360
+ 29b6f60:      	xorl	%edx, %edx
+ 29b6f62:      	cmpl	$0x2, (%r13)
+ 29b6f67:      	sete	%dl
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:355
+ 29b6f6a:      	shll	$0x10, %edx
+ 29b6f6d:      	incl	%edx
+ 29b6f6f:      	movq	%rbx, %rdi
+ 29b6f72:      	leaq	-0x100(%rbp), %rsi
+ 29b6f79:      	callq	0x29a1b80 <<bun_js_parser::p::P<false, false>>::visit_expr_in_out>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:364
+ 29b6f7e:      	movl	$0x0, 0xdd4(%rbx)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:365
+ 29b6f88:      	movb	$0x0, 0xed0(%rbx)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:366
+ 29b6f8f:      	movaps	-0x100(%rbp), %xmm0
+ 29b6f96:      	leaq	0x10(%r13), %rax
+ 29b6f9a:      	movups	%xmm0, (%rax)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:367
+ 29b6f9d:      	movq	%r15, 0xdb8(%rbx)
+ 29b6fa4:      	movq	%r12, 0xdc0(%rbx)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:369
+ 29b6fab:      	cmpb	$0x1, 0x120(%rbx)
+ 29b6fb2:      	movq	-0x40(%rbp), %r14
+ 29b6fb6:      	leaq	-0xf0(%rbp), %r12
+ 29b6fbd:      	leaq	-0x170(%rbp), %r15
+ 29b6fc4:      	jne	0x29b7000 <<bun_js_parser::p::P<false, false>>::s_local+0x1010>
+ 29b6fc6:      	cmpb	$0x0, 0x180(%rbx)
+ 29b6fcd:      	je	0x29b7000 <<bun_js_parser::p::P<false, false>>::s_local+0x1010>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:372
+ 29b6fcf:      	movzbl	(%rax), %eax
+ 29b6fd2:      	cmpl	$0x6, %eax
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:1014
+ 29b6fd5:      	je	0x29b6fe3 <<bun_js_parser::p::P<false, false>>::s_local+0xff3>
+ 29b6fd7:      	cmpl	$0xff, %eax
+ 29b6fdc:      	jne	0x29b7000 <<bun_js_parser::p::P<false, false>>::s_local+0x1010>
+ 29b6fde:      	jmp	0x29b7ada <<bun_js_parser::p::P<false, false>>::s_local+0x1aea>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:371
+ 29b6fe3:      	movq	0x188(%rbx), %rax
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:2511
+ 29b6fea:      	cmpq	0x14(%r13), %rax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:373
+ 29b6fee:      	je	0x29b739a <<bun_js_parser::p::P<false, false>>::s_local+0x13aa>
+ 29b6ff4:      	nopw	%cs:(%rax,%rax)
+ 29b6ffe:      	nop
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:392
+ 29b7000:      	cmpb	$0x1, 0x135(%rbx)
+ 29b7007:      	jne	0x29b701f <<bun_js_parser::p::P<false, false>>::s_local+0x102f>
+ 29b7009:      	movl	0xa68(%rbx), %esi
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:392
+ 29b700f:      	cmpl	%esi, -0x58(%rbp)
+ 29b7012:      	jae	0x29b701f <<bun_js_parser::p::P<false, false>>::s_local+0x102f>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:394
+ 29b7014:      	cmpl	$0x0, (%r13)
+ 29b7019:      	je	0x29b7219 <<bun_js_parser::p::P<false, false>>::s_local+0x1229>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:533
+ 29b701f:      	movzbl	-0x100(%rbp), %eax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:416
+ 29b7026:      	cmpb	$0x0, 0x16f(%rbx)
+ 29b702d:      	je	0x29b7160 <<bun_js_parser::p::P<false, false>>::s_local+0x1170>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:421
+ 29b7033:      	cmpl	$0x1e, %eax
+ 29b7036:      	je	0x29b7169 <<bun_js_parser::p::P<false, false>>::s_local+0x1179>
+ 29b703c:      	cmpl	$0x15, %eax
+ 29b703f:      	je	0x29b72cf <<bun_js_parser::p::P<false, false>>::s_local+0x12df>
+ 29b7045:      	cmpl	$0x11, %eax
+ 29b7048:      	jne	0x29b7450 <<bun_js_parser::p::P<false, false>>::s_local+0x1460>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:422
+ 29b704e:      	movq	-0xfc(%rbp), %rax
+ 29b7055:      	cmpb	$0x14, (%rax)
+ 29b7058:      	jne	0x29b7450 <<bun_js_parser::p::P<false, false>>::s_local+0x1460>
+; /workspace/wt/parser-base/src/ast/nodes.rs:99
+ 29b705e:      	movq	0x4(%rax), %r14
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:423
+ 29b7062:      	movq	0x24(%r14), %r15
+; /workspace/wt/parser-base/src/ast/lib.rs:262
+ 29b7066:      	movabsq	$0x180000000, %rax      # imm = 0x180000000
+ 29b7070:      	testq	%rax, %r15
+ 29b7073:      	je	0x29b7450 <<bun_js_parser::p::P<false, false>>::s_local+0x1460>
+; /workspace/wt/parser-base/src/mimalloc_sys/mimalloc.rs:184
+ 29b7079:      	movl	$0x4, %edi
+ 29b707e:      	callq	0x4b5ecd0 <mi_malloc>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/boxed.rs:251
+ 29b7083:      	testq	%rax, %rax
+ 29b7086:      	je	0x29b7b37 <<bun_js_parser::p::P<false, false>>::s_local+0x1b47>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:424
+ 29b708c:      	movq	%rax, %rdx
+ 29b708f:      	movl	0x20(%r14), %eax
+ 29b7093:      	movl	%eax, (%rdx)
+ 29b7095:      	movl	$0x1, %ecx
+ 29b709a:      	xorl	%eax, %eax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:438
+ 29b709c:      	cmpl	$0x2, (%r13)
+ 29b70a1:      	jne	0x29b743c <<bun_js_parser::p::P<false, false>>::s_local+0x144c>
+ 29b70a7:      	movl	%eax, -0x58(%rbp)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:439
+ 29b70aa:      	movq	0x4(%r13), %rax
+; /workspace/wt/parser-base/src/ast/b.rs:109
+ 29b70ae:      	movq	(%rax), %r8
+ 29b70b1:      	movl	0x8(%rax), %r9d
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:441
+ 29b70b5:      	movl	$0x1, (%rsp)
+ 29b70bc:      	movq	%rbx, %rdi
+ 29b70bf:      	movq	%r15, %rsi
+ 29b70c2:      	movq	%rdx, %r14
+ 29b70c5:      	callq	0x29eaf20 <<bun_js_parser::p::P<true, false>>::try_track_dynamic_import_destructure>
+ 29b70ca:      	movq	%r14, %rdx
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:440
+ 29b70cd:      	testb	%al, %al
+ 29b70cf:      	movl	-0x58(%rbp), %eax
+ 29b70d2:      	je	0x29b743c <<bun_js_parser::p::P<false, false>>::s_local+0x144c>
+; /workspace/wt/parser-base/src/js_parser/p.rs:1293
+ 29b70d8:      	cmpb	$0x0, 0xed6(%rbx)
+ 29b70df:      	jne	0x29b743c <<bun_js_parser::p::P<false, false>>::s_local+0x144c>
+ 29b70e5:      	cmpb	$0x0, 0xed3(%rbx)
+ 29b70ec:      	jne	0x29b743c <<bun_js_parser::p::P<false, false>>::s_local+0x144c>
+ 29b70f2:      	movq	%r15, -0x170(%rbp)
+ 29b70f9:      	leaq	0x578(%rbx), %r12
+; /workspace/wt/parser-base/src/collections/zig_hash_map.rs:514
+ 29b7100:      	movq	%r12, %rdi
+ 29b7103:      	leaq	-0x170(%rbp), %rsi
+ 29b710a:      	callq	0x28ed030 <<bun_collections::zig_hash_map::HashMap<bun_ast::Ref, u32>>::get_index::<bun_ast::Ref>>
+ 29b710f:      	testb	$0x1, %al
+ 29b7111:      	cmoveq	%r15, %rdx
+ 29b7115:      	xorq	$0x1, %rax
+ 29b7119:      	movq	%r12, -0xe8(%rbp)
+ 29b7120:      	leaq	-0xf0(%rbp), %r12
+ 29b7127:      	movq	%rdx, -0xe0(%rbp)
+ 29b712e:      	movq	%rax, -0xf0(%rbp)
+; /workspace/wt/parser-base/src/collections/zig_hash_map.rs:670
+ 29b7135:      	movq	%r12, %rdi
+ 29b7138:      	callq	0x290ffa0 <<bun_collections::zig_hash_map::MapEntry<bun_ast::Ref, u32, bun_collections::zig_hash_map::AutoHashContext>>::or_insert_with::<<u32 as core::default::Default>::default>>
+; /workspace/wt/parser-base/src/js_parser/p.rs:1297
+ 29b713d:      	movl	(%rax), %ecx
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/num/uint_macros.rs:2526
+ 29b713f:      	incl	%ecx
+ 29b7141:      	movl	$0xffffffff, %edx       # imm = 0xFFFFFFFF
+ 29b7146:      	cmovel	%edx, %ecx
+ 29b7149:      	movq	%r14, %rdx
+; /workspace/wt/parser-base/src/js_parser/p.rs:1297
+ 29b714c:      	movl	%ecx, (%rax)
+ 29b714e:      	movl	-0x58(%rbp), %eax
+; /workspace/wt/parser-base/src/js_parser/p.rs:1298
+ 29b7151:      	jmp	0x29b743c <<bun_js_parser::p::P<false, false>>::s_local+0x144c>
+ 29b7156:      	nopw	%cs:(%rax,%rax)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:533
+ 29b7160:      	cmpl	$0x1e, %eax
+ 29b7163:      	jne	0x29b7450 <<bun_js_parser::p::P<false, false>>::s_local+0x1460>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:536
+ 29b7169:      	cmpl	$0x2, (%r13)
+ 29b716e:      	jne	0x29b7450 <<bun_js_parser::p::P<false, false>>::s_local+0x1460>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:533
+ 29b7174:      	movl	-0xfc(%rbp), %r15d
+ 29b717b:      	movl	-0xf8(%rbp), %ecx
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:537
+ 29b7181:      	movq	0x4(%r13), %r14
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:538
+ 29b7185:      	movq	%r12, %rdi
+ 29b7188:      	movq	%rbx, %rsi
+ 29b718b:      	movl	%r15d, %edx
+ 29b718e:      	callq	0x29e1700 <<bun_js_parser::p::P<false, false>>::require_namespace_ref>
+ 29b7193:      	cmpl	$0x1, -0xf0(%rbp)
+ 29b719a:      	jne	0x29b7450 <<bun_js_parser::p::P<false, false>>::s_local+0x1460>
+ 29b71a0:      	movq	-0xec(%rbp), %rsi
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:544
+ 29b71a7:      	movl	%r15d, -0xf0(%rbp)
+; /workspace/wt/parser-base/src/ast/b.rs:109
+ 29b71ae:      	movq	(%r14), %r8
+ 29b71b1:      	movl	0x8(%r14), %r9d
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:542
+ 29b71b5:      	movl	$0x1, (%rsp)
+ 29b71bc:      	movl	$0x1, %ecx
+ 29b71c1:      	movq	%rbx, %rdi
+ 29b71c4:      	movq	%r12, %rdx
+ 29b71c7:      	callq	0x29eaf20 <<bun_js_parser::p::P<true, false>>::try_track_dynamic_import_destructure>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:541
+ 29b71cc:      	testb	%al, %al
+ 29b71ce:      	jne	0x29b7450 <<bun_js_parser::p::P<false, false>>::s_local+0x1460>
+ 29b71d4:      	movl	%r15d, -0xf0(%rbp)
+; /workspace/wt/parser-base/src/collections/zig_hash_map.rs:452
+ 29b71db:      	leaq	0x498(%rbx), %rdi
+ 29b71e2:      	movq	%r12, %rsi
+ 29b71e5:      	callq	0x29d9810 <<bun_collections::zig_hash_map::HashMap<u32, ()>>::get_or_put_slot>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:1912
+ 29b71ea:      	movq	0x4c0(%rbx), %rsi
+; /workspace/wt/parser-base/src/collections/zig_hash_map.rs:453
+ 29b71f1:      	testb	$0x1, %dl
+ 29b71f4:      	je	0x29b73df <<bun_js_parser::p::P<false, false>>::s_local+0x13ef>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:245
+ 29b71fa:      	cmpq	%rsi, %rax
+ 29b71fd:      	jae	0x29b7b67 <<bun_js_parser::p::P<false, false>>::s_local+0x1b77>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:627
+ 29b7203:      	movq	0x4b8(%rbx), %rcx
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:767
+ 29b720a:      	cmpb	$0x0, (%rcx,%rax,8)
+ 29b720e:      	jne	0x29b7450 <<bun_js_parser::p::P<false, false>>::s_local+0x1460>
+ 29b7214:      	jmp	0x29b7ada <<bun_js_parser::p::P<false, false>>::s_local+0x1aea>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:396
+ 29b7219:      	movzbl	0x10(%r13), %eax
+ 29b721e:      	cmpb	$-0x1, %al
+ 29b7220:      	je	0x29b701f <<bun_js_parser::p::P<false, false>>::s_local+0x102f>
+ 29b7226:      	movl	0x18(%r13), %edi
+ 29b722a:      	movl	$0xffffffff, %ecx       # imm = 0xFFFFFFFF
+ 29b722f:      	cmpq	%rcx, %rdi
+ 29b7232:      	sete	%cl
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:397
+ 29b7235:      	cmpb	$0x1e, %al
+ 29b7237:      	setne	%al
+ 29b723a:      	orb	%cl, %al
+ 29b723c:      	jne	0x29b701f <<bun_js_parser::p::P<false, false>>::s_local+0x102f>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:399
+ 29b7242:      	cmpl	%esi, %edi
+ 29b7244:      	jae	0x29b7b5d <<bun_js_parser::p::P<false, false>>::s_local+0x1b6d>
+ 29b724a:      	movq	0x4(%r13), %rax
+ 29b724e:      	movq	(%rax), %rdx
+; /workspace/wt/parser-base/src/bun_alloc/baby_vec.rs:99
+ 29b7251:      	movq	0xa58(%rbx), %rax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:399
+ 29b7258:      	leaq	(%rdi,%rdi,2), %rcx
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:401
+ 29b725c:      	movq	%rdx, 0x8(%rax,%rcx,8)
+ 29b7261:      	leaq	-0xe0(%rbp), %rax
+ 29b7268:      	xorps	%xmm0, %xmm0
+; /workspace/wt/parser-base/src/collections/array_hash_map.rs:436
+ 29b726b:      	movups	%xmm0, (%rax)
+ 29b726e:      	movups	%xmm0, 0x18(%rax)
+ 29b7272:      	movups	%xmm0, 0x30(%rax)
+; /workspace/wt/parser-base/src/collections/array_hash_map.rs:1259
+ 29b7276:      	movq	$0x0, -0xf0(%rbp)
+ 29b7281:      	movq	$0x8, -0xe8(%rbp)
+ 29b728c:      	movq	$0x4, -0xd0(%rbp)
+ 29b7297:      	movq	$0x4, -0xb8(%rbp)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:403
+ 29b72a2:      	movq	%r15, %rdi
+ 29b72a5:      	leaq	0x6f0(%rbx), %rsi
+ 29b72ac:      	movq	%r12, %rcx
+ 29b72af:      	callq	0x29d7090 <<bun_collections::zig_hash_map::HashMap<bun_ast::Ref, bun_collections::array_hash_map::StringArrayHashMap<bun_ast::nodes::LocRef>>>::insert>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:848
+ 29b72b4:      	cmpq	$-0x1, -0x170(%rbp)
+ 29b72bc:      	je	0x29b6ca0 <<bun_js_parser::p::P<false, false>>::s_local+0xcb0>
+ 29b72c2:      	movq	%r15, %rdi
+ 29b72c5:      	callq	0x2010030 <core::ptr::drop_glue::<bun_bundler::bundle_v2::bv2_impl::bake_types::EntryPointList>>
+ 29b72ca:      	jmp	0x29b6ca0 <<bun_js_parser::p::P<false, false>>::s_local+0xcb0>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:428
+ 29b72cf:      	movq	-0xfc(%rbp), %r15
+ 29b72d6:      	movq	%r15, -0xf0(%rbp)
+; /workspace/wt/parser-base/src/collections/zig_hash_map.rs:338
+ 29b72dd:      	leaq	0x460(%rbx), %rdi
+ 29b72e4:      	movq	%r12, %rsi
+ 29b72e7:      	callq	0x28ecdb0 <<bun_collections::zig_hash_map::HashMap<bun_ast::Ref, alloc::vec::Vec<u32>>>::get_index::<bun_ast::Ref>>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:1543
+ 29b72ec:      	cmpq	$0x1, %rax
+ 29b72f0:      	jne	0x29b7450 <<bun_js_parser::p::P<false, false>>::s_local+0x1460>
+ 29b72f6:      	movq	%rdx, %rdi
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:1873
+ 29b72f9:      	movq	0x488(%rbx), %rsi
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:238
+ 29b7300:      	cmpq	%rsi, %rdx
+ 29b7303:      	jae	0x29b7b5d <<bun_js_parser::p::P<false, false>>::s_local+0x1b6d>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:627
+ 29b7309:      	movq	0x480(%rbx), %rax
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:238
+ 29b7310:      	shlq	$0x5, %rdi
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:744
+ 29b7314:      	cmpq	$-0x1, 0x8(%rax,%rdi)
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:1168
+ 29b731a:      	je	0x29b7450 <<bun_js_parser::p::P<false, false>>::s_local+0x1460>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:430
+ 29b7320:      	cmpl	$0x2, (%r13)
+ 29b7325:      	jne	0x29b7450 <<bun_js_parser::p::P<false, false>>::s_local+0x1460>
+ 29b732b:      	addq	%rdi, %rax
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:1873
+ 29b732e:      	movq	0x18(%rax), %rcx
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/num/uint_macros.rs:3242
+ 29b7332:      	leaq	(,%rcx,4), %r8
+ 29b733a:      	movq	%rcx, %rdx
+ 29b733d:      	shrq	$0x3e, %rdx
+ 29b7341:      	setne	%sil
+ 29b7345:      	movabsq	$0x7ffffffffffffffc, %rdx # imm = 0x7FFFFFFFFFFFFFFC
+ 29b734f:      	cmpq	%rdx, %r8
+ 29b7352:      	seta	%dl
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/intrinsics/mod.rs:511
+ 29b7355:      	orb	%sil, %dl
+ 29b7358:      	jne	0x29b7aba <<bun_js_parser::p::P<false, false>>::s_local+0x1aca>
+ 29b735e:      	movq	0x10(%rax), %rsi
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:472
+ 29b7362:      	testq	%r8, %r8
+ 29b7365:      	je	0x29b73fd <<bun_js_parser::p::P<false, false>>::s_local+0x140d>
+ 29b736b:      	movq	%rsi, -0x78(%rbp)
+ 29b736f:      	movq	%rcx, %r14
+ 29b7372:      	movq	%r8, -0x58(%rbp)
+; /workspace/wt/parser-base/src/mimalloc_sys/mimalloc.rs:184
+ 29b7376:      	movq	%r8, %rdi
+ 29b7379:      	callq	0x4b5ecd0 <mi_malloc>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:481
+ 29b737e:      	testq	%rax, %rax
+ 29b7381:      	je	0x29b7b81 <<bun_js_parser::p::P<false, false>>::s_local+0x1b91>
+ 29b7387:      	movq	%rax, %rdx
+ 29b738a:      	movq	%r14, %rcx
+ 29b738d:      	movq	%r14, %rax
+ 29b7390:      	movq	-0x58(%rbp), %r8
+ 29b7394:      	movq	-0x78(%rbp), %rsi
+ 29b7398:      	jmp	0x29b7404 <<bun_js_parser::p::P<false, false>>::s_local+0x1414>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:379
+ 29b739a:      	movq	0x1a0(%rbx), %rsi
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:1014
+ 29b73a1:      	testq	%rsi, %rsi
+ 29b73a4:      	je	0x29b7ada <<bun_js_parser::p::P<false, false>>::s_local+0x1aea>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:767
+ 29b73aa:      	cmpq	$-0x1, (%rsi)
+ 29b73ae:      	je	0x29b7ada <<bun_js_parser::p::P<false, false>>::s_local+0x1aea>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:377
+ 29b73b4:      	addq	$0x50, %rsi
+; /workspace/wt/parser-base/src/bun_alloc/baby_vec.rs:99
+ 29b73b8:      	movq	0xa10(%rbx), %rdx
+ 29b73bf:      	movl	0xa20(%rbx), %ecx
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:386
+ 29b73c5:      	movq	%r13, %rdi
+ 29b73c8:      	callq	0x28ec8e0 <<bun_ast::b::B>::write_to_hasher::<bun_wyhash::Wyhash, [bun_ast::symbol::Symbol]>>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:392
+ 29b73cd:      	cmpb	$0x1, 0x135(%rbx)
+ 29b73d4:      	je	0x29b7009 <<bun_js_parser::p::P<false, false>>::s_local+0x1019>
+ 29b73da:      	jmp	0x29b701f <<bun_js_parser::p::P<false, false>>::s_local+0x102f>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:245
+ 29b73df:      	cmpq	%rsi, %rax
+ 29b73e2:      	jae	0x29b7b67 <<bun_js_parser::p::P<false, false>>::s_local+0x1b77>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:627
+ 29b73e8:      	movq	0x4b8(%rbx), %rcx
+; /workspace/wt/parser-base/src/collections/zig_hash_map.rs:457
+ 29b73ef:      	movl	$0x1, (%rcx,%rax,8)
+ 29b73f6:      	movl	%r15d, 0x4(%rcx,%rax,8)
+; /workspace/wt/parser-base/src/collections/zig_hash_map.rs:460
+ 29b73fb:      	jmp	0x29b7450 <<bun_js_parser::p::P<false, false>>::s_local+0x1460>
+ 29b73fd:      	movl	$0x4, %edx
+ 29b7402:      	xorl	%eax, %eax
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/slice.rs:449
+ 29b7404:      	testq	%rcx, %rcx
+ 29b7407:      	je	0x29b742b <<bun_js_parser::p::P<false, false>>::s_local+0x143b>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:574
+ 29b7409:      	movq	%rdx, %rdi
+ 29b740c:      	movq	%rdx, -0x58(%rbp)
+ 29b7410:      	movq	%r8, %rdx
+ 29b7413:      	movq	%rcx, %r14
+ 29b7416:      	movq	%rax, -0x78(%rbp)
+ 29b741a:      	callq	*0x2559e48(%rip)        # 0x4f11268 <F_1_772+0x4ef4cc6>
+ 29b7420:      	movq	-0x78(%rbp), %rax
+ 29b7424:      	movq	%r14, %rcx
+ 29b7427:      	movq	-0x58(%rbp), %rdx
+ 29b742b:      	testq	%rax, %rax
+ 29b742e:      	sete	%al
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:438
+ 29b7431:      	cmpl	$0x2, (%r13)
+ 29b7436:      	je	0x29b70a7 <<bun_js_parser::p::P<false, false>>::s_local+0x10b7>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:647
+ 29b743c:      	testb	%al, %al
+ 29b743e:      	jne	0x29b7450 <<bun_js_parser::p::P<false, false>>::s_local+0x1460>
+; /workspace/wt/parser-base/src/bun_alloc/lib.rs:548
+ 29b7440:      	movq	%rdx, %rdi
+ 29b7443:      	callq	0x4b5ee60 <mi_free>
+ 29b7448:      	nopl	(%rax,%rax)
+ 29b7450:      	movzbl	-0x6c(%rbp), %eax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:575
+ 29b7454:      	movb	%al, 0xed3(%rbx)
+ 29b745a:      	movq	-0x110(%rbp), %rdx
+ 29b7461:      	testq	%rdx, %rdx
+ 29b7464:      	movq	-0x40(%rbp), %r14
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:576
+ 29b7468:      	je	0x29b7484 <<bun_js_parser::p::P<false, false>>::s_local+0x1494>
+ 29b746a:      	cmpl	$0x0, (%r13)
+ 29b746f:      	jne	0x29b7484 <<bun_js_parser::p::P<false, false>>::s_local+0x1494>
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:581
+ 29b7471:      	movq	%rbx, %rdi
+ 29b7474:      	movq	%r13, %rsi
+ 29b7477:      	callq	0x29e9b90 <<bun_js_parser::p::P<false, false>>::replace_decl_and_possibly_remove>
+ 29b747c:      	testb	%al, %al
+ 29b747e:      	je	0x29b6ca0 <<bun_js_parser::p::P<false, false>>::s_local+0xcb0>
+; /workspace/wt/parser-base/src/ast/s.rs:294
+ 29b7484:      	cmpb	$0x2, -0x29(%rbp)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:593
+ 29b7488:      	jne	0x29b7499 <<bun_js_parser::p::P<false, false>>::s_local+0x14a9>
+; /workspace/wt/parser-base/src/ast/nodes.rs:108
+ 29b748a:      	movq	0x9f0(%rbx), %rax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:588
+ 29b7491:      	movzbl	0x7b(%rax), %eax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:593
+ 29b7495:      	xorb	$0x1, %al
+ 29b7497:      	jmp	0x29b749b <<bun_js_parser::p::P<false, false>>::s_local+0x14ab>
+ 29b7499:      	xorl	%eax, %eax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:595
+ 29b749b:      	xorl	%edx, %edx
+ 29b749d:      	movl	-0x44(%rbp), %ecx
+ 29b74a0:      	cmpl	0xe98(%rbx), %ecx
+ 29b74a6:      	setne	%dl
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:589
+ 29b74a9:      	movzbl	-0x38(%rbp), %ecx
+ 29b74ad:      	movzbl	%al, %eax
+ 29b74b0:      	shll	$0x8, %eax
+ 29b74b3:      	orl	%ecx, %eax
+ 29b74b5:      	shll	$0x10, %edx
+ 29b74b8:      	orl	%eax, %edx
+ 29b74ba:      	jmp	0x29b74d9 <<bun_js_parser::p::P<false, false>>::s_local+0x14e9>
+; /workspace/wt/parser-base/src/ast/s.rs:294
+ 29b74bc:      	cmpb	$0x2, -0x29(%rbp)
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:621
+ 29b74c0:      	jne	0x29b74d1 <<bun_js_parser::p::P<false, false>>::s_local+0x14e1>
+; /workspace/wt/parser-base/src/ast/nodes.rs:108
+ 29b74c2:      	movq	0x9f0(%rbx), %rax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:616
+ 29b74c9:      	movzbl	0x7b(%rax), %eax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:621
+ 29b74cd:      	xorb	$0x1, %al
+ 29b74cf:      	jmp	0x29b74d3 <<bun_js_parser::p::P<false, false>>::s_local+0x14e3>
+ 29b74d1:      	xorl	%eax, %eax
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:617
+ 29b74d3:      	movzbl	%al, %edx
+ 29b74d6:      	shll	$0x8, %edx
+ 29b74d9:      	movq	%rbx, %rdi
+ 29b74dc:      	movq	%r13, %rsi
+ 29b74df:      	callq	0x293a610 <<bun_js_parser::p::P<true, false>>::visit_decl>
+ 29b74e4:      	movq	-0x108(%rbp), %rsi
+; /workspace/wt/parser-base/src/js_parser/visit/mod.rs:633
+ 29b74eb:      	cmpq	-0x68(%rbp), %rsi
+ 29b74ef:      	je	0x29b6c70 <<bun_js_parser::p::P<false, false>>::s_local+0xc80>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mut_ptr.rs:971
+ 29b74f5:      	movq	%rsi, %rax
+ 29b74f8:      	shlq	$0x5, %rax
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:574
+ 29b74fc:      	movups	(%r13), %xmm0
+ 29b7501:      	movups	0x10(%r13), %xmm1
+ 29b7506:      	movups	%xmm1, 0x10(%r14,%rax)
+ 29b750c:      	movups	%xmm0, (%r14,%rax)
+ 29b7511:      	jmp	0x29b6c70 <<bun_js_parser::p::P<false, false>>::s_local+0xc80>
+ 29b7516:      	movq	-0x88(%rbp), %r9
+ 29b751d:      	movq	-0x108(%rbp), %rsi
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1148
+ 29b7524:      	testl	%eax, %eax
+ 29b7526:      	movq	%rax, %rdx
+ 29b7529:      	setne	%al
+ 29b752c:      	testq	%rsi, %rsi
+ 29b752f:      	sete	%cl
+ 29b7532:      	testb	%al, %cl
+ 29b7534:      	jne	0x29b79cf <<bun_js_parser::p::P<false, false>>::s_local+0x19df>
+ 29b753a:      	movq	%rdx, %rax
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:1831
+ 29b753d:      	cmpq	%rdx, %rsi
+ 29b7540:      	ja	0x29b7549 <<bun_js_parser::p::P<false, false>>::s_local+0x1559>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:1836
+ 29b7542:      	movq	%rsi, 0x10(%r9)
+ 29b7546:      	movq	%rsi, %rax
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1154
+ 29b7549:      	movzbl	0x18(%r9), %r14d
+ 29b754e:      	cmpb	$0x1, %r14b
+ 29b7552:      	jne	0x29b77a0 <<bun_js_parser::p::P<false, false>>::s_local+0x17b0>
+ 29b7558:      	cmpl	$0x0, 0xdc8(%rbx)
+ 29b755f:      	je	0x29b77a0 <<bun_js_parser::p::P<false, false>>::s_local+0x17b0>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs:1663
+ 29b7565:      	testq	%rax, %rax
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/iter/macros.rs:180
+ 29b7568:      	je	0x29b79cf <<bun_js_parser::p::P<false, false>>::s_local+0x19df>
+ 29b756e:      	movq	0x8(%r9), %r15
+ 29b7572:      	shlq	$0x5, %rax
+ 29b7576:      	movq	-0x118(%rbp), %rcx
+ 29b757d:      	movl	0xc(%rcx), %ecx
+ 29b7580:      	movl	%ecx, -0x68(%rbp)
+ 29b7583:      	jmp	0x29b7613 <<bun_js_parser::p::P<false, false>>::s_local+0x1623>
+ 29b7588:      	nopl	(%rax,%rax)
+; /workspace/wt/parser-base/src/ast/ast_memory_allocator.rs:151
+ 29b7590:      	movq	(%rax), %rcx
+ 29b7593:      	addq	$0x28, %rax
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/const_ptr.rs:38
+ 29b7597:      	testq	%rcx, %rcx
+; /workspace/wt/parser-base/src/ast/ast_memory_allocator.rs:151
+ 29b759a:      	cmovneq	%rcx, %rax
+; /workspace/wt/parser-base/src/bun_alloc/MimallocArena.rs:348
+ 29b759e:      	movq	(%rax), %rdi
+; /workspace/wt/parser-base/src/bun_alloc/MimallocArena.rs:560
+ 29b75a1:      	movl	$0x14, %esi
+ 29b75a6:      	callq	0x4b5f5d0 <mi_heap_malloc>
+ 29b75ab:      	movq	%rax, %r12
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/const_ptr.rs:38
+ 29b75ae:      	testq	%rax, %rax
+ 29b75b1:      	je	0x29b7ae4 <<bun_js_parser::p::P<false, false>>::s_local+0x1af4>
+ 29b75b7:      	movb	$0x2, (%r12)
+ 29b75bc:      	movq	%r13, 0x4(%r12)
+ 29b75c1:      	movl	%r14d, 0xc(%r12)
+ 29b75c6:      	movb	$0x0, 0x10(%r12)
+ 29b75cc:      	movq	-0x60(%rbp), %rax
+; /workspace/wt/parser-base/src/bun_alloc/baby_vec.rs:121
+ 29b75d0:      	movl	0x10(%rax), %esi
+ 29b75d3:      	cmpl	0x14(%rax), %esi
+ 29b75d6:      	je	0x29b7788 <<bun_js_parser::p::P<false, false>>::s_local+0x1798>
+ 29b75dc:      	movq	-0x60(%rbp), %rdx
+; /workspace/wt/parser-base/src/bun_alloc/baby_vec.rs:125
+ 29b75e0:      	movq	(%rdx), %rax
+ 29b75e3:      	movl	%esi, %ecx
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mut_ptr.rs:971
+ 29b75e5:      	shlq	$0x4, %rcx
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:1966
+ 29b75e9:      	movl	$0xd, (%rax,%rcx)
+ 29b75f0:      	movq	%r12, 0x4(%rax,%rcx)
+ 29b75f5:      	movl	-0x68(%rbp), %edi
+ 29b75f8:      	movl	%edi, 0xc(%rax,%rcx)
+; /workspace/wt/parser-base/src/bun_alloc/baby_vec.rs:126
+ 29b75fc:      	incl	%esi
+ 29b75fe:      	movl	%esi, 0x10(%rdx)
+ 29b7601:      	movq	-0x50(%rbp), %rax
+ 29b7605:      	addq	$0x20, %r15
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs:1663
+ 29b7609:      	addq	$-0x20, %rax
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/iter/macros.rs:180
+ 29b760d:      	je	0x29b79cf <<bun_js_parser::p::P<false, false>>::s_local+0x19df>
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1156
+ 29b7613:      	cmpb	$-0x1, 0x10(%r15)
+ 29b7618:      	je	0x29b7605 <<bun_js_parser::p::P<false, false>>::s_local+0x1615>
+ 29b761a:      	movq	%rax, -0x50(%rbp)
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1156
+ 29b761e:      	leaq	0x10(%r15), %rax
+ 29b7622:      	movups	(%rax), %xmm0
+ 29b7625:      	movaps	%xmm0, -0x180(%rbp)
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:969
+ 29b762c:      	testb	$0x1, 0xdc8(%rbx)
+ 29b7633:      	je	0x29b7ae9 <<bun_js_parser::p::P<false, false>>::s_local+0x1af9>
+; /workspace/wt/parser-base/src/js_parser/p.rs:2116
+ 29b7639:      	cmpb	$0x0, 0xed6(%rbx)
+ 29b7640:      	jne	0x29b7695 <<bun_js_parser::p::P<false, false>>::s_local+0x16a5>
+ 29b7642:      	cmpb	$0x0, 0xed3(%rbx)
+ 29b7649:      	jne	0x29b7695 <<bun_js_parser::p::P<false, false>>::s_local+0x16a5>
+ 29b764b:      	movq	0xdcc(%rbx), %r12
+; /workspace/wt/parser-base/src/bun_alloc/baby_vec.rs:99
+ 29b7652:      	movl	0xa20(%rbx), %esi
+; /workspace/wt/parser-base/src/ast/lib.rs:254
+ 29b7658:      	movl	%r12d, %edi
+ 29b765b:      	andl	$0xfffffff, %edi        # imm = 0xFFFFFFF
+; /workspace/wt/parser-base/src/js_parser/p.rs:2124
+ 29b7661:      	cmpq	%rsi, %rdi
+ 29b7664:      	jae	0x29b7b5d <<bun_js_parser::p::P<false, false>>::s_local+0x1b6d>
+; /workspace/wt/parser-base/src/bun_alloc/baby_vec.rs:99
+ 29b766a:      	movq	0xa10(%rbx), %rax
+; /workspace/wt/parser-base/src/js_parser/p.rs:2124
+ 29b7671:      	leaq	(%rdi,%rdi,2), %rcx
+ 29b7675:      	shlq	$0x4, %rcx
+ 29b7679:      	incl	0x10(%rax,%rcx)
+; /workspace/wt/parser-base/src/js_parser/p.rs:2125
+ 29b767d:      	movq	%rbx, %rdi
+ 29b7680:      	movq	%r12, %rsi
+ 29b7683:      	callq	0x29edb40 <<bun_js_parser::p::P<true, false>>::part_use>
+; /workspace/wt/parser-base/src/ast/symbol.rs:399
+ 29b7688:      	incl	(%rax)
+; /workspace/wt/parser-base/src/js_parser/p.rs:2127
+ 29b768a:      	movq	%rbx, %rdi
+ 29b768d:      	movq	%r12, %rsi
+ 29b7690:      	callq	0x29df2b0 <<bun_js_parser::p::P<true, false>>::record_scope_use>
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1165
+ 29b7695:      	movq	0xb08(%rbx), %rcx
+ 29b769c:      	movq	0xb10(%rbx), %r8
+; /workspace/wt/parser-base/src/ast/binding.rs:159
+ 29b76a3:      	leaq	-0x170(%rbp), %rdi
+ 29b76aa:      	movq	%r15, %rsi
+ 29b76ad:      	movq	%rbx, %rdx
+ 29b76b0:      	callq	0x25410e0 <<bun_ast::binding::Binding>::to_expr_inner>
+; /workspace/wt/parser-base/src/ast/expr.rs:1073
+ 29b76b5:      	movups	-0x170(%rbp), %xmm0
+ 29b76bc:      	movaps	%xmm0, -0xf0(%rbp)
+ 29b76c3:      	movaps	-0x180(%rbp), %xmm0
+ 29b76ca:      	leaq	-0xe0(%rbp), %rax
+ 29b76d1:      	movups	%xmm0, (%rax)
+; /workspace/wt/parser-base/src/ast/expr.rs:1078
+ 29b76d4:      	movl	-0x164(%rbp), %r14d
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:558
+ 29b76db:      	movq	%fs:-0x2638, %rax
+; /workspace/wt/parser-base/src/ast/new_store.rs:473
+ 29b76e4:      	testq	%rax, %rax
+ 29b76e7:      	je	0x29b7720 <<bun_js_parser::p::P<false, false>>::s_local+0x1730>
+; /workspace/wt/parser-base/src/ast/ast_memory_allocator.rs:151
+ 29b76e9:      	movq	(%rax), %rcx
+ 29b76ec:      	addq	$0x28, %rax
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/const_ptr.rs:38
+ 29b76f0:      	testq	%rcx, %rcx
+; /workspace/wt/parser-base/src/ast/ast_memory_allocator.rs:151
+ 29b76f3:      	cmovneq	%rcx, %rax
+; /workspace/wt/parser-base/src/bun_alloc/MimallocArena.rs:348
+ 29b76f7:      	movq	(%rax), %rdi
+; /workspace/wt/parser-base/src/bun_alloc/MimallocArena.rs:560
+ 29b76fa:      	movl	$0x24, %esi
+ 29b76ff:      	callq	0x4b5f5d0 <mi_heap_malloc>
+ 29b7704:      	movq	%rax, %r13
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/const_ptr.rs:38
+ 29b7707:      	testq	%rax, %rax
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs:280
+ 29b770a:      	jne	0x29b773a <<bun_js_parser::p::P<false, false>>::s_local+0x174a>
+ 29b770c:      	jmp	0x29b7ae4 <<bun_js_parser::p::P<false, false>>::s_local+0x1af4>
+ 29b7711:      	nopw	%cs:(%rax,%rax)
+ 29b771b:      	nopl	(%rax,%rax)
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:558
+ 29b7720:      	movq	%fs:-0x2630, %rdi
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/const_ptr.rs:38
+ 29b7729:      	testq	%rdi, %rdi
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mut_ptr.rs:591
+ 29b772c:      	je	0x29b7afd <<bun_js_parser::p::P<false, false>>::s_local+0x1b0d>
+; /workspace/wt/parser-base/src/ast/new_store.rs:313
+ 29b7732:      	callq	0x2536d90 <<bun_ast::expr::expr_store::Store>::allocate::<bun_ast::e::Binary>>
+ 29b7737:      	movq	%rax, %r13
+ 29b773a:      	movaps	-0xf0(%rbp), %xmm0
+ 29b7741:      	movaps	-0xe0(%rbp), %xmm1
+ 29b7748:      	movups	%xmm1, 0x10(%r13)
+ 29b774d:      	movups	%xmm0, (%r13)
+ 29b7752:      	movb	$0x25, 0x20(%r13)
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:558
+ 29b7757:      	movq	%fs:-0x2648, %rax
+; /workspace/wt/parser-base/src/ast/new_store.rs:473
+ 29b7760:      	testq	%rax, %rax
+ 29b7763:      	jne	0x29b7590 <<bun_js_parser::p::P<false, false>>::s_local+0x15a0>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:558
+ 29b7769:      	movq	%fs:-0x2640, %rdi
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/const_ptr.rs:38
+ 29b7772:      	testq	%rdi, %rdi
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mut_ptr.rs:591
+ 29b7775:      	je	0x29b7b04 <<bun_js_parser::p::P<false, false>>::s_local+0x1b14>
+; /workspace/wt/parser-base/src/ast/new_store.rs:313
+ 29b777b:      	callq	0x2537310 <<bun_ast::stmt::stmt_store::Store>::allocate::<bun_ast::s::SExpr>>
+ 29b7780:      	movq	%rax, %r12
+ 29b7783:      	jmp	0x29b75b7 <<bun_js_parser::p::P<false, false>>::s_local+0x15c7>
+; /workspace/wt/parser-base/src/bun_alloc/baby_vec.rs:122
+ 29b7788:      	incq	%rsi
+ 29b778b:      	movq	-0x60(%rbp), %r13
+ 29b778f:      	movq	%r13, %rdi
+ 29b7792:      	callq	0x29c38d0 <<bun_alloc::baby_vec::BabyVec<bun_js_parser::visit::visit_binary::BinaryExpressionVisitor>>::grow_to>
+; /workspace/wt/parser-base/src/bun_alloc/baby_vec.rs:125
+ 29b7797:      	movl	0x10(%r13), %esi
+ 29b779b:      	jmp	0x29b75dc <<bun_js_parser::p::P<false, false>>::s_local+0x15ec>
+ 29b77a0:      	movq	%rax, -0x50(%rbp)
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1184
+ 29b77a4:      	movzbl	0x12b(%rbx), %eax
+ 29b77ab:      	movzbl	0x1a(%r9), %r15d
+ 29b77b0:      	cmpb	$0x3, %r15b
+ 29b77b4:      	sete	%cl
+ 29b77b7:      	testb	%cl, %al
+ 29b77b9:      	je	0x29b7808 <<bun_js_parser::p::P<false, false>>::s_local+0x1818>
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1185
+ 29b77bb:      	movb	$0x1, 0x1a(%r9)
+ 29b77c0:      	movb	$0x1, %r15b
+ 29b77c3:      	movq	-0x50(%rbp), %rdx
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs:1663
+ 29b77c7:      	testq	%rdx, %rdx
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/iter/macros.rs:180
+ 29b77ca:      	je	0x29b7808 <<bun_js_parser::p::P<false, false>>::s_local+0x1818>
+ 29b77cc:      	movq	0x8(%r9), %rcx
+ 29b77d0:      	shlq	$0x5, %rdx
+ 29b77d4:      	xorl	%esi, %esi
+ 29b77d6:      	jmp	0x29b77e9 <<bun_js_parser::p::P<false, false>>::s_local+0x17f9>
+ 29b77d8:      	nopl	(%rax,%rax)
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs:1663
+ 29b77e0:      	addq	$0x20, %rsi
+ 29b77e4:      	cmpq	%rsi, %rdx
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/iter/macros.rs:180
+ 29b77e7:      	je	0x29b7808 <<bun_js_parser::p::P<false, false>>::s_local+0x1818>
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1187
+ 29b77e9:      	movzbl	0x10(%rcx,%rsi), %edi
+ 29b77ee:      	leal	-0x25(%rdi), %r8d
+ 29b77f2:      	cmpl	$0x2, %r8d
+ 29b77f6:      	jb	0x29b77e0 <<bun_js_parser::p::P<false, false>>::s_local+0x17f0>
+ 29b77f8:      	cmpl	$0xff, %edi
+ 29b77fe:      	je	0x29b77e0 <<bun_js_parser::p::P<false, false>>::s_local+0x17f0>
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1191
+ 29b7800:      	movb	$0x3, 0x1a(%r9)
+ 29b7805:      	movb	$0x3, %r15b
+; /workspace/wt/parser-base/src/js_parser/p.rs:6661
+ 29b7808:      	movzbl	0x16f(%rbx), %ecx
+ 29b780f:      	testb	%cl, %cl
+ 29b7811:      	jne	0x29b781c <<bun_js_parser::p::P<false, false>>::s_local+0x182c>
+ 29b7813:      	cmpb	$0x0, 0xed9(%rbx)
+ 29b781a:      	je	0x29b784b <<bun_js_parser::p::P<false, false>>::s_local+0x185b>
+ 29b781c:      	cmpb	$0x2, %r15b
+; /workspace/wt/parser-base/src/js_parser/p.rs:6663
+ 29b7820:      	ja	0x29b7835 <<bun_js_parser::p::P<false, false>>::s_local+0x1845>
+ 29b7822:      	movq	0x9f0(%rbx), %rdx
+; /workspace/wt/parser-base/src/js_parser/p.rs:6663
+ 29b7829:      	cmpq	$0x0, 0x58(%rdx)
+ 29b782e:      	jne	0x29b7835 <<bun_js_parser::p::P<false, false>>::s_local+0x1845>
+ 29b7830:      	xorl	%r15d, %r15d
+ 29b7833:      	jmp	0x29b784b <<bun_js_parser::p::P<false, false>>::s_local+0x185b>
+; /workspace/wt/parser-base/src/js_parser/p.rs:6661
+ 29b7835:      	xorb	$0x1, %cl
+ 29b7838:      	cmpb	$0x2, %r15b
+ 29b783c:      	setne	%dl
+; /workspace/wt/parser-base/src/js_parser/p.rs:6671
+ 29b783f:      	orb	%cl, %dl
+ 29b7841:      	jne	0x29b784b <<bun_js_parser::p::P<false, false>>::s_local+0x185b>
+; /workspace/wt/parser-base/src/js_parser/p.rs:6673
+ 29b7843:      	movb	$0x2, %r15b
+ 29b7846:      	subb	%al, %r15b
+ 29b7849:      	jmp	0x29b78c2 <<bun_js_parser::p::P<false, false>>::s_local+0x18d2>
+; /workspace/wt/parser-base/src/ast/s.rs:294
+ 29b784b:      	testb	%r15b, %r15b
+ 29b784e:      	setne	%al
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1202
+ 29b7851:      	orb	%r14b, %al
+ 29b7854:      	jne	0x29b78c2 <<bun_js_parser::p::P<false, false>>::s_local+0x18d2>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:627
+ 29b7856:      	movq	0x8(%r9), %rdx
+ 29b785a:      	leaq	-0x194(%rbp), %rdi
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1204
+ 29b7861:      	xorl	%r15d, %r15d
+ 29b7864:      	movq	%rbx, %rsi
+ 29b7867:      	movq	-0x50(%rbp), %rcx
+ 29b786b:      	xorl	%r8d, %r8d
+ 29b786e:      	callq	0x2920640 <<bun_js_parser::p::P<true, false>>::maybe_relocate_vars_to_top_level>
+ 29b7873:      	movq	-0x88(%rbp), %r9
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1205
+ 29b787a:      	cmpb	$0x1, -0x184(%rbp)
+ 29b7881:      	jne	0x29b78c2 <<bun_js_parser::p::P<false, false>>::s_local+0x18d2>
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1206
+ 29b7883:      	cmpl	$-0x1, -0x194(%rbp)
+ 29b788a:      	je	0x29b79cf <<bun_js_parser::p::P<false, false>>::s_local+0x19df>
+ 29b7890:      	movq	-0x60(%rbp), %rax
+; /workspace/wt/parser-base/src/bun_alloc/baby_vec.rs:121
+ 29b7894:      	movl	0x10(%rax), %esi
+ 29b7897:      	cmpl	0x14(%rax), %esi
+ 29b789a:      	je	0x29b7b46 <<bun_js_parser::p::P<false, false>>::s_local+0x1b56>
+ 29b78a0:      	movq	-0x60(%rbp), %rdx
+; /workspace/wt/parser-base/src/bun_alloc/baby_vec.rs:125
+ 29b78a4:      	movq	(%rdx), %rax
+ 29b78a7:      	movl	%esi, %ecx
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mut_ptr.rs:971
+ 29b78a9:      	shlq	$0x4, %rcx
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:1966
+ 29b78ad:      	movups	-0x194(%rbp), %xmm0
+ 29b78b4:      	movups	%xmm0, (%rax,%rcx)
+; /workspace/wt/parser-base/src/bun_alloc/baby_vec.rs:126
+ 29b78b8:      	incl	%esi
+ 29b78ba:      	movl	%esi, 0x10(%rdx)
+ 29b78bd:      	jmp	0x29b79cf <<bun_js_parser::p::P<false, false>>::s_local+0x19df>
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1214
+ 29b78c2:      	movb	%r15b, 0x1a(%r9)
+ 29b78c6:      	movq	-0x60(%rbp), %rax
+; /workspace/wt/parser-base/src/bun_alloc/baby_vec.rs:121
+ 29b78ca:      	movl	0x10(%rax), %esi
+ 29b78cd:      	cmpl	0x14(%rax), %esi
+ 29b78d0:      	je	0x29b7b18 <<bun_js_parser::p::P<false, false>>::s_local+0x1b28>
+ 29b78d6:      	movq	-0x60(%rbp), %rdx
+; /workspace/wt/parser-base/src/bun_alloc/baby_vec.rs:125
+ 29b78da:      	movq	(%rdx), %rax
+ 29b78dd:      	movl	%esi, %ecx
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mut_ptr.rs:971
+ 29b78df:      	shlq	$0x4, %rcx
+ 29b78e3:      	movq	-0x118(%rbp), %rdi
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:1966
+ 29b78ea:      	movups	(%rdi), %xmm0
+ 29b78ed:      	movups	%xmm0, (%rax,%rcx)
+; /workspace/wt/parser-base/src/bun_alloc/baby_vec.rs:126
+ 29b78f1:      	incl	%esi
+ 29b78f3:      	movl	%esi, 0x10(%rdx)
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1218
+ 29b78f6:      	cmpb	$0x0, 0x120(%rbx)
+ 29b78fd:      	je	0x29b7913 <<bun_js_parser::p::P<false, false>>::s_local+0x1923>
+; /workspace/wt/parser-base/src/ast/nodes.rs:123
+ 29b78ff:      	movq	0x9f0(%rbx), %rax
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs:1663
+ 29b7906:      	cmpq	0xb00(%rbx), %rax
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1218
+ 29b790d:      	je	0x29b79e1 <<bun_js_parser::p::P<false, false>>::s_local+0x19f1>
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1254
+ 29b7913:      	testb	%r14b, %r14b
+ 29b7916:      	je	0x29b79cf <<bun_js_parser::p::P<false, false>>::s_local+0x19df>
+ 29b791c:      	movzbl	0x13d(%rbx), %eax
+; /workspace/wt/parser-base/src/ast/runtime.rs:135
+ 29b7923:      	andb	$0x6, %al
+ 29b7925:      	cmpb	$0x2, %al
+ 29b7927:      	movq	-0x50(%rbp), %r12
+ 29b792b:      	jne	0x29b79cf <<bun_js_parser::p::P<false, false>>::s_local+0x19df>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs:1663
+ 29b7931:      	testq	%r12, %r12
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/iter/macros.rs:180
+ 29b7934:      	je	0x29b79cf <<bun_js_parser::p::P<false, false>>::s_local+0x19df>
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1255
+ 29b793a:      	movq	0x8(%r9), %r14
+ 29b793e:      	shlq	$0x5, %r12
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/iter/macros.rs:180
+ 29b7942:      	addq	$0x10, %r14
+ 29b7946:      	xorl	%r13d, %r13d
+ 29b7949:      	jmp	0x29b7959 <<bun_js_parser::p::P<false, false>>::s_local+0x1969>
+ 29b794b:      	nopl	(%rax,%rax)
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs:1663
+ 29b7950:      	addq	$0x20, %r13
+ 29b7954:      	cmpq	%r13, %r12
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/iter/macros.rs:180
+ 29b7957:      	je	0x29b79cf <<bun_js_parser::p::P<false, false>>::s_local+0x19df>
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1257
+ 29b7959:      	cmpb	$-0x1, (%r14,%r13)
+ 29b795e:      	je	0x29b7950 <<bun_js_parser::p::P<false, false>>::s_local+0x1960>
+ 29b7960:      	leaq	(%r14,%r13), %r15
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1257
+ 29b7964:      	movups	(%r15), %xmm0
+ 29b7968:      	movaps	%xmm0, -0x170(%rbp)
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1260
+ 29b796f:      	cmpl	$0x0, -0x10(%r15)
+ 29b7974:      	jne	0x29b7950 <<bun_js_parser::p::P<false, false>>::s_local+0x1960>
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1261
+ 29b7976:      	movq	-0xc(%r14,%r13), %rax
+ 29b797b:      	movq	(%rax), %rdi
+; /workspace/wt/parser-base/src/bun_alloc/baby_vec.rs:94
+ 29b797e:      	movl	0xa20(%rbx), %esi
+; /workspace/wt/parser-base/src/ast/lib.rs:254
+ 29b7984:      	andl	$0xfffffff, %edi        # imm = 0xFFFFFFF
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1264
+ 29b798a:      	cmpq	%rsi, %rdi
+ 29b798d:      	jae	0x29b7b5d <<bun_js_parser::p::P<false, false>>::s_local+0x1b6d>
+; /workspace/wt/parser-base/src/bun_alloc/baby_vec.rs:94
+ 29b7993:      	movq	0xa10(%rbx), %rax
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1264
+ 29b799a:      	leaq	(%rdi,%rdi,2), %rdx
+ 29b799e:      	shlq	$0x4, %rdx
+ 29b79a2:      	movq	0x1c(%rax,%rdx), %rcx
+ 29b79a7:      	movl	0x24(%rax,%rdx), %r8d
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1266
+ 29b79ac:      	leaq	-0xf0(%rbp), %rdi
+ 29b79b3:      	movq	%rbx, %rsi
+ 29b79b6:      	leaq	-0x170(%rbp), %rdx
+ 29b79bd:      	callq	0x2a036c0 <<bun_js_parser::p::P<true, false>>::wrap_value_for_server_component_reference>
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1265
+ 29b79c2:      	movups	-0xf0(%rbp), %xmm0
+ 29b79c9:      	movups	%xmm0, (%r15)
+ 29b79cd:      	jmp	0x29b7950 <<bun_js_parser::p::P<false, false>>::s_local+0x1960>
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1272
+ 29b79cf:      	addq	$0x178, %rsp            # imm = 0x178
+ 29b79d6:      	popq	%rbx
+ 29b79d7:      	popq	%r12
+ 29b79d9:      	popq	%r13
+ 29b79db:      	popq	%r14
+ 29b79dd:      	popq	%r15
+ 29b79df:      	popq	%rbp
+ 29b79e0:      	retq
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs:1663
+ 29b79e1:      	cmpq	$0x0, -0x50(%rbp)
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/iter/macros.rs:180
+ 29b79e6:      	je	0x29b7913 <<bun_js_parser::p::P<false, false>>::s_local+0x1923>
+ 29b79ec:      	movq	0x8(%r9), %r15
+ 29b79f0:      	movq	-0x50(%rbp), %r12
+ 29b79f4:      	shlq	$0x5, %r12
+ 29b79f8:      	xorl	%r13d, %r13d
+ 29b79fb:      	jmp	0x29b7a14 <<bun_js_parser::p::P<false, false>>::s_local+0x1a24>
+ 29b79fd:      	nopl	(%rax)
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1239
+ 29b7a00:      	cmpl	$0x0, (%r15,%r13)
+ 29b7a05:      	je	0x29b7a51 <<bun_js_parser::p::P<false, false>>::s_local+0x1a61>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/non_null.rs:1663
+ 29b7a07:      	addq	$0x20, %r13
+ 29b7a0b:      	cmpq	%r13, %r12
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/iter/macros.rs:180
+ 29b7a0e:      	je	0x29b7913 <<bun_js_parser::p::P<false, false>>::s_local+0x1923>
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1221
+ 29b7a14:      	movzbl	0x10(%r15,%r13), %eax
+ 29b7a1a:      	cmpl	$0x5, %eax
+ 29b7a1d:      	je	0x29b7a00 <<bun_js_parser::p::P<false, false>>::s_local+0x1a10>
+ 29b7a1f:      	cmpl	$0x6, %eax
+ 29b7a22:      	je	0x29b7a30 <<bun_js_parser::p::P<false, false>>::s_local+0x1a40>
+ 29b7a24:      	cmpl	$0x9, %eax
+ 29b7a27:      	je	0x29b7a00 <<bun_js_parser::p::P<false, false>>::s_local+0x1a10>
+ 29b7a29:      	jmp	0x29b7a07 <<bun_js_parser::p::P<false, false>>::s_local+0x1a17>
+ 29b7a2b:      	nopl	(%rax,%rax)
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1221
+ 29b7a30:      	movq	0x14(%r15,%r13), %rax
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1229
+ 29b7a35:      	cmpb	$0x15, 0x18(%rax)
+ 29b7a39:      	jne	0x29b7a07 <<bun_js_parser::p::P<false, false>>::s_local+0x1a17>
+; /workspace/wt/parser-base/src/ast/lib.rs:386
+ 29b7a3b:      	movq	0x1a8(%rbx), %rcx
+; /workspace/wt/parser-base/src/ast/lib.rs:357
+ 29b7a42:      	xorq	0x1c(%rax), %rcx
+ 29b7a46:      	testq	$-0x70000001, %rcx      # imm = 0x8FFFFFFF
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1231
+ 29b7a4d:      	jne	0x29b7a07 <<bun_js_parser::p::P<false, false>>::s_local+0x1a17>
+ 29b7a4f:      	jmp	0x29b7a00 <<bun_js_parser::p::P<false, false>>::s_local+0x1a10>
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1240
+ 29b7a51:      	movq	0x4(%r15,%r13), %rax
+ 29b7a56:      	movq	(%rax), %r8
+; /workspace/wt/parser-base/src/bun_alloc/baby_vec.rs:94
+ 29b7a59:      	movl	0xa20(%rbx), %esi
+; /workspace/wt/parser-base/src/ast/lib.rs:254
+ 29b7a5f:      	movl	%r8d, %edi
+ 29b7a62:      	andl	$0xfffffff, %edi        # imm = 0xFFFFFFF
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1243
+ 29b7a68:      	cmpq	%rsi, %rdi
+ 29b7a6b:      	jae	0x29b7b5d <<bun_js_parser::p::P<false, false>>::s_local+0x1b6d>
+; /workspace/wt/parser-base/src/bun_alloc/baby_vec.rs:94
+ 29b7a71:      	movq	0xa10(%rbx), %rax
+; /workspace/wt/parser-base/src/js_parser/visit/visit_stmt.rs:1243
+ 29b7a78:      	leaq	(%rdi,%rdi,2), %rdx
+ 29b7a7c:      	shlq	$0x4, %rdx
+ 29b7a80:      	movl	0x24(%rax,%rdx), %ecx
+ 29b7a84:      	testq	%rcx, %rcx
+; /workspace/wt/parser-base/src/js_parser/parser.rs:1913
+ 29b7a87:      	je	0x29b7a07 <<bun_js_parser::p::P<false, false>>::s_local+0x1a17>
+ 29b7a8d:      	movq	0x1c(%rax,%rdx), %rdx
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/num/mod.rs:860
+ 29b7a92:      	movzbl	(%rdx), %eax
+ 29b7a95:      	addb	$-0x41, %al
+ 29b7a97:      	cmpb	$0x19, %al
+ 29b7a99:      	ja	0x29b7a07 <<bun_js_parser::p::P<false, false>>::s_local+0x1a17>
+; /workspace/wt/parser-base/src/js_parser/p.rs:8568
+ 29b7a9f:      	movq	%rbx, %rdi
+ 29b7aa2:      	movq	-0x60(%rbp), %rsi
+ 29b7aa6:      	xorl	%r9d, %r9d
+ 29b7aa9:      	callq	0x2a00630 <<bun_js_parser::p::P<false, false>>::emit_react_refresh_register>
+ 29b7aae:      	movq	-0x88(%rbp), %r9
+; /workspace/wt/parser-base/src/js_parser/p.rs:8567
+ 29b7ab5:      	jmp	0x29b7a07 <<bun_js_parser::p::P<false, false>>::s_local+0x1a17>
+ 29b7aba:      	xorl	%edi, %edi
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:454
+ 29b7abc:      	movq	%r8, %rsi
+ 29b7abf:      	callq	0x24d4128 <alloc::raw_vec::handle_error>
+ 29b7ac4:      	xorl	%edi, %edi
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:454
+ 29b7ac6:      	movq	%r13, %rsi
+ 29b7ac9:      	callq	0x24d4128 <alloc::raw_vec::handle_error>
+ 29b7ace:      	movq	-0x88(%rbp), %r9
+ 29b7ad5:      	jmp	0x29b7524 <<bun_js_parser::p::P<false, false>>::s_local+0x1534>
+ 29b7ada:      	movl	$0xf9c428, %edi         # imm = 0xF9C428
+ 29b7adf:      	callq	0x24d9a90 <core::option::unwrap_failed>
+ 29b7ae4:      	callq	0x24f9f40 <bun_alloc::out_of_memory>
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:971
+ 29b7ae9:      	movl	$0x10deb6e, %edi        # imm = 0x10DEB6E
+ 29b7aee:      	movl	$0x18, %esi
+ 29b7af3:      	movl	$0xf9c428, %edx         # imm = 0xF9C428
+ 29b7af8:      	callq	0x24d9a60 <core::option::expect_failed>
+ 29b7afd:      	movl	$0xfa35e3, %edi         # imm = 0xFA35E3
+ 29b7b02:      	jmp	0x29b7b09 <<bun_js_parser::p::P<false, false>>::s_local+0x1b19>
+ 29b7b04:      	movl	$0x106ec08, %edi        # imm = 0x106EC08
+ 29b7b09:      	movl	$0x19, %esi
+ 29b7b0e:      	movl	$0xf9c428, %edx         # imm = 0xF9C428
+ 29b7b13:      	callq	0x24d9a60 <core::option::expect_failed>
+; /workspace/wt/parser-base/src/bun_alloc/baby_vec.rs:122
+ 29b7b18:      	incq	%rsi
+ 29b7b1b:      	movq	-0x60(%rbp), %r15
+ 29b7b1f:      	movq	%r15, %rdi
+ 29b7b22:      	callq	0x29c38d0 <<bun_alloc::baby_vec::BabyVec<bun_js_parser::visit::visit_binary::BinaryExpressionVisitor>>::grow_to>
+ 29b7b27:      	movq	-0x88(%rbp), %r9
+; /workspace/wt/parser-base/src/bun_alloc/baby_vec.rs:125
+ 29b7b2e:      	movl	0x10(%r15), %esi
+ 29b7b32:      	jmp	0x29b78d6 <<bun_js_parser::p::P<false, false>>::s_local+0x18e6>
+ 29b7b37:      	movl	$0x4, %edi
+ 29b7b3c:      	movl	$0x4, %esi
+ 29b7b41:      	callq	0x24d4116 <alloc::alloc::handle_alloc_error>
+; /workspace/wt/parser-base/src/bun_alloc/baby_vec.rs:122
+ 29b7b46:      	incq	%rsi
+ 29b7b49:      	movq	-0x60(%rbp), %rbx
+ 29b7b4d:      	movq	%rbx, %rdi
+ 29b7b50:      	callq	0x29c38d0 <<bun_alloc::baby_vec::BabyVec<bun_js_parser::visit::visit_binary::BinaryExpressionVisitor>>::grow_to>
+; /workspace/wt/parser-base/src/bun_alloc/baby_vec.rs:125
+ 29b7b55:      	movl	0x10(%rbx), %esi
+ 29b7b58:      	jmp	0x29b78a0 <<bun_js_parser::p::P<false, false>>::s_local+0x18b0>
+ 29b7b5d:      	movl	$0xf9c428, %edx         # imm = 0xF9C428
+ 29b7b62:      	callq	0x24d9b15 <core::panicking::panic_bounds_check>
+ 29b7b67:      	movl	$0xf9c428, %edx         # imm = 0xF9C428
+ 29b7b6c:      	movq	%rax, %rdi
+ 29b7b6f:      	callq	0x24d9b15 <core::panicking::panic_bounds_check>
+ 29b7b74:      	movq	%rdx, %rdi
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:238
+ 29b7b77:      	movl	$0xf9c428, %edx         # imm = 0xF9C428
+ 29b7b7c:      	callq	0x24d9b15 <core::panicking::panic_bounds_check>
+ 29b7b81:      	movl	$0x4, %edi
+ 29b7b86:      	movq	-0x58(%rbp), %rsi
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:454
+ 29b7b8a:      	callq	0x24d4128 <alloc::raw_vec::handle_error>
+ 29b7b8f:      	movl	$0x4, %edi
+; /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:454
+ 29b7b94:      	movq	%r13, %rsi
+ 29b7b97:      	callq	0x24d4128 <alloc::raw_vec::handle_error>

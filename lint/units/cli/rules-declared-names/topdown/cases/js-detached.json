@@ -1,0 +1,1 @@
+["class A extends (undefined ?? B) {}", "switch (undefined ?? x) {}", "(class extends (undefined ?? B) {});", "class C { [undefined ?? x]() {} }"]

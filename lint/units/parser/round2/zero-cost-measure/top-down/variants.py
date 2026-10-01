@@ -8,8 +8,14 @@ Build one with paren-expr-seam/run.py (OUT=/tmp/zcm-td/seam/out RELAX=1), link i
   nolintbt nolint, and the three lexer backtrackers as they were at the base (no read of the log, no truncate).
   f1       head with the test of a lint parse at "(" gone: the check of the stack bound in parse_expr_common is the seam.
            A lint parse holds a bound that no frame passes; the cold side of the check reads its real bound from the side table.
-  vold     head, and a type, an object type and a list of type arguments are read by the grammar of the base first where
-           the sink is Discard; where that fails, the lexer and the log go back and the grammar of the head reads."""
+           MEASURED WORSE: js-control +1,838,620 raw Bc against head (parse_expr_common gains a test of the level and four
+           instructions per expression). Do not take it as it is.
+  f1b      f1 with an entry of its own for the one call of parse_expr_common at Level::Member (pfx_t_new).
+  vold     head, and a type, an object type, the body of an interface and a list of type arguments are read by the grammar of
+           the base first where the sink is Discard; where that returns Err, the lexer and the log go back and the grammar of
+           the head reads. The trigger is incomplete: the grammar of the base logs most errors and returns Ok.
+  vold2    vold with the trigger `read.is_err() | (log.errors != mark.errors)`: two jumps in the assembly. For reading only.
+  vold3    vold with the trigger as a wrapping sum of the two conditions: one jump. The one to measure and to run the harness on."""
 import os, re, shutil, sys
 
 SRC = '/workspace/wt/parser/src/js_parser'

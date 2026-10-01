@@ -1257,31 +1257,45 @@ mod draft {
     fn exit_if_jsc_initialization_ran_out_of_address_space() {
         #[cfg(unix)]
         {
-            use bun_core::pretty_error;
+            use bun_core::write_pretty;
 
             if can_reserve_address_space(JSC_MINIMUM_RESERVATION_MB * 1024 * 1024) {
                 return;
             }
+            // A crash from here on is reported as one.
+            set_current_action(None);
 
-            pretty_error!(
+            // The raw writer, like the report below: it needs no `Output` source on this thread.
+            Output::flush();
+            let writer = &mut stderr_writer();
+            let colors = enable_ansi_colors_stderr();
+            let _ = write_pretty!(
+                writer,
+                colors,
                 "\n<r><red>error<r>: Bun ran out of virtual address space while initializing JavaScriptCore.\n\nJavaScriptCore reserves address space for its heaps at startup. This process could not reserve another {} MB.\n",
                 JSC_MINIMUM_RESERVATION_MB,
             );
-            match address_space_limit() {
+            let _ = match address_space_limit() {
                 // `ulimit -v` sets and prints the limit in KB.
-                Some(limit) => pretty_error!(
+                Some(limit) => write_pretty!(
+                    writer,
+                    colors,
                     "\n<d>Current limit: {} KB (ulimit -v)<r>\n\nTo fix this, raise or remove the limit:\n\n  <cyan>ulimit -v unlimited<r>\n",
                     limit / 1024,
                 ),
                 #[cfg(any(target_os = "linux", target_os = "android"))]
-                None => pretty_error!(
+                None => write_pretty!(
+                    writer,
+                    colors,
                     "\nThis process has no <cyan>ulimit -v<r> limit. Check the memory limits of the container or sandbox it runs in, and <cyan>vm.overcommit_memory<r> if it is set to 2.\n",
                 ),
                 #[cfg(not(any(target_os = "linux", target_os = "android")))]
-                None => pretty_error!(
+                None => write_pretty!(
+                    writer,
+                    colors,
                     "\nThis process has no <cyan>ulimit -v<r> limit. Check the memory limits of the container or sandbox it runs in.\n",
                 ),
-            }
+            };
             Global::exit(1);
         }
     }

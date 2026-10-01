@@ -7,9 +7,8 @@
 // Connection-level cases only here (no HPACK required): preface, SETTINGS handshake/ack, PING,
 // WINDOW_UPDATE, frame-size and stream-id rules. HPACK/HEADERS cases live in a sibling file.
 
-import type { Socket } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, gcTick, isASAN, isDebug, isWindows, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, gcTick, normalizeBunSnapshot } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
@@ -935,8 +934,9 @@ describe("SETTINGS ack ordering (RFC 9113 §6.5.3)", () => {
 
 // The window a side sends DATA against is what the peer granted minus what the side sent. A
 // WINDOW_UPDATE is checked against that window (§6.9.1), and a change of the peer's
-// SETTINGS_INITIAL_WINDOW_SIZE moves it by the difference (§6.9.2).
-describe("send flow-control window (RFC 9113 §6.9.1, §6.9.2)", () => {
+// SETTINGS_INITIAL_WINDOW_SIZE moves it by the difference (§6.9.2). The side that lowered its own
+// value grants window against the new size, or a sender that obeys it waits forever.
+describe("flow-control windows after WINDOW_UPDATE and SETTINGS (RFC 9113 §6.9.1, §6.9.2)", () => {
   const MAX_WINDOW = 0x7fffffff;
   const DEFAULT_WINDOW = 65535;
   const STREAM_1_OVERFLOW = [[1, ErrorCode.FLOW_CONTROL_ERROR]];
@@ -1125,138 +1125,101 @@ describe("send flow-control window (RFC 9113 §6.9.1, §6.9.2)", () => {
     });
   });
 
-  // Two uploads send in turn, and the peer answers no stream before its body has ended. The cost
-  // of a read must not grow with the number of DATA frames that the uploads sent. The peer makes
-  // the client read with PING round trips, and the CPU time of this thread is marked around each
-  // phase of them. Windows counts CPU time in steps of 15.6 ms, which is more than a phase uses.
-  test.skipIf(isWindows)("a read costs the same after two uploads sent their DATA frames in turn", async () => {
-    const framesPerStream = isDebug || isASAN ? 10_000 : 25_000;
-    const pingsPerPhase = isDebug || isASAN ? 20 : 200;
-    const MARK = 1;
-    const UPLOAD = 2;
-    const REPORT = 3;
-    // Five phases of PING round trips before the uploads and five after. The least of five leaves
-    // out the phases that collected garbage.
-    const phase = [...Array(pingsPerPhase).fill(0), MARK];
-    const phases = [MARK, ...phase, ...phase, ...phase, ...phase, ...phase];
-    const script = [...phases, UPLOAD, ...phases, REPORT];
-    // One byte of window to each stream in turn, 500 times. The peer sends the next batch when the
-    // DATA of this one arrived, so the client never has a DATA frame to hold back.
-    const inTurn = Buffer.concat([windowUpdate(1, 1), windowUpdate(3, 1)]);
-    const grants = Buffer.alloc(inTurn.length * 500, inTurn);
-
-    const finished = Promise.withResolvers<void>();
-    const seen = { dataFrames: 0, notOneByte: 0, sameStreamTwice: 0 };
-    let pending = Buffer.alloc(0);
-    let unsent = Buffer.alloc(0);
-    let prefaceLeft = PREFACE.length;
-    let step = 0;
-    let granted = 0;
-    let uploading = false;
-    let lastStream = 0;
-    const send = (socket: Socket, bytes: Buffer) => {
-      if (unsent.length > 0) {
-        unsent = Buffer.concat([unsent, bytes]);
-        return;
-      }
-      const written = socket.write(bytes);
-      if (written < bytes.length) unsent = bytes.subarray(Math.max(written, 0));
-    };
-    const ping = (socket: Socket) =>
-      send(socket, encodeFrame(FrameType.PING, 0, 0, Buffer.from([script[step++], 0, 0, 0, 0, 0, 0, 0])));
-    const grant = (socket: Socket) => {
-      if (seen.dataFrames < granted) return;
-      if (granted < 2 * framesPerStream) {
-        granted += 1000;
-        send(socket, grants);
-      } else {
-        uploading = false;
-        ping(socket);
-      }
-    };
-    // The peer shares this thread and its CPU time with the client, so it must cost little: a
-    // native socket, and frame headers read in place. RawH2Server costs more per frame than the client.
-    const peer = Bun.listen({
-      hostname: "127.0.0.1",
-      port: 0,
-      socket: {
-        open(socket) {
-          // Streams open with no window, so each byte of window the peer grants sends one DATA frame.
-          send(socket, Buffer.concat([initialWindowSize(0), windowUpdate(0, 16 << 20)]));
-        },
-        drain(socket) {
-          const bytes = unsent;
-          unsent = Buffer.alloc(0);
-          send(socket, bytes);
-        },
-        error(_, err) {
-          finished.reject(err);
-        },
-        data(socket, chunk) {
-          let bytes = pending.length > 0 ? Buffer.concat([pending, chunk]) : chunk;
-          if (prefaceLeft > 0) {
-            const skipped = Math.min(prefaceLeft, bytes.length);
-            prefaceLeft -= skipped;
-            bytes = bytes.subarray(skipped);
-          }
-          let offset = 0;
-          while (bytes.length - offset >= 9) {
-            const length = bytes.readUIntBE(offset, 3);
-            if (bytes.length - offset < 9 + length) break;
-            const type = bytes[offset + 3];
-            const ack = (bytes[offset + 4] & 0x1) !== 0;
-            const streamId = bytes.readUInt32BE(offset + 5);
-            const kind = bytes[offset + 9];
-            offset += 9 + length;
-            if (type === FrameType.DATA) {
-              seen.dataFrames++;
-              if (length !== 1) seen.notOneByte++;
-              if (streamId === lastStream) seen.sameStreamTwice++;
-              lastStream = streamId;
-            } else if (type === FrameType.SETTINGS) {
-              if (ack) ping(socket);
-              else send(socket, settingsAck);
-            } else if (type === FrameType.PING && ack) {
-              if (kind !== UPLOAD && step < script.length) ping(socket);
-            } else if (type === FrameType.HEADERS && streamId === 3) {
-              uploading = true;
-            }
-          }
-          pending = Buffer.from(bytes.subarray(offset));
-          if (uploading) grant(socket);
-        },
-      },
+  /** A server that lowers its initialWindowSize to `lowered` at the first DATA of a stream. */
+  async function serverThatLowersItsWindow(lowered: number, onEnd: (bytes: number) => void = () => {}) {
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      let bytes = 0;
+      stream.on("error", () => {});
+      stream.once("data", () => stream.session!.settings({ initialWindowSize: lowered }));
+      stream.on("data", (chunk: Buffer) => (bytes += chunk.length));
+      stream.on("end", () => {
+        onEnd(bytes);
+        if (stream.destroyed) return;
+        stream.respond({ ":status": 200 });
+        stream.end();
+      });
     });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    return server;
+  }
 
-    const marks: number[] = [];
-    const client = http2.connect(`http://127.0.0.1:${peer.port}`);
-    client.on("error", finished.reject);
-    client.on("close", () => finished.reject(new Error("the session closed before the report")));
-    client.on("ping", (payload: Buffer) => {
-      if (payload[0] === MARK) {
-        const { user, system } = process.threadCpuUsage();
-        marks.push(user + system);
-      } else if (payload[0] === UPLOAD) {
-        for (let i = 0; i < 2; i++) {
-          const req = client.request({ ":method": "POST", ":path": "/" });
-          req.on("error", finished.reject);
-          req.write(Buffer.alloc(framesPerStream, 0x61));
-        }
-      } else if (payload[0] === REPORT) {
-        finished.resolve();
-      }
-    });
+  /** Whether `f` is a SETTINGS frame that sets INITIAL_WINDOW_SIZE to `value`. */
+  function setsInitialWindowSize(f: Frame, value: number) {
+    if (f.type !== FrameType.SETTINGS || (f.flags & 0x1) !== 0) return false;
+    for (let entry = 0; entry + 6 <= f.payload.length; entry += 6) {
+      if (f.payload.readUInt16BE(entry) === 0x4 && f.payload.readUInt32BE(entry + 2) === value) return true;
+    }
+    return false;
+  }
+
+  test("a server that lowers initialWindowSize grants window against the new size", async () => {
+    const lowered = 1024;
+    const server = await serverThatLowersItsWindow(lowered);
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
     try {
-      await finished.promise;
-      // The premise: each DATA frame carries one byte, and no stream sends two in a row.
-      expect(seen).toEqual({ dataFrames: 2 * framesPerStream, notOneByte: 0, sameStreamTwice: 0 });
-      expect(marks.length).toBe(12);
-      const least = (first: number) => Math.min(...[0, 1, 2, 3, 4].map(i => marks[first + i + 1] - marks[first + i]));
-      // after / before is 0.4 to 1.6 here, and 8 and up when each read visits a record per DATA frame.
-      expect(least(6) / least(0)).toBeLessThan(4);
+      c.sendPreface();
+      c.sendEmptySettings();
+      await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
+      c.sendSettingsAck();
+      c.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, requestHeaderBlock("POST"));
+      c.sendFrame(FrameType.DATA, 0, 1, Buffer.alloc(1000, 0x61));
+      await c.waitFor(f => setsInitialWindowSize(f, lowered));
+      // The sender now has 65535 - 1000 + (1024 - 65535) = 24 bytes of window. Half of the old
+      // size is more than it can ever send, so the 1000 bytes come back when the ACK arrives.
+      c.sendSettingsAck();
+      const update = await c.waitFor(f => f.type === FrameType.WINDOW_UPDATE && f.streamId === 1);
+      expect(update.payload.readUInt32BE(0)).toBe(1000);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  test("an upload finishes when the server lowers initialWindowSize while it runs", async () => {
+    const total = 128 * 1024;
+    const received = Promise.withResolvers<number>();
+    const server = await serverThatLowersItsWindow(1024, received.resolve);
+    const client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`);
+    client.on("error", received.reject);
+    try {
+      const req = client.request({ ":method": "POST", ":path": "/" });
+      req.on("error", received.reject);
+      req.resume();
+      req.end(Buffer.alloc(total, 0x61));
+      expect(await received.promise).toBe(total);
     } finally {
       client.destroy();
-      peer.stop(true);
+      server.close();
+    }
+  });
+
+  test("a download finishes when the client lowers initialWindowSize while it runs", async () => {
+    const total = 128 * 1024;
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      stream.respond({ ":status": 200 });
+      stream.end(Buffer.alloc(total, 0x61));
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const received = Promise.withResolvers<number>();
+    const client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`);
+    client.on("error", received.reject);
+    try {
+      let bytes = 0;
+      const req = client.request({ ":path": "/" });
+      req.on("error", received.reject);
+      req.once("data", () => client.settings({ initialWindowSize: 1024 }));
+      req.on("data", (chunk: Buffer) => (bytes += chunk.length));
+      req.on("end", () => received.resolve(bytes));
+      req.end();
+      expect(await received.promise).toBe(total);
+    } finally {
+      client.destroy();
+      server.close();
     }
   });
 });

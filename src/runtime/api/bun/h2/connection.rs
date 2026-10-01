@@ -657,9 +657,10 @@ impl Connection {
         }
         let mut buf = std::mem::take(&mut self.replenish_buf);
         buf.clear();
+        let advertised = self.local_settings.initial_window_size;
         for (id, s) in self.streams.iter_mut() {
             if s.state != State::Closed
-                && s.recv_window.needs_update()
+                && s.recv_window.needs_update_within(advertised)
                 && sink.is_stream_reading(*id)
             {
                 let inc = s.recv_window.take_update();
@@ -2079,8 +2080,11 @@ impl Connection {
     /// pause). Without this, a peer stalled on a zero stream window would only be released by the
     /// next inbound batch — which may never come, since the peer is the one waiting.
     pub(crate) fn replenish_stream(&mut self, sink: &impl Sink, stream_id: u32) {
+        let advertised = self.local_settings.initial_window_size;
         let inc = match self.streams.get_mut(&stream_id) {
-            Some(s) if s.state != State::Closed && s.recv_window.needs_update() => {
+            Some(s)
+                if s.state != State::Closed && s.recv_window.needs_update_within(advertised) =>
+            {
                 s.recv_window.take_update()
             }
             _ => return,

@@ -31,7 +31,7 @@ Press `enter` to accept the default answer for each prompt, or pass the `-y` fla
 
 ---
 
-`bun init` infers settings with sane defaults and is non-destructive when run multiple times.
+`bun init` infers settings with sane defaults and is non-destructive when run multiple times. If a `package.json` exists but cannot be read or parsed, `bun init` exits with an error and leaves the file unchanged.
 
 <Frame>
   ![Demo](https://user-images.githubusercontent.com/709451/183006613-271960a3-ff22-4f7c-83f5-5e18f684c836.gif)

@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import fs, { readdirSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
 // Whether `bun init` emits CLAUDE.md depends on a `claude` binary being on
@@ -311,38 +311,284 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     });
   }, 30_000);
 
-  // A package.json that exists but cannot be loaded is an error, like it is
-  // for `bun add` / `bun pm pkg`. It used to be treated as "no package.json"
-  // and silently overwritten with the blank scaffold.
+  // `bun init` fills in a package.json that is absent or empty, and merges into
+  // one that it parsed. Any other package.json is an error, like it is for
+  // `bun add` / `bun pm pkg`, and stays as it is. It used to be treated as "no
+  // package.json" and overwritten with the blank scaffold.
+  async function init(cwd: string, args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "init", ...args],
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: initEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr: normalizeBunSnapshot(stderr, cwd), exitCode };
+  }
+  const fixOrRemove = "\nnote: fix or remove this file, then run 'bun init' again";
+  const rootNotAnObject = 'error: package.json root must be an object in "<dir>/package.json"';
+  // Root ignores permission bits, and Windows has none.
+  const permissionBitsApply = !isWindows && process.getuid!() !== 0;
+
   test.each([
     {
       name: "syntax error",
       contents: '{\n  "name": "myapp",\n  "version": "2.0.0",\n  "dependencies": {\n    "foo": "^1.0.0",\n  }\n',
-      error: 'error: Expected "}" but found end of file',
+      error:
+        '6 |   }\n       ^\nerror: Expected "}" but found end of file\n    at <dir>/package.json:6:4\n' +
+        'ParserError: failed to parse "<dir>/package.json"',
     },
     {
-      name: "non-object root",
-      contents: '["name", "myapp"]\n',
-      error: "error: package.json root must be an object",
+      name: "lone {",
+      contents: "{",
+      error:
+        '1 | {\n    ^\nerror: Expected "}" but found end of file\n    at <dir>/package.json:1:1\n' +
+        'ParserError: failed to parse "<dir>/package.json"',
     },
+    {
+      name: "whitespace only",
+      contents: "  \n",
+      error:
+        "error: Unexpected end of file\n    at <dir>/package.json:1:3\n" +
+        'ParserError: failed to parse "<dir>/package.json"',
+    },
+    {
+      name: "NUL byte in a string",
+      contents: '{ "name": "my\0app" }\n',
+      error:
+        '1 | { "name": "my\0app" }\n              ^\nerror: Syntax Error\n    at <dir>/package.json:1:11\n' +
+        'SyntaxError: failed to parse "<dir>/package.json"',
+    },
+    {
+      name: "UTF-16",
+      contents: Buffer.from("\uFEFF{}", "utf16le"),
+      error:
+        "1 | \uFFFD\uFFFD{\0}\0\n    ^\nerror: Unexpected \uFFFD\uFFFD\n    at <dir>/package.json:1:1\n" +
+        'ParserError: failed to parse "<dir>/package.json"',
+    },
+    { name: "non-object root", contents: '["name", "myapp"]\n', error: rootNotAnObject },
+    { name: "string root", contents: '"myapp"\n', error: rootNotAnObject },
+    { name: "number root", contents: "42\n", error: rootNotAnObject },
+    { name: "null root", contents: "null\n", error: rootNotAnObject },
   ])("bun init -y errors on an invalid package.json instead of overwriting it ($name)", async ({ contents, error }) => {
     await using temp = tempDir("bun-init-invalid-package-json", {
       "package.json": contents,
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "init", "-y"],
-      cwd: temp,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: initEnv,
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stdout, stderr, exitCode } = await init(temp, ["-y"]);
 
     expect(stdout).toBe("");
-    expect(stderr).toContain(error);
-    expect(await Bun.file(path.join(temp, "package.json")).text()).toBe(contents);
-    expect(readdirSync(temp).sort()).toEqual(["package.json"]);
+    expect(stderr).toBe(error + fixOrRemove);
+    expect(fs.readFileSync(path.join(temp, "package.json"))).toEqual(Buffer.from(contents));
+    expect(readdirSync(temp)).toEqual(["package.json"]);
     expect(exitCode).toBe(1);
+  });
+
+  test.each([
+    { name: "-m -y", args: ["-m", "-y"], file: "package.json" },
+    { name: "stdin is not a TTY", args: [], file: "package.json" },
+    { name: "-y <folder>", args: ["-y", "sub"], file: "sub/package.json" },
+  ])("bun init errors on an invalid package.json from every entry point ($name)", async ({ args, file }) => {
+    await using temp = tempDir("bun-init-invalid-package-json-entry", { [file]: "{" });
+
+    const { stdout, stderr, exitCode } = await init(temp, args);
+
+    expect(stdout).toBe("");
+    expect(stderr).toBe(
+      `1 | {\n    ^\nerror: Expected "}" but found end of file\n    at <dir>/${file}:1:1\n` +
+        `ParserError: failed to parse "<dir>/${file}"` +
+        fixOrRemove,
+    );
+    expect(await Bun.file(path.join(temp, file)).text()).toBe("{");
+    expect(readdirSync(path.dirname(path.join(temp, file)))).toEqual(["package.json"]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("bun init -y errors when package.json is a directory", async () => {
+    await using temp = tempDir("bun-init-package-json-directory", { "package.json": {} });
+
+    const { stdout, stderr, exitCode } = await init(temp, ["-y"]);
+
+    expect(stdout).toBe("");
+    // Windows opens a handle to the directory, so the file kind check reports it.
+    expect(stderr).toBe(
+      isWindows
+        ? 'error: "<dir>/package.json" is not a regular file'
+        : 'EISDIR: Is a directory: could not open "<dir>/package.json" (open)',
+    );
+    expect(readdirSync(temp)).toEqual(["package.json"]);
+    expect(readdirSync(path.join(temp, "package.json"))).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
+
+  // Creating a symlink needs a privilege on Windows.
+  test.skipIf(isWindows).each([
+    {
+      name: "symlink loop",
+      target: "package.json",
+      error: 'ELOOP: Too many levels of symbolic links: could not open "<dir>/package.json" (open)',
+    },
+    { name: "symlink to a device", target: "/dev/null", error: 'error: "<dir>/package.json" is not a regular file' },
+  ])("bun init -y errors when package.json is not a regular file ($name)", async ({ target, error }) => {
+    await using temp = tempDir("bun-init-package-json-symlink", {});
+    fs.symlinkSync(target, path.join(temp, "package.json"));
+
+    const { stdout, stderr, exitCode } = await init(temp, ["-y"]);
+
+    expect(stdout).toBe("");
+    expect(stderr).toBe(error);
+    expect(fs.readlinkSync(path.join(temp, "package.json"))).toBe(target);
+    expect(readdirSync(temp)).toEqual(["package.json"]);
+    expect(exitCode).toBe(1);
+  });
+
+  test.skipIf(!permissionBitsApply).each([
+    { name: "write-only", mode: 0o200 },
+    { name: "read-only", mode: 0o444 },
+  ])("bun init -y errors on a package.json it may not read and write ($name)", async ({ mode }) => {
+    const contents = '{ "name": "myapp", "version": "2.0.0" }\n';
+    await using temp = tempDir("bun-init-package-json-mode", { "package.json": contents });
+    fs.chmodSync(path.join(temp, "package.json"), mode);
+
+    const { stdout, stderr, exitCode } = await init(temp, ["-y"]);
+
+    expect(stdout).toBe("");
+    expect(stderr).toBe(
+      'EACCES: Permission denied while opening "<dir>/package.json"\n' +
+        "note: package.json must be readable and writable for bun init to update it",
+    );
+    fs.chmodSync(path.join(temp, "package.json"), 0o644);
+    expect(await Bun.file(path.join(temp, "package.json")).text()).toBe(contents);
+    expect(readdirSync(temp)).toEqual(["package.json"]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("bun init -y -m fills in an empty package.json", async () => {
+    await using temp = tempDir("bun-init-empty-package-json", { "package.json": "" });
+
+    const { stdout, exitCode } = await init(temp, ["-y", "-m"]);
+
+    expect(stdout.split("\n")[0]).toBe(" + package.json");
+    expect(await Bun.file(path.join(temp, "package.json")).json()).toEqual({
+      devDependencies: { "@types/bun": "latest" },
+    });
+    expect(exitCode).toBe(0);
+  }, 30_000);
+
+  // Creating a symlink needs a privilege on Windows.
+  test.skipIf(isWindows)(
+    "bun init -y -m creates the target of a dangling package.json symlink",
+    async () => {
+      await using temp = tempDir("bun-init-dangling-package-json", {});
+      fs.symlinkSync("target.json", path.join(temp, "package.json"));
+
+      const { exitCode } = await init(temp, ["-y", "-m"]);
+
+      expect(fs.readlinkSync(path.join(temp, "package.json"))).toBe("target.json");
+      expect(await Bun.file(path.join(temp, "target.json")).json()).toEqual({
+        devDependencies: { "@types/bun": "latest" },
+      });
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+
+  // The React templates never load package.json. Their writer skips one that exists.
+  test("bun init --react skips a package.json it cannot parse", async () => {
+    await using temp = tempDir("bun-init-react-invalid-package-json", { "package.json": "{" });
+
+    const { stdout, exitCode } = await init(temp, ["--react"]);
+
+    expect(stdout.split("\n")).toContain(" ○ package.json (already exists, skipping)");
+    expect(await Bun.file(path.join(temp, "package.json")).text()).toBe("{");
+    expect(fs.existsSync(path.join(temp, "bunfig.toml"))).toBe(true);
+    expect(exitCode).toBe(0);
+  }, 30_000);
+
+  test.skipIf(!permissionBitsApply)(
+    "bun init --react skips a read-only package.json",
+    async () => {
+      const contents = '{ "name": "myapp" }\n';
+      await using temp = tempDir("bun-init-react-read-only-package-json", { "package.json": contents });
+      fs.chmodSync(path.join(temp, "package.json"), 0o444);
+
+      const { stdout, exitCode } = await init(temp, ["--react"]);
+
+      expect(stdout.split("\n")).toContain(" ○ package.json (already exists, skipping)");
+      expect(await Bun.file(path.join(temp, "package.json")).text()).toBe(contents);
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+
+  // ConPTY rewrites the child's output (it wraps lines at `cols`), so the text
+  // these tests read from the terminal is only stable on a POSIX pty.
+  describe.skipIf(isWindows)("on a TTY", () => {
+    /** Runs `bun init` on a pty. `onPicker` runs once the template picker is shown. */
+    async function initOnTTY(cwd: string, onPicker?: (terminal: Bun.Terminal) => void) {
+      const decoder = new TextDecoder();
+      let output = "";
+      const picker = Promise.withResolvers<void>();
+      await using terminal = new Bun.Terminal({
+        cols: 80,
+        rows: 24,
+        data(_, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+          if (output.includes("Select a project template")) picker.resolve();
+        },
+      });
+      await using proc = Bun.spawn({ cmd: [bunExe(), "init"], cwd, env: initEnv, terminal });
+      if (onPicker) {
+        // Fail with the child's output if it exits before the picker.
+        const exitedEarly = proc.exited.then(code => {
+          throw new Error(`bun init exited before the template picker (code ${code}):\n${output}`);
+        });
+        exitedEarly.catch(() => {});
+        await Promise.race([picker.promise, exitedEarly]);
+        onPicker(terminal);
+      }
+      const exitCode = await proc.exited;
+      return { output: normalizeBunSnapshot(Bun.stripANSI(output), cwd), exitCode };
+    }
+
+    test("bun init errors on an invalid package.json before the template picker", async () => {
+      await using temp = tempDir("bun-init-tty-invalid-package-json", { "package.json": "{" });
+
+      const { output, exitCode } = await initOnTTY(temp);
+
+      expect(output).toBe(
+        '1 | {\n    ^\nerror: Expected "}" but found end of file\n    at <dir>/package.json:1:1\n' +
+          'ParserError: failed to parse "<dir>/package.json"' +
+          fixOrRemove,
+      );
+      expect(await Bun.file(path.join(temp, "package.json")).text()).toBe("{");
+      expect(readdirSync(temp)).toEqual(["package.json"]);
+      expect(exitCode).toBe(1);
+    });
+
+    test.each([
+      { name: "created", before: undefined },
+      { name: "given content", before: "" },
+    ])("bun init keeps a package.json that is $name while the template picker is open", async ({ before }) => {
+      const saved = '{ "name": "saved-during-the-picker" }\n';
+      await using temp = tempDir(
+        "bun-init-tty-package-json-changed",
+        before === undefined ? {} : { "package.json": before },
+      );
+
+      const { output, exitCode } = await initOnTTY(temp, terminal => {
+        fs.writeFileSync(path.join(temp, "package.json"), saved);
+        // "1" picks the first entry (Blank) and submits it.
+        terminal.write("1");
+      });
+
+      expect(output).toEndWith(
+        'error: "<dir>/package.json" appeared or changed while bun init was running\n' + "note: run 'bun init' again",
+      );
+      expect(await Bun.file(path.join(temp, "package.json")).text()).toBe(saved);
+      expect(readdirSync(temp)).toEqual(["package.json"]);
+      expect(exitCode).toBe(1);
+    });
   });
 
   test("bun init --react works", async () => {

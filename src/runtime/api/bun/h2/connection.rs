@@ -210,9 +210,7 @@ pub(crate) trait Sink {
     fn on_ping(&self, payload: &[u8], is_ack: bool);
     /// `code` is the raw u32 from the wire so unknown error codes survive to JS (node parity).
     fn on_go_away(&self, code: u32, last_stream_id: u32, debug: &[u8]);
-    /// A WINDOW_UPDATE with a non-zero increment for `stream_id` (0 = the connection). An
-    /// embedder whose own encoder sends DATA owns the send windows: it checks the increment
-    /// against the window it sends with (§6.9.1), adds it, and resumes queued sends.
+    /// A WINDOW_UPDATE with a non-zero increment for `stream_id` (0 = the connection).
     fn credit_send_window(&self, _stream_id: u32, _increment: u32) -> SendCredit {
         SendCredit::NotOwned
     }

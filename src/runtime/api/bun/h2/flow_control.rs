@@ -116,8 +116,7 @@ impl RecvWindow {
         self.consumed > 0 && self.consumed >= self.size / 2
     }
 
-    /// `needs_update` for a stream. `advertised` is the local SETTINGS_INITIAL_WINDOW_SIZE: once
-    /// it is below `size`, a peer that obeys it (§6.9.2) can never use half of `size`.
+    /// `needs_update` for a stream, capped at `advertised`: the local INITIAL_WINDOW_SIZE (§6.9.2).
     #[inline]
     pub(crate) fn needs_update_within(&self, advertised: u32) -> bool {
         self.consumed > 0 && self.consumed >= self.size.min(advertised as i64) / 2

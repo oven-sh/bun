@@ -3872,8 +3872,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             stream_id,
             increment
         );
-        // The window is `granted - used`, and it is negative after the peer lowered
-        // SETTINGS_INITIAL_WINDOW_SIZE below what the stream used (§6.9.2).
+        // `granted` is below `used` after the peer lowered INITIAL_WINDOW_SIZE that far (§6.9.2).
         let overflows =
             |granted: u64, used: u64| granted + increment as u64 > used + MAX_WINDOW_SIZE as u64;
         if stream_id == 0 {

@@ -1,0 +1,189 @@
+# direct.ts --not-laid-out: the run instances that sweep.ts cannot lay out (outcome unsupported), their root files alone through the debug build
+# name	class	case path	first obstacle	exit code	signal	died	stderr (lines joined with |)
+booleanLiteralsContextuallyTypedFromUnion.tsx	C	compiler/booleanLiteralsContextuallyTypedFromUnion.tsx	absolute-path-in-text: /.src/booleanLiteralsContextuallyTypedFromUnion.tsx: /.lib/react.d.ts	0			
+callsOnComplexSignatures.tsx	C	compiler/callsOnComplexSignatures.tsx	absolute-path-in-text: /.src/callsOnComplexSignatures.tsx: /.lib/react16.d.ts	0			
+caseInsensitiveFileSystemWithCapsImportTypeDeclarations.ts	C	compiler/caseInsensitiveFileSystemWithCapsImportTypeDeclarations.ts	case-insensitive-requested	0			
+commonSourceDir2.ts	E	compiler/commonSourceDir2.ts	dos-root: A:	0			
+commonSourceDir3.ts	C	compiler/commonSourceDir3.ts	dos-root: A:	0			
+commonSourceDir1.ts	C	compiler/commonSourceDir1.ts	dos-root: A:	0			
+checkJsxNotSetError.ts	E	compiler/checkJsxNotSetError.ts	absolute-path-in-text: /bar.jsx: /foo	0			
+commonSourceDir4.ts	E	compiler/commonSourceDir4.ts	dos-root: A:	0			
+contextuallyTypedJsxAttribute2.tsx	C	compiler/contextuallyTypedJsxAttribute2.tsx	absolute-path-in-text: /.src/contextuallyTypedJsxAttribute2.tsx: /.lib/react16.d.ts	0			
+conditionalTypeVarianceBigArrayConstraintsPerformance.ts	E	compiler/conditionalTypeVarianceBigArrayConstraintsPerformance.ts	absolute-path-in-text: /.src/conditionalTypeVarianceBigArrayConstraintsPerformance.ts: /.lib/react16.d.ts	0			
+declarationEmitRelativeModuleError.ts	E	compiler/declarationEmitRelativeModuleError.ts	absolute-path-in-text: /.src/declarationEmitRelativeModuleError.ts: b:/block	0			
+contextuallyTypedJsxChildren.tsx	C	compiler/contextuallyTypedJsxChildren.tsx	absolute-path-in-text: /.src/contextuallyTypedJsxChildren.tsx: /.lib/react16.d.ts	0			
+contextuallyTypedJsxChildren2.tsx	C	compiler/contextuallyTypedJsxChildren2.tsx	absolute-path-in-text: /.src/contextuallyTypedJsxChildren2.tsx: /.lib/react16.d.ts	0			
+errorInfoForRelatedIndexTypesNoConstraintElaboration.ts	E	compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts	absolute-path-in-text: /.src/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts: /.lib/react16.d.ts	0			
+ignoredJsxAttributes.tsx	E	compiler/ignoredJsxAttributes.tsx	absolute-path-in-text: /.src/ignoredJsxAttributes.tsx: /.lib/react16.d.ts	0			
+jsxChildWrongType.tsx	E	compiler/jsxChildWrongType.tsx	absolute-path-in-text: /.src/index.tsx: /.lib/react18/react18.d.ts	0			
+jsxCallElaborationCheckNoCrash1.tsx	E	compiler/jsxCallElaborationCheckNoCrash1.tsx	absolute-path-in-text: /.src/jsxCallElaborationCheckNoCrash1.tsx: /.lib/react16.d.ts	0			
+jsxChildrenArrayWrongType(target=es2015).tsx	E	compiler/jsxChildrenArrayWrongType.tsx	absolute-path-in-text: /.src/index.tsx: /.lib/react18/react18.d.ts	0			
+jsxChildrenIndividualErrorElaborations.tsx	E	compiler/jsxChildrenIndividualErrorElaborations.tsx	absolute-path-in-text: /.src/index.tsx: /.lib/react16.d.ts	0			
+genericInferenceDefaultTypeParameterJsxReact.tsx	C	compiler/genericInferenceDefaultTypeParameterJsxReact.tsx	absolute-path-in-text: /.src/genericInferenceDefaultTypeParameterJsxReact.tsx: /.lib/react16.d.ts	0			
+jsxComplexSignatureHasApplicabilityError.tsx	C	compiler/jsxComplexSignatureHasApplicabilityError.tsx	absolute-path-in-text: /.src/jsxComplexSignatureHasApplicabilityError.tsx: /.lib/react16.d.ts	0			
+jsxChildrenWrongType.tsx	E	compiler/jsxChildrenWrongType.tsx	absolute-path-in-text: /.src/other.tsx: /.lib/react18/react18.d.ts	0			
+jsxDeclarationsWithEsModuleInteropNoCrash.tsx	C	compiler/jsxDeclarationsWithEsModuleInteropNoCrash.tsx	absolute-path-in-text: /.src/jsxDeclarationsWithEsModuleInteropNoCrash.jsx: /.lib/react16.d.ts	0			
+jsxChildrenSingleChildConfusableWithMultipleChildrenNoError.tsx	C	compiler/jsxChildrenSingleChildConfusableWithMultipleChildrenNoError.tsx	absolute-path-in-text: /.src/jsxChildrenSingleChildConfusableWithMultipleChildrenNoError.tsx: /.lib/react16.d.ts	0			
+jsxElementTypeLiteralWithGeneric.tsx	E	compiler/jsxElementTypeLiteralWithGeneric.tsx	absolute-path-in-text: /.src/jsxElementTypeLiteralWithGeneric.tsx: /.lib/react16.d.ts	0			
+jsxElementTypeLiteral.tsx	E	compiler/jsxElementTypeLiteral.tsx	absolute-path-in-text: /.src/jsxElementTypeLiteral.tsx: /.lib/react16.d.ts	0			
+jsxEmptyExpressionNotCountedAsChild(jsx=react).tsx	C	compiler/jsxEmptyExpressionNotCountedAsChild.tsx	absolute-path-in-text: /.src/jsxEmptyExpressionNotCountedAsChild.tsx: /.lib/react16.d.ts	0			
+jsxElementType.tsx	E	compiler/jsxElementType.tsx	absolute-path-in-text: /.src/jsxElementType.tsx: /.lib/react16.d.ts	0			
+jsxEmptyExpressionNotCountedAsChild(jsx=react-jsx).tsx	C	compiler/jsxEmptyExpressionNotCountedAsChild.tsx	absolute-path-in-text: /.src/jsxEmptyExpressionNotCountedAsChild.tsx: /.lib/react16.d.ts	0			
+jsxEmptyExpressionNotCountedAsChild(jsx=react-jsxdev).tsx	C	compiler/jsxEmptyExpressionNotCountedAsChild.tsx	absolute-path-in-text: /.src/jsxEmptyExpressionNotCountedAsChild.tsx: /.lib/react16.d.ts	0			
+jsxFragReactReferenceErrors(jsx=preserve).tsx	C	compiler/jsxFragReactReferenceErrors.tsx	absolute-path-in-text: /.src/jsxFragReactReferenceErrors.tsx: /.lib/react18/react18.d.ts	0			
+jsxExcessPropsAndAssignability.tsx	E	compiler/jsxExcessPropsAndAssignability.tsx	absolute-path-in-text: /.src/jsxExcessPropsAndAssignability.tsx: /.lib/react16.d.ts	0			
+jsxFragReactReferenceErrors(jsx=react-native).tsx	C	compiler/jsxFragReactReferenceErrors.tsx	absolute-path-in-text: /.src/jsxFragReactReferenceErrors.tsx: /.lib/react18/react18.d.ts	0			
+jsxFragmentWrongType.tsx	E	compiler/jsxFragmentWrongType.tsx	absolute-path-in-text: /.src/a.tsx: /.lib/react18/react18.d.ts	0			
+jsxGenericComponentWithSpreadingResultOfGenericFunction.tsx	C	compiler/jsxGenericComponentWithSpreadingResultOfGenericFunction.tsx	absolute-path-in-text: /.src/jsxGenericComponentWithSpreadingResultOfGenericFunction.tsx: /.lib/react16.d.ts	0			
+jsxHasLiteralType.tsx	C	compiler/jsxHasLiteralType.tsx	absolute-path-in-text: /.src/jsxHasLiteralType.tsx: /.lib/react.d.ts	0			
+jsxFragmentFactoryNoUnusedLocals.tsx	E	compiler/jsxFragmentFactoryNoUnusedLocals.tsx	absolute-path-in-text: /.src/jsxFragmentFactoryNoUnusedLocals.tsx: /.lib/react16.d.ts	0			
+jsxFunctionTypeChildren.tsx	C	compiler/jsxFunctionTypeChildren.tsx	absolute-path-in-text: /.src/jsxFunctionTypeChildren.tsx: /.lib/react16.d.ts	0			
+jsxInferenceProducesLiteralAsExpected.tsx	C	compiler/jsxInferenceProducesLiteralAsExpected.tsx	absolute-path-in-text: /.src/jsxInferenceProducesLiteralAsExpected.tsx: /.lib/react.d.ts	0			
+jsxImportForSideEffectsNonExtantNoError.tsx	E	compiler/jsxImportForSideEffectsNonExtantNoError.tsx	absolute-path-in-text: /.src/jsxImportForSideEffectsNonExtantNoError.tsx: /.lib/react16.d.ts	0			
+jsxIntrinsicElementsTypeArgumentErrors.tsx	E	compiler/jsxIntrinsicElementsTypeArgumentErrors.tsx	absolute-path-in-text: /.src/jsxIntrinsicElementsTypeArgumentErrors.tsx: /.lib/react16.d.ts	2			jsxIntrinsicElementsTypeArgumentErrors.tsx(5,16): error syntax: Unexpected >> | jsxIntrinsicElementsTypeArgumentErrors.tsx(7,23): error syntax: Unexpected >> | jsxIntrinsicElementsTypeArgumentErrors.tsx(18,16): error syntax: Unexpected > | jsxIntrinsicElementsTypeArgumentErrors.tsx(20,23): error syntax: Unexpected >
+jsxIntrinsicUnions.tsx	C	compiler/jsxIntrinsicUnions.tsx	absolute-path-in-text: /.src/jsxIntrinsicUnions.tsx: /.lib/react16.d.ts	0			
+jsxIntrinsicElementsCompatability.tsx	C	compiler/jsxIntrinsicElementsCompatability.tsx	absolute-path-in-text: /.src/jsxIntrinsicElementsCompatability.tsx: /.lib/react16.d.ts	0			
+jsxIssuesErrorWhenTagExpectsTooManyArguments.tsx	E	compiler/jsxIssuesErrorWhenTagExpectsTooManyArguments.tsx	absolute-path-in-text: /.src/jsxIssuesErrorWhenTagExpectsTooManyArguments.tsx: /.lib/react16.d.ts	0			
+jsxPartialSpread.tsx	C	compiler/jsxPartialSpread.tsx	absolute-path-in-text: /.src/jsxPartialSpread.tsx: /.lib/react16.d.ts	0			
+jsxNamespacedNameNotComparedToNonMatchingIndexSignature.tsx	C	compiler/jsxNamespacedNameNotComparedToNonMatchingIndexSignature.tsx	absolute-path-in-text: /.src/jsxNamespacedNameNotComparedToNonMatchingIndexSignature.tsx: /.lib/react16.d.ts	0			
+jsxRuntimePragma(jsx=react).ts	C	compiler/jsxRuntimePragma.ts	absolute-path-in-text: /.src/one.tsx: /.lib/react16.d.ts	0			
+jsxRuntimePragma(jsx=preserve).ts	C	compiler/jsxRuntimePragma.ts	absolute-path-in-text: /.src/one.tsx: /.lib/react16.d.ts	0			
+jsxRuntimePragma(jsx=react-jsx).ts	C	compiler/jsxRuntimePragma.ts	absolute-path-in-text: /.src/one.tsx: /.lib/react16.d.ts	0			
+jsxSpreadFirstUnionNoErrors.tsx	C	compiler/jsxSpreadFirstUnionNoErrors.tsx	absolute-path-in-text: /.src/jsxSpreadFirstUnionNoErrors.tsx: /.lib/react.d.ts	0			
+missingMemberErrorHasShortPath.ts	E	compiler/missingMemberErrorHasShortPath.ts	dos-root: C:	0			
+pathMappingBasedModuleResolution1_node.ts	E	compiler/pathMappingBasedModuleResolution1_node.ts	dos-root: c:	0			
+pathMappingBasedModuleResolution6_node.ts	C	compiler/pathMappingBasedModuleResolution6_node.ts	dos-root: c:	0			
+maxNodeModuleJsDepthDefaultsToZero.ts	E	compiler/maxNodeModuleJsDepthDefaultsToZero.ts	absolute-path-in-text: /index.ts: /typings/index.d.ts	0			
+jsxRuntimePragma(jsx=react-jsxdev).ts	C	compiler/jsxRuntimePragma.ts	absolute-path-in-text: /.src/one.tsx: /.lib/react16.d.ts	0			
+reactImportUnusedInNewJSXEmit(jsx=react-jsx).tsx	E	compiler/reactImportUnusedInNewJSXEmit.tsx	absolute-path-in-text: /.src/index.tsx: /.lib/react16.d.ts	0			
+reactHOCSpreadprops.tsx	C	compiler/reactHOCSpreadprops.tsx	absolute-path-in-text: /.src/reactHOCSpreadprops.tsx: /.lib/react16.d.ts	0			
+reactDefaultPropsInferenceSuccess.tsx	E	compiler/reactDefaultPropsInferenceSuccess.tsx	absolute-path-in-text: /.src/reactDefaultPropsInferenceSuccess.tsx: /.lib/react16.d.ts	0			
+reactReadonlyHOCAssignabilityReal.tsx	C	compiler/reactReadonlyHOCAssignabilityReal.tsx	absolute-path-in-text: /.src/reactReadonlyHOCAssignabilityReal.tsx: /.lib/react16.d.ts	0			
+reactImportUnusedInNewJSXEmit(jsx=react-jsxdev).tsx	E	compiler/reactImportUnusedInNewJSXEmit.tsx	absolute-path-in-text: /.src/index.tsx: /.lib/react16.d.ts	0			
+reactTagNameComponentWithPropsNoOOM2.tsx	C	compiler/reactTagNameComponentWithPropsNoOOM2.tsx	absolute-path-in-text: /.src/reactTagNameComponentWithPropsNoOOM2.tsx: /.lib/react16.d.ts	0			
+reactSFCAndFunctionResolvable.tsx	C	compiler/reactSFCAndFunctionResolvable.tsx	absolute-path-in-text: /.src/reactSFCAndFunctionResolvable.tsx: /.lib/react16.d.ts	0			
+sourceMapWithNonCaseSensitiveFileNamesAndOutDir.ts	C	compiler/sourceMapWithNonCaseSensitiveFileNamesAndOutDir.ts	case-insensitive-requested	0			
+reactTagNameComponentWithPropsNoOOM.tsx	C	compiler/reactTagNameComponentWithPropsNoOOM.tsx	absolute-path-in-text: /.src/reactTagNameComponentWithPropsNoOOM.tsx: /.lib/react16.d.ts	0			
+returnTypePredicateIsInstantiateInContextOfTarget.tsx	C	compiler/returnTypePredicateIsInstantiateInContextOfTarget.tsx	absolute-path-in-text: /.src/returnTypePredicateIsInstantiateInContextOfTarget.tsx: /.lib/react16.d.ts	0			
+spellingSuggestionJSXAttribute.tsx	E	compiler/spellingSuggestionJSXAttribute.tsx	absolute-path-in-text: /.src/spellingSuggestionJSXAttribute.tsx: /.lib/react16.d.ts	0			
+styledComponentsInstantiaionLimitNotReached.ts	E	compiler/styledComponentsInstantiaionLimitNotReached.ts	absolute-path-in-text: /.src/styledComponentsInstantiaionLimitNotReached.ts: /.lib/react16.d.ts	0			
+tripleSlashReferenceAbsoluteWindowsPath.ts	C	compiler/tripleSlashReferenceAbsoluteWindowsPath.ts	dos-root: C:	0			
+symbolLinkDeclarationEmitModuleNamesImportRef.ts	C	compiler/symbolLinkDeclarationEmitModuleNamesImportRef.ts	case-insensitive-requested	0			
+tsxFragmentChildrenCheck.ts	C	compiler/tsxFragmentChildrenCheck.ts	absolute-path-in-text: /.src/my-component.tsx: /.lib/react.d.ts	0			
+tsxInvokeComponentType.tsx	E	compiler/tsxInvokeComponentType.tsx	absolute-path-in-text: /.src/tsxInvokeComponentType.tsx: /.lib/react16.d.ts	0			
+tsxNotUsingApparentTypeOfSFC.tsx	E	compiler/tsxNotUsingApparentTypeOfSFC.tsx	absolute-path-in-text: /.src/tsxNotUsingApparentTypeOfSFC.tsx: /.lib/react16.d.ts	0			
+tsxReactPropsInferenceSucceedsOnIntersections.tsx	C	compiler/tsxReactPropsInferenceSucceedsOnIntersections.tsx	absolute-path-in-text: /.src/tsxReactPropsInferenceSucceedsOnIntersections.tsx: /.lib/react16.d.ts	0			
+tsxResolveExternalModuleExportsTypes.ts	E	compiler/tsxResolveExternalModuleExportsTypes.ts	absolute-path-in-text: /.src/foo.tsx: /.lib/react.d.ts	0			
+tsxSpreadDoesNotReportExcessProps.tsx	C	compiler/tsxSpreadDoesNotReportExcessProps.tsx	absolute-path-in-text: /.src/tsxSpreadDoesNotReportExcessProps.tsx: /.lib/react16.d.ts	0			
+tsxUnionMemberChecksFilterDataProps.tsx	C	compiler/tsxUnionMemberChecksFilterDataProps.tsx	absolute-path-in-text: /.src/tsxUnionMemberChecksFilterDataProps.tsx: /.lib/react16.d.ts	0			
+typeInferenceWithExcessPropertiesJsx.tsx	C	compiler/typeInferenceWithExcessPropertiesJsx.tsx	absolute-path-in-text: /.src/typeInferenceWithExcessPropertiesJsx.tsx: /.lib/react16.d.ts	0			
+tsxDeepAttributeAssignabilityError.tsx	E	compiler/tsxDeepAttributeAssignabilityError.tsx	absolute-path-in-text: /.src/my-component.tsx: /.lib/react.d.ts	0			
+multiline.tsx	E	conformance/directives/multiline.tsx	absolute-path-in-text: /.src/b.tsx: /.lib/react.d.ts	0			
+jsDeclarationsNonIdentifierInferredNames.ts	C	conformance/jsdoc/declarations/jsDeclarationsNonIdentifierInferredNames.ts	absolute-path-in-text: /.src/jsDeclarationsNonIdentifierInferredNames.jsx: /.lib/react16.d.ts	0			
+controlFlowOptionalChain3.tsx	E	conformance/controlFlow/controlFlowOptionalChain3.tsx	absolute-path-in-text: /.src/controlFlowOptionalChain3.tsx: /.lib/react16.d.ts	0			
+jsDeclarationsReactComponents(target=es2015).ts	C	conformance/jsdoc/declarations/jsDeclarationsReactComponents.ts	absolute-path-in-text: /.src/jsDeclarationsReactComponents1.jsx: /.lib/react16.d.ts	2			jsDeclarationsReactComponents1.jsx(5,27): error no-empty-pattern: Unexpected empty object pattern.
+tsxStatelessComponentDefaultProps.tsx	C	compiler/tsxStatelessComponentDefaultProps.tsx	absolute-path-in-text: /.src/tsxStatelessComponentDefaultProps.tsx: /.lib/react16.d.ts	0			
+checkJsxChildrenProperty1.tsx	C	conformance/jsx/checkJsxChildrenProperty1.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+checkJsxChildrenProperty12.tsx	E	conformance/jsx/checkJsxChildrenProperty12.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+jsDeclarationsTypeReassignmentFromDeclaration.ts	C	conformance/jsdoc/declarations/jsDeclarationsTypeReassignmentFromDeclaration.ts	absolute-path-in-text: /.src/index.js: /some-mod	0			
+checkJsxChildrenProperty13.tsx	E	conformance/jsx/checkJsxChildrenProperty13.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+checkJsxChildrenCanBeTupleType.tsx	E	conformance/jsx/checkJsxChildrenCanBeTupleType.tsx	absolute-path-in-text: /.src/checkJsxChildrenCanBeTupleType.tsx: /.lib/react16.d.ts	0			
+checkJsxChildrenProperty14.tsx	E	conformance/jsx/checkJsxChildrenProperty14.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+checkJsxChildrenProperty16.tsx	C	conformance/jsx/checkJsxChildrenProperty16.tsx	absolute-path-in-text: /.src/checkJsxChildrenProperty16.tsx: /.lib/react16.d.ts	0			
+checkJsxChildrenProperty15.tsx	E	conformance/jsx/checkJsxChildrenProperty15.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+checkJsxChildrenProperty2.tsx	E	conformance/jsx/checkJsxChildrenProperty2.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+checkJsxChildrenProperty3.tsx	C	conformance/jsx/checkJsxChildrenProperty3.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+checkJsxChildrenProperty4.tsx	E	conformance/jsx/checkJsxChildrenProperty4.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+checkJsxChildrenProperty7.tsx	E	conformance/jsx/checkJsxChildrenProperty7.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+checkJsxChildrenProperty8.tsx	C	conformance/jsx/checkJsxChildrenProperty8.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+checkJsxChildrenProperty9.tsx	C	conformance/jsx/checkJsxChildrenProperty9.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+checkJsxChildrenProperty6.tsx	C	conformance/jsx/checkJsxChildrenProperty6.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+checkJsxChildrenProperty5.tsx	E	conformance/jsx/checkJsxChildrenProperty5.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+checkJsxGenericTagHasCorrectInferences.tsx	E	conformance/jsx/checkJsxGenericTagHasCorrectInferences.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+checkJsxSubtleSkipContextSensitiveBug.tsx	C	conformance/jsx/checkJsxSubtleSkipContextSensitiveBug.tsx	absolute-path-in-text: /.src/checkJsxSubtleSkipContextSensitiveBug.tsx: /.lib/react16.d.ts	0			
+checkJsxUnionSFXContextualTypeInferredCorrectly.tsx	C	conformance/jsx/checkJsxUnionSFXContextualTypeInferredCorrectly.tsx	absolute-path-in-text: /.src/checkJsxUnionSFXContextualTypeInferredCorrectly.tsx: /.lib/react16.d.ts	0			
+commentEmittingInPreserveJsx1.tsx	C	conformance/jsx/commentEmittingInPreserveJsx1.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+correctlyMarkAliasAsReferences1.tsx	E	conformance/jsx/correctlyMarkAliasAsReferences1.tsx	absolute-path-in-text: /.src/0.tsx: /.lib/react.d.ts	0			
+correctlyMarkAliasAsReferences3.tsx	E	conformance/jsx/correctlyMarkAliasAsReferences3.tsx	absolute-path-in-text: /.src/0.tsx: /.lib/react.d.ts	0			
+correctlyMarkAliasAsReferences2.tsx	E	conformance/jsx/correctlyMarkAliasAsReferences2.tsx	absolute-path-in-text: /.src/0.tsx: /.lib/react.d.ts	0			
+correctlyMarkAliasAsReferences4.tsx	E	conformance/jsx/correctlyMarkAliasAsReferences4.tsx	absolute-path-in-text: /.src/0.tsx: /.lib/react.d.ts	0			
+jsxSpreadOverwritesAttributeStrict.tsx	E	conformance/jsx/jsxSpreadOverwritesAttributeStrict.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+jsxCheckJsxNoTypeArgumentsAllowed.tsx	E	conformance/jsx/jsxCheckJsxNoTypeArgumentsAllowed.tsx	absolute-path-in-text: /.src/file.jsx: /.lib/react.d.ts	2			file.jsx(5,16): error syntax: Expected ">" but found "<"
+jsxJsxsCjsTransformChildren(jsx=react-jsx).tsx	C	conformance/jsx/jsxs/jsxJsxsCjsTransformChildren.tsx	absolute-path-in-text: /.src/jsxJsxsCjsTransformChildren.tsx: /.lib/react16.d.ts	0			
+jsxJsxsCjsTransformCustomImport(jsx=react-jsx).tsx	E	conformance/jsx/jsxs/jsxJsxsCjsTransformCustomImport.tsx	absolute-path-in-text: /.src/jsxJsxsCjsTransformCustomImport.tsx: /.lib/react16.d.ts	0			
+jsxJsxsCjsTransformCustomImport(jsx=react-jsxdev).tsx	E	conformance/jsx/jsxs/jsxJsxsCjsTransformCustomImport.tsx	absolute-path-in-text: /.src/jsxJsxsCjsTransformCustomImport.tsx: /.lib/react16.d.ts	0			
+jsxJsxsCjsTransformChildren(jsx=react-jsxdev).tsx	C	conformance/jsx/jsxs/jsxJsxsCjsTransformChildren.tsx	absolute-path-in-text: /.src/jsxJsxsCjsTransformChildren.tsx: /.lib/react16.d.ts	0			
+jsxJsxsCjsTransformCustomImportPragma(jsx=react-jsx).tsx	E	conformance/jsx/jsxs/jsxJsxsCjsTransformCustomImportPragma.tsx	absolute-path-in-text: /.src/react.tsx: /.lib/react16.d.ts	0			
+jsxJsxsCjsTransformCustomImportPragma(jsx=react-jsxdev).tsx	E	conformance/jsx/jsxs/jsxJsxsCjsTransformCustomImportPragma.tsx	absolute-path-in-text: /.src/react.tsx: /.lib/react16.d.ts	0			
+jsxJsxsCjsTransformKeyPropCustomImport(jsx=react-jsx).tsx	E	conformance/jsx/jsxs/jsxJsxsCjsTransformKeyPropCustomImport.tsx	absolute-path-in-text: /.src/jsxJsxsCjsTransformKeyPropCustomImport.tsx: /.lib/react16.d.ts	0			jsxJsxsCjsTransformKeyPropCustomImport.tsx(4,20): warning syntax: "key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.
+jsxJsxsCjsTransformKeyPropCustomImport(jsx=react-jsxdev).tsx	E	conformance/jsx/jsxs/jsxJsxsCjsTransformKeyPropCustomImport.tsx	absolute-path-in-text: /.src/jsxJsxsCjsTransformKeyPropCustomImport.tsx: /.lib/react16.d.ts	0			jsxJsxsCjsTransformKeyPropCustomImport.tsx(4,20): warning syntax: "key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.
+jsxJsxsCjsTransformKeyProp(jsx=react-jsx).tsx	C	conformance/jsx/jsxs/jsxJsxsCjsTransformKeyProp.tsx	absolute-path-in-text: /.src/jsxJsxsCjsTransformKeyProp.tsx: /.lib/react16.d.ts	0			jsxJsxsCjsTransformKeyProp.tsx(4,20): warning syntax: "key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.
+jsxJsxsCjsTransformKeyPropCustomImportPragma(jsx=react-jsxdev).tsx	E	conformance/jsx/jsxs/jsxJsxsCjsTransformKeyPropCustomImportPragma.tsx	absolute-path-in-text: /.src/react.tsx: /.lib/react16.d.ts	0			react.tsx(6,21): warning syntax: "key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.
+jsxJsxsCjsTransformNestedSelfClosingChild(jsx=react-jsx).tsx	C	conformance/jsx/jsxs/jsxJsxsCjsTransformNestedSelfClosingChild.tsx	absolute-path-in-text: /.src/jsxJsxsCjsTransformNestedSelfClosingChild.tsx: /.lib/react16.d.ts	0			
+jsxJsxsCjsTransformKeyPropCustomImportPragma(jsx=react-jsx).tsx	E	conformance/jsx/jsxs/jsxJsxsCjsTransformKeyPropCustomImportPragma.tsx	absolute-path-in-text: /.src/react.tsx: /.lib/react16.d.ts	0			react.tsx(6,21): warning syntax: "key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.
+jsxJsxsCjsTransformNestedSelfClosingChild(jsx=react-jsxdev).tsx	C	conformance/jsx/jsxs/jsxJsxsCjsTransformNestedSelfClosingChild.tsx	absolute-path-in-text: /.src/jsxJsxsCjsTransformNestedSelfClosingChild.tsx: /.lib/react16.d.ts	0			
+jsxJsxsCjsTransformSubstitutesNames(jsx=react-jsx).tsx	C	conformance/jsx/jsxs/jsxJsxsCjsTransformSubstitutesNames.tsx	absolute-path-in-text: /.src/jsxJsxsCjsTransformSubstitutesNames.tsx: /.lib/react16.d.ts	0			
+jsxJsxsCjsTransformSubstitutesNamesFragment(jsx=react-jsx).tsx	C	conformance/jsx/jsxs/jsxJsxsCjsTransformSubstitutesNamesFragment.tsx	absolute-path-in-text: /.src/jsxJsxsCjsTransformSubstitutesNamesFragment.tsx: /.lib/react16.d.ts	0			
+jsxJsxsCjsTransformKeyProp(jsx=react-jsxdev).tsx	C	conformance/jsx/jsxs/jsxJsxsCjsTransformKeyProp.tsx	absolute-path-in-text: /.src/jsxJsxsCjsTransformKeyProp.tsx: /.lib/react16.d.ts	0			jsxJsxsCjsTransformKeyProp.tsx(4,20): warning syntax: "key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.
+jsxJsxsCjsTransformSubstitutesNamesFragment(jsx=react-jsxdev).tsx	C	conformance/jsx/jsxs/jsxJsxsCjsTransformSubstitutesNamesFragment.tsx	absolute-path-in-text: /.src/jsxJsxsCjsTransformSubstitutesNamesFragment.tsx: /.lib/react16.d.ts	0			
+tsxAttributeResolution15.tsx	E	conformance/jsx/tsxAttributeResolution15.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+jsxJsxsCjsTransformSubstitutesNames(jsx=react-jsxdev).tsx	C	conformance/jsx/jsxs/jsxJsxsCjsTransformSubstitutesNames.tsx	absolute-path-in-text: /.src/jsxJsxsCjsTransformSubstitutesNames.tsx: /.lib/react16.d.ts	0			
+tsxDefaultAttributesResolution2.tsx	C	conformance/jsx/tsxDefaultAttributesResolution2.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxDefaultAttributesResolution3.tsx	E	conformance/jsx/tsxDefaultAttributesResolution3.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxDefaultAttributesResolution1.tsx	C	conformance/jsx/tsxDefaultAttributesResolution1.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxGenericAttributesType1.tsx	E	conformance/jsx/tsxGenericAttributesType1.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxAttributeResolution16.tsx	C	conformance/jsx/tsxAttributeResolution16.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxGenericAttributesType2.tsx	C	conformance/jsx/tsxGenericAttributesType2.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxGenericAttributesType4.tsx	C	conformance/jsx/tsxGenericAttributesType4.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxGenericAttributesType3.tsx	C	conformance/jsx/tsxGenericAttributesType3.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxGenericAttributesType5.tsx	E	conformance/jsx/tsxGenericAttributesType5.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxGenericAttributesType6.tsx	E	conformance/jsx/tsxGenericAttributesType6.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxGenericAttributesType8.tsx	E	conformance/jsx/tsxGenericAttributesType8.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxReactComponentWithDefaultTypeParameter1.tsx	C	conformance/jsx/tsxReactComponentWithDefaultTypeParameter1.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxReactComponentWithDefaultTypeParameter2.tsx	C	conformance/jsx/tsxReactComponentWithDefaultTypeParameter2.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxGenericAttributesType9.tsx	C	conformance/jsx/tsxGenericAttributesType9.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxGenericAttributesType7.tsx	E	conformance/jsx/tsxGenericAttributesType7.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxReactEmit8(jsx=react-jsx).tsx	C	conformance/jsx/tsxReactEmit8.tsx	absolute-path-in-text: /.src/tsxReactEmit8.tsx: /.lib/react16.d.ts	0			
+tsxReactComponentWithDefaultTypeParameter3.tsx	E	conformance/jsx/tsxReactComponentWithDefaultTypeParameter3.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxReactEmit8(jsx=react-jsxdev).tsx	C	conformance/jsx/tsxReactEmit8.tsx	absolute-path-in-text: /.src/tsxReactEmit8.tsx: /.lib/react16.d.ts	0			
+tsxReactEmitSpreadAttribute(target=es2015).ts	C	conformance/jsx/tsxReactEmitSpreadAttribute.ts	absolute-path-in-text: /.src/test.tsx: /.lib/react16.d.ts	0			
+tsxReactEmitSpreadAttribute(target=es2018).ts	C	conformance/jsx/tsxReactEmitSpreadAttribute.ts	absolute-path-in-text: /.src/test.tsx: /.lib/react16.d.ts	0			
+tsxSpreadAttributesResolution1.tsx	C	conformance/jsx/tsxSpreadAttributesResolution1.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxSfcReturnUndefinedStrictNullChecks.tsx	E	conformance/jsx/tsxSfcReturnUndefinedStrictNullChecks.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxSpreadAttributesResolution10.tsx	E	conformance/jsx/tsxSpreadAttributesResolution10.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxReactEmitSpreadAttribute(target=esnext).ts	C	conformance/jsx/tsxReactEmitSpreadAttribute.ts	absolute-path-in-text: /.src/test.tsx: /.lib/react16.d.ts	0			
+tsxSpreadAttributesResolution11.tsx	E	conformance/jsx/tsxSpreadAttributesResolution11.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxSpreadAttributesResolution13.tsx	E	conformance/jsx/tsxSpreadAttributesResolution13.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxSpreadAttributesResolution14.tsx	E	conformance/jsx/tsxSpreadAttributesResolution14.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxSpreadAttributesResolution12.tsx	E	conformance/jsx/tsxSpreadAttributesResolution12.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxSpreadAttributesResolution16.tsx	E	conformance/jsx/tsxSpreadAttributesResolution16.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxSpreadAttributesResolution2.tsx	E	conformance/jsx/tsxSpreadAttributesResolution2.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxSpreadAttributesResolution15.tsx	C	conformance/jsx/tsxSpreadAttributesResolution15.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxSpreadAttributesResolution4.tsx	E	conformance/jsx/tsxSpreadAttributesResolution4.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxSpreadAttributesResolution3.tsx	C	conformance/jsx/tsxSpreadAttributesResolution3.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxSpreadAttributesResolution6.tsx	E	conformance/jsx/tsxSpreadAttributesResolution6.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxSpreadAttributesResolution7.tsx	C	conformance/jsx/tsxSpreadAttributesResolution7.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxSpreadAttributesResolution5.tsx	E	conformance/jsx/tsxSpreadAttributesResolution5.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxStatelessFunctionComponentOverload4.tsx	E	conformance/jsx/tsxStatelessFunctionComponentOverload4.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxSpreadAttributesResolution9.tsx	C	conformance/jsx/tsxSpreadAttributesResolution9.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxSpreadAttributesResolution8.tsx	C	conformance/jsx/tsxSpreadAttributesResolution8.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxStatelessFunctionComponentOverload5.tsx	E	conformance/jsx/tsxStatelessFunctionComponentOverload5.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxStatelessFunctionComponents1.tsx	E	conformance/jsx/tsxStatelessFunctionComponents1.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	2			file.tsx(43,16): error syntax: Expected "}" but found ";" | file.tsx(44,1): error syntax: Unexpected }
+tsxStatelessFunctionComponents2.tsx	E	conformance/jsx/tsxStatelessFunctionComponents2.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxStatelessFunctionComponentOverload6.tsx	E	conformance/jsx/tsxStatelessFunctionComponentOverload6.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxTypeArgumentsJsxPreserveOutput.tsx	C	conformance/jsx/tsxTypeArgumentsJsxPreserveOutput.tsx	absolute-path-in-text: /.src/foo.tsx: /.lib/react.d.ts	0			
+tsxStatelessFunctionComponentsWithTypeArguments4.tsx	E	conformance/jsx/tsxStatelessFunctionComponentsWithTypeArguments4.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxTypeArgumentResolution.tsx	E	conformance/jsx/tsxTypeArgumentResolution.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	2			file.tsx(26,13): error syntax: Unexpected > | file.tsx(28,13): error syntax: Unexpected >
+tsxUnionElementType3.tsx	E	conformance/jsx/tsxUnionElementType3.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxUnionElementType1.tsx	E	conformance/jsx/tsxUnionElementType1.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxUnionElementType4.tsx	E	conformance/jsx/tsxUnionElementType4.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxUnionElementType5.tsx	C	conformance/jsx/tsxUnionElementType5.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxUnionElementType6.tsx	E	conformance/jsx/tsxUnionElementType6.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxUnionElementType2.tsx	E	conformance/jsx/tsxUnionElementType2.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxUnionTypeComponent2.tsx	E	conformance/jsx/tsxUnionTypeComponent2.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+tsxUnionTypeComponent1.tsx	C	conformance/jsx/tsxUnionTypeComponent1.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+unicodeEscapesInJsxtags.tsx	E	conformance/jsx/unicodeEscapesInJsxtags.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	2			file.tsx(16,4): error syntax: Expected JSX element name but found "\"
+contextuallyTypedStringLiteralsInJsxAttributes02.tsx	E	conformance/types/contextualTypes/jsxAttributes/contextuallyTypedStringLiteralsInJsxAttributes02.tsx	absolute-path-in-text: /.src/file.tsx: /.lib/react.d.ts	0			
+intraExpressionInferencesJsx.tsx	C	conformance/types/typeRelationships/typeInference/intraExpressionInferencesJsx.tsx	absolute-path-in-text: /.src/intraExpressionInferencesJsx.tsx: /.lib/react16.d.ts	0			
+library-reference-13.ts	C	conformance/references/library-reference-13.ts	absolute-path-in-text: /a/tsconfig.json: /a/types	0			
+# {"summary":true,"mode":"not-laid-out","run":12797,"notLaidOut":186,"withoutOperand":0,"processes":186,"deaths":0,"byReason":{"absolute-path-in-text":175,"case-insensitive-requested":3,"dos-root":8},"codes":{"error syntax":10,"error no-empty-pattern":1,"warning syntax":6},"slowest":{"ms":2340,"what":"genericInferenceDefaultTypeParameterJsxReact.tsx"},"seconds":46}

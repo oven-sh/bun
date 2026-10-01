@@ -5,7 +5,7 @@ const { Stream } = require("internal/stream");
 const { isUint8Array, validateString } = require("internal/validators");
 const { deprecate } = require("internal/util/deprecate");
 const { getDefaultHighWaterMark } = require("internal/streams/state");
-const { kOutHeaders, kNeedDrain, utcDate } = require("internal/http");
+const { kHandle, kOutHeaders, kNeedDrain, outgoingMessageMethods, utcDate } = require("internal/http");
 const {
   validateHeaderName,
   validateHeaderValue,
@@ -860,7 +860,7 @@ ObjectDefineProperty(OutgoingMessage.prototype, "writableNeedDrain", {
 });
 
 const crlf_buf = Buffer.from("\r\n");
-OutgoingMessage.prototype.write = function write(chunk, encoding, callback) {
+const outgoingWrite = function write(this: any, chunk, encoding, callback) {
   if (typeof encoding === "function") {
     callback = encoding;
     encoding = null;
@@ -869,6 +869,15 @@ OutgoingMessage.prototype.write = function write(chunk, encoding, callback) {
   const ret = write_(this, chunk, encoding, callback, false);
   if (!ret) this[kNeedDrain] = true;
   return ret;
+};
+outgoingMessageMethods.write = outgoingWrite;
+
+// In Node.js a ServerResponse inherits write(), end() and flushHeaders(), so a call through this
+// prototype is a call of its own method. Bun's ServerResponse has its own three for a response
+// with a handle: the call goes there. https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L243-L244
+OutgoingMessage.prototype.write = function write(chunk, encoding, callback) {
+  if (this[kHandle]) return outgoingMessageMethods.serverResponseWrite.$call(this, chunk, encoding, callback);
+  return outgoingWrite.$call(this, chunk, encoding, callback);
 };
 
 function onError(msg, err, callback) {
@@ -1034,7 +1043,7 @@ function onFinish(outmsg) {
   outmsg.emit("finish");
 }
 
-OutgoingMessage.prototype.end = function end(chunk, encoding, callback) {
+const outgoingEnd = function end(this: any, chunk, encoding, callback) {
   if (typeof chunk === "function") {
     callback = chunk;
     chunk = null;
@@ -1108,6 +1117,12 @@ OutgoingMessage.prototype.end = function end(chunk, encoding, callback) {
 
   return this;
 };
+outgoingMessageMethods.end = outgoingEnd;
+
+OutgoingMessage.prototype.end = function end(chunk, encoding, callback) {
+  if (this[kHandle]) return outgoingMessageMethods.serverResponseEnd.$call(this, chunk, encoding, callback);
+  return outgoingEnd.$call(this, chunk, encoding, callback);
+};
 
 // This function is called once all user data are flushed to the socket.
 // Note that it has a chance that the socket is not drained.
@@ -1176,13 +1191,19 @@ OutgoingMessage.prototype._flushOutput = function _flushOutput(socket) {
   return ret;
 };
 
-OutgoingMessage.prototype.flushHeaders = function flushHeaders() {
+const outgoingFlushHeaders = function flushHeaders(this: any) {
   if (!this._header) {
     this._implicitHeader();
   }
 
   // Force-flush the headers.
   this._send("");
+};
+outgoingMessageMethods.flushHeaders = outgoingFlushHeaders;
+
+OutgoingMessage.prototype.flushHeaders = function flushHeaders() {
+  if (this[kHandle]) return outgoingMessageMethods.serverResponseFlushHeaders.$call(this);
+  return outgoingFlushHeaders.$call(this);
 };
 
 OutgoingMessage.prototype.pipe = function pipe() {

@@ -23,6 +23,7 @@ const {
   kProxyConfig,
   checkShouldUseProxy,
   kPerRequestCheckServerIdentity,
+  outgoingMessageMethods,
 } = require("internal/http");
 const { validateInteger, validateBoolean, validateString, validateOneOf } = require("internal/validators");
 const { getTimerDuration } = require("internal/timers");
@@ -463,6 +464,13 @@ function ClientRequest(input?, options?, cb?): void {
   }
 }
 $toClass(ClientRequest, "ClientRequest", OutgoingMessage);
+
+// In Node.js a ClientRequest inherits these three: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_client.js#L462-L463
+// Here the three of OutgoingMessage.prototype first test for a ServerResponse with a handle.
+// A ClientRequest never is one, so it takes the ports of the Node.js functions themselves.
+ClientRequest.prototype.write = outgoingMessageMethods.write;
+ClientRequest.prototype.end = outgoingMessageMethods.end;
+ClientRequest.prototype.flushHeaders = outgoingMessageMethods.flushHeaders;
 
 ObjectDefineProperty(ClientRequest.prototype, "path", {
   __proto__: null,

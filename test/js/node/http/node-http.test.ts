@@ -22,6 +22,7 @@ import http, {
   validateHeaderName,
   validateHeaderValue,
 } from "node:http";
+import http2 from "node:http2";
 import https, { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
@@ -3305,6 +3306,207 @@ it("a pipelined response is started when no response is in flight to hand it the
   } finally {
     socket?.destroy();
     server.close();
+  }
+});
+
+// In Node.js, write(), end() and flushHeaders() of OutgoingMessage.prototype are the methods of a
+// ServerResponse. The expected bytes are those of Node.js v26.3.0.
+describe("the OutgoingMessage.prototype methods on a response", () => {
+  const FIRST = "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 1\r\n\r\n1";
+  const transports = {
+    "socket": "on a TCP connection",
+    "https": "on a TLS connection",
+    "duplex": "on a duplex given to 'connection'",
+    "http2": "on an HTTP/1.1 connection to an http2 server with allowHTTP1",
+  } as const;
+  type Transport = keyof typeof transports;
+
+  // A run of 64 or more equal characters becomes <x*N>, so that a failure prints a short string.
+  function collapse(wire: string) {
+    let out = "";
+    for (let i = 0; i < wire.length; ) {
+      let j = i + 1;
+      while (j < wire.length && wire.charCodeAt(j) === wire.charCodeAt(i)) j++;
+      out += j - i >= 64 ? `<${wire[i]}*${j - i}>` : wire.slice(i, j);
+      i = j;
+    }
+    return out;
+  }
+
+  // With `queued`, one connection has /first and /second pipelined, and /third behind them when
+  // `third` is given. The response to /first stays open until the handler of the last request
+  // has returned, so the response to /second is queued behind it.
+  // Without `queued` there is only /second: its response owns the connection.
+  async function exchange(
+    transport: Transport,
+    queued: boolean,
+    second: (res: any) => unknown,
+    third?: (res: any) => void,
+  ) {
+    const errors: unknown[] = [];
+    const returned: unknown[] = [];
+    let first: ServerResponse | undefined;
+    const handler = (req, res) => {
+      res.sendDate = false;
+      if (req.url === "/first") {
+        first = res;
+        return;
+      }
+      try {
+        if (req.url === "/second") returned.push(second(res));
+        else third!(res);
+        if (req.url === "/third" || !third) first?.end("1");
+      } catch (e: any) {
+        errors.push(e.code);
+        req.socket.destroy();
+      }
+    };
+    const server =
+      transport === "https"
+        ? createHttpsServer(tlsCert, handler)
+        : transport === "http2"
+          ? http2.createSecureServer({ ...tlsCert, allowHTTP1: true }, handler)
+          : createServer(handler);
+    let client: Duplex | undefined;
+    try {
+      if (transport === "duplex") {
+        const [clientSide, serverSide] = duplexPair();
+        server.emit("connection", serverSide);
+        client = clientSide;
+      } else {
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const { port } = server.address() as AddressInfo;
+        client =
+          transport === "socket"
+            ? connect(port, "127.0.0.1")
+            : tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false, ALPNProtocols: ["http/1.1"] });
+      }
+      const { promise: ended, resolve: onEnded } = Promise.withResolvers<void>();
+      const chunks: Buffer[] = [];
+      client.on("data", chunk => chunks.push(chunk));
+      client.on("error", e => errors.push((e as NodeJS.ErrnoException).code));
+      client.on("end", onEnded).on("close", onEnded);
+      const get = (url: string, last: boolean) =>
+        `GET ${url} HTTP/1.1\r\nHost: x\r\n${last ? "Connection: close\r\n" : ""}\r\n`;
+      client.write((queued ? get("/first", false) : "") + get("/second", !third) + (third ? get("/third", true) : ""));
+      await ended;
+      return { errors, returned, wire: collapse(Buffer.concat(chunks).toString("latin1")) };
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  }
+
+  for (const transport of Object.keys(transports) as Transport[]) {
+    for (const queued of [true, false]) {
+      const ahead = queued ? FIRST : "";
+      const position = queued
+        ? "a response that is queued behind a pipelined one"
+        : "a response that owns the connection";
+
+      describe(`${transports[transport]}, ${position}`, () => {
+        it.concurrent("http.OutgoingMessage.prototype.write() is the write() of the response", async () => {
+          const events: string[] = [];
+          const result = await exchange(transport, queued, res => {
+            res.on("finish", () => events.push("finish"));
+            const accepted = OutgoingMessage.prototype.write.call(res, "SUPER", () => events.push("write callback"));
+            res.end("b", () => events.push("end callback"));
+            return accepted;
+          });
+          // Sorted: on a duplex, the callback of res.write() itself runs after 'finish'.
+          expect({ ...result, events: events.sort() }).toEqual({
+            errors: [],
+            returned: [true],
+            wire:
+              ahead +
+              "HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nSUPER\r\n1\r\nb\r\n0\r\n\r\n",
+            events: ["end callback", "finish", "write callback"],
+          });
+        });
+
+        it.concurrent("http.OutgoingMessage.prototype.end() ends the response", async () => {
+          const events: string[] = [];
+          const result = await exchange(transport, queued, res => {
+            res.on("finish", () => events.push("finish"));
+            OutgoingMessage.prototype.end.call(res, "SUPER", () => events.push("callback"));
+            return res.finished;
+          });
+          expect({ ...result, events }).toEqual({
+            errors: [],
+            returned: [true],
+            wire: ahead + "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 5\r\n\r\nSUPER",
+            events: ["finish", "callback"],
+          });
+        });
+
+        it.concurrent("http.OutgoingMessage.prototype.flushHeaders() stores the head of the response", async () => {
+          const result = await exchange(transport, queued, res => {
+            res.setHeader("Content-Length", "1");
+            OutgoingMessage.prototype.flushHeaders.call(res);
+            const headersSent = res.headersSent;
+            res.end("b");
+            return headersSent;
+          });
+          expect(result).toEqual({
+            errors: [],
+            returned: [true],
+            wire: ahead + "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nConnection: close\r\n\r\nb",
+          });
+        });
+
+        it.concurrent(
+          "a loop of http.OutgoingMessage.prototype.write() stops at false and goes on from 'drain'",
+          async () => {
+            const chunk = Buffer.alloc(16384, "x").toString();
+            const framed = "4000\r\n<x*16384>\r\n";
+            const result = await exchange(transport, queued, res => {
+              let accepted = 0;
+              while (accepted < 8 && OutgoingMessage.prototype.write.call(res, chunk)) accepted++;
+              res.on("drain", () => res.end("END"));
+              return accepted;
+            });
+            expect(result).toEqual({
+              errors: [],
+              returned: [3],
+              wire:
+                ahead +
+                "HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n" +
+                framed +
+                framed +
+                framed +
+                framed +
+                "3\r\nEND\r\n0\r\n\r\n",
+            });
+          },
+        );
+
+        if (!queued) return;
+
+        it.concurrent(
+          "the response behind one that http.OutgoingMessage.prototype.end() ended follows it",
+          async () => {
+            const result = await exchange(
+              transport,
+              true,
+              res => {
+                res.setHeader("Content-Length", "6");
+                OutgoingMessage.prototype.end.call(res, "SECOND");
+              },
+              res => res.end("THIRD"),
+            );
+            expect(result).toEqual({
+              errors: [],
+              returned: [undefined],
+              wire:
+                FIRST +
+                "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nSECOND" +
+                "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 5\r\n\r\nTHIRD",
+            });
+          },
+        );
+      });
+    }
   }
 });
 

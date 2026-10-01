@@ -61,6 +61,7 @@ const {
   kOutHeaders,
   onDataIncomingMessage,
   http1ServerPipeline,
+  outgoingMessageMethods,
 } = require("internal/http");
 const { FakeSocket } = require("internal/http/FakeSocket");
 const NumberIsNaN = Number.isNaN;
@@ -76,6 +77,9 @@ const {
   parseUniqueHeadersOption,
 } = require("node:_http_outgoing");
 const OutgoingMessagePrototype = OutgoingMessage.prototype;
+// Node's write() and end() of OutgoingMessage, for a response with no handle. The two on
+// OutgoingMessage.prototype come back to ServerResponse for a response that has one.
+const { write: OutgoingMessageWrite, end: OutgoingMessageEnd } = outgoingMessageMethods;
 const { kIncomingMessage } = require("node:_http_common");
 let http1Fallback;
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
@@ -3448,7 +3452,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   }
 
   if (!handle) {
-    return OutgoingMessagePrototype.end.$call(this, chunk, encoding, callback);
+    return OutgoingMessageEnd.$call(this, chunk, encoding, callback);
   }
 
   if (this[headerStateSymbol] === NodeHTTPHeaderState.none) {
@@ -3658,7 +3662,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
     // The original chunk passes through untouched: write_() has its own
     // !_hasBody discard, and clearing it to undefined here would trip
     // write_()'s chunk-type validation instead.
-    return OutgoingMessagePrototype.write.$call(this, chunk, encoding, callback);
+    return OutgoingMessageWrite.$call(this, chunk, encoding, callback);
   }
 
   if (this[headerStateSymbol] === NodeHTTPHeaderState.none) {
@@ -3768,6 +3772,8 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
 // advanceResponsePipeline replays buffered ops through these; patched res.write/res.end (compression middleware) must not see them again.
 const ServerResponsePrototypeWrite = ServerResponse.prototype.write;
 const ServerResponsePrototypeEnd = ServerResponse.prototype.end;
+outgoingMessageMethods.serverResponseWrite = ServerResponsePrototypeWrite;
+outgoingMessageMethods.serverResponseEnd = ServerResponsePrototypeEnd;
 
 const kBytesBuffered = Symbol("kBytesBuffered");
 const kAccountingFlushScheduled = Symbol("kAccountingFlushScheduled");
@@ -4059,6 +4065,8 @@ ServerResponse.prototype.flushHeaders = function () {
     this._send("");
   }
 };
+const ServerResponsePrototypeFlushHeaders = ServerResponse.prototype.flushHeaders;
+outgoingMessageMethods.serverResponseFlushHeaders = ServerResponsePrototypeFlushHeaders;
 
 function updateHasBody(response, statusCode) {
   // RFC 2616, 10.2.5:

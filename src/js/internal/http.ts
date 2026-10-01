@@ -59,6 +59,20 @@ const http1ServerPipeline: {
   kMustCloseConnection?: symbol;
 } = {};
 
+// In Node.js, ServerResponse and ClientRequest inherit write(), end() and flushHeaders() from
+// OutgoingMessage. Bun's ServerResponse has its own three for a response with a handle.
+// node:_http_outgoing keeps its ports of the Node.js functions here, and node:_http_server the
+// ServerResponse ones, so that a call through OutgoingMessage.prototype runs the right one.
+type OutgoingMethod = (this: unknown, ...args: unknown[]) => unknown;
+const outgoingMessageMethods: {
+  write?: OutgoingMethod;
+  end?: OutgoingMethod;
+  flushHeaders?: OutgoingMethod;
+  serverResponseWrite?: OutgoingMethod;
+  serverResponseEnd?: OutgoingMethod;
+  serverResponseFlushHeaders?: OutgoingMethod;
+} = {};
+
 export const enum NodeHTTPResponseAbortEvent {
   none = 0,
   abort = 1,
@@ -555,6 +569,7 @@ export {
   noBodySymbol,
   onDataIncomingMessage,
   optionsSymbol,
+  outgoingMessageMethods,
   parseProxyConfigFromEnv,
   parseProxyUrl,
   redactInvalidProxyUrl,

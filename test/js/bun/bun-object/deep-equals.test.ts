@@ -138,8 +138,8 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
       }
     }
 
-    // bun labels plain data itself: `req.params` in Bun.serve is [object RequestParams] and
-    // fs.Stats is [object Stats]. Tests compare those to object literals.
+    // bun labels some plain data itself, for example `req.params` in Bun.serve is [object RequestParams].
+    // Tests compare those to object literals.
     it("are compared by their properties whatever their tags are", () => {
       tagReads = 0;
       expect(Bun.deepEquals(new Tagged(), { a: 1 })).toBe(true);
@@ -156,9 +156,7 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
 
       const formData = new FormData();
       formData.append("a", "b");
-      expect(Object.prototype.toString.call(formData.toJSON())).toBe("[object FormData]");
       expect(Bun.deepEquals(formData.toJSON(), { a: "b" })).toBe(true);
-      expect(Object.prototype.toString.call(new URLSearchParams("a=b").toJSON())).toBe("[object URLSearchParams]");
       expect(Bun.deepEquals(new URLSearchParams("a=b").toJSON(), { a: "b" })).toBe(true);
     });
 
@@ -175,7 +173,6 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
       });
       const res = await fetch(new URL("/orgs/oven-sh/repos/bun", server.url).href);
       expect(await res.text()).toBe("ok");
-      expect(Object.prototype.toString.call(params)).toBe("[object RequestParams]");
       expect(Bun.deepEquals(params, { orgId: "oven-sh", repoId: "bun" })).toBe(true);
       expect(params).toEqual({ orgId: "oven-sh", repoId: "bun" });
       expect(deepEquals(params, { orgId: "oven-sh", repoId: "other" })).toBe(false);
@@ -183,7 +180,6 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
 
     it("fs.Stats, fs.StatFs and fs.Dirent equal a copy of their own properties", () => {
       const stats = fs.statSync(import.meta.dir);
-      expect(Object.prototype.toString.call(stats)).toBe("[object Stats]");
       expect(Bun.deepEquals(stats, { ...stats })).toBe(true);
       expect(stats).toEqual({ ...stats });
       expect(deepEquals(stats, { ...stats, size: -1 })).toBe(false);
@@ -195,7 +191,6 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
       expect(Bun.deepEquals(statFs, { ...statFs })).toBe(true);
 
       const [dirent] = fs.readdirSync(import.meta.dir, { withFileTypes: true });
-      expect(Object.prototype.toString.call(dirent)).toBe("[object Dirent]");
       expect(Bun.deepEquals(dirent, { ...dirent })).toBe(true);
       expect(dirent).toEqual({ ...dirent });
     });

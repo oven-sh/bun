@@ -1939,6 +1939,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
 
         goto compareAsNormalValue;
 
+    // A pair of different classes that gets here is decided by the toString tag comparison in Bun__deepEquals.
     compareAsNormalValue:
         break;
     }

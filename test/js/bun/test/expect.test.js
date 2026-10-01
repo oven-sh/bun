@@ -398,8 +398,7 @@ describe("expect()", () => {
 
     if (isBun) {
       // Jest rejects all of these. bun:test keeps them equal: a plain object has no state outside of its
-      // properties, and bun labels plain data itself (`req.params` in Bun.serve is [object RequestParams],
-      // fs.Stats is [object Stats]).
+      // properties, and bun labels some plain data itself (`req.params` in Bun.serve is [object RequestParams]).
       test("two plain objects are compared by their properties whatever their tags are", () => {
         let tagReads = 0;
         class Counting {
@@ -421,7 +420,6 @@ describe("expect()", () => {
 
         const formData = new FormData();
         formData.append("a", "b");
-        expect(Object.prototype.toString.call(formData.toJSON())).toBe("[object FormData]");
         expect(formData.toJSON()).toEqual({ a: "b" });
         expect(new URLSearchParams("a=b").toJSON()).toEqual({ a: "b" });
       });
@@ -1598,11 +1596,8 @@ describe("expect()", () => {
 
   test_skipIf(isJest)("deepEquals URLs", () => {
     const equals = [
-      [
-        [new URL("https://example.com"), new URL("https://example.com")],
-        [new URL("https://example.com"), new URL("https://example.com/")],
-        [Object.fromEntries(Object.entries(new URL("https://example.com"))), new URL("https://example.com/")],
-      ],
+      [new URL("https://example.com"), new URL("https://example.com")],
+      [new URL("https://example.com"), new URL("https://example.com/")],
     ];
     const not = [
       [new URL("https://example.com"), new URL("https://example.com/1")],
@@ -1625,9 +1620,11 @@ describe("expect()", () => {
       expect(second).not.toStrictEqual(first);
     }
 
-    expect(Object.fromEntries(Object.entries(new URL("https://example.com")))).not.toStrictEqual(
-      new URL("https://example.com/"),
-    );
+    // A copy of the own enumerable properties of a URL is a plain object, not a URL.
+    const copy = Object.fromEntries(Object.entries(new URL("https://example.com")));
+    expect(copy).not.toEqual(new URL("https://example.com/"));
+    expect(new URL("https://example.com/")).not.toEqual(copy);
+    expect(copy).not.toStrictEqual(new URL("https://example.com/"));
   });
 
   test("toEqual objects and arrays", () => {

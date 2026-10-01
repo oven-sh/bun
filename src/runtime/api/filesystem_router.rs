@@ -146,26 +146,21 @@ impl FileSystemRouter {
             }
             let root_dir_path_ = dir.to_utf8(global_this)?;
             if !(root_dir_path_.slice().is_empty() || root_dir_path_.slice() == b".") {
-                // resolve relative path if needed
-                let path_ = root_dir_path_.slice();
-                if path::Platform::AUTO.is_absolute(path_) {
-                    root_dir_path = root_dir_path_;
-                } else {
-                    let parts: [&[u8]; 1] = [path_];
-                    let Some(joined) =
-                        path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
-                            Fs::FileSystem::instance().top_level_dir,
-                            &mut out_buf,
-                            &parts,
-                        )
-                    else {
-                        return Err(global_this.throw(format_args!(
-                            "Unable to find directory: {}",
-                            bstr::BStr::new(path_)
-                        )));
-                    };
-                    root_dir_path = Utf8Bytes::Borrowed(joined);
-                }
+                // An absolute path is normalized too: a route is named by what follows this
+                // path in the resolver's spelling of its directory, which is normalized.
+                let Some(joined) =
+                    path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
+                        Fs::FileSystem::instance().top_level_dir,
+                        &mut out_buf,
+                        &[root_dir_path_.slice()],
+                    )
+                else {
+                    return Err(global_this.throw(format_args!(
+                        "Unable to find directory: {}",
+                        bstr::BStr::new(root_dir_path_.slice())
+                    )));
+                };
+                root_dir_path = Utf8Bytes::Borrowed(joined);
             }
         } else {
             // dir is not optional

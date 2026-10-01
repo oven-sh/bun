@@ -58,7 +58,9 @@ const rule = {
 			if (k) stats.consecutiveTrue++;
 			if (k !== structuralConsecutive) {
 				stats.consecutiveMismatch++;
-				mismatches.push(["consecutive", k, node.type, endNode.type, sibling, noTokenBetween, sourceCode.text.slice(0, 200)]);
+				const common = (() => { let a = endNode; const up = new Set(); for (let n = node; n; n = n.parent) up.add(n); while (a && !up.has(a)) a = a.parent; return a; })();
+				const chain = []; for (let n = endNode.parent; n && n !== common; n = n.parent) chain.push(n.type);
+				mismatches.push(["consecutive", k, node.type, endNode.type, sibling, noTokenBetween, `parents of end: ${chain.join("<")} | common ${common && common.type}`, sourceCode.text.slice(endNode.parent.range[0], node.range[1]).slice(0, 260)]);
 			}
 		}
 		function reportIfUnreachable(node) {

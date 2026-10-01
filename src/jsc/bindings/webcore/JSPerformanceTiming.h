@@ -79,7 +79,6 @@ inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, PerformanceTiming*)
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, PerformanceTiming&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, PerformanceTiming* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<PerformanceTiming>&&);
-inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<PerformanceTiming>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
 
 template<> struct JSDOMWrapperConverterTraits<PerformanceTiming> {
     using WrapperClass = JSPerformanceTiming;

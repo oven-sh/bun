@@ -909,11 +909,6 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
     return createWrapper<Cookie>(globalObject, WTF::move(impl));
 }
 
-JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Cookie& impl)
-{
-    return wrap(lexicalGlobalObject, globalObject, impl);
-}
-
 Cookie* JSCookie::toWrapped(JSC::VM& vm, JSC::JSValue value)
 {
     if (auto* wrapper = dynamicDowncast<JSCookie>(value))

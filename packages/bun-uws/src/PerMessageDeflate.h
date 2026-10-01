@@ -107,8 +107,6 @@ struct DeflationStream {
         /* Memory usage is given by 2 ^ (windowBits + 2) + 2 ^ (memLevel + 9) */
         int windowBits = -(int) ((compressOptions & _COMPRESSOR_MASK) >> 4), memLevel = compressOptions & 0xF;
 
-        //printf("windowBits: %d, memLevel: %d\n", windowBits, memLevel);
-
         deflateInit2(&deflationStream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, windowBits, memLevel, Z_DEFAULT_STRATEGY);
     }
 

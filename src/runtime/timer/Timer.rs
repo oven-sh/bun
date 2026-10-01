@@ -127,7 +127,6 @@ impl All {
         global_this: &JSGlobalObject,
         countdown: JSValue,
         overflow_behavior: CountdownOverflowBehavior,
-        warn: bool,
     ) -> JsResult<u32> {
         // Both match arms below enforce the [0, i32::MAX] range (Clamp
         // saturates to i32::MAX; OneMs yields either 1 or a value already
@@ -145,32 +144,30 @@ impl All {
             }
             CountdownOverflowBehavior::OneMs => {
                 if !(countdown_double >= 1.0 && countdown_double <= i32::MAX as f64) {
-                    if warn {
-                        if countdown_double > i32::MAX as f64 {
-                            Self::warn_invalid_countdown(
-                                global_this,
-                                countdown_double,
-                                TimeoutWarning::TimeoutOverflowWarning,
-                            )?;
-                        } else if countdown_double < 0.0 && !self.warned_negative_number {
-                            self.warned_negative_number = true;
-                            Self::warn_invalid_countdown(
-                                global_this,
-                                countdown_double,
-                                TimeoutWarning::TimeoutNegativeWarning,
-                            )?;
-                        } else if !countdown.is_undefined()
-                            && countdown.is_number()
-                            && countdown_double.is_nan()
-                            && !self.warned_not_number
-                        {
-                            self.warned_not_number = true;
-                            Self::warn_invalid_countdown(
-                                global_this,
-                                countdown_double,
-                                TimeoutWarning::TimeoutNaNWarning,
-                            )?;
-                        }
+                    if countdown_double > i32::MAX as f64 {
+                        Self::warn_invalid_countdown(
+                            global_this,
+                            countdown_double,
+                            TimeoutWarning::TimeoutOverflowWarning,
+                        )?;
+                    } else if countdown_double < 0.0 && !self.warned_negative_number {
+                        self.warned_negative_number = true;
+                        Self::warn_invalid_countdown(
+                            global_this,
+                            countdown_double,
+                            TimeoutWarning::TimeoutNegativeWarning,
+                        )?;
+                    } else if !countdown.is_undefined()
+                        && countdown.is_number()
+                        && countdown_double.is_nan()
+                        && !self.warned_not_number
+                    {
+                        self.warned_not_number = true;
+                        Self::warn_invalid_countdown(
+                            global_this,
+                            countdown_double,
+                            TimeoutWarning::TimeoutNaNWarning,
+                        )?;
                     }
                     1
                 } else {
@@ -196,12 +193,8 @@ impl All {
         let id = all.last_id;
         all.last_id = all.last_id.wrapping_add(1);
 
-        let countdown_int = all.js_value_to_countdown(
-            cx.global(),
-            countdown,
-            CountdownOverflowBehavior::Clamp,
-            true,
-        )?;
+        let countdown_int =
+            all.js_value_to_countdown(cx.global(), countdown, CountdownOverflowBehavior::Clamp)?;
         let wrapped_promise = promise.with_async_context_if_needed(cx.global());
         Ok(TimeoutObject::init(
             cx,
@@ -241,12 +234,8 @@ impl All {
         all.last_id = all.last_id.wrapping_add(1);
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
-        let countdown_int = all.js_value_to_countdown(
-            cx.global(),
-            countdown,
-            CountdownOverflowBehavior::OneMs,
-            true,
-        )?;
+        let countdown_int =
+            all.js_value_to_countdown(cx.global(), countdown, CountdownOverflowBehavior::OneMs)?;
         Ok(TimeoutObject::init(
             cx,
             id,
@@ -270,12 +259,8 @@ impl All {
         all.last_id = all.last_id.wrapping_add(1);
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
-        let countdown_int = all.js_value_to_countdown(
-            cx.global(),
-            countdown,
-            CountdownOverflowBehavior::OneMs,
-            true,
-        )?;
+        let countdown_int =
+            all.js_value_to_countdown(cx.global(), countdown, CountdownOverflowBehavior::OneMs)?;
         Ok(TimeoutObject::init(
             cx,
             id,

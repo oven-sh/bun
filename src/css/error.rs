@@ -215,8 +215,6 @@ pub enum PrinterErrorKind {
     invalid_composes_nesting,
     /// The CSS modules `composes` property cannot be used with a simple class selector.
     invalid_composes_selector,
-    /// The CSS modules pattern must end with `[local]` for use in CSS grid.
-    invalid_css_modules_pattern_in_grid,
     /// Substituting parent selectors for `&` while compiling CSS nesting for
     /// the configured targets exceeded the expansion limit.
     maximum_nesting_expansion,
@@ -242,9 +240,6 @@ impl fmt::Display for PrinterErrorKind {
             }
             Self::invalid_composes_selector => {
                 f.write_str("The 'composes' property can only be used with a simple class selector")
-            }
-            Self::invalid_css_modules_pattern_in_grid => {
-                f.write_str("CSS modules pattern must end with '[local]' when used in CSS grid")
             }
             Self::maximum_nesting_expansion => f.write_str(
                 "Maximum nesting expansion exceeded when compiling CSS nesting for the configured targets",
@@ -272,8 +267,6 @@ pub enum ParserError {
     invalid_declaration,
     /// A media query was invalid.
     invalid_media_query,
-    /// Invalid CSS nesting.
-    invalid_nesting,
     /// The @nest rule is deprecated.
     deprecated_nest_rule,
     /// An invalid selector in an `@page` rule.
@@ -292,10 +285,6 @@ pub enum ParserError {
     unexpected_token(Token),
     /// Maximum nesting depth was reached.
     maximum_nesting_depth,
-    unexpected_value {
-        expected: Str,
-        received: Str,
-    },
 }
 
 impl fmt::Display for ParserError {
@@ -307,7 +296,6 @@ impl fmt::Display for ParserError {
             Self::end_of_input => f.write_str("Unexpected end of input"),
             Self::invalid_declaration => f.write_str("Invalid declaration"),
             Self::invalid_media_query => f.write_str("Invalid media query"),
-            Self::invalid_nesting => f.write_str("Invalid CSS nesting"),
             Self::deprecated_nest_rule => {
                 f.write_str("The @nest rule is deprecated, use standard CSS nesting instead")
             }
@@ -323,9 +311,6 @@ impl fmt::Display for ParserError {
             ),
             Self::unexpected_token(token) => write!(f, "Unexpected token: {}", token),
             Self::maximum_nesting_depth => f.write_str("Maximum CSS nesting depth exceeded"),
-            Self::unexpected_value { expected, received } => {
-                write!(f, "Expected {}, received {}", bs(*expected), bs(*received))
-            }
         }
     }
 }
@@ -476,21 +461,6 @@ pub type MinifyError = ErrorWithLocation<MinifyErrorKind>;
 /// A transformation error.
 #[allow(non_camel_case_types)]
 pub enum MinifyErrorKind {
-    /// A circular `@custom-media` rule was detected.
-    circular_custom_media {
-        /// The name of the `@custom-media` rule that was referenced circularly.
-        name: Str,
-    },
-    /// Attempted to reference a custom media rule that doesn't exist.
-    custom_media_not_defined {
-        /// The name of the `@custom-media` rule that was not defined.
-        name: Str,
-    },
-    /// Boolean logic with media types in @custom-media rules is not supported.
-    unsupported_custom_media_boolean_logic {
-        /// The source location of the `@custom-media` rule with unsupported boolean logic.
-        custom_media_loc: Location,
-    },
     /// Compiling nested rules for the configured browser targets would expand to
     /// more than [`crate::css_rules::MAX_SELECTOR_EXPANSION`] selectors.
     selector_expansion_limit_exceeded,
@@ -503,17 +473,6 @@ pub enum MinifyErrorKind {
 impl fmt::Display for MinifyErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::circular_custom_media { name } => {
-                write!(f, "Circular @custom-media rule: \"{}\"", bs(*name))
-            }
-            Self::custom_media_not_defined { name } => {
-                write!(f, "Custom media rule \"{}\" not defined", bs(*name))
-            }
-            Self::unsupported_custom_media_boolean_logic { custom_media_loc } => write!(
-                f,
-                "Unsupported boolean logic in custom media rule at line {}, column {}",
-                custom_media_loc.line, custom_media_loc.column,
-            ),
             Self::selector_expansion_limit_exceeded => write!(
                 f,
                 "Nested CSS rules expand to more than {} selectors when compiled for the configured browser targets. Reduce the nesting depth or the number of selectors per rule, or target browsers that support CSS nesting.",

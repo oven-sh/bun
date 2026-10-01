@@ -642,7 +642,6 @@ async function connectToUnixServer(
       };
     } catch {
       exit("Invalid tcp: URL:" + unix);
-      return;
     }
   } else if (unix.startsWith("/")) {
     connectionOptions = { unix };

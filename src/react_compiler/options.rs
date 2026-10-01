@@ -8,7 +8,6 @@ use crate::hir::environment_config::{EnvironmentConfig, ExternalFunctionConfig};
 #[derive(Debug, Clone, Default)]
 pub struct ReactCompilerOptions {
     pub enabled: bool,
-    pub is_dev: bool,
     pub filename: Option<String>,
     /// `"infer"` / `"annotation"` / `"syntax"` / `"all"`. Defaults to `"infer"`.
     pub compilation_mode: Option<String>,

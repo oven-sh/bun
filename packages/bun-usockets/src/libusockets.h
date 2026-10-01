@@ -215,9 +215,6 @@ struct us_udp_packet_buffer_t *us_create_udp_packet_buffer();
 /* Creates a (heavy-weight) UDP socket with a user space ring buffer. Again, this one is heavy weight and
  * shoud be reused. One entire QUIC server can be implemented using only one single UDP socket so weight
  * is not a concern as is the case for TCP sockets which are 1-to-1 with TCP connections. */
-//struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*read_cb)(struct us_udp_socket_t *), unsigned short port);
-
-//struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, struct us_udp_packet_buffer_t *, int), void (*drain_cb)(struct us_udp_socket_t *), char *host, unsigned short port);
 
 struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int, int), const char *host, unsigned short port, int flags, int *err, void *user);
 

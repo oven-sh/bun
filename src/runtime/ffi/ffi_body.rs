@@ -243,7 +243,6 @@ struct CompileC {
     source: Source,
     current_file_for_errors: ZBox,
     libraries: StringArray,
-    library_dirs: StringArray,
     include_dirs: StringArray,
     symbols: SymbolsMap,
     define: Vec<[ZBox; 2]>,
@@ -258,7 +257,6 @@ impl Default for CompileC {
             source: Source::File(ZBox::from_bytes(b"")),
             current_file_for_errors: ZBox::from_bytes(b""),
             libraries: StringArray::default(),
-            library_dirs: StringArray::default(),
             include_dirs: StringArray::default(),
             symbols: SymbolsMap::default(),
             define: Vec::new(),
@@ -832,15 +830,6 @@ impl CompileC {
         CompilerRT::inject(state);
         stdarg::inject(state);
 
-        self.error_check()
-            .map_err(|_| crate::Error::DeferredErrors)?;
-
-        for library_dir in self.library_dirs.items.iter() {
-            // register all, even if some fail. Only fail after all have been registered.
-            if state.add_library_path(library_dir).is_err() {
-                bun_output::scoped_log!(TCC, "TinyCC failed to add library path");
-            }
-        }
         self.error_check()
             .map_err(|_| crate::Error::DeferredErrors)?;
 

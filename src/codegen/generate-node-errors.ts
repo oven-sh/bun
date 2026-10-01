@@ -72,7 +72,6 @@ for (let [code, constructor, name, ...other_constructors] of NodeErrors) {
 
   for (const con of other_constructors) {
     if (con == null) continue;
-    if (name == null) name = con.name;
     enumHeader += `    ${code}_${con.name} = ${i},\n`;
     listHeader += `    { JSC::ErrorType::${con.name}, "${con.name}"_s, "${code}"_s },\n`;
     rustConsts += `    /// \`${code}\` (instanceof ${con.name})\n`;
@@ -128,7 +127,7 @@ let dts = `
 
 // Global error code functions for TypeScript
 `;
-for (const [code, constructor, name, ...other_constructors] of NodeErrors) {
+for (const [code, constructor, name] of NodeErrors) {
   const hasExistingOverride = builtindts.includes(`declare function $${code}`);
   if (hasExistingOverride) {
     continue;

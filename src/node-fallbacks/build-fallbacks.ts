@@ -19,11 +19,6 @@ for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
   const name = allFiles[fileIndex];
   const mod = basename(name, extname(name)).replaceAll(".", "/");
   const file = allFiles.find(f => f.startsWith(mod));
-  const externals = [...builtins];
-  const i = externals.indexOf(name);
-  if (i !== -1) {
-    externals.splice(i, 1);
-  }
 
   // Build all files at once with specific options
   const externalModules = builtins

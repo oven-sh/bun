@@ -94,8 +94,6 @@ public:
     bool ownMicrotaskQueue = false;
 };
 
-class NodeVMGlobalObject;
-
 class NodeVMSpecialSandbox final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;

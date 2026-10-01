@@ -80,13 +80,7 @@ pub enum AliasingEffectConfig {
         from: &'static str,
         into: &'static str,
     },
-    Impure {
-        place: &'static str,
-    },
     Mutate {
-        value: &'static str,
-    },
-    MutateTransitiveConditionally {
         value: &'static str,
     },
     Apply {

@@ -60,8 +60,6 @@ class DOMWrapperWorld;
 #include "ExtendedDOMIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
 #include "BunBuiltinNames.h"
-// #include "WebCoreJSBuiltins.h"
-// #include "WorkerThreadType.h"
 #include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>

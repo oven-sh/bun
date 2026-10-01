@@ -1028,7 +1028,6 @@ function initializeWellKnownPrototypes() {
   wellKnownPrototypes.set(Map.prototype, { name: "Map", constructor: Map });
   wellKnownPrototypes.set(Object.prototype, { name: "Object", constructor: Object });
   wellKnownPrototypes.set(Set.prototype, { name: "Set", constructor: Set });
-  // wellKnownPrototypes.set(TypedArray.prototype, { name: "TypedArray", constructor: TypedArray });
 }
 
 function getConstructorName(obj, ctx, recurseTimes, protoProps) {

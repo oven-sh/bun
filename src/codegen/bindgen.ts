@@ -590,7 +590,6 @@ function getArgumentExceptionHandler(type: TypeImpl, argumentIndex: number, name
           `WebCore::expectedEnumerationValues<${type.cppClassName()}>()`,
         ].join(", ")});`,
       };
-      break;
     }
   }
 }
@@ -1184,7 +1183,7 @@ cpp.line();
 if (needsWebCore) {
   cpp.line(`namespace WebCore {`);
   cpp.line();
-  for (const [type, reachableType] of typeHashToReachableType) {
+  for (const [, reachableType] of typeHashToReachableType) {
     switch (reachableType.kind) {
       case "stringEnum":
         emitConvertEnumFunction(cpp, reachableType);

@@ -930,7 +930,6 @@ Object.defineProperty(assert, "CallTracker", {
   configurable: true,
   enumerable: true,
 });
-// assert.CallTracker = CallTracker
 
 /**
  * Expose a strict only variant of assert.

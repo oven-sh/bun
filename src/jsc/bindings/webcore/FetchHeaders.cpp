@@ -145,9 +145,6 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
     if (!headers.setIndex(index, *valueToSet))
         headers.set(name, *valueToSet);
 
-    // if (guard == FetchHeaders::Guard::RequestNoCors)
-    //     removePrivilegedNoCORSRequestHeaders(headers);
-
     return {};
 }
 

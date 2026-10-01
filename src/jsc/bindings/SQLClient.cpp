@@ -34,7 +34,6 @@ typedef struct ExternColumnIdentifier {
         BunString name;
     };
 
-    bool isIndexedColumn() const { return tag == 1; }
     bool isNamedColumn() const { return tag == 2; }
     bool isDuplicateColumn() const { return tag == 0; }
 

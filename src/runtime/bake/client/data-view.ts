@@ -62,11 +62,6 @@ export class DataViewWriter {
     this.uint8ArrayView = new Uint8Array(view.buffer);
   }
 
-  u8(value: number) {
-    this.view.setUint8(this.cursor, value);
-    this.cursor += 1;
-  }
-
   u32(value: number) {
     this.view.setUint32(this.cursor, value, true);
     this.cursor += 4;

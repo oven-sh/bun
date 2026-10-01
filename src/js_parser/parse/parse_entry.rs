@@ -962,7 +962,6 @@ impl<'a> Parser<'a> {
         if p.options.features.react_compiler.is_enabled() {
             let rc_options = bun_react_compiler::ReactCompilerOptions {
                 enabled: true,
-                is_dev: p.options.jsx.development,
                 parse_test_pragmas: p.options.features.react_compiler_parse_test_pragmas,
                 output_mode: p
                     .options

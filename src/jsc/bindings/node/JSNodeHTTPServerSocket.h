@@ -40,8 +40,6 @@ struct WebSocketData;
 
 namespace Bun {
 
-class JSNodeHTTPServerSocketPrototype;
-
 class JSNodeHTTPServerSocket : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;

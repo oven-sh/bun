@@ -26,7 +26,6 @@
 #include "config.h"
 #include "JSEventTarget.h"
 
-// #include "DOMWindow.h"
 #include "EventTarget.h"
 #include "EventTargetInterfaces.h"
 #include "JSDOMWrapperCache.h"

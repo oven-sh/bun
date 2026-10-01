@@ -2614,15 +2614,9 @@ impl ExpectCustomAsymmetricMatcher {
         Ok(JSValue::from(matched))
     }
 
-    fn maybe_clear(global_this: &JSGlobalObject, err: JsError, dont_throw: bool) -> crate::Result<bool> {
-        if dont_throw {
-            global_this.clear_exception();
-            return Ok(false);
-        }
-        match err {
-            JsError::OutOfMemory => Err(crate::Error::Alloc(bun_alloc::AllocError)),
-            _ => Err(crate::Error::Unexpected),
-        }
+    fn maybe_clear(global_this: &JSGlobalObject) -> crate::Result<bool> {
+        global_this.clear_exception();
+        Ok(false)
     }
 
     /// Calls a custom implementation (if provided) to stringify this asymmetric matcher, and returns true if it was provided and it succeed
@@ -2631,40 +2625,39 @@ impl ExpectCustomAsymmetricMatcher {
         this_value: JSValue,
         global_this: &JSGlobalObject,
         writer: &mut (impl bun_io::Write + ?Sized),
-        dont_throw: bool,
     ) -> crate::Result<bool> {
         let Some(matcher_fn) = expect_custom_asymmetric_matcher_js::matcher_fn_get_cached(this_value) else { return Ok(false) };
         let fn_value = match matcher_fn.get(global_this, "toAsymmetricMatcher") {
             Ok(v) => v,
-            Err(e) => return Self::maybe_clear(global_this, e, dont_throw),
+            Err(_) => return Self::maybe_clear(global_this),
         };
         if let Some(fn_value) = fn_value {
             if fn_value.js_type().is_function() {
                 let Some(captured_args) = expect_custom_asymmetric_matcher_js::captured_args_get_cached(this_value) else { return Ok(false) };
                 let args_len = match captured_args.get_length(global_this) {
                     Ok(n) => n,
-                    Err(e) => return Self::maybe_clear(global_this, e, dont_throw),
+                    Err(_) => return Self::maybe_clear(global_this),
                 };
                 let mut args: Vec<JSValue> = Vec::with_capacity(args_len as usize);
                 let mut iter = match captured_args.array_iterator(global_this) {
                     Ok(it) => it,
-                    Err(e) => return Self::maybe_clear(global_this, e, dont_throw),
+                    Err(_) => return Self::maybe_clear(global_this),
                 };
                 loop {
                     match iter.next() {
                         Ok(Some(arg)) => args.push(arg),
                         Ok(None) => break,
-                        Err(e) => return Self::maybe_clear(global_this, e, dont_throw),
+                        Err(_) => return Self::maybe_clear(global_this),
                     }
                 }
 
                 let result = match matcher_fn.call(global_this, this_value, &args) {
                     Ok(r) => r,
-                    Err(e) => return Self::maybe_clear(global_this, e, dont_throw),
+                    Err(_) => return Self::maybe_clear(global_this),
                 };
                 let s = match result.to_bun_string(global_this) {
                     Ok(s) => s,
-                    Err(e) => return Self::maybe_clear(global_this, e, dont_throw),
+                    Err(_) => return Self::maybe_clear(global_this),
                 };
                 write!(writer, "{}", s)?;
             }
@@ -3058,13 +3051,10 @@ pub(crate) mod mock {
         }
     }
 
-    #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::EnumString)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
     pub(crate) enum ReturnStatus {
-        #[strum(serialize = "throw")]
         Throw,
-        #[strum(serialize = "return")]
         Return,
-        #[strum(serialize = "incomplete")]
         Incomplete,
     }
 
@@ -3094,7 +3084,6 @@ pub(crate) mod mock {
             let mut formatter = self.formatter.borrow_mut();
             let mut printed_once = false;
 
-            let mut num_returns: i32 = 0;
             let mut num_calls: i32 = 0;
 
             let mut iter = self
@@ -3117,7 +3106,6 @@ pub(crate) mod mock {
                 {
                     ReturnStatus::Return => {
                         write!(writer, "{}", value.to_fmt(&mut **formatter))?;
-                        num_returns += 1;
                     }
                     ReturnStatus::Throw => {
                         write!(writer, "function call threw an error: {}", value.to_fmt(&mut **formatter))?;
@@ -3127,7 +3115,6 @@ pub(crate) mod mock {
                     }
                 }
             }
-            let _ = num_returns;
             Ok(())
         }
     }

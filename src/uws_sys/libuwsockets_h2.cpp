@@ -13,7 +13,6 @@
 // clang-format on
 
 using uWS::H2App;
-using uWS::Http2Request;
 using uWS::Http2Response;
 using uWS::Http2ResponseData;
 

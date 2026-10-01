@@ -13,7 +13,6 @@
 namespace Inspector {
 
 class FrontendRouter;
-class BackendDispatcher;
 class HTTPServerFrontendDispatcher;
 enum class DisconnectReason;
 

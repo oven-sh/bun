@@ -100,11 +100,6 @@ declare module "react-server-dom-bun/client.node.unbundled.js" {
     prefix: string;
     crossOrigin?: string;
   }
-  export interface Options {
-    encodeFormAction?: any;
-    findSourceMapURL?: any;
-    environmentName?: string;
-  }
   export function createFromNodeStream<T = any>(readable: Readable, manifest?: Manifest): Promise<T>;
 }
 
@@ -143,15 +138,4 @@ declare module "react-dom/server.node" {
     model: ReactElement,
     options: RenderToPipeableStreamOptions,
   ): PipeableStream<Uint8Array>;
-}
-
-declare module "bun:wrap" {
-  export const __name: unique symbol;
-  export const __legacyDecorateClassTS: unique symbol;
-  export const __legacyDecorateParamTS: unique symbol;
-  export const __legacyMetadataTS: unique symbol;
-  export const __using: unique symbol;
-  export const __callDispose: unique symbol;
-  export const __MEMO_CACHE_SENTINEL: unique symbol;
-  export const __EARLY_RETURN_SENTINEL: unique symbol;
 }

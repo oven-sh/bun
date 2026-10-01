@@ -25,7 +25,6 @@ pub struct ExternalFunctionConfig {
 #[derive(Debug, Clone)]
 pub struct InstrumentationConfig {
     pub fn_: ExternalFunctionConfig,
-    pub gating: Option<ExternalFunctionConfig>,
     pub global_gating: Option<String>,
 }
 

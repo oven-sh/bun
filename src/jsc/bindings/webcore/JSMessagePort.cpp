@@ -43,7 +43,6 @@
 #include "JSStructuredSerializeOptions.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
-// #include "WebCoreOpaqueRootInlines.h"
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/JSArray.h>

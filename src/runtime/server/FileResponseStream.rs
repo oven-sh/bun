@@ -91,7 +91,6 @@ bitflags::bitflags! {
     struct State: u8 {
         const RESPONSE_DONE = 1 << 0;
         const FINISHED      = 1 << 1;
-        const ERRORED       = 1 << 2;
         const RESP_DETACHED = 1 << 3;
         const READ_REF_HELD = 1 << 4;
     }
@@ -546,7 +545,7 @@ impl FileResponseStream {
 
     fn fail_with(&self, err: sys::Error) {
         if !self.state.get().contains(State::RESPONSE_DONE) {
-            self.insert_state(State::RESPONSE_DONE | State::ERRORED);
+            self.insert_state(State::RESPONSE_DONE);
             self.detach_resp();
             let resp = self.resp.get();
             resp.force_close();

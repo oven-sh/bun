@@ -106,10 +106,6 @@ function getColoredMyersDiff(actual, expected) {
 
   let message = printSimpleMyersDiff(actual, expected);
 
-  if (skipped) {
-    message += "...";
-  }
-
   return { message, header, skipped };
 }
 

@@ -2897,7 +2897,7 @@ impl JestPrettyFormat {
             *this.amf_quote_strings() = original_quote_strings;
         } else if let Some(instance) = value.as_class_ref::<expect::ExpectCustomAsymmetricMatcher>() {
             let printed = expect::ExpectCustomAsymmetricMatcher::custom_print(
-                instance, value, this.amf_global_this(), &mut *writer.ctx, true,
+                instance, value, this.amf_global_this(), &mut *writer.ctx,
             )
             .expect("unreachable");
             if !printed {

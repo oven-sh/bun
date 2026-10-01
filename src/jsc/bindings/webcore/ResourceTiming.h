@@ -25,7 +25,6 @@
 
 #pragma once
 
-// #include "LoaderMalloc.h"
 #include "NetworkLoadMetrics.h"
 #include "ResourceLoadTiming.h"
 #include "ServerTiming.h"

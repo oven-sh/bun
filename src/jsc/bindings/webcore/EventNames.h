@@ -21,7 +21,6 @@
 
 #pragma once
 
-// #include "ThreadGlobalData.h"
 #include "EventTarget.h"
 #include <wtf/text/AtomString.h>
 

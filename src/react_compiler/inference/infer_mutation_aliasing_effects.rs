@@ -3453,19 +3453,6 @@ fn compute_effects_for_aliasing_signature_config(
                     }
                 }
             }
-            crate::hir::type_config::AliasingEffectConfig::Impure { place } => {
-                let values = substitutions.get(place).cloned().unwrap_or_default();
-                for v in values {
-                    effects.push(AliasingEffect::Impure {
-                        place: v,
-                        error: CompilerDiagnostic::new(
-                            ErrorCategory::Purity,
-                            "Impure function call",
-                            None,
-                        ),
-                    });
-                }
-            }
             crate::hir::type_config::AliasingEffectConfig::Mutate { value } => {
                 let values = substitutions.get(value).cloned().unwrap_or_default();
                 for v in values {
@@ -3473,14 +3460,6 @@ fn compute_effects_for_aliasing_signature_config(
                         value: v,
                         reason: None,
                     });
-                }
-            }
-            crate::hir::type_config::AliasingEffectConfig::MutateTransitiveConditionally {
-                value,
-            } => {
-                let values = substitutions.get(value).cloned().unwrap_or_default();
-                for v in values {
-                    effects.push(AliasingEffect::MutateTransitiveConditionally { value: v });
                 }
             }
             crate::hir::type_config::AliasingEffectConfig::Apply {

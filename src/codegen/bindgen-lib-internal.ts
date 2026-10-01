@@ -802,13 +802,11 @@ export function registerFunction(opts: FuncOptions) {
 function validateVariant(variant: any) {
   let minRequiredArgs = 0;
   let seenOptionalArgument = false;
-  let i = 0;
 
   for (const [name, type] of Object.entries(variant.args) as [string, TypeImpl][]) {
     if (!(type instanceof TypeImpl)) {
       throw new Error(`Expected type for argument ${name}, got ${inspect(type)}`);
     }
-    i += 1;
     if (type.isVirtualArgument()) {
       continue;
     }

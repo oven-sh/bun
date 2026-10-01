@@ -3,7 +3,6 @@
 import type { Bake } from "bun";
 import "./debug";
 import { loadExports, replaceModules, serverManifest, ssrManifest } from "./hmr-module";
-// import { AsyncLocalStorage } from "node:async_hooks";
 const { AsyncLocalStorage } = require("node:async_hooks");
 
 if (typeof IS_BUN_DEVELOPMENT !== "boolean") {

@@ -150,7 +150,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     cwd(newCwd?: string): this {
       this.#throwIfRunning();
       if (typeof newCwd === "undefined" || newCwd === "." || newCwd === "" || newCwd === "./") {
-        newCwd = defaultCwd ?? process.cwd();
+        newCwd = process.cwd();
       }
       this.#args!.setCwd(newCwd);
       return this;
@@ -261,7 +261,6 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
 
   var defaultEnv = process.env || {};
   const originalDefaultEnv = defaultEnv;
-  var defaultCwd: string | undefined = undefined;
 
   const cwdSymbol = Symbol("cwd");
   const envSymbol = Symbol("env");
@@ -287,7 +286,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     cwd(newCwd: string | undefined) {
       if (typeof newCwd === "undefined" || typeof newCwd === "string") {
         if (newCwd === "." || newCwd === "" || newCwd === "./") {
-          newCwd = defaultCwd ?? process.cwd();
+          newCwd = process.cwd();
         }
 
         this[cwdSymbol] = newCwd;
@@ -348,7 +347,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     Object.setPrototypeOf(Shell, $isObject(prototype) ? prototype : ShellPrototype.prototype);
     Object.defineProperty(Shell, "name", { value: "Shell", configurable: true, enumerable: true });
 
-    Shell[cwdSymbol] = defaultCwd;
+    Shell[cwdSymbol] = undefined;
     Shell[envSymbol] = defaultEnv;
     Shell[throwsSymbol] = true;
 
@@ -359,7 +358,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
   Object.setPrototypeOf(Shell, ShellPrototype);
   Object.setPrototypeOf(BunShell, ShellPrototype.prototype);
 
-  BunShell[cwdSymbol] = defaultCwd;
+  BunShell[cwdSymbol] = undefined;
   BunShell[envSymbol] = defaultEnv;
   BunShell[throwsSymbol] = true;
 

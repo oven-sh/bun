@@ -2,9 +2,8 @@ import { CString, dlopen, linkSymbols, ptr, toArrayBuffer, toBuffer } from "bun:
 import { describe, expect, test } from "bun:test";
 import { isMusl } from "harness";
 
-// Not `toThrow()`: it also accepts an Error that the function returns, which is
-// what `toBuffer()` and `toArrayBuffer()` did with their TypeError before they
-// threw it.
+// The value that `fn` throws, or `undefined` when it returns. `toBuffer()` and
+// `toArrayBuffer()` once returned their TypeError and did not throw it.
 function thrownBy(fn: () => unknown): any {
   try {
     fn();

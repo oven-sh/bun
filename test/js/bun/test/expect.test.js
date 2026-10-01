@@ -6,6 +6,7 @@
  *  `NODE_OPTIONS=--experimental-vm-modules npx jest test/js/bun/test/expect.test.js`
  */
 
+import { runInNewContext } from "node:vm";
 // import these functions typed with the bun:test types,
 // so this test can also be used to detect issues with the "bun:test" type definitions
 import test_interop from "./test-interop.js";
@@ -995,6 +996,136 @@ describe("expect()", () => {
         throw null;
       }).toThrow(err);
     }
+  });
+
+  describe("toThrow does not treat a returned Error as thrown", () => {
+    const didNotThrow = /did not throw|didn't throw|to throw an error/;
+
+    /** How one matcher call ended. It uses try/catch, so it does not depend on toThrow. */
+    const outcomeOf = async (/** @type {() => unknown} */ assertion) => {
+      try {
+        await assertion();
+        return "pass";
+      } catch (e) {
+        const message = String(ANY(e).message);
+        return didNotThrow.test(message) ? "did not throw" : message;
+      }
+    };
+
+    // Jest 30 removed the toThrowError alias.
+    const matchers = isJest ? ["toThrow"] : ["toThrow", "toThrowError"];
+
+    /** toThrow and its toThrowError alias must fail on `fn`, and pass with `.not`. */
+    const expectDidNotThrow = async (
+      /** @type {string} */ text,
+      /** @type {() => unknown} */ fn,
+      /** @type {unknown[]} */ expected = [],
+    ) => {
+      for (const matcher of matchers) {
+        const row = `${matcher}: ${text}`;
+        expect([row, await outcomeOf(() => ANY(expect(fn))[matcher](...expected))]).toEqual([row, "did not throw"]);
+        const notRow = `not.${row}`;
+        expect([notRow, await outcomeOf(() => ANY(expect(fn)).not[matcher](...expected))]).toEqual([notRow, "pass"]);
+      }
+    };
+
+    const returnsError = () => new TypeError("boom");
+
+    test("every kind of Error", async () => {
+      class CustomError extends Error {}
+      /** @type {[string, () => unknown][]} */
+      const callees = [
+        ["TypeError", returnsError],
+        ["Error subclass", () => new CustomError("boom")],
+        ["AggregateError", () => new AggregateError([new Error("inner")], "boom")],
+        ["Error with a cause", () => new Error("boom", { cause: new Error("inner") })],
+        ["Error from another realm", () => runInNewContext("new Error('boom')")],
+        ["Error called as a function", Error],
+      ];
+      for (const [text, callee] of callees) {
+        await expectDidNotThrow(text, callee);
+
+        // The same value counts when the function throws it.
+        const throwsIt = () => {
+          throw callee();
+        };
+        expect([text, await outcomeOf(() => expect(throwsIt).toThrow())]).toEqual([text, "pass"]);
+      }
+    });
+
+    test("every form of the expected value", async () => {
+      /** @type {[string, unknown][]} */
+      const expectedForms = [
+        ['""', ""],
+        ['"boom"', "boom"],
+        ["/boom/", /boom/],
+        ["TypeError", TypeError],
+        ['new TypeError("boom")', new TypeError("boom")],
+        ["expect.objectContaining()", expect.objectContaining({ message: "boom" })],
+        ["expect.any(TypeError)", expect.any(TypeError)],
+      ];
+      for (const [text, expected] of expectedForms) {
+        await expectDidNotThrow(text, returnsError, [expected]);
+      }
+    });
+
+    test("the snapshot matchers", async () => {
+      // This row comes first. A build that reads a returned Error as thrown stops here, so the rows
+      // below cannot write a snapshot on it.
+      expect(await outcomeOf(() => expect(returnsError).toThrow())).toBe("did not throw");
+
+      expect(await outcomeOf(() => expect(returnsError).toThrowErrorMatchingSnapshot("returned error"))).toBe(
+        "did not throw",
+      );
+      if (!isVitest) {
+        expect(await outcomeOf(() => expect(returnsError).toThrowErrorMatchingInlineSnapshot(`"boom"`))).toBe(
+          "did not throw",
+        );
+      }
+    });
+
+    test(".resolves and .rejects with a settled function", async () => {
+      const throwsError = () => {
+        throw new TypeError("boom");
+      };
+
+      expect(await outcomeOf(() => expect(Promise.resolve(returnsError)).resolves.toThrow())).toBe("did not throw");
+      await expect(Promise.resolve(returnsError)).resolves.not.toThrow();
+      await expect(Promise.resolve(throwsError)).resolves.toThrow("boom");
+
+      // Vitest takes a rejection reason as the thrown value and does not call it.
+      if (!isVitest) {
+        expect(await outcomeOf(() => expect(Promise.reject(returnsError)).rejects.toThrow())).toBe("did not throw");
+        await expect(Promise.reject(returnsError)).rejects.not.toThrow();
+        await expect(Promise.reject(throwsError)).rejects.toThrow("boom");
+      }
+    });
+
+    test_skipIf(!isBun)("a value reported during the call", async () => {
+      // Under bun test, toThrow also receives a value that reportError() or an unhandled rejection
+      // reports while the function runs. It does not stand in for the return value.
+      const reportsThenReturns = () => {
+        reportError(42);
+        return new TypeError("boom");
+      };
+      await expectDidNotThrow("reportError(42), then return an Error", reportsThenReturns, ["boom"]);
+
+      const reportsThenThrows = (/** @type {unknown} */ reported) => () => {
+        reportError(reported);
+        throw new Error("sync");
+      };
+      expect(reportsThenThrows(42)).toThrow("sync");
+      // A reported promise that fulfills does not hide the throw.
+      expect(reportsThenThrows(Promise.resolve(1))).toThrow("sync");
+      expect(() => expect(reportsThenThrows(Promise.resolve(1))).not.toThrow()).toThrow("sync");
+    });
+
+    test_skipIf(!isBun)("a returned promise that fulfills with an Error", async () => {
+      // bun test waits for a promise that the function returns.
+      expect(() => Promise.reject(new Error("rejected"))).toThrow("rejected");
+      expect(() => Promise.resolve(new Error("fulfilled"))).not.toThrow();
+      expect(await outcomeOf(() => expect(async () => new Error("fulfilled")).toThrow())).toBe("did not throw");
+    });
   });
 
   test("deepEquals derived strings and strings", () => {

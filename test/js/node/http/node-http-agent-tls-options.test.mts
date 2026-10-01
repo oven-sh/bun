@@ -674,8 +674,9 @@ describe("http.request agent options", () => {
 
 describe(
   "https.request through a proxy from proxyEnv, with TLS options that tls.connect() rejects",
-  // tls.connect() runs when the proxy has answered the CONNECT, after https.request() returned. In Node v26.3.0 what
-  // it throws there is an uncaught exception. Node v27 and later give it to the request (nodejs/node#66096).
+  // tls.connect() runs when the proxy has answered the CONNECT, after https.request() returned. nodejs/node#66096 gives
+  // what it throws there to the request. No Node release has that change (v26.10.0 throws it uncaught). It is on Node
+  // main, so v27 runs this block, and on v26.x-staging (33e4ba358b), which is not in a v26 release.
   { skip: typeof Bun === "undefined" && Number(process.versions.node.split(".")[0]) < 27 },
   () => {
     const target = { host: "example.invalid", port: 443, path: "/" };
@@ -902,7 +903,54 @@ describe(
 
 // Only run in Bun to avoid infinite loop when Node.js runs this file
 if (typeof Bun !== "undefined") {
-  const { bunEnv, nodeExe } = await import("harness");
+  const { bunEnv, bunExe, nodeExe } = await import("harness");
+
+  describe("https.request through a proxy from NODE_USE_ENV_PROXY=1", () => {
+    test("the request gets what tls.connect() throws, and the process exits", async () => {
+      // Answers each CONNECT with 200 and then holds the connection.
+      const sockets = new Set<net.Socket>();
+      const proxy = net.createServer(socket => {
+        sockets.add(socket);
+        socket.on("error", () => {});
+        socket.once("data", () => socket.write("HTTP/1.1 200 Connection established\r\n\r\n"));
+      });
+      const port = await startProxy(proxy);
+      try {
+        // The global agent takes the proxy from the environment when node:https loads.
+        const script = `
+          const events = [];
+          const req = require("node:https").get("https://example.invalid/", { minVersion: "TLSv9" });
+          req.on("error", err => events.push(err.code));
+          req.on("close", () => {
+            events.push("close");
+            console.log(JSON.stringify(events));
+          });
+        `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", script],
+          env: {
+            ...bunEnv,
+            NODE_USE_ENV_PROXY: "1",
+            HTTPS_PROXY: `http://127.0.0.1:${port}`,
+            https_proxy: undefined,
+            NO_PROXY: undefined,
+            no_proxy: undefined,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        // The proxy holds the connection. The process can only exit when the client closed it.
+        assert.deepStrictEqual(
+          { stdout: stdout.trim(), stderr, exitCode },
+          { stdout: JSON.stringify(["ERR_TLS_INVALID_PROTOCOL_VERSION", "close"]), stderr: "", exitCode: 0 },
+        );
+      } finally {
+        for (const socket of sockets) socket.destroy();
+        proxy.close();
+      }
+    });
+  });
 
   describe("Node.js compatibility", () => {
     test("all tests pass in Node.js", async () => {

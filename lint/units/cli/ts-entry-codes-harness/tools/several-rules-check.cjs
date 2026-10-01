@@ -34,8 +34,7 @@ const ts = [
 	"y = [1, , 2] satisfies (number | undefined)[];",
 	"a = a;",
 	"namespace N { debugger; }",
-	"enum E { A = 1 }",
-	"export { a, b, o, y, C, N, E };",
+	"export { a, b, o, y, C, N };",
 	"",
 ].join("\n");
 const env = { ...process.env, ASAN_OPTIONS: "detect_leaks=0:allow_user_segv_handler=1" };

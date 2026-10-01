@@ -79,6 +79,14 @@ opaque!(
     CRYPTO_BUFFER_POOL
 );
 opaque!(
+    /// `struct crypto_buffer_st` (`typedef ... CRYPTO_BUFFER`).
+    CRYPTO_BUFFER
+);
+opaque!(
+    /// `struct x509_lazy_cert_set_st` (`typedef ... X509_LAZY_CERT_SET`, oven-sh/boringssl).
+    X509_LAZY_CERT_SET
+);
+opaque!(
     /// `struct x509_st` (`typedef ... X509`).
     X509
 );
@@ -835,8 +843,7 @@ opaque!(
 pub type SSL_verify_cb = Option<unsafe extern "C" fn(c_int, *mut X509_STORE_CTX) -> c_int>;
 
 /// `int pem_password_cb(char *buf, int size, int rwflag, void *userdata)`.
-pub(crate) type pem_password_cb =
-    unsafe extern "C" fn(*mut c_char, c_int, c_int, *mut c_void) -> c_int;
+pub type pem_password_cb = unsafe extern "C" fn(*mut c_char, c_int, c_int, *mut c_void) -> c_int;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Extern functions — SSL / BIO / ERR / HMAC / RSA / PBKDF2
@@ -851,6 +858,11 @@ unsafe extern "C" {
     pub fn SSL_CTX_new(method: *const SSL_METHOD) -> *mut SSL_CTX;
     pub fn SSL_CTX_free(ctx: *mut SSL_CTX);
     pub fn SSL_CTX_get_verify_mode(ctx: *const SSL_CTX) -> c_int;
+    pub fn SSL_CTX_set_session_id_context(
+        ctx: *mut SSL_CTX,
+        sid_ctx: *const u8,
+        sid_ctx_len: usize,
+    ) -> c_int;
     pub fn SSL_CTX_set_ex_data(ctx: *mut SSL_CTX, idx: c_int, data: *mut c_void) -> c_int;
     pub fn SSL_CTX_set0_buffer_pool(ctx: *mut SSL_CTX, pool: *mut CRYPTO_BUFFER_POOL);
     pub fn SSL_CTX_set1_groups_list(ctx: *mut SSL_CTX, groups: *const c_char) -> c_int;
@@ -877,6 +889,11 @@ unsafe extern "C" {
     pub fn SSL_get_shutdown(ssl: *const SSL) -> c_int;
     pub fn SSL_is_init_finished(ssl: *const SSL) -> c_int;
     pub fn SSL_set_verify(ssl: *mut SSL, mode: c_int, callback: SSL_verify_cb);
+    pub fn SSL_set_session_id_context(
+        ssl: *mut SSL,
+        sid_ctx: *const u8,
+        sid_ctx_len: usize,
+    ) -> c_int;
     pub fn SSL_set0_verify_cert_store(ssl: *mut SSL, store: *mut X509_STORE) -> c_int;
     pub fn SSL_set_renegotiate_mode(ssl: *mut SSL, mode: ssl_renegotiate_mode_t);
     pub fn SSL_renegotiate(ssl: *mut SSL) -> c_int;
@@ -949,6 +966,7 @@ unsafe extern "C" {
     pub fn BIO_read(bio: *mut BIO, data: *mut c_void, len: c_int) -> c_int;
     pub fn BIO_write(bio: *mut BIO, data: *const c_void, len: c_int) -> c_int;
     pub fn BIO_ctrl_pending(bio: *const BIO) -> usize;
+    pub fn BIO_reset(bio: *mut BIO) -> c_int;
     pub safe fn BIO_s_mem() -> *const BIO_METHOD;
     pub fn BIO_new_mem_buf(buf: *const c_void, len: ossl_ssize_t) -> *mut BIO;
     pub fn BIO_set_mem_eof_return(bio: *mut BIO, eof_value: c_int) -> c_int;
@@ -1073,6 +1091,32 @@ unsafe extern "C" {
 
     pub fn SSL_get_verify_result(ssl: *const SSL) -> c_long;
 
+    /// Reads the next PEM block whose type is `expected_name` (e.g. `c"CERTIFICATE"`), skipping others, and
+    /// returns its decoded (and, with `cb`, decrypted) payload without parsing it.
+    pub fn PEM_bytes_read_bio(
+        out_data: *mut *mut u8,
+        out_len: *mut c_long,
+        out_name: *mut *mut c_char,
+        expected_name: *const c_char,
+        bio: *mut BIO,
+        cb: Option<pem_password_cb>,
+        userdata: *mut c_void,
+    ) -> c_int;
+    pub fn CRYPTO_BUFFER_new(
+        data: *const u8,
+        len: usize,
+        pool: *mut CRYPTO_BUFFER_POOL,
+    ) -> *mut CRYPTO_BUFFER;
+    pub fn CRYPTO_BUFFER_free(buf: *mut CRYPTO_BUFFER);
+    /// oven-sh/boringssl: a set of DER certificates indexed by subject and parsed on first use. Takes a reference to
+    /// each buffer; NULL if any cannot be indexed (see `X509_LAZY_CERT_SET_can_index`).
+    pub fn X509_LAZY_CERT_SET_new(
+        certs: *const *mut CRYPTO_BUFFER,
+        num_certs: usize,
+    ) -> *mut X509_LAZY_CERT_SET;
+    pub fn X509_LAZY_CERT_SET_can_index(der: *const u8, len: usize) -> c_int;
+    pub safe fn X509_get_default_cert_file() -> *const c_char;
+    pub safe fn X509_get_default_cert_dir() -> *const c_char;
     pub fn PEM_read_bio_X509(
         bp: *mut BIO,
         x: *mut *mut X509,
@@ -1092,6 +1136,7 @@ unsafe extern "C" {
     pub fn X509_STORE_add_cert(store: *mut X509_STORE, x509: *mut X509) -> c_int;
     pub fn X509_STORE_add_crl(store: *mut X509_STORE, crl: *mut X509_CRL) -> c_int;
     pub fn X509_STORE_set_flags(store: *mut X509_STORE, flags: c_ulong) -> c_int;
+    pub fn X509_VERIFY_PARAM_set_flags(param: *mut c_void, flags: c_ulong) -> c_int;
     pub fn X509_CRL_free(crl: *mut X509_CRL);
     pub fn PEM_read_bio_X509_CRL(
         bp: *mut BIO,

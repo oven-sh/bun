@@ -125,6 +125,7 @@ impl<'h> Codegen<'h> {
         }
     }
 
+    /// The symbol for a name declared at module level ([`Host::new_generated`]).
     fn ref_for_name(&mut self, name: StoreStr) -> Ref {
         if let Some(&r) = self.name_to_ref.get(&name) {
             self.host.record_usage(r);
@@ -135,12 +136,23 @@ impl<'h> Codegen<'h> {
         r
     }
 
+    /// The symbol for a name the compiled function declares ([`Host::new_local`]).
+    fn ref_for_local(&mut self, name: StoreStr) -> Ref {
+        if let Some(&r) = self.name_to_ref.get(&name) {
+            self.host.record_usage(r);
+            return r;
+        }
+        let r = self.host.new_local(name.slice());
+        self.name_to_ref.insert(name, r);
+        r
+    }
+
     fn well_known(&mut self, w: WellKnown, name: &[u8]) -> Ref {
         if let Some(r) = self.well_known[w as usize] {
             self.host.record_usage(r);
             return r;
         }
-        let r = self.host.new_generated(name);
+        let r = self.host.new_local(name);
         self.well_known[w as usize] = Some(r);
         r
     }
@@ -201,7 +213,7 @@ impl<'h> Codegen<'h> {
         let mut cursor = std::io::Cursor::new(&mut buf[..]);
         write!(cursor, "bb{}", id.0).unwrap();
         let len = cursor.position() as usize;
-        let r = self.host.new_generated(&buf[..len]);
+        let r = self.host.new_local(&buf[..len]);
         self.label_to_ref.insert(id, r);
         r
     }
@@ -355,7 +367,12 @@ pub(crate) fn codegen_function(
 
         let identifiers = rename_variables(&mut reactive_fn_mut, cx.env);
         let mut outlined_cx = Context::new(cx.env, cx.cg, identifiers);
-        let codegen = codegen_reactive_function(&mut outlined_cx, &reactive_fn_mut)?;
+        let mut codegen = codegen_reactive_function(&mut outlined_cx, &reactive_fn_mut)?;
+        // Module level. `name_to_ref` gives the `Ref` the use site's `LoadGlobal` printed.
+        codegen.id = reactive_fn_mut.id.as_ref().map(|name| LocRef {
+            loc: convert_loc(reactive_fn_mut.loc),
+            ref_: cx.cg.ref_for_name(store_str(name.as_bytes())),
+        });
         outlined.push(OutlinedFunction {
             func: codegen,
             #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
@@ -448,7 +465,7 @@ impl<'a, 'h> Context<'a, 'h> {
             return Err(unnamed_identifier_err(id.0));
         };
         let (IdentifierName::Named(s) | IdentifierName::Promoted(s)) = name;
-        let r = self.cg.ref_for_name(*s);
+        let r = self.cg.ref_for_local(*s);
         self.cg.id_to_ref.insert(id, r);
         Ok(r)
     }
@@ -502,16 +519,8 @@ fn codegen_reactive_function(
     let (memo_blocks, memo_values, pruned_memo_blocks, pruned_memo_values) =
         count_memo_blocks(func, cx.env);
 
-    let id = func.id.as_ref().map(|name| {
-        let r = cx.cg.ref_for_name(store_str(name.as_bytes()));
-        LocRef {
-            loc: convert_loc(func.loc),
-            ref_: r,
-        }
-    });
-
     Ok(CodegenFunction {
-        id,
+        id: None,
         #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
         name_hint: func.name_hint.clone(),
         params,
@@ -663,6 +672,7 @@ fn codegen_reactive_scope(
                 target: cache_ident(),
                 index: Expr::init(E::Number::new(index as f64), loc),
                 optional_chain: None,
+                is_import_property_use: false,
             },
             loc,
         )
@@ -1597,22 +1607,13 @@ fn emit_store(
                 },
                 stmt_loc,
             );
-            if let Some(ref lvalue_place) = instr.lvalue {
-                let is_store_context = matches!(
-                    &instr.value,
-                    ReactiveValue::Instruction(InstructionValue::StoreContext { .. })
-                );
-                if !is_store_context {
-                    let ident = &cx.env.identifiers[lvalue_place.identifier.0 as usize];
-                    cx.temp.insert(ident.declaration_id, Some(expr));
+            if instr.lvalue.is_some() {
+                // Not in upstream: a promoted result is read by name from a later memo block.
+                let stmt = codegen_instruction(cx, instr, expr)?;
+                if matches!(stmt.data, StmtData::SEmpty(_)) {
                     return Ok(None);
-                } else {
-                    let stmt = codegen_instruction(cx, instr, expr)?;
-                    if matches!(stmt.data, StmtData::SEmpty(_)) {
-                        return Ok(None);
-                    }
-                    return Ok(Some(stmt));
                 }
+                return Ok(Some(stmt));
             }
             Ok(Some(expr_stmt(expr, stmt_loc)))
         }
@@ -1731,11 +1732,12 @@ fn codegen_instruction_value(
             value,
             ..
         } => {
-            let block_items: Vec<ReactiveStatement> = instructions
-                .iter()
-                .map(|i| ReactiveStatement::Instruction(i.clone()))
-                .collect();
-            let body = codegen_block_no_reset(cx, &block_items)?;
+            let mut body: Vec<Stmt> = Vec::with_capacity(instructions.len());
+            for instr in instructions {
+                if let Some(stmt) = codegen_instruction_nullable(cx, instr)? {
+                    body.push(stmt);
+                }
+            }
             let mut expressions: Vec<Expr> = Vec::new();
             for stmt in body {
                 match stmt.data {
@@ -1886,6 +1888,7 @@ fn codegen_base_instruction_value(
                         expr: it.next().unwrap_or(orig.expr),
                         options: it.next().unwrap_or(Expr::EMPTY),
                         import_record_index: orig.import_record_index,
+                        namespace_ref: orig.namespace_ref,
                     },
                     loc,
                 ));
@@ -2005,6 +2008,7 @@ fn codegen_base_instruction_value(
                     target: obj,
                     index: prop,
                     optional_chain: None,
+                    is_import_property_use: false,
                 },
                 loc,
             ))
@@ -2026,6 +2030,7 @@ fn codegen_base_instruction_value(
                             target: obj,
                             index: prop,
                             optional_chain: None,
+                            is_import_property_use: false,
                         },
                         loc,
                     ),
@@ -2047,6 +2052,7 @@ fn codegen_base_instruction_value(
                             target: obj,
                             index: prop,
                             optional_chain: None,
+                            is_import_property_use: false,
                         },
                         loc,
                     ),
@@ -2222,6 +2228,9 @@ fn codegen_base_instruction_value(
             closing_loc,
         } => codegen_jsx_expression(cx, tag, props, children, *loc, *closing_loc),
         InstructionValue::JsxFragment { children, .. } => {
+            // Lowering only makes a `JsxFragment` of the automatic runtime's
+            // `Fragment` import; the classic `React.Fragment` is a plain tag.
+            debug_assert!(!cx.cg.host.is_jsx_classic());
             let mut child_elems: ExprNodeList = AstAlloc::vec_with_capacity(children.len());
             for child in children {
                 child_elems.push(codegen_jsx_element(cx, child)?);
@@ -2329,7 +2338,7 @@ fn codegen_function_expression(
                 fn_flags |= flags::Function::HasRestArg;
             }
             let fn_name = name.as_ref().map(|n| {
-                let r = cx.cg.ref_for_name(*n);
+                let r = cx.cg.ref_for_local(*n);
                 LocRef { loc, ref_: r }
             });
             Expr::init(
@@ -2369,6 +2378,7 @@ fn codegen_function_expression(
                 ),
                 index: Expr::init(E::EString::init(hint.slice()), loc),
                 optional_chain: None,
+                is_import_property_use: false,
             },
             loc,
         );
@@ -2562,6 +2572,31 @@ fn codegen_jsx_expression(
         }
     }
 
+    // Same shape choice as `visit_expr.rs::e_jsx_element`: the classic runtime,
+    // and `key` after a spread in the automatic one, is a `createElement` call
+    // whose `key` stays in the props.
+    let is_key_after_spread = props
+        .iter()
+        .skip_while(|attr| !matches!(attr, JsxAttribute::SpreadAttribute { .. }))
+        .any(|attr| match attr {
+            JsxAttribute::Attribute { name, .. } => name.slice() == b"key",
+            JsxAttribute::SpreadAttribute { .. } => false,
+        });
+    if cx.cg.host.is_jsx_classic() || is_key_after_spread {
+        let mut properties: G::PropertyList = AstAlloc::vec_with_capacity(props.len());
+        for attr in props {
+            properties.push(codegen_jsx_attribute(cx, attr)?);
+        }
+        return Ok(codegen_create_element_call(
+            cx,
+            tag_value,
+            properties,
+            child_nodes,
+            elem_loc,
+            close_loc,
+        ));
+    }
+
     let mut properties: G::PropertyList = AstAlloc::vec_with_capacity(props.len() + 1);
     let mut key_value: Option<Expr> = None;
     for attr in props {
@@ -2583,6 +2618,54 @@ fn codegen_jsx_expression(
         elem_loc,
         close_loc,
     ))
+}
+
+/// Build the `createElement(type, props | null, ...children)` call shape —
+/// mirrors `bun_js_parser::visit::visit_expr::e_jsx_element`: the callee is
+/// `options.jsx.factory` for the classic runtime and the auto-imported
+/// `createElement` for the automatic one.
+fn codegen_create_element_call(
+    cx: &mut Context,
+    tag_value: Expr,
+    properties: G::PropertyList,
+    children: ExprNodeList,
+    loc: Loc,
+    close_loc: Loc,
+) -> Expr {
+    let target = if cx.cg.host.is_jsx_classic() {
+        cx.cg.host.jsx_classic_factory(loc)
+    } else {
+        let target_ref = cx.cg.host.jsx_import(JsxImportKind::CreateElement);
+        cx.cg.host.record_usage(target_ref);
+        Expr::init(E::ImportIdentifier::new(target_ref, true), loc)
+    };
+
+    let mut args: ExprNodeList = AstAlloc::vec_with_capacity(2 + children.len());
+    args.push(tag_value);
+    args.push(if properties.is_empty() {
+        Expr::init(E::Null {}, loc)
+    } else {
+        Expr::init(
+            E::Object {
+                properties,
+                ..Default::default()
+            },
+            loc,
+        )
+    });
+    args.extend(children);
+
+    Expr::init(
+        E::Call {
+            target,
+            args,
+            can_be_unwrapped_if_unused: E::CallUnwrap::IfUnused,
+            was_jsx_element: true,
+            close_paren_loc: close_loc,
+            ..Default::default()
+        },
+        loc,
+    )
 }
 
 /// Build the automatic-runtime `jsx(type, props, key?)` / `jsxDEV(...)` call
@@ -3231,6 +3314,7 @@ fn property_access_expr(
                 target,
                 index: Expr::init(E::Number::new(n.value()), loc),
                 optional_chain,
+                is_import_property_use: false,
             },
             loc,
         ),

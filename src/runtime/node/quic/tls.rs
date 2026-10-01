@@ -340,6 +340,9 @@ fn load_private_key(ctx: *mut ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static s
 const X509_V_FLAG_CRL_CHECK: core::ffi::c_ulong = 0x4;
 /// `X509_V_FLAG_CRL_CHECK_ALL` — also check intermediate CAs (Node sets both).
 const X509_V_FLAG_CRL_CHECK_ALL: core::ffi::c_ulong = 0x8;
+/// `X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS` (oven-sh/boringssl) — as every other Bun SSL_CTX: an expired CA in the
+/// trust set does not shadow the valid certificate for the same issuer that the peer sends.
+const X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS: core::ffi::c_ulong = 0x2000000;
 
 fn load_crl_store(ctx: *mut ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
     // SAFETY: as above.
@@ -431,6 +434,10 @@ impl TlsContext {
             {
                 return Err("failed to pin TLS 1.3");
             }
+            ssl::X509_VERIFY_PARAM_set_flags(
+                ssl::SSL_CTX_get0_param(ctx),
+                X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS,
+            );
             if let Some(groups) = &config.groups {
                 if ssl::SSL_CTX_set1_groups_list(ctx, groups.as_ptr().cast()) != 1 {
                     return Err("invalid TLS groups list");

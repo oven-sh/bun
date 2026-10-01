@@ -31,23 +31,17 @@ use bun_spawn_sys::posix_spawn::posix_spawn;
 /// is `u32` there; `Status::from` casts before matching.
 #[cfg(unix)]
 pub use posix_spawn::WaitPidResult;
-#[cfg(windows)]
-#[derive(Clone, Copy)]
-pub struct WaitPidResult {}
 
 /// Low-level fd / memfd helpers historically grouped here as `spawn_sys`.
 /// MOVE_DOWN: real impls now live in `bun_sys` (lower crate); re-export so
 /// higher-tier callers (`bun_runtime::api::bun_spawn::stdio`, `Terminal`)
 /// keep their `bun_spawn::process::spawn_sys::*` import path.
 pub mod spawn_sys {
-    // POSIX-only — memfd / FD_CLOEXEC have no Windows equivalent
-    // (`can_use_memfd` is always-false there and `set_close_on_exec` is a
-    // no-op since Win32 handles default to non-inheritable). Gated so the
-    // re-export resolves without `bun_sys` having to ship Windows stubs.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub use bun_sys::{MemfdFlags, MemfdFlags as MemfdFlag, memfd_create};
+    // memfd is Linux; FD_CLOEXEC is POSIX (Win32 handles are non-inheritable unless asked).
     #[cfg(unix)]
-    pub use bun_sys::{can_use_memfd, set_close_on_exec};
+    pub use bun_sys::set_close_on_exec;
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub use bun_sys::{MemfdFlags, MemfdFlags as MemfdFlag, can_use_memfd, memfd_create};
 }
 
 bun_core::declare_scope!(PROCESS, visible);
@@ -56,12 +50,14 @@ bun_core::declare_scope!(PROCESS, visible);
 // The raw OS spawn layer (option/result structs, `Rusage`, `spawn_process_posix`)
 // moved into the leaf `bun_spawn_sys` crate so it has no event-loop dependency.
 // Re-export here so existing `bun_spawn::process::*` paths keep resolving.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub use bun_spawn_sys::PidFdType;
 pub use bun_spawn_sys::spawn_process::rusage_zeroed;
 #[cfg(windows)]
 pub use bun_spawn_sys::uv_getrusage;
 pub use bun_spawn_sys::{
-    Argv, CStrPtr, Dup2, Envp, ExtraPipe, PidFdType, PidT, PosixSpawnOptions, PosixSpawnResult,
-    PosixStdio, Rusage, StdioKind,
+    Argv, CStrPtr, Dup2, Envp, ExtraPipe, PidT, PosixSpawnOptions, PosixSpawnResult, PosixStdio,
+    Rusage, StdioKind,
 };
 
 /// Whether the process-exit poll should be registered one-shot.
@@ -232,10 +228,6 @@ impl Process {
         matches!(self.status, Status::Exited(_) | Status::Signaled(_))
     }
 
-    pub fn signal_code(&self) -> Option<bun_core::SignalCode> {
-        self.status.signal_code()
-    }
-
     /// Intrusive ref-count helpers. Kept on
     /// `&mut self` to match call-site shape; the actual op is atomic on the
     /// embedded `ThreadSafeRefCount` so the mutable borrow is conservative.
@@ -301,7 +293,7 @@ impl Process {
         }))
     }
 
-    // has_exited / has_killed / signal_code live in the always-on impl above.
+    // has_exited / has_killed live in the always-on impl above.
 
     pub fn on_exit(&mut self, status: Status, rusage: &Rusage) {
         // ProcessExitHandler is Copy (owner ptr + &'static vtable), so mirror
@@ -564,12 +556,7 @@ impl Process {
         } else {
             0
         };
-        let signal_code: Option<u8> =
-            if term_signal > 0 && term_signal < bun_core::SignalCode::SIGSYS as c_int {
-                Some(term_signal as u8)
-            } else {
-                None
-            };
+        let signal_code: Option<u8> = u8::try_from(term_signal).ok().filter(|&signal| signal != 0);
 
         bun_sys::windows::libuv::log!(
             "Process.onExit({}) code: {}, signal: {:?}",
@@ -595,11 +582,8 @@ impl Process {
             );
         } else {
             this.on_exit(
-                // libuv exit_status is negative (a `-UV_E*` code) on this arm;
-                // `E::from_raw` takes the unsigned table ordinal, so route
-                // through the libuv→bun errno map via the i32 ctor.
-                Status::Err(bun_sys::Error::from_code_int(
-                    i32::try_from(exit_status).expect("int cast"),
+                Status::Err(bun_sys::Error::from_code(
+                    bun_sys::windows::translate_uv_error_to_e(exit_status as c_int),
                     bun_sys::Tag::waitpid,
                 )),
                 &rusage,
@@ -755,11 +739,7 @@ pub enum Status {
     #[default]
     Running,
     Exited(Exited),
-    /// Raw signal byte — any `u8` (incl. Linux RT signals 32..=64) is a valid
-    /// payload. `bun_core::SignalCode` is exhaustive 1..=31,
-    /// so storing it here would force lossy `Signaled→Exited` rewrites for RT
-    /// signals — observable as `{exitCode:0, signal:null}` in JS. Carry the raw
-    /// byte and range-check in `signal_code()` instead.
+    /// The platform's number (`WTERMSIG`), any `u8`; see `Status::signal` / `Status::signal_code`.
     Signaled(u8),
     Err(bun_sys::Error),
 }
@@ -767,9 +747,7 @@ pub enum Status {
 #[derive(Clone, Copy, Default)]
 pub struct Exited {
     pub code: u8,
-    /// Raw signal number. `0` means "no signal".
-    /// `SignalCode` discriminants are 1..=31; storing it as the
-    /// enum and transmuting `0` would be UB. Convert via `Status::signal_code`.
+    /// The platform's signal number, or `0` for none; see `Status::signal`.
     pub signal: u8,
     /// Untruncated `GetExitCodeProcess` DWORD; `code` is its low byte.
     /// NTSTATUS crash codes only survive here (0xC0000409 → `code` 9).
@@ -824,46 +802,32 @@ impl Status {
                 signal: signal.unwrap_or(0),
             }));
         } else if let Some(sig) = signal {
-            // Any byte is valid. Carry the raw byte; `signal_code()` range-checks.
             return Some(Status::Signaled(sig));
         }
 
         None
     }
 
-    pub fn signal_code(&self) -> Option<bun_core::SignalCode> {
+    /// The terminating (or stopping) signal as the platform numbers it: re-raise it or add 128.
+    pub fn signal(&self) -> Option<bun_sys::SignalCode> {
         let raw = match self {
             Status::Signaled(sig) => *sig,
-            Status::Exited(exit) => exit.signal,
+            Status::Exited(exit) if exit.signal != 0 => exit.signal,
             _ => return None,
         };
-        bun_core::SignalCode::from_raw(raw)
+        Some(bun_sys::SignalCode(raw))
     }
-}
 
-/// Local shim — `bun_core::SignalCode` does not yet expose this.
-/// Shell-convention: 128 + signal number for signals 1..=31, else `None`.
-pub trait SignalCodeExt {
-    fn to_exit_code(self) -> Option<u8>;
-}
-impl SignalCodeExt for bun_core::SignalCode {
-    #[inline]
-    fn to_exit_code(self) -> Option<u8> {
-        let n = self as u8;
-        if (1..=31).contains(&n) {
-            Some(128u8.wrapping_add(n))
-        } else {
-            None
-        }
+    /// `signal()` as a named signal, to name or classify it; `None` also when the platform names none.
+    pub fn signal_code(&self) -> Option<bun_core::SignalCode> {
+        self.signal()?.named()
     }
 }
 
 impl core::fmt::Display for Status {
     fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if let Some(signal_code) = self.signal_code() {
-            if let Some(code) = signal_code.to_exit_code() {
-                return write!(writer, "code: {}", code);
-            }
+        if let Some(code) = self.signal().map(bun_sys::SignalCode::to_exit_code) {
+            return write!(writer, "code: {}", code);
         }
 
         match self {
@@ -1070,6 +1034,11 @@ pub mod waiter_thread_posix {
                 let t = bun_core::heap::take(this);
                 T::release_ref_from_waiter_thread(t.subprocess);
             }
+        }
+        /// A child's exit is delivered to its `Process` whatever became of the script that spawned it
+        /// (the child is reaped); what reaches script is the exit handler's to decide.
+        unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+            bun_event_loop::ContextId::NONE
         }
     }
 
@@ -1397,21 +1366,10 @@ pub mod waiter_thread_posix {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            // All by-value `c_uint`/`c_int` args; the kernel validates flags
-            // and returns -1/errno on failure — no memory-safety preconditions,
-            // so `safe fn` (Rust 2024) discharges the link-time proof.
-            unsafe extern "C" {
-                safe fn eventfd(
-                    initval: core::ffi::c_uint,
-                    flags: core::ffi::c_int,
-                ) -> core::ffi::c_int;
-            }
-            let fd = eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC);
-            if fd < 0 {
-                return Err(std::io::Error::last_os_error());
-            }
+            let fd = bun_sys::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC)
+                .map_err(|e| std::io::Error::from_raw_os_error(e.errno as i32))?;
             // SAFETY: single-writer init path (guarded by fetch_max above).
-            unsafe { (*instance()).eventfd = Fd::from_native(fd) };
+            unsafe { (*instance()).eventfd = fd };
         }
 
         let thread = std::thread::Builder::new()
@@ -1477,17 +1435,6 @@ pub mod waiter_thread_posix {
             }
         }
     }
-}
-
-/// Windows stub mirroring the unix `WaiterThreadPosix as WaiterThread` re-export.
-/// An uninhabited type with associated fns so callers can use
-/// `WaiterThread::should_use_waiter_thread()` uniformly on both platforms.
-#[cfg(not(unix))]
-pub enum WaiterThread {}
-
-#[cfg(not(unix))]
-impl WaiterThread {
-    pub fn set_should_use_waiter_thread() {}
 }
 
 // (PosixSpawnOptions / StdioKind / Dup2 / PosixStdio moved to bun_spawn_sys —
@@ -2079,13 +2026,9 @@ mod spawn_process_body {
             if treat_as_dup {
                 if fd_i == 1 {
                     // SAFETY: `dup_fds` is a 2-element out-array; libuv writes both.
-                    // `from_uv_rc` sets `from_libuv` so display goes through the
-                    // checked uv→errno translator (raw codes are sparse on Windows;
-                    // an unchecked `E::from_raw` would be UB for unmapped values).
-                    if let Some(err) = bun_sys::Error::from_uv_rc(
-                        unsafe { uv::uv_pipe(&mut dup_fds, 0, 0) },
-                        bun_sys::Tag::pipe,
-                    ) {
+                    if let Some(err) =
+                        unsafe { uv::uv_pipe(&mut dup_fds, 0, 0) }.to_error(bun_sys::Tag::pipe)
+                    {
                         cleanup_uv_files(&uv_files_to_close, loop_);
                         return Ok(Err(err));
                     }
@@ -2369,8 +2312,6 @@ mod spawn_process_body {
 
             #[cfg(windows)]
             pub windows: WindowsOptions,
-            #[cfg(not(windows))]
-            pub windows: (),
         }
 
         #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2436,8 +2377,6 @@ mod spawn_process_body {
                     argv0: None,
                     #[cfg(windows)]
                     windows: Default::default(),
-                    #[cfg(not(windows))]
-                    windows: (),
                 }
             }
         }
@@ -2457,8 +2396,6 @@ mod spawn_process_body {
                     new_process_group,
                     #[cfg(windows)]
                     windows: self.windows.clone(),
-                    #[cfg(not(windows))]
-                    windows: (),
                     ..Default::default()
                 }
             }
@@ -2569,11 +2506,6 @@ mod spawn_process_body {
                 } // EAGAIN / EWOULDBLOCK
                 if nreads < 0 {
                     this.pipe.read_stop();
-                    // Route through the libuv→errno translator: on Windows, raw
-                    // libuv codes are sparse negatives (e.g. UV_EOF = -4095) and
-                    // do **not** map 1:1 onto `bun_sys::E` discriminants, so an
-                    // unchecked `E::from_raw(err_enum())` would be UB for any
-                    // unmapped value.
                     let e = bun_sys::windows::translate_uv_error_to_e(nreads as core::ffi::c_int);
                     Self::on_error(this, e);
                 } else {
@@ -3118,8 +3050,7 @@ mod spawn_process_body {
             //
             // Also disabled off the watchdog-arming (main) thread: the subreaper
             // toggle is process-wide and `wait4(-1)` reaps *any* child, so
-            // concurrent calls from a worker pool (install's `repository::exec`
-            // git clones) would race the subreaper flag and steal each other's
+            // calls from other threads would race the subreaper flag and steal each other's
             // exit statuses. Those callers fall through to the plain
             // `reap_child(pid)` path below; the inherited PDEATHSIG on the main
             // thread still tears the whole process down if our parent dies.

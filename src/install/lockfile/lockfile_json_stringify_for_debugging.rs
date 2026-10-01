@@ -1,6 +1,5 @@
 use crate::lockfile::package::PackageColumns as _;
 use bun_core::fmt as bun_fmt;
-use bun_paths::PathBuffer;
 use bun_semver::ExternalString;
 use bun_semver::string::JsonFormatterOptions;
 
@@ -230,7 +229,7 @@ where
         let hoisted_deps = this.buffers.hoisted_dependencies.as_slice();
         let resolutions = this.buffers.resolutions.as_slice();
         let mut depth_buf = tree::depth_buf_uninit();
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         path_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
 
         for tree_id in 0..this.buffers.trees.as_slice().len() {
@@ -595,12 +594,6 @@ json_scalar_uint!(u8, u16, u32, u64, usize);
 impl JsonScalar for &[u8] {
     fn write_json(&self, out: &mut Vec<u8>, _: WriteStreamOptions) {
         encode_json_string(self, out);
-    }
-}
-impl<const N: usize> JsonScalar for &[u8; N] {
-    #[inline]
-    fn write_json(&self, out: &mut Vec<u8>, opts: WriteStreamOptions) {
-        self.as_slice().write_json(out, opts);
     }
 }
 

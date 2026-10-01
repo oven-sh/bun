@@ -16,7 +16,7 @@ use crate::api::bun_x509 as X509;
 // Declared here per port rules (call the linked C symbol directly); migrate
 // into `bun_boringssl_sys` once the bindgen pass covers them.
 // ──────────────────────────────────────────────────────────────────────────
-#[allow(non_camel_case_types, non_upper_case_globals)]
+#[allow(non_upper_case_globals)]
 pub(super) mod ffi {
     use super::boringssl::{SSL, SSL_CTX, X509, X509_STORE, X509_STORE_CTX, struct_stack_st_X509};
     use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
@@ -105,8 +105,7 @@ pub(super) mod ffi {
 
         // ── SSL_SESSION ───────────────────────────────────────────────────
         pub(crate) safe fn SSL_get_session(ssl: &SSL) -> *mut SSL_SESSION;
-        // Borrowed from the SSL's ex_data; no caller-side precondition.
-        pub(crate) safe fn us_ssl_get_new_session(ssl: &SSL) -> *mut SSL_SESSION;
+        pub(crate) fn SSL_SESSION_up_ref(session: *mut SSL_SESSION) -> c_int;
         // Both handles are opaque-ZST refs (`UnsafeCell` body); BoringSSL bumps
         // `session`'s refcount internally — no caller-side precondition.
         pub(crate) safe fn SSL_set_session(ssl: &SSL, session: &SSL_SESSION) -> c_int;
@@ -173,10 +172,6 @@ pub(super) mod ffi {
         // `SSL::opaque_ref` (panics on null, which every site already guards).
         pub(crate) safe fn SSL_get_servername(ssl: &SSL, ty: c_int) -> *const c_char;
         pub(crate) safe fn SSL_is_init_finished(ssl: &SSL) -> c_int;
-        /// Installs the inline-reject verify recorder (usockets openssl.c);
-        /// the BIO hook + handshake drive then keep a rejected client's
-        /// Finished off the wire and fail the handshake with the X509 verdict.
-        pub(crate) safe fn us_internal_ssl_set_inline_reject(ssl: &SSL);
         pub(crate) safe fn SSL_get_peer_cert_chain(ssl: &SSL) -> *mut struct_stack_st_X509;
         pub(crate) safe fn SSL_get0_alpn_selected(
             ssl: &SSL,
@@ -250,13 +245,10 @@ pub(super) mod ffi {
         );
         // Returns the borrowed cert store of a live `SSL_CTX*`.
         pub(crate) safe fn SSL_CTX_get_cert_store(ctx: &SSL_CTX) -> *mut X509_STORE;
-        // Emptiness probe for a cert store: `get0_objects` borrows the
-        // object stack and `OPENSSL_sk_num(NULL)` returns 0.
-        pub(crate) fn X509_STORE_get0_objects(store: *mut X509_STORE) -> *mut c_void;
-        pub(crate) fn OPENSSL_sk_num(sk: *const c_void) -> usize;
         // The process-wide default root store; up-refs before returning, so
         // the caller owns a reference it must release with X509_STORE_free.
         pub(crate) fn us_get_shared_default_ca_store() -> *mut X509_STORE;
+        pub(crate) fn us_ssl_ctx_has_user_ca(ctx: *mut SSL_CTX) -> c_int;
         pub(crate) fn X509_STORE_free(store: *mut X509_STORE);
         // X509_STORE_CTX lifecycle for issuer lookups; `new` allocates,
         // `init` borrows the store, `free` releases. Used to extend the peer
@@ -560,7 +552,8 @@ pub(super) fn get_peer_certificate(
         // contains the bundled roots. The getter up-refs, so the temporary
         // reference is released after the walk.
         let mut shared_store: *mut boringssl::X509_STORE = core::ptr::null_mut();
-        if store.is_null() || ffi::OPENSSL_sk_num(ffi::X509_STORE_get0_objects(store)) == 0 {
+        let ssl_ctx = ffi::SSL_get_SSL_CTX(boringssl::SSL::opaque_ref(ssl_ptr));
+        if store.is_null() || ffi::us_ssl_ctx_has_user_ca(ssl_ctx) == 0 {
             shared_store = ffi::us_get_shared_default_ca_store();
             if !shared_store.is_null() {
                 store = shared_store;
@@ -901,6 +894,10 @@ pub(crate) fn set_key_cert(
     unsafe {
         let ctx = &(*sc).ctx;
         ffi::SSL_set_SSL_CTX(ssl_ptr.cast(), ctx.as_ptr().cast());
+        // A client keeps no session id context (see `us_internal_ssl_attach`).
+        if ffi::SSL_is_server(boringssl::SSL::opaque_ref(ssl_ptr)) == 0 {
+            boringssl::SSL_set_session_id_context(ssl_ptr, core::ptr::null(), 0);
+        }
         // SSL_set_SSL_CTX stops retargeting the certificate once ClientHello
         // processing has reached ALPN selection, and Node supports calling
         // setKeyCert from ALPNCallback - apply the identity directly.
@@ -1094,10 +1091,10 @@ pub(super) fn get_alpn_protocol(this: &This, global: &JSGlobalObject) -> JsResul
     // SAFETY: SSL_get0_alpn_selected guarantees alpn_proto points to alpn_proto_len bytes owned by the SSL.
     let slice = unsafe { bun_core::ffi::slice(alpn_proto, alpn_proto_len as usize) };
     if strings::eql(slice, b"h2") {
-        return BunString::static_("h2").to_js(global);
+        return Ok(global.common_strings().alpn_h2());
     }
     if strings::eql(slice, b"http/1.1") {
-        return BunString::static_("http/1.1").to_js(global);
+        return Ok(global.common_strings().alpn_http11());
     }
     bun_string_jsc::create_utf8_for_js(global, slice)
 }
@@ -1105,10 +1102,13 @@ pub(super) fn get_alpn_protocol(this: &This, global: &JSGlobalObject) -> JsResul
 /// The session Node's `getSession()`/`getTLSTicket()` read: the one most
 /// recently delivered to the new-session callback (the only place BoringSSL
 /// surfaces a TLS 1.3 NewSessionTicket), falling back to the SSL's own.
-fn current_session(ssl: &boringssl::SSL) -> *mut ffi::SSL_SESSION {
-    let new = ffi::us_ssl_get_new_session(ssl);
-    if !new.is_null() {
-        return new;
+fn current_session(this: &This, ssl: &boringssl::SSL) -> *mut ffi::SSL_SESSION {
+    if let Some(latest) = this.latest_session.get() {
+        return latest.as_ptr().cast();
+    }
+    let latest = this.socket.get().wrapper_latest_session();
+    if !latest.is_null() {
+        return latest.cast();
     }
     ffi::SSL_get_session(ssl)
 }
@@ -1121,7 +1121,7 @@ pub(super) fn get_session(
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
-    let session = current_session(boringssl::SSL::opaque_ref(ssl_ptr));
+    let session = current_session(this, boringssl::SSL::opaque_ref(ssl_ptr));
     if session.is_null() {
         return Ok(JSValue::UNDEFINED);
     }
@@ -1202,7 +1202,7 @@ pub(super) fn get_tls_ticket(
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
-    let session = current_session(boringssl::SSL::opaque_ref(ssl_ptr));
+    let session = current_session(this, boringssl::SSL::opaque_ref(ssl_ptr));
     if session.is_null() {
         return Ok(JSValue::UNDEFINED);
     }
@@ -1311,12 +1311,14 @@ pub(super) fn set_verify_mode(
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
-    // we always allow and check the SSL certificate after the handshake or renegotiation
-    ffi::SSL_set_verify(
-        boringssl::SSL::opaque_ref(ssl_ptr),
-        verify_mode,
-        Some(always_allow_ssl_verify_callback),
-    );
+    let ssl = boringssl::SSL::opaque_ref(ssl_ptr);
+    if !acts_as_server && reject_unauthorized && ffi::SSL_is_init_finished(ssl) == 0 {
+        // The same in-handshake chain check as for a client that rejects from the start.
+        this.socket.get().set_inline_reject();
+    } else {
+        // we always allow and check the SSL certificate after the handshake or renegotiation
+        ffi::SSL_set_verify(ssl, verify_mode, Some(always_allow_ssl_verify_callback));
+    }
     Ok(JSValue::UNDEFINED)
 }
 

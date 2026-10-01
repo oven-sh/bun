@@ -337,6 +337,10 @@ void HostClient::handleReply(const Frame& h, Reader r)
         return;
     }
     case Reply::NavFailEvent: {
+        // Callback only. The slot settles on the NavFailed that follows when
+        // the failure belongs to an IPC navigate; the delegate also fails
+        // for navigations no IPC navigate owns (reload, back/forward, the
+        // page itself), and only the host can tell them apart.
         WTF::String err = r.str();
         view->m_loading = false;
         if (JSObject* cb = view->m_onNavigationFailed.get()) {
@@ -404,8 +408,9 @@ void HostClient::handleReply(const Frame& h, Reader r)
         settleSlot(g, view, view->m_pendingNavigate, true, jsUndefined());
         return;
     case Reply::NavFailed:
-        // navigateIPC sends NavFailed directly for invalid URLs — no
-        // NavFailEvent precedes it, so the only m_loading reset path is here.
+        // NavFailEvent precedes this on navigation failures. host_main's
+        // invalid-viewId NavFailed has no event, so keep the m_loading
+        // reset here too.
         view->m_loading = false;
         settleSlot(g, view, view->m_pendingNavigate, false, createError(g, r.str()));
         return;
@@ -655,16 +660,23 @@ JSPromise* reload(JSGlobalObject* g, JSWebView* view)
     return sendOp(g, view, view->m_pendingMisc, Op::Reload, nullptr, 0);
 }
 
+// close() variant, mirror of ChromeBackend's rejectViewSlotsAsHandled:
+// see rejectSlotAsHandled (JSWebView.h).
+static void rejectViewSlotsAsHandled(JSGlobalObject* g, JSWebView* view, JSValue err)
+{
+    view->m_loading = false;
+    rejectSlotAsHandled(g, view, view->m_pendingNavigate, err);
+    rejectSlotAsHandled(g, view, view->m_pendingEval, err);
+    rejectSlotAsHandled(g, view, view->m_pendingScreenshot, err);
+    rejectSlotAsHandled(g, view, view->m_pendingMisc, err);
+}
+
 void close(JSWebView* view)
 {
     auto& c = client();
     if (c.global) {
         auto* g = c.global;
-        JSValue err = createError(g, "WebView closed"_s);
-        settleSlot(g, view, view->m_pendingNavigate, false, err);
-        settleSlot(g, view, view->m_pendingEval, false, err);
-        settleSlot(g, view, view->m_pendingScreenshot, false, err);
-        settleSlot(g, view, view->m_pendingMisc, false, err);
+        rejectViewSlotsAsHandled(g, view, createError(g, "WebView closed"_s));
     }
     c.writeFrame(Op::Close, view->m_viewId, nullptr, 0);
     c.viewsById.erase(view->m_viewId);

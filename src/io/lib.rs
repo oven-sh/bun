@@ -54,7 +54,7 @@ pub use keep_alive::KeepAlive;
 //                  process object is signaled (i.e. has terminated).
 // Downstream code calls `install()` / `enable()` / `is_enabled()`
 // unconditionally, so both arms expose the same surface.
-#[cfg(not(windows))]
+#[cfg(unix)]
 #[path = "ParentDeathWatchdog.rs"]
 pub mod parent_death_watchdog;
 #[cfg(windows)]
@@ -445,9 +445,6 @@ pub use posix_event_loop::Flags as PollKind;
 pub mod file_poll {
     pub use super::Store;
     pub use super::posix_event_loop::{Flags, FlagsSet};
-    /// Kqueue/epoll watch kind passed to `FilePoll::register`.
-    #[allow(dead_code)]
-    pub(crate) type Pollable = Flags;
 }
 
 // ── bun_io original submodules ──────────────────────────────────────────────
@@ -500,6 +497,7 @@ bun_dispatch::link_interface! {
         MultiRunPipeReader,
         TestParallelWorkerPipe,
         LifecycleScript,
+        InstallGit,
         SecurityScan,
     ] {
         fn has_on_read_chunk() -> bool;
@@ -678,8 +676,8 @@ use bun_sys::{self as sys, E, Fd};
 
 // `loop` is a Rust keyword, so the static is
 // named `io_loop` but the runtime tagname is `"loop"` so `BUN_DEBUG_loop=1` works.
+#[cfg(not(windows))]
 #[allow(non_upper_case_globals)]
-#[allow(dead_code)]
 pub(crate) static io_loop: bun_core::output::ScopedLogger =
     bun_core::output::ScopedLogger::new("loop", bun_core::output::Visibility::Visible);
 // All `log!` call sites are inside epoll/kqueue paths (Linux/macOS/FreeBSD); on
@@ -2021,7 +2019,7 @@ pub mod waker {
     #[cfg(target_os = "macos")]
     pub struct KEventWaker {
         kq: i32,
-        machport: bun_core::mach_port,
+        machport: libc::mach_port_t,
         pub machport_buf: Box<[u8]>,
     }
 
@@ -2030,10 +2028,10 @@ pub mod waker {
 
     #[cfg(target_os = "macos")]
     unsafe extern "C" {
-        // Defined in src/io/io_darwin.cpp. `mach_port` is a by-value `u32`;
+        // Defined in src/io/io_darwin.cpp. `mach_port_t` is a by-value `u32`;
         // bad/dead ports are reported by mach return codes, not UB.
-        fn io_darwin_create_machport(kq: i32, buf: *mut c_void, len: usize) -> bun_core::mach_port;
-        safe fn io_darwin_schedule_wakeup(port: bun_core::mach_port) -> bool;
+        fn io_darwin_create_machport(kq: i32, buf: *mut c_void, len: usize) -> libc::mach_port_t;
+        safe fn io_darwin_schedule_wakeup(port: libc::mach_port_t) -> bool;
     }
 
     #[cfg(target_os = "macos")]
@@ -2248,6 +2246,8 @@ pub mod closer {
     #[cfg(windows)]
     use crate::IntrusiveUvFs as _;
     #[cfg(windows)]
+    use bun_sys::ReturnCodeExt as _;
+    #[cfg(windows)]
     use bun_sys::windows::libuv as uv;
     #[cfg(windows)]
     use core::ffi::c_void;
@@ -2275,9 +2275,9 @@ pub mod closer {
                     fd.uv(),
                     Some(Self::on_close),
                 )
-                .err_enum()
+                .errno()
                 {
-                    bun_core::debug_warn!("libuv close() failed = {}", err);
+                    bun_core::debug_warn!("libuv close() failed = {:?}", err);
                     drop(bun_core::heap::take(closer));
                 }
             }
@@ -2297,8 +2297,8 @@ pub mod closer {
                 );
 
                 #[cfg(debug_assertions)]
-                if let Some(err) = (*closer).io_request.result.err_enum() {
-                    bun_core::debug_warn!("libuv close() failed = {}", err);
+                if let Some(err) = (*closer).io_request.result.errno() {
+                    bun_core::debug_warn!("libuv close() failed = {:?}", err);
                 }
 
                 (*req).deinit();

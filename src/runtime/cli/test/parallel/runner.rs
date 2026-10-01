@@ -132,6 +132,8 @@ pub(crate) fn run_as_coordinator(
             alive: false,
             exit_status: None,
             reap_pending: false,
+            reached_ready: false,
+            startup_failures: 0,
         });
         let w: *mut Worker = workers.last_mut().unwrap();
         // SAFETY: w points into workers; Vec will not reallocate (capacity == k)
@@ -346,12 +348,12 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     }
     // Was `inline for` over a heterogeneous-ish tuple; all elements are
     // (&'static [u8], &[Box<[u8]>]) so a const array + plain for suffices.
-    let multi_value_flags: [(&'static [u8], &[Box<[u8]>]); 6] = [
+    // No `--env-file`: a worker loads no env file (see `TestCommand::exec`).
+    let multi_value_flags: [(&'static [u8], &[Box<[u8]>]); 5] = [
         (b"--conditions\0", &ctx.args.conditions),
         (b"--drop\0", &ctx.args.drop),
         (b"--main-fields\0", &ctx.args.main_fields),
         (b"--extension-order\0", &ctx.args.extension_order),
-        (b"--env-file\0", &ctx.args.env_files),
         (b"--feature\0", &ctx.args.feature_flags),
     ];
     for (flag, values) in multi_value_flags {
@@ -378,11 +380,17 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     if ctx.args.allow_ffi_cc == Some(false) {
         argv.push(lit(b"--no-ffi-cc\0"));
     }
+    match bun_core::code_generation_from_strings() {
+        bun_core::CodeGenerationFromStrings::Allowed => {}
+        bun_core::CodeGenerationFromStrings::DisallowedLikeNode => {
+            argv.push(lit(b"--disallow-code-generation-from-strings\0"));
+        }
+        bun_core::CodeGenerationFromStrings::Disallowed => {
+            argv.push(lit(b"--disallow-code-generation-from-strings=strict\0"));
+        }
+    }
     if matches!(ctx.debug.macros, MacroOptions::Disable) {
         argv.push(lit(b"--no-macros\0"));
-    }
-    if ctx.args.disable_default_env_files {
-        argv.push(lit(b"--no-env-file\0"));
     }
     if let Some(jsx) = &ctx.args.jsx {
         if !jsx.factory.is_empty() {
@@ -457,7 +465,6 @@ fn jsx_runtime_tag_name(r: bun_options_types::schema::api::JsxRuntime) -> &'stat
     match r {
         J::Automatic => "automatic",
         J::Classic => "classic",
-        J::Solid => "solid",
         J::_none => "_none",
     }
 }
@@ -469,7 +476,7 @@ fn jsx_runtime_tag_name(r: bun_options_types::schema::api::JsxRuntime) -> &'stat
 /// PDEATHSIG — coordinator death surfaces as channel close. Same `Channel`
 /// abstraction as the coordinator side: usockets over the socketpair on POSIX,
 /// `uv.Pipe` over the inherited duplex named-pipe on Windows.
-pub struct WorkerCommands {
+pub(crate) struct WorkerCommands {
     pub(crate) channel: Channel<WorkerCommands>,
     /// Coordinator dispatches one `.run` and waits for `.file_done` before
     /// the next, so a single slot is sufficient. Owned path storage.
@@ -523,6 +530,25 @@ impl<'a> WorkerLoop<'a> {
         // SAFETY: single-threaded worker; WORKER_CMDS is only read on this thread
         unsafe {
             WORKER_CMDS.write(Some(&raw mut self.cmds));
+        }
+
+        // Test hook: "abort" dies by SIGABRT (the startup-panic branch),
+        // anything else exits 1 (the bounded-respawn branch). Real init
+        // failures aren't reproducible from a test. Debug/ASAN builds only,
+        // so a stray env var can't disable --parallel in a release build.
+        if cfg!(any(debug_assertions, bun_asan)) {
+            // SAFETY: env loader is initialized before the test runner runs.
+            let env = unsafe { &*vm.transpiler.env };
+            if let Some(mode) = env.get(b"BUN_TEST_WORKER_EXIT_BEFORE_READY") {
+                bun_core::pretty_errorln!(
+                    "test worker exiting before ready (BUN_TEST_WORKER_EXIT_BEFORE_READY)"
+                );
+                Output::flush();
+                if bun_core::strings::eql(mode, b"abort") {
+                    std::process::abort();
+                }
+                Global::exit(1);
+            }
         }
 
         // SAFETY: single-threaded worker; WORKER_FRAME is a process-global scratch buffer
@@ -612,7 +638,6 @@ impl<'a> WorkerLoop<'a> {
 // `vm` must stay a raw pointer: it is stored in `WorkerLoop`/`WorkerCommands`
 // while a `&mut` derived from it (`vm_ref`) is also live, so a reference param
 // would alias. The `# Safety` contract above documents the caller's obligation.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) fn run_as_worker(
     reporter: &mut CommandLineReporter,
     vm: *mut VirtualMachine,
@@ -660,6 +685,7 @@ pub(crate) fn run_as_worker(
     // (lastChanceToFinalize) runs; bypassing it leaks JSC-owned native state.
     vm_ref.exit_handler.exit_code = 0;
     vm_ref.exit_handler.skip_exit_listeners = test_command::skip_exit_listeners(wloop.reporter);
+    vm_ref.exit_handler.requested = test_command::exit_is_requested();
     vm_ref.run_with_api_lock(|| {
         // SAFETY: caller guarantees `vm` is a valid live VM pointer for the worker's lifetime.
         unsafe {

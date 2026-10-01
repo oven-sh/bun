@@ -65,11 +65,6 @@ pub struct Builtins<'a> {
 }
 
 impl<'a> Builtins<'a> {
-    /// Locate and parse the builtins section of an ELF, Mach-O or PE executable image.
-    pub fn from_executable(file: &'a [u8]) -> Result<Self, BuiltinsError> {
-        Self::parse(find_section(file)?)
-    }
-
     /// Parse a builtins section (header onward). Trailing bytes past the blob are ignored.
     pub fn parse(section: &'a [u8]) -> Result<Self, BuiltinsError> {
         use BuiltinsError::Invalid;
@@ -133,15 +128,6 @@ impl<'a> Builtins<'a> {
         })
     }
 
-    /// Number of JS internal modules; ids `0..len()` are InternalModuleRegistry field indices.
-    pub fn len(&self) -> u32 {
-        self.count
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.count == 0
-    }
-
     pub fn module(&self, id: u32) -> Option<Module<'a>> {
         if id >= self.count {
             return None;
@@ -161,7 +147,7 @@ impl<'a> Builtins<'a> {
         (0..self.count).find(|&id| self.module(id).is_some_and(|m| m.name == name))
     }
 
-    /// The modules `id` requires while it is being evaluated.
+    /// The modules `id` can require: at evaluation or later, from a lazy `require()` inside one of its functions.
     pub fn dependencies(&self, id: u32) -> impl Iterator<Item = u32> + 'a {
         let (start, end) = if id < self.count {
             (
@@ -173,10 +159,6 @@ impl<'a> Builtins<'a> {
         };
         let deps = self.deps;
         (start..end).map(move |i| u16_at(deps, i * 2) as u32)
-    }
-
-    pub fn modules(&self) -> impl Iterator<Item = Module<'a>> + '_ {
-        (0..self.count).filter_map(move |id| self.module(id))
     }
 }
 

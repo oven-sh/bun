@@ -77,6 +77,9 @@ devTest("image tag", {
       });
       await dev.fetch("/").expect.toInclude('alt="modified image"');
     });
+    // The image did not change, so the reloaded page keeps its URL and the asset is still served.
+    expect(await c.js`document.querySelector("img").src`).toBe(url);
+    await dev.fetch(url).expect.toBe("FIRST");
 
     // Editing image content causes a hard reload because the html must reflect the new image content
     await c.expectReload(async () => {
@@ -149,6 +152,41 @@ devTest("import then create", {
       await dev.write("data.ts", "export default 'data';");
     });
     await c.expectMessage("data");
+  },
+});
+devTest("a file whose import failed to resolve is imported by a second file", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["/entry.ts"],
+    }),
+    "entry.ts": `
+      import "./broken";
+      import "./first";
+    `,
+    "broken.ts": `
+      import "not-installed-pkg";
+      export const value = "value";
+    `,
+    // broken.ts has failed by the time the bundler gets to its second importer.
+    "first.ts": `
+      import "./second";
+    `,
+    "second.ts": `
+      import "./third";
+    `,
+    "third.ts": `
+      import { value } from "./broken";
+      console.log(value);
+    `,
+  },
+  async test(dev) {
+    const c = await dev.client("/", {
+      errors: ['broken.ts:1:8: error: Could not resolve: "not-installed-pkg". Maybe you need to "bun install"?'],
+    });
+    await c.expectReload(async () => {
+      await dev.write("broken.ts", `export const value = "value";`);
+    });
+    await c.expectMessage("value");
   },
 });
 devTest("external links", {

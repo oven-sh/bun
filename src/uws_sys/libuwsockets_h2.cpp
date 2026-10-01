@@ -157,8 +157,6 @@ bool uws_h2_res_write(uws_h2_res_t* res, const char* data, size_t* length)
     return ok;
 }
 
-uint64_t uws_h2_res_get_write_offset(uws_h2_res_t* res) { return ((Http2Response*)res)->getWriteOffset(); }
-void uws_h2_res_override_write_offset(uws_h2_res_t* res, uint64_t off) { ((Http2Response*)res)->overrideWriteOffset(off); }
 bool uws_h2_res_has_responded(uws_h2_res_t* res) { return ((Http2Response*)res)->hasResponded(); }
 size_t uws_h2_res_get_buffered_amount(uws_h2_res_t* res) { return ((Http2Response*)res)->getBufferedAmount(); }
 
@@ -168,9 +166,6 @@ void uws_h2_res_end_sendfile(uws_h2_res_t* res, uint64_t, bool close)
 {
     ((Http2Response*)res)->sendTerminatingChunk(close);
 }
-void uws_h2_res_prepare_for_sendfile(uws_h2_res_t*) {}
-void* uws_h2_res_get_native_handle(uws_h2_res_t* res) { return res; }
-void* uws_h2_res_get_socket_data(uws_h2_res_t* res) { return ((Http2Response*)res)->getSocketData(); }
 
 void uws_h2_res_on_writable(uws_h2_res_t* res, bool (*h)(uws_h2_res_t*, uint64_t, void*), void* opt)
 {
@@ -200,8 +195,6 @@ void uws_h2_res_cork(uws_h2_res_t* res, void* ctx, void (*corker)(void*))
 {
     ((Http2Response*)res)->cork([ctx, corker]() { corker(ctx); });
 }
-void uws_h2_res_uncork(uws_h2_res_t*) {}
-bool uws_h2_res_is_corked(uws_h2_res_t*) { return false; }
 
 typedef struct uws_res_s uws_res_t;
 uint64_t uws_res_get_remote_address_info(uws_res_t* res, const char** dest, int* port, bool* is_ipv6);

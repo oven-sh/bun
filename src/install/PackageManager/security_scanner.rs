@@ -38,9 +38,6 @@ use crate::hoisted_install as HoistedInstall;
 use crate::isolated_install as IsolatedInstall;
 use crate::package_manager_real::package_manager_options::Do;
 
-/// Signal name for a raw signal byte.
-/// `Status::Signaled` carries the raw byte; named range 1..=31 maps via
-/// `SignalCode::name()`, RT/out-of-range values fall back to "UNKNOWN".
 #[inline]
 fn signal_name(raw: u8) -> &'static str {
     bun_sys::SignalCode(raw).name().unwrap_or("UNKNOWN")
@@ -906,7 +903,6 @@ fn attempt_security_scan_with_retry(
         process: None,
         ipc_reader: BufferedReader::init::<SecurityScanSubprocess>(),
         ipc_data: Vec::new(),
-        stderr_data: Vec::new(),
         has_received_ipc: false,
         exit_status: None,
         remaining_fds: 0,
@@ -951,7 +947,6 @@ pub struct SecurityScanSubprocess<'a> {
     process: Option<ProcessHandle>,
     ipc_reader: BufferedReader,
     ipc_data: Vec<u8>,
-    stderr_data: Vec<u8>,
     has_received_ipc: bool,
     exit_status: Option<Status>,
     remaining_fds: i8,
@@ -1011,7 +1006,6 @@ bun_io::impl_buffered_reader_parent! {
 impl<'a> SecurityScanSubprocess<'a> {
     pub(crate) fn spawn(&mut self) -> Result<(), Error> {
         self.ipc_data = Vec::new();
-        self.stderr_data = Vec::new();
         let parent: *mut Self = self;
         self.ipc_reader.set_parent(parent.cast());
 
@@ -1132,10 +1126,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         let mut json_fds: [uv::uv_file; 2] = [0; 2];
         // SAFETY: FFI — `json_fds` is a 2-element out-array; flags are valid.
         let pipe_rc = unsafe { uv::uv_pipe(&mut json_fds, 0, uv::UV_NONBLOCK_PIPE as i32) };
-        // Use the translating overlay (`ReturnCodeExt::err_enum_e`) — the inherent
-        // `ReturnCode::err_enum()` returns the raw |uv_code| (e.g. 4071 for
-        // UV_EINVAL on Windows) without mapping to POSIX `bun.sys.E`.
-        if let Some(e) = pipe_rc.err_enum_e() {
+        if let Some(e) = pipe_rc.errno() {
             ipc_output_fds[0].close();
             ipc_output_fds[1].close();
             return Err(bun_errno::from_errno(e as i32).into());
@@ -1436,10 +1427,6 @@ impl<'a> SecurityScanSubprocess<'a> {
                                 spins = 0;
                             }
                             Err(e) => match e.get_errno() {
-                                // macOS `bun_sys::read` is single-shot
-                                // (`read$NOCANCEL`); WaiterThread
-                                // + PTY matrix arms can land signals mid-drain.
-                                bun_sys::E::EINTR => continue,
                                 bun_sys::E::EAGAIN => {
                                     // Bounded spin only — if we don't converge
                                     // to EOF here, fall through to the poll
@@ -1490,7 +1477,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         _original_cwd: &[u8],         // Reserved for future use
         is_retry: bool,
     ) -> Result<ScanAttemptResult, Error> {
-        // `defer { ipc_data.deinit(); stderr_data.deinit(); }` — Vec fields drop with self.
+        // `defer { ipc_data.deinit(); }`: Vec fields drop with self.
 
         let Some(status) = self.exit_status.clone() else {
             Output::err_generic(

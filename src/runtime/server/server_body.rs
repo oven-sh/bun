@@ -2354,8 +2354,6 @@ where
             // sentinel and calls `clone_into(.., preserve_url=false)`.
             match unsafe { (*request_).clone(&ctx.js_thread_of_caller(callframe)) } {
                 Ok(cloned) => cloned,
-                // A used or locked body rejects the returned promise, like
-                // every other bad argument here.
                 Err(err) => {
                     return Ok(JSPromise::rejected_promise_with_caught_exception(ctx, err)?.to_js());
                 }

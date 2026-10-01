@@ -963,22 +963,38 @@ describe("new Request() throws when the input Request's body is disturbed or loc
     expect(await Promise.all([source.text(), copy.text()])).toEqual(["hello", "hello"]);
   });
 
+  test("an empty-string body input is copied, not shared through the body getter", async () => {
+    const source = new Request("http://example.com/", { method: "POST", body: "" });
+    const copy = new Request(source, {});
+    expect(copy.body).not.toBe(source.body);
+    expect(await Promise.all([source.text(), copy.text()])).toEqual(["", ""]);
+
+    const response = new Response("");
+    const fromResponse = new Request("http://example.com/", response);
+    expect(await Promise.all([response.text(), fromResponse.text()])).toEqual(["", ""]);
+  });
+
   test("Bun.serve: new Request(req) of an already-read incoming request throws", async () => {
-    const { promise, resolve } = Promise.withResolvers<string>();
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
     await using server = Bun.serve({
       port: 0,
       async fetch(req) {
-        const original = await req.text();
         try {
-          new Request(req);
-          resolve(`no throw (original=${JSON.stringify(original)})`);
+          const original = await req.text();
+          try {
+            new Request(req);
+            resolve(`no throw (original=${JSON.stringify(original)})`);
+          } catch (e) {
+            resolve(`${(e as Error).constructor.name}: ${(e as Error).message}`);
+          }
         } catch (e) {
-          resolve(`${(e as Error).constructor.name}: ${(e as Error).message}`);
+          reject(e);
         }
         return new Response("ok");
       },
     });
-    await fetch(server.url, { method: "POST", body: "hello" });
+    const response = await fetch(server.url, { method: "POST", body: "hello" });
+    expect(response.status).toBe(200);
     expect(await promise).toBe("TypeError: Body is disturbed or locked");
   });
 

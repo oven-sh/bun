@@ -379,9 +379,7 @@ impl Request {
             .set_cookies(cookie_map.map(|c| std::ptr::from_ref::<CookieMap>(c).cast_mut()));
     }
 
-    /// `BunRequest.prototype.clone` (the `Bun.serve` `routes:` subclass) goes
-    /// through `JSBunRequest::clone` -> here, not through [`Self::do_clone`].
-    /// [`Self::clone_into`] runs the fetch-spec usability check for both.
+    /// `BunRequest.prototype.clone` (`JSBunRequest::clone`) calls this, not [`Self::do_clone`].
     #[bun_uws::uws_callback(export = "Request__clone")]
     pub(crate) fn ffi_clone(&self, global_this: &JSGlobalObject) -> Option<Box<Request>> {
         // `BunRequest.prototype.clone`, a C++ host function, calls this.
@@ -1133,10 +1131,8 @@ impl Request {
 
                     if !fields.contains(Fields::Body) {
                         match request.body_value() {
-                            BodyValue::Null | BodyValue::Empty => {}
+                            BodyValue::Null => {}
                             _ => {
-                                // Fetch spec Request(input, init): init gave no
-                                // body and input is unusable, so throw.
                                 if let Err(e) = request.throw_if_body_unusable(cx.global()) {
                                     bail!(Err(e));
                                 }
@@ -1186,7 +1182,7 @@ impl Request {
 
                     if !fields.contains(Fields::Body) {
                         match response.get_body_value() {
-                            BodyValue::Null | BodyValue::Empty => {}
+                            BodyValue::Null => {}
                             _ => {
                                 if let Err(e) = response.throw_if_body_unusable(cx.global()) {
                                     bail!(Err(e));
@@ -1474,9 +1470,7 @@ impl Request {
         cx: &bun_jsc::JsThread<'_>,
         preserve_url: bool,
     ) -> JsResult<()> {
-        // Fetch spec: `clone()` step 1 and the Request constructor's "input is
-        // unusable" step. Every copy of a Request (the constructor, `clone()`,
-        // `BunRequest.prototype.clone`, `server.fetch(request)`) passes here.
+        // Every copy of a Request passes here, so the fetch-spec usability check lives here only.
         self.throw_if_body_unusable(cx.global())?;
         // allocator param dropped (global mimalloc)
         let _ = self.ensure_url();

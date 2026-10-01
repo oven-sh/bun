@@ -21,3 +21,21 @@ oracle/extract-tseslint.cjs  node extract-tseslint.cjs <test file under packages
 oracle/classify-tseslint-nuv.cjs   node classify-tseslint-nuv.cjs cases/tseslint-no-unused-vars.json --out cases/tseslint-nuv-carried.json
                          the cases with default options under the configuration of a lint run, with the answer of @typescript-eslint/no-unused-vars
                          as `expect` (237 and 224 cases; `own: differs` where that is not what the test itself expects: jsxPragma, comments that configure).
+oracle/bun-accepts.cjs   node bun-accepts.cjs <list.json>...   which cases of a list the lint parse of bun takes (the probe prints PARSE_ERROR).
+oracle/inline-type-export.cjs   node inline-type-export.cjs <file.ts>...   what no-unused-vars adds when the names with `type` inside the braces
+                         of a local export clause are not seen (the lint tree has no item for them).
+cases/nupcm-in-targets-ts.json   `#x in o` where typescript-eslint's parser takes it as an assignment target (9 cases).
+Runs of the probe of 2026-10-01 21:17 (/tmp/ru/nupcm2, this source) against the oracle:
+  seed/no-unused-private-class-members.json 731 cases: 728 same, 3 that bun's parser rejects, 0 missing, 0 extra, 0 at another place (287 reports);
+  cases/nupcm-in-targets-ts.json 8 same, 1 that only ESLint's parser rejects;
+  171 files of TypeScript's tests/cases that use private names: 135 same, 36 that a parser rejects (165 reports);
+  96 files of bun's test/, src/js, packages: 93 same, 3 that both reject (61 reports); 53 files of node_modules: same (0 reports).
+The site facts of ../rule-no-unused-vars/topdown (sitesprobe, built 20:04) against ESLint's trees with sites-estree.cjs, run here:
+  /tmp/nuv/jsall.txt 7,299 files: 1,034,571 identifiers, 0 different;
+  /tmp/nuv/tsall.txt 15,185 files (1,877 rejected by bun, 176 by typescript-eslint): 870,374 identifiers, 4 different (2 in
+  assignmentToInstantiationExpression.ts: `f<T> = x`; 2 in parserArrowFunctionExpression10.ts, which the parsers read differently),
+  2 targets that bun has no identifier for (a default inside an index signature of an interface).
+The models of ../rule-no-unused-vars on typescript-eslint's own cases with default options (cases/tseslint-nuv-carried.json 237,
+tseslint-nuv-eslint-carried.json 224): model/check-ts-model.cjs and topdown/nuv-sim-ts.cjs both 0 differences; with the fallbacks
+for what a lint parse does not build (BUN_VIEW=chain; --unbuilt --token-marks) 10 reports of 199 are lost, 0 added.
+bun's lint parse takes 236 of the 237 and all 224 (oracle/bun-accepts.cjs).

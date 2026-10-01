@@ -836,18 +836,29 @@ describe.concurrent("the request stream when ws upgrades before the declared bod
     let duringUpgrade: string[] = [];
     // Stays undefined when the server answers without the listener. The result then shows the answer.
     let request: http.IncomingMessage | undefined;
-    await using server = http.createServer();
-    const wsServer = new WebSocketServer({ noServer: true });
-    // With no 'upgrade' listener, the server gives the Upgrade request to the 'request' listener.
-    server.on(listenFor, (req: http.IncomingMessage) => {
+    let didRead = false;
+    // What the reader does before the part of the body that came with the head reaches the request.
+    const atHead = (req: http.IncomingMessage) => {
       request = req;
-      let didRead = false;
       const read = req._read;
       req._read = function (size) {
         didRead = true;
         return read.call(this, size);
       };
       for (const name of ["end", "close", "aborted", "error"]) req.on(name, () => events.push(name));
+      // After a read(), push() emits 'data' at once. While paused, the bytes wait in native code.
+      if (reader === "paused, resumed in the upgrade tick") req.read();
+      if (reader !== "flowing" && reader !== "read() in the upgrade tick") req.pause();
+    };
+    // The 'upgrade' listener runs when the read that carried the head is parsed, so that part of the body is in
+    // the request by then. shouldUpgradeCallback runs at the end of the head, like a 'request' listener.
+    await using server = http.createServer(
+      listenFor === "upgrade" ? { shouldUpgradeCallback: req => (atHead(req), true) } : {},
+    );
+    const wsServer = new WebSocketServer({ noServer: true });
+    // With no 'upgrade' listener, the server gives the Upgrade request to the 'request' listener.
+    server.on(listenFor, (req: http.IncomingMessage) => {
+      if (listenFor === "request") atHead(req);
       const listenForData = () => req.on("data", chunk => events.push("data:" + chunk));
       const upgrade = () => {
         readerWaitedBeforeUpgrade = didRead;
@@ -869,16 +880,12 @@ describe.concurrent("the request stream when ws upgrades before the declared bod
           req.read();
           return upgrade();
         case "paused, resumed in the upgrade tick":
-          // After a read(), push() emits 'data' at once. While paused, the bytes wait in native code.
-          req.read();
-          req.pause();
           return setImmediate(() => {
             listenForData();
             req.resume();
             upgrade();
           });
         case "paused, starts after the upgrade":
-          req.pause();
           return setImmediate(() => {
             upgrade();
             listenForData();

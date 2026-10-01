@@ -82,7 +82,6 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
           returned("resume"),
           returned("pause"),
           returned("pauseReads"),
-          returned("notifyWhenReadParsed"),
           returned("flushHeaders"),
           threw("end", "ERR_STREAM_WRITE_AFTER_END"),
           threw("write", "ERR_STREAM_WRITE_AFTER_END"),

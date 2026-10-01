@@ -1042,11 +1042,12 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           // message completes. Node.js emits 'upgrade' when it has parsed the
           // read that carried the request. So when bytes follow the head in
           // that read, the emit waits until uWS has parsed them, and the
-          // upgradeHead is what follows the body in it.
+          // upgradeHead is what follows the body in it. Not for a request that
+          // shouldUpgradeCallback made flow: it would end before its 'upgrade'.
           const emitWhenReadParsed = socketHandle.upgradeToTunnel(
             hasBody,
             handle,
-            connectHead !== undefined && !socket.destroyed,
+            connectHead !== undefined && !socket.destroyed && http_req.readableFlowing !== true,
           );
           socket[kHandoffResponse] = handle;
           socket[kEnableStreaming](true);

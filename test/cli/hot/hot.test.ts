@@ -858,7 +858,10 @@ it("holds the promise of the entry point itself, which it looks at on every tick
   let stdout = "";
   const line = async (prefix: string) => {
     for (;;) {
-      const found = stdout.split("\n").find(line => line.startsWith(prefix));
+      const found = stdout
+        .split("\n")
+        .slice(0, -1)
+        .find(line => line.startsWith(prefix));
       if (found) return found;
       const { value, done } = await reader.read();
       if (done) return stdout;

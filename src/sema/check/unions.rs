@@ -895,11 +895,14 @@ impl<'p> Checker<'p> {
         if let Some(known) = self.p.distributed_intersections.get(&key) {
             return known;
         }
-        let before = (self.what_only_holds_for_now(), self.union_too_complex);
+        let before = self.what_only_holds_for_now();
+        let was_too_complex = std::mem::take(&mut self.union_too_complex);
         let result = self.distribute_intersection(types.len(), set, no_constraint_reduction);
-        if (self.what_only_holds_for_now(), self.union_too_complex) == before {
+        // Whoever asks for one that is too complex is to be told so each time.
+        if !self.union_too_complex && self.what_only_holds_for_now() == before {
             self.p.distributed_intersections.insert(key, result);
         }
+        self.union_too_complex |= was_too_complex;
         result
     }
 

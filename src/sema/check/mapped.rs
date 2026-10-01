@@ -1888,7 +1888,7 @@ impl<'p> Checker<'p> {
         node: TypeNodeId,
         mapper: MapperId,
         constraint: TypeId,
-    ) -> (Vec<TypeId>, Option<Members>) {
+    ) -> (Vec<TypeId>, Option<Members<'p>>) {
         let source = self.mapped_modifiers_source(file, node);
         let over_keyof = matches!(source, Some((_, true)));
         // `getReducedApparentType`: of a type parameter what it extends, and an intersection nothing can be is not there.

@@ -432,6 +432,8 @@ impl<V> Interned<V> {
     }
 }
 
+crate::packed_ids!(TypeId, SigId, MapperId);
+
 pub type Mapping = Box<[(TypeId, TypeId)]>;
 
 pub struct TypeStore {

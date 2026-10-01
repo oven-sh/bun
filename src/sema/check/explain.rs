@@ -175,6 +175,7 @@ impl Checker<'_> {
     pub fn check_file_explained(&mut self, file: FileId) -> Vec<Explained> {
         let explained_before = std::mem::replace(&mut self.explains, true);
         self.notes.borrow_mut().clear();
+        self.release_shapes_for_now();
         let errors = self.check_file(file);
         self.explains = explained_before;
         let notes = self.notes.take();

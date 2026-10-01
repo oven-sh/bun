@@ -12,6 +12,21 @@ pub struct ResolvedCall {
     pub ret: TypeId,
 }
 
+impl crate::table::Packed for ResolvedCall {
+    type Cell = std::sync::atomic::AtomicU64;
+    #[inline]
+    fn pack(self) -> u64 {
+        self.sig.map_or(0, |sig| u64::from(sig.0) + 1) << 32 | (u64::from(self.ret.0) + 1)
+    }
+    #[inline]
+    fn unpack(raw: u64) -> Self {
+        ResolvedCall {
+            sig: ((raw >> 32) != 0).then(|| SigId((raw >> 32) as u32 - 1)),
+            ret: TypeId(raw as u32 - 1),
+        }
+    }
+}
+
 #[derive(Copy, Clone)]
 pub(super) enum Arg {
     Expr(ExprId),

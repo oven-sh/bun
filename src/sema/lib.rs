@@ -15,6 +15,7 @@ pub mod messages;
 pub mod program;
 pub mod resolve;
 pub mod sites;
+pub mod table;
 pub mod types;
 pub mod util;
 pub mod verify;

@@ -60,6 +60,7 @@ use crate::atom::{Atom, known};
 use crate::bind::{Bound, SymFlags};
 use crate::hir::{self, *};
 use crate::program::{FileId, Files, Sym};
+use crate::table::{Bases, ById, ByIdKept, ByNode, ByNodeKept, IdSet, NodeSet, RawWord};
 use crate::types::Prop;
 use crate::types::*;
 use crate::util::{FxHashMap, ShardedMap};
@@ -77,40 +78,35 @@ struct Held {
     serial: u64,
 }
 
-/// One slot for each node of one kind of one file. 0 is "not computed".
-struct Slots(Vec<Box<[AtomicU32]>>);
+/// The type of each node of one kind.
+struct Slots(ByNode<(FileId, u32), RawWord>);
 
 impl Slots {
-    fn new(files: &Files, len: impl Fn(&hir::File) -> usize) -> Slots {
-        Slots(
-            files
-                .modules
-                .iter()
-                .map(|m| (0..len(&m.hir)).map(|_| AtomicU32::new(0)).collect())
-                .collect(),
-        )
+    fn new(bases: &Bases) -> Slots {
+        Slots(ByNode::new(bases))
     }
     /// Set in a slot whose type rests on something that could not be found out.
     const UNCERTAIN: u32 = 1 << 31;
 
     #[inline]
     fn get(&self, file: FileId, index: usize) -> Option<TypeId> {
-        match self.0[file.idx()][index].load(Ordering::Relaxed) & !Self::UNCERTAIN {
+        match self.0.raw((file, index as u32)) & !Self::UNCERTAIN {
             0 => None,
             n => Some(TypeId(n - 1)),
         }
     }
     #[inline]
     fn is_uncertain(&self, file: FileId, index: usize) -> bool {
-        self.0[file.idx()][index].load(Ordering::Relaxed) & Self::UNCERTAIN != 0
+        self.0.raw((file, index as u32)) & Self::UNCERTAIN != 0
     }
     #[inline]
     fn set_uncertain(&self, file: FileId, index: usize, ty: TypeId) {
-        self.0[file.idx()][index].store((ty.0 + 1) | Self::UNCERTAIN, Ordering::Relaxed);
+        self.0
+            .set_raw((file, index as u32), (ty.0 + 1) | Self::UNCERTAIN);
     }
     #[inline]
     fn set(&self, file: FileId, index: usize, ty: TypeId) {
-        self.0[file.idx()][index].store(ty.0 + 1, Ordering::Relaxed);
+        self.0.set_raw((file, index as u32), ty.0 + 1);
     }
 }
 
@@ -123,67 +119,69 @@ pub struct Program {
     fn_return_types: Slots,
     pat_types: Slots,
     literal_prop_types: Slots,
-    symbol_types: ShardedMap<Sym, TypeId>,
+    symbol_types: ByNode<Sym, TypeId>,
     /// The names, functions and members whose type depends on itself.
-    circular_pats: ShardedMap<(FileId, PatId), ()>,
-    circular_returns: ShardedMap<(FileId, FnId), ()>,
-    circular_members: ShardedMap<(FileId, MemberId), ()>,
+    circular_pats: NodeSet<(FileId, PatId)>,
+    circular_returns: NodeSet<(FileId, FnId)>,
+    circular_members: NodeSet<(FileId, MemberId)>,
     /// Properties declared by assignment declarations whose type depends on itself, keyed by the first declaration
     /// (`symbol.ValueDeclaration`). `reportCircularityError` reports 7022 there.
-    circular_assignments: ShardedMap<(FileId, ExprId), ()>,
+    circular_assignments: NodeSet<(FileId, ExprId)>,
     /// Symbols whose `Query::Symbol` was part of a resolution cycle. `reportCircularityError` reports 7022 for `export default e`,
     /// `export = e` and CommonJS exports.
-    circular_symbols: ShardedMap<Sym, ()>,
+    circular_symbols: NodeSet<Sym>,
     /// References whose control flow walk reached depth 2000 (2563). `getTypeAtFlowNode`
-    flows_too_deep: ShardedMap<(FileId, ExprId), ()>,
+    flows_too_deep: NodeSet<(FileId, ExprId)>,
     /// The classes and interfaces whose base types depend on themselves, the aliases that do, and the mapped types whose keys do.
-    circular_bases: ShardedMap<Sym, ()>,
-    circular_aliases: ShardedMap<Sym, ()>,
-    circular_mapped_keys: ShardedMap<(FileId, TypeNodeId), ()>,
+    circular_bases: NodeSet<Sym>,
+    circular_aliases: NodeSet<Sym>,
+    circular_mapped_keys: NodeSet<(FileId, TypeNodeId)>,
     /// Type nodes at which 2615 is reported: the type of a property of a mapped type depends on itself. See
     /// `first_checked_type_node`.
-    circular_mapped_props: ShardedMap<(FileId, TypeNodeId), ()>,
+    circular_mapped_props: NodeSet<(FileId, TypeNodeId)>,
     /// Type nodes whose resolution produced a tuple of 10,000 or more elements (2799). `TupleNormalizer.normalize`
-    too_large_tuples: ShardedMap<(FileId, TypeNodeId), ()>,
+    too_large_tuples: NodeSet<(FileId, TypeNodeId)>,
     /// The variables in a circle that goes through a call: whoever asks first is told what the initializer comes to.
-    circular_through_call: ShardedMap<(FileId, PatId), ()>,
+    circular_through_call: NodeSet<(FileId, PatId)>,
     /// `NodeCheckFlagsInitializerIsUndefinedComputed` and `NodeCheckFlagsInitializerIsUndefined`
-    initializer_is_undefined: ShardedMap<(FileId, ParamId), bool>,
-    declared_types: ShardedMap<Sym, TypeId>,
+    initializer_is_undefined: ByNode<(FileId, ParamId), bool>,
+    declared_types: ByNode<Sym, TypeId>,
     /// The unions that a type alias, or an alias with type arguments, stands for.
-    named_unions: ShardedMap<TypeId, ()>,
+    named_unions: IdSet<TypeId>,
     /// `UnionType.origin` of a union that `getIntersectionTypeEx` produced by distributing an intersection over its union
     /// members: the members of that intersection.
-    union_origins: ShardedMap<TypeId, Arc<[TypeId]>>,
+    union_origins: ByIdKept<TypeId, Arc<[TypeId]>>,
     /// The generic alias and the arguments a type was made from (`Type.alias`), for a type that could not have come of other
     /// arguments or without the alias. Types are hash-consed: `T | undefined` is the same type whoever wrote it, and has none.
-    alias_of: ShardedMap<TypeId, (Sym, Arc<[TypeId]>)>,
-    shapes: ShardedMap<TypeId, Arc<shape::Resolved>>,
+    alias_of: ByIdKept<TypeId, (Sym, Arc<[TypeId]>)>,
+    shapes: ByIdKept<TypeId, shape::Resolved>,
+    /// What `members` says of a type, once that holds for good.
+    members: ById<TypeId, shape::KeptMembers>,
     instantiations: ShardedMap<(TypeId, MapperId), TypeId>,
-    outer_type_params: ShardedMap<(FileId, crate::bind::ScopeId), Arc<[TypeId]>>,
-    base_types: ShardedMap<Sym, Arc<[TypeId]>>,
-    calls: ShardedMap<(FileId, ExprId), ResolvedCall>,
+    outer_type_params: ByNodeKept<(FileId, crate::bind::ScopeId), Arc<[TypeId]>>,
+    base_types: ByNodeKept<Sym, Arc<[TypeId]>>,
+    calls: ByNode<(FileId, ExprId), ResolvedCall>,
     /// `getCandidateForOverloadFailure` for a failed call with a single signature. `calls` holds the signature that the errors
     /// are reported against.
-    failure_sigs: ShardedMap<(FileId, ExprId), SigId>,
+    failure_sigs: ByNode<(FileId, ExprId), SigId>,
     /// The contextual type of an argument that has to wait for the others, once the call knows it.
-    arg_contexts: ShardedMap<(FileId, ExprId), TypeId>,
+    arg_contexts: ByNode<(FileId, ExprId), TypeId>,
     /// Calls with a `const` type parameter in some overload that are resolved to an overload before it, or that it does not apply to.
-    calls_outside_const_context: ShardedMap<(FileId, ExprId), ()>,
+    calls_outside_const_context: NodeSet<(FileId, ExprId)>,
     relations: ShardedMap<(TypeId, TypeId, u8), u8>,
-    variances: ShardedMap<Sym, Arc<[u8]>>,
-    member_types: ShardedMap<(FileId, MemberId), TypeId>,
+    variances: ByNodeKept<Sym, Arc<[u8]>>,
+    member_types: ByNode<(FileId, MemberId), TypeId>,
     /// `resolvedType` of a property declared by assignment declarations, keyed by the first declaration.
-    assigned_prop_types: ShardedMap<(FileId, ExprId), TypeId>,
+    assigned_prop_types: ByNode<(FileId, ExprId), TypeId>,
     /// `resolvedType` of a property of a mapped type, keyed by the mapped type and the property name. `getTypeOfMappedSymbol`
     mapped_prop_types: ShardedMap<(TypeId, Atom), TypeId>,
     intersected_props: ShardedMap<(TypeId, Atom), TypeId>,
-    never_intersections: ShardedMap<TypeId, bool>,
-    inferred_constraints: ShardedMap<TypeId, Option<TypeId>>,
-    constraints: ShardedMap<TypeId, TypeId>,
+    never_intersections: ById<TypeId, bool>,
+    inferred_constraints: ById<TypeId, Option<TypeId>>,
+    constraints: ById<TypeId, TypeId>,
     /// The types whose base constraint depends on itself (`circularConstraintType`).
-    circular_constraints: ShardedMap<TypeId, ()>,
-    enum_values: ShardedMap<(FileId, EnumMemberId), Option<EnumValue>>,
+    circular_constraints: IdSet<TypeId>,
+    enum_values: ByNodeKept<(FileId, EnumMemberId), Option<EnumValue>>,
     conditionals: ShardedMap<(FileId, TypeNodeId, MapperId), TypeId>,
     /// Memo entries whose evaluation hit an instantiation limit, and those 2589 has been reported for. See `note_depth`.
     excessive: ShardedMap<Deep, ()>,
@@ -193,61 +191,74 @@ pub struct Program {
     /// What `global_type_of_arity` found, by name and number of type parameters.
     global_types: ShardedMap<(Atom, u8), Option<Sym>>,
     /// The parent type node of each type node, per file. See `type_parents`.
-    type_parents: ShardedMap<FileId, Arc<Vec<TypeNodeId>>>,
+    type_parents: ByIdKept<FileId, Arc<Vec<TypeNodeId>>>,
 }
 
 impl Program {
     pub fn new(files: Files) -> Program {
+        let bases =
+            |len: fn(&crate::program::Module) -> usize| Bases::new(files.modules.iter().map(len));
+        let exprs = bases(|m| m.hir.exprs.len());
+        let type_nodes = bases(|m| m.hir.types.len());
+        let fns = bases(|m| m.hir.fns.len());
+        let pats = bases(|m| m.hir.pats.len());
+        let props = bases(|m| m.hir.props.len());
+        let members = bases(|m| m.hir.members.len());
+        let params = bases(|m| m.hir.params.len());
+        let enum_members = bases(|m| m.hir.enum_members.len());
+        let scopes = bases(|m| m.bound.scopes.len());
+        let symbols = bases(|m| m.bound.symbols.len());
         Program {
             types: TypeStore::new(),
-            expr_types: Slots::new(&files, |f| f.exprs.len()),
-            type_node_types: Slots::new(&files, |f| f.types.len()),
-            fn_return_types: Slots::new(&files, |f| f.fns.len()),
-            pat_types: Slots::new(&files, |f| f.pats.len()),
-            literal_prop_types: Slots::new(&files, |f| f.props.len()),
-            symbol_types: ShardedMap::default(),
-            circular_pats: ShardedMap::default(),
-            circular_returns: ShardedMap::default(),
-            circular_members: ShardedMap::default(),
-            circular_assignments: ShardedMap::default(),
-            circular_symbols: ShardedMap::default(),
-            flows_too_deep: ShardedMap::default(),
-            circular_bases: ShardedMap::default(),
-            circular_aliases: ShardedMap::default(),
-            circular_mapped_keys: ShardedMap::default(),
-            circular_mapped_props: ShardedMap::default(),
-            too_large_tuples: ShardedMap::default(),
-            circular_through_call: ShardedMap::default(),
-            initializer_is_undefined: ShardedMap::default(),
-            declared_types: ShardedMap::default(),
-            named_unions: ShardedMap::default(),
-            union_origins: ShardedMap::default(),
-            alias_of: ShardedMap::default(),
-            shapes: ShardedMap::default(),
+            expr_types: Slots::new(&exprs),
+            type_node_types: Slots::new(&type_nodes),
+            fn_return_types: Slots::new(&fns),
+            pat_types: Slots::new(&pats),
+            literal_prop_types: Slots::new(&props),
+            symbol_types: ByNode::new(&symbols),
+            circular_pats: NodeSet::new(&pats),
+            circular_returns: NodeSet::new(&fns),
+            circular_members: NodeSet::new(&members),
+            circular_assignments: NodeSet::new(&exprs),
+            circular_symbols: NodeSet::new(&symbols),
+            flows_too_deep: NodeSet::new(&exprs),
+            circular_bases: NodeSet::new(&symbols),
+            circular_aliases: NodeSet::new(&symbols),
+            circular_mapped_keys: NodeSet::new(&type_nodes),
+            circular_mapped_props: NodeSet::new(&type_nodes),
+            too_large_tuples: NodeSet::new(&type_nodes),
+            circular_through_call: NodeSet::new(&pats),
+            initializer_is_undefined: ByNode::new(&params),
+            declared_types: ByNode::new(&symbols),
+            named_unions: Default::default(),
+            union_origins: Default::default(),
+            alias_of: Default::default(),
+            shapes: Default::default(),
+            members: Default::default(),
             instantiations: ShardedMap::default(),
-            outer_type_params: ShardedMap::default(),
-            base_types: ShardedMap::default(),
-            calls: ShardedMap::default(),
-            failure_sigs: ShardedMap::default(),
-            arg_contexts: ShardedMap::default(),
-            calls_outside_const_context: ShardedMap::default(),
+            outer_type_params: ByNodeKept::new(&scopes),
+            base_types: ByNodeKept::new(&symbols),
+            calls: ByNode::new(&exprs),
+            failure_sigs: ByNode::new(&exprs),
+            arg_contexts: ByNode::new(&exprs),
+            calls_outside_const_context: NodeSet::new(&exprs),
             relations: ShardedMap::default(),
-            variances: ShardedMap::default(),
-            member_types: ShardedMap::default(),
-            assigned_prop_types: ShardedMap::default(),
+            variances: ByNodeKept::new(&symbols),
+            member_types: ByNode::new(&members),
+            assigned_prop_types: ByNode::new(&exprs),
             mapped_prop_types: ShardedMap::default(),
             intersected_props: ShardedMap::default(),
-            never_intersections: ShardedMap::default(),
-            inferred_constraints: ShardedMap::default(),
-            constraints: ShardedMap::default(),
-            circular_constraints: ShardedMap::default(),
-            enum_values: ShardedMap::default(),
+            never_intersections: Default::default(),
+            inferred_constraints: Default::default(),
+            constraints: Default::default(),
+            circular_constraints: Default::default(),
+            enum_values: ByNodeKept::new(&enum_members),
             conditionals: ShardedMap::default(),
             excessive: ShardedMap::default(),
             excessive_reported: ShardedMap::default(),
             has_excessive: AtomicBool::new(false),
             global_types: ShardedMap::default(),
-            type_parents: ShardedMap::default(),
+            type_parents: Default::default(),
             files,
         }
     }
@@ -298,6 +309,7 @@ impl Program {
             deadline: None,
             constraint_stack: Vec::new(),
             trap_on_timeout: std::env::var_os("BUN_SEMA_TIME_TRAP").is_some(),
+            shapes_for_now: Vec::new(),
             serials: Vec::new(),
             held_for_now: FxHashMap::default(),
             explains: false,
@@ -489,6 +501,8 @@ pub struct Checker<'p> {
     /// The `stack` of `getResolvedBaseConstraint`: what the constraints being worked out, one for the sake of the other, are instances of.
     constraint_stack: Vec<relate::RecursionId>,
     trap_on_timeout: bool,
+    /// See `shape_for_now`.
+    shapes_for_now: Vec<Box<shape::Resolved>>,
     /// For each question on `stack`, a number no other question has had.
     serials: Vec<u64>,
     /// The types of properties of object literals that only hold for now: see `hold_for_now`.

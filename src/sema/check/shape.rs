@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent};
+use crate::table::Handle;
 
 pub struct Resolved {
     pub shape: Shape,
@@ -9,14 +10,14 @@ pub struct Resolved {
 }
 
 impl Resolved {
-    fn new(shape: Shape) -> Arc<Resolved> {
+    fn new(shape: Shape) -> Resolved {
         let mut by_name = FxHashMap::default();
         if shape.props.len() > 8 {
             for (i, p) in shape.props.iter().enumerate() {
                 by_name.entry(p.name).or_insert(i as u32);
             }
         }
-        Arc::new(Resolved { shape, by_name })
+        Resolved { shape, by_name }
     }
 
     pub fn prop(&self, name: Atom) -> Option<&Prop> {
@@ -31,17 +32,46 @@ impl Resolved {
 }
 
 /// The contents of a type: a shape that instantiations share, and what this one puts for the type parameters.
-#[derive(Clone)]
-pub struct Members {
-    pub resolved: Arc<Resolved>,
+#[derive(Copy, Clone)]
+pub struct Members<'p> {
+    pub resolved: &'p Resolved,
     pub mapper: MapperId,
 }
 
-impl Members {
+impl<'p> Members<'p> {
     #[inline]
-    pub fn shape(&self) -> &Shape {
+    pub fn shape(&self) -> &'p Shape {
         &self.resolved.shape
     }
+}
+
+/// `Members` the way it is kept for a type: where the shape is, and the mapper.
+#[derive(Copy, Clone)]
+pub(super) struct KeptMembers {
+    shape: Handle,
+    mapper: MapperId,
+}
+
+impl crate::table::Packed for KeptMembers {
+    type Cell = std::sync::atomic::AtomicU64;
+    #[inline]
+    fn pack(self) -> u64 {
+        (u64::from(self.shape.0) + 1) << 32 | u64::from(self.mapper.0)
+    }
+    #[inline]
+    fn unpack(raw: u64) -> Self {
+        KeptMembers {
+            shape: Handle((raw >> 32) as u32 - 1),
+            mapper: MapperId(raw as u32),
+        }
+    }
+}
+
+/// A shape, and where it is kept if it holds for good.
+#[derive(Copy, Clone)]
+struct Built<'p> {
+    resolved: &'p Resolved,
+    kept: Option<Handle>,
 }
 
 /// What answers when a type is asked for a name.
@@ -167,8 +197,27 @@ impl<'p> Checker<'p> {
         }
     }
 
-    fn shape_memo(&mut self, key: TypeId, build: impl FnOnce(&mut Self) -> Shape) -> Arc<Resolved> {
+    fn shape_memo(&mut self, key: TypeId, build: impl FnOnce(&mut Self) -> Shape) -> Built<'p> {
         self.shape_memo_or(key, build, |_| Shape::default())
+    }
+
+    /// A shape that does not hold for good. It is there until `release_shapes_for_now`.
+    fn shape_for_now(&mut self, shape: Shape) -> Built<'p> {
+        let resolved = Box::new(Resolved::new(shape));
+        // SAFETY: a box does not move what it holds, and it is dropped by `release_shapes_for_now`, which is only called where no
+        // `Members` is around: between files.
+        let for_now: &'p Resolved = unsafe { &*std::ptr::from_ref(&*resolved) };
+        self.shapes_for_now.push(resolved);
+        Built {
+            resolved: for_now,
+            kept: None,
+        }
+    }
+
+    /// Nothing that `members` has handed out may be around.
+    pub(super) fn release_shapes_for_now(&mut self) {
+        debug_assert!(self.stack.is_empty());
+        self.shapes_for_now.clear();
     }
 
     /// `meanwhile`: the answer for whoever asks while `build` is at it.
@@ -177,34 +226,66 @@ impl<'p> Checker<'p> {
         key: TypeId,
         build: impl FnOnce(&mut Self) -> Shape,
         meanwhile: impl FnOnce(&mut Self) -> Shape,
-    ) -> Arc<Resolved> {
-        if let Some(known) = self.p.shapes.get(&key) {
-            return known;
+    ) -> Built<'p> {
+        if let Some(kept) = self.p.shapes.handle(&key) {
+            return Built {
+                resolved: self.p.shapes.at(kept),
+                kept: Some(kept),
+            };
         }
         if !self.enter(Query::Shape(key)) {
             // `enter` also refuses for want of time or room.
             let is_under_way = !self.timed_out
                 && !self.is_stack_low()
                 && self.stack[self.resolution_start..].contains(&Query::Shape(key));
-            return Resolved::new(if is_under_way {
+            let shape = if is_under_way {
                 meanwhile(self)
             } else {
                 Shape::default()
-            });
+            };
+            return self.shape_for_now(shape);
         }
         let shape = build(self);
-        let resolved = Resolved::new(shape);
         if self.leave() {
-            return self.p.shapes.insert(key, resolved);
+            let (kept, resolved) = self.p.shapes.insert_ref(key, Resolved::new(shape));
+            return Built {
+                resolved,
+                kept: Some(kept),
+            };
         }
-        resolved
+        self.shape_for_now(shape)
     }
 
     /// The contents of an object type or an intersection of them. `None` for anything else.
-    pub fn members(&mut self, ty: TypeId) -> Option<Members> {
+    pub fn members(&mut self, ty: TypeId) -> Option<Members<'p>> {
+        if let Some(known) = self.p.members.get(&ty) {
+            return Some(Members {
+                resolved: self.p.shapes.at(known.shape),
+                mapper: known.mapper,
+            });
+        }
+        let (built, mapper) = self.members_uncached(ty)?;
+        if let Some(shape) = built.kept {
+            self.p.members.insert(ty, KeptMembers { shape, mapper });
+        }
+        Some(Members {
+            resolved: built.resolved,
+            mapper,
+        })
+    }
+
+    fn members_uncached(&mut self, ty: TypeId) -> Option<(Built<'p>, MapperId)> {
         self.guard("members");
         match self.data(ty) {
-            TypeData::NoInfer(t) => self.members(*t),
+            TypeData::NoInfer(t) => self.members(*t).map(|members| {
+                (
+                    Built {
+                        resolved: members.resolved,
+                        kept: None,
+                    },
+                    members.mapper,
+                )
+            }),
             TypeData::Ref { target, args } => {
                 let target = *target;
                 let declared = self.declared_type(target);
@@ -227,20 +308,14 @@ impl<'p> Checker<'p> {
                     params.iter().copied().zip(args.iter().copied()).collect()
                 };
                 pairs.push((self.intern(TypeData::ThisParam(target)), this));
-                Some(Members {
-                    resolved,
-                    mapper: self.p.types.mapper(pairs),
-                })
+                Some((resolved, self.p.types.mapper(pairs)))
             }
             TypeData::Anon { origin, mapper } => {
                 let (origin, mapper) = (*origin, *mapper);
                 if let Origin::Mapped(file, node) = origin {
                     let resolved =
                         self.shape_memo(ty, |c| c.build_mapped_shape(file, node, mapper));
-                    return Some(Members {
-                        resolved,
-                        mapper: MapperId::IDENTITY,
-                    });
+                    return Some((resolved, MapperId::IDENTITY));
                 }
                 let identity = self.identity_of(mapper);
                 let key = if identity == mapper {
@@ -252,14 +327,14 @@ impl<'p> Checker<'p> {
                     })
                 };
                 let resolved = self.shape_memo(key, |c| c.build_origin_shape(origin));
-                Some(Members {
+                Some((
                     resolved,
-                    mapper: if identity == mapper {
+                    if identity == mapper {
                         MapperId::IDENTITY
                     } else {
                         mapper
                     },
-                })
+                ))
             }
             TypeData::Fns { decls, mapper } => {
                 let mapper = *mapper;
@@ -297,30 +372,24 @@ impl<'p> Checker<'p> {
                     }
                     shape
                 });
-                Some(Members {
+                Some((
                     resolved,
-                    mapper: if identity == mapper {
+                    if identity == mapper {
                         MapperId::IDENTITY
                     } else {
                         mapper
                     },
-                })
+                ))
             }
             TypeData::Synth(shape) => {
                 let resolved = self.shape_memo(ty, |_| (**shape).clone());
-                Some(Members {
-                    resolved,
-                    mapper: MapperId::IDENTITY,
-                })
+                Some((resolved, MapperId::IDENTITY))
             }
             TypeData::ReverseMapped { source, mapped, of } => {
                 let (source, mapped, of) = (*source, *mapped, *of);
                 let resolved =
                     self.shape_memo(ty, |c| c.build_reverse_mapped_shape(source, mapped, of));
-                Some(Members {
-                    resolved,
-                    mapper: MapperId::IDENTITY,
-                })
+                Some((resolved, MapperId::IDENTITY))
             }
             TypeData::Tuple {
                 elems,
@@ -330,18 +399,12 @@ impl<'p> Checker<'p> {
                 let (elems, flags, readonly) = (elems.clone(), flags.clone(), *readonly);
                 let resolved =
                     self.shape_memo(ty, |c| c.build_tuple_shape(ty, &elems, &flags, readonly));
-                Some(Members {
-                    resolved,
-                    mapper: MapperId::IDENTITY,
-                })
+                Some((resolved, MapperId::IDENTITY))
             }
             TypeData::Intersection(parts) => {
                 let parts = parts.clone();
                 let resolved = self.shape_memo(ty, |c| c.build_intersection_shape(ty, &parts));
-                Some(Members {
-                    resolved,
-                    mapper: MapperId::IDENTITY,
-                })
+                Some((resolved, MapperId::IDENTITY))
             }
             _ => None,
         }
@@ -1006,7 +1069,11 @@ impl<'p> Checker<'p> {
 
     /// `getTypeWithThisArgument` of a tuple, which is a reference like any other but has no place to keep the argument: what it
     /// has, with `this_argument` for `this`. `None`: `ty` is no tuple.
-    fn tuple_members_with_this(&mut self, ty: TypeId, this_argument: TypeId) -> Option<Members> {
+    fn tuple_members_with_this(
+        &mut self,
+        ty: TypeId,
+        this_argument: TypeId,
+    ) -> Option<Members<'p>> {
         let TypeData::Tuple {
             elems,
             flags,
@@ -1020,7 +1087,7 @@ impl<'p> Checker<'p> {
         }
         let shape = self.build_tuple_shape(this_argument, elems, flags, *readonly);
         Some(Members {
-            resolved: Resolved::new(shape),
+            resolved: self.shape_for_now(shape).resolved,
             mapper: MapperId::IDENTITY,
         })
     }
@@ -4133,9 +4200,9 @@ impl<'p> Checker<'p> {
                 ..Shape::default()
             });
             return if construct {
-                resolved.shape.construct.clone()
+                resolved.resolved.shape.construct.clone()
             } else {
-                resolved.shape.call.clone()
+                resolved.resolved.shape.call.clone()
             };
         }
         let Some(members) = self.members(ty) else {

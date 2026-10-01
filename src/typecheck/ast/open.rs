@@ -1,8 +1,9 @@
 // The objects that one binder, one program or one checker makes. They are written through a shared reference.
 use crate::ast::ast::PatternAmbientModule;
+use crate::ast::diagnostic::DiagnosticStore;
 use crate::ast::file::{IdAllocator, NodeRecord};
 use crate::ast::flow::{FlowList, FlowNode};
-use crate::ast::ids::{NodeId, OPEN_BIT, SymbolTableId};
+use crate::ast::ids::{DiagnosticId, NodeId, OPEN_BIT, SymbolTableId};
 use crate::ast::modifierflags::ModifierFlags;
 use crate::ast::nodeflags::NodeFlags;
 use crate::ast::stable::Arena;
@@ -30,6 +31,8 @@ pub(crate) struct OpenList<'a> {
 pub(crate) struct BindOverlay {
     pub(crate) flags: Vec<NodeFlags>,
     pub(crate) late: Vec<u32>,
+    pub(crate) bind_diagnostics: Vec<DiagnosticId>,
+    pub(crate) bind_diagnostic_store: DiagnosticStore,
     pub(crate) symbol_count: isize,
     pub(crate) global_exports: SymbolTableId,
     pub(crate) pattern_ambient_modules: Vec<PatternAmbientModule>,

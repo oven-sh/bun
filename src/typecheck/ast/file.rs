@@ -3,8 +3,11 @@ use crate::ast::ast::{
     CheckJsDirective, CommentDirective, FileReference, PatternAmbientModule, Pragma,
 };
 use crate::ast::ast_generated::Def;
+use crate::ast::diagnostic::DiagnosticStore;
 use crate::ast::flow::{FlowList, FlowNode};
-use crate::ast::ids::{NodeId, NodeListId, OPEN_BIT, PAGE_SIZE, SymbolId, SymbolTableId};
+use crate::ast::ids::{
+    DiagnosticId, NodeId, NodeListId, OPEN_BIT, PAGE_SIZE, SymbolId, SymbolTableId,
+};
 use crate::ast::kind_generated::Kind;
 use crate::ast::modifierflags::ModifierFlags;
 use crate::ast::nodeflags::NodeFlags;
@@ -85,6 +88,10 @@ pub struct TableEntry {
 pub struct SourceFileData {
     pub file_name: Vec<u8>,
     pub path: Path,
+    // SourceFile.diagnostics: the parse diagnostics, ids of `diagnostic_store`.
+    pub diagnostics: Vec<DiagnosticId>,
+    // The store of the parser of the file: its parse diagnostics and their related information.
+    pub diagnostic_store: DiagnosticStore,
     pub language_variant: LanguageVariant,
     pub script_kind: ScriptKind,
     pub is_declaration_file: bool,
@@ -134,6 +141,10 @@ pub struct Bound {
     pub(crate) table_index: Vec<u32>,
     pub(crate) flow_nodes: Vec<FlowNode>,
     pub(crate) flow_lists: Vec<FlowList>,
+    // SourceFile.bindDiagnostics: ids of `bind_diagnostic_store`.
+    pub(crate) bind_diagnostics: Vec<DiagnosticId>,
+    // The store of the binder of the file: its diagnostics and their related information.
+    pub(crate) bind_diagnostic_store: DiagnosticStore,
     // SourceFile.SymbolCount
     pub(crate) file_symbol_count: isize,
     // SourceFile.GlobalExports
@@ -676,6 +687,34 @@ impl<'a> SourceFile<'a> {
             Some(file) => &file.source_file.imports,
             None => &[],
         }
+    }
+
+    // SourceFile.Diagnostics(): the parse diagnostics, ids of `diagnostic_store`.
+    pub fn diagnostics(&self) -> &'a [DiagnosticId] {
+        match self.file {
+            Some(file) => &file.source_file.diagnostics,
+            None => &[],
+        }
+    }
+
+    // The store of the parser of the file: None for a SourceFile node that no file holds.
+    pub fn diagnostic_store(&self) -> Option<&'a DiagnosticStore> {
+        self.file.map(|file| &file.source_file.diagnostic_store)
+    }
+
+    // SourceFile.BindDiagnostics(): ids of `bind_diagnostic_store`, none before the binding of the file has ended.
+    pub fn bind_diagnostics(&self) -> &'a [DiagnosticId] {
+        match self.file.and_then(File::bound) {
+            Some(bound) => &bound.bind_diagnostics,
+            None => &[],
+        }
+    }
+
+    // The store of the binder of the file: None until the file is bound.
+    pub fn bind_diagnostic_store(&self) -> Option<&'a DiagnosticStore> {
+        self.file
+            .and_then(File::bound)
+            .map(|bound| &bound.bind_diagnostic_store)
     }
 
     // SourceFile.ECMALineMap()

@@ -1,11 +1,14 @@
 // Ends the binding of a file: the objects of the open store of the binder get their ids and become the bind result of the file, once.
 use crate::ast::ast::PatternAmbientModule;
+use crate::ast::diagnostic::DiagnosticStore;
 use crate::ast::file::{
     Bound, File, IdAllocator, NodeRecord, SymbolRecord, TableEntry, TableRecord, TextSpan,
     round_up_to_page,
 };
 use crate::ast::flow::{FlowList, FlowNode};
-use crate::ast::ids::{FlowListId, FlowNodeId, NodeId, OPEN_BIT, SymbolId, SymbolTableId};
+use crate::ast::ids::{
+    DiagnosticId, FlowListId, FlowNodeId, NodeId, OPEN_BIT, SymbolId, SymbolTableId,
+};
 use crate::ast::layout::SlotType;
 use crate::ast::nodeflags::NodeFlags;
 use crate::ast::open::{BindOverlay, Open, count};
@@ -293,6 +296,8 @@ impl File {
             let BindOverlay {
                 flags,
                 mut late,
+                bind_diagnostics,
+                bind_diagnostic_store,
                 symbol_count,
                 global_exports,
                 pattern_ambient_modules,
@@ -303,6 +308,9 @@ impl File {
             }
             bound.flags = flags;
             bound.late = late;
+            // The file of a bind diagnostic is the root of the file: the store of the binder holds no id of the open store.
+            bound.bind_diagnostics = bind_diagnostics;
+            bound.bind_diagnostic_store = bind_diagnostic_store;
             bound.file_symbol_count = symbol_count;
             bound.global_exports = SymbolTableId(fix(global_exports.0));
             bound.pattern_ambient_modules = pattern_ambient_modules
@@ -343,6 +351,19 @@ impl Ast<'_> {
         if !is_root || self.overlay(f).is_none() {
             self.cannot_write(who, file.0, self.exists(file));
         }
+    }
+
+    // `file.SetBindDiagnostics(diagnostics)`: the file keeps the store of its binder, whose ids the diagnostics are.
+    pub fn set_bind_diagnostics(
+        self,
+        file: NodeId,
+        store: DiagnosticStore,
+        diagnostics: Vec<DiagnosticId>,
+    ) {
+        self.write_bound_file(file, "SourceFile.BindDiagnostics", |overlay| {
+            overlay.bind_diagnostic_store = store;
+            overlay.bind_diagnostics = diagnostics;
+        });
     }
 
     // `file.SymbolCount = count`

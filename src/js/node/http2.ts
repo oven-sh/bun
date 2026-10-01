@@ -2244,13 +2244,7 @@ function streamOnResume(this: Http2Stream) {
   const id = this.id;
   if (session && id) session[bunHTTP2Native]?.setStreamReading(id, true);
 }
-// events.errorMonitor listener. A Duplex that errors without being destroyed (autoDestroy is
-// off, like node; a write() after end() is the usual cause) never emits 'end' or 'finish', so a
-// destroy that destroyClosedStream deferred to one of them would never run. Node has the same wait
-// (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L606-L612) and leaves
-// such a stream undestroyed, but there the native close cannot precede a late write made in the
-// same tick as end(chunk). Here it can, and a client stream holds its maxConcurrentStreams slot
-// until 'close'. Unread buffered data is dropped, as in any destroy().
+// An error on a natively closed stream cancels the 'end' or 'finish' that destroyClosedStream waits for.
 function streamOnErrored(this: Http2Stream) {
   if (!this.destroyed && this.errored && (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) !== 0) {
     // Deferred so the 'error' listeners observe the same live stream as when the close comes second.
@@ -4938,18 +4932,13 @@ function destroySelfOnEnd(this: Http2Stream) {
 // streamEnd(7): the native side fully closed the stream and freed it.
 function destroyClosedStream(stream: Http2Stream) {
   if (stream.errored) {
-    // Neither event below fires on an errored Duplex. node's onStreamClose destroys at once too:
-    // an emitted 'error' makes `stream.readable` false.
+    // Neither event below fires on an errored Duplex.
     stream.destroy();
   } else if (stream.readable && !stream.rstCode) {
-    // Clean close while data is still buffered on the readable side (e.g. the response ended
-    // before the request body was consumed): node defers the destroy until the consumer drains
-    // it ('end'), so a late-attaching reader does not lose data.
+    // Unread data is still buffered: like node, destroy at 'end' so that a late reader loses nothing.
     stream.once("end", destroySelfOnEnd);
   } else if ((stream.writableEnded || stream[kEndingWithChunk]) && !stream.writableFinished && !stream.destroyed) {
-    // Writable side is mid-finish (an in-flight _final/_write carrying END_STREAM settled
-    // native synchronously, re-entering before Writable.end() set kEnding): destroying now
-    // swallows 'finish'. Node's kMaybeDestroy waits for writable to finish first.
+    // The close re-entered from inside end(): destroying now, before 'finish', would swallow it.
     stream.once("finish", destroySelfOnEnd);
   } else {
     stream.destroy();

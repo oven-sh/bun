@@ -6194,12 +6194,14 @@ describe.concurrent("write() after end()", () => {
   }
 
   it("server stream, late write before the native close", async () => {
+    let closedByEnd;
     const result = await serve((stream, late) => {
       stream.respond({ ":status": 200 });
       stream.end("done");
+      closedByEnd = stream.closed;
       stream.write("late", late);
     });
-    expect(result).toEqual([lateWriteEvents, 4]);
+    expect([closedByEnd, ...result]).toEqual([false, lateWriteEvents, 4]);
   });
 
   it("server stream, native close inside end(chunk)", async () => {
@@ -6245,11 +6247,13 @@ describe.concurrent("write() after end()", () => {
   }
 
   it("client stream, late write before the native close", async () => {
+    let closedByEnd;
     const events = await request((client, req, late) => {
       req.end("body");
+      closedByEnd = req.closed;
       req.write("late", late);
     });
-    expect(events).toEqual(lateWriteEvents);
+    expect([closedByEnd, events]).toEqual([false, lateWriteEvents]);
   });
 
   it("client stream, native close before the late write", async () => {

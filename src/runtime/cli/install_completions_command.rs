@@ -46,7 +46,7 @@ impl InstallCompletionsCommand {
                 Self::BUNX_NAME
             ),
         );
-        if bun_sys::symlink(exe, link_path).is_ok() {
+        if link_path.is_ok_and(|link_path| bun_sys::symlink(exe, link_path).is_ok()) {
             return Ok(());
         }
 
@@ -56,7 +56,7 @@ impl InstallCompletionsCommand {
                     &mut link_buf,
                     format_args!("{}/bin/{}", bstr::BStr::new(install_dir), Self::BUNX_NAME),
                 );
-                if bun_sys::symlink(exe, link_path).is_err() {
+                if !link_path.is_ok_and(|link_path| bun_sys::symlink(exe, link_path).is_ok()) {
                     break 'outer;
                 }
                 return Ok(());
@@ -70,7 +70,7 @@ impl InstallCompletionsCommand {
                     &mut link_buf,
                     format_args!("{}/.bun/bin/{}", bstr::BStr::new(home_dir), Self::BUNX_NAME),
                 );
-                if bun_sys::symlink(exe, link_path).is_err() {
+                if !link_path.is_ok_and(|link_path| bun_sys::symlink(exe, link_path).is_ok()) {
                     break 'outer;
                 }
                 return Ok(());
@@ -88,7 +88,7 @@ impl InstallCompletionsCommand {
                         Self::BUNX_NAME
                     ),
                 );
-                if bun_sys::symlink(exe, link_path).is_err() {
+                if !link_path.is_ok_and(|link_path| bun_sys::symlink(exe, link_path).is_ok()) {
                     break 'outer;
                 }
                 return Ok(());
@@ -553,12 +553,8 @@ impl InstallCompletionsCommand {
 
             // Check if they need to load the zsh completions file into their .zshrc
             if shell == Shell::Zsh {
-                let mut completions_path_buf = bun_paths::path_buffer_pool::get();
-                let completions_path: &[u8] = resolve_path::join_string_buf::<platform::Auto>(
-                    &mut completions_path_buf,
-                    &[completions_dir, filename],
-                );
-                let mut zshrc_filepath = bun_paths::path_buffer_pool::get();
+                let completions_path: &[u8] =
+                    resolve_path::join::<platform::Auto>(&[completions_dir, filename]);
                 let needs_to_tell_them_to_add_completions_file: bool = 'brk: {
                     let dot_zshrc: File = 'zshrc: {
                         'first: {
@@ -571,19 +567,8 @@ impl InstallCompletionsCommand {
                             // $ZDOTDIR/.zlogout
 
                             if let Some(zdot_dir) = env_var::ZDOTDIR.get() {
-                                zshrc_filepath[..zdot_dir.len()].copy_from_slice(zdot_dir);
-                                zshrc_filepath[zdot_dir.len()..zdot_dir.len() + b"/.zshrc".len()]
-                                    .copy_from_slice(b"/.zshrc");
-                                zshrc_filepath[zdot_dir.len() + b"/.zshrc".len()] = 0;
-                                // SAFETY: NUL written at zdot_dir.len() + "/.zshrc".len() above
-                                let filepath = unsafe {
-                                    bun_core::ZStr::from_raw(
-                                        zshrc_filepath.as_ptr(),
-                                        zdot_dir.len() + b"/.zshrc".len(),
-                                    )
-                                };
-                                match bun_sys::open_file_absolute_z(
-                                    filepath,
+                                match bun_sys::open_file(
+                                    &[zdot_dir, b"/.zshrc"].concat(),
                                     bun_sys::OpenFlags::READ_WRITE,
                                 ) {
                                     Ok(f) => break 'zshrc f,
@@ -594,19 +579,8 @@ impl InstallCompletionsCommand {
 
                         'second: {
                             if let Some(zdot_dir) = env_var::HOME.get() {
-                                zshrc_filepath[..zdot_dir.len()].copy_from_slice(zdot_dir);
-                                zshrc_filepath[zdot_dir.len()..zdot_dir.len() + b"/.zshrc".len()]
-                                    .copy_from_slice(b"/.zshrc");
-                                zshrc_filepath[zdot_dir.len() + b"/.zshrc".len()] = 0;
-                                // SAFETY: NUL written at zdot_dir.len() + "/.zshrc".len() above
-                                let filepath = unsafe {
-                                    bun_core::ZStr::from_raw(
-                                        zshrc_filepath.as_ptr(),
-                                        zdot_dir.len() + b"/.zshrc".len(),
-                                    )
-                                };
-                                match bun_sys::open_file_absolute_z(
-                                    filepath,
+                                match bun_sys::open_file(
+                                    &[zdot_dir, b"/.zshrc"].concat(),
                                     bun_sys::OpenFlags::READ_WRITE,
                                 ) {
                                     Ok(f) => break 'zshrc f,
@@ -617,19 +591,8 @@ impl InstallCompletionsCommand {
 
                         'third: {
                             if let Some(zdot_dir) = env_var::HOME.get() {
-                                zshrc_filepath[..zdot_dir.len()].copy_from_slice(zdot_dir);
-                                zshrc_filepath[zdot_dir.len()..zdot_dir.len() + b"/.zshenv".len()]
-                                    .copy_from_slice(b"/.zshenv");
-                                zshrc_filepath[zdot_dir.len() + b"/.zshenv".len()] = 0;
-                                // SAFETY: NUL written at zdot_dir.len() + "/.zshenv".len() above
-                                let filepath = unsafe {
-                                    bun_core::ZStr::from_raw(
-                                        zshrc_filepath.as_ptr(),
-                                        zdot_dir.len() + b"/.zshenv".len(),
-                                    )
-                                };
-                                match bun_sys::open_file_absolute_z(
-                                    filepath,
+                                match bun_sys::open_file(
+                                    &[zdot_dir, b"/.zshenv"].concat(),
                                     bun_sys::OpenFlags::READ_WRITE,
                                 ) {
                                     Ok(f) => break 'zshrc f,
@@ -707,4 +670,4 @@ impl InstallCompletionsCommand {
 }
 
 #[cfg(not(windows))]
-use bun_core::fmt::{buf_print_infallible as buf_print, buf_print_z_infallible as buf_print_z};
+use bun_core::fmt::{buf_print_infallible as buf_print, buf_print_z};

@@ -568,7 +568,7 @@ if (!cluster.isPrimary) {
   await new Promise(() => {});
 }
 
-const N = 6;
+const N = 3;
 
 function protectedCounts() {
   Bun.gc(true);
@@ -578,29 +578,50 @@ function protectedCounts() {
 
 const before = protectedCounts();
 
-const workers: import("node:cluster").Worker[] = [];
-for (let i = 0; i < N; i++) workers.push(cluster.fork());
-await Promise.all(workers.map(w => new Promise<void>(r => w.once("online", () => r()))));
+// Fork, wait for every worker to come online, kill them all, and wait for the
+// channel to close. The workers live only in this frame, so nothing user-side
+// references them after it returns.
+async function runWorkers() {
+  const workers: import("node:cluster").Worker[] = [];
+  for (let i = 0; i < N; i++) workers.push(cluster.fork());
+  await Promise.all(
+    workers.map(
+      w =>
+        new Promise<void>((resolve, reject) => {
+          w.once("online", resolve);
+          w.once("error", reject);
+          w.once("exit", code => reject(new Error("worker exited before online: " + code)));
+        }),
+    ),
+  );
 
-const during = protectedCounts();
+  const during = protectedCounts();
 
-// Kill every worker, wait for the channel to close, then drop user references.
-for (const w of workers) w.process.kill();
-await Promise.all(
-  workers.map(w => new Promise<void>(r => {
-    let n = 0;
-    const step = () => { if (++n === 2) r(); };
-    w.once("exit", step);
-    w.once("disconnect", step);
-  })),
-);
-workers.length = 0;
+  for (const w of workers) w.process.kill();
+  await Promise.all(
+    workers.map(
+      w =>
+        new Promise<void>((resolve, reject) => {
+          let n = 0;
+          const step = () => { if (++n === 2) resolve(); };
+          w.once("exit", step);
+          w.once("disconnect", step);
+          w.once("error", reject);
+        }),
+    ),
+  );
+  return during;
+}
 
-// Bounded poll: finalization may need a few real event-loop idles, while a
+const during = await runWorkers();
+
+// Bounded poll: finalization may need a few event-loop idles, while a
 // Strong-rooted Subprocess never goes away no matter how long we wait.
+// The count includes the shared Subprocess prototype object (same class
+// name, lives as long as the process), so 1 means no instance is live.
 let liveSubprocess = Infinity;
-for (let i = 0; i < 60; i++) {
-  await Bun.sleep(25);
+for (let i = 0; i < 20; i++) {
+  await new Promise(r => setImmediate(r));
   Bun.gc(true);
   liveSubprocess = heapStats().objectTypeCounts.Subprocess ?? 0;
   if (liveSubprocess <= 1) break;
@@ -631,11 +652,10 @@ process.exit(0);
     protectedObjectDelta: 0,
     exitCode: 0,
   });
-  // After every worker exits and user code holds no reference, the Subprocess
-  // wrappers are collectable. A root-cycle leak retains every one of the N;
-  // allow one straggler for a conservatively rooted async frame.
-  expect(liveSubprocess).toBeLessThan(N);
-  expect(liveSubprocess).toBeLessThanOrEqual(1);
+  // After every worker exits and user code holds no reference, every Subprocess
+  // instance is collectable. Only the prototype object remains. A root cycle
+  // keeps all N instances alive.
+  expect(liveSubprocess).toBe(1);
 });
 
 test("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {

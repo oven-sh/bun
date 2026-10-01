@@ -41,12 +41,10 @@ use bun_sys::windows::libuv::{UvHandle as _, UvStream as _};
 pub(crate) struct InternalMsgHolder {
     pub seq: i32,
 
-    // These fields back the child-side process singleton; the primary side stores
-    // the same state in the Subprocess wrapper's WriteBarrier slots instead.
+    // Child side only. The primary keeps this state in the Subprocess wrapper's cached slots.
     pub worker: bun_jsc::StrongOptional,
     pub cb: bun_jsc::StrongOptional,
-    /// JS Array of messages that arrived before the listener was installed.
-    /// Lazily created.
+    /// A JS Array of the messages that arrived before the listener was installed.
     pub(crate) messages: bun_jsc::StrongOptional,
 }
 
@@ -62,32 +60,48 @@ impl Default for InternalMsgHolder {
 }
 
 impl InternalMsgHolder {
-    #[inline]
-    fn as_map(map: JSValue) -> &'static mut bun_jsc::JSMap {
-        // `JSMap` is an `opaque_ffi!` ZST; the slot was seeded with
-        // `JSMap::create` so `from_js` is non-null. Single JS thread.
-        bun_jsc::JSMap::opaque_mut(bun_jsc::JSMap::from_js(map).unwrap().as_ptr())
+    /// The ack-callback `Map` in the Subprocess wrapper's `ipcAckCallbacks` slot.
+    fn ack_callbacks(subprocess: JSValue) -> Option<&'static mut bun_jsc::JSMap> {
+        if subprocess.is_empty() {
+            return None;
+        }
+        let map = crate::api::bun::subprocess::js::ipc_ack_callbacks_get_cached(subprocess)?;
+        Some(bun_jsc::JSMap::opaque_mut(
+            bun_jsc::JSMap::from_js(map)?.as_ptr(),
+        ))
     }
 
-    /// Store `callback` under `seq` on the given JS callbacks Map.
+    /// Store `callback` under `seq` in the wrapper's ack-callback `Map`, created on first use.
+    /// A `Map` in a cached slot is one GC edge for all in-flight acks, not a root per ack.
     pub(crate) fn put_callback(
-        map: JSValue,
+        subprocess: JSValue,
         global: &JSGlobalObject,
         seq: i32,
         callback: JSValue,
     ) -> JsResult<()> {
-        Self::as_map(map).set(global, JSValue::js_number(seq as f64), callback)
+        let map = match Self::ack_callbacks(subprocess) {
+            Some(map) => map,
+            None => {
+                let created = bun_jsc::JSMap::create(global);
+                crate::api::bun::subprocess::js::ipc_ack_callbacks_set_cached(
+                    subprocess, global, created,
+                );
+                Self::ack_callbacks(subprocess).ok_or(JsError::OutOfMemory)?
+            }
+        };
+        map.set(global, JSValue::js_number(seq as f64), callback)
     }
 
-    /// Remove and return the callback stored under `seq` on the given JS
-    /// callbacks Map, or `None` when absent.
+    /// Remove and return the callback stored under `seq`, or `None` when absent.
     pub(crate) fn take_callback(
-        map: JSValue,
+        subprocess: JSValue,
         global: &JSGlobalObject,
         seq: i32,
     ) -> JsResult<Option<JSValue>> {
+        let Some(map) = Self::ack_callbacks(subprocess) else {
+            return Ok(None);
+        };
         let key = JSValue::js_number(seq as f64);
-        let map = Self::as_map(map);
         let cb = map.get(global, key)?;
         if cb.is_undefined() {
             return Ok(None);
@@ -109,7 +123,9 @@ impl InternalMsgHolder {
                 a
             }
         };
-        arr.push(global, message)
+        // Own-slot writes and reads: an indexed accessor on `Array.prototype` must not see the queue.
+        let len = arr.get_length(global)? as u32;
+        arr.put_index(global, len, message)
     }
 
     pub(crate) fn dispatch(
@@ -153,16 +169,13 @@ impl InternalMsgHolder {
             return Ok(());
         };
         let _keep = bun_jsc::EnsureStillAlive(messages);
-        // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
-        // `dispatch_unsafe` → `event_loop.run_callback` runs the JS IPC
-        // listener which can re-enter via a fresh `&mut Self` and write
-        // `self.cb` / `self.worker`. Launder so each iteration re-reads
-        // through an opaque pointer.
+        // The JS listener can re-enter through `child_singleton()` and replace `cb` / `worker`,
+        // so each iteration must re-read them through a pointer LLVM cannot treat as `noalias`.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         let len = messages.get_length(global)? as u32;
         for i in 0..len {
-            let message = messages.get_index(global, i)?;
-            if message.is_undefined_or_null() {
+            let message = messages.get_direct_index(global, i)?;
+            if message.is_empty_or_undefined_or_null() {
                 continue;
             }
             // SAFETY: `this` is still live across re-entry — the IPC
@@ -1439,19 +1452,16 @@ impl SendQueue {
                 .waiting_for_ack
                 .with_mut(|w| w.as_ref().and_then(|i| i.handle.as_ref()?.cluster_seq));
             if let Some(seq) = cluster_seq {
-                let this_jsvalue = self.owner_this_jsvalue();
-                let map = if this_jsvalue.is_empty() {
-                    None
-                } else {
-                    crate::api::bun::subprocess::js::ipc_ack_callbacks_get_cached(this_jsvalue)
-                };
-                let cb = match map.map(|map| InternalMsgHolder::take_callback(map, global, seq)) {
-                    Some(Ok(cb)) => cb,
-                    Some(Err(err)) => {
+                let cb = match InternalMsgHolder::take_callback(
+                    self.owner_this_jsvalue(),
+                    global,
+                    seq,
+                ) {
+                    Ok(cb) => cb,
+                    Err(err) => {
                         crate::dispatch::fold(Err(err));
                         None
                     }
-                    None => None,
                 };
                 if let Some(cb) = cb {
                     let reply = JSValue::create_empty_object(global, 1);

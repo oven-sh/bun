@@ -143,18 +143,7 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
         seq
     });
     if callback.is_function() {
-        // Ack callbacks live in a JS Map held by the Subprocess wrapper's
-        // WriteBarrier slot: one GC edge regardless of how many are in flight,
-        // and not a GC root, so the Subprocess stays collectable.
-        let map = match subprocess_js::ipc_ack_callbacks_get_cached(arguments[0]) {
-            Some(m) => m,
-            None => {
-                let m = bun_jsc::JSMap::create(global);
-                subprocess_js::ipc_ack_callbacks_set_cached(arguments[0], global, m);
-                m
-            }
-        };
-        InternalMsgHolder::put_callback(map, global, this_seq, callback)?;
+        InternalMsgHolder::put_callback(arguments[0], global, this_seq, callback)?;
         if let Some(h) = &mut native_handle {
             h.cluster_seq = Some(this_seq);
         }
@@ -203,9 +192,7 @@ pub(crate) fn on_internal_message_primary(
     if subprocess.ipc().is_none() {
         return Ok(JSValue::UNDEFINED);
     }
-    // Stored in the Subprocess wrapper's WriteBarrier slots: visited by GC but
-    // not a root, so a finished worker's whole object graph is collectable once
-    // user code releases it.
+    // Cached slots, not `Strong` handles: a `Strong` here roots the worker's whole object graph.
     subprocess_js::ipc_worker_set_cached(arguments[0], global, arguments[1]);
     subprocess_js::ipc_internal_callback_set_cached(arguments[0], global, arguments[2]);
     Ok(JSValue::UNDEFINED)
@@ -238,17 +225,15 @@ pub(crate) fn handle_internal_message_primary(
     if let Some(p) = message.get(global, "ack")? {
         if !p.is_undefined() {
             let ack = p.to_int32();
-            if let Some(map) = subprocess_js::ipc_ack_callbacks_get_cached(this_jsvalue) {
-                if let Some(callback) = InternalMsgHolder::take_callback(map, global, ack)? {
-                    event_loop.run_callback(
-                        subprocess.context,
-                        callback,
-                        global,
-                        worker,
-                        &[message, JSValue::NULL],
-                    );
-                    return Ok(());
-                }
+            if let Some(callback) = InternalMsgHolder::take_callback(this_jsvalue, global, ack)? {
+                event_loop.run_callback(
+                    subprocess.context,
+                    callback,
+                    global,
+                    worker,
+                    &[message, JSValue::NULL],
+                );
+                return Ok(());
             }
         }
     }

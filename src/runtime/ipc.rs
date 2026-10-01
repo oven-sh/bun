@@ -72,7 +72,6 @@ impl InternalMsgHolder {
     }
 
     /// Store `callback` under `seq` in the wrapper's ack-callback `Map`, created on first use.
-    /// A `Map` in a cached slot is one GC edge for all in-flight acks, not a root per ack.
     pub(crate) fn put_callback(
         subprocess: JSValue,
         global: &JSGlobalObject,
@@ -169,8 +168,7 @@ impl InternalMsgHolder {
             return Ok(());
         };
         let _keep = bun_jsc::EnsureStillAlive(messages);
-        // The JS listener can re-enter through `child_singleton()` and replace `cb` / `worker`,
-        // so each iteration must re-read them through a pointer LLVM cannot treat as `noalias`.
+        // Re-read `cb` / `worker` each iteration: the JS listener can replace them through `child_singleton()`.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         let len = messages.get_length(global)? as u32;
         for i in 0..len {

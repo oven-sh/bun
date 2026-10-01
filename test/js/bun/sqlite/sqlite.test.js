@@ -2897,8 +2897,9 @@ it("new Database() does not leak the sqlite3 handle when open fails", async () =
   // The error is built from the handle, so it must keep its SQLite code.
   expect(() => new Database(badPath)).toThrow(expect.objectContaining({ code: "SQLITE_CANTOPEN" }));
 
-  // Runs `count` failed opens in a child. Returns the RSS growth over them, and
-  // the bytes that LeakSanitizer reports at exit (0 on a build without it).
+  // Runs 200 failed opens to warm up and then `count` more in a child. Returns the
+  // RSS growth over the `count`, and the bytes that LeakSanitizer reports at exit
+  // (0 on a build without it).
   async function failedOpens(count) {
     const src = `
       import { Database } from "bun:sqlite";
@@ -2922,6 +2923,8 @@ it("new Database() does not leak the sqlite3 handle when open fails", async () =
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const summary = /SUMMARY: AddressSanitizer: (\d+) byte\(s\) leaked/.exec(stderr);
+    // The child prints the growth last, so a number on stdout means that every open ran.
+    expect({ stdout, stderr, exitCode }).toMatchObject({ stdout: expect.stringMatching(/^-?\d/) });
     // A leak report makes the child exit with 1.
     if (!summary) expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
     return { rssGrowthMB: parseFloat(stdout), leakedBytes: Number(summary?.[1] ?? 0) };

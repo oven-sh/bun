@@ -2900,8 +2900,7 @@ fn get_or_put_resolved_package(
                     break 'res FolderResolutionValue::Err(crate::Error::MissingPackageJSON);
                 }
 
-                // Declared by the root or a workspace, or supplied by a root rule: the
-                // path is relative to the top-level dir and the folder is on disk.
+                // Root, workspace and root-rule paths are relative to the top-level dir.
                 if declared_by_workspace || this.lockfile.is_overridden_dependency(dependency_id) {
                     // relative to cwd
                     // reshaped for borrowck — `folder_path` borrows

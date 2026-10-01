@@ -945,9 +945,7 @@ impl Lockfile {
                 == ResolutionTag::Folder
     }
 
-    /// Did the resolver apply a root `overrides`/`resolutions` rule to this dependency?
-    /// Same lookup as `enqueue_dependency_with_main`. A `file:` path from a rule is
-    /// relative to the top-level dir whichever package declares the dependency.
+    /// Did the resolver apply a root rule to this dependency? Same lookup as `enqueue_dependency_with_main`.
     pub(crate) fn is_overridden_dependency(&self, id: DependencyID) -> bool {
         let dependency = &self.buffers.dependencies[id as usize];
         if dependency.behavior.is_workspace() {

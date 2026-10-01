@@ -6033,6 +6033,7 @@ describe("transitive file dependencies", () => {
       ]);
 
       for (const args of [["--save-text-lockfile"], ["--frozen-lockfile"]]) {
+        await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
         const { stdout, stderr, exited } = spawn({
           cmd: [bunExe(), "install", ...args],
           cwd: packageDir,

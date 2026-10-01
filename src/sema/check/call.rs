@@ -2114,6 +2114,34 @@ impl<'p> Checker<'p> {
         false
     }
 
+    /// The calls, and the functions that do not wait for the types of their parameters, inside the object literal `e`: like such an
+    /// argument they are worked out once, for the first candidate, which expects `e` to be `context`.
+    fn settle_nested_once(&mut self, file: FileId, e: ExprId, context: TypeId) {
+        let hir = self.hir(file);
+        match hir[e].kind {
+            ExprKind::Object(props) => {
+                for p in props.iter() {
+                    let prop = &hir[p];
+                    if prop.value.is_none()
+                        || !matches!(prop.kind, PropKind::Init | PropKind::Method)
+                    {
+                        continue;
+                    }
+                    if let Some(name) = self.member_name(file, prop.key)
+                        && let Some(wanted) = self.contextual_property(context, name)
+                    {
+                        self.settle_nested_once(file, prop.value, wanted);
+                    }
+                }
+            }
+            ExprKind::Fn(_) if !self.is_context_sensitive(file, e) => {
+                self.set_context_if_unset(file, e, context);
+            }
+            ExprKind::Call(_) | ExprKind::New(_) => self.set_context_if_unset(file, e, context),
+            _ => {}
+        }
+    }
+
     /// `chooseOverload` checks the arguments again for each candidate, so only a candidate with a `const` type parameter sees them in
     /// a const context. Here an argument is checked once. If a candidate before the first such one applies, the call has no const context.
     fn try_candidates_before_const(
@@ -2291,6 +2319,9 @@ impl<'p> Checker<'p> {
                     &telling
                 })
             };
+            if !is_settled_once && wanted.len() > 1 {
+                self.settle_nested_once(file, e, wanted[0]);
+            }
             self.set_context(file, e, context);
         }
         // `isSignatureApplicable`: what it is called on counts, but for `new` and for a call of `super.m`.
@@ -2612,18 +2643,45 @@ impl<'p> Checker<'p> {
         let ExprKind::Object(props) = hir[arg].kind else {
             return Some(TypeId::UNRESOLVED);
         };
-        if props.iter().any(|p| hir[p].kind == PropKind::Spread)
-            || self.has_type_variables(param)
-            || !self.is_known(param)
-        {
+        if self.has_type_variables(param) || !self.is_known(param) {
             return Some(TypeId::UNRESOLVED);
         }
-        let mut shape = Shape {
+        let partial = || Shape {
             literal: Literalness::Partial,
             ..Shape::default()
         };
+        // A `Partial` shape without members is `anyFunctionType`, which `{}` is not.
+        let finish = |c: &mut Self, shape: Shape| {
+            if shape.props.is_empty() {
+                TypeId::EMPTY_OBJECT
+            } else {
+                c.synth(shape)
+            }
+        };
+        let mut shape = partial();
+        // `getSpreadType` of what comes before the properties in `shape`.
+        let mut spread: Option<TypeId> = None;
         for p in props.iter() {
             let prop = &hir[p];
+            if prop.kind == PropKind::Spread {
+                if self.depends_on_context(file, prop.value) {
+                    return Some(TypeId::UNRESOLVED);
+                }
+                let given = self.type_of_expr(file, prop.value);
+                if !self.is_known(given)
+                    || self.is_uncertain(file, prop.value)
+                    || self.has_type_variables(given)
+                {
+                    return Some(TypeId::UNRESOLVED);
+                }
+                let written = finish(self, std::mem::replace(&mut shape, partial()));
+                let left = match spread {
+                    Some(left) => self.spread(left, written),
+                    None => written,
+                };
+                spread = Some(self.spread(left, given));
+                continue;
+            }
             let Some(name) = self.member_name(file, prop.key) else {
                 return Some(TypeId::UNRESOLVED);
             };
@@ -2666,12 +2724,14 @@ impl<'p> Checker<'p> {
                 mapper: MapperId::IDENTITY,
             });
         }
-        // A `Partial` shape without members is `anyFunctionType`, which `{}` is not.
-        let literal_type = if shape.props.is_empty() {
-            TypeId::EMPTY_OBJECT
-        } else {
-            self.synth(shape)
+        let written = finish(self, shape);
+        let literal_type = match spread {
+            Some(left) => self.spread(left, written),
+            None => written,
         };
+        if self.is_any(literal_type) {
+            return Some(TypeId::UNRESOLVED);
+        }
         let is_related = if by_subtype {
             self.is_subtype(literal_type, param)
         } else {
@@ -3386,6 +3446,12 @@ impl<'p> Checker<'p> {
                         self.set_async_return_contexts(file, e, context, return_mapper);
                         self.instantiate_with_expected_result(context, return_mapper)
                     } else {
+                        // `instantiateContextualType`: the contextual signature of a function goes by all that is inferred so far.
+                        let param = if matches!(self.hir(file)[e].kind, ExprKind::Fn(_)) {
+                            self.instantiate_instantiable_for_signature(&inference, param)
+                        } else {
+                            param
+                        };
                         self.set_async_return_contexts(file, e, param, return_mapper);
                         let context = self.instantiate_with_expected_result(param, return_mapper);
                         // In the end a literal is held against what the type parameters come to. It is looked at once, so that

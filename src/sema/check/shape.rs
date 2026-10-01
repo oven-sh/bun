@@ -1534,13 +1534,23 @@ impl<'p> Checker<'p> {
                         if i > 0 && self.is_implementation_after(file, constructors[i - 1], m) {
                             continue;
                         }
+                        // Where an interface of the same name declares the type parameters the symbol goes by, those of the class
+                        // stand for them.
+                        let own = self.decl_params_mapper(sym, file, hir[c].type_params);
+                        let mapper = if own == MapperId::IDENTITY {
+                            outer
+                        } else {
+                            let mut pairs = self.p.types.mapping(outer).to_vec();
+                            pairs.extend_from_slice(self.p.types.mapping(own));
+                            self.p.types.mapper(pairs)
+                        };
                         b.shape
                             .construct
                             .push(self.p.types.intern_sig(SigData::Construct {
                                 class: sym,
                                 file,
                                 func: hir[m].func,
-                                mapper: outer,
+                                mapper,
                             }));
                     }
                 }

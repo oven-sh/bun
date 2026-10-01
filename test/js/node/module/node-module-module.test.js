@@ -965,10 +965,10 @@ console.log("survived", require("./late.js"));`,
       process.on("uncaughtException", error => console.log("uncaughtException: " + error.message));
       process.on("unhandledRejection", error => console.log("unhandledRejection: " + error.message));
     `;
-    async function run(preload, inWorker = false) {
+    async function run(preload, inWorker = false, main = `console.log("main ran");`) {
       using dir = tempDir("module-run-main", {
         "preload.cjs": preload,
-        "main.cjs": `console.log("main ran");`,
+        "main.cjs": main,
         "worker.mjs": `new Worker(import.meta.dir + "/main.cjs", { preload: [import.meta.dir + "/preload.cjs"] });`,
       });
       await using proc = Bun.spawn({
@@ -1015,9 +1015,15 @@ console.log("survived", require("./late.js"));`,
           throw new Error("after the original");
         };
       `;
-      expect(await run(preload)).toMatchObject({ stdout: "", exitCode: 1 });
+      expect(await run(preload)).toMatchObject({ stdout: "main ran\n", exitCode: 1 });
       expect(await run(handlers + preload)).toEqual({
-        stdout: "uncaughtException: after the original\nmain ran\n",
+        stdout: "main ran\nunhandledRejection: after the original\n",
+        stderr: "",
+        exitCode: 0,
+      });
+      // What the main file throws is not lost for it.
+      expect(await run(handlers + preload, false, `throw new Error("from main");`)).toEqual({
+        stdout: "unhandledRejection: after the original\nuncaughtException: from main\n",
         stderr: "",
         exitCode: 0,
       });

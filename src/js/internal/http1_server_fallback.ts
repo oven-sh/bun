@@ -46,7 +46,7 @@ interface Http1FallbackResponseHead {
   keepAliveTimeoutSecs: number;
 }
 
-function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout) {
+function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout, response) {
   const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
   let head: Http1FallbackResponseHead | null = null;
   let headWritten = false;
@@ -228,6 +228,8 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     finished: false,
     aborted: false,
     shouldKeepAlive,
+    // The ServerResponse whose trailers end() sends. A property and not a closure variable: one more captured variable moves the scope of these closures to a larger cell.
+    response,
     onfinished: null as (() => void) | null,
     // Like the native getter: an empty slot reads as undefined.
     get onwritable() {
@@ -314,7 +316,12 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       // Transfer-Encoding: chunked themselves.
       const terminated = chunked && !noBody;
       writeBody(buf, terminated ? undefined : onEndWritten);
-      if (terminated) writeToSocket("0\r\n\r\n", onEndWritten);
+      if (terminated) {
+        // Like Node's end(): the trailers follow the last chunk, in one latin1 write.
+        const trailer = this.response._trailer;
+        if (!trailer) writeToSocket("0\r\n\r\n", onEndWritten);
+        else if (!socket.writableEnded) socket.write("0\r\n" + trailer + "\r\n", "latin1", onEndWritten);
+      }
       this.ended = true;
       // Like Node's OutgoingMessage#end(): while the socket holds bytes, the response has finished when its last write completes.
       if (socket.writableLength > 0 && !socket.destroyed) {
@@ -485,7 +492,7 @@ function connectionListenerHTTP1(server, socket, options) {
     res._keepAliveTimeout = keepAliveTimeout;
     const { maxRequestsPerSocket } = server;
     res._maxRequestsPerSocket = maxRequestsPerSocket;
-    const handle = createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout);
+    const handle = createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout, res);
     handle.onfinished = function () {
       socket[kHttp1ActiveRequests] = Math.max(0, (socket[kHttp1ActiveRequests] || 1) - 1);
       if (!shouldKeepAlive && !socket.destroyed) {

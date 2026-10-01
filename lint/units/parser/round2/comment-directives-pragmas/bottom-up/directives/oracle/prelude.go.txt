@@ -1,0 +1,58 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
+	"unicode/utf8"
+)
+
+type TextRange struct{ pos, end int }
+
+func NewTextRange(pos, end int) TextRange { return TextRange{pos, end} }
+func (t TextRange) Pos() int             { return t.pos }
+func (t TextRange) End() int             { return t.end }
+
+type Kind int
+type TokenFlags int
+
+const (
+	KindSingleLineCommentTrivia Kind = 1
+	KindMultiLineCommentTrivia  Kind = 2
+)
+const (
+	TokenFlagsNone                    TokenFlags = 0
+	TokenFlagsPrecedingLineBreak      TokenFlags = 1
+	TokenFlagsPrecedingJSDocComment   TokenFlags = 2
+	TokenFlagsUnterminated            TokenFlags = 4
+)
+const Asterisk_Slash_expected = 1010
+
+type CommentDirectiveKind int32
+
+const (
+	CommentDirectiveKindUnknown CommentDirectiveKind = iota
+	CommentDirectiveKindExpectError
+	CommentDirectiveKindIgnore
+)
+
+type CommentDirective struct {
+	Loc  TextRange
+	Kind CommentDirectiveKind
+}
+
+type Scanner struct {
+	text              string
+	end               int
+	pos               int
+	tokenStart        int
+	token             Kind
+	tokenFlags        TokenFlags
+	skipTrivia        bool
+	commentDirectives []CommentDirective
+	errors            []int
+}
+
+func (s *Scanner) error(code int)                          { s.errors = append(s.errors, s.pos) }
+func (s *Scanner) scanJSDocCommentForTags(commentText string) {}

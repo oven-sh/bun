@@ -1,5 +1,5 @@
 "declare const x: any; if (!!x) {}"
-      => no-extra-boolean-cast 1:27 Redundant double negation.
+      => 1:27 Redundant double negation.
 "declare const x: any; if (!!x as any) {}"
       => (none)
 "declare const x: any; if ((!!x)!) {}"
@@ -13,11 +13,11 @@
 "declare const x: any; if (!(!x)!) {}"
       => (none)
 "declare const x: any; if (!!(x as any)) {}"
-      => no-extra-boolean-cast 1:27 Redundant double negation.
+      => 1:27 Redundant double negation.
 "declare const x: any; if (!!x!) {}"
-      => no-extra-boolean-cast 1:27 Redundant double negation.
+      => 1:27 Redundant double negation.
 "declare const x: any; if (Boolean(x)) {}"
-      => no-extra-boolean-cast 1:27 Redundant Boolean call.
+      => 1:27 Redundant Boolean call.
 "declare const x: any; if (Boolean(x) as any) {}"
       => (none)
 "declare const x: any; if (Boolean(x)!) {}"
@@ -27,15 +27,15 @@
 "declare const x: any; if ((Boolean as any)(x)) {}"
       => (none)
 "declare const x: any; if ((Boolean)(x)) {}"
-      => no-extra-boolean-cast 1:27 Redundant Boolean call.
+      => 1:27 Redundant Boolean call.
 "declare const x: any; if (Boolean<any>(x)) {}"
-      => no-extra-boolean-cast 1:27 Redundant Boolean call.
+      => 1:27 Redundant Boolean call.
 "declare const x: any; if (Boolean(x as any)) {}"
-      => no-extra-boolean-cast 1:27 Redundant Boolean call.
+      => 1:27 Redundant Boolean call.
 "declare const x: any; if (!Boolean(a as any)) { }"
-      => no-extra-boolean-cast 1:28 Redundant Boolean call.
+      => 1:28 Redundant Boolean call.
 "declare const x: any; Boolean(!!x);"
-      => no-extra-boolean-cast 1:31 Redundant double negation.
+      => 1:31 Redundant double negation.
 "declare const x: any; Boolean(!!x as any);"
       => (none)
 "declare const x: any; Boolean((!!x)!);"
@@ -45,7 +45,7 @@
 "declare const x: any; (Boolean as any)(!!x);"
       => (none)
 "declare const x: any; new Boolean(!!x);"
-      => no-extra-boolean-cast 1:35 Redundant double negation.
+      => 1:35 Redundant double negation.
 "declare const x: any; new Boolean(!!x as any);"
       => (none)
 "declare const x: any; new (Boolean as any)(!!x);"
@@ -53,11 +53,11 @@
 "declare const x: any; new Boolean!(!!x);"
       => (none)
 "declare const x: any; new Boolean<any>(!!x);"
-      => no-extra-boolean-cast 1:40 Redundant double negation.
+      => 1:40 Redundant double negation.
 "declare const x: any; !(!!x as any);"
       => (none)
 "declare const x: any; !!!x;"
-      => no-extra-boolean-cast 1:24 Redundant double negation.
+      => 1:24 Redundant double negation.
 "declare const x: any; !(!!x)!;"
       => (none)
 "declare const x: any; !Boolean(x)!;"
@@ -65,7 +65,7 @@
 "declare const x: any; !(Boolean(x) as any);"
       => (none)
 "declare const x: any; (!!x) ? 1 : 2;"
-      => no-extra-boolean-cast 1:24 Redundant double negation.
+      => 1:24 Redundant double negation.
 "declare const x: any; (!!x as any) ? 1 : 2;"
       => (none)
 "declare const x: any; (!!x)! ? 1 : 2;"
@@ -77,35 +77,35 @@
 "declare const x: any; for (; !!x satisfies boolean;) {}"
       => (none)
 "declare const x: any; for (; (!!x);) {}"
-      => no-extra-boolean-cast 1:31 Redundant double negation.
+      => 1:31 Redundant double negation.
 "declare const x: any; if (Boolean?.(x)) {}"
-      => no-extra-boolean-cast 1:27 Redundant Boolean call.
+      => 1:27 Redundant Boolean call.
 "declare const x: any; if (Boolean?.(x)!) {}"
       => (none)
 "declare const x: any; if ((Boolean?.(x))!) {}"
       => (none)
 "declare const x: any; if (Boolean?.(!!x)) {}"
-      => no-extra-boolean-cast 1:27 Redundant Boolean call. | no-extra-boolean-cast 1:37 Redundant double negation.
+      => 1:27 Redundant Boolean call. | 1:37 Redundant double negation.
 "declare const x: any; if ((Boolean)?.(x)) {}"
-      => no-extra-boolean-cast 1:27 Redundant Boolean call.
+      => 1:27 Redundant Boolean call.
 "declare const x: any; if (((Boolean))(((x)))) {}"
-      => no-extra-boolean-cast 1:27 Redundant Boolean call.
+      => 1:27 Redundant Boolean call.
 "declare const x: any; if ((!(!x))) {}"
-      => no-extra-boolean-cast 1:28 Redundant double negation.
+      => 1:28 Redundant double negation.
 "declare const x: any; if (!(!(x))) {}"
-      => no-extra-boolean-cast 1:27 Redundant double negation.
+      => 1:27 Redundant double negation.
 "declare const x: any; if (! /* c */ !x) {}"
-      => no-extra-boolean-cast 1:27 Redundant double negation.
+      => 1:27 Redundant double negation.
 "function f(Boolean: any, x: any) { if (Boolean(x)) {} }"
       => (none)
 "declare const x: any; enum Boolean { A } if (Boolean(x)) {}"
       => (none)
 "declare const x: any; namespace N { export const Boolean = 1; } if (Boolean(x)) {}"
-      => no-extra-boolean-cast 1:69 Redundant Boolean call.
+      => 1:69 Redundant Boolean call.
 "declare const x: any; type Boolean = number; if (Boolean(x)) {}"
-      => no-extra-boolean-cast 1:50 Redundant Boolean call.
+      => 1:50 Redundant Boolean call.
 "declare const x: any; interface Boolean { a: 1 } if (Boolean(x)) {}"
-      => no-extra-boolean-cast 1:54 Redundant Boolean call.
+      => 1:54 Redundant Boolean call.
 "declare const x: any; declare const Boolean: any; if (Boolean(x)) {}"
       => (none)
 "declare const x: any; declare function Boolean(a: any): any; if (Boolean(x)) {}"
@@ -117,6 +117,6 @@
 "import Boolean = require('x'); declare const x: any; if (Boolean(x)) {}"
       => (none)
 "declare const x: any; declare global { var Boolean: any } if (Boolean(x)) {}"
-      => no-extra-boolean-cast 1:63 Redundant Boolean call.
+      => 1:63 Redundant Boolean call.
 "declare const x: any; class C<Boolean> { m() { if (Boolean(x)) {} } }"
-      => no-extra-boolean-cast 1:52 Redundant Boolean call.
+      => 1:52 Redundant Boolean call.

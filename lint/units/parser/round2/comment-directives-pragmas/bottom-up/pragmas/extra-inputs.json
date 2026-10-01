@@ -1,0 +1,146 @@
+[
+ [
+  "check-digit-ends-name",
+  "// @ts-check2\n"
+ ],
+ [
+  "check-colon-ends-name",
+  "// @ts-nocheck: generated\n"
+ ],
+ [
+  "check-nbsp-before-at",
+  "// @ts-check\n"
+ ],
+ [
+  "check-tab-before-at",
+  "//\t\t@ts-check\n"
+ ],
+ [
+  "check-four-slashes",
+  "//// @ts-check\n"
+ ],
+ [
+  "check-after-nel",
+  "// @ts-check\n"
+ ],
+ [
+  "check-after-zwsp",
+  "​// @ts-nocheck\n"
+ ],
+ [
+  "check-after-ls-ps",
+  "  /// <reference path=\"a.ts\" /> // @ts-check"
+ ],
+ [
+  "block-slash-only",
+  "/*/"
+ ],
+ [
+  "block-empty-closed",
+  "/**/\n// @ts-check\n"
+ ],
+ [
+  "jsx-arg-adjacent-to-end",
+  "/* @jsx h*/\n/**@jsxFrag F*/\n"
+ ],
+ [
+  "jsx-tabs",
+  "/*\t@jsx\th\t*/\n"
+ ],
+ [
+  "jsx-crlf-lines",
+  "/*@jsx h\r\n@jsxFrag F*/\n"
+ ],
+ [
+  "jsx-same-line-first-only",
+  "/* @jsx a @jsxFrag b */\n"
+ ],
+ [
+  "jsx-two-lines-same-name",
+  "/*\n@jsx a\n@jsx b\n*/\n"
+ ],
+ [
+  "jsx-bare-at-then-pragma",
+  "/* @ @jsx h */\n/* x@ @jsxFrag F */\n"
+ ],
+ [
+  "jsx-at-end",
+  "/* @jsx h @*/\n/* @*/\n"
+ ],
+ [
+  "jsx-dotted-i",
+  "/* @jsxİmportSource p */\n"
+ ],
+ [
+  "jsx-unknown-name",
+  "/* @jsxs h */\n/* @jsx.h x */\n"
+ ],
+ [
+  "reference-empty-values",
+  "/// <reference path=\"a\" types=\"\" />\n/// <reference lib=\"\" path=\"p\" />\n"
+ ],
+ [
+  "reference-no-default-lib-wins",
+  "/// <reference no-default-lib=\"true\" types=\"t\" resolution-mode=\"bogus\"/>\n"
+ ],
+ [
+  "reference-mode-empty",
+  "/// <reference types=\"t\" resolution-mode=\"\"/>\n"
+ ],
+ [
+  "reference-mode-without-types",
+  "/// <reference path=\"a.ts\" preserve=\"true\" resolution-mode=\"import\" />\n"
+ ],
+ [
+  "reference-no-newline-two",
+  "/// <reference path=\"a.ts\" />\n/// <reference path=\"b.ts\" />"
+ ],
+ [
+  "reference-value-with-other-quote",
+  "/// <reference path='a\"b.ts' types=\"c'd\" />\n"
+ ],
+ [
+  "reference-arg-without-value",
+  "/// <reference path types=\"t\" />\n"
+ ],
+ [
+  "reference-stops-at-bad-arg",
+  "/// <reference path=\"a.ts\" 1=\"x\" types=\"t\" />\n"
+ ],
+ [
+  "reference-upper-tag-mixed",
+  "/// <Reference Path=\"a.ts\" NO-DEFAULT-LIB=\"TRUE\" />\n"
+ ],
+ [
+  "reference-tab-after-slashes",
+  "///\t \t<reference lib=\"l\"/>\n"
+ ],
+ [
+  "reference-then-token-then-reference",
+  "/// <reference path=\"a.ts\" />\nlet x; /// <reference path=\"b.ts\" />\n"
+ ],
+ [
+  "html-close-comment-first",
+  "-->\n// @ts-nocheck\n"
+ ],
+ [
+  "directive-comments-are-no-pragmas",
+  "// @ts-ignore\n/* @ts-expect-error */\nlet x;"
+ ],
+ [
+  "check-in-middle-of-blocks",
+  "/* a */ /* b */\n/** c */ // @ts-nocheck\n/* d */ let x;"
+ ],
+ [
+  "hashbang-crlf",
+  "#!/usr/bin/env bun\r\n/// <reference types=\"bun\" />\r\n"
+ ],
+ [
+  "hashbang-not-first",
+  " #!x\n// @ts-check\n"
+ ],
+ [
+  "bom-then-hashbang",
+  "﻿#!x\n// @ts-check\n"
+ ]
+]

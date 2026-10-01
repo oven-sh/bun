@@ -1,0 +1,87 @@
+
+
+type FileReference struct {
+	TextRange
+	FileName       string
+	ResolutionMode string
+	Preserve       bool
+}
+
+func main() {
+	var inputs [][]string
+	data, _ := os.ReadFile(os.Args[1])
+	if err := json.Unmarshal(data, &inputs); err != nil {
+		panic(err)
+	}
+	for _, in := range inputs {
+		text := in[1]
+		pragmas := getCommentPragmas(&NodeFactory{}, text)
+		var refs, types, libs []string
+		var diags []string
+		checkJs := "none"
+		checkPos := -1
+		for _, pragma := range pragmas {
+			switch pragma.Name {
+			case "reference":
+				ty, typesOk := pragma.Args["types"]
+				lib, libOk := pragma.Args["lib"]
+				path, pathOk := pragma.Args["path"]
+				resolutionMode, resolutionModeOk := pragma.Args["resolution-mode"]
+				preserve, preserveOk := pragma.Args["preserve"]
+				noDefaultLib, noDefaultLibOk := pragma.Args["no-default-lib"]
+				pres := ""
+				if preserveOk && preserve.Value == "true" {
+					pres = " preserve"
+				}
+				switch {
+				case noDefaultLibOk && noDefaultLib.Value == "true":
+				case typesOk:
+					mode := ""
+					if resolutionModeOk {
+						if resolutionMode.Value == "import" {
+							mode = " mode=import"
+						} else if resolutionMode.Value == "require" {
+							mode = " mode=require"
+						} else {
+							diags = append(diags, fmt.Sprintf("TS1453@%d-%d", resolutionMode.Pos(), resolutionMode.End()))
+						}
+					}
+					types = append(types, fmt.Sprintf("%d-%d%s%s", ty.Pos(), ty.End(), mode, pres))
+				case libOk:
+					libs = append(libs, fmt.Sprintf("%d-%d%s", lib.Pos(), lib.End(), pres))
+				case pathOk:
+					refs = append(refs, fmt.Sprintf("%d-%d%s", path.Pos(), path.End(), pres))
+				default:
+					diags = append(diags, fmt.Sprintf("TS1084@%d-%d", pragma.Pos(), pragma.End()))
+				}
+			case "ts-check", "ts-nocheck":
+				if checkPos < 0 || pragma.Pos() > checkPos {
+					checkPos = pragma.Pos()
+					checkJs = fmt.Sprintf("enabled=%v@%d-%d", pragma.Name == "ts-check", pragma.Pos(), pragma.End())
+				}
+			}
+		}
+		var ps []string
+		for _, pragma := range pragmas {
+			var keys []string
+			for k := range pragma.Args {
+				switch k {
+				case "types", "lib", "path", "resolution-mode", "preserve", "no-default-lib", "factory":
+					keys = append(keys, k)
+				}
+			}
+			sort.Strings(keys)
+			var as []string
+			for _, k := range keys {
+				a := pragma.Args[k]
+				as = append(as, fmt.Sprintf("%s@%d-%d", k, a.Pos(), a.End()))
+			}
+			ps = append(ps, fmt.Sprintf("%s[%d-%d kind=%d nl=%v]{%s}", pragma.Name, pragma.Pos(), pragma.End(), pragma.Kind, pragma.HasTrailingNewLine, strings.Join(as, ",")))
+		}
+		j, _ := json.Marshal(text)
+		_ = j
+		fmt.Printf("ref=[%s] types=[%s] lib=[%s] checkJs=%s diags=[%s] pragmas=[%s]\n", strings.Join(refs, " "), strings.Join(types, " "), strings.Join(libs, " "), checkJs, strings.Join(diags, " "), strings.Join(ps, " "))
+	}
+	_ = unicode.MaxASCII
+	_ = utf8.RuneError
+}

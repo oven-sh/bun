@@ -1,0 +1,41 @@
+--- upstream-multiline-a.ts bytes=161 parseDiagnostics=0 raw=3
+directive Ignore 40..54
+directive ExpectError 77..97
+directive ExpectError 120..140
+--- upstream-multiline-b.tsx bytes=608 parseDiagnostics=0 raw=7
+directive Ignore 176..192
+directive Ignore 230..244
+directive ExpectError 285..307
+directive ExpectError 348..373
+directive ExpectError 414..438
+directive ExpectError 476..496
+directive ExpectError 537..559
+--- jsx-tag-comments.tsx bytes=62 parseDiagnostics=0 raw=3
+directive Ignore 13..26
+directive ExpectError 35..57
+--- jsx-attr-value-comment.tsx bytes=67 parseDiagnostics=0 raw=2
+directive Ignore 14..30
+directive ExpectError 39..58
+--- jsx-closing-tag-comment.tsx bytes=32 parseDiagnostics=0 raw=1
+directive Ignore 15..28
+--- jsx-text-is-no-comment.tsx bytes=53 parseDiagnostics=0 raw=0
+--- jsx-expression-comments.tsx bytes=57 parseDiagnostics=0 raw=2
+directive Ignore 12..28
+directive ExpectError 30..49
+--- jsx-fragment-text.tsx bytes=51 parseDiagnostics=0 raw=1
+directive ExpectError 31..50
+--- jsx-after-child-element.tsx bytes=58 parseDiagnostics=0 raw=0
+--- jsx-self-closing-then-comment.tsx bytes=29 parseDiagnostics=0 raw=1
+directive Ignore 13..26
+--- tsx-generic-arrow-lookahead.tsx bytes=64 parseDiagnostics=0 raw=2
+directive Ignore 21..37
+directive ExpectError 44..63
+--- template-and-regex.ts bytes=99 parseDiagnostics=0 raw=1
+directive ExpectError 26..48
+--- string.ts bytes=59 parseDiagnostics=0 raw=0
+--- arrow-return-type-attempt.ts bytes=70 parseDiagnostics=0 raw=2
+directive Ignore 16..32
+directive ExpectError 42..64
+--- type-arguments-attempt.ts bytes=59 parseDiagnostics=0 raw=6
+directive Ignore 12..28
+directive ExpectError 33..55

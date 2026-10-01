@@ -1,0 +1,108 @@
+--- line-ignore
+directive Ignore 0..13
+--- line-expect-error
+directive ExpectError 0..19
+--- line-no-space
+directive Ignore 0..12
+--- line-three-slashes
+directive Ignore 0..14
+--- line-three-slashes-no-space
+directive ExpectError 0..19
+--- line-four-slashes
+directive Ignore 0..15
+--- line-five-slashes-no-space
+directive Ignore 0..15
+--- line-tabs-and-reason
+directive ExpectError 0..29
+--- line-prefix-only-ignore
+directive Ignore 0..16
+directive Ignore 17..36
+--- line-prefix-only-expect
+directive ExpectError 0..20
+directive ExpectError 21..50
+--- line-case-sensitive
+--- line-not-first
+--- line-space-after-at
+--- line-nbsp
+--- line-vertical-tab-form-feed
+--- line-other-pragmas
+--- line-crlf
+directive Ignore 0..13
+directive ExpectError 23..42
+--- line-trailing
+directive Ignore 11..24
+directive ExpectError 32..61
+--- line-at-eof
+directive Ignore 7..20
+--- line-only-at
+--- line-ls-ps
+directive Ignore 0..13
+directive ExpectError 16..35
+directive Ignore 38..50
+--- line-non-ascii-after
+directive Ignore 0..19
+--- line-non-ascii-before
+directive ExpectError 12..31
+--- block-ignore
+directive Ignore 0..16
+--- block-expect-no-space
+directive ExpectError 0..20
+--- block-jsdoc
+directive Ignore 0..17
+directive ExpectError 18..42
+--- block-last-line
+directive Ignore 3..17
+--- block-last-line-star
+directive ExpectError 3..25
+--- block-last-line-slashes
+directive ExpectError 3..28
+--- block-directive-not-on-last-line
+--- block-three-lines
+directive Ignore 10..26
+--- block-not-first
+--- block-crlf
+directive Ignore 4..18
+--- block-cr
+directive Ignore 3..17
+--- block-ls
+directive Ignore 5..19
+--- block-ps-no-space
+directive ExpectError 5..23
+--- block-slash-star-slash
+directive Ignore 0..17
+--- block-second-run-of-stars
+--- block-end-bounds-the-read
+--- block-unterminated
+directive Ignore 7..20
+--- block-unterminated-last-line
+directive ExpectError 4..23
+--- block-empty
+--- block-tabs
+directive Ignore 0..18
+directive Ignore 22..39
+--- block-indented
+directive Ignore 1..17
+directive ExpectError 25..51
+--- block-then-line-same-line
+directive Ignore 0..16
+directive ExpectError 17..36
+--- block-then-block-adjacent
+directive Ignore 0..16
+directive ExpectError 16..38
+--- block-after-code
+directive Ignore 14..28
+--- block-non-ascii-before-last-line
+directive Ignore 9..23
+--- block-nbsp-before-at
+--- block-prefix-only
+directive Ignore 0..15
+directive ExpectError 16..39
+--- block-many-blank-last-lines
+directive Ignore 0..16
+directive ExpectError 23..41
+--- mixed-order
+directive Ignore 13..26
+directive ExpectError 33..55
+directive Ignore 59..72
+--- none
+--- empty

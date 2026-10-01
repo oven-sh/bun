@@ -1,0 +1,81 @@
+{"code":"if (a || 1n) {}","type":"script","reports":["1:5-1:12 Unexpected constant condition."]}
+{"code":"if (a && 0n) {}","type":"script","reports":["1:5-1:12 Unexpected constant condition."]}
+{"code":"if (a && 0x0n) {}","type":"script","reports":["1:5-1:14 Unexpected constant condition."]}
+{"code":"if (a && 0b0n) {}","type":"script","reports":["1:5-1:14 Unexpected constant condition."]}
+{"code":"if (a && 0o0n) {}","type":"script","reports":["1:5-1:14 Unexpected constant condition."]}
+{"code":"if (a && 0_0n) {}","type":"script","fatal":"Parsing error: Numeric separator is not allowed in legacy octal numeric literals","reports":[]}
+{"code":"if (a || 0n) {}","type":"script","reports":[]}
+{"code":"if (a && 1n) {}","type":"script","reports":[]}
+{"code":"if (a && 0x10n) {}","type":"script","reports":[]}
+{"code":"if (a && '') {}","type":"script","reports":["1:5-1:12 Unexpected constant condition."]}
+{"code":"if (a && \"\") {}","type":"script","reports":["1:5-1:12 Unexpected constant condition."]}
+{"code":"if (a || 'x') {}","type":"script","reports":["1:5-1:13 Unexpected constant condition."]}
+{"code":"if (a && 'x') {}","type":"script","reports":[]}
+{"code":"if (a || '') {}","type":"script","reports":[]}
+{"code":"if (a && 0) {}","type":"script","reports":["1:5-1:11 Unexpected constant condition."]}
+{"code":"if (a && 0.0) {}","type":"script","reports":["1:5-1:13 Unexpected constant condition."]}
+{"code":"if (a && 0x0) {}","type":"script","reports":["1:5-1:13 Unexpected constant condition."]}
+{"code":"if (a && 0e5) {}","type":"script","reports":["1:5-1:13 Unexpected constant condition."]}
+{"code":"if (a && .0) {}","type":"script","reports":["1:5-1:12 Unexpected constant condition."]}
+{"code":"if (a && -0) {}","type":"script","reports":[]}
+{"code":"if (a || -1) {}","type":"script","reports":[]}
+{"code":"if (a || 0.1) {}","type":"script","reports":["1:5-1:13 Unexpected constant condition."]}
+{"code":"if (a || /x/) {}","type":"script","reports":["1:5-1:13 Unexpected constant condition."]}
+{"code":"if (a && /x/) {}","type":"script","reports":[]}
+{"code":"if (a && null) {}","type":"script","reports":["1:5-1:14 Unexpected constant condition."]}
+{"code":"if (a || null) {}","type":"script","reports":[]}
+{"code":"if (a && false) {}","type":"script","reports":["1:5-1:15 Unexpected constant condition."]}
+{"code":"if (a || true) {}","type":"script","reports":["1:5-1:14 Unexpected constant condition."]}
+{"code":"if (a || false) {}","type":"script","reports":[]}
+{"code":"if (a && true) {}","type":"script","reports":[]}
+{"code":"if (a && ``) {}","type":"script","reports":[]}
+{"code":"if (a || `x`) {}","type":"script","reports":[]}
+{"code":"if (a && undefined) {}","type":"script","reports":[]}
+{"code":"if (a || Infinity) {}","type":"script","reports":[]}
+{"code":"if (a && NaN) {}","type":"script","reports":[]}
+{"code":"if (a && (0)) {}","type":"script","reports":["1:5-1:13 Unexpected constant condition."]}
+{"code":"if (a && ((0))) {}","type":"script","reports":["1:5-1:15 Unexpected constant condition."]}
+{"code":"if (a || (b || (1))) {}","type":"script","reports":["1:5-1:20 Unexpected constant condition."]}
+{"code":"if (a && (b, 0)) {}","type":"script","reports":[]}
+{"code":"if (a && (b = 0)) {}","type":"script","reports":[]}
+{"code":"if (a && (b &&= 0)) {}","type":"script","reports":["1:5-1:19 Unexpected constant condition."]}
+{"code":"if (a || (b ||= 1)) {}","type":"script","reports":["1:5-1:19 Unexpected constant condition."]}
+{"code":"if (a && (b ||= 0)) {}","type":"script","reports":[]}
+{"code":"if (a || (b &&= 1)) {}","type":"script","reports":[]}
+{"code":"if (a && (b ??= 0)) {}","type":"script","reports":[]}
+{"code":"if (a || !0) {}","type":"script","reports":[]}
+{"code":"if (a && !1) {}","type":"script","reports":[]}
+{"code":"if (a && void 0) {}","type":"script","reports":["1:5-1:16 Unexpected constant condition."]}
+{"code":"if (a || void 0) {}","type":"script","reports":[]}
+{"code":"if (a && (void 0)) {}","type":"script","reports":["1:5-1:18 Unexpected constant condition."]}
+{"code":"if (a && typeof b) {}","type":"script","reports":[]}
+{"code":"if (a ?? 0) {}","type":"script","reports":[]}
+{"code":"if (a ?? void 0) {}","type":"script","reports":[]}
+{"code":"if ((a ?? 0) && 0) {}","type":"script","reports":["1:5-1:18 Unexpected constant condition."]}
+{"code":"if (a && 0 && b) {}","type":"script","reports":["1:5-1:16 Unexpected constant condition."]}
+{"code":"if (a && b && 0) {}","type":"script","reports":["1:5-1:16 Unexpected constant condition."]}
+{"code":"if (a && (b && 0)) {}","type":"script","reports":["1:5-1:18 Unexpected constant condition."]}
+{"code":"if (a && (b || 0)) {}","type":"script","reports":[]}
+{"code":"if (a || (b && 0)) {}","type":"script","reports":[]}
+{"code":"if (a || b && 0) {}","type":"script","reports":[]}
+{"code":"if ((a || b) && 0) {}","type":"script","reports":["1:5-1:18 Unexpected constant condition."]}
+{"code":"if (a || 1 || b) {}","type":"script","reports":["1:5-1:16 Unexpected constant condition."]}
+{"code":"if (a && 0 || 1) {}","type":"script","reports":["1:5-1:16 Unexpected constant condition."]}
+{"code":"if ((a && 0) || b) {}","type":"script","reports":[]}
+{"code":"if (0 || (a && 0)) {}","type":"script","reports":["1:5-1:18 Unexpected constant condition."]}
+{"code":"if (0 && a || 0) {}","type":"script","reports":["1:5-1:16 Unexpected constant condition."]}
+{"code":"x = a && 0 ? 1 : 2;","type":"script","reports":["1:5-1:11 Unexpected constant condition."]}
+{"code":"x = (a && 0) + 1 ? 1 : 2;","type":"script","reports":[]}
+{"code":"x = +(a && 0) ? 1 : 2;","type":"script","reports":[]}
+{"code":"x = +(0 && a) ? 1 : 2;","type":"script","reports":["1:5-1:14 Unexpected constant condition."]}
+{"code":"x = [a && 0] ? 1 : 2;","type":"script","reports":["1:5-1:13 Unexpected constant condition."]}
+{"code":"x = +[a && 0] ? 1 : 2;","type":"script","reports":[]}
+{"code":"x = +[0 && a] ? 1 : 2;","type":"script","reports":["1:5-1:14 Unexpected constant condition."]}
+{"code":"x = `${a && 0}` ? 1 : 2;","type":"script","reports":[]}
+{"code":"x = `${0 && a}` ? 1 : 2;","type":"script","reports":["1:5-1:16 Unexpected constant condition."]}
+{"code":"x = `x${a}` ? 1 : 2;","type":"script","reports":["1:5-1:12 Unexpected constant condition."]}
+{"code":"x = +`x${a}` ? 1 : 2;","type":"script","reports":[]}
+{"code":"x = `${a}${''}` ? 1 : 2;","type":"script","reports":[]}
+{"code":"x = `\\\n${a}` ? 1 : 2;","type":"script","reports":[]}
+{"code":"x = `\\u{0}${a}` ? 1 : 2;","type":"script","reports":["1:5-1:16 Unexpected constant condition."]}
+{"code":"x = ` ${a}` ? 1 : 2;","type":"script","reports":["1:5-1:12 Unexpected constant condition."]}

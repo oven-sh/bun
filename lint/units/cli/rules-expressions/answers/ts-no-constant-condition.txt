@@ -1,5 +1,5 @@
 "if (true) {}"
-      => no-constant-condition 1:5 Unexpected constant condition.
+      => 1:5 Unexpected constant condition.
 "if (true as boolean) {}"
       => (none)
 "if ((true) as boolean) {}"
@@ -11,7 +11,7 @@
 "if (true satisfies boolean) {}"
       => (none)
 "declare const x: any; if (x as any || true) {}"
-      => no-constant-condition 1:27 Unexpected constant condition.
+      => 1:27 Unexpected constant condition.
 "declare const x: any; if ((x || true) as any) {}"
       => (none)
 "declare const x: any; if (x || (true as boolean)) {}"
@@ -19,31 +19,31 @@
 "declare const x: any; if ((true as boolean) || x) {}"
       => (none)
 "declare const x: any; if (true || (x as any)) {}"
-      => no-constant-condition 1:27 Unexpected constant condition.
+      => 1:27 Unexpected constant condition.
 "declare const x: any; if (!(true as boolean)) {}"
       => (none)
 "declare const x: any; if (!true!) {}"
       => (none)
 "declare const x: any; if (typeof (x as any)) {}"
-      => no-constant-condition 1:27 Unexpected constant condition.
+      => 1:27 Unexpected constant condition.
 "declare const x: any; if (void (x as any)) {}"
-      => no-constant-condition 1:27 Unexpected constant condition.
+      => 1:27 Unexpected constant condition.
 "declare let x: any; if (x = (1 as any)) {}"
       => (none)
 "declare let x: any; if (x = 1) {}"
-      => no-constant-condition 1:25 Unexpected constant condition.
+      => 1:25 Unexpected constant condition.
 "if ([1 as any]) {}"
-      => no-constant-condition 1:5 Unexpected constant condition.
+      => 1:5 Unexpected constant condition.
 "if ([] as any) {}"
       => (none)
 "if ({} as any) {}"
       => (none)
 "if (`a${1 as any}`) {}"
-      => no-constant-condition 1:5 Unexpected constant condition.
+      => 1:5 Unexpected constant condition.
 "if (`${1 as any}`) {}"
       => (none)
 "if (`${1}`) {}"
-      => no-constant-condition 1:5 Unexpected constant condition.
+      => 1:5 Unexpected constant condition.
 "declare const x: any; if (`${x}`) {}"
       => (none)
 "if (1 + (2 as number)) {}"
@@ -51,19 +51,19 @@
 "if ((1 as number) + 2) {}"
       => (none)
 "if (1 + 2) {}"
-      => no-constant-condition 1:5 Unexpected constant condition.
+      => 1:5 Unexpected constant condition.
 "if (Boolean(1)) {}"
-      => no-constant-condition 1:5 Unexpected constant condition.
+      => 1:5 Unexpected constant condition.
 "if (Boolean(1 as any)) {}"
       => (none)
 "if (Boolean<any>(1)) {}"
-      => no-constant-condition 1:5 Unexpected constant condition.
+      => 1:5 Unexpected constant condition.
 "if (Boolean!(1)) {}"
       => (none)
 "if ((Boolean as any)(1)) {}"
       => (none)
 "if (undefined) {}"
-      => no-constant-condition 1:5 Unexpected constant condition.
+      => 1:5 Unexpected constant condition.
 "if (undefined as any) {}"
       => (none)
 "if (undefined!) {}"
@@ -75,23 +75,23 @@
 "while ((true)) {}"
       => (none)
 "while (1) {}"
-      => no-constant-condition 1:8 Unexpected constant condition.
+      => 1:8 Unexpected constant condition.
 "while (1 as any) {}"
       => (none)
 "while (<any>1) {}"
       => (none)
 "do {} while (true);"
-      => no-constant-condition 1:14 Unexpected constant condition.
+      => 1:14 Unexpected constant condition.
 "do {} while (true as boolean);"
       => (none)
 "for (; true;) {}"
-      => no-constant-condition 1:8 Unexpected constant condition.
+      => 1:8 Unexpected constant condition.
 "for (; true as boolean;) {}"
       => (none)
 "for (; (true)!;) {}"
       => (none)
 "const a = true ? 1 : 2;"
-      => no-constant-condition 1:11 Unexpected constant condition.
+      => 1:11 Unexpected constant condition.
 "const a = (true as boolean) ? 1 : 2;"
       => (none)
 "const a = true! ? 1 : 2;"
@@ -105,15 +105,15 @@
 "function* g() { while (1) { (yield 1) as any; } }"
       => (none)
 "function* g() { while (1) { const f = function* () { yield 1; }; } }"
-      => no-constant-condition 1:24 Unexpected constant condition.
+      => 1:24 Unexpected constant condition.
 "function* g() { while (1) { class A { *m() { yield 1; } } } }"
-      => no-constant-condition 1:24 Unexpected constant condition.
+      => 1:24 Unexpected constant condition.
 "function* g() { while (1) { const o = { *m() { yield 1; } }; } }"
-      => no-constant-condition 1:24 Unexpected constant condition.
+      => 1:24 Unexpected constant condition.
 "function* g() { while (1) { const f = () => 1; } yield 2; }"
-      => no-constant-condition 1:24 Unexpected constant condition.
+      => 1:24 Unexpected constant condition.
 "function* g() { for (yield 1; 1; ) {} }"
-      => no-constant-condition 1:31 Unexpected constant condition.
+      => 1:31 Unexpected constant condition.
 "function* g() { for (; 1; yield 1) {} }"
       => (none)
 "function* g() { for (; (yield 1, 1); ) {} }"
@@ -125,16 +125,16 @@
 "function* g() { while (1) { while (1) { yield 1; } } }"
       => (none)
 "function* g() { while (1) { yield 1; while (1) { } } }"
-      => no-constant-condition 1:45 Unexpected constant condition.
+      => 1:45 Unexpected constant condition.
 "function* g() { while (1) { function h() { while (1) {} } yield 1; } }"
-      => no-constant-condition 1:51 Unexpected constant condition.
+      => 1:51 Unexpected constant condition.
 "enum E { A } if (E.A) {}"
       => (none)
 "declare const x: any; if (x!) {}"
       => (none)
 "abstract class A { abstract m(): void; n() { if (1) {} } }"
-      => no-constant-condition 1:50 Unexpected constant condition.
+      => 1:50 Unexpected constant condition.
 "namespace N { if (1) {} }"
-      => no-constant-condition 1:19 Unexpected constant condition.
+      => 1:19 Unexpected constant condition.
 "declare namespace N { const a: 1; } if (0) {}"
-      => no-constant-condition 1:41 Unexpected constant condition.
+      => 1:41 Unexpected constant condition.

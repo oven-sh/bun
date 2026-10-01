@@ -1,0 +1,330 @@
+--- path
+pragma reference 0..33 S nl=1 [path=21..29]
+path 21..29 preserve=0
+--- types
+pragma reference 0..30 S nl=1 [types=22..26]
+types 22..26 mode=none preserve=0
+--- lib
+pragma reference 0..30 S nl=1 [lib=20..26]
+lib 20..26 preserve=0
+--- types-mode-import
+pragma reference 0..54 S nl=1 [resolution-mode=44..50 types=22..25]
+types 22..25 mode=import preserve=0
+--- types-mode-require-preserve
+pragma reference 0..71 S nl=1 [preserve=63..67 resolution-mode=44..51 types=22..25]
+types 22..25 mode=require preserve=1
+--- types-mode-bad
+pragma reference 0..51 S nl=1 [resolution-mode=44..47 types=22..25]
+types 22..25 mode=none preserve=0
+diag TS1453 44..47
+--- no-default-lib
+pragma reference 0..38 S nl=1 [no-default-lib=31..35]
+pragma reference 39..66 S nl=1 [lib=59..62]
+lib 59..62 preserve=0
+--- no-default-lib-false
+pragma reference 0..39 S nl=1 [no-default-lib=31..36]
+diag TS1084 0..39
+--- precedence-types-over-lib-over-path
+pragma reference 0..44 S nl=1 [lib=29..30 path=21..22 types=39..40]
+pragma reference 45..79 S nl=1 [lib=74..75 path=66..67]
+types 39..40 mode=none preserve=0
+lib 74..75 preserve=0
+--- invalid-reference
+pragma reference 0..27 S nl=1 [foo=20..23]
+pragma reference 28..45 S nl=1 []
+pragma reference 46..70 S nl=1 []
+diag TS1084 0..27
+diag TS1084 28..45
+diag TS1084 46..70
+--- case-and-spacing
+pragma reference 0..34 S nl=1 [path=24..28]
+pragma reference 35..63 S nl=1 [path=56..60]
+path 24..28 preserve=0
+path 56..60 preserve=0
+--- unterminated-tag
+pragma reference 0..26 S nl=1 [path=21..25]
+pragma reference 27..55 S nl=1 [path=48..52]
+path 21..25 preserve=0
+path 48..52 preserve=0
+--- duplicate-arg-last-wins
+pragma reference 0..41 S nl=1 [path=33..37]
+path 33..37 preserve=0
+--- amd-not-read
+pragma reference 69..98 S nl=1 [path=90..94]
+path 90..94 preserve=0
+--- two-slashes-not-reference
+--- ts-nocheck
+pragma ts-nocheck 0..14 S nl=1 []
+check 0 0..14
+--- ts-check
+pragma ts-check 0..12 S nl=1 []
+check 1 0..12
+--- ts-check-triple-slash
+pragma ts-nocheck 0..15 S nl=1 []
+check 0 0..15
+--- last-check-wins
+pragma ts-nocheck 0..14 S nl=1 []
+pragma ts-check 15..27 S nl=1 []
+check 1 15..27
+--- last-nocheck-wins
+pragma ts-check 0..12 S nl=1 []
+pragma ts-nocheck 13..43 S nl=1 []
+check 0 13..43
+--- ts-check-prefix-name
+--- not-leading
+--- after-hashbang
+pragma ts-nocheck 19..33 S nl=1 []
+pragma reference 34..63 S nl=1 [types=56..59]
+check 0 19..33
+types 56..59 mode=none preserve=0
+--- block-comment-nocheck-not-read
+--- block-jsx
+pragma jsx 0..13 M nl=1 [factory=9..10]
+pragma jsxfrag 14..37 M nl=1 [factory=26..34]
+pragma jsximportsource 38..92 M nl=1 [factory=58..64]
+pragma jsxruntime 38..92 M nl=1 [factory=80..89]
+--- block-jsx-first-at-only
+pragma jsx 30..50 M nl=1 [factory=39..40]
+--- line-jsx-not-read
+--- leading-stops-at-token
+pragma ts-check 0..12 S nl=1 []
+check 1 0..12
+--- same-line-after-block
+pragma ts-nocheck 8..22 S nl=1 []
+check 0 8..22
+--- bom-and-blank-lines
+pragma ts-nocheck 7..21 S nl=1 []
+check 0 7..21
+--- cr-lf-ls
+pragma ts-check 0..12 S nl=1 []
+pragma reference 14..43 S nl=1 [path=35..39]
+pragma reference 46..75 S nl=1 [path=67..71]
+check 1 0..12
+path 35..39 preserve=0
+path 67..71 preserve=0
+--- non-ascii-before-value
+pragma reference 0..30 S nl=1 [path=21..26]
+path 21..26 preserve=0
+--- empty
+--- comment-at-eof
+pragma reference 0..29 S nl=0 [path=21..25]
+path 21..25 preserve=0
+--- unterminated-block
+pragma jsx 0..9 M nl=0 [factory=8..9]
+--- t01
+pragma reference 0..31 S nl=1 [path=21..27]
+pragma reference 32..62 S nl=1 [types=54..58]
+pragma reference 63..93 S nl=1 [lib=83..89]
+path 21..27 preserve=0
+types 54..58 mode=none preserve=0
+lib 83..89 preserve=0
+--- t02
+pragma reference 0..70 S nl=1 [preserve=63..67 resolution-mode=45..51 types=22..26]
+types 22..26 mode=import preserve=1
+--- t03
+pragma reference 0..53 S nl=1 [resolution-mode=45..50 types=22..26]
+types 22..26 mode=none preserve=0
+diag TS1453 45..50
+--- t04
+pragma reference 0..38 S nl=1 [no-default-lib=31..35]
+--- t05
+pragma reference 0..39 S nl=1 [no-default-lib=31..36]
+diag TS1084 0..39
+--- t06
+pragma reference 0..26 S nl=1 [foo=20..23]
+diag TS1084 0..26
+--- t07
+pragma reference 0..27 S nl=1 [path=21..25]
+path 21..25 preserve=0
+--- t08
+pragma reference 0..27 S nl=1 []
+diag TS1084 0..27
+--- t09
+pragma reference 0..27 S nl=1 [path=20..24]
+path 20..24 preserve=0
+--- t10
+pragma reference 0..29 S nl=1 [path=22..26]
+path 22..26 preserve=0
+--- t11
+--- t12
+--- t13
+pragma reference 0..40 S nl=1 [path=33..37]
+path 33..37 preserve=0
+--- t14
+pragma reference 0..46 S nl=1 [lib=42..43 path=21..25 types=34..35]
+types 34..35 mode=none preserve=0
+--- t15
+pragma reference 0..32 S nl=1 [path=23..27]
+path 23..27 preserve=0
+--- t16
+pragma reference 0..28 S nl=1 [path=21..25]
+path 21..25 preserve=0
+--- t17
+--- t18
+--- t19
+pragma reference 0..26 S nl=1 [path=21..25]
+path 21..25 preserve=0
+--- t20
+pragma reference 0..36 S nl=1 []
+diag TS1084 0..36
+--- t21
+pragma reference 0..17 S nl=1 []
+diag TS1084 0..17
+--- t22
+--- t23
+--- t24
+pragma reference 20..48 S nl=1 [path=41..45]
+path 41..45 preserve=0
+--- t25
+pragma reference 5..33 S nl=1 [path=26..30]
+pragma reference 42..70 S nl=1 [path=63..67]
+path 26..30 preserve=0
+path 63..67 preserve=0
+--- t26
+pragma reference 12..40 S nl=1 [path=33..37]
+path 33..37 preserve=0
+--- t27
+pragma ts-nocheck 0..14 S nl=1 []
+check 0 0..14
+--- t28
+pragma ts-check 0..12 S nl=1 []
+pragma ts-nocheck 13..27 S nl=1 []
+check 0 13..27
+--- t29
+pragma ts-nocheck 0..14 S nl=1 []
+pragma ts-check 15..27 S nl=1 []
+check 1 15..27
+--- t30
+pragma ts-nocheck 0..13 S nl=1 []
+check 0 0..13
+--- t31
+pragma ts-nocheck 0..32 S nl=1 []
+check 0 0..32
+--- t32
+pragma ts-nocheck 0..15 S nl=1 []
+check 0 0..15
+--- t33
+--- t34
+--- t35
+--- t36
+--- t37
+--- t38
+--- t39
+pragma jsx 0..13 M nl=1 [factory=9..10]
+pragma jsxfrag 14..37 M nl=1 [factory=26..34]
+pragma jsximportsource 38..90 M nl=1 [factory=58..64]
+pragma jsxruntime 38..90 M nl=1 [factory=78..87]
+--- t40
+--- t41
+--- t42
+pragma jsx 0..22 M nl=1 [factory=10..11]
+--- t43
+--- t44
+--- t45
+pragma jsx 0..25 M nl=1 [factory=8..20]
+pragma jsxfrag 0..25 M nl=1 [factory=21..22]
+--- t46
+pragma reference 0..37 S nl=1 [path=21..25]
+path 21..25 preserve=0
+--- t47
+pragma reference 0..55 S nl=1 [path=21..25]
+path 21..25 preserve=0
+--- t48
+pragma reference 0..24 S nl=1 [path=21..21]
+path 21..21 preserve=0
+--- t49
+pragma reference 0..43 S nl=1 [preserve=35..40 types=22..23]
+pragma reference 44..84 S nl=1 [lib=64..65 preserve=77..81]
+pragma reference 85..126 S nl=1 [path=106..107 preserve=119..123]
+path 106..107 preserve=1
+types 22..23 mode=none preserve=0
+lib 64..65 preserve=1
+--- t50
+pragma reference 3..31 S nl=1 [path=24..28]
+path 24..28 preserve=0
+--- t51
+pragma reference 0..28 S nl=1 [path=21..25]
+pragma reference 30..58 S nl=1 [path=51..55]
+path 21..25 preserve=0
+path 51..55 preserve=0
+--- t52
+--- t53
+pragma reference 0..55 S nl=1 [resolution-mode=45..52 types=22..26]
+pragma reference 56..105 S nl=1 [path=77..78 resolution-mode=97..102]
+path 77..78 preserve=0
+types 22..26 mode=require preserve=0
+--- t54
+pragma ts-nocheck 0..15 S nl=1 []
+check 0 0..15
+--- t55
+pragma ts-nocheck 0..19 S nl=1 []
+check 0 0..19
+--- t56
+pragma reference 0..26 S nl=1 [path=21..25]
+path 21..25 preserve=0
+--- t57
+pragma jsx 0..27 M nl=0 [factory=8..9]
+pragma jsxfrag 0..27 M nl=0 [factory=22..23]
+pragma jsxruntime 28..53 M nl=1 [factory=43..50]
+pragma ts-check 54..66 S nl=1 []
+check 1 54..66
+--- t58
+pragma jsximportsource 11..36 M nl=0 [factory=32..33]
+--- t59
+--- t60
+pragma reference 0..28 S nl=1 [path=21..25]
+pragma reference 31..59 S nl=1 [path=52..56]
+path 21..25 preserve=0
+path 52..56 preserve=0
+--- t61
+pragma reference 0..31 S nl=1 [path=21..23]
+path 21..23 preserve=0
+--- t62
+pragma reference 0..30 S nl=1 [path=21..25]
+path 21..25 preserve=0
+--- t63
+pragma reference 0..38 S nl=1 [path=21..25 types=34..35]
+types 34..35 mode=none preserve=0
+--- t64
+pragma jsxruntime 0..26 M nl=1 [factory=16..23]
+--- t65
+--- t66
+pragma reference 0..28 S nl=1 [path=21..25]
+path 21..25 preserve=0
+--- t67
+pragma reference 0..28 S nl=1 [path=21..25]
+pragma reference 34..60 S nl=1 [types=56..57]
+pragma ts-nocheck 62..76 S nl=1 []
+check 0 62..76
+path 21..25 preserve=0
+types 56..57 mode=none preserve=0
+--- t68
+pragma reference 6..32 S nl=1 [lib=26..29]
+lib 26..29 preserve=0
+--- t69
+pragma reference 0..26 S nl=0 [lib=20..23]
+lib 20..23 preserve=0
+--- t70
+--- t71
+--- t72
+pragma ts-check 5..17 S nl=0 []
+check 1 5..17
+--- t73
+pragma reference 0..53 S nl=1 [path=21..25 resolution-mode=44..50]
+pragma reference 54..105 S nl=1 [resolution-mode=96..102 types=76..77]
+pragma reference 106..150 S nl=1 [lib=126..127 resolution-mode=146..147]
+path 21..25 preserve=0
+types 76..77 mode=none preserve=0
+lib 126..127 preserve=0
+diag TS1453 96..102
+--- t74
+pragma reference 0..50 S nl=1 [no-default-lib=31..35 path=43..47]
+--- t75
+pragma reference 0..44 S nl=1 [path=21..25 preserve=37..41]
+path 21..25 preserve=0
+--- t76
+pragma ts-nocheck 16..30 S nl=1 []
+check 0 16..30
+--- t77
+pragma reference 18..32 S nl=1 []
+diag TS1084 18..32

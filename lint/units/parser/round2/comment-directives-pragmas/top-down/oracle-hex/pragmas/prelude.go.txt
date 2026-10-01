@@ -1,0 +1,48 @@
+package main
+
+import (
+	"bufio"
+	"encoding/hex"
+	"fmt"
+	"os"
+	"sort"
+	"strings"
+	"unicode"
+	"unicode/utf8"
+)
+
+type TextRange struct{ pos, end int }
+
+func NewTextRange(pos, end int) TextRange { return TextRange{pos, end} }
+func (t TextRange) Pos() int             { return t.pos }
+func (t TextRange) End() int             { return t.end }
+
+type Kind int
+
+const (
+	KindSingleLineCommentTrivia Kind = 1
+	KindMultiLineCommentTrivia  Kind = 2
+)
+
+type CommentRange struct {
+	TextRange
+	Kind               Kind
+	HasTrailingNewLine bool
+}
+type PragmaArgument struct {
+	TextRange
+	Name  string
+	Value string
+}
+type Pragma struct {
+	CommentRange
+	Name string
+	Args map[string]PragmaArgument
+}
+type NodeFactory struct{}
+
+func (f *NodeFactory) NewCommentRange(kind Kind, pos int, end int, hasTrailingNewLine bool) CommentRange {
+	return CommentRange{TextRange: NewTextRange(pos, end), Kind: kind, HasTrailingNewLine: hasTrailingNewLine}
+}
+
+

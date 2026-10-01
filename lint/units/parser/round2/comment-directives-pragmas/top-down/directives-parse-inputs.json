@@ -1,0 +1,62 @@
+[
+ [
+  "upstream-multiline-a.ts",
+  "export const texts: string[] = [];\n\n/**\n @ts-ignore */\ntexts.push(100);\n\n/**\n @ts-expect-error */\ntexts.push(100);\n\n/**\n @ts-expect-error */\ntexts.push(\"100\");\n\n"
+ ],
+ [
+  "upstream-multiline-b.tsx",
+  "/// <reference path=\"/.lib/react.d.ts\" />\nimport * as React from \"react\";\n\nexport function MyComponent(props: { foo: string }) {\n  return <div />;\n}\n\nlet x = (\n  <div>\n    {/*\n   @ts-ignore */}\n    <MyComponent foo={100} />\n\n    {/*@ts-ignore*/}\n    <MyComponent foo={100} />\n\n    {/*\n   @ts-expect-error */}\n    <MyComponent foo={100} />\n\n    {/*\n   // @ts-expect-error */}\n    <MyComponent foo={100} />\n\n    {/*\n   * @ts-expect-error */}\n    <MyComponent foo={100} />\n\n    {/*@ts-expect-error*/}\n    <MyComponent foo={100} />\n\n    {/*\n   @ts-expect-error */}\n    <MyComponent foo={\"hooray\"} />\n  </div>\n);\n"
+ ],
+ [
+  "jsx-tag-comments.tsx",
+  "let e = <div // @ts-ignore\n  a=\"b\" /* @ts-expect-error */\n/>;\n"
+ ],
+ [
+  "jsx-attr-value-comment.tsx",
+  "let e = <a b= /* @ts-ignore */ \"x\" c={ // @ts-expect-error\n 1} />;\n"
+ ],
+ [
+  "jsx-closing-tag-comment.tsx",
+  "let e = <a></a // @ts-ignore\n>;\n"
+ ],
+ [
+  "jsx-text-is-no-comment.tsx",
+  "let e = <a>// @ts-ignore\n/* @ts-expect-error */</a>;\n"
+ ],
+ [
+  "jsx-expression-comments.tsx",
+  "let e = <a>{/* @ts-ignore */}{// @ts-expect-error\n}</a>;\n"
+ ],
+ [
+  "jsx-fragment-text.tsx",
+  "let e = <>/* @ts-ignore */</>; // @ts-expect-error\n"
+ ],
+ [
+  "jsx-after-child-element.tsx",
+  "let e = <a><b/>// @ts-ignore\n<b></b>/* @ts-ignore */</a>;\n"
+ ],
+ [
+  "jsx-self-closing-then-comment.tsx",
+  "let e = <a/> // @ts-ignore\n;\n"
+ ],
+ [
+  "tsx-generic-arrow-lookahead.tsx",
+  "const f = <T,>(x: T) /* @ts-ignore */ => x; // @ts-expect-error\n"
+ ],
+ [
+  "template-and-regex.ts",
+  "let t = `// @ts-ignore ${ /* @ts-expect-error */ 1 } /* @ts-ignore */`; let r = /\\/\\/ @ts-ignore/;\n"
+ ],
+ [
+  "string.ts",
+  "let s = '// @ts-ignore'; let u = \"/* @ts-expect-error */\";\n"
+ ],
+ [
+  "arrow-return-type-attempt.ts",
+  "let r = c ? (a) /* @ts-ignore */ : b => d /* @ts-expect-error */ : e;\n"
+ ],
+ [
+  "type-arguments-attempt.ts",
+  "let r = a < /* @ts-ignore */ b > /* @ts-expect-error */ c;\n"
+ ]
+]

@@ -13,7 +13,7 @@
 "declare const x: any; ({} as any) ?? x;"
       => (none)
 "declare const x: any; {}! ?? x;"
-      => FATAL  1:26 Parsing error: Expression expected.
+      => FATAL 1:26 Parsing error: Expression expected.
 "declare const x: any; ({}) ?? x;"
       => 1:24 Unexpected constant nullishness on the left-hand side of a `??` expression.
 "declare const x: any; ({} ?? x) as any;"
@@ -150,9 +150,9 @@
       => (none)
 "declare const x: any; null === (x satisfies any);"
       => (none)
-"//tsx\ndeclare const x: any; <p /> && x;"
+"declare const x: any; <p /> && x;" [tsx]
       => (none)
-"//tsx\ndeclare const x: any; (<p /> as any) ?? x;"
+"declare const x: any; (<p /> as any) ?? x;" [tsx]
       => (none)
-"//tsx\ndeclare const x: any; ({} as any) ?? x;"
+"declare const x: any; ({} as any) ?? x;" [tsx]
       => (none)

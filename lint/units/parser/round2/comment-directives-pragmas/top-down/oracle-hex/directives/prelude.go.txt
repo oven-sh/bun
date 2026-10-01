@@ -1,0 +1,47 @@
+package main
+
+import (
+	"bufio"
+	"encoding/hex"
+	"fmt"
+	"os"
+	"strings"
+	"unicode/utf8"
+)
+
+type TextRange struct{ pos, end int }
+
+func NewTextRange(pos, end int) TextRange { return TextRange{pos, end} }
+
+type CommentDirectiveKind int32
+
+const (
+	CommentDirectiveKindUnknown CommentDirectiveKind = iota
+	CommentDirectiveKindExpectError
+	CommentDirectiveKindIgnore
+)
+
+type CommentDirective struct {
+	Loc  TextRange
+	Kind CommentDirectiveKind
+}
+
+type TokenFlags int32
+
+const (
+	TokenFlagsPrecedingLineBreak TokenFlags = 1 << iota
+	TokenFlagsPrecedingJSDocComment
+)
+
+type Scanner struct {
+	text              string
+	end               int
+	pos               int
+	tokenStart        int
+	tokenFlags        TokenFlags
+	commentDirectives []CommentDirective
+	comments          []string
+}
+
+func (s *Scanner) scanJSDocCommentForTags(commentText string) {}
+

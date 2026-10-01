@@ -1,0 +1,5 @@
+### cmd: cargo clippy -p bun_lint --all-targets --no-deps --message-format=short
+### start: 2026-10-01T09:15:42Z
+    Checking bun_lint v0.0.0 (/tmp/cli-d1/tree/src/lint)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.22s
+### finished: 2026-10-01T09:15:46Z rc=0 wall=4s

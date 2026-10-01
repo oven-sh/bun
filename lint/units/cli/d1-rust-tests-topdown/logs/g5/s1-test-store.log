@@ -1,0 +1,13 @@
+### cmd: cargo test -p bun_lint --lib store_
+### start: 2026-10-01T09:15:48Z
+   Compiling bun_lint v0.0.0 (/tmp/cli-d1/tree/src/lint)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.83s
+     Running unittests lib.rs (target/debug/build/bun_lint/98e96dc9ddf11405/out/bun_lint-98e96dc9ddf11405)
+
+running 2 tests
+test store_probe_tests::store_parse_only_runs_the_rules ... ok
+test store_probe_tests::store_parse_for_lint_reads_typescript ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 39 filtered out; finished in 0.03s
+
+### finished: 2026-10-01T09:15:57Z rc=0 wall=9s

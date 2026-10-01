@@ -1,9 +1,9 @@
 "declare const a: any; (a?.b)();"
-      => no-unsafe-optional-chaining 1:24 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:24 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; (a?.b)!();"
       => (none)
 "declare const a: any; (a?.b!)();"
-      => no-unsafe-optional-chaining 1:24 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:24 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; a?.b!();"
       => (none)
 "declare const a: any; a?.b!.c;"
@@ -11,9 +11,9 @@
 "declare const a: any; (a?.b)!.c;"
       => (none)
 "declare const a: any; (a?.b!).c;"
-      => no-unsafe-optional-chaining 1:24 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:24 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; (a?.b!!).c;"
-      => no-unsafe-optional-chaining 1:24 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:24 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; ((a?.b)!).c;"
       => (none)
 "declare const a: any; ((a?.b!)!).c;"
@@ -27,21 +27,21 @@
 "declare const a: any; (<any>(a?.b)).c;"
       => (none)
 "declare const a: any; new (a?.b)();"
-      => no-unsafe-optional-chaining 1:28 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:28 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; new (a?.b)!();"
       => (none)
 "declare const a: any; new (a?.b!)();"
-      => no-unsafe-optional-chaining 1:28 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:28 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; new (a?.b as any)();"
       => (none)
 "declare const a: any; (a?.b)``;"
-      => no-unsafe-optional-chaining 1:24 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:24 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; (a?.b!)``;"
-      => no-unsafe-optional-chaining 1:24 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:24 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; (a?.b as any)``;"
       => (none)
 "declare const a: any; class A extends (a?.b) {}"
-      => no-unsafe-optional-chaining 1:40 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:40 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; class A extends (a?.b)! {}"
       => (none)
 "declare const a: any; class A extends (a?.b as any) {}"
@@ -49,45 +49,45 @@
 "declare const a: any; 1 in (a?.b as any);"
       => (none)
 "declare const a: any; 1 in a?.b!;"
-      => no-unsafe-optional-chaining 1:28 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:28 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; 1 in a?.b;"
-      => no-unsafe-optional-chaining 1:28 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:28 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; a instanceof (a?.b)!;"
       => (none)
 "declare const a: any; for (const x of a?.b as any) {}"
       => (none)
 "declare const a: any; for (const x of a?.b!) {}"
-      => no-unsafe-optional-chaining 1:39 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:39 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; for (const x of a?.b) {}"
-      => no-unsafe-optional-chaining 1:39 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:39 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; [...a?.b as any];"
       => (none)
 "declare const a: any; [...a?.b!];"
-      => no-unsafe-optional-chaining 1:27 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:27 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; [...a?.b];"
-      => no-unsafe-optional-chaining 1:27 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:27 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; const {x} = a?.b as any;"
       => (none)
 "declare const a: any; const {x} = a?.b!;"
-      => no-unsafe-optional-chaining 1:35 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:35 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; const {x} = a?.b;"
-      => no-unsafe-optional-chaining 1:35 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:35 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; const {x}: any = a?.b;"
-      => no-unsafe-optional-chaining 1:40 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:40 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; let x: any; ({x} = a?.b!);"
-      => no-unsafe-optional-chaining 1:42 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:42 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; let x: any; ({x} = a?.b);"
-      => no-unsafe-optional-chaining 1:42 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:42 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; let x: any; ([x] = (a?.b as any));"
       => (none)
 "declare const a: any; function f({x} = a?.b as any) {}"
       => (none)
 "declare const a: any; function f({x}: any = a?.b) {}"
-      => no-unsafe-optional-chaining 1:45 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:45 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; function f([x] = a?.b!) {}"
-      => no-unsafe-optional-chaining 1:40 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:40 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; (a && a?.b)();"
-      => no-unsafe-optional-chaining 1:29 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:29 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; (a && a?.b as any)();"
       => (none)
 "declare const a: any; (a && (a?.b)!)();"
@@ -97,13 +97,13 @@
 "declare const a: any; ((a && a?.b)!)();"
       => (none)
 "declare const a: any; (a ? a?.b : (a?.c as any))();"
-      => no-unsafe-optional-chaining 1:28 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:28 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; async function g() { (await a?.b)(); (await (a?.b as any))(); ((await a?.b) as any)(); }"
-      => no-unsafe-optional-chaining 1:51 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:51 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; (a, a?.b)();"
-      => no-unsafe-optional-chaining 1:27 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:27 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; (a, a?.b!)();"
-      => no-unsafe-optional-chaining 1:27 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:27 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; ((a, a?.b)!)();"
       => (none)
 "declare const a: any; a?.b!.c();"
@@ -113,21 +113,21 @@
 "declare const a: any; a?.[0]!.c;"
       => (none)
 "declare const a: any; (a?.[0]!).c;"
-      => no-unsafe-optional-chaining 1:24 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:24 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; a?.()!.c;"
       => (none)
 "declare const a: any; (a?.()!).c;"
-      => no-unsafe-optional-chaining 1:24 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:24 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; (a?.b)<string>();"
-      => no-unsafe-optional-chaining 1:24 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:24 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; a?.b<string>();"
       => (none)
 "declare const a: any; new (a?.b)<string>();"
-      => no-unsafe-optional-chaining 1:28 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:28 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; a!?.b.c;"
       => (none)
 "declare const a: any; (a!?.b).c;"
-      => no-unsafe-optional-chaining 1:24 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
+      => 1:24 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.
 "declare const a: any; (a?.b)!?.c;"
       => (none)
 "declare const a: any; ((a?.b)!)?.c;"

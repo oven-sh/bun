@@ -1,45 +1,45 @@
 "declare const a: any, b: any; if (a) {} else if (a) {}"
-      => 1:50 DUPE
+      => 1:50 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.
 "declare const a: any, b: any; if (a) {} else if (a as any) {}"
       => (none)
 "declare const a: any, b: any; if (a as any) {} else if (a as any) {}"
-      => 1:57 DUPE
+      => 1:57 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.
 "declare const a: any, b: any; if (a as any) {} else if (a as unknown) {}"
       => (none)
 "declare const a: any, b: any; if (a!) {} else if (a) {}"
       => (none)
 "declare const a: any, b: any; if (a!) {} else if (a!) {}"
-      => 1:51 DUPE
+      => 1:51 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.
 "declare const a: any, b: any; if (<any>a) {} else if (<any>a) {}"
-      => 1:55 DUPE
+      => 1:55 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.
 "declare const a: any, b: any; if (<any>a) {} else if (< any > a) {}"
-      => 1:55 DUPE
+      => 1:55 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.
 "declare const a: any, b: any; if (a satisfies any) {} else if (a satisfies any) {}"
-      => 1:64 DUPE
+      => 1:64 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.
 "declare const a: any, b: any; if ((a || b) as any) {} else if (a) {}"
       => (none)
 "declare const a: any, b: any; if ((a || b) as any) {} else if ((b || a) as any) {}"
       => (none)
 "declare const a: any, b: any; if ((a || b) as any) {} else if ((a || b) as any) {}"
-      => 1:64 DUPE
+      => 1:64 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.
 "declare const a: any, b: any; if (a || b) {} else if ((a) as any) {}"
       => (none)
 "declare const a: any, b: any; if (a as any || b) {} else if (a as any) {}"
-      => 1:62 DUPE
+      => 1:62 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.
 "declare const a: any, b: any; if (a as any || b) {} else if (b) {}"
-      => 1:62 DUPE
+      => 1:62 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.
 "declare const a: any, b: any; if (a as any || b) {} else if (a) {}"
       => (none)
 "declare const a: any, b: any; if ((a as any) || b) {} else if (a as any) {}"
-      => 1:64 DUPE
+      => 1:64 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.
 "declare const a: any, b: any; if (a as any || b) {} else if ((a as any)) {}"
-      => 1:63 DUPE
+      => 1:63 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.
 "declare const a: any, b: any; if (a! && b!) {} else if (b! && a!) {}"
-      => 1:57 DUPE
+      => 1:57 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.
 "declare const a: any, b: any; if (a! && b!) {} else if ((b! && a!)!) {}"
       => (none)
 "declare const a: any, b: any; if ((a && b)!) {} else if ((a && b)!) {}"
-      => 1:58 DUPE
+      => 1:58 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.
 "declare const a: any, b: any; if ((a && b)!) {} else if (a && b) {}"
       => (none)
 "declare const a: any, b: any; if (a && b) {} else if ((a && b)!) {}"
@@ -47,30 +47,30 @@
 "declare const a: any, b: any; if (a) {} else if ((a && b)!) {}"
       => (none)
 "declare const a: any, b: any; if (a) {} else if (a && (b as any)) {}"
-      => 1:50 DUPE
+      => 1:50 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.
 "declare const a: any, b: any; if (a<b>(1)) {} else if (a<b>(1)) {}"
-      => 1:56 DUPE
+      => 1:56 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.
 "declare const a: any, b: any; if (a<b>(1)) {} else if (a < b > (1)) {}"
-      => 1:56 DUPE
+      => 1:56 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.
 "declare const a: any, b: any; if (a as Array<Array<number>>) {} else if (a as Array<Array<number> >) {}"
-      => 1:74 DUPE
+      => 1:74 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.
 "declare const a: any, b: any; if (a as Array<Array<number>>) {} else if (a as Array<Array<number>>) {}"
-      => 1:74 DUPE
+      => 1:74 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.
 "declare const a: any, b: any; if (a as `x${string}`) {} else if (a as `x${string}`) {}"
-      => 1:66 DUPE
+      => 1:66 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.
 "declare const a: any, b: any; if (a as { x: 1 }) {} else if (a as { x: 1; }) {}"
       => (none)
 "declare const a: any, b: any; if (a) {} else if (b) {} else if (a as any) {} else if (b!) {} else if (b) {}"
-      => 1:103 DUPE
+      => 1:103 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.
 "declare const a: any, b: any; if (a.b) {} else if (a!.b) {} else if (a.b) {}"
-      => 1:70 DUPE
+      => 1:70 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.
 "declare const a: any, b: any; if (a?.b) {} else if (a?.b!) {} else if (a?.b) {}"
-      => 1:72 DUPE
-"//tsx\ndeclare const a: any, b: any; if (a as any) {} else if (a as any) {}"
-      => 2:57 DUPE
-"//tsx\ndeclare const a: any, b: any; if (<a/>) {} else if (<a />) {}"
-      => 2:53 DUPE
-"//tsx\ndeclare const a: any, b: any; if (<a>{b}</a>) {} else if (<a>{ b }</a>) {}"
-      => 2:59 DUPE
-"//tsx\ndeclare const a: any, b: any; if (<a>x y</a>) {} else if (<a>x  y</a>) {}"
+      => 1:72 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.
+"declare const a: any, b: any; if (a as any) {} else if (a as any) {}" [tsx]
+      => 1:57 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.
+"declare const a: any, b: any; if (<a/>) {} else if (<a />) {}" [tsx]
+      => 1:53 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.
+"declare const a: any, b: any; if (<a>{b}</a>) {} else if (<a>{ b }</a>) {}" [tsx]
+      => 1:59 This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.
+"declare const a: any, b: any; if (<a>x y</a>) {} else if (<a>x  y</a>) {}" [tsx]
       => (none)

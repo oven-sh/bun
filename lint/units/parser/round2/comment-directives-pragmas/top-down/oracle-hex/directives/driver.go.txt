@@ -1,0 +1,37 @@
+
+// The comment arms of Scan, lines copied from scanner.go by gen.py; every other rune is stepped over.
+func (s *Scanner) scanAll() {
+	for s.pos < s.end {
+		ch := s.char()
+		s.tokenStart = s.pos
+		if ch == '/' {
+			//SINGLE//
+			//MULTI//
+		}
+		_, size := s.charAndSize()
+		s.pos += size
+	}
+}
+
+func main() {
+	f, _ := os.Open(os.Args[1])
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1<<20), 1<<26)
+	w := bufio.NewWriter(os.Stdout)
+	defer w.Flush()
+	for sc.Scan() {
+		parts := strings.SplitN(sc.Text(), "\t", 2)
+		raw, _ := hex.DecodeString(parts[1])
+		s := &Scanner{text: string(raw), end: len(raw)}
+		s.scanAll()
+		fmt.Fprintf(w, "--- %s\n", parts[0])
+		for _, d := range s.commentDirectives {
+			kind := "ExpectError"
+			if d.Kind == CommentDirectiveKindIgnore {
+				kind = "Ignore"
+			}
+			fmt.Fprintf(w, "directive %s %d..%d\n", kind, d.Loc.pos, d.Loc.end)
+		}
+	}
+	_ = utf8.RuneError
+}

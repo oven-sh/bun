@@ -1,0 +1,58 @@
+--- string-not-comment "let s = \"// @ts-ignore\"; let t = '/* @ts-expect-error */';"
+  directives=[]
+--- template-text-and-hole "let t = `// @ts-ignore ${ /* @ts-ignore */ 1 } // @ts-expect-error`;"
+  directives=[Ignore 26..42]
+--- regex-not-comment "let r = /\\/\\/ @ts-ignore/; let q = /[/*]/; // @ts-expect-error"
+  directives=[ExpectError 43..62]
+--- division-then-comment "let d = 4 / 2 /* @ts-ignore */ / 1;"
+  directives=[Ignore 14..30]
+--- type-args-attempt-fails "let r = a < /* @ts-ignore */ b > c;"
+  directives=[Ignore 12..28] (tsc lists 3 with duplicates)
+--- type-args-attempt-kept "let r = f< /* @ts-ignore */ T>( /* @ts-expect-error */ x);"
+  directives=[Ignore 11..27, ExpectError 32..54]
+--- arrow-return-cond-reparse "let r = c ? (a) : /* @ts-expect-error */ b => d : e;"
+  directives=[ExpectError 18..40]
+--- arrow-return-cond-plain "let r = c ? (a) /* @ts-ignore */ : b;"
+  directives=[Ignore 16..32] (tsc lists 2 with duplicates)
+--- arrow-args-type-attempt "let x: ( /* @ts-ignore */ a: string) => void; let y: ( /* @ts-expect-error */ string);"
+  directives=[Ignore 9..25, ExpectError 55..77] (tsc lists 4 with duplicates)
+--- generic-arrow-tsx "const f = <T, /* @ts-ignore */ >(x: T) => x;"
+  directives=[Ignore 14..30]
+--- async-arrow-lookahead "let f = async /* @ts-ignore */ x => x;"
+  directives=[Ignore 14..30] (tsc lists 3 with duplicates)
+--- split-greater "let x: A<B<C /* @ts-ignore */ >> /* @ts-expect-error */ = y;"
+  directives=[Ignore 13..29, ExpectError 33..55]
+--- jsx-tag-line "let e = <div // @ts-ignore\n  a=\"b\" // @ts-expect-error\n/>;"
+  directives=[Ignore 13..26, ExpectError 35..54] (tsc lists 3 with duplicates)
+--- jsx-tag-block "let e = < /* @ts-ignore */ div /* @ts-expect-error */ a /* @ts-ignore */ = /* @ts-ignore */ \"b\" />;"
+  directives=[Ignore 10..26, ExpectError 31..53, Ignore 56..72, Ignore 75..91] (tsc lists 7 with duplicates)
+--- jsx-text-not-comment "let e = <div>// @ts-ignore\n/* @ts-expect-error */</div>;"
+  directives=[]
+--- jsx-expression-container "let e = <div>{/* @ts-expect-error */}{ x // @ts-ignore\n}</div>;"
+  directives=[ExpectError 14..36, Ignore 41..54]
+--- jsx-closing-tag "let e = <div></ /* @ts-ignore */ div /* @ts-expect-error */ >;"
+  directives=[Ignore 16..32, ExpectError 37..59]
+--- jsx-fragment "let e = < /* @ts-ignore */ > </ /* @ts-expect-error */ >;"
+  directives=[Ignore 10..26, ExpectError 32..54] (tsc lists 4 with duplicates)
+--- jsx-after-element "let e = <a /> /* @ts-ignore */ ; let f = <b></b> // @ts-expect-error\n;"
+  directives=[Ignore 14..30, ExpectError 49..68]
+--- jsx-attr-string-not-comment "let e = <a b=\"// @ts-ignore\" c='/* @ts-expect-error */' />;"
+  directives=[]
+--- jsx-spread-attr "let e = <a {...b /* @ts-ignore */ } />;"
+  directives=[Ignore 17..33]
+--- jsdoc-type-inner-line "/** @type {string // @ts-ignore\n} */ let x;"
+  directives=[]
+--- jsdoc-js-file "/** @type {string} // @ts-ignore\n */ let x = 1; // @ts-expect-error\n"
+  directives=[ExpectError 48..67]
+--- before-eof-block "let x;\n/* @ts-ignore */"
+  directives=[Ignore 7..23]
+--- only-directive "// @ts-ignore"
+  directives=[Ignore 0..13]
+--- class-members "class A { /* @ts-ignore */ public x: number; // @ts-expect-error\n declare y: string; }"
+  directives=[Ignore 10..26, ExpectError 45..64]
+--- interface-erased "interface I { // @ts-ignore\n a: string; /* @ts-expect-error */ }\ntype T = /* @ts-ignore */ 1;"
+  directives=[Ignore 14..27, ExpectError 40..62, Ignore 74..90]
+--- top-level-await-module "export {};\n// @ts-ignore\nawait 1; /* @ts-expect-error */\nawait 2;"
+  directives=[Ignore 11..24, ExpectError 34..56]
+--- hashbang-then-directive-then-pragma "#!/usr/bin/env bun\n// @ts-ignore\n// @ts-nocheck\nlet x;"
+  directives=[Ignore 19..32]

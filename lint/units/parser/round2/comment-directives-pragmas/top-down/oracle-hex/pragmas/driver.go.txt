@@ -1,0 +1,93 @@
+
+
+// Reads `name<TAB>hex` lines and prints the pragmas and the fields of processPragmasIntoFields, offsets only.
+func main() {
+	f, _ := os.Open(os.Args[1])
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1<<20), 1<<26)
+	w := bufio.NewWriter(os.Stdout)
+	defer w.Flush()
+	for sc.Scan() {
+		parts := strings.SplitN(sc.Text(), "\t", 2)
+		raw, _ := hex.DecodeString(parts[1])
+		text := string(raw)
+		fmt.Fprintf(w, "--- %s\n", parts[0])
+		pragmas := getCommentPragmas(&NodeFactory{}, text)
+		var refs, types, libs, diags []string
+		checkJs := ""
+		checkPos := -1
+		for _, pragma := range pragmas {
+			var keys []string
+			for k := range pragma.Args {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			var as []string
+			for _, k := range keys {
+				a := pragma.Args[k]
+				as = append(as, fmt.Sprintf("%s=%d..%d", k, a.Pos(), a.End()))
+			}
+			kind := "S"
+			if pragma.Kind == KindMultiLineCommentTrivia {
+				kind = "M"
+			}
+			nl := 0
+			if pragma.HasTrailingNewLine {
+				nl = 1
+			}
+			fmt.Fprintf(w, "pragma %s %d..%d %s nl=%d [%s]\n", pragma.Name, pragma.Pos(), pragma.End(), kind, nl, strings.Join(as, " "))
+			b := func(v bool) int {
+				if v {
+					return 1
+				}
+				return 0
+			}
+			switch pragma.Name {
+			case "reference":
+				ty, typesOk := pragma.Args["types"]
+				lib, libOk := pragma.Args["lib"]
+				path, pathOk := pragma.Args["path"]
+				resolutionMode, resolutionModeOk := pragma.Args["resolution-mode"]
+				preserve, preserveOk := pragma.Args["preserve"]
+				noDefaultLib, noDefaultLibOk := pragma.Args["no-default-lib"]
+				pres := b(preserveOk && preserve.Value == "true")
+				switch {
+				case noDefaultLibOk && noDefaultLib.Value == "true":
+				case typesOk:
+					mode := "none"
+					if resolutionModeOk {
+						if resolutionMode.Value == "import" {
+							mode = "import"
+						} else if resolutionMode.Value == "require" {
+							mode = "require"
+						} else {
+							diags = append(diags, fmt.Sprintf("diag TS1453 %d..%d", resolutionMode.Pos(), resolutionMode.End()))
+						}
+					}
+					types = append(types, fmt.Sprintf("types %d..%d mode=%s preserve=%d", ty.Pos(), ty.End(), mode, pres))
+				case libOk:
+					libs = append(libs, fmt.Sprintf("lib %d..%d preserve=%d", lib.Pos(), lib.End(), pres))
+				case pathOk:
+					refs = append(refs, fmt.Sprintf("path %d..%d preserve=%d", path.Pos(), path.End(), pres))
+				default:
+					diags = append(diags, fmt.Sprintf("diag TS1084 %d..%d", pragma.Pos(), pragma.End()))
+				}
+			case "ts-check", "ts-nocheck":
+				if checkPos < 0 || pragma.Pos() > checkPos {
+					checkPos = pragma.Pos()
+					checkJs = fmt.Sprintf("check %d %d..%d", b(pragma.Name == "ts-check"), pragma.Pos(), pragma.End())
+				}
+			}
+		}
+		if checkJs != "" {
+			fmt.Fprintln(w, checkJs)
+		}
+		for _, group := range [][]string{refs, types, libs, diags} {
+			for _, l := range group {
+				fmt.Fprintln(w, l)
+			}
+		}
+	}
+	_ = unicode.MaxASCII
+	_ = utf8.RuneError
+}

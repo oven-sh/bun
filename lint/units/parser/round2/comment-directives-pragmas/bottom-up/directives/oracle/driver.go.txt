@@ -1,0 +1,37 @@
+
+
+func main() {
+	var inputs [][]string
+	data, _ := os.ReadFile(os.Args[1])
+	if err := json.Unmarshal(data, &inputs); err != nil {
+		panic(err)
+	}
+	for _, in := range inputs {
+		text := in[1]
+		s := &Scanner{text: text, end: len(text), skipTrivia: true}
+		pos := 0
+		var comments []string
+		for pos < len(text) {
+			if text[pos] == '/' && pos+1 < len(text) && (text[pos+1] == '/' || text[pos+1] == '*') {
+				s.pos = pos
+				s.tokenStart = pos
+				s.scanCommentArm()
+				comments = append(comments, fmt.Sprintf("%d..%d", pos, s.pos))
+				pos = s.pos
+			} else {
+				pos++
+			}
+		}
+		var ds []string
+		for _, d := range s.commentDirectives {
+			k := "ExpectError"
+			if d.Kind == CommentDirectiveKindIgnore {
+				k = "Ignore"
+			}
+			ds = append(ds, fmt.Sprintf("%s %d..%d", k, d.Loc.Pos(), d.Loc.End()))
+		}
+		j, _ := json.Marshal(text)
+		fmt.Printf("--- %s %s\n  comments=[%s] unterminated=%v\n  directives=[%s]\n", in[0], j, strings.Join(comments, " "), len(s.errors) > 0, strings.Join(ds, ", "))
+	}
+	_ = utf8.RuneError
+}

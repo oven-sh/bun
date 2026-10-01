@@ -44,14 +44,25 @@ for (const rule of ["no-loss-of-precision", "no-octal"]) {
 // Ties of toPrecision, the ends of the range, and the literals of the notes.
 for (const s of ["1125899906842624.2", "1125899906842624.3", "2251799813685248.2", "2251799813685248.3", "2251799813685248.7", "562949953421312.12", "562949953421312.13", "562949953421312.62", "562949953421312.63", "1.7976931348623157e308", "1.7976931348623158e308", "1.7976931348623159e308", "1.8e308", "5e-324", "4e-324", "2.5e-324", "2.4e-324", "4.9e-324", "1e-323", "1.5e-323", "2.2250738585072014e-308", "2.225073858507201e-308", "0", "0.0", "0.", ".0", "0e0", "0.0e5", "00", "08", "09.5", "0.1", "0.3", "1e21", "1e22", "1e23", "123456789012345680000", "0.1e1", "5e-7", "0.0000001", "1.0", "100", "1e2", "10e1", "9.995e0", "0.30000000000000004", "0.1000000000000000055511151231257827"]) list.add(s);
 while (list.size < count) list.add(literal());
+const espree = require("/workspace/ref/eslint/node_modules/espree");
 const literals = [...list].filter(s => {
-	const m = linter.verify(`(${s})`, [{ languageOptions: { ecmaVersion: "latest", sourceType: "script" }, rules: {} }]);
-	return !m.some(x => x.fatal);
+	try {
+		espree.parse(`(${s})`, { ecmaVersion: "latest", sourceType: "script" });
+		return true;
+	} catch {
+		return false;
+	}
 });
-const expected = literals.map(s => {
-	const m = linter.verify(`(${s})`, [{ languageOptions: { ecmaVersion: "latest", sourceType: "script" }, rules: { "no-loss-of-precision": "error" } }]);
-	return m.length ? 1 : 0;
-});
+// One literal per line: a report names the line of its literal.
+const reported = new Set(
+	linter
+		.verify(literals.map(s => `(${s});`).join("\n"), [{ languageOptions: { ecmaVersion: "latest", sourceType: "script" }, rules: { "no-loss-of-precision": "error" } }])
+		.map(m => {
+			if (m.fatal) throw new Error(m.message);
+			return m.line - 1;
+		}),
+);
+const expected = literals.map((s, i) => (reported.has(i) ? 1 : 0));
 const r = spawnSync(bin, [], { input: literals.join("\n") + "\n", encoding: "utf8", maxBuffer: 1 << 28 });
 if (r.status !== 0) {
 	console.error("the binary failed", r.status, r.signal, r.stderr.slice(0, 2000));

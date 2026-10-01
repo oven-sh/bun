@@ -1,0 +1,8 @@
+# HEAD be1ebe5295 dirty=[] 2026-10-01T09:19:38Z load=591.12 639.58 682.65
+leak test/bundler/transpiler/typescript-grammar.test.ts rc=0 secs=18 ::  180 pass; 0 fail; 180 expect() calls;Ran 180 tests across 1 file. [8.40s];
+leak test/bundler/transpiler/typescript-grammar-expressions.test.ts rc=0 secs=11 ::  63 pass; 0 fail; 63 expect() calls;Ran 63 tests across 1 file. [5.00s];
+leak test/bundler/transpiler/typescript-grammar-statements.test.ts rc=0 secs=13 ::  66 pass; 0 fail; 66 expect() calls;Ran 66 tests across 1 file. [5.24s];
+leak test/bundler/transpiler/typescript-grammar-decorator-metadata.test.ts rc=0 secs=20 ::  57 pass; 0 fail; 57 expect() calls;Ran 57 tests across 1 file. [10.27s];
+leak test/bundler/transpiler/decorator-metadata.test.ts rc=0 secs=14 ::  5 pass; 0 fail; 227 expect() calls;Ran 5 tests across 1 file. [7.18s];
+leak test/bundler/transpiler/decorators.test.ts rc=0 secs=55 ::  24 pass; 0 fail; 273 expect() calls;Ran 24 tests across 1 file. [42.36s];
+leak test/bundler/transpiler/transpiler-stack-overflow.test.ts rc=0 secs=54 ::  1 pass; 0 fail; 1 expect() calls;

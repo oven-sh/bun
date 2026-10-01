@@ -18,7 +18,7 @@ else {
 	cases = (Array.isArray(parsed) ? parsed : [...parsed.valid, ...parsed.invalid]).map(c => (typeof c === "string" ? { code: c } : c));
 }
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bun-parse-"));
-const ext = c => (ts ? (c.code.startsWith("//tsx\n") ? "tsx" : "ts") : c.jsx ? "jsx" : "js");
+const ext = c => c.ext || (ts ? "ts" : c.jsx ? "jsx" : "js");
 const names = cases.map((c, i) => `c${String(i).padStart(4, "0")}.${ext(c)}`);
 cases.forEach((c, i) => fs.writeFileSync(path.join(dir, names[i]), c.code));
 const byName = new Map(names.map((n, i) => [n, i]));

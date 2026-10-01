@@ -49,3 +49,20 @@ patched
 ### 21-cargo-clippy-runtime rc=0 wall=3s 2026-10-01T08:58:49Z
 ### 22-cargo-fmt-runtime rc=0 wall=5s 2026-10-01T08:58:54Z
 ### g4 complete 2026-10-01T08:58:55Z dirty=0
+### g5 lock acquired 2026-10-01T09:12:52Z
+### applied L1 2026-10-01T09:12:53Z
+### g5 l1-test rc=101 wall=53s 2026-10-01T09:13:46Z
+### g5 l2-clippy rc=0 wall=24s 2026-10-01T09:14:10Z
+### g5 l3-fmt rc=0 wall=2s 2026-10-01T09:14:12Z
+### g5 l4-miri rc=0 wall=77s 2026-10-01T09:15:29Z
+### applied L2 2026-10-01T09:15:29Z
+### g5 k1-test rc=101 wall=13s 2026-10-01T09:15:42Z
+### g5 k2-clippy rc=0 wall=4s 2026-10-01T09:15:46Z
+### g5 k3-fmt rc=0 wall=1s 2026-10-01T09:15:47Z
+### applied L1S 2026-10-01T09:15:48Z
+### g5 s1-test-store rc=0 wall=9s 2026-10-01T09:15:57Z
+patched
+### g5 s2-miri-store-parse-only rc=1 wall=35s 2026-10-01T09:16:32Z
+### g5 s3-miri-store-parse-for-lint rc=1 wall=11s 2026-10-01T09:16:43Z
+### applied 0 2026-10-01T09:16:43Z
+### g5 complete 2026-10-01T09:16:43Z

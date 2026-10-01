@@ -3009,9 +3009,7 @@ it("bun add --trust keeps the new package when another --trust package is alread
   });
 });
 
-// Global installs live in <home>/.bun/install/global for the tests below. Every
-// location is pinned explicitly so BUN_INSTALL* variables from the environment
-// running the tests cannot redirect them.
+// Pins every global-install location under <home> so the ambient BUN_INSTALL* cannot redirect the tests below.
 function globalInstallEnv(home: string) {
   return {
     ...env,
@@ -3022,11 +3020,7 @@ function globalInstallEnv(home: string) {
   };
 }
 
-// The global dir does not exist before the first `bun add -g`. `init` chdirs
-// into it and used to walk up looking for a package.json, so a project
-// package.json in $HOME became the "global" project: the dependency was added
-// to ~/package.json and installed into ~/node_modules. The first global add
-// must instead create <global>/package.json and install there.
+// #40683: the first -g add must create <global>/package.json, not adopt ~/package.json.
 it("first `bun add -g` creates the global package.json instead of adopting ~/package.json", async () => {
   const homeProject = JSON.stringify({ name: "home-project", private: true });
   using home = tempDir("bun-add-global-home-project", {
@@ -3064,11 +3058,7 @@ it("first `bun add -g` creates the global package.json instead of adopting ~/pac
   expect(await file(join(homeDir, "package.json")).text()).toBe(homeProject);
 });
 
-// https://github.com/oven-sh/bun/issues/30658
-// Same walk-up, different symptom: a stray package.json with an old npm v1
-// package-lock.json next to it in a parent directory (typically $HOME on
-// Windows) was adopted as the root project, and the migrator then reported
-// that lockfile ("... is lockfileVersion 1, which bun cannot migrate").
+// #30658: a stray ~/package.json + v1 package-lock.json must not reach the migrator.
 it("`bun add -g` ignores package.json/package-lock.json above the global dir", async () => {
   using home = tempDir("bun-add-global-parent-lockfile", {
     // stray files in the parent of <home>/.bun/install/global
@@ -3109,13 +3099,7 @@ it("`bun add -g` ignores package.json/package-lock.json above the global dir", a
   );
 });
 
-// https://github.com/oven-sh/bun/issues/28247
-// Same walk-up problem, different symptom: if a parent directory's
-// package.json defines `workspaces` (plus any `workspace:*` deps), global
-// install used to hop onto it as the workspace root and then fail to
-// resolve those workspace-scoped deps:
-// "error: Workspace dependency \"…\" not found"
-// Global installs shouldn't participate in a parent workspace at all.
+// #28247: a parent package.json with `workspaces` must not become the root of a -g install.
 it("`bun add -g` ignores a workspaces package.json above the global dir", async () => {
   using home = tempDir("bun-add-global-parent-workspaces", {
     // parent package.json declares workspaces + a workspace-protocol dep
@@ -3151,16 +3135,7 @@ it("`bun add -g` ignores a workspaces package.json above the global dir", async 
   expect(await exited).not.toBe(0);
 });
 
-// https://github.com/oven-sh/bun/issues/28247
-// The case above is caught by the walk-up break, because the global dir has
-// no package.json so the walk ascends to the parent. This variant instead
-// pins the *second* guard: the global dir already has a package.json (as it
-// would after a prior `bun add -g`), so the walk-up loop stops there on its
-// first iteration and the break never fires. The only thing that keeps the
-// parent workspace from being adopted as root is the `!cli.global` gate on
-// the workspace-root hop. The parent lists the global dir as a workspace
-// member so, without the gate, the hop adopts it and its `workspace:*` dep
-// fails to resolve.
+// #28247: pins the workspace-hop gate alone; <global>/package.json pre-exists so the walk-up break never fires.
 it("`bun add -g` does not adopt a parent workspace that lists the global dir", async () => {
   using home = tempDir("bun-add-global-parent-workspace-member", {
     "package.json": JSON.stringify({
@@ -3202,11 +3177,7 @@ it("`bun add -g` does not adopt a parent workspace that lists the global dir", a
   expect(await exited).not.toBe(0);
 });
 
-// Any `-g` command must work before the first global add. The walk-up stop
-// alone would make `bun pm bin -g` return MissingPackageJSON on a fresh
-// machine that has a ~/package.json, where it used to "work" only by adopting
-// that project. The global dir is self-contained, so init bootstraps its
-// package.json instead.
+// Pins the bootstrap arm: a non-add -g command on a fresh machine must not hit MissingPackageJSON.
 it("`bun pm bin -g` works before the first global add and does not adopt ~/package.json", async () => {
   const homeProject = JSON.stringify({ name: "home-project", private: true });
   using home = tempDir("bun-pm-bin-global-fresh", {

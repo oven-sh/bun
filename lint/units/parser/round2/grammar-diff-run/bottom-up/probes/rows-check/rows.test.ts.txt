@@ -1,0 +1,235 @@
+import { describe, expect, test } from "bun:test";
+
+const tsconfig = JSON.stringify({ compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } });
+const transpilers = {
+  ts: new Bun.Transpiler({ loader: "ts" }),
+  tsx: new Bun.Transpiler({ loader: "tsx" }),
+  decorators: new Bun.Transpiler({ loader: "ts", tsconfig }),
+};
+
+/** A transpiler, a source that tsc 6.0.2 rejects with its parser or with a grammar check of its checker, and the first error of Bun. */
+type Rejected = [transpiler: keyof typeof transpilers, source: string, message: string];
+
+/** The message of the first error that the transpiler reports for the source. */
+function firstError(transpiler: keyof typeof transpilers, source: string): string {
+  try {
+    transpilers[transpiler].transformSync(source);
+  } catch (e: any) {
+    const list = Array.isArray(e?.errors) && e.errors.length > 0 ? e.errors : [e];
+    return String(list[0]?.message ?? list[0]);
+  }
+  return "no error";
+}
+
+// In every table the first source is valid for tsc as a whole and new with this grammar. The rows are what tsc rejects beside it.
+describe("TypeScript that tsc rejects stays an error", () => {
+  test.each<Rejected>([
+    ["ts", "type X = (a?: A = 1) => R;", "Expected \")\" but found \"?\""],
+    ["ts", "type X = { m(a? = 1): R };", "Expected \")\" but found \"=\""],
+    ["ts", "type X = new (a?: A = 1) => R;", "Expected \")\" but found \"?\""],
+    ["ts", "type X = (...a = []) => R;", "Unexpected ..."],
+    ["ts", "type X = { m(...a: A[] = []): R };", "Expected \")\" but found \"=\""],
+    ["ts", "type X = ({ ...a = 1 }) => R;", "Unexpected ..."],
+    ["ts", "type X = ([...a = 1]) => R;", "Expected \"]\" but found \"=\""],
+    ["decorators", "class K { @d p: (a?: A = 1) => R; }", "Expected \")\" but found \"?\""],
+    ["tsx", "type X = (a?: A = 1) => R;", "Expected \")\" but found \"?\""],
+  ])("an initializer after ? or ... of a parameter of a signature: %s %j", (transpiler, source, message) => {
+    expect(firstError("ts", "type X = (a = 1, ...b) => R;")).toBe("no error");
+    expect(firstError(transpiler, source)).toBe(message);
+  });
+
+  test.each<Rejected>([
+    ["ts", "type X = (public private a: A) => R;", "Expected \")\" but found \"private\""],
+    ["ts", "type X = (readonly public a: A) => R;", "Expected \")\" but found \"a\""],
+    ["ts", "type X = (override public a: A) => R;", "Expected \")\" but found \"public\""],
+    ["ts", "type X = (readonly readonly a: A) => R;", "Expected \")\" but found \":\""],
+    ["ts", "type X = { m(readonly override a: A): R };", "Expected \")\" but found \"a\""],
+    ["ts", "function f(public private a: A) {}", "Expected \")\" but found \"a\""],
+    ["ts", "function f(readonly public a: A) {}", "Expected \")\" but found \"a\""],
+    ["ts", "function f(override override a: A) {}", "Expected \")\" but found \"a\""],
+    ["ts", "class C { m(readonly override a: A) {} }", "Expected \")\" but found \"a\""],
+    ["ts", "let o = { m(public private a: A) {} };", "Expected \")\" but found \"a\""],
+    ["ts", "declare function f(public public a: A): void;", "Expected \")\" but found \"a\""],
+  ])("the modifiers of a parameter, repeated or in another order: %s %j", (transpiler, source, message) => {
+    expect(firstError("ts", "type X = (public override readonly a: A) => R;")).toBe("no error");
+    expect(firstError(transpiler, source)).toBe(message);
+  });
+
+  test.each<Rejected>([
+    ["ts", "function f(...a,): void;\nfunction f(...a) {}", "Expected \")\" but found \",\""],
+    ["ts", "class C { m(...a,): void; m(...a) {} }", "Expected \")\" but found \",\""],
+    ["ts", "abstract class C { abstract m(...a,): void }", "Expected \")\" but found \",\""],
+    ["ts", "class C { constructor(...a,); constructor(...a) {} }", "Expected \")\" but found \",\""],
+  ])("a comma after a rest parameter outside an ambient context: %s %j", (transpiler, source, message) => {
+    expect(firstError("ts", "declare class C { m(...a,): void; }")).toBe("no error");
+    expect(firstError(transpiler, source)).toBe(message);
+  });
+
+  test.each<Rejected>([
+    ["ts", "type X = [a: A?];", "Expected \"]\" but found \"?\""],
+    ["ts", "type X = [a?: A?];", "Expected \"]\" but found \"?\""],
+    ["ts", "type X = [a: ...A[]];", "Unexpected ..."],
+    ["ts", "type X = [...if?: A[]];", "Unexpected ?"],
+    ["ts", "let f = (a): [a: ?] => a;", "Expected \";\" but found \":\""],
+    ["ts", "f<[a: ?]>(x);", "Expected \"]\" but found \":\""],
+  ])("a named element of a tuple with ... or ? at its type: %s %j", (transpiler, source, message) => {
+    expect(firstError("ts", "type X = [...if: A[]];")).toBe("no error");
+    expect(firstError(transpiler, source)).toBe(message);
+  });
+
+  test.each<Rejected>([
+    ["ts", "type X = A.<B>;", "Expected identifier but found \"<\""],
+    ["ts", "let x: Array.<A>;", "Expected identifier but found \"<\""],
+    ["ts", "type X = A.B.<C>[];", "Expected identifier but found \"<\""],
+    ["ts", "class C implements A.<B> {}", "Expected identifier but found \"<\""],
+    ["tsx", "let x: A.<B>;", "Expected identifier but found \"<\""],
+  ])("the type arguments of a type reference after a dot: %s %j", (transpiler, source, message) => {
+    expect(firstError("ts", "type X = import(\"x\").A.<B>;")).toBe("no error");
+    expect(firstError(transpiler, source)).toBe(message);
+  });
+
+  test.each<Rejected>([
+    ["ts", "let x: #a;", "Unexpected #a"],
+    ["ts", "let x: #a[];", "Unexpected #a"],
+    ["ts", "let x: keyof #a;", "Unexpected #a"],
+    ["ts", "let x: #a | B;", "Unexpected #a"],
+    ["ts", "let x: #a.b;", "Unexpected #a"],
+    ["ts", "function f<U extends #a, V = #a>() {}", "Unexpected #a"],
+    ["ts", "type X = import(\"x\").#a;", "Expected identifier but found \"#a\""],
+  ])("a private name where a type is named: %s %j", (transpiler, source, message) => {
+    expect(firstError("ts", "let x: super;")).toBe("no error");
+    expect(firstError(transpiler, source)).toBe(message);
+  });
+
+  test.each<Rejected>([
+    ["ts", "function f<U extends super>() {}", "Unexpected super"],
+    ["ts", "function f<U extends super.a>() {}", "Unexpected super"],
+    ["ts", "function f<U extends class>() {}", "Unexpected class"],
+    ["ts", "type X<U extends delete> = U;", "Unexpected delete"],
+    ["ts", "class C<U extends in> {}", "Unexpected in"],
+    ["ts", "interface I<U extends instanceof> {}", "Unexpected instanceof"],
+    ["ts", "let f = <U extends class>(x) => x;", "Expected \"?\" but found \">\""],
+  ])("a word that starts an expression as the constraint of a type parameter: %s %j", (transpiler, source, message) => {
+    expect(firstError("ts", "function f<U extends if, V = class>() {}")).toBe("no error");
+    expect(firstError(transpiler, source)).toBe(message);
+  });
+
+  test.each<Rejected>([
+    ["ts", "f<extends>(x);", "Unexpected extends"],
+    ["ts", "type X = A<extends>;", "Unexpected extends"],
+    ["ts", "type X = A[extends];", "Unexpected extends"],
+    ["ts", "type X = A extends B ? if : 2;", "Unexpected if"],
+    ["ts", "type X = A extends B ? class : 2;", "Unexpected class"],
+  ])("a reserved word where the reference reads a type only if one starts: %s %j", (transpiler, source, message) => {
+    expect(firstError("ts", "type X = A extends B ? function : if;")).toBe("no error");
+    expect(firstError(transpiler, source)).toBe(message);
+  });
+
+  test.each<Rejected>([
+    ["ts", "type X = { #a: A };", "Unexpected #a"],
+    ["ts", "interface I { #a: A }", "Unexpected #a"],
+    ["ts", "interface I { #a(): void }", "Unexpected #a"],
+    ["ts", "type X = { readonly #a: A };", "Unexpected #a"],
+    ["ts", "type X = { 1n: A };", "Unexpected 1n"],
+    ["ts", "type X = { 1n?: A };", "Unexpected 1n"],
+    ["ts", "let f = (a): { #a:  } => a;", "Expected \";\" but found \":\""],
+  ])("a member of a type named by a private name or a bigint: %s %j", (transpiler, source, message) => {
+    expect(firstError("ts", "type X = { 1n(): void; get #a(): A };")).toBe("no error");
+    expect(firstError(transpiler, source)).toBe(message);
+  });
+
+  test.each<Rejected>([
+    ["ts", "type X = { a: A = 1 };", "Unexpected ="],
+    ["ts", "type X = { a? = 1 };", "Unexpected ="],
+    ["ts", "type X = { [a] = 1 };", "Unexpected ="],
+    ["ts", "interface I { a?: A = 1 }", "Unexpected ="],
+  ])("a property signature with an initializer: %s %j", (transpiler, source, message) => {
+    expect(firstError("ts", "type X = { a(b = 1): A };")).toBe("no error");
+    expect(firstError(transpiler, source)).toBe(message);
+  });
+
+  test.each<Rejected>([
+    ["ts", "type X = { get a(): A {} };", "Unexpected {"],
+    ["ts", "interface I { set a(v) {} }", "Unexpected {"],
+  ])("an accessor of a type with a body: %s %j", (transpiler, source, message) => {
+    expect(firstError("ts", "type X = { get [a + b](): A };")).toBe("no error");
+    expect(firstError(transpiler, source)).toBe(message);
+  });
+
+  test.each<Rejected>([
+    ["ts", "type X = { [k?: string]: A };", "Expected \"]\" but found \"?\""],
+    ["ts", "type X = { [k?]: A };", "Expected \"]\" but found \"?\""],
+    ["ts", "type X = { [...k: string[]]: A };", "Unexpected ..."],
+    ["ts", "type X = { [k: string,]: A };", "Expected \"]\" but found \",\""],
+    ["ts", "type X = { [k: string, l: number]: A };", "Expected \"]\" but found \",\""],
+    ["ts", "type X = { [a, b]: A };", "Expected \"]\" but found \",\""],
+    ["ts", "type X = { []: A };", "Unexpected ]"],
+    ["ts", "type X = { readonly []: A };", "Unexpected ]"],
+    ["ts", "type X = { [k: string = 1]: A };", "Expected \"]\" but found \"=\""],
+    ["ts", "class C { [k: string] }", "Expected \":\" but found \"}\""],
+    ["ts", "class C { [k: string, l: number]: A }", "Expected \"]\" but found \",\""],
+    ["ts", "class C { [k?: string]: A }", "Unexpected :"],
+    ["ts", "class C { [...k: string[]]: A }", "Unexpected ..."],
+    ["ts", "class C { []: A }", "Unexpected ]"],
+    ["ts", "class C { x: A\n[]; }", "Unexpected ]"],
+    ["ts", "class C { [k: string = 1]: A }", "Expected \"]\" but found \"=\""],
+    ["ts", "declare class C { [k: string] }", "Expected \":\" but found \"}\""],
+  ])("an index signature that is not one plain parameter: %s %j", (transpiler, source, message) => {
+    expect(firstError("ts", "class C { [k: string]: T, }")).toBe("no error");
+    expect(firstError(transpiler, source)).toBe(message);
+  });
+
+  test.each<Rejected>([
+    ["ts", "type X = { [a + b]: A };", "Expected \"]\" but found \"+\""],
+    ["ts", "type X = { [\"a\" + \"b\"]: A };", "Expected \"]\" but found \"+\""],
+    ["ts", "type X = { [a as B]: A };", "Expected \"]\" but found \"as\""],
+    ["ts", "type X = { [k = 1]: A };", "Expected \"]\" but found \"=\""],
+    ["ts", "type X = { [+a]: A };", "Unexpected +"],
+    ["ts", "type X = { [a()]: A };", "Expected \"]\" but found \"(\""],
+    ["ts", "interface I { [a + b](): void }", "Expected \"]\" but found \"+\""],
+  ])("a computed name of a property or a method of a type that is an expression: %s %j", (transpiler, source, message) => {
+    expect(firstError("ts", "type X = { [+1]: A; [a?.b]: B };")).toBe("no error");
+    expect(firstError(transpiler, source)).toBe(message);
+  });
+
+  test.each<Rejected>([
+    ["ts", "interface I extends A extends B {}", "Expected \"{\" but found \"extends\""],
+    ["ts", "interface I extends A, B extends C {}", "Expected \"{\" but found \"extends\""],
+    ["ts", "interface I implements A extends B {}", "Expected \"{\" but found \"extends\""],
+    ["ts", "interface I extends A implements B implements C {}", "Expected \"{\" but found \"implements\""],
+    ["ts", "interface I extends {}", "Expected \"{\" but found end of file"],
+    ["ts", "interface I extends A, {}", "Expected \"{\" but found end of file"],
+    ["ts", "interface I implements {}", "Expected \"{\" but found end of file"],
+  ])("the extends and implements lists of an interface: %s %j", (transpiler, source, message) => {
+    expect(firstError("ts", "interface I extends a() {}")).toBe("no error");
+    expect(firstError(transpiler, source)).toBe(message);
+  });
+
+  test.each<Rejected>([
+    ["ts", "class C implements typeof a() {}", "Expected \"{\" but found \"(\""],
+    ["ts", "class C implements typeof 1 {}", "Expected identifier but found \"1\""],
+    ["ts", "interface I extends +1 {}", "Unexpected +"],
+    ["ts", "class C implements !A {}", "Unexpected !"],
+    ["ts", "class C implements void A {}", "Expected \"{\" but found \"A\""],
+    ["ts", "class C implements delete A {}", "Expected \"{\" but found \"A\""],
+    ["ts", "class C implements await A {}", "Expected \"{\" but found \"A\""],
+    ["ts", "class C implements <B>a {}", "Expected \"(\" but found \"a\""],
+    ["ts", "class C implements ++a {}", "Unexpected ++"],
+    ["ts", "class C implements @d class {} {}", "Unexpected @"],
+  ])("an entry of an extends or implements list that no left-hand-side expression starts: %s %j", (transpiler, source, message) => {
+    expect(firstError("ts", "class C implements a.b() {}")).toBe("no error");
+    expect(firstError(transpiler, source)).toBe(message);
+  });
+
+  test.each<Rejected>([
+    ["decorators", "class C { readonly accessor a: A }", "Expected \";\" but found \"a\""],
+    ["decorators", "class C { declare accessor a: A }", "Expected \";\" but found \"a\""],
+    ["decorators", "class C { accessor a?: A }", "Expected \";\" but found \"a\""],
+    ["decorators", "class C { static accessor a?: A }", "Expected \";\" but found \"a\""],
+    ["decorators", "class C { readonly static accessor a: A }", "Expected \";\" but found \"a\""],
+  ])("accessor without standard decorators: %s %j", (transpiler, source, message) => {
+    expect(firstError("decorators", "class C { static accessor a: A }")).toBe("no error");
+    expect(firstError(transpiler, source)).toBe(message);
+  });
+
+});

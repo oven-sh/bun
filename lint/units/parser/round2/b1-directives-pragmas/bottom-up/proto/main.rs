@@ -36,9 +36,9 @@ fn lossy(b: &[u8]) -> String {
     String::from_utf8_lossy(b).into_owned()
 }
 
-fn read(text: &[u8]) -> (Pragmas, Vec<(u32, u32, u32)>) {
+fn read(text: &[u8]) -> (Header, Vec<(u32, u32, u32)>) {
     let mut diags = Vec::new();
-    let header = Pragmas::read(text, &mut |start, end, message| diags.push((message.code, start, end)));
+    let header = Header::read(text, &mut |start, end, message| diags.push((message.code, start, end)));
     (header, diags)
 }
 

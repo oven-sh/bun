@@ -33,7 +33,7 @@ mod syntax_errors {
 pub fn entry(text: &[u8], comments: &[(u32, u32)]) -> (usize, usize, u32) {
     let mut errors = 0;
     let directives = comment_directives::scan_comment_directives(text, comments.iter().copied());
-    let header = pragmas::Pragmas::read(text, &mut |_, _, message| errors += message.code + message.text.len() as u32);
+    let header = pragmas::Header::read(text, &mut |_, _, message| errors += message.code + message.text.len() as u32);
     let leading = pragmas::get_leading_comment_ranges(text);
     (directives.len() + leading.len(), header.pragmas.len(), errors)
 }

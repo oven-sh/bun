@@ -1,0 +1,62 @@
+[
+ [
+  "block-header",
+  "/** @jsx h */\nexport const a = <div/>;"
+ ],
+ [
+  "block-header-newline-after-arg",
+  "/**\n * @jsx h\n */\nexport const a = <div/>;"
+ ],
+ [
+  "line-header",
+  "// @jsx h\nexport const a = <div/>;"
+ ],
+ [
+  "block-after-first-token",
+  "export const b = 1;\n/** @jsx h */\nexport const a = <div/>;"
+ ],
+ [
+  "upper-JSX",
+  "/** @JSX h */\nexport const a = <div/>;"
+ ],
+ [
+  "lower-jsxfrag",
+  "/** @jsx h */\n/** @jsxfrag F */\nexport const a = <></>;"
+ ],
+ [
+  "exact-jsxFrag",
+  "/** @jsx h */\n/** @jsxFrag F */\nexport const a = <></>;"
+ ],
+ [
+  "two-on-one-line",
+  "/** @jsx h @jsxFrag F */\nexport const a = <></>;"
+ ],
+ [
+  "hash",
+  "/** #jsx h */\nexport const a = <div/>;"
+ ],
+ [
+  "email-first",
+  "/** me@x.com @jsx h */\nexport const a = <div/>;"
+ ],
+ [
+  "last-wins",
+  "/** @jsx h */\n/** @jsx g */\nexport const a = <div/>;"
+ ],
+ [
+  "jsxImportSource",
+  "/** @jsxImportSource preact */\nexport const a = <div/>;"
+ ],
+ [
+  "jsxRuntime-classic",
+  "/** @jsxRuntime classic */\nexport const a = <div/>;"
+ ],
+ [
+  "jsximportsource-lower",
+  "/** @jsximportsource preact */\nexport const a = <div/>;"
+ ],
+ [
+  "jsx-no-arg-then-newline",
+  "/** @jsx\n h */\nexport const a = <div/>;"
+ ]
+]

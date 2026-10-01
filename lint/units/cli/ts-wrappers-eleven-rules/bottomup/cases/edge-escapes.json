@@ -1,0 +1,14 @@
+[
+{"code":"switch (x) { case \\u0061: break; case a: break; }","ext":"ts"},
+{"code":"switch (x) { case \\u0061: break; case \\u0061: break; }","ext":"ts"},
+{"code":"switch (x) { case a.\\u0062: break; case a.b: break; }","ext":"ts"},
+{"code":"switch (x) { case 'a': break; case \"a\": break; }","ext":"ts"},
+{"code":"switch (x) { case 0x10: break; case 16: break; }","ext":"ts"},
+{"code":"switch (x) { case \\u0061: break; case a: break; }","ext":"tsx"},
+{"code":"class A { \\u0061 = 1; a = 2 }","ext":"ts"},
+{"code":"({ \\u0061: 1, a: 2 })","ext":"ts"},
+{"code":"\\u0061 = a","ext":"ts"},
+{"code":"a.\\u0062 = a.b","ext":"ts"},
+{"code":"x === N\\u0061N","ext":"ts"},
+{"code":"typeof x === \\u0075ndefined","ext":"ts"}
+]

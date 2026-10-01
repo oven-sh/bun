@@ -102,7 +102,7 @@ pub struct CheckJsDirective {
 
 /// What `finishSourceFile` reads from the comments before the first token.
 #[derive(Default)]
-pub struct Pragmas {
+pub struct Header {
     /// `SourceFile.Pragmas`
     pub pragmas: Vec<Pragma>,
     /// `SourceFile.ReferencedFiles`, `TypeReferenceDirectives` and `LibReferenceDirectives` in one list, in the order of the source.
@@ -153,7 +153,7 @@ impl PragmaArguments {
     }
 }
 
-impl Pragmas {
+impl Header {
     /// `ast.GetPragmaFromSourceFile`: the last pragma with the name `name`.
     pub fn get_pragma(&self, name: PragmaName) -> Option<&Pragma> {
         self.pragmas.iter().rfind(|pragma| pragma.name == name)
@@ -171,8 +171,8 @@ impl Pragmas {
 
     /// The part of `finishSourceFile` that reads the header of `source_text`. `report` gets the range and the diagnostic of each error.
     #[cold]
-    pub(crate) fn read(source_text: &[u8], report: &mut dyn FnMut(u32, u32, Message)) -> Pragmas {
-        let mut context = Pragmas {
+    pub(crate) fn read(source_text: &[u8], report: &mut dyn FnMut(u32, u32, Message)) -> Header {
+        let mut context = Header {
             pragmas: get_comment_pragmas(source_text),
             ..Default::default()
         };

@@ -1,0 +1,20 @@
+[
+{"code":"declare namespace N { const NaN: number } x === NaN","ext":"ts"},
+{"code":"namespace N { declare const NaN: number } x === NaN","ext":"ts"},
+{"code":"namespace N { export declare const NaN: number; export const a = 1 } x === NaN","ext":"ts"},
+{"code":"declare namespace N { namespace NaN {} } x === NaN","ext":"ts"},
+{"code":"declare namespace N { function NaN(): void } x === NaN","ext":"ts"},
+{"code":"declare namespace N { import NaN = A.B } x === NaN","ext":"ts"},
+{"code":"declare module 'm' { import type { NaN } from 'x' } x === NaN","ext":"ts"},
+{"code":"function f() { declare const NaN: number; } x === NaN","ext":"ts"},
+{"code":"{ declare const NaN: number; } x === NaN","ext":"ts"},
+{"code":"declare const { NaN }: any; x === NaN","ext":"ts"},
+{"code":"declare const { a: NaN }: any; x === NaN","ext":"ts"},
+{"code":"declare const { a: [NaN] }: any; x === NaN","ext":"ts"},
+{"code":"declare let a: number, NaN: number; x === NaN","ext":"ts"},
+{"code":"declare const NaN: number;\nexport {};\nx === NaN","ext":"ts"},
+{"code":"x === NaN","ext":"d.ts"},
+{"code":"declare const a: number; export default a === -0","ext":"d.ts"},
+{"code":"declare class A { x: number; x: string }","ext":"d.ts"},
+{"code":"export function f({}: T): void;","ext":"d.ts"}
+]

@@ -26,7 +26,7 @@ fn main() {
     for end in 0..=text.len() {
         for start in 0..=end.min(6) {
             let t = &text[start..end];
-            let header = pragmas::Pragmas::read(t, &mut |_, _, m| diags += (m.code > 0) as usize + m.text.len());
+            let header = pragmas::Header::read(t, &mut |_, _, m| diags += (m.code > 0) as usize + m.text.len());
             pragmas += header.pragmas.len() + header.reference_directives.len() + header.check_js_directive.is_some() as usize;
             let _ = pragmas::get_leading_comment_ranges(t).len();
             // Every range of up to 40 bytes at every offset, and some that are no ranges of the text.

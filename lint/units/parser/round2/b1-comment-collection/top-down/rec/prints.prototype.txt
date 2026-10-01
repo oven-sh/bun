@@ -1,0 +1,367 @@
+
+running 6 tests
+test parse::annotation_tests::zz_b1_print ... B1 attached "let x /*a*/ : /*b*/ number /*c*/ = 1; function f(this /*d*/ : /*e*/ T /*f*/, p /*g*/ ? /*h*/ : string /*i*/) /*j*/ : /*k*/ void /*l*/ {}"
+Some(
+    [
+        "type key=4 NumberKeyword[20,26)",
+        "type key=77 StringKeyword[95,101)",
+        "this fn=48 index=0 [49,53) TypeReference[68,69)",
+        "return fn=48 VoidKeyword[123,127)",
+    ],
+)
+B1 attached "class C { public /*a*/ readonly /*b*/ x /*c*/ ! /*d*/ : number; declare /*e*/ y /*f*/ ? /*g*/ : string; }"
+Some(
+    [
+        "type key=38 NumberKeyword[56,62)",
+        "type key=78 StringKeyword[96,102)",
+    ],
+)
+B1 attached "let g = (a /*1*/ ): /*2*/ number /*3*/ => a; try {} catch ( /*4*/ e /*5*/ : /*6*/ unknown /*7*/ ) {}"
+Some(
+    [
+        "type key=66 UnknownKeyword[82,89)",
+        "return arrow=8 NumberKeyword[26,32)",
+    ],
+)
+ok
+test parse::erased_tests::zz_b1_print ... B1 erased "/*a*/ interface I /*b*/ <T> /*c*/ { a: 1 } /*d*/ x;"
+Some(
+    (
+        1,
+        [
+            "interface [6,42) module#0 name=I@[16,17)",
+        ],
+    ),
+)
+B1 erased "type A /*a*/ <T> /*b*/ = T /*c*/ ; /*d*/ type B = 1 /*e*/\nx;"
+Some(
+    (
+        1,
+        [
+            "type-alias [0,34) module#0 name=A@[5,6)",
+            "type-alias [41,51) module#0 name=B@[46,47)",
+        ],
+    ),
+)
+B1 erased "declare /*a*/ const v: number /*b*/ ; declare function f(): void /*c*/\ny;"
+Some(
+    (
+        1,
+        [
+            "var [0,37) module#0 declare ambient",
+            "function [38,64) module#0 declare ambient no-body name=f@[55,56)",
+        ],
+    ),
+)
+B1 erased "abstract class C { /*a*/ abstract m(): void /*b*/ ; n(): void /*c*/\n n() {} [k: string]: any /*d*/ ; }"
+Some(
+    (
+        1,
+        [
+            "member method [25,51) scope@17#0 abstract",
+            "member method [52,61) scope@17#0",
+            "member index-signature [76,100) scope@17#1",
+        ],
+    ),
+)
+B1 erased "/*1*/ export /*2*/ declare /*3*/ const /*4*/ a /*5*/ : /*6*/ number /*7*/ ; /*8*/ interface /*9*/ I /*10*/ { } /*11*/ type /*12*/ T /*13*/ = /*14*/ 1 /*15*/ ;"
+Some(
+    (
+        0,
+        [
+            "var [6,75) module#0 export declare ambient",
+            "interface [82,110) module#0 name=I@[98,99)",
+            "type-alias [118,158) module#0 name=T@[130,131)",
+        ],
+    ),
+)
+B1 erased "export // export\ninterface I {}\n// export\ndeclare const x: number;"
+Some(
+    (
+        0,
+        [
+            "interface [0,31) module#0 export name=I@[27,28)",
+            "var [42,66) module#0 declare ambient",
+        ],
+    ),
+)
+B1 erased "/*0*/ @ /*1*/ dec /*2*/ ( /*3*/ ) /*4*/ declare class C {} export /*5*/ @ /*6*/ ( /*7*/ dec /*8*/ ) /*9*/ declare class D {}"
+Some(
+    (
+        0,
+        [
+            "class [6,58) module#0 declare ambient name=C@[54,55)",
+            "class [59,124) module#0 export declare ambient name=D@[120,121)",
+        ],
+    ),
+)
+B1 erased "declare /*1*/ module /*2*/ \"m\" /*3*/ { } /*4*/ declare /*5*/ global /*6*/ { } /*7*/ declare namespace A /*8*/ . /*9*/ B /*10*/ { } export {};"
+Some(
+    (
+        1,
+        [
+            "module [0,40) module#0 declare ambient name=\"m\"@[27,30)",
+            "module [47,77) module#0 declare ambient name=global@[61,67)",
+            "module [84,130) module#0 declare ambient name=A@[102,103)",
+            "module [118,130) in-tree@110 ambient nested name=B@[118,119)",
+        ],
+    ),
+)
+B1 erased "import /*6*/ type /*7*/ { C } /*8*/ from /*9*/ \"y\" /*10*/ ; export /*1*/ type /*2*/ { A /*3*/ } /*4*/ from /*5*/ \"./a\" /*6*/ ; export /*1*/ as /*2*/ namespace /*3*/ Foo /*4*/ ;"
+Some(
+    (
+        0,
+        [
+            "import [0,59) module#0 type-only path=\"y\"@[47,50)",
+            "export [60,126) module#0 type-only path=\"./a\"@[113,118)",
+            "export-as-namespace [127,176) module#0 name=Foo@[165,168)",
+        ],
+    ),
+)
+ok
+test parse::generics::tests::zz_b1_print ... B1 generics "function f /*a*/ < /*b*/ T /*c*/ > /*d*/ () {} const g = < /*e*/ U /*f*/ > /*g*/ (x: U) => x;"
+Some(
+    [
+        "type-parameters < /*b*/ T /*c*/ > of Fn(41)",
+        "type-parameters < /*e*/ U /*f*/ > of Arrow(57)",
+    ],
+)
+B1 generics "class A extends B /*a*/ <T> /*b*/ implements I /*c*/ , J<K> /*d*/ {} class D implements a /*e*/ [ /*f*/ 0 /*g*/ ] /*h*/ {}"
+Some(
+    [
+        "extends B /*a*/ <T> of the class at 0: ExpressionWithTypeArguments",
+        "implements I /*c*/ , J<K> of the class at 0: TypeReference, TypeReference",
+        "implements a /*e*/ [ /*f*/ 0 /*g*/ ] of the class at 69: ExpressionWithTypeArguments",
+    ],
+)
+B1 generics "const e = <Foo /*a*/ < /*b*/ T /*c*/ > /*d*/ a=\"1\" /*e*/ />;"
+Some(
+    [
+        "jsx-type-arguments < /*b*/ T /*c*/ > of the element at 10",
+    ],
+)
+B1 generics "f /*a*/ < /*b*/ T /*c*/ > /*d*/ (x); new C /*e*/ <T> /*f*/ (); let i = f<T> /*g*/ ;"
+Some(
+    [
+        "type-arguments < /*b*/ T /*c*/ > after e_identifier@0",
+        "type-arguments <T> after e_identifier@41",
+        "type-arguments <T> after e_identifier@71",
+    ],
+)
+B1 generics "/*a*/ interface I /*b*/ <T> /*c*/ { a: 1 } /*d*/ type A /*e*/ <T> /*f*/ = T;"
+Some(
+    [
+        "type-parameters <T> after the name that ends at 17",
+        "type-parameters <T> after the name that ends at 55",
+    ],
+)
+B1 generics "class E extends f /*1*/ ( /*2*/ ) /*3*/ < /*4*/ T /*5*/ > /*6*/ {}"
+Some(
+    [
+        "extends f /*1*/ ( /*2*/ ) /*3*/ < /*4*/ T /*5*/ > of the class at 0: ExpressionWithTypeArguments",
+    ],
+)
+B1 generics "class D implements a /*1*/ . b /*2*/ () /*3*/ < /*4*/ T> /*5*/ {}"
+Some(
+    [
+        "implements a /*1*/ . b /*2*/ () /*3*/ < /*4*/ T> of the class at 0: ExpressionWithTypeArguments",
+    ],
+)
+B1 generics "class E extends f /*1*/ ( /*2*/ ) /*3*/ {} class F extends g /*4*/ {}"
+Some(
+    [
+        "extends f /*1*/ ( /*2*/ ) of the class at 0: ExpressionWithTypeArguments",
+        "extends g of the class at 43: ExpressionWithTypeArguments",
+    ],
+)
+ok
+test parse::syntax_errors::tests::zz_b1_print ... B1 syntax_errors "f< /*2*/ >();" None
+B1 syntax_errors "let x: A< /*1*/ >; let y: B<C, /*3*/ >;" None
+B1 syntax_errors "let x: A | /*c*/ () => void;" Some((1385, 10, 27, "Function type notation must be parenthesized when used in a union type."))
+B1 syntax_errors "let x: A |    () => void;" Some((1385, 10, 24, "Function type notation must be parenthesized when used in a union type."))
+B1 syntax_errors "let x: A & /*c*/ new () => void;" Some((1388, 10, 31, "Constructor type notation must be parenthesized when used in an intersection type."))
+B1 syntax_errors "let f = (a): /*c*/ => a;" Some((1005, 11, 12, "';' expected."))
+B1 syntax_errors "let f = (a): /*c*/ ;" Some((1005, 11, 12, "';' expected."))
+B1 syntax_errors "let x: /*c*/ ;" Some((1110, 13, 14, "Type expected."))
+ok
+test parse::wrappers::tests::zz_b1_print ... B1 wrappers "y = x /*a*/ as /*b*/ T /*c*/ ; y = x satisfies T /*d*/ ;"
+Some(
+    [
+        "AsExpression [12,22) TypeReference(T)[21,22) of e_identifier@4",
+        "SatisfiesExpression [37,48) TypeReference(T)[47,48) of e_identifier@35",
+    ],
+)
+B1 wrappers "y = x /*a*/ ! /*b*/ ; y = (x /*c*/) /*d*/ ; y = <T> /*e*/ x /*f*/ ;"
+Some(
+    [
+        "NonNullExpression [12,13) of e_identifier@4",
+        "ParenthesizedExpression [26,35) of e_identifier@27",
+        "TypeAssertionExpression [48,51) TypeReference(T)[49,50) of e_identifier@58",
+    ],
+)
+B1 wrappers "let v = ( /*1*/ a /*2*/ ) /*3*/ as /*4*/ T /*5*/ ; let w = b /*6*/ ! /*7*/ . c; let u = < /*8*/ T /*9*/ > /*10*/ d /*11*/ ; let s = e /*12*/ satisfies /*13*/ S /*14*/ ;"
+Some(
+    [
+        "ParenthesizedExpression [8,25) of e_identifier@16",
+        "AsExpression [32,42) TypeReference(T)[41,42) of e_identifier@16",
+        "NonNullExpression [67,68) of e_identifier@59",
+        "TypeAssertionExpression [88,105) TypeReference(T)[96,97) of e_identifier@113",
+        "SatisfiesExpression [141,159) TypeReference(S)[158,159) of e_identifier@132",
+    ],
+)
+B1 wrappers "let u = < /*1*/ T /*2*/ > /*3*/ ( /*4*/ d /*5*/ ) /*6*/ ; let f = < /*7*/ T /*8*/ >( /*9*/ x /*10*/ ) /*11*/ => x;"
+Some(
+    [
+        "ParenthesizedExpression [32,49) of e_identifier@40",
+        "TypeAssertionExpression [8,25) TypeReference(T)[16,17) of e_identifier@40",
+    ],
+)
+B1 wrappers "const e = <div /*1*/ >{( /*2*/ a /*3*/ ) /*4*/ as T}</div /*5*/ >;"
+Some(
+    [
+        "ParenthesizedExpression [23,40) of e_identifier@31",
+        "AsExpression [47,51) TypeReference(T)[50,51) of e_identifier@31",
+    ],
+)
+ok
+test type_sink_tests::zz_b1_print ... B1 type_sink "{ [ /*1*/ a /*2*/ + /*3*/ b /*4*/ ] /*5*/ : 1 }"
+Some(
+    Some(
+        (
+            [
+                "TypeLiteral[0,47)",
+                "members<1,45>",
+                "member[2,45)",
+                "computed[2,35)",
+                "LiteralType[44,45)",
+            ],
+            0,
+            47,
+            5,
+        ),
+    ),
+)
+B1 type_sink "{ [a + b /*2*/ ]: 1 }"
+Some(
+    Some(
+        (
+            [
+                "TypeLiteral[0,21)",
+                "members<1,19>",
+                "member[2,19)",
+                "computed[2,16)",
+                "LiteralType[18,19)",
+            ],
+            0,
+            21,
+            1,
+        ),
+    ),
+)
+B1 type_sink "(a /*1*/ = /*2*/ 1 /*3*/ + /*4*/ 2 /*5*/ , b: X /*6*/ ) /*7*/ => void"
+Some(
+    Some(
+        (
+            [
+                "FunctionType[0,69)",
+                "parameters<1,47>",
+                "parameter[1,34)",
+                "parameter[43,47)",
+            ],
+            0,
+            69,
+            7,
+        ),
+    ),
+)
+B1 type_sink "(a = 1 /*1*/ ) => void"
+Some(
+    Some(
+        (
+            [
+                "FunctionType[0,22)",
+                "parameters<1,6>",
+                "parameter[1,6)",
+            ],
+            0,
+            22,
+            1,
+        ),
+    ),
+)
+B1 type_sink "{ a: number = /*1*/ 1 /*2*/ ; b /*3*/ : 2 }"
+Some(
+    Some(
+        (
+            [
+                "TypeLiteral[0,43)",
+                "members<1,41>",
+                "member[2,29)",
+                "NumberKeyword[5,11)",
+                "member[30,41)",
+                "LiteralType[40,41)",
+            ],
+            0,
+            43,
+            3,
+        ),
+    ),
+)
+B1 type_sink "{ readonly [K in /*d*/ keyof A /*e*/ ] /*f*/ -? /*g*/ : 1 /*h*/ ; /*i*/ }"
+Some(
+    Some(
+        (
+            [
+                "MappedType[0,73)",
+                "mapped members<65,65> question=Some((45, 46))",
+            ],
+            0,
+            73,
+            6,
+        ),
+    ),
+)
+B1 type_sink "{ [K in keyof A] ? /*g*/ : 1 }"
+Some(
+    Some(
+        (
+            [
+                "MappedType[0,30)",
+                "mapped members<28,28> question=Some((17, 18))",
+            ],
+            0,
+            30,
+            1,
+        ),
+    ),
+)
+B1 type_sink "import(\"m\", { with: { /*1*/ type /*2*/ : /*3*/ \"json\" /*4*/ } }) /*5*/ "
+Some(
+    Some(
+        (
+            [
+                "ImportType[0,64)",
+            ],
+            0,
+            71,
+            5,
+        ),
+    ),
+)
+B1 type_sink "A< /*1*/ B /*2*/ > /*3*/ | /*4*/ () => void"
+Some(
+    Some(
+        (
+            [
+                "UnionType[0,43)",
+            ],
+            1,
+            43,
+            4,
+        ),
+    ),
+)
+ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 72 filtered out; finished in 1.46s
+

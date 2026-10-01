@@ -101,10 +101,7 @@ fn parse(file: FileId, loader: Loader, source: &Source, name: &str) -> Vec<Diagn
                     parsed.sidecar.erased.statements.len(),
                     parsed.is_declaration_file,
                 );
-                if std::env::var("PROBE_RANGES").is_ok() {
-                    ranges(name, parsed, source, loader.is_typescript());
-                }
-                crate::lint(file, parsed, source, loader.is_typescript())
+                crate::lint(file, parsed, source, loader)
             })
         });
     let raw = std::env::var("PROBE_RAW").is_ok();
@@ -164,82 +161,6 @@ fn parse(file: FileId, loader: Loader, source: &Source, name: &str) -> Vec<Diagn
         .collect()
 }
 
-/// PROBE_RANGES=1: for every expression of the walk, where the node that ESLint has in its place starts and ends (`Context::node_start`, `Context::node_end`), to stdout.
-struct Ranges<'p, 'a> {
-    context: crate::context::Context<'p, 'a>,
-    out: String,
-}
-
-impl<'ast> bun_ast::walk::Visitor<'ast> for Ranges<'_, '_> {
-    fn visit_stmt(&mut self, stmt: &'ast bun_ast::Stmt) {
-        if self.context.stack_check.is_safe_to_recurse() {
-            bun_ast::walk::walk_stmt(self, stmt);
-        }
-    }
-    fn visit_expr(&mut self, expr: &'ast bun_ast::Expr) {
-        if self.context.stack_check.is_safe_to_recurse() {
-            bun_ast::walk::walk_expr(self, expr);
-        }
-    }
-    fn visit_binding(&mut self, binding: &'ast bun_ast::Binding) {
-        if self.context.stack_check.is_safe_to_recurse() {
-            bun_ast::walk::walk_binding(self, binding);
-        }
-    }
-    fn enter_expr(&mut self, expr: &'ast bun_ast::Expr) {
-        use std::fmt::Write as _;
-        let start = self.context.node_start(expr).start;
-        let end = self.context.node_end(expr).map_or(-1, i64::from);
-        let tag: &'static str = expr.data.tag().into();
-        let op: &'static str = match &expr.data {
-            bun_ast::ExprData::EBinary(binary) => binary.op.into(),
-            bun_ast::ExprData::EUnary(unary) => unary.op.into(),
-            _ => "-",
-        };
-        let wrapper = match self.context.ts_wrapper(expr) {
-            Some(wrapper) => format!("{wrapper:?}"),
-            None => "-".to_string(),
-        };
-        let _ = writeln!(self.out, "R\t{tag}\t{op}\t{wrapper}\t{}\t{start}\t{end}", expr.loc.start);
-    }
-}
-
-fn ranges(name: &str, parsed: &bun_js_parser::parse::parse_entry::ParsedForLint<'_, '_>, source: &Source, typescript: bool) {
-    use bun_ast::walk::Visitor as _;
-    use bun_js_parser::parse::erased::{ErasedData, ErasedMemberData};
-    let mut ranges = Ranges {
-        context: crate::context::Context::new(FileId(0), parsed, source, typescript),
-        out: String::new(),
-    };
-    for stmt in parsed.stmts {
-        ranges.visit_stmt(stmt);
-    }
-    for record in &parsed.sidecar.erased.statements {
-        match &record.data {
-            ErasedData::Declaration(stmt) => ranges.visit_stmt(stmt),
-            ErasedData::Module(module) => {
-                if let Some(body) = &module.body {
-                    for stmt in body.slice() {
-                        ranges.visit_stmt(stmt);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    for member in &parsed.sidecar.erased.members {
-        if let ErasedMemberData::Property(property) = &member.data {
-            for decorator in property.ts_decorators.iter() {
-                ranges.visit_expr(decorator);
-            }
-            for expr in [&property.key, &property.value, &property.initializer].into_iter().flatten() {
-                ranges.visit_expr(expr);
-            }
-        }
-    }
-    println!("F\t{name}\n{}", ranges.out);
-}
-
 /// How `Parser::parse_only` and the lint parse differ on one JavaScript file: nothing is printed when they do not.
 fn compare(loader: Loader, source: &Source, name: &str) {
     let run = |lint: bool| -> (String, Vec<String>) {
@@ -281,8 +202,6 @@ pub fn main() {
     let mut files: Vec<SourceFile> = Vec::new();
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
     let comparing = std::env::var("PROBE_COMPARE").is_ok();
-    // The text and the name of every file stay reachable to the end: the leak check is about the parse, not about this harness.
-    let mut kept: Vec<&'static [u8]> = Vec::new();
     for name in &operands {
         let operand = name.as_bytes();
         let Some(loader) = loader_of(operand) else {
@@ -298,8 +217,6 @@ pub fn main() {
         }
         let text: &'static [u8] = Box::leak(text.into_boxed_slice());
         let path: &'static [u8] = Box::leak(name.clone().into_bytes().into_boxed_slice());
-        kept.push(text);
-        kept.push(path);
         let source = Source::init_path_string(path, text);
         if comparing {
             if !loader.is_typescript() {
@@ -333,6 +250,5 @@ pub fn main() {
     use std::io::Write;
     let _ = std::io::stderr().write_all(&output);
     let failed = diagnostics.iter().any(|d| d.category == Category::Error);
-    std::hint::black_box(&kept);
     std::process::exit(if failed { 2 } else { 0 });
 }

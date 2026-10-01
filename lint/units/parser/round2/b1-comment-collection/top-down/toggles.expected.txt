@@ -1,0 +1,154 @@
+== B1_DISABLE=0
+{"same":268,"lint parse rejects, tsc accepts":3,"tsc rejects, lint parse accepts":5} comments in files that are the same: 1241
+BUN-REJECTS lexer_lint_hooks_bottom_up_comments_inputs:jsx-attr-element-bun-rejects-today err Expected "{" but found "<"
+TSC-REJECTS lexer_lint_hooks_top_down_comments_inputs:html-close.js diag TS1109@4
+TSC-REJECTS round2_comments_capture_top_down_extra_inputs:leading-legacy.js diag TS1109@2
+BUN-REJECTS _tmp_b1cc_in_b1_extra:accessor-body-annotation err Expected ";" but found "{"
+BUN-REJECTS in_misc:html-open-as-operators err Unsupported syntax: Legacy HTML comments not implemented yet!
+TSC-REJECTS in_misc:html-close-line-start diag TS1109@4
+TSC-REJECTS in_misc:html-close-file-start diag TS1109@2
+TSC-REJECTS in_misc:html-close-after-block-nl diag TS1109@13
+== B1_DISABLE=1
+{"same":229,"lint parse rejects, tsc accepts":3,"different list":39,"tsc rejects, lint parse accepts":5} comments in files that are the same: 1067
+BUN-REJECTS lexer_lint_hooks_bottom_up_comments_inputs:jsx-attr-element-bun-rejects-today err Expected "{" but found "<"
+DIFF lexer_lint_hooks_bottom_up_comments_inputs:bt-arrow-args-type only-tsc=[17-22:block] only-bun=[]
+TSC-REJECTS lexer_lint_hooks_top_down_comments_inputs:html-close.js diag TS1109@4
+DIFF round2_comments_capture_inputs:fj-build-computed only-tsc=[14-19:block 24-29:block] only-bun=[]
+DIFF round2_comments_capture_inputs:fj-build-param-init only-tsc=[14-19:block 26-31:block 34-39:block] only-bun=[]
+DIFF round2_comments_capture_inputs:fj-build-prop-init only-tsc=[25-30:block] only-bun=[]
+DIFF round2_comments_capture_inputs:fj-build-import-attr only-tsc=[36-41:block] only-bun=[]
+DIFF round2_comments_capture_inputs:fj-heritage-expr only-tsc=[21-26:block 30-35:block 38-43:block] only-bun=[]
+DIFF round2_comments_capture_inputs:fj-heritage-expr-targs only-tsc=[21-26:block 31-36:block 40-45:block] only-bun=[]
+DIFF round2_comments_capture_inputs:fj-drop-class-index-init only-tsc=[27-32:block] only-bun=[]
+DIFF round2_comments_capture_inputs:fj-drop-class-index-type only-tsc=[28-33:block 38-43:block] only-bun=[]
+DIFF round2_comments_capture_inputs:fj-drop-class-index-fn-default only-tsc=[30-35:block] only-bun=[]
+DIFF round2_comments_capture_inputs:fj-drop-class-index-accessor only-tsc=[50-55:block 60-65:block] only-bun=[]
+DIFF round2_comments_capture_inputs:fj-iface-heritage-expr only-tsc=[22-27:block 32-37:block 41-46:block] only-bun=[]
+DIFF round2_comments_capture_top_down_extra_inputs:heritage-expression.ts only-tsc=[21-26:block 29-34:block 37-42:block 45-50:block] only-bun=[]
+DIFF round2_comments_capture_top_down_extra_inputs:heritage-expression-type-args.ts only-tsc=[21-26:block 29-34:block 37-42:block 45-50:block 53-58:block] only-bun=[]
+DIFF round2_comments_capture_top_down_extra_inputs:in-type-computed.ts only-tsc=[19-24:block 27-32:block 35-40:block] only-bun=[]
+DIFF round2_comments_capture_top_down_extra_inputs:in-type-initializer.ts only-tsc=[10-15:block 26-31:block 34-39:block 42-47:block] only-bun=[]
+DIFF round2_comments_capture_top_down_extra_inputs:class-index-signature-type.ts only-tsc=[35-40:block 43-48:block 51-56:block] only-bun=[]
+DIFF round2_comments_capture_top_down_extra_inputs:class-index-signature-initializer.ts only-tsc=[31-36:block] only-bun=[]
+DIFF round2_comments_capture_top_down_extra_inputs:interface-computed.ts only-tsc=[24-29:block 32-37:block 40-45:block] only-bun=[]
+DIFF round2_comments_capture_top_down_extra_inputs:import-type-attributes.ts only-tsc=[61-66:block] only-bun=[]
+DIFF round2_comments_capture_top_down_extra_inputs:jsx-in-heritage.tsx only-tsc=[24-29:block 36-41:block 46-51:block] only-bun=[]
+TSC-REJECTS round2_comments_capture_top_down_extra_inputs:leading-legacy.js diag TS1109@2
+DIFF round2_comments_capture_top_down_records_inputs:heritage.ts only-tsc=[90-95:block 98-103:block 106-111:block 114-119:block] only-bun=[]
+DIFF round2_comments_capture_top_down_records_inputs:in-type.ts only-tsc=[19-24:block] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:computed-alias only-tsc=[21-26:block 29-34:block 37-42:block] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:computed-annotation only-tsc=[19-24:block 27-32:block 35-40:block] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:computed-interface only-tsc=[24-29:block 32-37:block 40-45:block] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:computed-class-index-type only-tsc=[35-40:block 43-48:block 51-56:block] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:init-fn-type-annotation only-tsc=[10-15:block 26-31:block 34-39:block 42-47:block] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:init-fn-type-alias only-tsc=[28-33:block 36-41:block 44-49:block] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:init-fn-type-interface only-tsc=[34-39:block 65-70:block] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:init-ctor-type only-tsc=[24-29:block] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:init-prop-signature only-tsc=[31-36:block 83-88:block] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:init-class-index only-tsc=[31-36:block] only-bun=[]
+BUN-REJECTS _tmp_b1cc_in_b1_extra:accessor-body-annotation err Expected ";" but found "{"
+DIFF _tmp_b1cc_in_b1_extra:accessor-body-alias only-tsc=[27-32:block 42-47:block 52-57:block 69-74:block] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:accessor-body-interface only-tsc=[30-35:block 45-50:block 55-60:block] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:bt-fn-type-args-kept only-tsc=[17-22:block] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:bt-implements-expr only-tsc=[21-26:block 29-34:block 37-42:block 45-50:block 53-58:block] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:bt-iface-extends-expr only-tsc=[22-27:block 30-35:block 38-43:block 46-51:block 54-59:block] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:bt-paren-type-reread only-tsc=[35-40:block] only-bun=[]
+BUN-REJECTS in_misc:html-open-as-operators err Unsupported syntax: Legacy HTML comments not implemented yet!
+TSC-REJECTS in_misc:html-close-line-start diag TS1109@4
+TSC-REJECTS in_misc:html-close-file-start diag TS1109@2
+TSC-REJECTS in_misc:html-close-after-block-nl diag TS1109@13
+== B1_DISABLE=2
+{"same":225,"different list":43,"lint parse rejects, tsc accepts":3,"tsc rejects, lint parse accepts":5} comments in files that are the same: 1062
+DIFF lexer_lint_hooks_bottom_up_comments_inputs:jsx-tag only-tsc=[10-15:block 20-25:block 28-33:block 36-41:block 46-50:line 67-72:block 87-92:block] only-bun=[]
+DIFF lexer_lint_hooks_bottom_up_comments_inputs:jsx-open-close only-tsc=[13-18:block 72-77:block 82-87:block] only-bun=[]
+DIFF lexer_lint_hooks_bottom_up_comments_inputs:jsx-nested only-tsc=[11-16:block 21-26:block 33-38:block 43-48:block 55-60:block] only-bun=[]
+BUN-REJECTS lexer_lint_hooks_bottom_up_comments_inputs:jsx-attr-element-bun-rejects-today err Expected "{" but found "<"
+DIFF lexer_lint_hooks_bottom_up_comments_inputs:jsx-member-ns only-tsc=[11-16:block 19-24:block 27-32:block 50-55:block 60-65:block] only-bun=[]
+DIFF lexer_lint_hooks_bottom_up_comments_inputs:jsx-fragment only-tsc=[10-15:block 21-26:block] only-bun=[]
+DIFF lexer_lint_hooks_bottom_up_comments_inputs:jsx-type-args only-tsc=[13-18:block 42-47:block 54-59:block] only-bun=[]
+DIFF lexer_lint_hooks_bottom_up_comments_inputs:jsx-line-comment-in-tag only-tsc=[13-17:line 26-30:line] only-bun=[]
+DIFF lexer_lint_hooks_bottom_up_comments_inputs:bt-arrow-return-cond-jsx only-tsc=[26-31:block 38-43:block] only-bun=[]
+DIFF lexer_lint_hooks_bottom_up_comments_inputs:bt-tsx-element-not-arrow only-tsc=[13-18:block 25-30:block 48-53:block] only-bun=[]
+DIFF lexer_lint_hooks_top_down_comments_inputs:jsx-tag.tsx only-tsc=[15-20:line 23-31:block 39-47:block 105-113:block 127-135:block 139-147:block] only-bun=[]
+DIFF lexer_lint_hooks_top_down_comments_inputs:jsx-member.tsx only-tsc=[13-21:block 24-32:block 35-43:block 50-58:block 65-73:block] only-bun=[]
+DIFF lexer_lint_hooks_top_down_comments_inputs:jsx-fragment.tsx only-tsc=[12-20:block 28-36:block] only-bun=[]
+DIFF lexer_lint_hooks_top_down_comments_inputs:jsx-generic.tsx only-tsc=[34-42:block] only-bun=[]
+TSC-REJECTS lexer_lint_hooks_top_down_comments_inputs:html-close.js diag TS1109@4
+DIFF lexer_lint_hooks_top_down_comments_inputs:nested-tsx.tsx only-tsc=[19-27:block 43-51:block 56-64:block 69-77:block] only-bun=[]
+DIFF lexer_lint_hooks_top_down_comments_inputs:jsx-attr-string.tsx only-tsc=[31-39:block 56-61:line] only-bun=[]
+DIFF round2_comments_capture_inputs:jsx-directive-in-tag only-tsc=[15-34:line 47-63:block] only-bun=[]
+DIFF round2_comments_capture_inputs:jsx-closing-tag-line only-tsc=[15-19:line] only-bun=[]
+DIFF round2_comments_capture_inputs:jsx-string-attr-gap only-tsc=[13-18:block 21-26:block 31-36:block 41-46:block 65-70:block] only-bun=[]
+DIFF round2_comments_capture_inputs:jsx-lt-lt only-tsc=[11-16:block 21-26:block 32-37:block] only-bun=[]
+DIFF round2_comments_capture_inputs2:jsx-in-cond-arrow only-tsc=[26-31:block 52-57:block 76-81:block] only-bun=[]
+DIFF round2_comments_capture_top_down_extra_inputs:jsx-in-heritage.tsx only-tsc=[24-29:block 36-41:block] only-bun=[]
+TSC-REJECTS round2_comments_capture_top_down_extra_inputs:leading-legacy.js diag TS1109@2
+DIFF round2_comments_capture_top_down_records_inputs:jsx-type-arguments.tsx only-tsc=[15-20:block 39-44:block 51-56:block] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:hashbang-tsx only-tsc=[24-31:block] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:jsx-open only-tsc=[10-15:block 20-25:block 28-33:block 36-41:block 46-50:line 67-72:block 87-92:block] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:jsx-close only-tsc=[16-21:block 26-31:block 52-57:block 60-65:block 68-72:line] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:jsx-self-close only-tsc=[12-17:block 20-25:block 41-45:line] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:jsx-fragment only-tsc=[10-15:block 21-26:block] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:jsx-member-ns only-tsc=[11-16:block 19-24:block 27-32:block 50-55:block 60-65:block] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:jsx-attr-string-lookalike only-tsc=[27-32:block 47-51:line] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:jsx-nested-attr only-tsc=[17-22:block 35-40:block 45-50:block 55-60:block] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:jsx-type-args only-tsc=[13-18:block 42-47:block 54-59:block] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:jsx-jsx-loader only-tsc=[13-18:block 25-29:line 53-58:block] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:jsx-jsx-fragment only-tsc=[10-15:block 20-25:block 31-36:block] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:jsx-directive-in-tag only-tsc=[15-34:line 47-63:block] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:jsx-child-element-tags only-tsc=[14-19:block 25-30:block 36-41:block 64-69:block] only-bun=[]
+BUN-REJECTS _tmp_b1cc_in_b1_extra:accessor-body-annotation err Expected ";" but found "{"
+DIFF _tmp_b1cc_in_b1_extra:bt-tsx-element only-tsc=[13-18:block 25-30:block 48-53:block] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:bt-nested-tsx only-tsc=[22-27:block 48-53:block 69-74:block] only-bun=[]
+BUN-REJECTS in_misc:html-open-as-operators err Unsupported syntax: Legacy HTML comments not implemented yet!
+TSC-REJECTS in_misc:html-close-line-start diag TS1109@4
+TSC-REJECTS in_misc:html-close-file-start diag TS1109@2
+TSC-REJECTS in_misc:html-close-after-block-nl diag TS1109@13
+DIFF in_misc:jsx-self-close-comment-between only-tsc=[13-18:block] only-bun=[]
+DIFF in_misc:jsx-spread-attr only-tsc=[39-44:block] only-bun=[]
+DIFF in_misc:jsx-shorthand-attr only-tsc=[11-16:block 19-24:block 27-32:block] only-bun=[]
+DIFF in_misc:jsx-attr-fragment-value only-tsc=[19-24:block 28-33:block] only-bun=[]
+DIFF in_misc:jsx-generic-self-close only-tsc=[21-26:block 29-34:block] only-bun=[]
+DIFF fixture only-tsc=[4559-4601:line 4642-4675:block 4820-4852:line 5081-5104:block 5165-5202:line 5675-5710:line 5922-5947:block 6788-6829:line] only-bun=[]
+== B1_DISABLE=4
+{"different list":32,"same":236,"lint parse rejects, tsc accepts":3,"tsc rejects, lint parse accepts":5} comments in files that are the same: 1086
+DIFF lexer_lint_hooks_bottom_up_comments_inputs:leading only-tsc=[0-4:line 5-12:block 13-21:jsdoc] only-bun=[]
+DIFF lexer_lint_hooks_bottom_up_comments_inputs:only-comments only-tsc=[0-4:line 5-12:block] only-bun=[]
+DIFF lexer_lint_hooks_bottom_up_comments_inputs:kinds only-tsc=[0-4:block 5-10:jsdoc 11-19:jsdoc 20-27:block 28-32:line 33-45:block 46-55:line] only-bun=[]
+DIFF lexer_lint_hooks_bottom_up_comments_inputs:crlf-and-ls only-tsc=[0-4:line] only-bun=[]
+DIFF lexer_lint_hooks_bottom_up_comments_inputs:pragmas-inside only-tsc=[0-13:line] only-bun=[]
+BUN-REJECTS lexer_lint_hooks_bottom_up_comments_inputs:jsx-attr-element-bun-rejects-today err Expected "{" but found "<"
+DIFF lexer_lint_hooks_top_down_comments_inputs:kinds.ts only-tsc=[0-4:line 5-12:block 13-21:jsdoc] only-bun=[]
+DIFF lexer_lint_hooks_top_down_comments_inputs:leading-only.ts only-tsc=[0-7:line 8-22:block] only-bun=[]
+DIFF lexer_lint_hooks_top_down_comments_inputs:terminators.ts only-tsc=[0-5:line 7-12:line 13-18:line 21-26:line] only-bun=[]
+TSC-REJECTS lexer_lint_hooks_top_down_comments_inputs:html-close.js diag TS1109@4
+DIFF round2_comments_capture_inputs:lead-ws-bom-free only-tsc=[4-8:line 11-19:block 20-28:jsdoc] only-bun=[]
+DIFF round2_comments_capture_inputs:lead-jsdoc-only only-tsc=[0-10:jsdoc] only-bun=[]
+DIFF round2_comments_capture_inputs:lead-empty-block only-tsc=[0-4:block] only-bun=[]
+DIFF round2_comments_capture_inputs:lead-comment-with-arrow-text only-tsc=[0-17:line 18-36:block] only-bun=[]
+DIFF round2_comments_capture_inputs:erased-beside-comments only-tsc=[0-5:block] only-bun=[]
+DIFF round2_comments_capture_inputs2:lead-directives only-tsc=[0-14:line 15-46:line 47-54:block] only-bun=[]
+DIFF round2_comments_capture_inputs2:decorator-call only-tsc=[0-5:block] only-bun=[]
+DIFF round2_comments_capture_inputs2:enum-const only-tsc=[0-5:block] only-bun=[]
+TSC-REJECTS round2_comments_capture_top_down_extra_inputs:leading-legacy.js diag TS1109@2
+DIFF round2_comments_capture_top_down_extra_inputs:leading-mixed.ts only-tsc=[5-9:line 11-18:block 20-28:jsdoc 31-35:line 38-46:block] only-bun=[]
+DIFF round2_comments_capture_top_down_extra_inputs:decl-file.d.ts only-tsc=[0-8:jsdoc] only-bun=[]
+DIFF round2_comments_capture_top_down_records_inputs:erased-interface.ts only-tsc=[0-5:block] only-bun=[]
+DIFF round2_comments_capture_top_down_records_inputs:leading.ts only-tsc=[0-4:line 5-13:jsdoc] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:lead-line-block-jsdoc only-tsc=[0-4:line 5-12:block 13-21:jsdoc] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:lead-kinds only-tsc=[0-4:block 5-10:jsdoc 11-19:jsdoc 20-27:block 28-32:line 33-45:block 46-55:line 56-82:line] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:lead-only-comment-eof only-tsc=[0-7:line] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:lead-only-block-eof only-tsc=[0-10:block] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:lead-crlf-ls-ps only-tsc=[0-4:line 6-10:line 13-17:line 20-27:block] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:lead-bom only-tsc=[3-7:line] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:lead-js only-tsc=[0-4:line 5-12:block 13-21:jsdoc] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:lead-jsx only-tsc=[0-8:jsdoc 9-13:line] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:lead-dts only-tsc=[0-8:jsdoc 9-13:line] only-bun=[]
+BUN-REJECTS _tmp_b1cc_in_b1_extra:accessor-body-annotation err Expected ";" but found "{"
+DIFF _tmp_b1cc_in_b1_extra:erased-export-declare only-tsc=[0-5:block] only-bun=[]
+DIFF _tmp_b1cc_in_b1_extra:erased-decorator only-tsc=[0-5:block] only-bun=[]
+BUN-REJECTS in_misc:html-open-as-operators err Unsupported syntax: Legacy HTML comments not implemented yet!
+TSC-REJECTS in_misc:html-close-line-start diag TS1109@4
+TSC-REJECTS in_misc:html-close-file-start diag TS1109@2
+TSC-REJECTS in_misc:html-close-after-block-nl diag TS1109@13
+DIFF fixture only-tsc=[0-64:line 65-141:line 142-219:line 220-288:line] only-bun=[]

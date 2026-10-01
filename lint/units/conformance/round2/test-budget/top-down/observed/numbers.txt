@@ -1,0 +1,44 @@
+Numbers of the research "test-budget", pass 1b (top-down), 2026-10-01, Linux x64, 12 CPUs, load average 230 to 510.
+release = the installed bun 1.4.3-canary.1+367d939d9 (no --lint; no test of these trees starts the binary under test)
+debug   = /workspace/wt/conformance/build/debug/bun-debug 1.4.3-debug+3110ce85c (ASAN)
+Each batch is one hold of /workspace/tools/lk. "cold": the data pages of H/corpus, H/fixtures and H/runner put out of the
+page cache just before (probes/evict.py). Modes: probes/modes.sh. Logs: batch1/, batch2/.
+
+THE TREE glue (the file as it is once corpus-commit and corpus-glue have landed, 106 tests), batch1, lock wait 19 s
+  release cold      106 pass            24.51 s   user 2.77 sys 0.86   load 295   the whole enumeration alone: 21.2 s of its 30 s
+  release warm      106 pass             4.46 s   user 2.08 sys 0.47   load 297
+  release warm      106 pass             3.43 s   user 1.86 sys 0.44   load 297   -> best 3.43, median 4.46 (wall 3.79 and 4.55)
+  release-ci        106 pass             3.47 s   user 2.17 sys 0.62   load 294   the environment of a release lane, --timeout=90000
+  release-ci-exact  106 pass             4.54 s   user 2.39 sys 0.68   load 293   the command line of spawnBunTest
+  debug             102 pass 1 skip 3 FAIL 101.2 s user 74.3 sys 4.6   load 381   three tests at the default 5 s: the list 7.3 s,
+                                                                                  enumerator group 1 6.8 s, error baselines group 10 5.2 s
+  debug-leak        105 pass 1 skip      87.5 s   user 79.2 sys 4.7   load 311   no text of a sanitizer
+  debug-ci          105 pass 1 skip     130.2 s   user 113.4 sys 4.9  load 469   leak check, exception checks, --timeout=270000: none
+  (the other pass of this research, same glue, another clone, load 312 to 340: release cold 23.3 and 21.4 s, warm 8.5, 6.4,
+   9.3 s; debug 104 pass at 94 s; debug with the leak and exception checks at the default 5 s: 101 pass, 3 fail)
+
+THE TREE budget (glue with prototype/test-budget.on-the-glue.patch, 107 tests), batch2, lock wait 14 min 48 s
+  release "cold"    107 pass             2.85 s   user 0.99 sys 0.31   load 230   a copy of the tree was being made beside it: it
+                                                                                  may not have been all cold; see cold-reads.txt
+  release warm      107 pass             2.45 s   user 0.92 sys 0.29   load 232
+  release warm      107 pass             2.77 s   user 0.94 sys 0.28   load 232   -> best 2.45, median 2.77 (wall 2.79 and 2.92)
+  release-ci        107 pass             3.10 s   user 1.04 sys 0.28   load 237
+  release-ci-exact  107 pass             4.17 s   user 0.98 sys 0.30   load 243
+  debug             105 pass 2 skip      87.6 s   user 73.9 sys 3.8   load 363   no test at the default time above 1.2 s
+  debug-leak        105 pass 2 skip      86.2 s   user 73.9 sys 4.1   load 499   no text of a sanitizer
+  debug-ci          105 pass 2 skip     156.7 s   user 117.1 sys 4.6  load 450   none
+  sweep.ts --no-run   exit 0            58.3 s   user 2.5 sys 0.7               cold; every case against the list
+  ../../typecheck.sh  no type error below test/cli/lint
+  lint-leak.sh        bun-debug --lint ok.ts, bad.ts, rule.ts under the leak and exception checks: exit 0, 2, 0, no text of a sanitizer
+  The equal tree of ../../release-time-budget/top-down ("after"), six cold runs at load 304 to 660: 2.2 to 7.8 s.
+
+THE LONGEST TEST OF A KIND IN ANY DEBUG RUN ABOVE (the limit that the change gives it)
+  a test without a process   11.8 s   the list, debug-ci of glue                      (60 s; the default is 5 s)
+  a test with processes      23.2 s   "a command that lints gets the written unit", debug-ci of budget
+                                                                                      (60 s; the check's own limit was 30 s, now 60 s)
+  in a release build         1.9 s    a test of "default check", warm run of glue     (20 s; the default is 5 s)
+
+WHERE A DEBUG BUILD SPENDS THE TIME (budget, debug-ci, seconds of the tests of each block; probes/by-describe.ts)
+  reference 15.6, directives 2.7, variations 0.9, enumerator 25.9, error baselines 29.3, run 15.1, plain format 2.8,
+  default check 23.2 (the longest; its 20 tests run side by side), listed instances 2.4, corpus 1.2; the rest of the 157 s
+  is the load of the modules, the samples that the describe blocks take, and the end of the process under the leak check.

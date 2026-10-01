@@ -34,8 +34,13 @@ plain = [
     'a batch passes when the oracle is replayed, and fails its names of list E when nothing is reported',
     'a name in the list of the other class, a skipped instance and a name of no instance are failures',
 ]
+# The test of corpus-glue, where the file has it: 1.2 s in a debug build with the exception checks.
+optional = ['an instance that the reference fails is told from one that it skips, and neither runs']
 lines = s.split('\n')
-for name in plain:
+for name in plain + optional:
+    if name in optional and not any('"' + name + '"' in l for l in lines):
+        print('the file has no test of this name, which is none of the required ones: ' + name)
+        continue
     at = [i for i, l in enumerate(lines) if l.startswith('  test("' + name + '"')]
     if len(at) == 1:
         j = at[0] + 1

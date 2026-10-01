@@ -301,6 +301,38 @@ enum Place {
 }
 
 /// `NodeBuilderImpl` and its `NodeBuilderContext`.
+impl<'p> Checker<'p> {
+    /// Finds out what the type aliases of `file` that `plain_alias_of` is about stand for and, with `fills_in`, fills it in for them.
+    fn name_plain_aliases(&mut self, file: FileId, fills_in: bool) {
+        let files = self.files();
+        let module = &files.modules[file.idx()];
+        for (a, alias) in module.hir.aliases.iter().enumerate() {
+            let symbol = module.bound.alias_symbol[a];
+            if !alias.type_params.is_empty()
+                || alias.ty.is_none()
+                || symbol.is_none()
+                || !matches!(
+                    module.hir[alias.ty].kind,
+                    TypeNodeKind::Union(_) | TypeNodeKind::Intersection(_)
+                )
+            {
+                continue;
+            }
+            let symbol = files.sym(file, symbol);
+            let ty = self.declared_type(symbol);
+            if fills_in
+                && matches!(
+                    self.data(ty),
+                    TypeData::Union(_) | TypeData::Intersection(_)
+                )
+                && self.p.plain_alias_of.get(&ty).is_none()
+            {
+                self.p.plain_alias_of.insert(ty, Some(symbol));
+            }
+        }
+    }
+}
+
 struct Printer<'c, 'p> {
     c: &'c mut Checker<'p>,
     flags: u32,
@@ -1187,8 +1219,40 @@ impl<'p> Printer<'_, 'p> {
     }
 
     /// The first type alias without type parameters, outside the default library, that is written as a union or an intersection
-    /// and has been found to stand for `ty`. The same members written out elsewhere are the same type here, and are named too.
-    fn plain_alias_of(&self, ty: TypeId) -> Option<Sym> {
+    /// and stands for `ty`. The same members written out elsewhere are the same type here, and are named too.
+    fn plain_alias_of(&mut self, ty: TypeId) -> Option<Sym> {
+        let program = self.c.p;
+        if program.are_plain_aliases_known.get().is_none() {
+            let modules = &program.files.modules;
+            let counts = |index: usize| !modules[index].is_lib && !modules[index].is_transient;
+            // Asked from outside, whatever is under way here.
+            let mut checker = program.checker();
+            // What the aliases stand for can be found out in any order, so whoever needs the table helps instead of waiting for it.
+            loop {
+                let index = program
+                    .plain_aliases_resolved
+                    .fetch_add(1, Ordering::Relaxed);
+                if index >= modules.len() {
+                    break;
+                }
+                if counts(index) {
+                    checker.name_plain_aliases(FileId(index as u32), false);
+                }
+            }
+            program.are_plain_aliases_known.get_or_init(|| {
+                for index in (0..modules.len()).filter(|&index| counts(index)) {
+                    checker.name_plain_aliases(FileId(index as u32), true);
+                }
+            });
+        }
+        // Those of the file at hand are only known here.
+        if crate::local::is_on() {
+            let file = FileId(crate::local::file());
+            if self.c.named_plain_aliases_of != Some(file) {
+                self.c.named_plain_aliases_of = Some(file);
+                program.checker().name_plain_aliases(file, true);
+            }
+        }
         self.c.p.plain_alias_of.get(&ty).flatten()
     }
 

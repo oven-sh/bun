@@ -180,7 +180,13 @@ pub struct Program {
     /// `intersectionTypes`, for those that have a union among them.
     distributed_intersections: ByKey<(Box<[TypeId]>, bool), TypeId>,
     /// See `note_alias_of_union`.
+    /// For putting types into words: the first type alias without type parameters, in the order of the files and outside the default
+    /// library, that is written as a union or an intersection and stands for the type. Filled in at once, when it is first asked for:
+    /// what a message says does not go by what happens to have been looked at before.
     plain_alias_of: ById<TypeId, Option<Sym>>,
+    are_plain_aliases_known: std::sync::OnceLock<()>,
+    /// How many files somebody has taken on to find out what their aliases stand for.
+    plain_aliases_resolved: std::sync::atomic::AtomicUsize,
     generic_union_aliases: NodeSet<Sym>,
     sig_params: ByIdKept<SigId, Box<[SigParam]>>,
     sig_type_params: ByIdKept<SigId, Box<[TypeId]>>,
@@ -388,6 +394,8 @@ impl Program {
             shapes: Default::default(),
             distributed_intersections: Default::default(),
             plain_alias_of: Default::default(),
+            are_plain_aliases_known: Default::default(),
+            plain_aliases_resolved: Default::default(),
             generic_union_aliases: NodeSet::new(&symbols),
             sig_params: Default::default(),
             sig_type_params: Default::default(),
@@ -513,6 +521,7 @@ impl Program {
             shapes_for_now: Vec::new(),
             held_for_now: FxHashMap::default(),
             trials: FxHashMap::default(),
+            named_plain_aliases_of: None,
             explains: false,
             notes: Default::default(),
             timed_out: false,
@@ -757,6 +766,8 @@ pub struct Checker<'p> {
     held_for_now: FxHashMap<(FileId, PropId), Held>,
     /// The last candidate tried for a call that is being resolved: see `instantiate_for_call_as`.
     trials: FxHashMap<(FileId, ExprId), Trial>,
+    /// The file at hand whose type aliases `plain_alias_of` has been filled in for.
+    named_plain_aliases_of: Option<FileId>,
     /// What is noted of errors is kept: somebody is going to read it.
     explains: bool,
     notes: std::cell::RefCell<Vec<explain::Note>>,

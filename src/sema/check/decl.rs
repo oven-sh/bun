@@ -1334,8 +1334,7 @@ impl<'p> Checker<'p> {
         ty
     }
 
-    /// For putting types into words: `sym` is a type alias written as a union or an intersection, and stands for `ty`. The same members
-    /// written out elsewhere are the same type here, and go by the name too. The first alias to be resolved is the one.
+    /// For putting types into words: `sym` is a generic type alias written as a union, and stands for `ty`.
     fn note_alias_of_union(&mut self, sym: Sym, ty: TypeId) {
         if !matches!(
             self.data(ty),
@@ -1357,9 +1356,7 @@ impl<'p> Checker<'p> {
                         TypeNodeKind::Union(_) | TypeNodeKind::Intersection(_)
                     )
                 {
-                    if alias.type_params.is_empty() {
-                        self.p.plain_alias_of.insert(ty, Some(sym));
-                    } else {
+                    if !alias.type_params.is_empty() {
                         self.p.generic_union_aliases.insert(sym, ());
                     }
                 }

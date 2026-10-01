@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# usage: verify.sh <tree> <out directory>   (run under /workspace/tools/lk)
-# The checks of the binding in a scratch clone with the corpus: the test file under the release build and under the
-# debug build with the leak check of CI, sweep.ts of HEAD beside sweep.ts of the tree with the debug binary on one
-# small directory and with --no-run, and compare.sh of the notes.
+# usage: verify.sh <tree> <out directory> [revision]   (run under /workspace/tools/lk)
+# The checks of the binding in a scratch clone with the corpus (../../scratch.sh, then apply.sh): the test file under the
+# release build and under the debug build of the worktree with the leak check of CI, sweep.ts of the revision (default
+# 3110ce85cf, where it carries its own glue) beside sweep.ts of the tree with the debug binary on one small directory and
+# with --no-run, and compare.sh of ../../runner-corpus-binding/top-down on 23 command lines.
 set -uo pipefail
 tree=$(cd -- "$1" && pwd)
 out=$2
+revision=${3:-3110ce85cf}
 mkdir -p "$out"
 out=$(cd -- "$out" && pwd)
 dbg=/workspace/wt/conformance/build/debug/bun-debug
@@ -25,7 +27,7 @@ tail -7 "$out/debug-leak.log"
 grep -c "LeakSanitizer\|AddressSanitizer" "$out/debug-leak.log"
 
 echo "== sweeps before and after"; date
-git show "HEAD:$home/sweep.ts" > "$home/sweep_before.ts"
+git show "$revision:$home/sweep.ts" > "$home/sweep_before.ts"
 trap 'rm -f "$tree/$home/sweep_before.ts"' EXIT
 for side in before after; do
   script=sweep.ts; [ "$side" = before ] && script=sweep_before.ts
@@ -43,5 +45,5 @@ rm -f "$home/sweep_before.ts"
 trap - EXIT
 
 echo "== compare.sh"; date
-bash /workspace/notes/lint/units/conformance/round2/runner-corpus-binding/top-down/compare.sh "$tree" "$out/cmp" HEAD 2>&1 | tail -30
+bash /workspace/notes/lint/units/conformance/round2/runner-corpus-binding/top-down/compare.sh "$tree" "$out/cmp" "$revision" 2>&1 | tail -30
 date

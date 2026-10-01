@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-# usage: parse.py <probes.rs> <cargo json messages> ; prints "<value>\t<probe expression>" per probe line, in order
+# usage: parse.py <probes.rs> <cargo json messages> [file name suffix] ; prints "<value>\t<probe expression>" per probe line, in order
+# The suffix (default lib.rs) names the file that holds the probe lines: p.rs for probes appended to a copy of the crate.
 import json, re, sys
+suffix = sys.argv[3] if len(sys.argv) > 3 else "lib.rs"
 probes = open(sys.argv[1]).read().split("\n")
 found = {}
 other = []
@@ -21,7 +23,7 @@ for line in open(sys.argv[2], errors="replace"):
     for sp in msg.get("spans", []):
         lab = sp.get("label") or ""
         g = re.search(r"found one with a size of (\d+)", lab)
-        if g and sp.get("file_name", "").endswith("lib.rs"):
+        if g and sp.get("file_name", "").endswith(suffix):
             found[sp["line_start"]] = int(g.group(1))
             hit = True
     if not hit and msg.get("code"):

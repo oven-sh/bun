@@ -1152,6 +1152,7 @@ impl<'p> Checker<'p> {
                 && self.is_context_sensitive(file, e)
                 && let Some(param) = self.context_of_arg_at(params, i, Some(args.len()))
                 && (!self.has_room_for_literal(file, e, param)
+                    || self.literal_lacks_target_signatures(file, e, param)
                     || !self.do_plain_members_fit(file, e, param, false))
             {
                 return true;
@@ -2797,6 +2798,40 @@ impl<'p> Checker<'p> {
             .any(|&p| self.is_const_type_variable(p, 0))
     }
 
+    /// `chooseOverload`: for each of `sigs`, whether it passes `hasCorrectTypeArgumentArity` and `hasCorrectArity` for `call`. Empty
+    /// if none passes, or if an argument is spread: the argument count then depends on the type of the operand.
+    pub(super) fn overloads_with_correct_arity(
+        &mut self,
+        file: FileId,
+        call: ExprId,
+        id: CallId,
+        sigs: &[SigId],
+    ) -> SmallVec<[bool; 8]> {
+        let hir = self.hir(file);
+        let (args, type_args) = (hir[id].args, hir[id].type_args);
+        if hir
+            .ids(args)
+            .any(|a| matches!(hir[a].kind, ExprKind::Spread(_)))
+        {
+            return SmallVec::new();
+        }
+        let is_incomplete = self.is_call_incomplete(file, call, id);
+        let mut has_arity: SmallVec<[bool; 8]> = SmallVec::with_capacity(sigs.len());
+        for &sig in sigs {
+            let type_params = self.sig_type_params(sig);
+            has_arity.push(
+                self.has_correct_type_argument_arity(&type_params, type_args.len()) && {
+                    let params = self.sig_params(sig);
+                    self.has_correct_arity_for_count(&params, args.len(), None, is_incomplete)
+                },
+            );
+        }
+        if !has_arity.contains(&true) {
+            has_arity.clear();
+        }
+        has_arity
+    }
+
     fn choose_overload_among(
         &mut self,
         file: FileId,
@@ -2872,6 +2907,23 @@ impl<'p> Checker<'p> {
                 }
             }
             let any_fits = plain.iter().any(|p| p.is_some_and(|p| p.0));
+            // `chooseOverload` checks a literal anew for each candidate: a rejected one does not put it in a const context.
+            if any_fits && self.provisional == 0 && plain.iter().any(|p| p.is_some_and(|p| !p.0)) {
+                let (mut is_const_rejected, mut is_const_standing) = (false, false);
+                for (k, said) in plain.iter().enumerate() {
+                    if !self.has_const_type_parameter(candidates[k]) {
+                        continue;
+                    }
+                    if said.is_some_and(|said| !said.0) {
+                        is_const_rejected = true;
+                    } else {
+                        is_const_standing = true;
+                    }
+                }
+                if is_const_rejected && !is_const_standing {
+                    self.p.calls_outside_const_context.insert((file, call), ());
+                }
+            }
             // A call, and a function that does not wait for the types of its parameters, are worked out once and stay what they came
             // to (`resolvedSignature`, `NodeCheckFlagsContextChecked`): for the first candidate that gets as far as them.
             // `isSignatureApplicable` goes from left to right, so that is none that an argument before them rules out.
@@ -3136,6 +3188,7 @@ impl<'p> Checker<'p> {
                     // Where a type guard is asked for, only a type guard will do.
                     if let Some(param) = self.context_of_arg_at(&params, i, Some(args.len()))
                         && (!self.has_room_for_literal(file, e, param)
+                            || self.literal_lacks_target_signatures(file, e, param)
                             || !self.is_guard_if_expected(file, e, param)
                             || !self.do_annotated_parameters_fit(file, e, param, by_subtype)
                             || !self.do_plain_members_fit(file, e, param, by_subtype))
@@ -3596,7 +3649,6 @@ impl<'p> Checker<'p> {
             || hir
                 .ids(items)
                 .any(|item| matches!(hir[item].kind, ExprKind::Spread(_) | ExprKind::Missing))
-            || self.in_const_context(file, arg)
         {
             return Some(TypeId::UNRESOLVED);
         }
@@ -3635,11 +3687,23 @@ impl<'p> Checker<'p> {
             }
             types.push(ty);
         }
+        // `inConstContext` is false: `isConstContext` reads the contextual type, which `isSignatureApplicable` sets to `param`.
         let literal_type = if self.is_in_tuple_context(file, arg, Some(param)) {
             let flags: SmallVec<[ElemFlags; 8]> = smallvec![ElemFlags::REQUIRED; types.len()];
             self.tuple(&types, &flags, false)
         } else {
-            let element = self.union(&types);
+            // An element that is not checked is taken to fit, so it adds nothing to the element type. In a union `UNRESOLVED`
+            // absorbs the other members.
+            let checked: SmallVec<[TypeId; 8]> = types
+                .iter()
+                .copied()
+                .filter(|&ty| ty != TypeId::UNRESOLVED)
+                .collect();
+            let element = if checked.is_empty() {
+                self.union(&types)
+            } else {
+                self.union(&checked)
+            };
             self.array_of(element)
         };
         let is_related = if by_subtype {
@@ -3679,6 +3743,31 @@ impl<'p> Checker<'p> {
             }
             let function = self.global_ref(known::Function, &[]);
             self.is_assignable(function, part)
+        })
+    }
+
+    /// `signaturesRelatedTo`: the type of an object or array literal has no signatures, so the literal `arg` is not related to
+    /// `param` if every member of `param` is primitive or has a signature. The type variables in the signatures do not matter.
+    fn literal_lacks_target_signatures(
+        &mut self,
+        file: FileId,
+        arg: ExprId,
+        param: TypeId,
+    ) -> bool {
+        if !matches!(
+            self.hir(file)[arg].kind,
+            ExprKind::Object(_) | ExprKind::Array(_)
+        ) {
+            return false;
+        }
+        let param = self.force(param);
+        self.parts(param).iter().all(|&part| {
+            self.is_primitive(part)
+                || self.is_object_type(part)
+                    && self.mapped_origin(part).is_none()
+                    && self.members(part).is_some_and(|m| {
+                        !m.shape().call.is_empty() || !m.shape().construct.is_empty()
+                    })
         })
     }
 

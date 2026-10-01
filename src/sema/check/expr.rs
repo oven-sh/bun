@@ -770,6 +770,7 @@ impl<'p> Checker<'p> {
             return false;
         }
         let sigs = self.signatures(callee, matches!(hir[call].kind, ExprKind::New(_)));
+        let mut has_arity: SmallVec<[bool; 8]> = SmallVec::new();
         // Which overload the call resolves to decides.
         if sigs.len() > 1 && sigs.iter().any(|&sig| self.has_const_type_parameter(sig)) {
             if self.p.calls.get(&(file, call)).is_none()
@@ -785,8 +786,13 @@ impl<'p> Checker<'p> {
             {
                 return false;
             }
+            has_arity = self.overloads_with_correct_arity(file, call, c, &sigs);
         }
-        for sig in sigs {
+        for (k, sig) in sigs.into_iter().enumerate() {
+            // `chooseOverload` skips it before it checks any argument.
+            if has_arity.get(k) == Some(&false) {
+                continue;
+            }
             let type_params = self.sig_type_params(sig);
             if !type_params
                 .iter()

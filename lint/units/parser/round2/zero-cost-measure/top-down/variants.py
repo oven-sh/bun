@@ -363,12 +363,33 @@ def vold(t):
 """)
     return {'old fns': len(names)}
 
+MEMBER = """
+    /// `parse_expr_common` at `Level::Member`, the one level that a "__PURE__" comment does not reach.
+    pub(crate) fn parse_expr_at_member_level(&mut self, flags: EFlags, expr: &mut Expr) -> Result<(), Error> {
+        if !self.stack_check.is_safe_to_recurse() {
+            return self.parse_expr_past_stack_bound(Level::Member, None, flags, expr);
+        }
+        *expr = self.parse_prefix(Level::Member, None, flags)?;
+        self.parse_suffix(expr, Level::Member, None, flags)?;
+        Ok(())
+    }
+"""
+
+def f1b(t):
+    """f1, and the one call of parse_expr_common above Level::Call (the target of `new`) has its own entry, so that the
+    test of the level in parse_expr_common is dead for every caller that is left, as ThinLTO proves it at the head."""
+    c = f1(t)
+    t.rep('parse/parse_prefix.rs', "        p.parse_expr_with_flags(Level::Member, flags, &mut target)?;\n", "        p.parse_expr_at_member_level(flags, &mut target)?;\n")
+    s = t.read('parse/mod.rs'); i = s.index('    pub(crate) fn parse_expr_common(')
+    t.write('parse/mod.rs', s[:i] + MEMBER.lstrip('\n') + s[i:])
+    return c
+
 def v0(t): return {}
 def v_nolint(t): return nolint(t)
 def v_nolintbt(t):
     c = nolint(t); bt(t); return c
 
-V = {'v0': v0, 'nolint': v_nolint, 'nolintbt': v_nolintbt, 'f1': f1, 'vold': vold}
+V = {'v0': v0, 'nolint': v_nolint, 'nolintbt': v_nolintbt, 'f1': f1, 'f1b': f1b, 'vold': vold}
 if __name__ == '__main__':
     if '--list' in sys.argv: print(' '.join(V)); sys.exit(0)
     for tag in sys.argv[1:]:

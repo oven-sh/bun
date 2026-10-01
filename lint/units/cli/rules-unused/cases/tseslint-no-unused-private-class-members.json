@@ -1,0 +1,987 @@
+{
+	"valid": [
+		{
+			"code": "class Foo {}",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  publicMember = 42;\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  public publicMember = 42;\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  protected publicMember = 42;\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass C {\n  #usedInInnerClass;\n\n  method(a) {\n    return class {\n      foo = a.#usedInInnerClass;\n    };\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass C {\n  private accessor accessorMember = 42;\n\n  method() {\n    return this.accessorMember;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass C {\n  private static staticMember = 42;\n\n  static method() {\n    return this.staticMember;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass C {\n  private static staticMember = 42;\n\n  method() {\n    return C.staticMember;\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Test1 {\n  constructor(private parameterProperty: number) {}\n  method() {\n    return this.parameterProperty;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Test1 {\n  constructor(private readonly parameterProperty: number) {}\n  method() {\n    return this.parameterProperty;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Test1 {\n  constructor(private readonly parameterProperty: number = 1) {}\n  method() {\n    return this.parameterProperty;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  private prop: number;\n\n  method(thing: Foo) {\n    return thing.prop;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  private static staticProp: number;\n\n  method(thing: typeof Foo) {\n    return thing.staticProp;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  private prop: number;\n\n  method() {\n    const self = this;\n    return self.prop;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  #privateMember = 42;\n  method() {\n    return this.#privateMember;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  private privateMember = 42;\n  method() {\n    return this.privateMember;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  #privateMember = 42;\n  anotherMember = this.#privateMember;\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  private privateMember = 42;\n  anotherMember = this.privateMember;\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  #privateMember = 42;\n  foo() {\n    anotherMember = this.#privateMember;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  private privateMember = 42;\n  foo() {\n    anotherMember = this.privateMember;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass C {\n  #privateMember;\n\n  foo() {\n    bar((this.#privateMember += 1));\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass C {\n  private privateMember;\n\n  foo() {\n    bar((this.privateMember += 1));\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  #privateMember = 42;\n  method() {\n    return someGlobalMethod(this.#privateMember);\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  private privateMember = 42;\n  method() {\n    return someGlobalMethod(this.privateMember);\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass C {\n  #privateMember;\n\n  foo() {\n    return class {};\n  }\n\n  bar() {\n    return this.#privateMember;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass C {\n  private privateMember;\n\n  foo() {\n    return class {};\n  }\n\n  bar() {\n    return this.privateMember;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  #privateMember;\n  method() {\n    for (const bar in this.#privateMember) {\n    }\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  private privateMember;\n  method() {\n    for (const bar in this.privateMember) {\n    }\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  #privateMember;\n  method() {\n    for (const bar of this.#privateMember) {\n    }\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  private privateMember;\n  method() {\n    for (const bar of this.privateMember) {\n    }\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  #privateMember;\n  method() {\n    [bar = 1] = this.#privateMember;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  private privateMember;\n  method() {\n    [bar = 1] = this.privateMember;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  #privateMember;\n  method() {\n    [bar] = this.#privateMember;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  private privateMember;\n  method() {\n    [bar] = this.privateMember;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass C {\n  #privateMember;\n\n  method() {\n    ({ [this.#privateMember]: a } = foo);\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass C {\n  private privateMember;\n\n  method() {\n    ({ [this.privateMember]: a } = foo);\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass C {\n  set #privateMember(value) {\n    doSomething(value);\n  }\n  get #privateMember() {\n    return something();\n  }\n  method() {\n    this.#privateMember += 1;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass C {\n  private set privateMember(value) {\n    doSomething(value);\n  }\n  private get privateMember() {\n    return something();\n  }\n  method() {\n    this.privateMember += 1;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  set #privateMember(value) {}\n\n  method(a) {\n    [this.#privateMember] = a;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  private set privateMember(value) {}\n\n  method(a) {\n    [this.privateMember] = a;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass C {\n  get #privateMember() {\n    return something();\n  }\n  set #privateMember(value) {\n    doSomething(value);\n  }\n  method() {\n    this.#privateMember += 1;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass C {\n  private get privateMember() {\n    return something();\n  }\n  private set privateMember(value) {\n    doSomething(value);\n  }\n  method() {\n    this.privateMember += 1;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  private privateMember;\n  private privateMember2;\n\n  method() {\n    const { privateMember, privateMember2 } = this;\n    console.log(privateMember, privateMember2);\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  private static staticMember = 1;\n  static method() {\n    const { staticMember } = this;\n    console.log(staticMember);\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  private privateMember = 1;\n  method() {\n    const { privateMember } = this;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  private privateMember = 1;\n  method() {\n    const { privateMember: privateMember2 } = this;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  private privateMember = 1;\n\n  method() {\n    let privateMember;\n    ({ privateMember } = this);\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  private privateMember = 1;\n\n  method() {\n    const foo = ({ privateMember } = this) => {};\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  private privateMember;\n\n  method() {\n    const { privateMember: used } = this;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  #privateMember() {\n    return 42;\n  }\n  anotherMethod() {\n    return this.#privateMember();\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  private privateMember() {\n    return 42;\n  }\n  anotherMethod() {\n    return this.privateMember();\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass C {\n  set #privateMember(value) {\n    doSomething(value);\n  }\n\n  foo() {\n    this.#privateMember = 1;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		},
+		{
+			"code": "\nclass C {\n  private set privateMember(value) {\n    doSomething(value);\n  }\n\n  foo() {\n    this.privateMember = 1;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {}
+			}
+		}
+	],
+	"invalid": [
+		{
+			"code": "\nclass C {\n  #unusedInOuterClass;\n\n  foo() {\n    return class D {\n      #unusedInOuterClass;\n\n      bar() {\n        return this.#unusedInOuterClass;\n      }\n    };\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "#unusedInOuterClass"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass C {\n  #unusedOnlyInSecondNestedClass;\n\n  foo() {\n    return class {\n      #unusedOnlyInSecondNestedClass;\n\n      bar() {\n        return this.#unusedOnlyInSecondNestedClass;\n      }\n    };\n  }\n\n  baz() {\n    return this.#unusedOnlyInSecondNestedClass;\n  }\n\n  bar() {\n    return class {\n      #unusedOnlyInSecondNestedClass;\n    };\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "#unusedOnlyInSecondNestedClass"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass C {\n  #usedOnlyInTheSecondInnerClass;\n\n  method(a) {\n    return class {\n      #usedOnlyInTheSecondInnerClass;\n\n      method2(b) {\n        foo = b.#usedOnlyInTheSecondInnerClass;\n      }\n\n      method3(b) {\n        foo = b.#usedOnlyInTheSecondInnerClass;\n      }\n    };\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"line": 3,
+					"data": {
+						"classMemberName": "#usedOnlyInTheSecondInnerClass"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass C {\n  private accessor accessorMember = 42;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "accessorMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass C {\n  private static staticMember = 42;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "staticMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Test1 {\n  constructor(private parameterProperty: number) {}\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "parameterProperty"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Test1 {\n  constructor(private readonly parameterProperty: number) {}\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "parameterProperty"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Test1 {\n  constructor(private readonly parameterProperty: number = 1) {}\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "parameterProperty"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass C {\n  private usedOutsideClass;\n}\n\nconst instance = new C();\nconsole.log(instance.usedOutsideClass);\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "usedOutsideClass"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass C {\n  private usedOutsideClass;\n}\n\nconst instance = new C();\nconsole.log(instance['usedOutsideClass']);\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "usedOutsideClass"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  private prop: number;\n\n  method() {\n    const self1 = this;\n    const self2 = self1;\n    return self2.prop;\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "prop"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  #privateMember = 5;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "#privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  private privateMember = 5;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass First {}\nclass Second {\n  #privateMember = 5;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "#privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass First {}\nclass Second {\n  private privateMember = 5;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass First {\n  #privateMember = 5;\n}\nclass Second {}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "#privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass First {\n  private privateMember = 5;\n}\nclass Second {}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass First {\n  #privateMember = 5;\n  #privateMember2 = 5;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "#privateMember"
+					}
+				},
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "#privateMember2"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass First {\n  private privateMember = 5;\n  private privateMember2 = 5;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "privateMember"
+					}
+				},
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "privateMember2"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  #privateMember = 5;\n  method() {\n    this.#privateMember = 42;\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "#privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  private privateMember = 5;\n  method() {\n    this.privateMember = 42;\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  #privateMember = 5;\n  method() {\n    this.#privateMember += 42;\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "#privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  private privateMember = 5;\n  method() {\n    this.privateMember += 42;\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass C {\n  #privateMember;\n\n  foo() {\n    this.#privateMember++;\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "#privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass C {\n  private privateMember;\n\n  foo() {\n    this.privateMember++;\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  #privateMember() {}\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "#privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  private privateMember() {}\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  #privateMember() {}\n  #privateMemberUsed() {\n    return 42;\n  }\n  publicMethod() {\n    return this.#privateMemberUsed();\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "#privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  private privateMember() {}\n  private privateMemberUsed() {\n    return 42;\n  }\n  publicMethod() {\n    return this.privateMemberUsed();\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  set #privateMember(value) {}\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "#privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  private set privateMember(value) {}\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  #privateMember;\n  method() {\n    for (this.#privateMember in bar) {\n    }\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "#privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  private privateMember;\n  method() {\n    for (this.privateMember in bar) {\n    }\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  #privateMember;\n  method() {\n    for (this.#privateMember of bar) {\n    }\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "#privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  private privateMember;\n  method() {\n    for (this.privateMember of bar) {\n    }\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  #privateMember;\n  method() {\n    ({ x: this.#privateMember } = bar);\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "#privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  private privateMember;\n  method() {\n    ({ x: this.privateMember } = bar);\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  #privateMember;\n  method() {\n    [...this.#privateMember] = bar;\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "#privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  private privateMember;\n  method() {\n    [...this.privateMember] = bar;\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  #privateMember;\n  method() {\n    [this.#privateMember = 1] = bar;\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "#privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  private privateMember;\n  method() {\n    [this.privateMember = 1] = bar;\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  #privateMember;\n  method() {\n    [this.#privateMember] = bar;\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "#privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  private privateMember;\n  method() {\n    [this.privateMember] = bar;\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  private privateMember;\n\n  method() {\n    const { unused: privateMember } = this;\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "privateMember"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nconst foo = 'bar';\nclass Foo {\n  private foo = 1;\n\n  method() {\n    const { [foo]: test } = this;\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nconst foo = 'bar';\nclass Foo {\n  private foo = 1;\n  private bar = 2;\n\n  method() {\n    const { [foo]: test } = this;\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {}
+			},
+			"errors": [
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "foo"
+					}
+				},
+				{
+					"messageId": "unusedPrivateClassMember",
+					"data": {
+						"classMemberName": "bar"
+					}
+				}
+			]
+		}
+	]
+}

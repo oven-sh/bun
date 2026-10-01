@@ -1,0 +1,3583 @@
+{
+	"valid": [
+		{
+			"code": "\nimport { ClassDecoratorFactory } from 'decorators';\n@ClassDecoratorFactory()\nexport class Foo {}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { ClassDecorator } from 'decorators';\n@ClassDecorator\nexport class Foo {}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { AccessorDecoratorFactory } from 'decorators';\nexport class Foo {\n  @AccessorDecoratorFactory(true)\n  get bar() {}\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { AccessorDecorator } from 'decorators';\nexport class Foo {\n  @AccessorDecorator\n  set bar() {}\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { MethodDecoratorFactory } from 'decorators';\nexport class Foo {\n  @MethodDecoratorFactory(false)\n  bar() {}\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { MethodDecorator } from 'decorators';\nexport class Foo {\n  @MethodDecorator\n  static bar() {}\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { ConstructorParameterDecoratorFactory } from 'decorators';\nexport class Service {\n  constructor(\n    @ConstructorParameterDecoratorFactory(APP_CONFIG) config: AppConfig,\n  ) {\n    this.title = config.title;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { ConstructorParameterDecorator } from 'decorators';\nexport class Foo {\n  constructor(@ConstructorParameterDecorator bar) {\n    this.bar = bar;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { ParameterDecoratorFactory } from 'decorators';\nexport class Qux {\n  bar(@ParameterDecoratorFactory(true) baz: number) {\n    console.log(baz);\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { ParameterDecorator } from 'decorators';\nexport class Foo {\n  static greet(@ParameterDecorator name: string) {\n    return name;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Input, Output, EventEmitter } from 'decorators';\nexport class SomeComponent {\n  @Input() data;\n  @Output()\n  click = new EventEmitter();\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { configurable } from 'decorators';\nexport class A {\n  @configurable(true) static prop1;\n\n  @configurable(false)\n  static prop2;\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { foo, bar } from 'decorators';\nexport class B {\n  @foo x;\n\n  @bar\n  y;\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\ninterface Base {}\nclass Thing implements Base {}\nnew Thing();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\ninterface Base {}\nconst a: Base = {};\nconsole.log(a);\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Foo } from 'foo';\nfunction bar<T>(): T {}\nbar<Foo>();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Foo } from 'foo';\nconst bar = function <T>(): T {};\nbar<Foo>();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Foo } from 'foo';\nconst bar = <T,>(): T => {};\nbar<Foo>();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Foo } from 'foo';\n<Foo>(<T,>(): T => {})();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nconst a: Nullable<string> = 'hello';\nconsole.log(a);\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nimport { SomeOther } from 'other';\nconst a: Nullable<SomeOther> = 'hello';\nconsole.log(a);\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nconst a: Nullable | undefined = 'hello';\nconsole.log(a);\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nconst a: Nullable & undefined = 'hello';\nconsole.log(a);\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nimport { SomeOther } from 'other';\nconst a: Nullable<SomeOther[]> = 'hello';\nconsole.log(a);\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nimport { SomeOther } from 'other';\nconst a: Nullable<Array<SomeOther>> = 'hello';\nconsole.log(a);\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nconst a: Array<Nullable> = 'hello';\nconsole.log(a);\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nconst a: Nullable[] = 'hello';\nconsole.log(a);\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nconst a: Array<Nullable[]> = 'hello';\nconsole.log(a);\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nconst a: Array<Array<Nullable>> = 'hello';\nconsole.log(a);\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nimport { SomeOther } from 'other';\nconst a: Array<Nullable<SomeOther>> = 'hello';\nconsole.log(a);\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nimport { Component } from 'react';\nclass Foo implements Component<Nullable> {}\n\nnew Foo();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nimport { Component } from 'react';\nclass Foo extends Component<Nullable, {}> {}\nnew Foo();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nimport { SomeOther } from 'some';\nimport { Component } from 'react';\nclass Foo extends Component<Nullable<SomeOther>, {}> {}\nnew Foo();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nimport { SomeOther } from 'some';\nimport { Component } from 'react';\nclass Foo implements Component<Nullable<SomeOther>, {}> {}\nnew Foo();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nimport { SomeOther } from 'some';\nimport { Component, Component2 } from 'react';\nclass Foo implements Component<Nullable<SomeOther>, {}>, Component2 {}\nnew Foo();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nimport { Another } from 'some';\nclass A {\n  do = (a: Nullable<Another>) => {\n    console.log(a);\n  };\n}\nnew A();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nimport { Another } from 'some';\nclass A {\n  do(a: Nullable<Another>) {\n    console.log(a);\n  }\n}\nnew A();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nimport { Another } from 'some';\nclass A {\n  do(): Nullable<Another> {\n    return null;\n  }\n}\nnew A();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nimport { Another } from 'some';\nexport interface A {\n  do(a: Nullable<Another>);\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nimport { Another } from 'some';\nexport interface A {\n  other: Nullable<Another>;\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nfunction foo(a: Nullable) {\n  console.log(a);\n}\nfoo();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nfunction foo(): Nullable {\n  return null;\n}\nfoo();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nimport { SomeOther } from 'some';\nclass A extends Nullable<SomeOther> {\n  other: Nullable<Another>;\n}\nnew A();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nimport { SomeOther } from 'some';\nimport { Another } from 'some';\nclass A extends Nullable<SomeOther> {\n  do(a: Nullable<Another>) {\n    console.log(a);\n  }\n}\nnew A();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nimport { SomeOther } from 'some';\nimport { Another } from 'some';\nexport interface A extends Nullable<SomeOther> {\n  other: Nullable<Another>;\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nimport { SomeOther } from 'some';\nimport { Another } from 'some';\nexport interface A extends Nullable<SomeOther> {\n  do(a: Nullable<Another>);\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Foo } from './types';\n\nclass Bar<T extends Foo> {\n  prop: T;\n}\n\nnew Bar<number>();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Foo, Bar } from './types';\n\nclass Baz<T extends Foo & Bar> {\n  prop: T;\n}\n\nnew Baz<any>();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Foo } from './types';\n\nclass Bar<T = Foo> {\n  prop: T;\n}\n\nnew Bar<number>();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Foo } from './types';\n\nclass Foo<T = any> {\n  prop: T;\n}\n\nnew Foo();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Foo } from './types';\n\nclass Foo<T = {}> {\n  prop: T;\n}\n\nnew Foo();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Foo } from './types';\n\nclass Foo<T extends {} = {}> {\n  prop: T;\n}\n\nnew Foo();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\ntype Foo = 'a' | 'b' | 'c';\ntype Bar = number;\n\nexport const map: { [name in Foo]: Bar } = {\n  a: 1,\n  b: 2,\n  c: 3,\n};\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\ntype Foo = 'a' | 'b' | 'c';\ntype Bar = number;\n\nexport const map: { [name in Foo as string]: Bar } = {\n  a: 1,\n  b: 2,\n  c: 3,\n};\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nclass A<T> {\n  bar: T;\n}\nnew A<Nullable>();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nimport { SomeOther } from 'other';\nfunction foo<T extends Nullable>(): T {}\nfoo<SomeOther>();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nimport { SomeOther } from 'other';\nclass A<T extends Nullable> {\n  bar: T;\n}\nnew A<SomeOther>();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nimport { SomeOther } from 'other';\ninterface A<T extends Nullable> {\n  bar: T;\n}\nexport const a: A<SomeOther> = {\n  foo: 'bar',\n};\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nexport class App {\n  constructor(private logger: Logger) {\n    console.log(this.logger);\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nexport class App {\n  constructor(bar: string);\n  constructor(private logger: Logger) {\n    console.log(this.logger);\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nexport class App {\n  constructor(\n    baz: string,\n    private logger: Logger,\n  ) {\n    console.log(baz);\n    console.log(this.logger);\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nexport class App {\n  constructor(\n    baz: string,\n    private logger: Logger,\n    private bar: () => void,\n  ) {\n    console.log(this.logger);\n    this.bar();\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nexport class App {\n  constructor(private logger: Logger) {}\n  meth() {\n    console.log(this.logger);\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Component, Vue } from 'vue-property-decorator';\nimport HelloWorld from './components/HelloWorld.vue';\n\n@Component({\n  components: {\n    HelloWorld,\n  },\n})\nexport default class App extends Vue {}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport firebase, { User } from 'firebase/app';\n// initialize firebase project\nfirebase.initializeApp({});\nexport function authenticated(cb: (user: User | null) => void): void {\n  firebase.auth().onAuthStateChanged(user => cb(user));\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Foo } from './types';\nexport class Bar<T extends Foo> {\n  prop: T;\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport webpack from 'webpack';\nexport default function webpackLoader(this: webpack.loader.LoaderContext) {}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport execa, { Options as ExecaOptions } from 'execa';\nexport function foo(options: ExecaOptions): execa {\n  options();\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Foo, Bar } from './types';\nexport class Baz<F = Foo & Bar> {\n  prop: F;\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\n// warning 'B' is defined but never used\nexport const a: Array<{ b: B }> = [];\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nexport enum FormFieldIds {\n  PHONE = 'phone',\n  EMAIL = 'email',\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nenum FormFieldIds {\n  PHONE = 'phone',\n  EMAIL = 'email',\n}\nexport interface IFoo {\n  fieldName: FormFieldIds;\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nenum FormFieldIds {\n  PHONE = 'phone',\n  EMAIL = 'email',\n}\nexport interface IFoo {\n  fieldName: FormFieldIds.EMAIL;\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport * as fastify from 'fastify';\nimport { Server, IncomingMessage, ServerResponse } from 'http';\nconst server: fastify.FastifyInstance<Server, IncomingMessage, ServerResponse> =\n  fastify({});\nserver.get('/ping');\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\ndeclare namespace Foo {\n  function bar(line: string, index: number | null, tabSize: number): number;\n  var baz: string;\n}\nconsole.log(Foo);\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport foo from 'foo';\nexport interface Bar extends foo.i18n {}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport foo from 'foo';\nimport bar from 'foo';\nexport interface Bar extends foo.i18n<bar> {}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { TypeA } from './interface';\nexport const a = <GenericComponent<TypeA> />;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nconst text = 'text';\nexport function Foo() {\n  return (\n    <div>\n      <input type=\"search\" size={30} placeholder={text} />\n    </div>\n  );\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { observable } from 'mobx';\nexport default class ListModalStore {\n  @observable\n  orderList: IObservableArray<BizPurchaseOrderTO> = observable([]);\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Dec, TypeA, Class } from 'test';\nexport default class Foo {\n  constructor(\n    @Dec(Class)\n    private readonly prop: TypeA<Class>,\n  ) {}\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Dec, TypeA, Class } from 'test';\nexport default class Foo {\n  constructor(\n    @Dec(Class)\n    ...prop: TypeA<Class>\n  ) {\n    prop();\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nexport function foo(): void;\nexport function foo(): void;\nexport function foo(): void {}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nexport function foo(a: number): number;\nexport function foo(a: string): string;\nexport function foo(a: number | string): number | string {\n  return a;\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nexport function foo<T>(a: number): T;\nexport function foo<T>(a: string): T;\nexport function foo<T>(a: number | string): T {\n  return a;\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nexport type T = {\n  new (): T;\n  new (arg: number): T;\n  new <T>(arg: number): T;\n};\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nexport type T = new () => T;\nexport type T = new (arg: number) => T;\nexport type T = new <T>(arg: number) => T;\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nenum Foo {\n  a,\n}\nexport type T = {\n  [Foo.a]: 1;\n};\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\ntype Foo = string;\nexport class Bar {\n  [x: Foo]: any;\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\ntype Foo = string;\nexport class Bar {\n  [x: Foo]: Foo;\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nnamespace Foo {\n  export const Foo = 1;\n}\n\nexport { Foo };\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nexport namespace Foo {\n  export const item: Foo = 1;\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nnamespace foo.bar {\n  export interface User {\n    name: string;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nexport interface Foo {\n  bar: string;\n  baz: Foo['bar'];\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nexport type Bar = Array<Bar>;\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nfunction Foo() {}\n\nnamespace Foo {\n  export const x = 1;\n}\n\nexport { Foo };\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nclass Foo {}\n\nnamespace Foo {\n  export const x = 1;\n}\n\nexport { Foo };\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nnamespace Foo {}\n\nconst Foo = 1;\n\nexport { Foo };\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\ntype Foo = {\n  error: Error | null;\n};\n\nexport function foo() {\n  return new Promise<Foo>();\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nexport function foo<T>(value: T): T {\n  return { value };\n}\nexport type Foo<T> = typeof foo<T>;\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nexport interface Event<T> {\n  (\n    listener: (e: T) => any,\n    thisArgs?: any,\n    disposables?: Disposable[],\n  ): Disposable;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"options": [
+				{
+					"args": "after-used",
+					"argsIgnorePattern": "^_",
+					"ignoreRestSiblings": true,
+					"varsIgnorePattern": "^_$"
+				}
+			]
+		},
+		{
+			"code": "\nexport class Test {\n  constructor(@Optional() value: number[] = []) {\n    console.log(value);\n  }\n}\n\nfunction Optional() {\n  return () => {};\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { FooType } from './fileA';\n\nexport abstract class Foo {\n  protected abstract readonly type: FooType;\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nexport type F<A extends unknown[]> = (...a: A) => unknown;\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { Foo } from './bar';\nexport type F<A extends unknown[]> = (...a: Foo<A>) => unknown;\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\ntype StyledPaymentProps = {\n  isValid: boolean;\n};\n\nexport const StyledPayment = styled.div<StyledPaymentProps>``;\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport type { foo } from './a';\nexport type Bar = typeof foo;\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\ninterface Foo {}\ntype Bar = {};\ndeclare class Clazz {}\ndeclare function func();\ndeclare enum Enum {}\ndeclare namespace Name {}\ndeclare const v1;\ndeclare var v2;\ndeclare let v3;\ndeclare const { v4 };\ndeclare const { v4: v5 };\ndeclare const [v6];\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts"
+		},
+		{
+			"code": "\nexport type Test<U> = U extends (k: infer I) => void ? I : never;\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nexport type Test<U> = U extends { [k: string]: infer I } ? I : never;\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nexport type Test<U> = U extends (arg: {\n  [k: string]: (arg2: infer I) => void;\n}) => void\n  ? I\n  : never;\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\n        import React from 'react';\n\n        export const ComponentFoo: React.FC = () => {\n          return <div>Foo Foo</div>;\n        };\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\n        import { h } from 'some-other-jsx-lib';\n\n        export const ComponentFoo: h.FC = () => {\n          return <div>Foo Foo</div>;\n        };\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					},
+					"ecmaVersion": 6,
+					"sourceType": "module",
+					"jsxPragma": "h"
+				}
+			}
+		},
+		{
+			"code": "\n        import { Fragment } from 'react';\n\n        export const ComponentFoo: Fragment = () => {\n          return <>Foo Foo</>;\n        };\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					},
+					"ecmaVersion": 6,
+					"sourceType": "module",
+					"jsxFragmentName": "Fragment"
+				}
+			}
+		},
+		{
+			"code": "\ndeclare module 'foo' {\n  type Test = 1;\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\ndeclare module 'foo' {\n  type Test = 1;\n  const x: Test = 1;\n  export = x;\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\ndeclare global {\n  interface Foo {}\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\ndeclare global {\n  namespace jest {\n    interface Matchers<R> {\n      toBeSeven: () => R;\n    }\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nexport declare namespace Foo {\n  namespace Bar {\n    namespace Baz {\n      namespace Bam {\n        const x = 1;\n      }\n    }\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nclass Foo<T> {\n  value: T;\n}\nclass Bar<T> {\n  foo = Foo<T>;\n}\nnew Bar();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\ndeclare namespace A {\n  export interface A {}\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts"
+		},
+		{
+			"code": "\ndeclare function A(A: string): string;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts"
+		},
+		{
+			"code": "\ntype Color = 'red' | 'blue';\ntype Quantity = 'one' | 'two';\nexport type SeussFish = `${Quantity | Color} fish`;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\ntype VerticalAlignment = \"top\" | \"middle\" | \"bottom\";\ntype HorizontalAlignment = \"left\" | \"center\" | \"right\";\n\nexport declare function setAlignment(value: \\`\\${VerticalAlignment}-\\${HorizontalAlignment}\\`): void;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\ntype EnthusiasticGreeting<T extends string> = \\`\\${Uppercase<T>} - \\${Lowercase<T>} - \\${Capitalize<T>} - \\${Uncapitalize<T>}\\`;\nexport type HELLO = EnthusiasticGreeting<\"heLLo\">;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\ninterface IItem {\n  title: string;\n  url: string;\n  children?: IItem[];\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts"
+		},
+		{
+			"code": "\nnamespace _Foo {\n  export const bar = 1;\n  export const baz = Foo.bar;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"options": [
+				{
+					"varsIgnorePattern": "^_"
+				}
+			]
+		},
+		{
+			"code": "\ninterface _Foo {\n  a: string;\n  b: Foo;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"options": [
+				{
+					"varsIgnorePattern": "^_"
+				}
+			]
+		},
+		{
+			"code": "\n/* eslint @rule-tester/collect-unused-vars: \"error\" */\ndeclare module 'next-auth' {\n  interface User {\n    id: string;\n    givenName: string;\n    familyName: string;\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { TestGeneric, Test } from 'fake-module';\n\ndeclare function deco(..._param: any): any;\nexport class TestClass {\n  @deco\n  public test(): TestGeneric<Test> {}\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module",
+					"project": "./tsconfig-withmeta.json",
+					"projectService": false,
+					"tsconfigRootDir": "/fixtures"
+				}
+			}
+		},
+		{
+			"code": "\nfunction foo() {}\n\nexport class Foo {\n  constructor() {\n    foo();\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nfunction foo() {}\n\nexport class Foo {\n  static {}\n\n  constructor() {\n    foo();\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\ninterface Foo {\n  bar: string;\n}\nexport const Foo = 'bar';\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nexport const Foo = 'bar';\ninterface Foo {\n  bar: string;\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nlet foo = 1;\nfoo ??= 2;\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nlet foo = 1;\nfoo &&= 2;\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nlet foo = 1;\nfoo ||= 2;\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nconst foo = 1;\nexport = foo;\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nconst Foo = 1;\ninterface Foo {\n  bar: string;\n}\nexport = Foo;\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\ninterface Foo {\n  bar: string;\n}\nexport = Foo;\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\ntype Foo = 1;\nexport = Foo;\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\ntype Foo = 1;\nexport = {} as Foo;\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\ndeclare module 'foo' {\n  type Foo = 1;\n  export = Foo;\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nnamespace Foo {\n  export const foo = 1;\n}\nexport namespace Bar {\n  export import TheFoo = Foo;\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\ntype _Foo = 1;\nexport const x: _Foo = 1;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"options": [
+				{
+					"reportUsedIgnorePattern": false,
+					"varsIgnorePattern": "^_"
+				}
+			]
+		},
+		{
+			"code": "\nexport const foo: number = 1;\n\nexport type Foo = typeof foo;\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { foo } from 'foo';\n\nexport type Foo = typeof foo;\n\nexport const bar = (): Foo => foo;\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { SomeType } from 'foo';\n\nexport const value = 1234 as typeof SomeType;\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nimport { foo } from 'foo';\n\nexport type Bar = typeof foo;\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nexport enum Foo {\n  _A,\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"options": [
+				{
+					"reportUsedIgnorePattern": true,
+					"varsIgnorePattern": "_"
+				}
+			]
+		},
+		{
+			"code": "\nconst command = (): ParameterDecorator => {\n  return () => {};\n};\n\nexport class Foo {\n  bar(@command() command: string) {\n    console.log(command);\n  }\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nexport namespace Foo {\n  const foo: 1234;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts"
+		},
+		{
+			"code": "\ndeclare module 'foo' {\n  const foo: 1234;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts"
+		},
+		{
+			"code": "\nconst foo: 1234;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts"
+		},
+		{
+			"code": "\nexport namespace Foo {\n  export import Bar = Something.Bar;\n  const foo: 1234;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts"
+		},
+		{
+			"code": "\ndeclare module 'foo' {\n  export import Bar = Something.Bar;\n  const foo: 1234;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts"
+		},
+		{
+			"code": "\nexport import Bar = Something.Bar;\nconst foo: 1234;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts"
+		},
+		{
+			"code": "\ndeclare module 'foo' {\n  export import Bar = Something.Bar;\n  const foo: 1234;\n  export const bar: string;\n  export namespace NS {\n    const baz: 1234;\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts"
+		},
+		{
+			"code": "\nexport namespace Foo {\n  export import Bar = Something.Bar;\n  const foo: 1234;\n  export const bar: string;\n  export namespace NS {\n    const baz: 1234;\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts"
+		},
+		{
+			"code": "\nexport import Bar = Something.Bar;\nconst foo: 1234;\nexport const bar: string;\nexport namespace NS {\n  const baz: 1234;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts"
+		},
+		{
+			"code": "\nexport namespace Foo {\n  const foo: 1234;\n  export const bar: string;\n  export namespace NS {\n    const baz: 1234;\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts"
+		},
+		{
+			"code": "\nexport namespace Foo {\n  type Foo = 1;\n  type Bar = 1;\n\n  export default function foo(): Bar;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts"
+		},
+		{
+			"code": "\ndeclare module 'foo' {\n  type Foo = 1;\n  type Bar = 1;\n\n  export default function foo(): Bar;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts"
+		},
+		{
+			"code": "\ntype Foo = 1;\ntype Bar = 1;\n\nexport default function foo(): Bar;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts"
+		},
+		{
+			"code": "\nclass Foo {}\ndeclare class Bar {}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts"
+		},
+		{
+			"code": "\nusing resource = getResource();\nresource;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 2026,
+					"sourceType": "module"
+				}
+			}
+		},
+		{
+			"code": "\nusing resource = getResource();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 2026,
+					"sourceType": "module"
+				}
+			},
+			"options": [
+				{
+					"ignoreUsingDeclarations": true
+				}
+			]
+		},
+		{
+			"code": "\nawait using resource = getResource();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 2026,
+					"sourceType": "module"
+				}
+			},
+			"options": [
+				{
+					"ignoreUsingDeclarations": true
+				}
+			]
+		}
+	],
+	"invalid": [
+		{
+			"code": "\nimport { ClassDecoratorFactory } from 'decorators';\nexport class Foo {}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 10,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "ClassDecoratorFactory"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nimport { Foo, Bar } from 'foo';\nfunction baz<Foo>(): Foo {}\nbaz<Bar>();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 10,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nconst a: string = 'hello';\nconsole.log(a);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 10,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Nullable"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nimport { SomeOther } from 'other';\nconst a: Nullable<string> = 'hello';\nconsole.log(a);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 10,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "SomeOther"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nimport { Another } from 'some';\nclass A {\n  do = (a: Nullable) => {\n    console.log(a);\n  };\n}\nnew A();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 10,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Another"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nimport { Another } from 'some';\nclass A {\n  do(a: Nullable) {\n    console.log(a);\n  }\n}\nnew A();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 10,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Another"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nimport { Another } from 'some';\nclass A {\n  do(): Nullable {\n    return null;\n  }\n}\nnew A();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 10,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Another"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nimport { Another } from 'some';\nexport interface A {\n  do(a: Nullable);\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 10,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Another"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nimport { Another } from 'some';\nexport interface A {\n  other: Nullable;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 10,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Another"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nfunction foo(a: string) {\n  console.log(a);\n}\nfoo();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 10,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Nullable"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nfunction foo(): string | null {\n  return null;\n}\nfoo();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 10,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Nullable"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nimport { SomeOther } from 'some';\nimport { Another } from 'some';\nclass A extends Nullable {\n  other: Nullable<Another>;\n}\nnew A();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 10,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "SomeOther"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nimport { Nullable } from 'nullable';\nimport { SomeOther } from 'some';\nimport { Another } from 'some';\nabstract class A extends Nullable {\n  other: Nullable<Another>;\n}\nnew A();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 10,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "SomeOther"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nenum FormFieldIds {\n  PHONE = 'phone',\n  EMAIL = 'email',\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 6,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "FormFieldIds"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nimport test from 'test';\nimport baz from 'baz';\nexport interface Bar extends baz.test {}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 8,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "test"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nimport test from 'test';\nimport baz from 'baz';\nexport class Bar implements baz.test {}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 8,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "test"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nnamespace Foo {}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 11,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nnamespace Foo {\n  export const Foo = 1;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 11,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nnamespace Foo {\n  const Foo = 1;\n  console.log(Foo);\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 11,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nnamespace Foo {\n  export const Bar = 1;\n  console.log(Foo.Bar);\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 11,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nnamespace Foo {\n  namespace Foo {\n    export const Bar = 1;\n    console.log(Foo.Bar);\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 11,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Foo"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 13,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ninterface Foo {\n  bar: string;\n  baz: Foo['bar'];\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 11,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ntype Foo = Array<Foo>;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 6,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nimport React from 'react';\nimport { Fragment } from 'react';\n\nexport const ComponentFoo = () => {\n  return <div>Foo Foo</div>;\n};\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 10,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Fragment"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nimport React from 'react';\nimport { h } from 'some-other-jsx-lib';\n\nexport const ComponentFoo = () => {\n  return <div>Foo Foo</div>;\n};\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					},
+					"ecmaVersion": 6,
+					"sourceType": "module",
+					"jsxPragma": "h"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 8,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "React"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nimport React from 'react';\n\nexport const ComponentFoo = () => {\n  return <div>Foo Foo</div>;\n};\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {
+						"jsx": true
+					},
+					"ecmaVersion": 6,
+					"sourceType": "module",
+					"jsxPragma": null
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 8,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "React"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ndeclare module 'foo' {\n  type Test = any;\n  const x = 1;\n  export = x;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 8,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Test"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n// not declared\nexport namespace Foo {\n  namespace Bar {\n    namespace Baz {\n      namespace Bam {\n        const x = 1;\n      }\n    }\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 4,
+					"column": 13,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Bar"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"line": 5,
+					"column": 15,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Baz"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"line": 6,
+					"column": 17,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Bam"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"line": 7,
+					"column": 15,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ninterface Foo {\n  a: string;\n}\ninterface Foo {\n  b: Foo;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 11,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nlet x = null;\nx = foo(x);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 1,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ninterface Foo {\n  bar: string;\n}\nconst Foo = 'bar';\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 5,
+					"column": 7,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "Foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nlet foo = 1;\nfoo += 1;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 1,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ninterface Foo {\n  bar: string;\n}\ntype Bar = 1;\nexport = Bar;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 11,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ninterface Foo {\n  bar: string;\n}\ntype Bar = 1;\nexport = Foo;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 5,
+					"column": 6,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Bar"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nnamespace Foo {\n  export const foo = 1;\n}\nexport namespace Bar {\n  import TheFoo = Foo;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 6,
+					"column": 10,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "TheFoo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nconst foo: number = 1;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 7,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nenum Foo {\n  A = 1,\n  B = Foo.A,\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ntype _Foo = 1;\nexport const x: _Foo = 1;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"options": [
+				{
+					"reportUsedIgnorePattern": true,
+					"varsIgnorePattern": "^_"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "usedIgnoredVar",
+					"line": 2,
+					"data": {
+						"additional": ". Used vars must not match /^_/u",
+						"varName": "_Foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ninterface _Foo {}\nexport const x: _Foo = 1;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"options": [
+				{
+					"reportUsedIgnorePattern": true,
+					"varsIgnorePattern": "^_"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "usedIgnoredVar",
+					"line": 2,
+					"data": {
+						"additional": ". Used vars must not match /^_/u",
+						"varName": "_Foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nenum _Foo {\n  A = 1,\n}\nexport const x = _Foo.A;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"options": [
+				{
+					"reportUsedIgnorePattern": true,
+					"varsIgnorePattern": "^_"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "usedIgnoredVar",
+					"line": 2,
+					"data": {
+						"additional": ". Used vars must not match /^_/u",
+						"varName": "_Foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nnamespace _Foo {}\nexport const x = _Foo;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"options": [
+				{
+					"reportUsedIgnorePattern": true,
+					"varsIgnorePattern": "^_"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "usedIgnoredVar",
+					"line": 2,
+					"data": {
+						"additional": ". Used vars must not match /^_/u",
+						"varName": "_Foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n        const foo: number = 1;\n\n        export type Foo = typeof foo;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "usedOnlyAsType",
+					"line": 2,
+					"column": 15,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n        declare const foo: number;\n\n        export type Foo = typeof foo;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "usedOnlyAsType",
+					"line": 2,
+					"column": 23,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n        const foo: number = 1;\n\n        export type Foo = typeof foo | string;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "usedOnlyAsType",
+					"line": 2,
+					"column": 15,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n        const foo: number = 1;\n\n        export type Foo = (typeof foo | string) & { __brand: 'foo' };\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "usedOnlyAsType",
+					"line": 2,
+					"column": 15,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n        const foo = {\n          bar: {\n            baz: 123,\n          },\n        };\n\n        export type Bar = typeof foo.bar;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "usedOnlyAsType",
+					"line": 2,
+					"column": 15,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n        const foo = {\n          bar: {\n            baz: 123,\n          },\n        };\n\n        export type Bar = (typeof foo)['bar'];\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "usedOnlyAsType",
+					"line": 2,
+					"column": 15,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nconst command = (): ParameterDecorator => {\n  return () => {};\n};\n\nexport class Foo {\n  bar(@command() command: string) {}\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 7,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "command"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ndeclare const deco: () => ParameterDecorator;\n\nexport class Foo {\n  bar(@deco() deco, @deco() param) {}\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 5,
+					"column": 15,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "deco"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"line": 5,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "param"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nexport namespace Foo {\n  const foo: 1234;\n  export {};\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts",
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nconst foo: 1234;\nexport {};\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts",
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ndeclare module 'foo' {\n  const foo: 1234;\n  export {};\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts",
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nexport namespace Foo {\n  const foo: 1234;\n  const bar: 4567;\n\n  export { bar };\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts",
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nconst foo: 1234;\nconst bar: 4567;\n\nexport { bar };\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts",
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ndeclare module 'foo' {\n  const foo: 1234;\n  const bar: 4567;\n\n  export { bar };\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts",
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nexport namespace Foo {\n  const foo: 1234;\n  const bar: 4567;\n  export const bazz: 4567;\n\n  export { bar };\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts",
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nconst foo: 1234;\nconst bar: 4567;\nexport const bazz: 4567;\n\nexport { bar };\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts",
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ndeclare module 'foo' {\n  const foo: 1234;\n  const bar: 4567;\n  export const bazz: 4567;\n\n  export { bar };\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts",
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nexport namespace Foo {\n  const foo: string;\n  const bar: number;\n\n  export default bar;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts",
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nconst foo: string;\nconst bar: number;\n\nexport default bar;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts",
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ndeclare module 'foo' {\n  const foo: string;\n  const bar: number;\n\n  export default bar;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts",
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nexport namespace Foo {\n  const foo: string;\n  const bar: number;\n  export const bazz: number;\n\n  export default bar;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts",
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nconst foo: string;\nconst bar: number;\nexport const bazz: number;\n\nexport default bar;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts",
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ndeclare module 'foo' {\n  const foo: string;\n  const bar: number;\n  export const bazz: number;\n\n  export default bar;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts",
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nexport namespace Foo {\n  const foo: string;\n  export const bar: number;\n\n  export * from '...';\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts",
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nconst foo: string;\nexport const bar: number;\n\nexport * from '...';\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts",
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ndeclare module 'foo' {\n  const foo: string;\n  export const bar: number;\n\n  export * from '...';\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts",
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nnamespace Foo {\n  type Foo = 1;\n  type Bar = 1;\n\n  export = Bar;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts",
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ntype Foo = 1;\ntype Bar = 1;\n\nexport = Bar;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts",
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ndeclare module 'foo' {\n  type Foo = 1;\n  type Bar = 1;\n\n  export = Bar;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts",
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ndeclare module 'foo' {\n  type Test = 1;\n  export {};\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts",
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Test"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nexport declare namespace Foo {\n  namespace Bar {\n    namespace Baz {\n      namespace Bam {\n        const x = 1;\n      }\n\n      export {};\n    }\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 5,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Bam"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ndeclare module 'foo' {\n  namespace Bar {\n    namespace Baz {\n      namespace Bam {\n        const x = 1;\n      }\n\n      export {};\n    }\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 5,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Bam"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ndeclare enum Foo {}\nexport {};\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ndeclare class Bar {}\n\nexport {};\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts",
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Bar"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {}\n\nexport {};\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"filename": "foo.d.ts",
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nusing resource = getResource();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 2026,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "resource"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nawait using resource = getResource();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 2026,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "resource"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nexport const myTypeGuard2 = (data2: unknown): typeof data2 => {\n  return true;\n};\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "usedOnlyAsType",
+					"line": 2,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "data2"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nexport const myTypeGuard = (data: unknown): data is string => {\n  return true;\n};\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"ecmaFeatures": {},
+					"ecmaVersion": 6,
+					"sourceType": "module"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "usedOnlyAsType",
+					"line": 2,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "data"
+					}
+				}
+			]
+		}
+	]
+}

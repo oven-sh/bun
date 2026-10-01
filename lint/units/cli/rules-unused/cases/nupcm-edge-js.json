@@ -1,0 +1,1262 @@
+[
+	{
+		"code": "class A { #x; m() { this.#x; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { this.#x; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { this.#x = 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { this.#x = 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { (this.#x) = 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { (this.#x) = 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { ((this.#x)) = 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { ((this.#x)) = 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { this.#x += 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { this.#x += 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { (this.#x += 1); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { (this.#x += 1); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { this.#x ||= 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { this.#x ||= 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { this.#x &&= 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { this.#x &&= 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { this.#x ??= 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { this.#x ??= 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { this.#x **= 2; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { this.#x **= 2; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { this.#x++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { this.#x++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { ++this.#x; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { ++this.#x; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { this.#x--; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { this.#x--; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { --this.#x; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { --this.#x; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { (this.#x++); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { (this.#x++); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { (this.#x)++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { (this.#x)++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { a, this.#x++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { a, this.#x++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { this.#x++, a; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { this.#x++, a; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { a = this.#x++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { a = this.#x++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { a = this.#x += 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { a = this.#x += 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { a = (this.#x = 1); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { a = (this.#x = 1); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { this.#x = this.#x + 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { this.#x = this.#x + 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { this.#x = a = 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { this.#x = a = 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { a = this.#x = 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { a = this.#x = 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { x(this.#x = 1); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { x(this.#x = 1); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { x(this.#x++); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { x(this.#x++); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { for (this.#x = 0;;) break; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { for (this.#x = 0;;) break; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { for (this.#x++;;) break; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { for (this.#x++;;) break; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { for (;; this.#x++) break; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { for (;; this.#x++) break; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { for (; this.#x++;) break; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { for (; this.#x++;) break; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { for (this.#x in o); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { for (this.#x in o); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { for (this.#x of o); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { for (this.#x of o); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { for ((this.#x) in o); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { for ((this.#x) in o); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { for ([this.#x] of o); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { for ([this.#x] of o); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { for ({ a: this.#x } of o); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { for ({ a: this.#x } of o); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { for (const k in this.#x); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { for (const k in this.#x); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { for (const k of this.#x); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { for (const k of this.#x); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { for (var k = this.#x;;) break; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { for (var k = this.#x;;) break; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { [this.#x] = o; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { [this.#x] = o; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { [(this.#x)] = o; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { [(this.#x)] = o; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { [this.#x = 1] = o; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { [this.#x = 1] = o; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { [a = this.#x] = o; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { [a = this.#x] = o; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { [...this.#x] = o; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { [...this.#x] = o; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { [...[this.#x]] = o; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { [...[this.#x]] = o; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { [[this.#x]] = o; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { [[this.#x]] = o; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { [, this.#x] = o; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { [, this.#x] = o; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { ({ a: this.#x } = o); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { ({ a: this.#x } = o); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { ({ a: this.#x = 1 } = o); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { ({ a: this.#x = 1 } = o); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { ({ a: [this.#x] } = o); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { ({ a: [this.#x] } = o); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { ({ [this.#x]: a } = o); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { ({ [this.#x]: a } = o); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { ({ ...this.#x } = o); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { ({ ...this.#x } = o); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { ({ a: { b: this.#x } } = o); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { ({ a: { b: this.#x } } = o); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { ({ a = this.#x } = o); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { ({ a = this.#x } = o); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { ({ a: b = this.#x } = o); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { ({ a: b = this.#x } = o); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { ({ [this.#x]: this.#x } = o); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { ({ [this.#x]: this.#x } = o); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { [this.#x]; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { [this.#x]; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { ({ a: this.#x }); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { ({ a: this.#x }); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { x(...this.#x); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { x(...this.#x); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { [...this.#x]; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { [...this.#x]; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { ({ ...this.#x }); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { ({ ...this.#x }); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { if (c) this.#x++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { if (c) this.#x++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { if (c) this.#x += 1; else this.#x -= 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { if (c) this.#x += 1; else this.#x -= 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { while (c) this.#x++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { while (c) this.#x++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { do this.#x++; while (c); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { do this.#x++; while (c); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { l: this.#x++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { l: this.#x++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { { this.#x++; } } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { { this.#x++; } } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { switch (c) { case 1: this.#x++; } } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { switch (c) { case 1: this.#x++; } } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { try { this.#x++; } catch {} } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { try { this.#x++; } catch {} } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { with (o) this.#x++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { with (o) this.#x++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { return this.#x++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { return this.#x++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { throw this.#x++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { throw this.#x++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { void this.#x++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { void this.#x++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { !this.#x++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { !this.#x++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { this.#x++ + 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { this.#x++ + 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { c ? this.#x++ : 0; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { c ? this.#x++ : 0; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { c && this.#x++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { c && this.#x++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { c && (this.#x = 1); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { c && (this.#x = 1); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { c ? (this.#x = 1) : 0; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { c ? (this.#x = 1) : 0; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { (() => this.#x++)(); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { (() => this.#x++)(); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { (() => { this.#x++; })(); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { (() => { this.#x++; })(); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { (function () { this.#x++; }).call(this); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { (function () { this.#x++; }).call(this); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { () => (this.#x = 1); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { () => (this.#x = 1); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { () => this.#x; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { () => this.#x; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { delete this.#x; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { delete this.#x; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { typeof this.#x; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { typeof this.#x; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { this.#x.y = 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { this.#x.y = 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { this.#x.y++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { this.#x.y++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { this.#x[0] = 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { this.#x[0] = 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { this.#x(); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { this.#x(); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { new this.#x(); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { new this.#x(); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { this.#x``; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { this.#x``; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { this.#x?.y; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { this.#x?.y; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { this?.#x; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { this?.#x; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { a?.b.#x; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { a?.b.#x; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { (a?.b).#x = 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { (a?.b).#x = 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { #x in this; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { #x in this; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { (#x in this); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { (#x in this); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { a = #x in this; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { a = #x in this; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { if (#x in o) {} } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { if (#x in o) {} } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { #x in o ? 1 : 2; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { #x in o ? 1 : 2; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { x(#x in o); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { x(#x in o); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { o.#x = 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { o.#x = 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { o.p.#x = 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { o.p.#x = 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { f().#x = 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { f().#x = 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { o.#x; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { o.#x; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { super.y = this.#x; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { super.y = this.#x; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { this.#x = this; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { this.#x = this; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { [this.#x, a] = [a, this.#x]; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { [this.#x, a] = [a, this.#x]; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { this.#x = () => this.#x; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { this.#x = () => this.#x; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { `${this.#x}`; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { `${this.#x}`; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { `${this.#x = 1}`; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { `${this.#x = 1}`; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { `${this.#x++}`; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { `${this.#x++}`; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { async function f() { await (this.#x = 1); } } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { async function f() { await (this.#x = 1); } } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { function* g() { yield this.#x++; } } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { function* g() { yield this.#x++; } } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { this.#x++\n; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { this.#x++\n; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { this.#x = 1\n } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { this.#x = 1\n } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { ;this.#x++ } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { ;this.#x++ } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { this.#x++ ; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { this.#x++ ; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { 'use strict'; this.#x++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} m() { 'use strict'; this.#x++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x = 1; }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { static #x; }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { static #x = 1; }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x() {} }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { static #x() {} }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { *#x() {} }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { async #x() {} }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { async *#x() {} }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { set #x(v) {} }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { static get #x() { return 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { static set #x(v) {} }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return 1; } set #x(v) {} }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { set #x(v) {} get #x() { return 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { static get #x() { return 1; } static set #x(v) {} }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; #y; #z; }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; #y; m() { this.#y; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #a; #b; m() { this.#a; this.#b = 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A {\n  #x;\n  #y = 1;\n  #z() {}\n}",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #\\u0078; }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { this.#\\u0078; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #\\u0078; m() { this.#x; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #π; }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #$; #_; }",
+		"ext": "js"
+	},
+	{
+		"code": "(class { #x; });",
+		"ext": "js"
+	},
+	{
+		"code": "x = class { #x; };",
+		"ext": "js"
+	},
+	{
+		"code": "x = class B { #x; };",
+		"ext": "js"
+	},
+	{
+		"code": "export class A { #x; }",
+		"ext": "js"
+	},
+	{
+		"code": "export default class { #x; }",
+		"ext": "js"
+	},
+	{
+		"code": "export default class A { #x; m() { return this.#x; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; static { this.#x; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { static #x; static { A.#x = 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { static #x; static { A.#x++; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { static #x; static { x(A.#x); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; y = this.#x; }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; y = this.#x = 1; }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; y = (this.#x = 1); }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; y = this.#x++; }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; [this.#x] = 1; }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; [#x in o] = 1; }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x = this.#y; #y = this.#x; }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x = this.#x; }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x() { this.#x(); } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x() { return this.#x; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { get #x() { return this.#x; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { set #x(v) { this.#x = v; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; constructor() { this.#x = 1; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; constructor(x = this.#x) {} }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m(a = this.#x) {} }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m(a = (this.#x = 1)) {} }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { return class { m() { return this.#x; } }; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { return class { #x; m() { return this.#x; } }; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { return class { #x; }; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { return class { #y; m() { this.#x; this.#y; } }; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { class B { #x; } return this.#x; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { class B { #x; m() { this.#x = 1; } } return this.#x; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; static B = class extends (A.#x, Object) {}; }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; static B = class { #x; static C = class extends (this.#x, Object) {}; }; }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { return class B extends (this.#x, Object) { #x; }; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { return class B extends (this.#x = Object) { #x; m() { this.#x; } }; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A extends (class { #x; m() { this.#x; } }) { #x; }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { return class { [this.#x]() {} }; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { return class { #x; [this.#x]() {} }; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { return class { static y = this.#x; }; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { return class { #x; static y = this.#x; }; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #a; m() { return class { #b; m() { return class { m() { this.#a; this.#b; } }; } }; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #a; m() { return class { #a; m() { return class { m() { this.#a; } }; } }; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { m() { this.#x; } #x; }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { m() { this.#x = 1; } #x; }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; } class B { #x; m() { this.#x; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { this.#x; } } class B { #x; }",
+		"ext": "js"
+	},
+	{
+		"code": "function f() { return class { #x; }; }",
+		"ext": "js"
+	},
+	{
+		"code": "const o = { m() { return class { #x; }; } };",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { const f = () => { this.#x = 1; }; } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { function f() { this.#x; } } }",
+		"ext": "js"
+	},
+	{
+		"code": "class A { #x; m() { return { get y() { return this.#x; } }; } }",
+		"ext": "js"
+	}
+]

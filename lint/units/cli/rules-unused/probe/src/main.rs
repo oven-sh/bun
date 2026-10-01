@@ -363,7 +363,7 @@ fn check(path: &str, dump: bool) -> Option<String> {
             erased_members.entry(member.class_body).or_default().push(index);
             if dump {
                 let what = match &member.data {
-                    ErasedMemberData::Property(property) => format!("property kind={} flags={:?}", property.kind as u8, property.flags.bits()),
+                    ErasedMemberData::Property(property) => format!("property kind={} static={} method={} computed={}", property.kind as u8, property.flags.contains(Flag::IsStatic), property.flags.contains(Flag::IsMethod), property.flags.contains(Flag::IsComputed)),
                     ErasedMemberData::IndexSignature => String::from("index signature"),
                 };
                 println!("  erased member {}..{} class_body={} index={} {:?} {}", member.start, member.end, member.class_body, member.index, member.flags, what);

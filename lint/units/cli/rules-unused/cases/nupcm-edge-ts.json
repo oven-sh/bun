@@ -1,0 +1,1058 @@
+[
+	{
+		"code": "class A { #x: any; m(o: any) { this.#x! = 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { this.#x! = 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { (this.#x!) = 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { (this.#x!) = 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { (this.#x as any) = 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { (this.#x as any) = 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { (<any>this.#x) = 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { (<any>this.#x) = 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { (this.#x satisfies any) = 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { (this.#x satisfies any) = 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { this.#x!++; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { this.#x!++; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { (this.#x as any)++; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { (this.#x as any)++; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { this.#x! += 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { this.#x! += 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { (this.#x++) as any; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { (this.#x++) as any; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { (this.#x += 1) as any; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { (this.#x += 1) as any; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { (this.#x++)!; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { (this.#x++)!; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { <any>this.#x++; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { <any>this.#x++; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { (this.#x = 1) as any; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { (this.#x = 1) as any; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { (this.#x = 1)!; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { (this.#x = 1)!; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { this.#x = 1 as any; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { this.#x = 1 as any; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { this.#x = <any>1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { this.#x = <any>1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { [this.#x!] = o; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { [this.#x!] = o; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { [this.#x as any] = o; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { [this.#x as any] = o; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { ({ a: this.#x! } = o); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { ({ a: this.#x! } = o); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { ({ a: this.#x as any } = o); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { ({ a: this.#x as any } = o); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { [...this.#x!] = o; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { [...this.#x!] = o; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { for (this.#x! of o); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { for (this.#x! of o); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { for ((this.#x as any) of o); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { for ((this.#x as any) of o); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { ([this.#x]) = o; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { ([this.#x]) = o; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { ([this.#x] as any) = o; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { ([this.#x] as any) = o; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { [[this.#x] as any] = o; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { [[this.#x] as any] = o; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { [([this.#x])] = o; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { [([this.#x])] = o; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { ({ a: ([this.#x]) } = o); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { ({ a: ([this.#x]) } = o); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { (({ a: this.#x }) = o); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { (({ a: this.#x }) = o); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { (({ a: this.#x }) as any) = o; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { (({ a: this.#x }) as any) = o; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { this.#x<string>; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { this.#x<string>; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { this.#x<string>(); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { this.#x<string>(); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { new this.#x<string>(); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { new this.#x<string>(); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { this.#x!; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { this.#x!; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { this.#x as any; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { this.#x as any; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { (this as any).#x = 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { (this as any).#x = 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { (this as A).#x; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { (this as A).#x; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { this!.#x = 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { this!.#x = 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { (<A>this).#x++; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { (<A>this).#x++; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { const a: typeof this.#x = 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { const a: typeof this.#x = 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { let a = this.#x!; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { let a = this.#x!; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { this.#x = this.#x!; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { this.#x = this.#x!; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(o: any) { x(this.#x!); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): any { return 1; } set #x(v: any) {} m(o: any) { x(this.#x!); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { this.#x; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { this.#x = 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { (this.#x) = 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { ((this.#x)) = 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { this.#x += 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { (this.#x += 1); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { this.#x ||= 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { this.#x &&= 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { this.#x ??= 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { this.#x **= 2; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { this.#x++; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { ++this.#x; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { this.#x--; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { --this.#x; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { (this.#x++); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { (this.#x)++; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { a, this.#x++; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { this.#x++, a; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { a = this.#x++; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { a = this.#x += 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { a = (this.#x = 1); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { this.#x = this.#x + 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { this.#x = a = 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { a = this.#x = 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { x(this.#x = 1); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { x(this.#x++); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { for (this.#x = 0;;) break; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { for (this.#x++;;) break; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { for (;; this.#x++) break; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { for (; this.#x++;) break; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { for (this.#x in o); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { for (this.#x of o); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { for ((this.#x) in o); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { for ([this.#x] of o); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { for ({ a: this.#x } of o); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { for (const k in this.#x); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { for (const k of this.#x); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { for (var k = this.#x;;) break; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { [this.#x] = o; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { [(this.#x)] = o; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { [this.#x = 1] = o; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { [a = this.#x] = o; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { [...this.#x] = o; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { [...[this.#x]] = o; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { [[this.#x]] = o; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { [, this.#x] = o; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { ({ a: this.#x } = o); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { ({ a: this.#x = 1 } = o); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { ({ a: [this.#x] } = o); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { ({ [this.#x]: a } = o); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { ({ ...this.#x } = o); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { ({ a: { b: this.#x } } = o); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { ({ a = this.#x } = o); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { ({ a: b = this.#x } = o); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { ({ [this.#x]: this.#x } = o); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { [this.#x]; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { ({ a: this.#x }); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { x(...this.#x); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { [...this.#x]; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { ({ ...this.#x }); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { if (c) this.#x++; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { if (c) this.#x += 1; else this.#x -= 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { while (c) this.#x++; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { do this.#x++; while (c); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { l: this.#x++; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { { this.#x++; } } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { switch (c) { case 1: this.#x++; } } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { try { this.#x++; } catch {} } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { with (o) this.#x++; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { return this.#x++; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { throw this.#x++; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { void this.#x++; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { !this.#x++; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { this.#x++ + 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { c ? this.#x++ : 0; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { c && this.#x++; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { c && (this.#x = 1); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { c ? (this.#x = 1) : 0; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { (() => this.#x++)(); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { (() => { this.#x++; })(); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { (function () { this.#x++; }).call(this); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { () => (this.#x = 1); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { () => this.#x; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { delete this.#x; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { typeof this.#x; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { this.#x.y = 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { this.#x.y++; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { this.#x[0] = 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { this.#x(); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { new this.#x(); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { this.#x``; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { this.#x?.y; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { this?.#x; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { a?.b.#x; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { (a?.b).#x = 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { #x in this; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { (#x in this); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { a = #x in this; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { if (#x in o) {} } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { #x in o ? 1 : 2; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { x(#x in o); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { o.#x = 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { o.p.#x = 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { f().#x = 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { o.#x; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { super.y = this.#x; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { this.#x = this; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { [this.#x, a] = [a, this.#x]; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { this.#x = () => this.#x; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { `${this.#x}`; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { `${this.#x = 1}`; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { `${this.#x++}`; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { async function f() { await (this.#x = 1); } } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { function* g() { yield this.#x++; } } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { this.#x++\n; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { this.#x = 1\n } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { ;this.#x++ } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { this.#x++ ; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x: any; m(this: any, a: any, o: any, c: any, x: any) { 'use strict'; this.#x++; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #m(a: string): void; #m(a: any) {} }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #m(a: string): void; #m(a: number): void; #m(a: any) {} m() { this.#m(1); } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #m(a: any) {} #m(a: string): void; }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { static #m(a: string): void; static #m(a: any) {} }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #m(a: string): void; }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { get #x(): number; }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #m(a = this.#y): void; #m(a: any) {} #y = 1; }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { accessor #x = 1; }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { accessor #x = 1; m() { return this.#x; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { static accessor #x = 1; }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x = 1; m() { return class { accessor #x = 2; }; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "abstract class A { abstract #x: number; }",
+		"ext": "ts"
+	},
+	{
+		"code": "abstract class A { abstract #m(): void; }",
+		"ext": "ts"
+	},
+	{
+		"code": "abstract class A { abstract accessor #x: number; }",
+		"ext": "ts"
+	},
+	{
+		"code": "abstract class A { #y = 1; abstract m(a?: number): void; }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { declare #x: number; }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { declare #x: number; m() { return this.#x; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { declare static #x: number; }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x?: number; }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x!: number; }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { readonly #x = 1; }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { static readonly #x = 1; m() { return A.#x; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { private y = 1; #x = 1; }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { private y = 1; }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { private static y = 1; }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { constructor(private y: number) {} }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x = 1; constructor(private y = this.#x) {} }",
+		"ext": "ts"
+	},
+	{
+		"code": "declare class A { #x: number; }",
+		"ext": "ts"
+	},
+	{
+		"code": "declare class A { #x: number; #m(): void; }",
+		"ext": "ts"
+	},
+	{
+		"code": "declare class A { get #x(): number; set #x(v: number); }",
+		"ext": "ts"
+	},
+	{
+		"code": "export declare class A { #x: number; }",
+		"ext": "ts"
+	},
+	{
+		"code": "declare namespace N { class A { #x: number; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "namespace N { class A { #x = 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "namespace N { export class A { #x = 1; m() { return this.#x; } } }",
+		"ext": "ts"
+	},
+	{
+		"code": "declare module 'm' { class A { #x: number; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "declare global { class A { #x: number; } } export {};",
+		"ext": "ts"
+	},
+	{
+		"code": "namespace N.M { class A { #x = 1; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "export namespace N { declare class A { #x: number; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A<T> { #x: T; }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A<T> { #x!: T; m(): T { return this.#x; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x = 1; m(): this is A { return #x in this; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x = 1; [k: string]: any; }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x = 1; m(o: A) { o.#x = 2; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x = 1; m(o: A) { return o.#x; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x = 1; static m(o: A): number { return o.#x; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { @dec #x = 1; }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { @dec #m() {} }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { @(function (this: any) { return this.#x; }) y = 1; #x = 1; }",
+		"ext": "ts"
+	},
+	{
+		"code": "@(class { #x = 1; }) class A {}",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x = 1; m() { enum E { a = this.#x } } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x = 1; m() { namespace N { export const a = 1; } return this.#x; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x = 1; m = () => { this.#x! += 1; }; }",
+		"ext": "ts"
+	},
+	{
+		"code": "interface I { x: number } class A implements I { x = 1; #y = 2; }",
+		"ext": "ts"
+	},
+	{
+		"code": "type T = { a: number }; class A { #x: T = { a: 1 }; }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x = 1 as const; }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x = <any>1; m() { this.#x = 2 as any; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "function f(this: A) { } class A { #x = 1; }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x = 1; m() { const self = this; self.#x = 2; } }",
+		"ext": "ts"
+	},
+	{
+		"code": "class A { #x = 1; m() { const self = this; return self.#x; } }",
+		"ext": "ts"
+	}
+]

@@ -1,0 +1,5215 @@
+{
+	"valid": [
+		{
+			"code": "\nvar foo = 5;\n\nlabel: while (true) {\n  console.log(foo);\n  break label;\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\nvar foo = 5;\n\nwhile (true) {\n  console.log(foo);\n  break;\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\nfor (let prop in box) {\n  box[prop] = parseInt(box[prop]);\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nvar box = { a: 2 };\nfor (var prop in box) {\n  box[prop] = parseInt(box[prop]);\n}\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\nf({\n  set foo(a) {\n    return;\n  },\n});\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\na;\nvar a;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				"all"
+			]
+		},
+		{
+			"code": "\nvar a = 10;\nalert(a);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				"all"
+			]
+		},
+		{
+			"code": "\nvar a = 10;\n(function () {\n  alert(a);\n})();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				"all"
+			]
+		},
+		{
+			"code": "\nvar a = 10;\n(function () {\n  setTimeout(function () {\n    alert(a);\n  }, 0);\n})();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				"all"
+			]
+		},
+		{
+			"code": "\nvar a = 10;\nd[a] = 0;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				"all"
+			]
+		},
+		{
+			"code": "\n(function () {\n  var a = 10;\n  return a;\n})();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				"all"
+			]
+		},
+		{
+			"code": "(function g() {})();",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				"all"
+			]
+		},
+		{
+			"code": "\nfunction f(a) {\n  alert(a);\n}\nf();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				"all"
+			]
+		},
+		{
+			"code": "\nvar c = 0;\nfunction f(a) {\n  var b = a;\n  return b;\n}\nf(c);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				"all"
+			]
+		},
+		{
+			"code": "\nfunction a(x, y) {\n  return y;\n}\na();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				"all"
+			]
+		},
+		{
+			"code": "\nvar arr1 = [1, 2];\nvar arr2 = [3, 4];\nfor (var i in arr1) {\n  arr1[i] = 5;\n}\nfor (var i in arr2) {\n  arr2[i] = 10;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				"all"
+			]
+		},
+		{
+			"code": "var a = 10;",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				"local"
+			]
+		},
+		{
+			"code": "\nvar min = 'min';\nMath[min];\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				"all"
+			]
+		},
+		{
+			"code": "\nFoo.bar = function (baz) {\n  return baz;\n};\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				"all"
+			]
+		},
+		{
+			"code": "myFunc(function foo() {}.bind(this));",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "myFunc(function foo() {}.toString());",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\nfunction foo(first, second) {\n  doStuff(function () {\n    console.log(second);\n  });\n}\nfoo();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\n(function () {\n  var doSomething = function doSomething() {};\n  doSomething();\n})();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "/*global a */ a;",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\nvar a = 10;\n(function () {\n  alert(a);\n})();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"vars": "all"
+				}
+			]
+		},
+		{
+			"code": "\nfunction g(bar, baz) {\n  return baz;\n}\ng();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"vars": "all"
+				}
+			]
+		},
+		{
+			"code": "\nfunction g(bar, baz) {\n  return baz;\n}\ng();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"args": "after-used",
+					"vars": "all"
+				}
+			]
+		},
+		{
+			"code": "\nfunction g(bar, baz) {\n  return bar;\n}\ng();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"args": "none",
+					"vars": "all"
+				}
+			]
+		},
+		{
+			"code": "\nfunction g(bar, baz) {\n  return 2;\n}\ng();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"args": "none",
+					"vars": "all"
+				}
+			]
+		},
+		{
+			"code": "\nfunction g(bar, baz) {\n  return bar + baz;\n}\ng();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"args": "all",
+					"vars": "local"
+				}
+			]
+		},
+		{
+			"code": "\nvar g = function (bar, baz) {\n  return 2;\n};\ng();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"args": "none",
+					"vars": "all"
+				}
+			]
+		},
+		{
+			"code": "\n(function z() {\n  z();\n})();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": " ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				},
+				"globals": {
+					"a": true
+				}
+			}
+		},
+		{
+			"code": "\nvar who = 'Paul';\nmodule.exports = `Hello ${who}!`;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "export var foo = 123;",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "module",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "export function foo() {}",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "module",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nlet toUpper = partial => partial.toUpperCase;\nexport { toUpper };\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "module",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "export class foo {}",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "module",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nclass Foo {}\nvar x = new Foo();\nx.foo();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nconst foo = 'hello!';\nfunction bar(foobar = foo) {\n  foobar.replace(/!$/, ' world!');\n}\nbar();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nfunction Foo() {}\nvar x = new Foo();\nx.foo();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\nfunction foo() {\n  var foo = 1;\n  return foo;\n}\nfoo();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\nfunction foo(foo) {\n  return foo;\n}\nfoo(1);\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\nfunction foo() {\n  function foo() {\n    return 1;\n  }\n  return foo();\n}\nfoo();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\nfunction foo() {\n  var foo = 1;\n  return foo;\n}\nfoo();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nfunction foo(foo) {\n  return foo;\n}\nfoo(1);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nfunction foo() {\n  function foo() {\n    return 1;\n  }\n  return foo();\n}\nfoo();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nconst x = 1;\nconst [y = x] = [];\nfoo(y);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nconst x = 1;\nconst { y = x } = {};\nfoo(y);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nconst x = 1;\nconst {\n  z: [y = x],\n} = {};\nfoo(y);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nconst x = [];\nconst { z: [y] = x } = {};\nfoo(y);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nconst x = 1;\nlet y;\n[y = x] = [];\nfoo(y);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nconst x = 1;\nlet y;\n({\n  z: [y = x],\n} = {});\nfoo(y);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nconst x = [];\nlet y;\n({ z: [y] = x } = {});\nfoo(y);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nconst x = 1;\nfunction foo(y = x) {\n  bar(y);\n}\nfoo();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nconst x = 1;\nfunction foo({ y = x } = {}) {\n  bar(y);\n}\nfoo();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nconst x = 1;\nfunction foo(\n  y = function (z = x) {\n    bar(z);\n  },\n) {\n  y();\n}\nfoo();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nconst x = 1;\nfunction foo(\n  y = function () {\n    bar(x);\n  },\n) {\n  y();\n}\nfoo();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nvar x = 1;\nvar [y = x] = [];\nfoo(y);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nvar x = 1;\nvar { y = x } = {};\nfoo(y);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nvar x = 1;\nvar {\n  z: [y = x],\n} = {};\nfoo(y);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nvar x = [];\nvar { z: [y] = x } = {};\nfoo(y);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nvar x = 1,\n  y;\n[y = x] = [];\nfoo(y);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nvar x = 1,\n  y;\n({\n  z: [y = x],\n} = {});\nfoo(y);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nvar x = [],\n  y;\n({ z: [y] = x } = {});\nfoo(y);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nvar x = 1;\nfunction foo(y = x) {\n  bar(y);\n}\nfoo();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nvar x = 1;\nfunction foo({ y = x } = {}) {\n  bar(y);\n}\nfoo();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nvar x = 1;\nfunction foo(\n  y = function (z = x) {\n    bar(z);\n  },\n) {\n  y();\n}\nfoo();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nvar x = 1;\nfunction foo(\n  y = function () {\n    bar(x);\n  },\n) {\n  y();\n}\nfoo();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "/*exported toaster*/ var toaster = 'great';",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\n/*exported toaster, poster*/ var toaster = 1;\nposter = 0;\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "/*exported x*/ var { x } = y;",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "/*exported x, y*/ var { x, y } = z;",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "/*eslint @rule-tester/use-every-a:1*/ var a;",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\n/*eslint @rule-tester/use-every-a:1*/ !function (a) {\n  return 1;\n};\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\n/*eslint @rule-tester/use-every-a:1*/ !function () {\n  var a;\n  return 1;\n};\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "var _a;",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"vars": "all",
+					"varsIgnorePattern": "^_"
+				}
+			]
+		},
+		{
+			"code": "\nvar a;\nfunction foo() {\n  var _b;\n}\nfoo();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"vars": "local",
+					"varsIgnorePattern": "^_"
+				}
+			]
+		},
+		{
+			"code": "\nfunction foo(_a) {}\nfoo();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"args": "all",
+					"argsIgnorePattern": "^_"
+				}
+			]
+		},
+		{
+			"code": "\nfunction foo(a, _b) {\n  return a;\n}\nfoo();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"args": "after-used",
+					"argsIgnorePattern": "^_"
+				}
+			]
+		},
+		{
+			"code": "\nvar [firstItemIgnored, secondItem] = items;\nconsole.log(secondItem);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			},
+			"options": [
+				{
+					"vars": "all",
+					"varsIgnorePattern": "[iI]gnored"
+				}
+			]
+		},
+		{
+			"code": "\nconst [a, _b, c] = items;\nconsole.log(a + c);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			},
+			"options": [
+				{
+					"destructuredArrayIgnorePattern": "^_"
+				}
+			]
+		},
+		{
+			"code": "\nconst [[a, _b, c]] = items;\nconsole.log(a + c);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			},
+			"options": [
+				{
+					"destructuredArrayIgnorePattern": "^_"
+				}
+			]
+		},
+		{
+			"code": "\nconst {\n  x: [_a, foo],\n} = bar;\nconsole.log(foo);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			},
+			"options": [
+				{
+					"destructuredArrayIgnorePattern": "^_"
+				}
+			]
+		},
+		{
+			"code": "\nfunction baz([_b, foo]) {\n  foo;\n}\nbaz();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			},
+			"options": [
+				{
+					"destructuredArrayIgnorePattern": "^_"
+				}
+			]
+		},
+		{
+			"code": "\nfunction baz({ x: [_b, foo] }) {\n  foo;\n}\nbaz();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			},
+			"options": [
+				{
+					"destructuredArrayIgnorePattern": "^_"
+				}
+			]
+		},
+		{
+			"code": "\nfunction baz([\n  {\n    x: [_b, foo],\n  },\n]) {\n  foo;\n}\nbaz();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			},
+			"options": [
+				{
+					"destructuredArrayIgnorePattern": "^_"
+				}
+			]
+		},
+		{
+			"code": "\nlet _a, b;\nfoo.forEach(item => {\n  [_a, b] = item;\n  doSomething(b);\n});\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			},
+			"options": [
+				{
+					"destructuredArrayIgnorePattern": "^_"
+				}
+			]
+		},
+		{
+			"code": "\n// doesn't report _x\nlet _x, y;\n_x = 1;\n[_x, y] = foo;\ny;\n\n// doesn't report _a\nlet _a, b;\n[_a, b] = foo;\n_a = 1;\nb;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2018
+				}
+			},
+			"options": [
+				{
+					"destructuredArrayIgnorePattern": "^_"
+				}
+			]
+		},
+		{
+			"code": "\n// doesn't report _x\nlet _x, y;\n_x = 1;\n[_x, y] = foo;\ny;\n\n// doesn't report _a\nlet _a, b;\n_a = 1;\n({ _a, ...b } = foo);\nb;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2018
+				}
+			},
+			"options": [
+				{
+					"destructuredArrayIgnorePattern": "^_",
+					"ignoreRestSiblings": true
+				}
+			]
+		},
+		{
+			"code": "\n(function (obj) {\n  var name;\n  for (name in obj) return;\n})({});\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\n(function (obj) {\n  var name;\n  for (name in obj) {\n    return;\n  }\n})({});\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\n(function (obj) {\n  for (var name in obj) {\n    return true;\n  }\n})({});\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\n(function (obj) {\n  for (var name in obj) return true;\n})({});\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\n(function (obj) {\n  let name;\n  for (name in obj) return;\n})({});\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\n(function (obj) {\n  let name;\n  for (name in obj) {\n    return;\n  }\n})({});\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\n(function (obj) {\n  for (let name in obj) {\n    return true;\n  }\n})({});\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\n(function (obj) {\n  for (let name in obj) return true;\n})({});\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\n(function (obj) {\n  for (const name in obj) {\n    return true;\n  }\n})({});\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\n(function (obj) {\n  for (const name in obj) return true;\n})({});\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\n(function (iter) {\n  let name;\n  for (name of iter) return;\n})({});\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\n(function (iter) {\n  let name;\n  for (name of iter) {\n    return;\n  }\n})({});\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\n(function (iter) {\n  for (let name of iter) {\n    return true;\n  }\n})({});\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\n(function (iter) {\n  for (let name of iter) return true;\n})({});\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\n(function (iter) {\n  for (const name of iter) {\n    return true;\n  }\n})({});\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\n(function (iter) {\n  for (const name of iter) return true;\n})({});\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nlet x = 0;\nfoo = (0, x++);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nlet x = 0;\nfoo = (0, (x += 1));\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nlet x = 0;\nfoo = (0, (x = x + 1));\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\ntry {\n} catch (err) {}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"caughtErrors": "none"
+				}
+			]
+		},
+		{
+			"code": "\ntry {\n} catch (err) {\n  console.error(err);\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"caughtErrors": "all"
+				}
+			]
+		},
+		{
+			"code": "\ntry {\n} catch (ignoreErr) {}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"caughtErrorsIgnorePattern": "^ignore"
+				}
+			]
+		},
+		{
+			"code": "\ntry {\n} catch (ignoreErr) {}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"caughtErrors": "all",
+					"caughtErrorsIgnorePattern": "^ignore"
+				}
+			]
+		},
+		{
+			"code": "\ntry {\n} catch (err) {}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"args": "all",
+					"caughtErrors": "none",
+					"vars": "all"
+				}
+			]
+		},
+		{
+			"code": "\nconst data = { type: 'coords', x: 1, y: 2 };\nconst { type, ...coords } = data;\nconsole.log(coords);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2018
+				}
+			},
+			"options": [
+				{
+					"ignoreRestSiblings": true
+				}
+			]
+		},
+		{
+			"code": "\nvar a = 0,\n  b;\nb = a = a + 1;\nfoo(b);\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\nvar a = 0,\n  b;\nb = a += a + 1;\nfoo(b);\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\nvar a = 0,\n  b;\nb = a++;\nfoo(b);\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\nfunction foo(a) {\n  var b = (a = a + 1);\n  bar(b);\n}\nfoo();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\nfunction foo(a) {\n  var b = (a += a + 1);\n  bar(b);\n}\nfoo();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\nfunction foo(a) {\n  var b = a++;\n  bar(b);\n}\nfoo();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\nvar unregisterFooWatcher;\n// ...\nunregisterFooWatcher = $scope.$watch('foo', function () {\n  // ...some code..\n  unregisterFooWatcher();\n});\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\nvar ref;\nref = setInterval(function () {\n  clearInterval(ref);\n}, 10);\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\nvar _timer;\nfunction f() {\n  _timer = setTimeout(function () {}, _timer ? 100 : 0);\n}\nf();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\nfunction foo(cb) {\n  cb = (function () {\n    function something(a) {\n      cb(1 + a);\n    }\n    register(something);\n  })();\n}\nfoo();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\nfunction* foo(cb) {\n  cb = yield function (a) {\n    cb(1 + a);\n  };\n}\nfoo();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nfunction foo(cb) {\n  cb = tag`hello${function (a) {\n    cb(1 + a);\n  }}`;\n}\nfoo();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nfunction foo(cb) {\n  var b;\n  cb = b = function (a) {\n    cb(1 + a);\n  };\n  b();\n}\nfoo();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\nfunction someFunction() {\n  var a = 0,\n    i;\n  for (i = 0; i < 2; i++) {\n    a = myFunction(a);\n  }\n}\nsomeFunction();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\n(function (a, b, { c, d }) {\n  d;\n});\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			},
+			"options": [
+				{
+					"argsIgnorePattern": "c"
+				}
+			]
+		},
+		{
+			"code": "\n(function (a, b, { c, d }) {\n  c;\n});\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			},
+			"options": [
+				{
+					"argsIgnorePattern": "d"
+				}
+			]
+		},
+		{
+			"code": "\n(function (a, b, c) {\n  c;\n});\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"argsIgnorePattern": "c"
+				}
+			]
+		},
+		{
+			"code": "\n(function (a, b, { c, d }) {\n  c;\n});\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			},
+			"options": [
+				{
+					"argsIgnorePattern": "[cd]"
+				}
+			]
+		},
+		{
+			"code": "\n(class {\n  set foo(UNUSED) {}\n});\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  set bar(UNUSED) {}\n}\nconsole.log(Foo);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			}
+		},
+		{
+			"code": "({ a, ...rest }) => rest;",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2018
+				}
+			},
+			"options": [
+				{
+					"args": "all",
+					"ignoreRestSiblings": true
+				}
+			]
+		},
+		{
+			"code": "\nlet foo, rest;\n({ foo, ...rest } = something);\nconsole.log(rest);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2020
+				}
+			},
+			"options": [
+				{
+					"ignoreRestSiblings": true
+				}
+			]
+		},
+		{
+			"code": "\n/*eslint @rule-tester/use-every-a:1*/ !function (b, a) {\n  return 1;\n};\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\nvar a = function () {\n  a();\n};\na();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\nvar a = function () {\n  return function () {\n    a();\n  };\n};\na();\n    ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			}
+		},
+		{
+			"code": "\nconst a = () => {\n  a();\n};\na();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2015
+				}
+			}
+		},
+		{
+			"code": "\nconst a = () => () => {\n  a();\n};\na();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2015
+				}
+			}
+		},
+		{
+			"code": "export * as ns from 'source';",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "module",
+					"ecmaVersion": 2020
+				}
+			}
+		},
+		{
+			"code": "import.meta;",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "module",
+					"ecmaVersion": 2020
+				}
+			}
+		},
+		{
+			"code": "\nvar a;\na ||= 1;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2021
+				}
+			}
+		},
+		{
+			"code": "\nvar a;\na &&= 1;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2021
+				}
+			}
+		},
+		{
+			"code": "\nvar a;\na ??= 1;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2021
+				}
+			}
+		},
+		{
+			"code": "\nclass Foo {\n  static {}\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2022
+				}
+			},
+			"options": [
+				{
+					"ignoreClassWithStaticInitBlock": true
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  static {}\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2022
+				}
+			},
+			"options": [
+				{
+					"ignoreClassWithStaticInitBlock": true,
+					"varsIgnorePattern": "^_"
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  static {}\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2022
+				}
+			},
+			"options": [
+				{
+					"ignoreClassWithStaticInitBlock": false,
+					"varsIgnorePattern": "^Foo"
+				}
+			]
+		},
+		{
+			"code": "\nconst a = 5;\nconst _c = a + 5;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			},
+			"options": [
+				{
+					"args": "all",
+					"reportUsedIgnorePattern": true,
+					"varsIgnorePattern": "^_"
+				}
+			]
+		},
+		{
+			"code": "\n(function foo(a, _b) {\n  return a + 5;\n})(5);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"args": "all",
+					"argsIgnorePattern": "^_",
+					"reportUsedIgnorePattern": true
+				}
+			]
+		},
+		{
+			"code": "\nconst [a, _b, c] = items;\nconsole.log(a + c);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			},
+			"options": [
+				{
+					"destructuredArrayIgnorePattern": "^_",
+					"reportUsedIgnorePattern": true
+				}
+			]
+		}
+	],
+	"invalid": [
+		{
+			"code": "\nfunction foox() {\n  return foox();\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foox"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n(function () {\n  function foox() {\n    if (true) {\n      return foox();\n    }\n  }\n})();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foox"
+					}
+				}
+			]
+		},
+		{
+			"code": "var a = 10;",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nfunction f() {\n  var a = 1;\n  return function () {\n    f((a *= 2));\n  };\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "f"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nfunction f() {\n  var a = 1;\n  return function () {\n    f(++a);\n  };\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "f"
+					}
+				}
+			]
+		},
+		{
+			"code": "/*global a */",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nfunction foo(first, second) {\n  doStuff(function () {\n    console.log(second);\n  });\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "var a = 10;",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				"all"
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nvar a = 10;\na = 20;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				"all"
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nvar a = 10;\n(function () {\n  var a = 1;\n  alert(a);\n})();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				"all"
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nvar a = 10,\n  b = 0,\n  c = null;\nalert(a + b);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				"all"
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "c"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nvar a = 10,\n  b = 0,\n  c = null;\nsetTimeout(function () {\n  var b = 2;\n  alert(a + b + c);\n}, 0);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				"all"
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "b"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nvar a = 10,\n  b = 0,\n  c = null;\nsetTimeout(function () {\n  var b = 2;\n  var c = 2;\n  alert(a + b + c);\n}, 0);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				"all"
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "b"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "c"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nfunction f() {\n  var a = [];\n  return a.map(function () {});\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				"all"
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "f"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nfunction f() {\n  var a = [];\n  return a.map(function g() {});\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				"all"
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "f"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nfunction foo() {\n  function foo(x) {\n    return x;\n  }\n  return function () {\n    return foo;\n  };\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nfunction f() {\n  var x;\n  function a() {\n    x = 42;\n  }\n  function b() {\n    alert(x);\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				"all"
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "f"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "a"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "b"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nfunction f(a) {}\nf();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				"all"
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nfunction a(x, y, z) {\n  return y;\n}\na();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				"all"
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "z"
+					}
+				}
+			]
+		},
+		{
+			"code": "var min = Math.min;",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				"all"
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "min"
+					}
+				}
+			]
+		},
+		{
+			"code": "var min = { min: 1 };",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				"all"
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "min"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nFoo.bar = function (baz) {\n  return 1;\n};\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				"all"
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "baz"
+					}
+				}
+			]
+		},
+		{
+			"code": "var min = { min: 1 };",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"vars": "all"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "min"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nfunction gg(baz, bar) {\n  return baz;\n}\ngg();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"vars": "all"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "bar"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n(function (foo, baz, bar) {\n  return baz;\n})();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"args": "after-used",
+					"vars": "all"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "bar"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n(function (foo, baz, bar) {\n  return baz;\n})();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"args": "all",
+					"vars": "all"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foo"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "bar"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n(function z(foo) {\n  var bar = 33;\n})();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"args": "all",
+					"vars": "all"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foo"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "bar"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n(function z(foo) {\n  z();\n})();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nfunction f() {\n  var a = 1;\n  return function () {\n    f((a = 2));\n  };\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "f"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "import x from 'y';",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "module",
+					"ecmaVersion": 6
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nexport function fn2({ x, y }) {\n  console.log(x);\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "module",
+					"ecmaVersion": 6
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "y"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nexport function fn2(x, y) {\n  console.log(x);\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "module",
+					"ecmaVersion": 6
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "y"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n/*exported max*/ var max = 1,\n  min = { min: 1 };\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "min"
+					}
+				}
+			]
+		},
+		{
+			"code": "/*exported x*/ var { x, y } = z;",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "y"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nvar _a;\nvar b;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"vars": "all",
+					"varsIgnorePattern": "^_"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 5,
+					"data": {
+						"action": "defined",
+						"additional": ". Allowed unused vars must match /^_/u",
+						"varName": "b"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nvar a;\nfunction foo() {\n  var _b;\n  var c_;\n}\nfoo();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"vars": "local",
+					"varsIgnorePattern": "^_"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 5,
+					"column": 7,
+					"data": {
+						"action": "defined",
+						"additional": ". Allowed unused vars must match /^_/u",
+						"varName": "c_"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nfunction foo(a, _b) {}\nfoo();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"args": "all",
+					"argsIgnorePattern": "^_"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 14,
+					"data": {
+						"action": "defined",
+						"additional": ". Allowed unused args must match /^_/u",
+						"varName": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nfunction foo(a, _b, c) {\n  return a;\n}\nfoo();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"args": "after-used",
+					"argsIgnorePattern": "^_"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 21,
+					"data": {
+						"action": "defined",
+						"additional": ". Allowed unused args must match /^_/u",
+						"varName": "c"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nfunction foo(_a) {}\nfoo();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"args": "all",
+					"argsIgnorePattern": "[iI]gnored"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 14,
+					"data": {
+						"action": "defined",
+						"additional": ". Allowed unused args must match /[iI]gnored/u",
+						"varName": "_a"
+					}
+				}
+			]
+		},
+		{
+			"code": "var [firstItemIgnored, secondItem] = items;",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			},
+			"options": [
+				{
+					"vars": "all",
+					"varsIgnorePattern": "[iI]gnored"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 1,
+					"column": 24,
+					"data": {
+						"action": "assigned a value",
+						"additional": ". Allowed unused vars must match /[iI]gnored/u",
+						"varName": "secondItem"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nconst array = ['a', 'b', 'c'];\nconst [a, _b, c] = array;\nconst newArray = [a, c];\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2020
+				}
+			},
+			"options": [
+				{
+					"destructuredArrayIgnorePattern": "^_"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 4,
+					"column": 7,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "newArray"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nconst array = ['a', 'b', 'c', 'd', 'e'];\nconst [a, _b, c] = array;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2020
+				}
+			},
+			"options": [
+				{
+					"destructuredArrayIgnorePattern": "^_"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 8,
+					"data": {
+						"action": "assigned a value",
+						"additional": ". Allowed unused elements of array destructuring must match /^_/u",
+						"varName": "a"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 15,
+					"data": {
+						"action": "assigned a value",
+						"additional": ". Allowed unused elements of array destructuring must match /^_/u",
+						"varName": "c"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nconst array = ['a', 'b', 'c'];\nconst [a, _b, c] = array;\nconst fooArray = ['foo'];\nconst barArray = ['bar'];\nconst ignoreArray = ['ignore'];\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2020
+				}
+			},
+			"options": [
+				{
+					"destructuredArrayIgnorePattern": "^_",
+					"varsIgnorePattern": "ignore"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 8,
+					"data": {
+						"action": "assigned a value",
+						"additional": ". Allowed unused elements of array destructuring must match /^_/u",
+						"varName": "a"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 15,
+					"data": {
+						"action": "assigned a value",
+						"additional": ". Allowed unused elements of array destructuring must match /^_/u",
+						"varName": "c"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"line": 4,
+					"column": 7,
+					"data": {
+						"action": "assigned a value",
+						"additional": ". Allowed unused vars must match /ignore/u",
+						"varName": "fooArray"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"line": 5,
+					"column": 7,
+					"data": {
+						"action": "assigned a value",
+						"additional": ". Allowed unused vars must match /ignore/u",
+						"varName": "barArray"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nconst array = [obj];\nconst [{ _a, foo }] = array;\nconsole.log(foo);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2020
+				}
+			},
+			"options": [
+				{
+					"destructuredArrayIgnorePattern": "^_"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 10,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "_a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nfunction foo([{ _a, bar }]) {\n  bar;\n}\nfoo();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2020
+				}
+			},
+			"options": [
+				{
+					"destructuredArrayIgnorePattern": "^_"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 17,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "_a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nlet _a, b;\n\nfoo.forEach(item => {\n  [a, b] = item;\n});\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2020
+				}
+			},
+			"options": [
+				{
+					"destructuredArrayIgnorePattern": "^_"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 5,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "_a"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 9,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "b"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n(function (obj) {\n  var name;\n  for (name in obj) {\n    i();\n    return;\n  }\n})({});\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 4,
+					"column": 8,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "name"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n(function (obj) {\n  var name;\n  for (name in obj) {\n  }\n})({});\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 4,
+					"column": 8,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "name"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n(function (obj) {\n  for (var name in obj) {\n  }\n})({});\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 12,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "name"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n(function (iter) {\n  var name;\n  for (name of iter) {\n    i();\n    return;\n  }\n})({});\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 4,
+					"column": 8,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "name"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n(function (iter) {\n  var name;\n  for (name of iter) {\n  }\n})({});\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 4,
+					"column": 8,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "name"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n(function (iter) {\n  for (var name of iter) {\n  }\n})({});\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 12,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "name"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n/* global foobar, foo, bar */\nfoobar;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 19,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foo"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 24,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "bar"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n/* global foobar,\n   foo,\n   bar\n */\nfoobar;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 4,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foo"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"line": 4,
+					"column": 4,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "bar"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nconst data = { type: 'coords', x: 1, y: 2 };\nconst { type, ...coords } = data;\nconsole.log(coords);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2018
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 9,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "type"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nconst data = { type: 'coords', x: 2, y: 2 };\nconst { type, ...coords } = data;\nconsole.log(type);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2018
+				}
+			},
+			"options": [
+				{
+					"ignoreRestSiblings": true
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 18,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "coords"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nlet type, coords;\n({ type, ...coords } = data);\nconsole.log(type);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2018
+				}
+			},
+			"options": [
+				{
+					"ignoreRestSiblings": true
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 13,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "coords"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nconst data = { type: 'coords', x: 3, y: 2 };\nconst { type, ...coords } = data;\nconsole.log(type);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2018
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 18,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "coords"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nconst data = { vars: ['x', 'y'], x: 1, y: 2 };\nconst {\n  vars: [x],\n  ...coords\n} = data;\nconsole.log(coords);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2018
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 4,
+					"column": 10,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nconst data = { defaults: { x: 0 }, x: 1, y: 2 };\nconst {\n  defaults: { x },\n  ...coords\n} = data;\nconsole.log(coords);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2018
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 4,
+					"column": 15,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "({ a, ...rest }) => {};",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2018
+				}
+			},
+			"options": [
+				{
+					"args": "all",
+					"ignoreRestSiblings": true
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "rest"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n/* global a$fooz,$foo */\na$fooz;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 18,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "$foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n/* globals a$fooz, $ */\na$fooz;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 20,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "$"
+					}
+				}
+			]
+		},
+		{
+			"code": "/*globals $foo*/",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 1,
+					"column": 11,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "$foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "/* global global*/",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 1,
+					"column": 11,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "global"
+					}
+				}
+			]
+		},
+		{
+			"code": "/*global foo:true*/",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 1,
+					"column": 10,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n/*global 変数, 数*/\n\n変数;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 14,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "数"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n/*global 𠮷𩸽, 𠮷*/\n𠮷𩸽;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 16,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "𠮷"
+					}
+				}
+			]
+		},
+		{
+			"code": "export default function (a) {}",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "module",
+					"ecmaVersion": 6
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nexport default function (a, b) {\n  console.log(a);\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "module",
+					"ecmaVersion": 6
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "b"
+					}
+				}
+			]
+		},
+		{
+			"code": "export default (function (a) {});",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "module",
+					"ecmaVersion": 6
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nexport default (function (a, b) {\n  console.log(a);\n});\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "module",
+					"ecmaVersion": 6
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "b"
+					}
+				}
+			]
+		},
+		{
+			"code": "export default a => {};",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "module",
+					"ecmaVersion": 6
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nexport default (a, b) => {\n  console.log(a);\n};\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "module",
+					"ecmaVersion": 6
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "b"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ntry {\n} catch (err) {}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "err"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ntry {\n} catch (err) {}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"caughtErrors": "all"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "err"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ntry {\n} catch (err) {}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"caughtErrors": "all",
+					"caughtErrorsIgnorePattern": "^ignore"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": ". Allowed unused caught errors must match /^ignore/u",
+						"varName": "err"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ntry {\n} catch (err) {}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"caughtErrors": "all",
+					"varsIgnorePattern": "^err"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "err"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ntry {\n} catch (err) {}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"caughtErrors": "all",
+					"varsIgnorePattern": "^."
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "err"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ntry {\n} catch (ignoreErr) {}\ntry {\n} catch (err) {}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"caughtErrors": "all",
+					"caughtErrorsIgnorePattern": "^ignore"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": ". Allowed unused caught errors must match /^ignore/u",
+						"varName": "err"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ntry {\n} catch (error) {}\ntry {\n} catch (err) {}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"caughtErrors": "all",
+					"caughtErrorsIgnorePattern": "^ignore"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": ". Allowed unused caught errors must match /^ignore/u",
+						"varName": "error"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": ". Allowed unused caught errors must match /^ignore/u",
+						"varName": "err"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ntry {\n} catch (err) {}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"args": "all",
+					"caughtErrors": "all",
+					"vars": "all"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "err"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ntry {\n} catch (err) {}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"args": "all",
+					"argsIgnorePattern": "^er",
+					"caughtErrors": "all",
+					"vars": "all"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "err"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nvar a = 0;\na = a + 1;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nvar a = 0;\na = a + a;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nvar a = 0;\na += a + 1;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nvar a = 0;\na++;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nfunction foo(a) {\n  a = a + 1;\n}\nfoo();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nfunction foo(a) {\n  a += a + 1;\n}\nfoo();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nfunction foo(a) {\n  a++;\n}\nfoo();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nvar a = 3;\na = a * 5 + 6;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nvar a = 2,\n  b = 4;\na = a * 2 + b;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nfunction foo(cb) {\n  cb = function (a) {\n    cb(1 + a);\n  };\n  bar(not_cb);\n}\nfoo();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "cb"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nfunction foo(cb) {\n  cb = (function (a) {\n    return cb(1 + a);\n  })();\n}\nfoo();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "cb"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nfunction foo(cb) {\n  cb =\n    (function (a) {\n      cb(1 + a);\n    },\n    cb);\n}\nfoo();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "cb"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nfunction foo(cb) {\n  cb =\n    (0,\n    function (a) {\n      cb(1 + a);\n    });\n}\nfoo();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "cb"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nwhile (a) {\n  function foo(b) {\n    b = b + 1;\n  }\n  foo();\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "b"
+					}
+				}
+			]
+		},
+		{
+			"code": "(function (a, b, c) {});",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"argsIgnorePattern": "c"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": ". Allowed unused args must match /c/u",
+						"varName": "a"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": ". Allowed unused args must match /c/u",
+						"varName": "b"
+					}
+				}
+			]
+		},
+		{
+			"code": "(function (a, b, { c, d }) {});",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			},
+			"options": [
+				{
+					"argsIgnorePattern": "[cd]"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": ". Allowed unused args must match /[cd]/u",
+						"varName": "a"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": ". Allowed unused args must match /[cd]/u",
+						"varName": "b"
+					}
+				}
+			]
+		},
+		{
+			"code": "(function (a, b, { c, d }) {});",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			},
+			"options": [
+				{
+					"argsIgnorePattern": "c"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": ". Allowed unused args must match /c/u",
+						"varName": "a"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": ". Allowed unused args must match /c/u",
+						"varName": "b"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": ". Allowed unused args must match /c/u",
+						"varName": "d"
+					}
+				}
+			]
+		},
+		{
+			"code": "(function (a, b, { c, d }) {});",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			},
+			"options": [
+				{
+					"argsIgnorePattern": "d"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": ". Allowed unused args must match /d/u",
+						"varName": "a"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": ". Allowed unused args must match /d/u",
+						"varName": "b"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": ". Allowed unused args must match /d/u",
+						"varName": "c"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n/*global\nfoo*/\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 1,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n(function ({ a }, b) {\n  return b;\n})();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2015
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n(function ({ a }, { b, c }) {\n  return b;\n})();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2015
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "a"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "c"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nlet x = 0;\n(x++, (x = 0));\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2015
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 8,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nlet x = 0;\n(x++, (x = 0));\nx = 3;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2015
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 4,
+					"column": 1,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nlet x = 0;\n(x++, 0);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2015
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 2,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nlet x = 0;\n(0, x++);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2015
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 5,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nlet x = 0;\n(0, (1, x++));\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2015
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 9,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nlet x = 0;\nfoo = (x++, 0);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2015
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 8,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nlet x = 0;\nfoo = ((0, x++), 0);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2015
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 12,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nlet x = 0;\n((x += 1), 0);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2015
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 3,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nlet x = 0;\n(0, (x += 1));\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2015
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 6,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nlet x = 0;\n(0, (1, (x += 1)));\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2015
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 10,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nlet x = 0;\nfoo = ((x += 1), 0);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2015
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 9,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nlet x = 0;\nfoo = ((0, (x += 1)), 0);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2015
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 13,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nlet z = 0;\n((z = z + 1), (z = 2));\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2020
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 16,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "z"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nlet z = 0;\n((z = z + 1), (z = 2));\nz = 3;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2020
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 4,
+					"column": 1,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "z"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nlet z = 0;\n((z = z + 1), (z = 2));\nz = z + 3;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2020
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 4,
+					"column": 1,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "z"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nlet x = 0;\n(0, (x = x + 1));\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2020
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 6,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nlet x = 0;\n((x = x + 1), 0);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2020
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 3,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nlet x = 0;\nfoo = ((0, (x = x + 1)), 0);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2020
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 13,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nlet x = 0;\nfoo = ((x = x + 1), 0);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2020
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 9,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nlet x = 0;\n(0, (1, (x = x + 1)));\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2020
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 10,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n(function ({ a, b }, { c }) {\n  return b;\n})();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2015
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "a"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "c"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n(function ([a], b) {\n  return b;\n})();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2015
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n(function ([a], [b, c]) {\n  return b;\n})();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2015
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "a"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "c"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n(function ([a, b], [c]) {\n  return b;\n})();\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2015
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "a"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "c"
+					}
+				}
+			]
+		},
+		{
+			"code": "(function (_a) {})();",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"args": "all",
+					"varsIgnorePattern": "^_"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "_a"
+					}
+				}
+			]
+		},
+		{
+			"code": "(function (_a) {})();",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"args": "all",
+					"caughtErrorsIgnorePattern": "^_"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "_a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nvar a = function () {\n  a();\n};\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nvar a = function () {\n  return function () {\n    a();\n  };\n};\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 5,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nconst a = () => () => {\n  a();\n};\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2015
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 7,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nlet myArray = [1, 2, 3, 4].filter(x => x == 0);\nmyArray = myArray.filter(x => x == 1);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2015
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 1,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "myArray"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nconst a = 1;\na += 1;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2015
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 1,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nconst a = () => {\n  a();\n};\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2015
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 7,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nlet x = [];\nx = x.concat(x);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2015
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 1,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "x"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nlet a = 'a';\na = 10;\nfunction foo() {\n  a = 11;\n  a = () => {\n    a = 13;\n  };\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2020
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 3,
+					"column": 1,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "a"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"line": 4,
+					"column": 10,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nlet foo;\ninit();\nfoo = foo + 2;\nfunction init() {\n  foo = 1;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2020
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 4,
+					"column": 1,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nfunction foo(n) {\n  if (n < 2) return 1;\n  return n * foo(n - 1);\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2020
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 10,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nlet c = 'c';\nc = 10;\nfunction foo1() {\n  c = 11;\n  c = () => {\n    c = 13;\n  };\n}\n\nc = foo1;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2020
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 11,
+					"column": 1,
+					"data": {
+						"action": "assigned a value",
+						"additional": "",
+						"varName": "c"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  static {}\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2022
+				}
+			},
+			"options": [
+				{
+					"ignoreClassWithStaticInitBlock": false
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 7,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  static {}\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2022
+				}
+			},
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 7,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  static {\n    var bar;\n  }\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2022
+				}
+			},
+			"options": [
+				{
+					"ignoreClassWithStaticInitBlock": true
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 4,
+					"column": 9,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "bar"
+					}
+				}
+			]
+		},
+		{
+			"code": "class Foo {}",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2022
+				}
+			},
+			"options": [
+				{
+					"ignoreClassWithStaticInitBlock": true
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 1,
+					"column": 7,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  static bar;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2022
+				}
+			},
+			"options": [
+				{
+					"ignoreClassWithStaticInitBlock": true
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 7,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nclass Foo {\n  static bar() {}\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 2022
+				}
+			},
+			"options": [
+				{
+					"ignoreClassWithStaticInitBlock": true
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"line": 2,
+					"column": 7,
+					"data": {
+						"action": "defined",
+						"additional": "",
+						"varName": "Foo"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nconst _a = 5;\nconst _b = _a + 5;\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			},
+			"options": [
+				{
+					"args": "all",
+					"reportUsedIgnorePattern": true,
+					"varsIgnorePattern": "^_"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "usedIgnoredVar",
+					"data": {
+						"additional": ". Used vars must not match /^_/u",
+						"varName": "_a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nconst _a = 42;\nfoo(() => _a);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			},
+			"options": [
+				{
+					"args": "all",
+					"reportUsedIgnorePattern": true,
+					"varsIgnorePattern": "^_"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "usedIgnoredVar",
+					"data": {
+						"additional": ". Used vars must not match /^_/u",
+						"varName": "_a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n(function foo(_a) {\n  return _a + 5;\n})(5);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"args": "all",
+					"argsIgnorePattern": "^_",
+					"reportUsedIgnorePattern": true
+				}
+			],
+			"errors": [
+				{
+					"messageId": "usedIgnoredVar",
+					"data": {
+						"additional": ". Used args must not match /^_/u",
+						"varName": "_a"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nconst [a, _b] = items;\nconsole.log(a + _b);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			},
+			"options": [
+				{
+					"destructuredArrayIgnorePattern": "^_",
+					"reportUsedIgnorePattern": true
+				}
+			],
+			"errors": [
+				{
+					"messageId": "usedIgnoredVar",
+					"data": {
+						"additional": ". Used elements of array destructuring must not match /^_/u",
+						"varName": "_b"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nlet _x;\n[_x] = arr;\nfoo(_x);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			},
+			"options": [
+				{
+					"destructuredArrayIgnorePattern": "^_",
+					"reportUsedIgnorePattern": true,
+					"varsIgnorePattern": "[iI]gnored"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "usedIgnoredVar",
+					"data": {
+						"additional": ". Used elements of array destructuring must not match /^_/u",
+						"varName": "_x"
+					}
+				}
+			]
+		},
+		{
+			"code": "\nconst [ignored] = arr;\nfoo(ignored);\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script",
+					"ecmaVersion": 6
+				}
+			},
+			"options": [
+				{
+					"destructuredArrayIgnorePattern": "^_",
+					"reportUsedIgnorePattern": true,
+					"varsIgnorePattern": "[iI]gnored"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "usedIgnoredVar",
+					"data": {
+						"additional": ". Used vars must not match /[iI]gnored/u",
+						"varName": "ignored"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ntry {\n} catch (_err) {\n  console.error(_err);\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"caughtErrors": "all",
+					"caughtErrorsIgnorePattern": "^_",
+					"reportUsedIgnorePattern": true
+				}
+			],
+			"errors": [
+				{
+					"messageId": "usedIgnoredVar",
+					"data": {
+						"additional": ". Used caught errors must not match /^_/u",
+						"varName": "_err"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ntry {\n} catch (_) {\n  _ = 'foo';\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"caughtErrorsIgnorePattern": "foo"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": ". Allowed unused caught errors must match /foo/u",
+						"varName": "_"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ntry {\n} catch (_) {\n  _ = 'foo';\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"caughtErrorsIgnorePattern": "ignored",
+					"varsIgnorePattern": "_"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": ". Allowed unused caught errors must match /ignored/u",
+						"varName": "_"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ntry {\n} catch ({ message, errors: [firstError] }) {}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"caughtErrorsIgnorePattern": "foo"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"column": 12,
+					"data": {
+						"action": "defined",
+						"additional": ". Allowed unused caught errors must match /foo/u",
+						"varName": "message"
+					}
+				},
+				{
+					"messageId": "unusedVar",
+					"column": 30,
+					"data": {
+						"action": "defined",
+						"additional": ". Allowed unused caught errors must match /foo/u",
+						"varName": "firstError"
+					}
+				}
+			]
+		},
+		{
+			"code": "\ntry {\n} catch ({ stack: $ }) {\n  $ = 'Something broke: ' + $;\n}\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"caughtErrorsIgnorePattern": "\\w"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"column": 3,
+					"data": {
+						"action": "assigned a value",
+						"additional": ". Allowed unused caught errors must match /\\w/u",
+						"varName": "$"
+					}
+				}
+			]
+		},
+		{
+			"code": "\n_ => {\n  _ = _ + 1;\n};\n      ",
+			"languageOptions": {
+				"parserOptions": {
+					"sourceType": "script"
+				}
+			},
+			"options": [
+				{
+					"argsIgnorePattern": "ignored",
+					"varsIgnorePattern": "_"
+				}
+			],
+			"errors": [
+				{
+					"messageId": "unusedVar",
+					"data": {
+						"action": "assigned a value",
+						"additional": ". Allowed unused args must match /ignored/u",
+						"varName": "_"
+					}
+				}
+			]
+		}
+	]
+}

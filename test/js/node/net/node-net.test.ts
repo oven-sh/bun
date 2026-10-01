@@ -2777,24 +2777,26 @@ it("onread: a peer reset that lands on the declined tail does not end the next c
     client.on("close", () => events.push("close"));
     await delivered.promise;
     // No 'error' listener: the reset reaches the client as a plain close while
-    // "BBBBCCCC" is still undelivered, which parks the end behind the tail.
+    // "BBBBCCCC" is still undelivered, which parks the end behind the tail. The
+    // stream shows nothing of that; the native handle detaches (readyState -1).
+    const handle = client._handle;
     serverSockets[0].resetAndDestroy();
-    await once(serverSockets[0], "close");
-    for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
+    while (handle.readyState > 0) await new Promise(resolve => setImmediate(resolve));
     events.push("destroy");
     client.destroy();
     await once(client, "close");
 
     delivered = Promise.withResolvers<void>();
     client.connect({ port, host: "127.0.0.1" });
+    const closed = once(client, "close");
     await delivered.promise; // "xxxx" taken, "yyyy" left as the tail
     delivered = Promise.withResolvers<void>();
     client.resume();
     await delivered.promise; // the tail drained
-    for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
+    // A stale deferred end fires from that drain, before this continuation runs.
     events.push("write");
     client.write("go");
-    await once(client, "close");
+    await closed;
     expect(events).toEqual(["AAAA", "destroy", "close", "xxxx", "yyyy", "write", "end", "close"]);
   } finally {
     client?.destroy();

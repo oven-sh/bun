@@ -1,0 +1,2 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.48s
+### cargo check -p bun_ast -p bun_js_parser --message-format=short rc=0 secs=6 HEAD=be1ebe5295

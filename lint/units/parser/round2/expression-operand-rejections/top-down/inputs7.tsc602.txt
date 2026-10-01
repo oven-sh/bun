@@ -1,0 +1,56 @@
+a.tsx	"<a/>.b;"
+    TS1005@4+1 "';' expected."
+a.tsx	"<a/>++;"
+    TS1005@4+2 "';' expected."
+    TS1109@6+1 "Expression expected."
+a.tsx	"<a/>();"
+    TS1005@4+1 "';' expected."
+    TS1109@5+1 "Expression expected."
+a.tsx	"<a/>[0];"
+    TS1005@4+1 "';' expected."
+a.tsx	"(<a/>).b;"
+    (parses)
+a.tsx	"<a/> = 1;"
+    (parses)
+a.tsx	"x = <a/>.b;"
+    TS1005@8+1 "';' expected."
+a.tsx	"<a></a>.b;"
+    TS1005@7+1 "';' expected."
+a.tsx	"++<a/>;"
+    TS1109@2+1 "Expression expected."
+    TS1109@5+1 "Expression expected."
+    TS1109@6+1 "Expression expected."
+a.tsx	"-<a/>;"
+    (parses)
+a.tsx	"<a/> + 1;"
+    (parses)
+a.tsx	"<a/> as T;"
+    (parses)
+a.tsx	"<a/>!;"
+    TS1005@4+1 "';' expected."
+    TS1109@5+1 "Expression expected."
+a.ts	"a++<T>(x);"
+    (parses)
+a.ts	"a++<b>(c);"
+    (parses)
+a.ts	"(a++)<b>(c);"
+    (parses)
+a.ts	"a++ < b;"
+    (parses)
+a.ts	"x = a++<T>(y) + 1;"
+    (parses)
+a.ts	"a.b<c>++;"
+    TS1109@8+1 "Expression expected."
+a.ts	"-a<b>(c);"
+    (parses)
+a.ts	"a + b<c>(d);"
+    (parses)
+a.ts	"a++!.b;"
+    TS1005@3+1 "';' expected."
+    TS1109@4+1 "Expression expected."
+a.ts	"a--!;"
+    TS1005@3+1 "';' expected."
+    TS1109@4+1 "Expression expected."
+a.ts	"f(a++!);"
+    TS1005@5+1 "',' expected."
+    TS1109@6+1 "Expression expected."

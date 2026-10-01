@@ -1,0 +1,159 @@
+"a + b = c;"
+    parse: ok
+    full:  ERR@0+0 "Invalid assignment target"
+"-a = b;"
+    parse: ok
+    full:  ERR@0+0 "Invalid assignment target"
+"a++ = b;"
+    parse: ok
+    full:  ERR@0+0 "Invalid assignment target"
+"async function f() { await x = y; }"
+    parse: ok
+    full:  ERR@21+0 "Invalid assignment target"
+"a++ ++;"
+    parse: ok
+    full:  ERR@0+0 "Invalid assignment target"
+"a--.b;"
+    parse: ok
+    full:  ok  => "(a--).b;\n"
+"++ delete a.b;"
+    parse: ok
+    full:  ERR@3+0 "Invalid assignment target"
+"new A?.b();"
+    parse: ok
+    full:  ok  => "new A?.b;\n"
+"new A?.();"
+    parse: ok
+    full:  ok  => "new A;\n"
+"new A?.[0]();"
+    parse: ok
+    full:  ok  => "new A?.[0];\n"
+"function* g() { yield*; }"
+    parse: ok
+    full:  ok  => "function* g() {\n  yield;\n}\n"
+"function* g() { yield\n* x; }"
+    parse: ERR@22+1 "Unexpected *"
+    full:  ERR@22+1 "Unexpected *"
+"a.\nb in c;"
+    parse: ok
+    full:  ok  => "a.b in c;\n"
+"a.\nb c;"
+    parse: ERR@5+1 "Expected \";\" but found \"c\""
+    full:  ERR@5+1 "Expected \";\" but found \"c\""
+"a.\nvar x;"
+    parse: ERR@7+1 "Expected \";\" but found \"x\""
+    full:  ERR@7+1 "Expected \";\" but found \"x\""
+"for (using of of []) {}"
+    parse: ok
+    full:  ok  => "import { __callDispose as __callDispose_vyva085h, __using as __using_nccbhqtj } "
+"for (using of of [x]) {}"
+    parse: ok
+    full:  ok  => "import { __callDispose as __callDispose_vyva085h, __using as __using_nccbhqtj } "
+"for (using of of x) {}"
+    parse: ok
+    full:  ok  => "import { __callDispose as __callDispose_vyva085h, __using as __using_nccbhqtj } "
+"for (using of x) {}"
+    parse: ERR@14+1 "Expected \";\" but found \"x\""
+    full:  ERR@14+1 "Expected \";\" but found \"x\""
+"for (using of = 1;;) {}"
+    parse: ok
+    full:  ok  => "for (using of = 1;; ) {}\n"
+"for (using of;;) {}"
+    parse: ok
+    full:  ok  => "for (using of;; ) {}\n"
+"a[];"
+    parse: ERR@2+1 "Unexpected ]"
+    full:  ERR@2+1 "Unexpected ]"
+"a?.[];"
+    parse: ERR@4+1 "Unexpected ]"
+    full:  ERR@4+1 "Unexpected ]"
+"a<b>.c;"
+    parse: ok
+    full:  ok  => "a.c;\n"
+"<A>x ** 2;"
+    parse: ok
+    full:  ok  => "x ** 2;\n"
+"-x ** 2;"
+    parse: ERR@3+2 "Unexpected **"
+    full:  ERR@3+2 "Unexpected **"
+"- -x ** 2;"
+    parse: ERR@5+2 "Unexpected **"
+    full:  ERR@5+2 "Unexpected **"
+"class C extends B { m() { super<T>.x; } }"
+    parse: ERR@26+5 "Unexpected \"super\""
+    full:  ERR@26+5 "Unexpected \"super\""
+"class C extends B { m() { super; } }"
+    parse: ERR@26+5 "Unexpected \"super\""
+    full:  ERR@26+5 "Unexpected \"super\""
+"class C { #a = 1; m() { this?.#a; } }"
+    parse: ok
+    full:  ok  => "class C {\n  #a = 1;\n  m() {\n    this?.#a;\n  }\n}\n"
+"class C { #a = 1; m(a) { a?.b.#a; } }"
+    parse: ok
+    full:  ok  => "class C {\n  #a = 1;\n  m(a) {\n    a?.b.#a;\n  }\n}\n"
+"<T>x = 1;"
+    parse: ok
+    full:  ok  => "x = 1;\n"
+"x as T = 1;"
+    parse: ERR@7+1 "Expected \";\" but found \"=\""
+    full:  ERR@7+1 "Expected \";\" but found \"=\""
+"(a + b) = c;"
+    parse: ok
+    full:  ERR@1+0 "Invalid assignment target"
+"++a++;"
+    parse: ok
+    full:  ERR@2+0 "Invalid assignment target"
+"++-a;"
+    parse: ok
+    full:  ERR@2+0 "Invalid assignment target"
+"a++ ++b;"
+    parse: ERR@6+1 "Expected \";\" but found \"b\""
+    full:  ERR@6+1 "Expected \";\" but found \"b\""
+"a++\n[0];"
+    parse: ok
+    full:  ok  => "(a++)[0];\n"
+"a++\n(0);"
+    parse: ok
+    full:  ok  => "(a++)(0);\n"
+"x = a++ ++;"
+    parse: ok
+    full:  ERR@4+0 "Invalid assignment target"
+"a ? b + c = d : e;"
+    parse: ok
+    full:  ERR@4+0 "Invalid assignment target"
+"a++!;"
+    parse: ok
+    full:  ok  => "a++;\n"
+"super.x;"
+    parse: ERR@0+5 "Unexpected \"super\""
+    full:  ERR@0+5 "Unexpected \"super\""
+"new super();"
+    parse: ERR@4+5 "Unexpected \"super\""
+    full:  ERR@4+5 "Unexpected \"super\""
+"a<b>?.c;"
+    parse: ok
+    full:  ok  => "a?.c;\n"
+"a.b++ ++;"
+    parse: ok
+    full:  ERR@0+0 "Invalid assignment target"
+"a + b\n= c;"
+    parse: ok
+    full:  ERR@0+0 "Invalid assignment target"
+"function* g() { yield = 1; }"
+    parse: ERR@22+1 "Unexpected ="
+    full:  ERR@22+1 "Unexpected ="
+"a + b = c;"
+    parse: ok
+    full:  ERR@0+0 "Invalid assignment target"
+"a++ ++;"
+    parse: ok
+    full:  ERR@0+0 "Invalid assignment target"
+"a[];"
+    parse: ERR@2+1 "Unexpected ]"
+    full:  ERR@2+1 "Unexpected ]"
+"new A?.b();"
+    parse: ok
+    full:  ok  => "new A?.b;\n"
+"a.\nb in c;"
+    parse: ok
+    full:  ok  => "a.b in c;\n"

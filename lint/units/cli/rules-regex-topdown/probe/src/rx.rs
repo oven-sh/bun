@@ -158,8 +158,8 @@ impl<'ast> Visitor<'ast> for Rx<'_, '_, '_> {
             ExprData::ERegExp(reg_exp) => {
                 self.out.push(format!("{{\"k\":\"lit\",\"at\":{},\"raw\":\"{}\",\"ts\":{}}}", expr.loc.start, hex(reg_exp.value.slice()), self.ctx.plain(expr).is_none()));
             }
-            ExprData::ECall(call) => self.call(expr, &call.target, call.args.slice(), false),
-            ExprData::ENew(new) => self.call(expr, &new.target, new.args.slice(), true),
+            ExprData::ECall(call) => self.call(expr, &call.target, call.args.as_slice(), false),
+            ExprData::ENew(new) => self.call(expr, &new.target, new.args.as_slice(), true),
             ExprData::EString(string) => {
                 let address = core::ptr::from_ref::<E::EString>(string).addr();
                 if !self.jsx_attr.contains(&address) {

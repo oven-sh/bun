@@ -1,12 +1,9 @@
-(pass) listed instances > a batch passes when the oracle is replayed, and fails its names of list E when nothing is reported [2332.07ms]
-(pass) listed instances > a name in the list of the other class, a skipped instance and a name of no instance are failures [333.27ms]
-(pass) expectations.json > is in the form that the update writes, at the level that the plain format of the command reaches [2.34ms]
-
-1 tests skipped:
-(skip) enumerator > every instance is its line of the list, and the counts are those of the reference
+  ^ this test timed out after 5000ms.
+(fail) reference > the list has the instances of the reference's run: 14,915, of which 12,797 run and 2,118 are skipped [5878.58ms]
+  ^ this test timed out after 5000ms.
 
  117 pass
  1 skip
- 0 fail
- 203 expect() calls
-Ran 118 tests across 1 file. [75.05s]
+ 1 fail
+ 209 expect() calls
+Ran 119 tests across 1 file. [118.14s]

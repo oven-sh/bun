@@ -322,6 +322,8 @@ function model(ast, source, options = {}) {
 
 	const probe = (when, node) => {
 		const top = stack.at(-1);
+		// `--update-enter-only`: what a TypeScript node around the update of a `for` does to the segments that start when the update ends.
+		if (when === "enter" && options.updateEnterOnly && node.isForUpdate) node.isForUpdate = false;
 		if (when === "enter") {
 			switch (node.t) {
 				case "EObject": {
@@ -497,6 +499,7 @@ function main() {
 		} else if (args[i] === "--files") {
 			for (const f of fs.readFileSync(args[++i], "utf8").split("\n").filter(Boolean)) { try { sources.push({ code: fs.readFileSync(f, "utf8"), name: f, jsx: f.endsWith("x"), ext: "js" }); } catch {} }
 		} else if (args[i] === "--live") options.live = true;
+		else if (args[i] === "--update-enter-only") options.updateEnterOnly = true;
 		else if (args[i] === "--show") show = true;
 	}
 	const count = { sources: 0, rejected: 0, same: 0, different: 0, failed: 0, reports: 0, heldDropped: 0, liveDiffers: 0, skippedTs: 0 };

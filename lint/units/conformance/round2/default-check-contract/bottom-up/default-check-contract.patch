@@ -1,5 +1,5 @@
 diff --git a/test/cli/lint/conformance.test.ts b/test/cli/lint/conformance.test.ts
-index 0f294fa055..5a4802189b 100644
+index 0f294fa055..559e673c28 100644
 --- a/test/cli/lint/conformance.test.ts
 +++ b/test/cli/lint/conformance.test.ts
 @@ -7,11 +7,14 @@ import { dirname, join } from "node:path";
@@ -59,7 +59,7 @@ index 0f294fa055..5a4802189b 100644
      endingOf(await runInstance(instance, check, { ...options, ...more }));
  
    test("the bytes of the baseline are the bytes of the oracle, or it is no pass", async () => {
-@@ -617,21 +626,32 @@ describe("run", () => {
+@@ -617,21 +626,47 @@ describe("run", () => {
      });
    });
  
@@ -98,10 +98,25 @@ index 0f294fa055..5a4802189b 100644
 +      expect({ outcome: other.outcome, headerOnly: other.headerOnly }).toEqual({ outcome: "fail", headerOnly: false });
 +      expect(other.reason).toStartWith("the first section differs from the oracle at byte ");
 +    }
++  });
++
++  test("the lists take a result at the level of its run: the first section alone passes a list of the level first-section and fails one of the level baseline", async () => {
++    const { factsOf, verify } = runner;
++    const plain = reports({ diagnostics: [{ ...known, location: printed }] });
++    const first = factsOf(await runInstance(E, plain, { ...options, level: "first-section" }), "first-section");
++    expect(first).toEqual({ name: "a.ts", status: "pass", level: "first-section", detail: "" });
++    expect(verify({ level: "first-section", E: ["a.ts"], C: [] }, new Map([["a.ts", first]]))).toEqual([]);
++    const whole = factsOf(await runInstance(E, reports({ diagnostics: [known] }), options), "first-section");
++    expect(whole).toEqual({ name: "a.ts", status: "pass", level: "baseline", detail: "" });
++    expect(verify({ level: "first-section", E: ["a.ts"], C: [] }, new Map([["a.ts", whole]]))).toEqual([]);
++    const short = factsOf(await runInstance(E, plain, options), "baseline");
++    expect({ status: short.status, level: short.level }).toEqual({ status: "fail", level: "baseline" });
++    const failures = verify({ level: "baseline", E: ["a.ts"], C: [] }, new Map([["a.ts", short]]));
++    expect(failures.map(f => [f.name, f.list, f.reason])).toEqual([["a.ts", "E", "fail"]]);
    });
  
    test("what is no list of diagnostics of the instance is no pass", async () => {
-@@ -655,14 +675,80 @@ describe("run", () => {
+@@ -655,12 +690,78 @@ describe("run", () => {
        reason: "a diagnostic has the code -1",
      });
      const throws: Check = async () => {
@@ -112,9 +127,9 @@ index 0f294fa055..5a4802189b 100644
        outcome: "crash",
 -      reason: "the check threw: Error: the command ended by the signal SIGSEGV",
 +      reason: "the check threw: Error: the checker is not built",
-     });
-   });
- 
++    });
++  });
++
 +  test("a check that finds an outcome by itself says why, and it never says that an instance passes", async () => {
 +    const death = {
 +      exitCode: null,
@@ -167,7 +182,7 @@ index 0f294fa055..5a4802189b 100644
 +    expect(await ending(C, passes)).toEqual({
 +      outcome: "crash",
 +      reason: "the check returned a verdict of no known outcome",
-+    });
+     });
 +    // The reports of rules, and whether the command wrote anything, stay with the outcome of the comparison.
 +    const left = reports({ diagnostics: [], rules: { "no-debugger": 1 }, silent: false });
 +    const counted = await runInstance(C, left, options);
@@ -179,12 +194,10 @@ index 0f294fa055..5a4802189b 100644
 +    const quiet = await runInstance(C, reports({ diagnostics: [], silent: true }), options);
 +    expect({ outcome: quiet.outcome, silent: quiet.silent }).toEqual({ outcome: "pass", silent: true });
 +    expect((await runInstance(C, emptyCheck, options)).silent).toBeUndefined();
-+  });
-+
-   const sample = [...cases().values()].filter(path => sampled(path, 250)).sort();
-   const seen = { E: 0, C: 0 };
+   });
  
-@@ -920,13 +1006,23 @@ describe("default check", () => {
+   const sample = [...cases().values()].filter(path => sampled(path, 250)).sort();
+@@ -920,13 +1021,23 @@ describe("default check", () => {
    const linter = lazy(() => createSpawnCheck({ command: command("lints-fixture.ts"), env: bunEnv }));
    const C: Instance = { name: "a.ts", status: "run", oracle: { class: "C" } };
    const E: Instance = { name: "a.ts", status: "run", oracle: { class: "E" } };
@@ -212,14 +225,16 @@ index 0f294fa055..5a4802189b 100644
  
    test.concurrent.each([
      ["a command that lints", "lints-fixture.ts", { ok: true, reason: "" }],
-@@ -974,16 +1070,62 @@ describe("default check", () => {
+@@ -974,16 +1085,62 @@ describe("default check", () => {
      expect(verdict.reason).toStartWith("a file without an error: the command did not start: ");
    });
  
 +  // The one test of this file that needs `bun --lint` itself: a binary without it runs the first file of the probe.
-+  test.concurrent(
+   test.concurrent(
+-    "a command that lints gets the written unit as its operand, and no diagnostic passes an instance without errors",
 +    "the binary under test: the probe takes it, what is without an error passes, and a syntax error fails the instance and is no crash",
-+    async () => {
+     async () => {
+-      expect(await ending(C, linter(), "const x: number = 1;\n")).toEqual({ outcome: "pass", reason: "" });
 +      const options = { command: [bunExe()], env: bunEnv };
 +      const probed = await probe(options);
 +      expect(probed).toEqual({ ok: true, reason: "" });
@@ -257,11 +272,9 @@ index 0f294fa055..5a4802189b 100644
 +    small ? 180_000 : 30_000,
 +  );
 +
-   test.concurrent(
--    "a command that lints gets the written unit as its operand, and no diagnostic passes an instance without errors",
++  test.concurrent(
 +    "a command that lints gets the written unit as its operand, and a command that writes nothing passes an instance without errors",
-     async () => {
--      expect(await ending(C, linter(), "const x: number = 1;\n")).toEqual({ outcome: "pass", reason: "" });
++    async () => {
 +      const clean = await run(C, linter(), "const x: number = 1;\n");
 +      expect({ outcome: clean.outcome, reason: clean.reason, silent: clean.silent }).toEqual({
 +        outcome: "pass",
@@ -278,7 +291,7 @@ index 0f294fa055..5a4802189b 100644
      async () => {
        const unit: InputFile = {
          unitName: "/.src/a.ts",
-@@ -1005,11 +1147,17 @@ describe("default check", () => {
+@@ -1005,11 +1162,17 @@ describe("default check", () => {
            },
          ],
        );
@@ -297,7 +310,7 @@ index 0f294fa055..5a4802189b 100644
      },
      spawnTimeout,
    );
-@@ -1034,44 +1182,245 @@ describe("default check", () => {
+@@ -1034,44 +1197,245 @@ describe("default check", () => {
      spawnTimeout,
    );
  
@@ -563,7 +576,7 @@ index 0f294fa055..5a4802189b 100644
        });
      },
      spawnTimeout,
-@@ -1137,8 +1486,9 @@ describe("expectations.json", () => {
+@@ -1137,8 +1501,9 @@ describe("expectations.json", () => {
    const listed = sampleListed(lists, small ? 16 : Infinity);
    const check = lazy(() => createSpawnCheck({ command: [bunExe()], env: bunEnv }));
  
@@ -574,7 +587,7 @@ index 0f294fa055..5a4802189b 100644
    });
  
    // One batch at a time: a batch keeps as many processes in flight as it may, and a second batch beside it would double them.
-@@ -1146,7 +1496,7 @@ describe("expectations.json", () => {
+@@ -1146,7 +1511,7 @@ describe("expectations.json", () => {
      "every listed instance is a run instance of its list and passes: batch %d",
      async (_k, batch) => {
        using dir = tempDir("lint-conformance", {});

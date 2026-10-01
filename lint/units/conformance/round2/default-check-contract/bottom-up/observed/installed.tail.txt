@@ -1,12 +1,10 @@
-(pass) default check > the report of a rule is left out of the comparison and counted, and an instance that has one does not count for the guard [8420.77ms]
-(pass) listed instances > a batch passes when the oracle is replayed, and fails its names of list E when nothing is reported [17.32ms]
-(pass) listed instances > a name in the list of the other class, a skipped instance and a name of no instance are failures [1.09ms]
-(pass) expectations.json > is in the form that the update writes, at the level that the plain format of the command reaches [0.06ms]
-
-1 tests failed:
-(fail) default check > the binary under test: the probe takes it, what is without an error passes, and a syntax error fails the instance and is no crash [2117.18ms]
+  ^ this test timed out after 30000ms.
+(fail) default check > the binary under test: the probe takes it, what is without an error passes, and a syntax error fails the instance and is no crash [1318.13ms]
+(fail) enumerator > every instance is its line of the list, and the counts are those of the reference [33867.96ms]
+  ^ this test timed out after 30000ms.
+(fail) default check > the binary under test: the probe takes it, what is without an error passes, and a syntax error fails the instance and is no crash [1318.13ms]
 
  117 pass
- 1 fail
- 201 expect() calls
-Ran 118 tests across 1 file. [40.01s]
+ 2 fail
+ 207 expect() calls
+Ran 119 tests across 1 file. [46.36s]

@@ -105,7 +105,7 @@ diff -ruN -x corpus /tmp/dcx1a/base-lint-after-prior/conformance/runner/expectat
    | "not-an-instance"
 diff -ruN -x corpus /tmp/dcx1a/base-lint-after-prior/conformance/runner/index.ts test/cli/lint/conformance/runner/index.ts
 --- /tmp/dcx1a/base-lint-after-prior/conformance/runner/index.ts	2026-10-01 15:11:53.737610397 +0000
-+++ test/cli/lint/conformance/runner/index.ts	2026-10-01 18:01:34.201672148 +0000
++++ test/cli/lint/conformance/runner/index.ts	2026-10-01 18:25:17.220666235 +0000
 @@ -5,6 +5,7 @@
    compareNames,
    compareWithRevision,
@@ -365,7 +365,7 @@ diff -ruN -x corpus /tmp/dcx1a/base-lint-after-prior/conformance/sweep.ts test/c
        }),
 diff -ruN -x corpus /tmp/dcx1a/base-lint-after-prior/conformance.test.ts test/cli/lint/conformance.test.ts
 --- /tmp/dcx1a/base-lint-after-prior/conformance.test.ts	2026-10-01 15:11:53.868444240 +0000
-+++ test/cli/lint/conformance.test.ts	2026-10-01 16:14:54.397512874 +0000
++++ test/cli/lint/conformance.test.ts	2026-10-01 18:02:22.110774571 +0000
 @@ -13,6 +13,8 @@
    InputFile,
    InputResult,
@@ -406,7 +406,7 @@ diff -ruN -x corpus /tmp/dcx1a/base-lint-after-prior/conformance.test.ts test/cl
      endingOf(await runInstance(instance, check, { ...options, ...more }));
  
    test("the bytes of the baseline are the bytes of the oracle, or it is no pass", async () => {
-@@ -618,21 +626,32 @@
+@@ -618,21 +626,47 @@
      });
    });
  
@@ -445,10 +445,25 @@ diff -ruN -x corpus /tmp/dcx1a/base-lint-after-prior/conformance.test.ts test/cl
 +      expect({ outcome: other.outcome, headerOnly: other.headerOnly }).toEqual({ outcome: "fail", headerOnly: false });
 +      expect(other.reason).toStartWith("the first section differs from the oracle at byte ");
 +    }
++  });
++
++  test("the lists take a result at the level of its run: the first section alone passes a list of the level first-section and fails one of the level baseline", async () => {
++    const { factsOf, verify } = runner;
++    const plain = reports({ diagnostics: [{ ...known, location: printed }] });
++    const first = factsOf(await runInstance(E, plain, { ...options, level: "first-section" }), "first-section");
++    expect(first).toEqual({ name: "a.ts", status: "pass", level: "first-section", detail: "" });
++    expect(verify({ level: "first-section", E: ["a.ts"], C: [] }, new Map([["a.ts", first]]))).toEqual([]);
++    const whole = factsOf(await runInstance(E, reports({ diagnostics: [known] }), options), "first-section");
++    expect(whole).toEqual({ name: "a.ts", status: "pass", level: "baseline", detail: "" });
++    expect(verify({ level: "first-section", E: ["a.ts"], C: [] }, new Map([["a.ts", whole]]))).toEqual([]);
++    const short = factsOf(await runInstance(E, plain, options), "baseline");
++    expect({ status: short.status, level: short.level }).toEqual({ status: "fail", level: "baseline" });
++    const failures = verify({ level: "baseline", E: ["a.ts"], C: [] }, new Map([["a.ts", short]]));
++    expect(failures.map(f => [f.name, f.list, f.reason])).toEqual([["a.ts", "E", "fail"]]);
    });
  
    test("what is no list of diagnostics of the instance is no pass", async () => {
-@@ -696,6 +715,9 @@
+@@ -696,6 +730,9 @@
        diagnostics: [],
        verdict: { outcome: "fail", cause: "syntax", reason: "x" },
        rules: { r: 2 },
@@ -458,7 +473,7 @@ diff -ruN -x corpus /tmp/dcx1a/base-lint-after-prior/conformance.test.ts test/cl
      });
      const { instance: _other, ...fail } = await runInstance(C, fails, options);
      expect(fail).toEqual({
-@@ -705,18 +727,26 @@
+@@ -705,18 +742,26 @@
        death: undefined,
        standIns: undefined,
        rules: { r: 2 },
@@ -488,7 +503,7 @@ diff -ruN -x corpus /tmp/dcx1a/base-lint-after-prior/conformance.test.ts test/cl
    });
  
    const sample = [...cases().values()].filter(path => sampled(path, 250)).sort();
-@@ -976,14 +1006,20 @@
+@@ -976,14 +1021,20 @@
    const linter = lazy(() => createSpawnCheck({ command: command("lints-fixture.ts"), env: bunEnv }));
    const C: Instance = { name: "a.ts", status: "run", oracle: { class: "C" } };
    const E: Instance = { name: "a.ts", status: "run", oracle: { class: "E" } };
@@ -512,7 +527,7 @@ diff -ruN -x corpus /tmp/dcx1a/base-lint-after-prior/conformance.test.ts test/cl
    };
    const ending = async (instance: Instance, check: Check, content: string, more: More = {}) =>
      endingOf(await run(instance, check, content, more));
-@@ -1036,23 +1072,60 @@
+@@ -1036,23 +1087,60 @@
  
    // The one test of this file that needs `bun --lint` itself: a binary without it runs the first file of the probe.
    test.concurrent(
@@ -579,7 +594,7 @@ diff -ruN -x corpus /tmp/dcx1a/base-lint-after-prior/conformance.test.ts test/cl
      async () => {
        const unit: InputFile = {
          unitName: "/.src/a.ts",
-@@ -1079,6 +1152,12 @@
+@@ -1079,6 +1167,12 @@
          reason: "the first section is the oracle's; a baseline needs the lengths and the related information",
          headerOnly: true,
        });
@@ -592,7 +607,7 @@ diff -ruN -x corpus /tmp/dcx1a/base-lint-after-prior/conformance.test.ts test/cl
      },
      spawnTimeout,
    );
-@@ -1194,58 +1273,79 @@
+@@ -1194,58 +1288,79 @@
          "//~ print {relative}(1,7): error syntax: This constant must be initialized\n",
        "syntax",
        `${named("syntax")}: /.src/a.ts(1,7): error syntax: Expected identifier but found "=", and 1 more`,
@@ -677,7 +692,7 @@ diff -ruN -x corpus /tmp/dcx1a/base-lint-after-prior/conformance.test.ts test/cl
        });
      },
      spawnTimeout,
-@@ -1281,7 +1381,7 @@
+@@ -1281,7 +1396,7 @@
    );
  
    test.concurrent(
@@ -686,7 +701,7 @@ diff -ruN -x corpus /tmp/dcx1a/base-lint-after-prior/conformance.test.ts test/cl
      async () => {
        const reports =
          "//~ print {relative}(1,1): error no-debugger: Unexpected 'debugger' statement.\n" +
-@@ -1289,10 +1389,11 @@
+@@ -1289,10 +1404,11 @@
          "//~ print {relative}(3,5): warning use-isnan: Use the isNaN function to compare with NaN.\n";
        const rules = { "no-debugger": 2, "use-isnan": 1 };
        const clean = await run(C, linter(), reports);
@@ -699,7 +714,7 @@ diff -ruN -x corpus /tmp/dcx1a/base-lint-after-prior/conformance.test.ts test/cl
        });
        // A rule says nothing of what the oracle holds.
        const silent = await run(E, linter(), reports);
-@@ -1385,8 +1486,9 @@
+@@ -1385,8 +1501,9 @@
    const listed = sampleListed(lists, small ? 16 : Infinity);
    const check = lazy(() => createSpawnCheck({ command: [bunExe()], env: bunEnv }));
  
@@ -710,7 +725,7 @@ diff -ruN -x corpus /tmp/dcx1a/base-lint-after-prior/conformance.test.ts test/cl
    });
  
    // One batch at a time: a batch keeps as many processes in flight as it may, and a second batch beside it would double them.
-@@ -1394,7 +1496,7 @@
+@@ -1394,7 +1511,7 @@
      "every listed instance is a run instance of its list and passes: batch %d",
      async (_k, batch) => {
        using dir = tempDir("lint-conformance", {});

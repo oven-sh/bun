@@ -17,6 +17,7 @@ const { Linter } = require(path.join(ESLINT, "lib/linter"));
 const astUtils = require(path.join(ESLINT, "lib/rules/utils/ast-utils"));
 const bunshape = require("../code-path-analysis/proto/bunshape.cjs");
 const { Driver } = require("../code-path-analysis/proto/driver.cjs");
+const CodePath = require(path.join(ESLINT, "lib/linter/code-path-analysis/code-path"));
 
 const ALL = ["getter-return", "no-fallthrough", "constructor-super", "no-this-before-super"];
 
@@ -164,6 +165,14 @@ function makeRules(sourceCode, text, options) {
 		else reports.push(line);
 	};
 	const anyReachable = list => list.some(s => s.reachable);
+	// Whether the list of the analyzer says what the set of the rule says: the port can then ask the analyzer alone.
+	const sameAsState = info => {
+		if (!options.stats) return;
+		options.stats.stateChecks++;
+		const state = CodePath.getState(info.codePath).currentSegments;
+		if (anyReachable(state) !== anyReachable(info.current)) options.stats.stateDiffers++;
+		if (state.length !== info.current.length || state.some(x => !info.current.includes(x))) options.stats.stateOtherSet++;
+	};
 
 	// function node -> { names: null | global name, id, property, inClass }
 	const getters = new Map();
@@ -496,6 +505,7 @@ function makeRules(sourceCode, text, options) {
 				case "EFunction":
 				case "EArrow": {
 					const info = top();
+					sameAsState(info);
 					if (info.shouldCheck && anyReachable(info.current)) {
 						const name = functionNameWithKind(info.getter, info.node);
 						report("getter-return", info.getter.property.src.range[0], info.hasReturn ? `Expected ${name} to always return a value.` : `Expected to return a value in ${name}.`, info.getter);
@@ -509,6 +519,7 @@ function makeRules(sourceCode, text, options) {
 					const c = node.case;
 					const s = c.parentSwitch;
 					const isLast = c.index === s.cases.length - 1;
+					sameAsState(top());
 					const reachable = anyReachable(top().current);
 					let isFallthrough = false;
 					if (reachable && !isLast) {
@@ -576,7 +587,7 @@ function modelled(r, text, options, ruleNames) {
 function main() {
 	const args = process.argv.slice(2);
 	const sources = [];
-	const options = { mode: "deferred", exactGlobals: false, stats: { paths: 0, derivedConstructors: 0, steps: 0, maxSteps: 0, loopMadeInfo: 0 } };
+	const options = { mode: "deferred", exactGlobals: false, stats: { paths: 0, derivedConstructors: 0, steps: 0, maxSteps: 0, loopMadeInfo: 0, stateChecks: 0, stateDiffers: 0, stateOtherSet: 0 } };
 	let show = 20;
 	let ruleNames = ALL;
 	for (let i = 0; i < args.length; i++) {

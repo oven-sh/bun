@@ -8,7 +8,7 @@
 // writing, after the descriptor is released, and writes one line to stderr for
 // it. The shim interposes libc's syscall(), so these tests need glibc.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isGlibc, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isGlibc, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
 import { symlinkSync } from "node:fs";
 import { constants } from "node:os";
@@ -64,38 +64,61 @@ const nodeFsFixture = /* js */ `
   console.log(JSON.stringify(out));
 `;
 
-// respondWithFile opens the file for reading. When statCheck cancels the send, http2 closes the descriptor.
+// respondWithFile opens the file for reading. "/cancelled": statCheck cancels the send, and http2 closes the
+// descriptor. "/sent": the read stream closes it after the last byte, and the trailers keep the http2 stream open
+// until the callback of that close has run.
 const http2Fixture = /* js */ `
+  const fs = require("node:fs");
   const http2 = require("node:http2");
-  const fail = e => {
-    console.log(JSON.stringify({ error: String(e) }));
-    process.exit(1);
+
+  const sentFileClosed = Promise.withResolvers();
+  const close = fs.close;
+  fs.close = (fd, callback) => {
+    if (!fs.readlinkSync("/proc/self/fd/" + fd).endsWith("sent.${EIO}.close-fault")) return close(fd, callback);
+    close(fd, err => {
+      callback(err);
+      sentFileClosed.resolve();
+    });
   };
+
   const server = http2.createServer();
-  server.on("error", fail);
-  server.on("stream", stream => {
-    stream.respondWithFile("body.${EIO}.close-fault", {}, {
-      statCheck() {
-        stream.respond({ ":status": 200 });
-        stream.end("from statCheck");
-        return false;
-      },
+  server.on("stream", (stream, headers) => {
+    if (headers[":path"] === "/cancelled") {
+      stream.respondWithFile("cancelled.${EIO}.close-fault", {}, {
+        statCheck() {
+          stream.respond({ ":status": 200 });
+          stream.end("from statCheck");
+          return false;
+        },
+      });
+      return;
+    }
+    stream.on("error", () => {});
+    stream.on("wantTrailers", async () => {
+      await sentFileClosed.promise;
+      setImmediate(() => stream.closed || stream.sendTrailers({ "x-file": "closed" }));
     });
+    stream.respondWithFile("sent.${EIO}.close-fault", {}, { waitForTrailers: true });
   });
-  server.listen(0, () => {
-    const client = http2.connect("http://localhost:" + server.address().port);
-    client.on("error", fail);
-    const request = client.request({ ":path": "/" });
-    request.on("error", fail);
-    let body = "";
-    request.setEncoding("utf8");
-    request.on("data", chunk => (body += chunk));
-    request.on("end", () => {
-      client.close();
-      server.close();
-      console.log(JSON.stringify({ body }));
+
+  // What the client got: the body, and the code that closed the stream (0 is NGHTTP2_NO_ERROR).
+  const get = (client, path) =>
+    new Promise(resolve => {
+      const request = client.request({ ":path": path });
+      let body = "";
+      request.setEncoding("utf8");
+      request.on("data", chunk => (body += chunk));
+      request.on("error", () => {});
+      request.on("close", () => resolve({ body, rstCode: request.rstCode }));
+      request.end();
     });
-    request.end();
+
+  server.listen(0, "127.0.0.1", async () => {
+    const client = http2.connect("http://127.0.0.1:" + server.address().port);
+    const out = { cancelled: await get(client, "/cancelled"), sent: await get(client, "/sent") };
+    client.close();
+    server.close();
+    console.log(JSON.stringify(out));
   });
 `;
 
@@ -128,11 +151,11 @@ const copyFixture = /* js */ `
     "cp": dest => withCallback(fs.cp, dest),
     "promises.cp": dest => fs.promises.cp("src.bin", dest),
   };
-  const out = { eintr: {} };
+  const out = { apis: {}, eintr: {} };
 
   for (const [api, copy] of Object.entries(apis)) {
     const dest = api + ".${fault}";
-    out[api] = { result: await settle(() => copy(dest)), dest: at(dest) };
+    out.apis[api] = { result: await settle(() => copy(dest)), dest: at(dest) };
   }
   for (const api of ["copyFileSync", "cpSync"]) {
     const dest = api + ".${EINTR}.close-fault";
@@ -177,20 +200,14 @@ const ficloneFixture = /* js */ `
 `;
 
 describe.skipIf(!cc)("a close(2) that reports an error", () => {
-  type Result = { stdout: any; stderr: string[]; exitCode: number };
-  const dirs: ReturnType<typeof tempDir>[] = [];
-  let nodeFs: Result, http2: Result, copy: Result, ficlone: Result;
+  let shimDir: ReturnType<typeof tempDir> | undefined;
+  let shim: string;
+  // A debug build on a loaded machine needs up to 6 s for one fixture, and a test has 5 s. Other builds keep the default.
+  const timeout = isDebug ? 30_000 : undefined;
 
-  // One process for each fixture runs all of its cases. Each close that the shim fails is one line
-  // of stderr. The timeout is for debug builds: they take seconds to load node:stream and node:http2.
   beforeAll(async () => {
-    const fixtureDir = (files: Record<string, string | Buffer>) => {
-      const dir = tempDir("fs-close-error", files);
-      dirs.push(dir);
-      return String(dir);
-    };
-
-    const shim = join(fixtureDir({}), "shim.so");
+    shimDir = tempDir("fs-close-error-shim", {});
+    shim = join(String(shimDir), "shim.so");
     await using compile = Bun.spawn({
       cmd: [cc!, "-shared", "-fPIC", "-o", shim, join(import.meta.dir, "fs-close-error-shim.c"), "-ldl"],
       env: bunEnv,
@@ -199,142 +216,131 @@ describe.skipIf(!cc)("a close(2) that reports an error", () => {
     });
     const [out, err, compiled] = await Promise.all([compile.stdout.text(), compile.stderr.text(), compile.exited]);
     if (compiled !== 0) throw new Error(`Failed to build the shim:\n${err || out}`);
-
-    async function run(cwd: string, env: Record<string, string> = {}): Promise<Result> {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "main.mjs"],
-        env: { ...bunEnv, LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim, ...env },
-        cwd,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      let parsed: unknown = stdout;
-      try {
-        parsed = JSON.parse(stdout);
-      } catch {}
-      return {
-        stdout: parsed,
-        stderr: stderr.split("\n").filter(line => line.length > 0 && !line.startsWith("WARNING: ASAN interferes")),
-        exitCode,
-      };
-    }
-
-    const source = Buffer.alloc(20000, "S");
-    // body.*: written here, without the shim. The http2 server only reads it.
-    const http2Dir = fixtureDir({ "main.mjs": http2Fixture, [`body.${EIO}.close-fault`]: "hello" });
-    const copyDir = fixtureDir({
-      "main.mjs": copyFixture,
-      "src.bin": source,
-      [`existing.${fault}`]: Buffer.alloc(50000, "D"),
-      [`target.${fault}`]: Buffer.alloc(50000, "D"),
-      [`same.${fault}`]: source,
-      "tree": { [`file.${fault}`]: source },
-      // Less than a pipe holds, so the copy into the fifo completes while nothing reads it.
-      "small.bin": Buffer.alloc(1000, "S"),
-    });
-    symlinkSync(`target.${fault}`, join(copyDir, "link"));
-    mkfifo(join(copyDir, `fifo.${fault}`), 0o666);
-
-    [nodeFs, http2, copy, ficlone] = await Promise.all([
-      run(fixtureDir({ "main.mjs": nodeFsFixture })),
-      run(http2Dir, { CLOSE_FAULT_READERS: "1" }),
-      run(copyDir),
-      run(fixtureDir({ "main.mjs": ficloneFixture, "src.bin": source }), { CLOSE_FAULT_FICLONE: "1" }),
-    ]);
-  }, 60_000);
+  });
 
   afterAll(() => {
-    for (const dir of dirs) dir[Symbol.dispose]();
+    shimDir?.[Symbol.dispose]();
   });
 
-  describe("node:fs", () => {
-    test("fs.closeSync throws ENOSPC, EDQUOT and EIO, and not EINTR or EINPROGRESS", () => {
-      expect(nodeFs.stdout.closeSync).toEqual({
-        ENOSPC: "ENOSPC close",
-        EDQUOT: "EDQUOT close",
-        EIO: "EIO close",
-        // libuv: "The close is in progress, not an error."
-        EINTR: "returned",
-        EINPROGRESS: "returned",
-      });
+  // Runs main.mjs of `cwd` under the shim. Each close that the shim fails is one line of stderr.
+  async function run(cwd: string, env: Record<string, string> = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: { ...bunEnv, LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim, ...env },
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
     });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    let parsed: unknown = stdout;
+    try {
+      parsed = JSON.parse(stdout);
+    } catch {}
+    return {
+      stdout: parsed,
+      stderr: stderr.split("\n").filter(line => line.length > 0 && !line.startsWith("WARNING: ASAN interferes")),
+      exitCode,
+    };
+  }
 
-    test("fs.close passes it to the callback", () => {
-      expect(nodeFs.stdout.close).toBe("ENOSPC close");
-    });
-
-    test("FileHandle.close rejects, and the handle is closed", () => {
-      expect(nodeFs.stdout.fileHandle).toEqual({ close: "ENOSPC close", fd: -1 });
-    });
-
-    test("fs.createWriteStream emits it", () => {
-      expect(nodeFs.stdout.createWriteStream).toBe("ENOSPC close");
-    });
-
-    // A debug build asserts on a close whose result bun drops. The assert is for EBADF, a use after close.
-    test("a descriptor that bun closes for itself does not end the process", () => {
-      expect({ afterInternalCloses: nodeFs.stdout.afterInternalCloses, exitCode: nodeFs.exitCode }).toEqual({
-        afterInternalCloses: "alive",
+  test.concurrent(
+    "fs.closeSync, fs.close, FileHandle.close and fs.createWriteStream report it",
+    async () => {
+      using dir = tempDir("fs-close-error", { "main.mjs": nodeFsFixture });
+      expect(await run(String(dir))).toEqual({
+        stdout: {
+          closeSync: {
+            ENOSPC: "ENOSPC close",
+            EDQUOT: "EDQUOT close",
+            EIO: "EIO close",
+            // libuv: "The close is in progress, not an error."
+            EINTR: "returned",
+            EINPROGRESS: "returned",
+          },
+          close: "ENOSPC close",
+          fileHandle: { close: "ENOSPC close", fd: -1 },
+          createWriteStream: "ENOSPC close",
+          // A debug build asserts on a close whose result bun drops. The assert is for EBADF, a use after close.
+          afterInternalCloses: "alive",
+        },
+        // Each descriptor is closed once.
+        stderr: failed(ENOSPC, EDQUOT, EIO, EINTR, EINPROGRESS, ENOSPC, ENOSPC, ENOSPC, ENOSPC, ENOSPC),
         exitCode: 0,
       });
-    });
+    },
+    timeout,
+  );
 
-    test("each descriptor is closed once", () => {
-      expect(nodeFs.stderr).toEqual(
-        failed(ENOSPC, EDQUOT, EIO, EINTR, EINPROGRESS, ENOSPC, ENOSPC, ENOSPC, ENOSPC, ENOSPC),
-      );
-    });
-  });
-
-  // Nothing can act on the result of this close. Node asserts on it.
-  test("http2 respondWithFile ignores it", () => {
-    expect(http2).toEqual({ stdout: { body: "from statCheck" }, stderr: failed(EIO), exitCode: 0 });
-  });
+  // The descriptor was only read, so nothing can act on the result of its close. Node asserts on the
+  // first close, and destroys the stream with the error of the second.
+  test.concurrent(
+    "http2 respondWithFile ignores it",
+    async () => {
+      using dir = tempDir("fs-close-error", {
+        "main.mjs": http2Fixture,
+        // Written here, without the shim. The http2 server only reads them.
+        [`cancelled.${EIO}.close-fault`]: "hello",
+        [`sent.${EIO}.close-fault`]: "hello",
+      });
+      expect(await run(String(dir), { CLOSE_FAULT_READERS: "1" })).toEqual({
+        stdout: { cancelled: { body: "from statCheck", rstCode: 0 }, sent: { body: "hello", rstCode: 0 } },
+        stderr: failed(EIO, EIO),
+        exitCode: 0,
+      });
+    },
+    timeout,
+  );
 
   // Node (libuv uv_fs_copyfile) fails the copy with the error of the close, and removes the destination.
-  describe("copyFile and cp", () => {
-    test.each(copyApis)("%s fails and removes the destination", api => {
-      expect(copy.stdout[api]).toEqual({ result: "ENOSPC copyfile", dest: "ENOENT" });
-    });
+  test.concurrent(
+    "copyFile and cp fail with it and remove the destination",
+    async () => {
+      const source = Buffer.alloc(20000, "S");
+      using dir = tempDir("fs-close-error", {
+        "main.mjs": copyFixture,
+        "src.bin": source,
+        [`existing.${fault}`]: Buffer.alloc(50000, "D"),
+        [`target.${fault}`]: Buffer.alloc(50000, "D"),
+        [`same.${fault}`]: source,
+        "tree": { [`file.${fault}`]: source },
+        // Less than a pipe holds, so the copy into the fifo completes while nothing reads it.
+        "small.bin": Buffer.alloc(1000, "S"),
+      });
+      symlinkSync(`target.${fault}`, join(String(dir), "link"));
+      mkfifo(join(String(dir), `fifo.${fault}`), 0o666);
 
-    test("EINTR does not fail the copy", () => {
+      const removed = { result: "ENOSPC copyfile", dest: "ENOENT" };
       const copied = { result: "returned", dest: "the source bytes" };
-      expect(copy.stdout.eintr).toEqual({ copyFileSync: copied, cpSync: copied });
-    });
-
-    test("a destination that existed before is removed, as in node", () => {
-      expect(copy.stdout.existing).toEqual({ result: "ENOSPC copyfile", dest: "ENOENT" });
-    });
-
-    // The target is not a name that the copy was given.
-    test("a symlink is removed, and its target is kept", () => {
-      expect(copy.stdout.symlink).toEqual({ result: "ENOSPC copyfile", link: false, target: "the source bytes" });
-    });
-
-    test("a destination that is the source is kept (node removes it)", () => {
-      expect(copy.stdout.source).toEqual({ result: "ENOSPC copyfile", dest: "the source bytes" });
-    });
-
-    test("a fifo is kept (node removes it)", () => {
-      expect(copy.stdout.fifo).toEqual({ result: "ENOSPC copyfile", dest: "a fifo" });
-    });
-
-    test("a recursive copy stops at the file whose close failed", () => {
-      expect(copy.stdout.directory).toEqual({ result: "ENOSPC copyfile", copied: [] });
-    });
-
-    test("each destination is closed once", () => {
-      expect({ stderr: copy.stderr, exitCode: copy.exitCode }).toEqual({
+      expect(await run(String(dir))).toEqual({
+        stdout: {
+          apis: Object.fromEntries(copyApis.map(api => [api, removed])),
+          // libuv: "The close is in progress, not an error."
+          eintr: { copyFileSync: copied, cpSync: copied },
+          // A destination that existed before the copy is removed too, as in node.
+          existing: removed,
+          // The target is not a name that the copy was given.
+          symlink: { result: "ENOSPC copyfile", link: false, target: "the source bytes" },
+          // Node removes a destination that is the source, and a fifo.
+          source: { result: "ENOSPC copyfile", dest: "the source bytes" },
+          fifo: { result: "ENOSPC copyfile", dest: "a fifo" },
+          // A recursive copy stops at the file whose close failed.
+          directory: { result: "ENOSPC copyfile", copied: [] },
+        },
+        // Each destination is closed once.
         stderr: failed(...copyApis.map(() => ENOSPC), EINTR, EINTR, ENOSPC, ENOSPC, ENOSPC, ENOSPC, ENOSPC),
         exitCode: 0,
       });
-    });
+    },
+    timeout,
+  );
 
-    test("a copy by FICLONE fails and removes the destination", () => {
+  test.concurrent(
+    "a copy by FICLONE fails with it and removes the destination",
+    async () => {
+      using dir = tempDir("fs-close-error", { "main.mjs": ficloneFixture, "src.bin": Buffer.alloc(20000, "S") });
       const removed = { result: "ENOSPC copyfile", dest: "ENOENT" };
       const cloned = { result: "returned", dest: "empty" };
-      expect(ficlone).toEqual({
+      expect(await run(String(dir), { CLOSE_FAULT_FICLONE: "1" })).toEqual({
         stdout: {
           enospc: { "copyFileSync": removed, "copyFileSync FICLONE_FORCE": removed, "cpSync": removed },
           eintr: { "copyFileSync": cloned, "copyFileSync FICLONE_FORCE": cloned, "cpSync": cloned },
@@ -342,6 +348,7 @@ describe.skipIf(!cc)("a close(2) that reports an error", () => {
         stderr: failed(ENOSPC, ENOSPC, ENOSPC, EINTR, EINTR, EINTR),
         exitCode: 0,
       });
-    });
-  });
+    },
+    timeout,
+  );
 });

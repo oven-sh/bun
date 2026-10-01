@@ -862,7 +862,7 @@ class WASI {
       }),
       fd_close: wrap(fd => {
         const stats = CHECK_FD(fd, BigInt(0));
-        // close(2) releases the descriptor even when it reports an error.
+        // close(2) releases the descriptor even when it reports an error, so the entry goes first. uvwasi keeps it: https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/uvwasi.c#L813-L816
         this.FD_MAP.delete(fd);
         fs.closeSync(stats.real);
         return WASI_ESUCCESS;

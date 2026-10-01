@@ -167,6 +167,7 @@ function main() {
 		else if (args[i] === "--max") max = Number(args[++i]);
 		else if (args[i] === "--verbose") verbose = true;
 		else if (args[i] === "--option") options[args[++i]] = true;
+		else if (args[i] === "--drop") options.dropVirtual = new Set(args[++i].split(","));
 	}
 	const linter = new Linter();
 	const languageOptionsPattern = /\/\*languageOptions\s((?:.|[\r\n])+?)\*\//u;

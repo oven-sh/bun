@@ -349,16 +349,73 @@ function lint(sourceCode, report) {
 		}
 	}
 	const isLiteral = n => ["ENull", "ERegExp", "EBoolean", "ENumber", "EBigInt"].includes(n.t) || (n.t === "EString" && !n.template);
-	function isLogicalIdentity(place, operator) {
+	// `isLogicalIdentity` and `isConstant` as they are to be written: the left operands of a chain of binary expressions
+	// are folded in a loop, the innermost first, and what is found for a link is kept, so that a long chain costs one pass.
+	const folded = new Map();
+	const isSpine = n => !!n && n.t === "EBinary" && !isAssign(n) && !isComma(n);
+	// [isConstant(node, flag), isLogicalIdentity(node, the operator of the node)] of the link `place`.
+	function fold(place, flag) {
+		const links = [];
+		let known = null;
+		let leaf = place;
+		for (;;) {
+			const n = plain(leaf);
+			if (!isSpine(n)) break;
+			const hit = folded.get(n);
+			if (hit && hit[flag ? 1 : 0]) { known = hit[flag ? 1 : 0]; break; }
+			links.push([n, flag]);
+			if (!isLogical(n)) flag = false;
+			leaf = n.left;
+		}
+		// What the link below says: its constant, and its identity for its own operator when it is a logical expression.
+		let below = known ? { constant: known[0], op: isLogical(plain(leaf)) ? plain(leaf).op : null, identity: known[1] } : { constant: isConstantLeaf(leaf, flag), op: null, identity: false };
+		for (let i = links.length - 1; i >= 0; i--) {
+			const [n, f] = links[i];
+			let constant, identity = false;
+			if (isLogical(n)) {
+				const leftIdentity = below.op !== null ? below.op === n.op && below.identity : isLogicalIdentityLeaf(n.left, n.op);
+				const rightIdentity = isLogicalIdentity(n.right, n.op);
+				const right = isConstant(n.right, f);
+				constant = (below.constant && right) || (below.constant && leftIdentity) || (f && right && rightIdentity);
+				identity = leftIdentity || rightIdentity;
+			} else constant = below.constant && isConstant(n.right, false) && n.op !== "in";
+			let slot = folded.get(n);
+			if (!slot) folded.set(n, (slot = [null, null]));
+			slot[f ? 1 : 0] = [constant, identity];
+			below = { constant, op: isLogical(n) ? n.op : null, identity };
+		}
+		return below;
+	}
+	// `isLogicalIdentity` of what is no logical expression.
+	function isLogicalIdentityLeaf(place, operator) {
 		const n = plain(place);
 		if (!n) return false;
 		if (isLiteral(n)) return (operator === "||" && booleanValue(n) === true) || (operator === "&&" && booleanValue(n) === false);
 		if (n.t === "EUnary") return operator === "&&" && n.op === "void";
-		if (isLogical(n)) return operator === n.op && (isLogicalIdentity(n.left, operator) || isLogicalIdentity(n.right, operator));
 		if (isAssign(n)) return (n.op === "||=" || n.op === "&&=") && operator === n.op.slice(0, -1) && isLogicalIdentity(n.right, operator);
 		return false;
 	}
+	function isLogicalIdentity(place, operator) {
+		const n = plain(place);
+		if (n && isLogical(n)) return operator === n.op && fold(place, false).identity;
+		return isLogicalIdentityLeaf(place, operator);
+	}
 	function isConstant(place, inBooleanPosition) {
+		const n = plain(place);
+		if (isSpine(n)) return fold(place, inBooleanPosition).constant;
+		return isConstantLeaf(place, inBooleanPosition);
+	}
+	// The recursive text of ESLint, kept to compare: `--recursive` runs it in place of the folded one.
+	function isLogicalIdentityRecursive(place, operator) {
+		const n = plain(place);
+		if (!n) return false;
+		if (isLiteral(n)) return (operator === "||" && booleanValue(n) === true) || (operator === "&&" && booleanValue(n) === false);
+		if (n.t === "EUnary") return operator === "&&" && n.op === "void";
+		if (isLogical(n)) return operator === n.op && (isLogicalIdentityRecursive(n.left, operator) || isLogicalIdentityRecursive(n.right, operator));
+		if (isAssign(n)) return (n.op === "||=" || n.op === "&&=") && operator === n.op.slice(0, -1) && isLogicalIdentityRecursive(n.right, operator);
+		return false;
+	}
+	function isConstantLeaf(place, inBooleanPosition) {
 		const n = plain(place);
 		if (!n) return false;
 		switch (n.t) {

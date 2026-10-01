@@ -52,6 +52,11 @@ export function caseBaseName(instanceName: string): string {
   return m === null ? instanceName : m[1] + m[3];
 }
 
+// The suite of a case and the directories below it: "conformance/types/tuple" of "conformance/types/tuple/castingTuple.ts".
+export function directoryOf(casePath: string): string {
+  return casePath.slice(0, casePath.lastIndexOf("/"));
+}
+
 // The paths of the cases below the directory of the cases, with forward slashes, in the order of their code units.
 export function listCases(casesDirectory: string): string[] {
   const out: string[] = [];
@@ -156,7 +161,7 @@ export function openCorpus(root: string): Corpus {
     oracle: instance => readOracle((instance as CorpusInstance).oracle),
     facts(instance) {
       const { name, casePath } = instance;
-      const known = { name, directory: casePath.slice(0, casePath.lastIndexOf("/")), casePath, instance };
+      const known = { name, directory: directoryOf(casePath), casePath, instance };
       // No list may hold an instance that does not run, whatever a platform makes of its files.
       const notRun = { ...known, kind: undefined, platformLimited: undefined };
       if (instance.invalidReason !== undefined) return { ...notRun, status: "invalid", reason: instance.invalidReason };

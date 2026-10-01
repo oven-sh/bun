@@ -324,6 +324,10 @@ class Driver {
 	// leaveNode: processCodePathToExit, the handlers of the rules, postprocess.
 	leave(node, kind, post, flags) {
 		const a = this.a;
+		if (node.dropped) {
+			if (kind && kind.k === "AssignmentPattern") a.state.popForkContext();
+			return;
+		}
 		a.currentNode = node;
 		a.processCodePathToExit(kind, node);
 		this.probe("exit", node, kind);
@@ -334,6 +338,12 @@ class Driver {
 	// A node that Bun's tree has no node for, and that ESTree has: its two ends are two forwards.
 	virtual(name, src, role) {
 		const node = { t: name, src, virtual: true };
+		if (this.options.dropVirtual && this.options.dropVirtual.has(name)) {
+			// Left out: what the role does still happens, the two forwards do not.
+			node.dropped = true;
+			if (this.a.codePath && role) this.a.preprocess(role);
+			return node;
+		}
 		this.enter(node, role, PLAIN);
 		return node;
 	}
@@ -341,6 +351,7 @@ class Driver {
 	// An ESTree `Identifier` that Bun's tree has no node for.
 	identifier(src, isReference, role) {
 		const node = { t: "Identifier", src, virtual: true };
+		if (!isReference && !role && this.options.dropVirtual && this.options.dropVirtual.has("Identifier")) return;
 		this.enter(node, role, PLAIN);
 		this.leave(node, isReference ? { k: "IdentifierReference" } : PLAIN);
 	}
@@ -456,7 +467,7 @@ class Driver {
 				this.enter(s, role, { k: "Loop", type: "ForStatement", label });
 				if (s.init) {
 					// An expression there is wrapped in S::SExpr by Bun alone: it is not a statement of ESTree.
-					if (s.init.t === "SExpr") this.expr(s.init.value, null);
+					if (s.init.t === "SExpr" && !this.options.trapHeadStatement) this.expr(s.init.value, null);
 					else this.stmt(s.init, null);
 				}
 				if (s.test) this.expr(s.test, { r: "ForTest", test: booleanValueIfSimpleConstant(s.test) }, { isTest: true });
@@ -467,7 +478,7 @@ class Driver {
 			case "SForIn":
 			case "SForOf":
 				this.enter(s, role, { k: "Loop", type: s.t === "SForIn" ? "ForInStatement" : "ForOfStatement", label });
-				if (s.init.t === "SExpr") this.expr(s.init.value, { r: "ForInOfLeft" });
+				if (s.init.t === "SExpr" && !this.options.trapHeadStatement) this.expr(s.init.value, { r: "ForInOfLeft" });
 				else this.stmt(s.init, { r: "ForInOfLeft" });
 				this.expr(s.value, { r: "ForInOfRight" });
 				this.stmt(s.body, { r: "ForInOfBody" });
@@ -566,7 +577,7 @@ class Driver {
 				this.binding(arg.binding, null, true);
 			}
 		}
-		if (node.t === "EArrow" && node.prefer_expr) {
+		if (node.t === "EArrow" && node.prefer_expr && !this.options.trapArrowReturn) {
 			// The body is one S::Return that ESTree does not have: the expression is the body.
 			this.expr(f.body.stmts[0].value, null);
 		} else {
@@ -673,6 +684,10 @@ class Driver {
 		const pd = flags.pdValue ? { pdValue: true } : null;
 		switch (e.t) {
 			case "EMissing":
+				if (this.options.trapMissing) {
+					this.enter(e, role, PLAIN, pd);
+					this.leave(e, PLAIN, null, pd);
+				}
 				break;
 			case "EIdentifier":
 				this.enter(e, role, PLAIN, pd);
@@ -811,8 +826,13 @@ class Driver {
 			const isAssign = LOGICAL_ASSIGN.has(e.op);
 			const kind = { k: isAssign ? "LogicalAssignment" : "Logical", operator: isAssign ? e.op.slice(0, -1) : e.op, isForkingByTrueOrFalse };
 			this.enter(e, role, kind, pd);
-			this.expr(e.left, null, { inLogical: true });
-			this.expr(e.right, { r: "LogicalRight" }, { inLogical: true });
+			if (this.options.trapRightFirst) {
+				this.expr(e.right, { r: "LogicalRight" }, { inLogical: true });
+				this.expr(e.left, null, { inLogical: true });
+			} else {
+				this.expr(e.left, null, { inLogical: true });
+				this.expr(e.right, { r: "LogicalRight" }, { inLogical: true });
+			}
 			this.leave(e, kind, null, pd);
 		} else if (e.op === "=" && e.is_default) {
 			this.enter(e, role, PLAIN, pd);
@@ -821,8 +841,13 @@ class Driver {
 			this.leave(e, { k: "AssignmentPattern" }, null, pd);
 		} else {
 			this.enter(e, role, PLAIN, pd);
-			this.expr(e.left, null);
-			this.expr(e.right, null);
+			if (this.options.trapRightFirst) {
+				this.expr(e.right, null);
+				this.expr(e.left, null);
+			} else {
+				this.expr(e.left, null);
+				this.expr(e.right, null);
+			}
 			this.leave(e, PLAIN, null, pd);
 		}
 	}

@@ -9,6 +9,14 @@ if (!isMainThread) {
   addon.start(
     () => {
       if (++calls !== 1) return;
+      if (how === "abort-callback") {
+        addon.abort();
+        queueMicrotask(() => {
+          addon.markCheckpoint();
+          clearInterval(keepAlive);
+        });
+        return;
+      }
       queueMicrotask(() => {
         if (mode === 1) addon.abort();
         if (how === "exit") process.exit(0);
@@ -52,6 +60,11 @@ if (!isMainThread) {
     assert.equal(stats.duplicates, 0);
     assert.equal(stats.late, 0);
     assert.equal(stats.released, 1);
+    if (how === "abort-callback") {
+      assert.equal(stats.checkpoint, 1);
+      assert.equal(stats.returned_after_checkpoint, stats.returned);
+      assert.equal(stats.checkpoint_at_finalize, 1);
+    }
     if (mode === 1) {
       assert.equal(stats.delivered, how === "natural" ? 0 : 1);
       assert.equal(stats.returned, stats.accepted - stats.delivered);

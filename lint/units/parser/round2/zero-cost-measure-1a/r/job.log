@@ -1,0 +1,7 @@
+queued 2026-10-01T19:55:42Z
+lock acquired 2026-10-01T20:17:26Z load 241.00 238.43 265.28
+cache seeded from /tmp/zc1a/seam/thinlto-cache (1624 files)
+r1 full rc 0 seconds 214 load 460.88
+cgbench r1 rc=0 20:23:20
+tests r1 rc=0 20:23:31
+done 2026-10-01T20:23:31Z load 377.06 339.39 301.30

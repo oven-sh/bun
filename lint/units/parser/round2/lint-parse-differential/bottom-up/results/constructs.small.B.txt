@@ -1,0 +1,25 @@
+ 3483 parses 1743 forms | built 0/0 expr 0/0 alias 0/0 iext 1743/1740 impl 0/0 | (interface extends: an entry is read as a type first)
+        e.g. [ts] "interface I extends -1 {}"  tsc TS1109@20 "Expression expected."
+  816 parses   28 forms | built 308/308 expr 112/84 alias 2/2 iext 0/0 impl 0/0 | tuple element that starts with a reserved word
+        e.g. [ts] "f<[in]>(x);"  tsc TS1109@3 "Expression expected."
+  586 parses  293 forms | built 0/0 expr 0/0 alias 293/293 iext 0/0 impl 0/0 | (alias body only: read by the Discard sink)
+        e.g. [ts] "type X = A!.B;"  tsc TS1005@11 "';' expected."
+  523 parses   21 forms | built 187/187 expr 62/47 alias 20/20 iext 0/0 impl 0/0 | unique read as a type name
+        e.g. [ts] "f<unique>(x);"  tsc TS1110@8 "Type expected."
+  484 parses   20 forms | built 186/186 expr 46/26 alias 20/20 iext 0/0 impl 0/0 | x is T outside a return type
+        e.g. [ts] "f<a is A>(x);"  tsc TS1005@4 "';' expected."
+  251 parses  127 forms | built 0/0 expr 0/0 alias 0/0 iext 0/0 impl 127/124 | (class implements: a type reference, else an expression of Bun's grammar)
+        e.g. [ts] "class C implements -1 {}"  tsc TS1109@19 "Expression expected."
+  126 parses   66 forms | built 0/0 expr 63/63 alias 0/0 iext 0/0 impl 0/0 | (other: the type stands in an expression)
+        e.g. [ts] "f<[,]>(x);"  tsc TS1110@3 "Type expected."
+  124 parses    4 forms | built 44/44 expr 16/12 alias 4/4 iext 0/0 impl 0/0 | function or constructor type as the operand of keyof or readonly
+        e.g. [ts] "f<keyof  () => A>(x);"  tsc TS1005@12 "';' expected."
+   62 parses    2 forms | built 22/22 expr 8/6 alias 2/2 iext 0/0 impl 0/0 | [] after infer U
+        e.g. [ts] "f<[...infer A[]]>(x);"  tsc TS1005@13 "',' expected."
+   44 parses   11 forms | built 22/22 expr 0/0 alias 0/0 iext 0/0 impl 0/0 | UNMATCHED
+        e.g. [ts] "let v = x as A\n<>;"  tsc TS1109@16 "Expression expected."
+   31 parses    1 forms | built 11/11 expr 4/3 alias 1/1 iext 0/0 impl 0/0 | typeof a.#b (typescript-go parses it, tsc 6.0.2 does not)
+        e.g. [ts] "f<typeof a.#b>(x);"  tsc TS1003@13 "Identifier expected."
+    8 parses    4 forms | built 4/4 expr 0/0 alias 0/0 iext 0/0 impl 0/0 | type parameter constraint that tsc reads as an expression
+        e.g. [ts] "function f<U extends  in>() {}"  tsc TS1109@22 "Expression expected."
+44 unmatched

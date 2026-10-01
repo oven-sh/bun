@@ -1,0 +1,47 @@
+  850 parses  425 forms | built 0/0 expr 0/0 alias 0/0 iext 0/0 impl 425/425 | (class implements: a type reference, else an expression of Bun's grammar)
+        e.g. [ts] "class C implements  {}"  lint TS1005 @22 "Expected \"{\" but found end of file"; tsc checker TS1097
+  552 parses   24 forms | built 210/210 expr 54/32 alias 23/23 iext 0/0 impl 0/0 | asserts predicate outside a return type
+        e.g. [ts] "f<asserts a>(x);"  lint TS1005 @10 "Expected \";\" but found \"a\""
+  416 parses   16 forms | built 147/147 expr 55/41 alias 13/13 iext 0/0 impl 0/0 | JSDoc type: ?T, T?, !T, *, ?, function(...)
+        e.g. [ts] "f<*>(x);"  lint TS1109 @2 "Unexpected *"; tsc checker TS8020
+  155 parses    5 forms | built 55/55 expr 20/15 alias 5/5 iext 0/0 impl 0/0 | unique before a type that is not symbol
+        e.g. [ts] "f<unique A>(x);"  lint TS1005 @9 "Expected \";\" but found \"A\""; tsc checker TS1005
+  140 parses    7 forms | built 48/48 expr 24/18 alias 1/1 iext 0/0 impl 0/0 | await as a parameter name of a function type (top_level_await)
+        e.g. [ts] "f<(await) => void>(x);"  lint TS1109 @8 "Unexpected )"
+   86 parses   43 forms | built 0/0 expr 0/0 alias 43/43 iext 0/0 impl 0/0 | empty type parameter list <>
+        e.g. [ts] "type X = <>() => as;"  lint TS1003 @10 "Expected identifier but found \">\""; tsc checker TS1098
+   60 parses    2 forms | built 22/22 expr 8/6 alias 1/1 iext 0/0 impl 0/0 | A.<B>: type arguments after a dot
+        e.g. [ts] "f<typeof a.<C>>(x);"  lint TS1003 @11 "Expected identifier but found \"<\""
+   50 parses   25 forms | built 0/0 expr 0/0 alias 0/0 iext 25/25 impl 0/0 | (interface extends: an entry is read as a type first)
+        e.g. [ts] "interface I extends import() {}"  lint no code @27 "Expected string but found \")\""
+   48 parses    2 forms | built 18/18 expr 7/5 alias 0/0 iext 0/0 impl 0/0 | import type: type arguments without a qualifier
+        e.g. [ts] "f<import('x')<>>(x);"  lint TS1109 @14 "Unexpected >>"
+   36 parses   18 forms | built 0/0 expr 0/0 alias 18/18 iext 0/0 impl 0/0 | index signature whose parameter has a modifier or no name
+        e.g. [ts] "type X = { [ in T] };"  lint TS1110 @13 "Unexpected in"; tsc checker TS1274
+   31 parses    2 forms | built 11/11 expr 5/4 alias 0/0 iext 0/0 impl 0/0 | import type or typeof: private name after the dot
+        e.g. [ts] "f<('x').#a>(x);"  lint TS1003 @8 "Expected identifier but found \"#a\""
+   29 parses    1 forms | built 11/11 expr 4/3 alias 0/0 iext 0/0 impl 0/0 | type member with the modifier export
+        e.g. [ts] "f<{ export a: A }>(x);"  lint TS1005 @11 "Expected \":\" but found \"a\""; tsc checker TS1070
+   16 parses    8 forms | built 8/8 expr 0/0 alias 0/0 iext 0/0 impl 0/0 | type parameter constraint read as an expression
+        e.g. [ts] "function f<U extends +1>() {}"  lint TS1110 @21 "Unexpected +"; tsc checker TS1110
+   16 parses    8 forms | built 0/0 expr 0/0 alias 8/8 iext 0/0 impl 0/0 | modifier before a parameter of a function type
+        e.g. [ts] "type X = (in A) => void;"  lint TS1005 @13 "Expected \")\" but found \"A\""; tsc checker TS1274
+   13 parses    7 forms | built 0/0 expr 1/0 alias 6/6 iext 0/0 impl 0/0 | in/out on a type parameter of a function type
+        e.g. [ts] "type X = <in T>() => T;"  lint no code @10 "The modifier \"in\" is not valid here"; tsc checker TS1274
+   12 parses    6 forms | built 0/0 expr 0/0 alias 6/6 iext 0/0 impl 0/0 | import type: argument that is no string
+        e.g. [ts] "type X = import(x);"  lint no code @16 "Expected string but found \"x\""
+    8 parses    4 forms | built 0/0 expr 4/4 alias 0/0 iext 0/0 impl 0/0 | object literal member that the checker rejects (f<{...}>(x) read as a comparison)
+        e.g. [ts] "f<{ a!: A }>(x);"  lint TS1005 @5 "Expected \"}\" but found \"!\""; tsc checker TS1255
+    8 parses    2 forms | built 0/0 expr 4/4 alias 0/0 iext 0/0 impl 0/0 | line break before => of an arrow function
+        e.g. [ts] "let f = (a): A//c\n => a;"  lint no code @19 "Unexpected newline before \"=>\""; tsc checker TS1200
+    6 parses    3 forms | built 0/0 expr 3/3 alias 0/0 iext 0/0 impl 0/0 | private name, super or <!-- in an expression
+        e.g. [ts] "f<#a>(x);"  lint no code @2 "Unexpected #a"; tsc checker TS18016
+    4 parses    2 forms | built 0/0 expr 0/0 alias 2/2 iext 0/0 impl 0/0 | (alias body only: read by the Discard sink)
+        e.g. [ts] "type X = { [K in T]: V; [ in U]: W };"  lint TS1110 @26 "Unexpected in"; tsc checker TS7061
+    4 parses    1 forms | built 0/0 expr 2/2 alias 0/0 iext 0/0 impl 0/0 | readonly before a parenthesized type in an arrow return type
+        e.g. [ts] "let f = (a): readonly ([]) => a;"  lint TS1005 @11 "Expected \";\" but found \":\""; tsc checker TS1354
+    2 parses    1 forms | built 0/0 expr 0/0 alias 1/1 iext 0/0 impl 0/0 | conditional type without a check type (A extends  extends ? 1 : 2)
+        e.g. [ts] "type X = A extends  extends ? 1 : 2;"  lint TS1110 @20 "Unexpected extends"
+    1 parses    1 forms | built 0/0 expr 0/1 alias 0/0 iext 0/0 impl 0/0 | await<A in tsx (top_level_await)
+        e.g. [tsx] "f<await<A>(x);"  lint no code @10 "Syntax Error"
+0 unmatched

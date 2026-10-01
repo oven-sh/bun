@@ -21,7 +21,7 @@ function eslint(code, ext) {
 		const config = [{ files: ["**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}"], languageOptions, linterOptions: { noInlineConfig: true, reportUnusedDisableDirectives: "off" }, rules: { "no-unused-private-class-members": "error" } }];
 		const messages = linter.verify(code, config, { filename: `c.${ext}` });
 		if (messages.some(m => m.fatal)) continue;
-		return messages.map(m => `${m.line}:${m.column} ${m.message}`).sort();
+		return messages.filter(m => m.ruleId === "no-unused-private-class-members").map(m => `${m.line}:${m.column} ${m.message}`).sort();
 	}
 	return null;
 }

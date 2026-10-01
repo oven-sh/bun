@@ -1,0 +1,52 @@
+f1b = f1 + an entry of its own for the call of parse_expr_common at Level::Member. Parser symbols (bun_js_parser|bun_ast), 20 passes.
+-- raw (one Bc per executed conditional jump)
+bun-types       rawbase      matched Ir    324,579,267 Bc    48,504,593 Bi   4,923,576
+bun-types       rawhead      matched Ir    357,791,537 Bc    54,750,693 Bi   4,643,696   vs rawbase: Ir   +33,212,270 Bc   +6,246,100 Bi   -279,880
+bun-types       rawf1        matched Ir    357,768,437 Bc    54,750,693 Bi   4,643,696   vs rawbase: Ir   +33,189,170 Bc   +6,246,100 Bi   -279,880
+bun-types       rawf1b       matched Ir    357,768,437 Bc    54,750,693 Bi   4,643,696   vs rawbase: Ir   +33,189,170 Bc   +6,246,100 Bi   -279,880
+typescript-lib  rawbase      matched Ir  1,111,791,187 Bc   173,606,173 Bi  15,647,136
+typescript-lib  rawhead      matched Ir  1,272,467,977 Bc   203,122,273 Bi  15,264,216   vs rawbase: Ir  +160,676,790 Bc  +29,516,100 Bi   -382,920
+typescript-lib  rawf1        matched Ir  1,272,176,137 Bc   203,122,273 Bi  15,264,216   vs rawbase: Ir  +160,384,950 Bc  +29,516,100 Bi   -382,920
+typescript-lib  rawf1b       matched Ir  1,272,176,137 Bc   203,122,273 Bi  15,264,216   vs rawbase: Ir  +160,384,950 Bc  +29,516,100 Bi   -382,920
+src-js          rawbase      matched Ir  5,011,054,474 Bc   580,255,840 Bi  57,402,455
+src-js          rawhead      matched Ir  5,029,510,124 Bc   584,754,260 Bi  57,317,855   vs rawbase: Ir   +18,455,650 Bc   +4,498,420 Bi    -84,600
+src-js          rawf1        matched Ir  5,030,404,464 Bc   584,731,720 Bi  57,317,855   vs rawbase: Ir   +19,349,990 Bc   +4,475,880 Bi    -84,600
+src-js          rawf1b       matched Ir  5,029,646,944 Bc   584,709,440 Bi  57,317,855   vs rawbase: Ir   +18,592,470 Bc   +4,453,600 Bi    -84,600
+tsx             rawbase      matched Ir  1,353,449,852 Bc   161,932,075 Bi  15,337,035
+tsx             rawhead      matched Ir  1,398,563,842 Bc   171,582,075 Bi  14,837,035   vs rawbase: Ir   +45,113,990 Bc   +9,650,000 Bi   -500,000
+tsx             rawf1        matched Ir  1,399,027,842 Bc   171,588,075 Bi  14,837,035   vs rawbase: Ir   +45,577,990 Bc   +9,656,000 Bi   -500,000
+tsx             rawf1b       matched Ir  1,398,823,842 Bc   171,582,075 Bi  14,837,035   vs rawbase: Ir   +45,373,990 Bc   +9,650,000 Bi   -500,000
+js-control      rawbase      matched Ir  3,301,848,109 Bc   351,009,231 Bi  42,778,315
+js-control      rawhead      matched Ir  3,299,485,179 Bc   351,045,631 Bi  42,778,315   vs rawbase: Ir    -2,362,930 Bc      +36,400 Bi         +0
+js-control      rawf1        matched Ir  3,309,079,079 Bc   352,884,251 Bi  42,778,315   vs rawbase: Ir    +7,230,970 Bc   +1,875,020 Bi         +0
+js-control      rawf1b       matched Ir  3,300,593,959 Bc   350,853,271 Bi  42,778,315   vs rawbase: Ir    -1,254,150 Bc     -155,960 Bi         +0
+-- default
+bun-types       base20b      matched Ir    331,255,477 Bc    46,592,991 Bi   4,923,576
+bun-types       head20b      matched Ir    364,856,107 Bc    52,009,911 Bi   4,643,696   vs base20b: Ir   +33,600,630 Bc   +5,416,920 Bi   -279,880
+bun-types       f1           matched Ir    364,811,847 Bc    51,991,991 Bi   4,643,696   vs base20b: Ir   +33,556,370 Bc   +5,399,000 Bi   -279,880
+bun-types       f1b          matched Ir    364,811,847 Bc    51,991,991 Bi   4,643,696   vs base20b: Ir   +33,556,370 Bc   +5,399,000 Bi   -279,880
+typescript-lib  base20b      matched Ir  1,144,739,177 Bc   166,938,251 Bi  15,647,136
+typescript-lib  head20b      matched Ir  1,307,711,227 Bc   192,992,511 Bi  15,264,216   vs base20b: Ir  +162,972,050 Bc  +26,054,260 Bi   -382,920
+typescript-lib  f1           matched Ir  1,307,419,267 Bc   192,898,531 Bi  15,264,216   vs base20b: Ir  +162,680,090 Bc  +25,960,280 Bi   -382,920
+typescript-lib  f1b          matched Ir  1,307,419,267 Bc   192,898,531 Bi  15,264,216   vs base20b: Ir  +162,680,090 Bc  +25,960,280 Bi   -382,920
+src-js          base20b      matched Ir  5,065,657,144 Bc   565,355,079 Bi  57,402,455
+src-js          head20b      matched Ir  5,084,135,834 Bc   569,331,519 Bi  57,317,855   vs base20b: Ir   +18,478,690 Bc   +3,976,440 Bi    -84,600
+src-js          f1           matched Ir  5,084,901,054 Bc   566,963,859 Bi  57,317,855   vs base20b: Ir   +19,243,910 Bc   +1,608,780 Bi    -84,600
+src-js          f1b          matched Ir  5,084,098,974 Bc   566,941,579 Bi  57,317,855   vs base20b: Ir   +18,441,830 Bc   +1,586,500 Bi    -84,600
+tsx             base20b      matched Ir  1,366,356,422 Bc   156,418,054 Bi  15,337,035
+tsx             head20b      matched Ir  1,411,692,412 Bc   164,666,054 Bi  14,837,035   vs base20b: Ir   +45,335,990 Bc   +8,248,000 Bi   -500,000
+tsx             f1           matched Ir  1,412,112,412 Bc   164,194,054 Bi  14,837,035   vs base20b: Ir   +45,755,990 Bc   +7,776,000 Bi   -500,000
+tsx             f1b          matched Ir  1,411,896,412 Bc   164,188,054 Bi  14,837,035   vs base20b: Ir   +45,539,990 Bc   +7,770,000 Bi   -500,000
+js-control      base20b      matched Ir  3,315,540,179 Bc   343,413,670 Bi  42,778,315
+js-control      head20b      matched Ir  3,312,992,649 Bc   343,577,190 Bi  42,778,315   vs base20b: Ir    -2,547,530 Bc     +163,520 Bi         +0
+js-control      f1           matched Ir  3,322,586,549 Bc   345,415,810 Bi  42,778,315   vs base20b: Ir    +7,046,370 Bc   +2,002,140 Bi         +0
+js-control      f1b          matched Ir  3,314,101,429 Bc   343,384,830 Bi  42,778,315   vs base20b: Ir    -1,438,750 Bc      -28,840 Bi         +0
+-- js-control, raw, head -> f1b by symbol
+parser  Ir  3,299,485,179 ->  3,300,593,959 (+1,108,780)  Bc   351,045,631 ->   350,853,271 (-192,360)  Bi  42,778,315 ->  42,778,315 (+0)
+rest    Ir  1,791,945,489 ->  1,792,812,820 (+867,331)  Bc   369,308,517 ->   369,873,375 (+564,858)  Bi  11,085,178 ->  11,083,680 (-1,498)
+2 parser symbols differ, 358 other symbols differ
+-- parser symbols with |dBc| >= 0, by dBc
+  Bc          +0  Ir     +432,740  Bi        +0  (a Bc 2,366,800) <bun_js_parser::p::P<false, false>>::parse_property
+  Bc    -192,360  Ir     +676,040  Bi        +0  (a Bc 14,158,280) <bun_js_parser::p::P<false, false>>::parse_prefix
+-- other symbols, top by |dBc|
+  Bc    +343,947  Ir     +346,135  Bi        +0  (a Bc 10,153,767) __memset_avx2_unaligned_erms

@@ -1,0 +1,259 @@
+1056 ts class A in targeted09, 86 checker codes
+  125 TS17020 '?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?
+         plainR:125 | TS1110 Unexpected ?:64 | TS1005 Expected ">" but found "?":21 | TS1109 Unexpected ?:13
+         "<?A>x"  "x as ?A"  "f<?A>();"
+  119 TS1497 Expression must be enclosed in parentheses to be used as a decorator.
+         visitR+optOnly:113 plainR:6 | TS1359 Expected identifier but found "<w>":51 | ---- Optional chaining is not allowed in decorator expressions; wrap the expression in parentheses to use it as a decorator:11 | ---- A decorator call expression cannot be followed by a property access; wrap the expression in parentheses to use it as a decorator:9
+         "@1 class C {}"  "@{} class C {}"  "@\"s\" class C {}"
+  113 TS17019 '?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?
+         plainR:113 | TS1005 Expected ">" but found "?":30 | TS1005 Expected ")" but found "?":21 | TS1005 Expected ";" but found "?":15
+         "<A?>x"  "x as A?"  "f<A?>();"
+   91 TS8020 JSDoc types can only be used inside documentation comments.
+         plainR:91 | TS1110 Unexpected *:34 | TS1005 Expected ";" but found "(":15 | TS1109 Unexpected *:12
+         "<*>x"  "x as *"  "f<*>();"
+   77 TS1206 Decorators are not valid here.
+         plainR:37 visitR+optOnly:40 | TS1359 Expected identifier but found "<w>":17 | TS1005 Expected "<w>" but found "<w>":15 | TS1003 Expected identifier but found "@":12
+         "@d var a = 1;"  "@d let a = 1;"  "@d type X = A;"
+   57 TS1005 'symbol' expected.
+         plainR:57 | TS1005 Expected ";" but found "<w>":22 | TS1005 Expected ")" but found "<w>":12 | TS1005 Expected ";" but found "(":7
+         "f<unique string>(x);"  "let x: unique string;"  "f<unique keyof A>(x);"
+   54 TS1274 'in' modifier can only appear on a type parameter of a class, interface or type alias
+         plainR:54 | ---- The modifier "<w>" is not valid here:51 | TS1005 Expected ")" but found "<w>":1 | TS1359 Expected identifier but found "<w>":1
+         "function f(in a: A) {}"  "var v = (in a: A) => 1;"  "type X = (in a: A) => R;"
+   38 TS1274 'out' modifier can only appear on a type parameter of a class, interface or type alias
+         plainR:38 | ---- The modifier "<w>" is not valid here:35 | TS1005 Expected ")" but found "<w>":3
+         "<out T>(a: T) => a"  "function f(out a: A) {}"  "var v = <out T>() => 1;"
+   33 TS17020 '!' at the start of a type is not valid TypeScript syntax. Did you mean to write 'a'?
+         plainR:33 | TS1110 Unexpected !:20 | TS1005 Expected ">" but found "<w>":9 | TS1109 Unexpected ;:2
+         "f<!a>();"  "new C<!a>;"  "a?.<!a>(x);"
+   22 TS17020 '!' at the start of a type is not valid TypeScript syntax. Did you mean to write 'A'?
+         plainR:22 | TS1110 Unexpected !:19 | ---- Unexpected ":":2 | TS1109 Unexpected ]:1
+         "f<!A[]>(x);"  "let x: !A[];"  "type X = !A[];"
+   21 TS1013 A rest parameter or binding pattern may not have a trailing comma.
+         plainR:21 | TS1005 Expected ")" but found ",":10 | ---- Unexpected "," after rest pattern:9 | ---- Unexpected trailing comma after rest element:2
+         "function f(...a,) {}"  "var v = (...a,) => 1;"  "class C { m(...a,) {} }"
+   21 TS1048 A rest parameter cannot have an initializer.
+         plainR:21 | TS1005 Expected ")" but found "=":15 | ---- A rest argument cannot have a default initializer:4 | ---- Invalid binding pattern:2
+         "function f(...a = []) {}"  "var v = (...a = []) => 1;"  "function f(...[a] = []) {}"
+   14 TS17019 '?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'string | undefined'?
+         plainR:14 | TS1110 Unexpected ]:12 | ---- Unexpected ":":1 | TS1005 Expected ";" but found "<w>":1
+         "f<A extends [infer H extends string?] ? H : never>(x);"  "let x: A extends [infer H extends string?] ? H : never;"  "type X = A extends [infer H extends string?] ? H : never;"
+   12 TS17019 '?' at the end of a type is not valid TypeScript syntax. Did you mean to write '{} | undefined'?
+         plainR:12 | TS1005 Expected ";" but found "?":3 | TS1005 Expected ")" but found "?":3 | TS1109 Unexpected ;:2
+         "f<A[]?>(x);"  "let x: A[]?;"  "type X = A[]?;"
+   10 TS1273 'public' modifier cannot appear on a type parameter
+         plainR:10 | TS1005 Expected ">" but found "<w>":9 | TS1005 Expected ";" but found "<w>":1
+         "<public T>(a: T) => a"  "var v = <public T>() => 1;"  "type X = <public T>() => T;"
+    9 TS1273 'static' modifier cannot appear on a type parameter
+         plainR:9 | TS1005 Expected ">" but found "<w>":8 | TS1005 Expected ";" but found "<w>":1
+         "<static T>(a: T) => a"  "var v = <static T>() => 1;"  "type X = <static T>() => void;"
+    9 TS1273 'abstract' modifier cannot appear on a type parameter
+         plainR:9 | TS1005 Expected ">" but found "<w>":8 | TS1005 Expected ";" but found "<w>":1
+         "<abstract T>(a: T) => a"  "var v = <abstract T>() => 1;"  "type X = <abstract T>() => void;"
+    9 TS1273 'async' modifier cannot appear on a type parameter
+         plainR:9 | TS1005 Expected ">" but found "<w>":8 | TS1005 Expected ";" but found "<w>":1
+         "<async T>(a: T) => a"  "var v = <async T>() => 1;"  "type X = <async T>() => void;"
+    8 TS17020 '?' at the start of a type is not valid TypeScript syntax. Did you mean to write '{} | null | undefine
+         plainR:8 | TS1110 Unexpected ?:7 | ---- Unexpected ":":1
+         "function f(x: ?A[]) {}"  "let f = (x: ?A[]) => x;"  "class K { @d p: ?A[]; }"
+    8 TS1014 A rest parameter must be last in a parameter list.
+         plainR:8 | TS1005 Expected ")" but found ",":5 | ---- Unexpected "," after rest pattern:2 | TS1005 Expected ")" but found "<w>":1
+         "function f(...a, b) {}"  "var v = (...a, b) => 1;"  "class C { m(...a, b) {} }"
+    7 TS1044 'static' modifier cannot appear on a module or namespace element.
+         plainR:7 | TS1005 Expected ";" but found "<w>":6 | ---- Unexpected static:1
+         "static enum E {}"  "static class C {}"  "static type X = A;"
+    7 TS1242 'abstract' modifier can only appear on a class, method, or property declaration.
+         plainR:7 | TS1005 Expected ";" but found "<w>":4 | TS1005 Expected ")" but found "<w>":3
+         "abstract var a;"  "abstract type X = A;"  "abstract type X = 1;"
+    7 TS1308 'await' expressions are only allowed within async functions and at the top levels of modules.
+         plainR:7 | ---- "<w>" can only be used inside an "<w>" function:7
+         "enum E { A = await 1 }"  "namespace N { await a }"  "function f(a = await b) {}"
+    7 TS1273 'private' modifier cannot appear on a type parameter
+         plainR:7 | TS1005 Expected ">" but found "<w>":6 | TS1005 Expected ";" but found "<w>":1
+         "var v = <private T>() => 1;"  "type X = <private T>() => void;"  "type X = new <private T>() => A;"
+    7 TS1273 'protected' modifier cannot appear on a type parameter
+         plainR:7 | TS1005 Expected ">" but found "<w>":6 | TS1005 Expected ";" but found "<w>":1
+         "var v = <protected T>() => 1;"  "type X = <protected T>() => void;"  "type X = new <protected T>() => A;"
+    7 TS1273 'declare' modifier cannot appear on a type parameter
+         plainR:7 | TS1005 Expected ">" but found "<w>":6 | TS1005 Expected ";" but found "<w>":1
+         "var v = <declare T>() => 1;"  "type X = <declare T>() => void;"  "type X = new <declare T>() => A;"
+    7 TS1273 'override' modifier cannot appear on a type parameter
+         plainR:7 | TS1005 Expected ">" but found "<w>":6 | TS1005 Expected ";" but found "<w>":1
+         "var v = <override T>() => 1;"  "type X = <override T>() => void;"  "type X = new <override T>() => A;"
+    7 TS1273 'accessor' modifier cannot appear on a type parameter
+         plainR:7 | TS1005 Expected ">" but found "<w>":6 | TS1005 Expected ";" but found "<w>":1
+         "var v = <accessor T>() => 1;"  "type X = <accessor T>() => void;"  "type X = new <accessor T>() => A;"
+    6 TS1044 'public' modifier cannot appear on a module or namespace element.
+         plainR:6 | TS1005 Expected ";" but found "<w>":5 | ---- Unexpected public:1
+         "public enum E {}"  "public class C {}"  "public interface I {}"
+    6 TS1186 A rest element cannot have an initializer.
+         plainA:1 plainR:5 | TS1005 Expected "}" but found "=":5 | TS1131 Unexpected ...:1
+         "function f({ ...a = 1 }) {}"  "class C { m({ ...a = 1 }) {} }"  "var v = { m({ ...a = 1 }) {} };"
+    6 TS1090 'static' modifier cannot appear on a parameter.
+         plainR:6 | TS1005 Expected ")" but found "<w>":6
+         "function f(static a: A) {}"  "var v = (static a: A) => 1;"  "type X = (static a: A) => R;"
+    6 TS1273 'readonly' modifier cannot appear on a type parameter
+         plainR:6 | TS1005 Expected ">" but found "<w>":5 | TS1005 Expected ";" but found "=>":1
+         "type X = <readonly T>() => void;"  "type X = new <readonly T>() => A;"  "var v = async <readonly T>() => 1;"
+    5 TS1042 'async' modifier cannot be used here.
+         plainR:5 | TS1005 Expected ";" but found "<w>":5
+         "async enum E {}"  "async class C {}"  "async type X = A;"
+    5 TS1097 'extends' list cannot be empty.
+         plainR:5 | TS1005 Expected "{" but found end of file:2 | TS1110 Unexpected extends:1 | TS1005 Expected "{" but found ";":1
+         "class C extends {}"  "class C extends  {}"  "var v = class extends  {};"
+    5 TS1090 'async' modifier cannot appear on a parameter.
+         plainR:5 | TS1005 Expected ")" but found "<w>":5
+         "function f(async a: A) {}"  "type X = (async a: A) => R;"  "function f(readonly async a) {}"
+    5 TS1098 Type parameter list cannot be empty.
+         plainR:5 | TS1003 Expected identifier but found ">":5
+         "type X = <>() => A;"  "type X = new <>() => A;"  "type X = { <>(): void };"
+    5 TS1235 A namespace declaration is only allowed at the top level of a namespace or module.
+         plainR:5 | TS1005 Expected ";" but found "<w>":5
+         "{ module M {} }"  "for (;;) namespace N {}"  "function f() { module M {} }"
+    4 TS1275 'accessor' modifier can only appear on a property declaration.
+         plainR:4 | TS1005 Expected ")" but found "<w>":3 | TS1005 Expected ";" but found "<w>":1
+         "accessor class C {}"  "function f(accessor a: A) {}"  "var v = (accessor a: A) => 1;"
+    4 TS1090 'export' modifier cannot appear on a parameter.
+         plainR:4 | TS1005 Expected ")" but found "<w>":2 | TS1359 Expected identifier but found "<w>":1 | TS1109 Unexpected export:1
+         "function f(export a: A) {}"  "var v = (export a: A) => 1;"  "type X = (export a: A) => R;"
+    4 TS1187 A parameter property may not be declared using a binding pattern.
+         plainR:4 | TS1005 Expected ")" but found "{":2 | TS1005 Expected ")" but found ":":1 | TS1005 Expected ")" but found "[":1
+         "function f(public [a]: A) {}"  "type X = (public [a]: A) => R;"  "function f(public { a }: A) {}"
+    4 TS1174 Classes can only extend a single class.
+         plainR:4 | TS1005 Expected "{" but found ",":4
+         "class C extends D, E {}"  "class C extends A<B>, C<D> {}"  "var v = class extends A, B {};"
+    4 TS1191 An import declaration cannot have modifiers.
+         plainR:4 | TS1005 Expected "=" but found "<w>":1 | TS1003 Expected identifier but found "'m'":1 | TS1003 Expected identifier but found "*":1
+         "export import 'm';"  "export import a from 'm';"  "export import { a } from 'm';"
+    4 TS1123 Variable declaration list cannot be empty.
+         plainR:4 | TS1003 Expected identifier but found end of file:2 | TS1003 Expected identifier but found ";":1 | ---- Unexpected "<w>":1
+         "declare var"  "declare let"  "declare var;"
+    4 TS1035 Only ambient modules can use quoted names.
+         plainR:4 | TS1005 Expected ";" but found ""<w>"":4
+         "module \"m\""  "module \"m\";"  "module \"m\" {}"
+    3 TS1090 'declare' modifier cannot appear on a parameter.
+         plainR:3 | TS1005 Expected ")" but found "<w>":3
+         "function f(declare a: A) {}"  "var v = (declare a: A) => 1;"  "type X = (declare a: A) => R;"
+    3 TS18016 Private identifiers are not allowed outside class bodies.
+         plainR:3 | TS1003 Expected identifier but found "#e":2 | ---- Unexpected #c:1
+         "a < b > #c in d"  "@d.#e class C {}"  "@d.#e() class C {}"
+    3 TS1009 Trailing comma not allowed.
+         plainR:3 | TS1005 Expected "{" but found ",":2 | TS1005 Expected "{" but found end of file:1
+         "class C extends A, {}"  "var v = class extends A, {};"  "class C extends D implements A, {}"
+    3 TS1211 A class declaration without the 'default' modifier must have a name.
+         plainR:3 | TS1005 Expected "{" but found "<w>":1 | TS1359 Expected identifier but found "<w>":1 | TS1003 Expected identifier but found "{":1
+         "declare class {}"  "class extends D {}"  "class implements I {}"
+    3 TS1024 'readonly' modifier can only appear on a property declaration or index signature.
+         plainR:3 | TS1005 Expected ";" but found "<w>":3
+         "readonly enum E {}"  "readonly class C {}"  "readonly namespace N {}"
+    3 TS1231 An export assignment must be at the top level of a file or module declaration.
+         plainR:3 | ---- Unexpected export:3
+         "{ export = A }"  "if (a) export = A;"  "function f() { export = A }"
+    3 TS1163 A 'yield' expression is only allowed in a generator body.
+         plainR:3 | ---- Cannot use "<w>" outside a generator function:3
+         "@(yield d) class C {}"  "class C { @(yield d) a }"  "class C { @(yield d) m() {} }"
+    3 TS1451 Private identifiers are only allowed in class bodies and may only be used as part of a class member dec
+         plainR:3 | TS1003 Expected identifier but found "#d":3
+         "@#d class C {}"  "class C { @#d a }"  "class C { @#d m() {} }"
+    2 TS1015 Parameter cannot have question mark and initializer.
+         plainR:2 | TS1109 Unexpected =:2
+         "var v = (a? = 1) => 1;"  "var v = async (a? = 1) => 1;"
+    2 TS1028 Accessibility modifier already seen.
+         plainR:2 | TS1005 Expected ")" but found "<w>":2
+         "var v = (public public a: A) => 1;"  "var v = (public private a: A) => 1;"
+    2 TS1326 This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and ca
+         plainR:2 | ---- Unexpected <:2
+         "import<A>('m')"  "import<A>(\"m\");"
+    2 TS1097 'implements' list cannot be empty.
+         plainR:2 | TS1005 Expected "{" but found end of file:1 | TS1109 Unexpected extends:1
+         "class C implements extends D {}"  "class C extends D implements  {}"
+    2 TS1172 'extends' clause already seen.
+         plainR:2 | TS1005 Expected "{" but found "<w>":2
+         "class C extends D extends E {}"  "class C extends D implements I extends E {}"
+    2 TS1005 '{' expected.
+         plainR:2 | TS1005 Expected "{" but found "}":1 | TS1005 Expected "{" but found ";":1
+         "var v = { m(); };"  "var v = { m(): void };"
+    2 TS1363 A type-only import can specify a default import or named bindings, but not both.
+         plainR:2 | TS1005 Expected "<w>" but found "," (token: TComma):2
+         "import type A, { B } from \"m\";"  "import type A, * as B from \"m\";"
+    2 TS18058 Default imports are not allowed in a deferred import.
+         plainR:2 | TS1005 Expected "<w>" but found "<w>" (token: TIdentifier):1 | ---- Expected string but found "<w>":1
+         "import defer a from \"m\";"  "import defer from from \"m\";"
+    2 TS1184 Modifiers cannot appear here.
+         plainR:2 | TS1005 Expected "<w>" but found "<w>":2
+         "@d export as namespace A;"  "var v = @d abstract class {};"
+    2 TS1193 An export declaration cannot have modifiers.
+         plainR:2 | ---- Unexpected "<w>":2
+         "declare export { a };"  "declare export * from 'm';"
+    2 TS1491 'export' modifier cannot appear on a 'using' declaration.
+         plainR:2 | ---- Unexpected using:2
+         "export using a: A = b;"  "namespace N { export using a = b }"
+    2 TS1030 'export' modifier already seen.
+         plainR:2 | ---- Unexpected export:2
+         "export export const a = 1;"  "namespace N { export export const a = 1 }"
+    2 TS1079 A 'declare' modifier cannot be used with an import declaration.
+         plainR:2 | ---- Unexpected "<w>":2
+         "declare import 'm';"  "declare import a from 'm';"
+    2 TS1319 A default export can only be used in an ECMAScript-style module.
+         plainR:2 | ---- Unexpected default:2
+         "namespace N { export default a }"  "namespace N { export default class {} }"
+    2 TS8038 Decorators may not appear after 'export' or 'export default' if they also appear before 'export'.
+         plainR:2 | TS1005 Expected "<w>" but found "@":2
+         "@d export @e class C {}"  "@d export default @e class C {}"
+    1 TS2304 Cannot find name '#a'.
+         plainR:1 | TS1003 Expected identifier but found "#a":1
+         "type X = typeof #a;"
+    1 TS1450 Dynamic imports can only accept a module specifier and an optional set of attributes as arguments
+         plainR:1 | TS1005 Expected ")" but found "1":1
+         "f<import(\"m\", { with: {} }, 1)>(x);"
+    1 TS1183 An implementation cannot be declared in ambient contexts.
+         plainA:1 | TS1005 Expected ";" but found "{":1
+         "class K { @d p: { get a(): A {} }; }"
+    1 TS1317 A parameter property cannot be declared using a rest parameter.
+         plainR:1 | TS1005 Expected ")" but found "...":1
+         "function f(public ...a: A[]) {}"
+    1 TS1197 Catch clause variable cannot have an initializer.
+         plainR:1 | TS1005 Expected ")" but found "=":1
+         "try {} catch (e = 1) {}"
+    1 TS1155 'const' declarations must be initialized.
+         plainR:1 | ---- The constant "<w>" must be initialized:1
+         "const a;"
+    1 TS1029 'public' modifier must precede 'readonly' modifier.
+         plainR:1 | TS1005 Expected ")" but found "<w>":1
+         "var v = (readonly public a: A) => 1;"
+    1 TS1030 'readonly' modifier already seen.
+         plainR:1 | TS1005 Expected ")" but found "<w>":1
+         "var v = (readonly readonly a: A) => 1;"
+    1 TS1029 'public' modifier must precede 'override' modifier.
+         plainR:1 | TS1005 Expected ")" but found "<w>":1
+         "var v = (override public a: A) => 1;"
+    1 TS1358 Tagged template expressions are not permitted in an optional chain.
+         plainR:1 | TS1005 Expected "(" but found "`t`":1
+         "a?.<b>`t`"
+    1 TS1173 'extends' clause must precede 'implements' clause.
+         plainR:1 | TS1005 Expected "{" but found "<w>":1
+         "class C implements I extends D {}"
+    1 TS1175 'implements' clause already seen.
+         plainR:1 | TS1005 Expected "{" but found "<w>":1
+         "class C implements I implements J {}"
+    1 TS1044 'private' modifier cannot appear on a module or namespace element.
+         plainR:1 | TS1005 Expected ";" but found "<w>":1
+         "private class C {}"
+    1 TS18059 Named imports are not allowed in a deferred import.
+         plainR:1 | TS1005 Expected "<w>" but found "{" (token: TOpenBrace):1
+         "import defer { a } from \"m\";"
+    1 TS1120 An export assignment cannot have modifiers.
+         plainR:1 | ---- Unexpected "<w>":1
+         "declare export = A;"
+    1 TS1029 'export' modifier must precede 'declare' modifier.
+         plainR:1 | ---- Unexpected "<w>":1
+         "declare export default class {}"
+    1 TS1491 'declare' modifier cannot appear on a 'using' declaration.
+         plainR:1 | ---- Cannot use "<w>" with a "<w>" declaration:1
+         "declare using a = b;"
+    1 TS1036 Statements are not allowed in ambient contexts.
+         plainR:1 | ---- A return statement cannot be used here:1
+         "declare namespace N { return }"
+    1 TS1108 A 'return' statement can only be used within a function body.
+         plainR:1 | ---- A return statement cannot be used here:1
+         "namespace N { return }"

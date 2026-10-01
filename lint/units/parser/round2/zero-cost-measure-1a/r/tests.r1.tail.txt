@@ -1,0 +1,5 @@
+ 1 skip
+ 37 todo
+ 0 fail
+ 12 snapshots, 2952 expect() calls
+Ran 729 tests across 8 files. [11.37s]

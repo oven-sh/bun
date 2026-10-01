@@ -1,0 +1,426 @@
+A  ts  "let a; let a;"
+      tsc: ok
+      lint: no code bun@11+1 "a" has already been declared
+A  ts  "const a = 1; var a;"
+      tsc: ok
+      lint: no code bun@17+1 "a" has already been declared
+AA ts  "function f(a, a) {}"
+      tsc: ok
+      lint: ok
+AA ts  "class C { constructor() {} constructor() {} }"
+      tsc: ok
+      lint: ok
+A  ts  "const a;"
+      tsc: ok
+      lint: no code bun@6+1 The constant "a" must be initialized
+AA ts  "return;"
+      tsc: ok
+      lint: ok
+AA ts  "break;"
+      tsc: ok
+      lint: ok
+AA ts  "continue;"
+      tsc: ok
+      lint: ok
+AA ts  "a: a: ;"
+      tsc: ok
+      lint: ok
+AA ts  "break a;"
+      tsc: ok
+      lint: ok
+A  ts  "function f() { await x; }"
+      tsc: ok
+      lint: no code bun@21+1 "await" can only be used inside an "async" function
+A  ts  "function f() { yield x; }"
+      tsc: ok
+      lint: no code bun@15+5 Cannot use "yield" outside a generator function
+AA ts  "function f() { yield; }"
+      tsc: ok
+      lint: ok
+AA ts  "delete x;"
+      tsc: ok
+      lint: ok
+AA ts  "with (a) {}"
+      tsc: ok
+      lint: ok
+B  ts  "var x = 010;"
+      tsc: TS1121@8+3 Octal literals are not allowed. Use the syntax '0o10'.
+      lint: ok
+RR ts  "var x = '\\07';"
+      tsc: TS1487@9+3 Octal escape sequences are not allowed. Use the syntax '\x07'.
+      lint: no code bun@8+0 Syntax Error
+AA ts  "new.target;"
+      tsc: ok
+      lint: ok
+A  ts  "super.a;"
+      tsc: ok
+      lint: no code bun@0+5 Unexpected "super"
+A  ts  "super();"
+      tsc: ok
+      lint: no code bun@0+5 Unexpected "super"
+A  ts  "class C { m() { super(); } }"
+      tsc: ok
+      lint: no code bun@16+5 Unexpected "super"
+AA ts  "1 = 2;"
+      tsc: ok
+      lint: ok
+AA ts  "a() = 1;"
+      tsc: ok
+      lint: ok
+AA ts  "a?.b = 1;"
+      tsc: ok
+      lint: ok
+AA ts  "++a();"
+      tsc: ok
+      lint: ok
+B  ts  "a++ ++;"
+      tsc: TS1005@4+2 ';' expected.
+      lint: ok
+AA ts  "({ __proto__: 1, __proto__: 2 });"
+      tsc: ok
+      lint: ok
+A  ts  "let let = 1;"
+      tsc: ok
+      lint: no code bun@4+3 Cannot use "let" as an identifier here
+A  ts  "for (let x = 1 of y) {}"
+      tsc: ok
+      lint: no code bun@13+0 for-of loop variables cannot have an initializer
+AA ts  "for (var x = 1 in y) {}"
+      tsc: ok
+      lint: ok
+A  ts  "for (let of y) {}"
+      tsc: ok
+      lint: TS1005@12..13 bun@12+1 Expected ";" but found "y"
+A  ts  "for (async of y) {}"
+      tsc: ok
+      lint: no code bun@5+8 For loop initializers cannot start with "async of"
+A  ts  "/a/zz;"
+      tsc: ok
+      lint: no code bun@4+0 Invalid flag "z" in regular expression
+AA ts  "/(/;"
+      tsc: ok
+      lint: ok
+AA ts  "x = {a, a: 1, get a() {}};"
+      tsc: ok
+      lint: ok
+A  ts  "({ get a(b) {} });"
+      tsc: ok
+      lint: no code bun@9+1 Getter a must have zero arguments
+A  ts  "({ set a() {} });"
+      tsc: ok
+      lint: no code bun@8+0 Setter a must have exactly 1 argument (there are 0)
+A  ts  "class C { get a(b) {} }"
+      tsc: ok
+      lint: no code bun@16+1 Getter a must have zero arguments
+A  ts  "class C { static prototype() {} }"
+      tsc: ok
+      lint: no code bun@17+9 Invalid static method name "prototype"
+A  ts  "class C { constructor() {} get constructor() {} }"
+      tsc: ok
+      lint: no code bun@31+11 Class constructor cannot be a getter
+A  ts  "class C { #a; #a; }"
+      tsc: ok
+      lint: no code bun@14+2 "#a" has already been declared
+AA ts  "class C { m() { this.#b; } }"
+      tsc: ok
+      lint: ok
+A  ts  "#a in b;"
+      tsc: ok
+      lint: no code bun@0+2 Unexpected #a
+AA ts  "label: function f() {}"
+      tsc: ok
+      lint: ok
+AA ts  "if (a) function f() {}"
+      tsc: ok
+      lint: ok
+A  ts  "if (a) class C {}"
+      tsc: ok
+      lint: no code bun@7+0 Cannot use a declaration in a single-statement context
+A  ts  "if (a) let x = 1;"
+      tsc: ok
+      lint: no code bun@7+0 Cannot use a declaration in a single-statement context
+A  ts  "while (a) const x = 1;"
+      tsc: ok
+      lint: no code bun@10+0 Cannot use a declaration in a single-statement context
+A  ts  "try {} catch ([a, a]) {}"
+      tsc: ok
+      lint: no code bun@18+1 "a" has already been declared
+AA ts  "try {} catch (e) { let e; }"
+      tsc: ok
+      lint: ok
+A  ts  "function f() { 'use strict'; var public; }"
+      tsc: ok
+      lint: no code bun@33+6 "public" is a reserved word and cannot be used in strict mode
+AA ts  "var eval = 1;"
+      tsc: ok
+      lint: ok
+AA ts  "var arguments = 1;"
+      tsc: ok
+      lint: ok
+AA ts  "class C { x = arguments; }"
+      tsc: ok
+      lint: ok
+AA ts  "import a from 'a'; import a from 'b';"
+      tsc: ok
+      lint: ok
+A  ts  "export const a = 1; export const a = 2;"
+      tsc: ok
+      lint: no code bun@33+1 "a" has already been declared
+AA ts  "export { a as b, c as b };"
+      tsc: ok
+      lint: ok
+AA ts  "export { x };"
+      tsc: ok
+      lint: ok
+AA ts  "export default 1; export default 2;"
+      tsc: ok
+      lint: ok
+AA ts  "import { a } from 'a'; let a;"
+      tsc: ok
+      lint: ok
+A  ts  "x = a ?? b || c;"
+      tsc: ok
+      lint: no code bun@11+2 Unexpected ||
+A  ts  "x = a || b ?? c;"
+      tsc: ok
+      lint: no code bun@11+2 Unexpected ??
+RR ts  "x = -a ** b;"
+      tsc: TS17006@4+2 An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.
+      lint: no code bun@7+2 Unexpected **
+RR ts  "x = typeof a ** b;"
+      tsc: TS17006@4+8 An unary expression with the 'typeof' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.
+      lint: no code bun@13+2 Unexpected **
+RR ts  "async () => await;"
+      tsc: TS1109@17+1 Expression expected.
+      lint: TS1109@17..18 bun@17+1 Unexpected ;
+A  ts  "async function f(a = await b) {}"
+      tsc: ok
+      lint: no code bun@21+5 The keyword "await" cannot be used here
+A  ts  "function* g(a = yield) {}"
+      tsc: ok
+      lint: no code bun@16+5 The keyword "yield" cannot be used here
+A  ts  "async (await) => 1;"
+      tsc: ok
+      lint: TS1109@12..13 bun@12+1 Unexpected )
+A  ts  "({ a = 1 });"
+      tsc: ok
+      lint: no code bun@5+1 Unexpected "="
+AA ts  "({ a: 1 } = 1);"
+      tsc: ok
+      lint: ok
+AA ts  "[...a, b] = c;"
+      tsc: ok
+      lint: ok
+AA ts  "({ ...a, b } = c);"
+      tsc: ok
+      lint: ok
+AA ts  "(a, b) = c;"
+      tsc: ok
+      lint: ok
+AA ts  "(a = 1) = 2;"
+      tsc: ok
+      lint: ok
+AA ts  "([a]) = 1;"
+      tsc: ok
+      lint: ok
+AA ts  "({ a }) = 1;"
+      tsc: ok
+      lint: ok
+RR ts  "x = (a, ...b);"
+      tsc: TS1109@8+3 Expression expected.
+      lint: no code bun@0+0 Unexpected "..."
+RR ts  "x = ();"
+      tsc: TS1109@5+1 Expression expected.
+      lint: TS1005@6..7 bun@6+1 Expected "=>" but found ";"
+RR ts  "(...a) + 1;"
+      tsc: TS1005@7+1 '=>' expected.
+      lint: no code bun@0+0 Unexpected "..."
+AA ts  "x = async (a, a) => 1;"
+      tsc: ok
+      lint: ok
+AA ts  "x = (a, a) => 1;"
+      tsc: ok
+      lint: ok
+AA ts  "function f(a = 1) { 'use strict'; }"
+      tsc: ok
+      lint: ok
+AA ts  "class C extends D { constructor() { this.a; super(); } }"
+      tsc: ok
+      lint: ok
+AA ts  "a\n++b;"
+      tsc: ok
+      lint: ok
+A  ts  "throw\na;"
+      tsc: ok
+      lint: no code bun@5+0 Unexpected newline after "throw"
+RR ts  "x = `${`;"
+      tsc: TS1160@9+0 Unterminated template literal.
+      lint: TS1160@9..9 bun@7+0 Unterminated string literal
+AA ts  "x = 1n.a;"
+      tsc: ok
+      lint: ok
+RR ts  "x = 1.a;"
+      tsc: TS1351@6+1 An identifier or keyword cannot immediately follow a numeric literal.
+      lint: no code bun@4+0 Syntax Error
+RR ts  "x = 0b2;"
+      tsc: TS1177@6+0 Binary digit expected.
+      lint: no code bun@4+0 Syntax Error
+RR ts  "x = 1_;"
+      tsc: TS6188@5+1 Numeric separators are not allowed here.
+      lint: no code bun@4+0 Syntax Error
+RR ts  "x = 1__0;"
+      tsc: TS6189@6+1 Multiple consecutive numeric separators are not permitted.
+      lint: no code bun@4+0 Syntax Error
+B  ts  "x = 08.5;"
+      tsc: TS1489@4+4 Decimals with leading zeros are not allowed.
+      lint: ok
+RR ts  "x = '\\u{110000}';"
+      tsc: TS1198@8+6 An extended Unicode escape value must be between 0x0 and 0x10FFFF inclusive.
+      lint: no code bun@5+9 Unicode escape sequence is out of range
+A  ts  "x = a?.`t`;"
+      tsc: ok
+      lint: TS1003@7..10 bun@7+3 Expected identifier but found "`t`"
+AA ts  "import.meta = 1;"
+      tsc: ok
+      lint: ok
+A  ts  "import(a, b, c);"
+      tsc: ok
+      lint: TS1005@13..14 bun@13+1 Expected ")" but found "c"
+A  ts  "import();"
+      tsc: ok
+      lint: TS1109@7..8 bun@7+1 Unexpected )
+RR ts  "new import('a');"
+      tsc: TS1109@4+6 Expression expected.
+      lint: no code bun@4+6 Cannot use an "import" expression here without parentheses
+A  ts  "import.foo;"
+      tsc: ok
+      lint: TS1005@7..10 bun@7+3 Expected "meta" but found "foo"
+A  ts  "new.foo;"
+      tsc: ok
+      lint: no code bun@4+3 Unexpected foo
+AA ts  "debugger\n1"
+      tsc: ok
+      lint: ok
+A  ts  "enum E { A = 1, A = 2 }"
+      tsc: ok
+      lint: no code bun@16+1 "A" has already been declared
+A  ts  "namespace N { export let a; export let a; }"
+      tsc: ok
+      lint: no code bun@39+1 "a" has already been declared
+AA ts  "type T = 1; type T = 2;"
+      tsc: ok
+      lint: ok
+AA ts  "interface I {} class I {}"
+      tsc: ok
+      lint: ok
+AA ts  "function f(): void; function g() {}"
+      tsc: ok
+      lint: ok
+AA ts  "class C { m(): void; n() {} }"
+      tsc: ok
+      lint: ok
+AA ts  "declare function f() {}"
+      tsc: ok
+      lint: ok
+AA ts  "declare const a = {};"
+      tsc: ok
+      lint: ok
+AA ts  "declare let a = 1;"
+      tsc: ok
+      lint: ok
+AA ts  "abstract class C { abstract m() {} }"
+      tsc: ok
+      lint: ok
+AA ts  "class C { abstract m(); }"
+      tsc: ok
+      lint: ok
+AA ts  "class C { declare m() {} }"
+      tsc: ok
+      lint: ok
+AA ts  "class C { readonly m() {} }"
+      tsc: ok
+      lint: ok
+AA ts  "class C { public public a; }"
+      tsc: ok
+      lint: ok
+RR ts  "class C { static static a; }"
+      tsc: TS1434@17+6 Unexpected keyword or identifier.
+      lint: TS1005@24..25 bun@24+1 Expected ";" but found "a"
+AA ts  "class C { constructor(); }"
+      tsc: ok
+      lint: ok
+A  ts  "class C { async constructor() {} }"
+      tsc: ok
+      lint: no code bun@16+11 Class constructor cannot be an async function
+A  ts  "class C { *constructor() {} }"
+      tsc: ok
+      lint: no code bun@11+11 Class constructor cannot be a generator function
+A  ts  "class C { get constructor() {} }"
+      tsc: ok
+      lint: no code bun@14+11 Class constructor cannot be a getter
+AA ts  "class C { constructor<T>() {} }"
+      tsc: ok
+      lint: ok
+AA ts  "class C { constructor(): void {} }"
+      tsc: ok
+      lint: ok
+AA ts  "class C { a?: 1 = 1; b!: 1 = 1; }"
+      tsc: ok
+      lint: ok
+RR ts  "class C { [a: string]: 1 = 1; }"
+      tsc: TS1005@25+1 ';' expected.
+      lint: TS1005@25..26 bun@25+1 Expected ";" but found "="
+AA ts  "function f(a?, b) {}"
+      tsc: ok
+      lint: ok
+AA ts  "function f(a?: 1 = 1) {}"
+      tsc: ok
+      lint: ok
+AA ts  "function f(this) {}"
+      tsc: ok
+      lint: ok
+AA ts  "function f(a, this: A) {}"
+      tsc: ok
+      lint: ok
+AA ts  "new C<A>;"
+      tsc: ok
+      lint: ok
+AA ts  "x = <T>(a) => 1;"
+      tsc: ok
+      lint: ok
+RR tsx "x = <T>(a) => 1;"
+      tsc: TS1382@12+1 Unexpected token. Did you mean `{'>'}` or `&gt;`?
+      lint: no code bun@7+0 Syntax Error
+AA tsx "x = <T,>(a) => 1;"
+      tsc: ok
+      lint: ok
+AA tsx "x = <T extends A>(a) => 1;"
+      tsc: ok
+      lint: ok
+AA tsx "x = <a b={1} b={2} />;"
+      tsc: ok
+      lint: ok
+RR tsx "x = <a></b>;"
+      tsc: TS17002@9+1 Expected corresponding JSX closing tag for 'a'.
+      lint: no code bun@9+1 Expected closing JSX tag to match opening tag "<a>"
+B  tsx "x = <a.b:c />;"
+      tsc: TS1003@8+1 Identifier expected.
+      lint: ok
+AA tsx "x = <a>{}</a>;"
+      tsc: ok
+      lint: ok
+RR tsx "x = <a b= />;"
+      tsc: TS1145@10+1 '{' or JSX element expected.
+      lint: TS1005@10..11 bun@10+1 Expected "{" but found "/"
+AA tsx "x = <a {...b} {...c} />;"
+      tsc: ok
+      lint: ok
+AA tsx "x = <></>;"
+      tsc: ok
+      lint: ok
+B  tsx "x = <a>}</a>;"
+      tsc: TS1381@7+1 Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+      lint: ok
+B  tsx "x = <a>></a>;"
+      tsc: TS1382@7+1 Unexpected token. Did you mean `{'>'}` or `&gt;`?
+      lint: ok

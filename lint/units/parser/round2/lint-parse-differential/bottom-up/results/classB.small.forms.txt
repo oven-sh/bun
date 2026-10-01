@@ -1,0 +1,443 @@
+conditional      " extends"                                 2 plainA   TS1109 Expression expected.              | targ | e.g. "f< extends>(x);" @3
+conditional      "{ a A } extends B ? C : D"                2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { a A } extends B ? C : D;" @11
+conditional      "A extends B ? () => C : D"                1 plainA   TS1005 ',' expected.                     | angle | e.g. "let v = <A extends B ? () => C : D>x;" @21
+conditional      "A extends B ? { a C } : { a: D }"         2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = A extends B ? { a C } : { a: D };" @25
+conditional      "A extends B ? { a: C } : { a D }"         2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = A extends B ? { a: C } : { a D };" @36
+conditional      "A extends B ? C : () => D"                1 plainA   TS1005 ',' expected.                     | angle | e.g. "let v = <A extends B ? C : () => D>x;" @21
+conditional      "unique  extends B ? C : D"               31 plainA   TS1005 ';' expected. / TS1005 ',' expected. | 16 ctxs | e.g. "f<unique  extends B ? C : D>(x);" @10
+constructor-type "new A"                                    2 plainA   TS1005 '(' expected.                     | targ | e.g. "f<new A>(x);" @6
+contextual       "infer"                                    2 plainA   TS1003 Identifier expected.              | targ | e.g. "f<infer>(x);" @7
+contextual       "intrinsic<>"                              2 plainR2  TS1005 ';' expected.                     | alias | e.g. "type X = intrinsic<>;" @18
+contextual       "intrinsic<A>"                             2 plainA   TS1005 ';' expected.                     | alias | e.g. "type X = intrinsic<A>;" @18
+contextual       "keyof.A"                                  2 plainA   TS1110 Type expected.                    | targ | e.g. "f<keyof.A>(x);" @7
+contextual       "keyof<A>"                                 2 plainA   TS1110 Type expected.                    | targ | e.g. "f<keyof<A>>(x);" @7
+contextual       "readonly.A"                               2 plainA   TS1110 Type expected.                    | targ | e.g. "f<readonly.A>(x);" @10
+contextual       "readonly<A>"                              2 plainA   TS1110 Type expected.                    | targ | e.g. "f<readonly<A>>(x);" @10
+contextual       "unique"                                  31 plainA   TS1110 Type expected. / TS1131 Property or signature expected. | 16 ctxs | e.g. "f<unique>(x);" @8
+contextual       "unique.A"                                31 plainA   TS1110 Type expected.                    | 16 ctxs | e.g. "f<unique.A>(x);" @8
+contextual       "unique<>"                                31 plainR27 TS1110 Type expected.                    | 16 ctxs | e.g. "f<unique<>>(x);" @8
+contextual       "unique<A>"                               31 plainA   TS1110 Type expected.                    | 16 ctxs | e.g. "f<unique<A>>(x);" @8
+function-type    "(...this: []) => void"                    2 plainA   TS1359 Identifier expected. 'this' is a reserved word that cannot be used here. | alias | e.g. "type X = (...this: []) => void;" @13
+function-type    "(...this: A[]) => void"                   2 plainA   TS1359 Identifier expected. 'this' is a reserved word that cannot be used here. | alias | e.g. "type X = (...this: A[]) => void;" @13
+function-type    "({ : [b] }: A) => void"                   2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = ({ : [b] }: A) => void;" @12
+function-type    "({ : { b } }: A) => void"                 2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = ({ : { b } }: A) => void;" @12
+function-type    "({ : b }: A) => void"                     2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = ({ : b }: A) => void;" @12
+function-type    "(a: A) => { a A }"                        2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = (a: A) => { a A };" @21
+function-type    "(this?: A) => void"                       2 plainA   TS1005 ',' expected.                     | alias | e.g. "type X = (this?: A) => void;" @14
+function-type    "<>() => unique"                          28 plainR28 TS1110 Type expected. / TS1131 Property or signature expected. | 14 ctxs | e.g. "f<<>() => unique>(x);" @16
+function-type    "<unique>() => unique"                    30 plainA   TS1110 Type expected. / TS1131 Property or signature expected. | 15 ctxs | e.g. "f<<unique>() => unique>(x);" @22
+import-type      "('x')\n.A"                                2 plainA   TS1128 Declaration or statement expected. | alias | e.g. "type X = ('x')\n.A;" @15
+import-type      "('x').\nA"                                2 plainA   TS1005 ';' expected.                     | alias | e.g. "type X = ('x').\nA;" @14
+import-type      "('x').A"                                  2 plainA   TS1005 ';' expected.                     | alias | e.g. "type X = ('x').A;" @14
+import-type      "('x').A.B"                                2 plainA   TS1005 ';' expected.                     | alias | e.g. "type X = ('x').A.B;" @14
+import-type      "('x').A.B<C, D>"                          2 plainA   TS1005 ';' expected.                     | alias | e.g. "type X = ('x').A.B<C, D>;" @14
+import-type      "('x').A[]"                                2 plainA   TS1005 ';' expected.                     | alias | e.g. "type X = ('x').A[];" @14
+import-type      "('x').A<B>"                               2 plainA   TS1005 ';' expected.                     | alias | e.g. "type X = ('x').A<B>;" @14
+import-type      "('x').default"                            2 plainA   TS1005 ';' expected.                     | alias | e.g. "type X = ('x').default;" @14
+import-type      "('x').new"                                2 plainA   TS1005 ';' expected.                     | alias | e.g. "type X = ('x').new;" @14
+import-type      "('x')<A>"                                 4 plainA   TS1109 Expression expected.              | as,satisfies | e.g. "let v = x as ('x')<A>;" @21
+import-type      "import.meta"                              2 plainA   TS1005 '(' expected.                     | targ | e.g. "f<import.meta>(x);" @8
+import-type      "import('x', )"                            2 plainA   TS1005 '{' expected.                     | targ | e.g. "f<import('x', )>(x);" @14
+import-type      "import('x', { a: { b 'c' } })"            2 plainA   TS1005 'with' expected.                  | alias | e.g. "type X = import('x', { a: { b 'c' } });" @23
+import-type      "import('x', { a: { b: 'c' } })"           2 plainA   TS1005 'with' expected.                  | alias | e.g. "type X = import('x', { a: { b: 'c' } });" @23
+import-type      "import('x', { assert: { 'resolution-mode' 'import' } })"   2 plainA   TS1005 ':' expected.                     | alias | e.g. "type X = import('x', { assert: { 'resolution-mode' 'import' } });" @51
+import-type      "import('x', { with: { 'resolution-mode' 'import' } },)"   2 plainA   TS1005 ':' expected.                     | alias | e.g. "type X = import('x', { with: { 'resolution-mode' 'import' } },);" @49
+import-type      "import('x', { with: { 'resolution-mode' 'import' } })"   2 plainA   TS1005 ':' expected.                     | alias | e.g. "type X = import('x', { with: { 'resolution-mode' 'import' } });" @49
+import-type      "import('x', { with: { 'resolution-mode' 'import' } }).A<B>"   2 plainA   TS1005 ':' expected.                     | alias | e.g. "type X = import('x', { with: { 'resolution-mode' 'import' } }).A<B>;" @49
+import-type      "import('x', { with: { 'resolution-mode' 'import' }, })"   2 plainA   TS1005 ':' expected.                     | alias | e.g. "type X = import('x', { with: { 'resolution-mode' 'import' }, });" @49
+import-type      "import('x', { with: { 'resolution-mode' 'import', } })"   2 plainA   TS1005 ':' expected.                     | alias | e.g. "type X = import('x', { with: { 'resolution-mode' 'import', } });" @49
+import-type      "import('x', { with: { 'resolution-mode' 'require' } }).A"   2 plainA   TS1005 ':' expected.                     | alias | e.g. "type X = import('x', { with: { 'resolution-mode' 'require' } }).A;" @49
+import-type      "import('x', { with: { 'resolution-mode': 'import' } },)"   2 plainA   TS1005 ')' expected.                     | alias | e.g. "type X = import('x', { with: { 'resolution-mode': 'import' } },);" @62
+import-type      "import('x', { with: { a 'b', c: 'd' } })"   2 plainA   TS1005 ':' expected.                     | alias | e.g. "type X = import('x', { with: { a 'b', c: 'd' } });" @33
+import-type      "import('x', { with: { a 1 } })"           2 plainA   TS1005 ':' expected.                     | alias | e.g. "type X = import('x', { with: { a 1 } });" @33
+import-type      "import('x', { with: { a: 'b', c 'd' } })"   2 plainA   TS1005 ':' expected.                     | alias | e.g. "type X = import('x', { with: { a: 'b', c 'd' } });" @41
+import-type      "import('x', {})"                          4 plainA   TS1005 'with' expected.                  | alias,targ | e.g. "f<import('x', {})>(x);" @15
+import-type      "import('x',)"                             2 plainA   TS1005 '{' expected.                     | targ | e.g. "f<import('x',)>(x);" @13
+import-type      "import('x')<A"                            4 plainA   TS1005 '>' expected.                     | as,satisfies | e.g. "let v = x as import('x')<A;" @26
+indexed          "(keyof )[B]"                              2 plainA   TS1110 Type expected.                    | targ | e.g. "f<(keyof )[B]>(x);" @9
+indexed          "<B>[C]"                                   2 plainA   TS1005 '(' expected.                     | targ | e.g. "f<<B>[C]>(x);" @5
+indexed          "typeof [B]"                               2 plainA   TS1003 Identifier expected.              | targ | e.g. "f<typeof [B]>(x);" @9
+infer            "A extends { a infer U } ? U : never"      2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = A extends { a infer U } ? U : never;" @21
+infer            "A extends { a infer U extends B } ? U : never"   2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = A extends { a infer U extends B } ? U : never;" @21
+infer            "A extends infer U[] ? U : never"         31 plainA   TS1005 '?' expected. / TS1005 ',' expected. | 16 ctxs | e.g. "f<A extends infer U[] ? U : never>(x);" @4
+infer            "infer "                                   2 plainA   TS1003 Identifier expected.              | targ | e.g. "f<infer >(x);" @8
+jsdoc            "A!.B"                                     2 plainA   TS1005 ';' expected.                     | alias | e.g. "type X = A!.B;" @11
+junk             "//c\nA"                                   1 plainA   TS1434 Unexpected keyword or identifier. | targ | e.g. "f<//c\nA>(x);" @0
+junk             "/a/"                                      1 plainA   TS1434 Unexpected keyword or identifier. | targ | e.g. "f</a/>(x);" @0
+junk             "/a/g"                                     1 plainA   TS1434 Unexpected keyword or identifier. | targ | e.g. "f</a/g>(x);" @0
+junk             "A = B"                                    2 plainA   TS1005 ';' expected.                     | targ | e.g. "f<A = B>(x);" @4
+junk             "super"                                    2 plainA   TS1034 'super' must be followed by an argument list or member access. | tparam | e.g. "function f<U extends super>() {}" @26
+mapped           "{  +[K in T]: V }"                        2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = {  +[K in T]: V };" @12
+mapped           "{ - [K in keyof T]-?: T[K] }"             2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { - [K in keyof T]-?: T[K] };" @11
+mapped           "{ - [K in T]: V }"                        2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { - [K in T]: V };" @11
+mapped           "{ - a: A }"                               2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { - a: A };" @11
+mapped           "{ -readonly : A }"                        2 plainA   TS1005 '[' expected.                     | alias | e.g. "type X = { -readonly : A };" @21
+mapped           "{ -readonly [K in keyof T]-: T[K] }"      2 plainA   TS1005 '?' expected.                     | alias | e.g. "type X = { -readonly [K in keyof T]-: T[K] };" @36
+mapped           "{ -readonly a A }"                        2 plainA   TS1005 '[' expected.                     | alias | e.g. "type X = { -readonly a A };" @21
+mapped           "{ -readonly a: A }"                       2 plainA   TS1005 '[' expected.                     | alias | e.g. "type X = { -readonly a: A };" @21
+mapped           "{ [K in T]- : V }"                        2 plainA   TS1005 '?' expected.                     | alias | e.g. "type X = { [K in T]- : V };" @21
+mapped           "{ [K in T]-: V }"                         2 plainA   TS1005 '?' expected.                     | alias | e.g. "type X = { [K in T]-: V };" @20
+mapped           "{ [K in T]: V, }"                         2 plainA   TS1005 ';' expected.                     | alias | e.g. "type X = { [K in T]: V, };" @22
+mapped           "{ [K in T]: V; a A }"                     2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { [K in T]: V; a A };" @24
+mapped           "{ [K in T]+: V }"                         2 plainA   TS1005 '?' expected.                     | alias | e.g. "type X = { [K in T]+: V };" @20
+mapped           "{ + [K in keyof T]+?: T[K] }"             2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { + [K in keyof T]+?: T[K] };" @11
+mapped           "{ + [K in T]: V }"                        2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { + [K in T]: V };" @11
+mapped           "{ + a: A }"                               2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { + a: A };" @11
+mapped           "{ +readonly : A }"                        2 plainA   TS1005 '[' expected.                     | alias | e.g. "type X = { +readonly : A };" @21
+mapped           "{ +readonly [K in keyof T]+: T[K] }"      2 plainA   TS1005 '?' expected.                     | alias | e.g. "type X = { +readonly [K in keyof T]+: T[K] };" @36
+mapped           "{ +readonly a A }"                        2 plainA   TS1005 '[' expected.                     | alias | e.g. "type X = { +readonly a A };" @21
+mapped           "{ +readonly a: A }"                       2 plainA   TS1005 '[' expected.                     | alias | e.g. "type X = { +readonly a: A };" @21
+mapped           "{ a A; [K in T]: V }"                     2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { a A; [K in T]: V };" @11
+operator         "keyof  () => A"                          31 plainA   TS1110 Type expected. / TS1005 '>' expected. | 16 ctxs | e.g. "f<keyof  () => A>(x);" @12
+operator         "keyof  | B"                               4 plainA   TS1110 Type expected.                    | alias,targ | e.g. "f<keyof  | B>(x);" @9
+operator         "keyof .B"                                 2 plainA   TS1110 Type expected.                    | targ | e.g. "f<keyof .B>(x);" @8
+operator         "keyof () => void"                        31 plainA   TS1110 Type expected. / TS1005 ';' expected. | 16 ctxs | e.g. "f<keyof () => void>(x);" @11
+operator         "keyof { a A }"                            2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = keyof { a A };" @17
+operator         "keyof <B>"                                2 plainA   TS1110 Type expected.                    | targ | e.g. "f<keyof <B>>(x);" @8
+operator         "keyof new () => A"                       31 plainA   TS1005 ';' expected. / TS1005 ',' expected. | 16 ctxs | e.g. "f<keyof new () => A>(x);" @8
+operator         "keyof unique "                           31 plainA   TS1110 Type expected. / TS1131 Property or signature expected. | 16 ctxs | e.g. "f<keyof unique >(x);" @15
+operator         "readonly () => void"                     31 plainA   TS1110 Type expected. / TS1005 ';' expected. | 16 ctxs | e.g. "f<readonly () => void>(x);" @14
+operator         "readonly { a A }"                         2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = readonly { a A };" @20
+operator         "readonly <A>"                             2 plainA   TS1110 Type expected.                    | targ | e.g. "f<readonly <A>>(x);" @11
+operator         "readonly unique "                        31 plainA   TS1110 Type expected. / TS1131 Property or signature expected. | 16 ctxs | e.g. "f<readonly unique >(x);" @18
+operator         "unique\n"                                27 plainA   TS1110 Type expected. / TS1131 Property or signature expected. | 14 ctxs | e.g. "f<unique\n>(x);" @9
+operator         "unique "                                 31 plainA   TS1110 Type expected. / TS1131 Property or signature expected. | 16 ctxs | e.g. "f<unique >(x);" @9
+operator         "unique  | A"                             31 plainA   TS1110 Type expected.                    | 16 ctxs | e.g. "f<unique  | A>(x);" @10
+parenthesized    "({ a A })"                                2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = ({ a A });" @12
+parenthesized    "(a is A)"                                31 plainA   TS1005 ')' expected. / TS1005 ',' expected. | 16 ctxs | e.g. "f<(a is A)>(x);" @5
+parenthesized    "(A, B)"                                   2 plainA   TS1005 '=>' expected.                    | targ | e.g. "f<(A, B)>(x);" @8
+parenthesized    "(A).B"                                    2 plainA   TS1005 ';' expected.                     | alias | e.g. "type X = (A).B;" @12
+parenthesized    "(A)<>"                                    4 plainA   TS1109 Expression expected.              | as,satisfies | e.g. "let v = x as (A)<>;" @17
+parenthesized    "(A)<B>"                                   4 plainA   TS1109 Expression expected.              | as,satisfies | e.g. "let v = x as (A)<B>;" @19
+parenthesized    "(a<B)"                                    2 plainA   TS1005 '>' expected.                     | targ | e.g. "f<(a<B)>(x);" @6
+parenthesized    "(infer )"                                 2 plainA   TS1003 Identifier expected.              | targ | e.g. "f<(infer )>(x);" @9
+parenthesized    "(unique )"                               27 plainA   TS1110 Type expected.                    | 14 ctxs | e.g. "f<(unique )>(x);" @10
+predicate        " a is A"                                 23 plainA   TS1005 ';' expected. / TS1005 ',' expected. | 12 ctxs | e.g. "f< a is A>(x);" @5
+predicate        " a is A | B"                             23 plainA   TS1005 ';' expected. / TS1005 ',' expected. | 12 ctxs | e.g. "f< a is A | B>(x);" @5
+predicate        " asserts is A"                           23 plainA   TS1005 ';' expected. / TS1005 ',' expected. | 12 ctxs | e.g. "f< asserts is A>(x);" @11
+predicate        " is is A"                                23 plainA   TS1005 ';' expected. / TS1005 ',' expected. | 12 ctxs | e.g. "f< is is A>(x);" @6
+predicate        "a is  | B"                               23 plainA   TS1005 ';' expected. / TS1005 ',' expected. | 12 ctxs | e.g. "f<a is  | B>(x);" @4
+predicate        "a is []"                                 23 plainA   TS1005 ';' expected. / TS1005 ',' expected. | 12 ctxs | e.g. "f<a is []>(x);" @4
+predicate        "a is A"                                  23 plainA   TS1005 ';' expected. / TS1005 ',' expected. | 12 ctxs | e.g. "f<a is A>(x);" @4
+predicate        "a is A | B"                              23 plainA   TS1005 ';' expected. / TS1005 ',' expected. | 12 ctxs | e.g. "f<a is A | B>(x);" @4
+predicate        "a is A extends B ? C : D"                23 plainA   TS1005 ';' expected. / TS1005 ',' expected. | 12 ctxs | e.g. "f<a is A extends B ? C : D>(x);" @4
+predicate        "a is a is A"                             31 plainA   TS1005 ';' expected. / TS1005 ',' expected. | 16 ctxs | e.g. "f<a is a is A>(x);" @4
+predicate        "a is A[]"                                23 plainA   TS1005 ';' expected. / TS1005 ',' expected. | 12 ctxs | e.g. "f<a is A[]>(x);" @4
+predicate        "ab is A"                                 23 plainA   TS1005 ';' expected. / TS1005 ',' expected. | 12 ctxs | e.g. "f<ab is A>(x);" @5
+predicate        "asserts  is A"                           23 plainA   TS1005 ';' expected. / TS1005 ',' expected. | 12 ctxs | e.g. "f<asserts  is A>(x);" @11
+predicate        "asserts  is A | B"                       23 plainA   TS1005 ';' expected. / TS1005 ',' expected. | 12 ctxs | e.g. "f<asserts  is A | B>(x);" @11
+predicate        "asserts is  A"                           23 plainA   TS1005 ';' expected. / TS1005 ',' expected. | 12 ctxs | e.g. "f<asserts is  A>(x);" @10
+predicate        "asserts is A"                            23 plainA   TS1005 ';' expected. / TS1005 ',' expected. | 12 ctxs | e.g. "f<asserts is A>(x);" @10
+predicate        "asserts is is "                          23 plainA   TS1110 Type expected.                    | 12 ctxs | e.g. "f<asserts is is >(x);" @16
+predicate        "x is A"                                  23 plainA   TS1005 ';' expected. / TS1005 ',' expected. | 12 ctxs | e.g. "f<x is A>(x);" @4
+query            " a\n<B>"                                  4 plainA   TS1109 Expression expected.              | as,satisfies | e.g. "let v = x as  a\n<B>;" @19
+query            " a<B>.c"                                  4 plainA   TS1005 ';' expected. / TS1477 An instantiation expression cannot be followed by a property access. | alias,targ | e.g. "f< a<B>.c>(x);" @4
+query            " class"                                   2 plainA   TS1005 '{' expected.                     | tparam | e.g. "function f<U extends  class>() {}" @27
+query            " const"                                   2 plainA   TS1109 Expression expected.              | targ | e.g. "f< const>(x);" @3
+query            " delete"                                  2 plainA   TS1109 Expression expected.              | tparam | e.g. "function f<U extends  delete>() {}" @28
+query            " in"                                      2 plainA   TS1109 Expression expected.              | tparam | e.g. "function f<U extends  in>() {}" @22
+query            " infer"                                   2 plainA   TS1003 Identifier expected.              | targ | e.g. "f< infer>(x);" @8
+query            " this.a"                                  2 plainA   TS1005 ';' expected.                     | alias | e.g. "type X =  this.a;" @14
+query            " this.a.b"                                2 plainA   TS1005 ';' expected.                     | alias | e.g. "type X =  this.a.b;" @14
+query            " unique"                                 31 plainA   TS1110 Type expected. / TS1131 Property or signature expected. | 16 ctxs | e.g. "f< unique>(x);" @9
+query            "typeof ['b']"                             2 plainA   TS1003 Identifier expected.              | targ | e.g. "f<typeof ['b']>(x);" @9
+query            "typeof []"                                2 plainA   TS1003 Identifier expected.              | targ | e.g. "f<typeof []>(x);" @9
+query            "typeof [number]"                          2 plainA   TS1003 Identifier expected.              | targ | e.g. "f<typeof [number]>(x);" @9
+query            "typeof <B>[]"                             1 plainA   TS1003 Identifier expected.              | targ | e.g. "f<typeof <B>[]>(x);" @9
+query            "typeof a\n<>"                             4 plainA   TS1109 Expression expected.              | as,satisfies | e.g. "let v = x as typeof a\n<>;" @23
+query            "typeof a\n<B>"                            4 plainA   TS1109 Expression expected.              | as,satisfies | e.g. "let v = x as typeof a\n<B>;" @25
+query            "typeof a.#b"                             31 plainA   TS1003 Identifier expected.              | 16 ctxs | e.g. "f<typeof a.#b>(x);" @13
+query            "typeof a<>.c"                             4 plainR2  TS1005 ';' expected. / TS1477 An instantiation expression cannot be followed by a property access. | alias,targ | e.g. "f<typeof a<>.c>(x);" @10
+query            "typeof a<B>.c"                            4 plainA   TS1005 ';' expected. / TS1477 An instantiation expression cannot be followed by a property access. | alias,targ | e.g. "f<typeof a<B>.c>(x);" @10
+query            "typeof aB>.c"                             2 plainA   TS1477 An instantiation expression cannot be followed by a property access. | targ | e.g. "f<typeof aB>.c>(x);" @1
+reference        "<\nB\n>"                                  2 plainA   TS1005 '(' expected.                     | targ | e.g. "f<<\nB\n>>(x);" @7
+reference        "<A>"                                      2 plainA   TS1005 '(' expected.                     | targ | e.g. "f<<A>>(x);" @5
+reference        "<B, C>"                                   2 plainA   TS1005 '(' expected.                     | targ | e.g. "f<<B, C>>(x);" @8
+reference        "<B>"                                      2 plainA   TS1005 '(' expected.                     | targ | e.g. "f<<B>>(x);" @5
+reference        "<B>[]"                                    2 plainA   TS1005 '(' expected.                     | targ | e.g. "f<<B>[]>(x);" @5
+reference        "A\n<>"                                    4 plainA   TS1109 Expression expected.              | as,satisfies | e.g. "let v = x as A\n<>;" @16
+reference        "A\n<B>"                                   4 plainA   TS1109 Expression expected.              | as,satisfies | e.g. "let v = x as A\n<B>;" @18
+reference        "A< extends C ? D : E>"                    2 plainR2  TS1005 '>' expected.                     | alias | e.g. "type X = A< extends C ? D : E>;" @12
+reference        "A<<C>>"                                   2 plainA   TS1005 '(' expected.                     | targ | e.g. "f<A<<C>>>(x);" @7
+reference        "A<>.C"                                    4 plainR2  TS1005 ';' expected. / TS1477 An instantiation expression cannot be followed by a property access. | alias,targ | e.g. "f<A<>.C>(x);" @3
+reference        "A<B>.C"                                   4 plainA   TS1005 ';' expected. / TS1477 An instantiation expression cannot be followed by a property access. | alias,targ | e.g. "f<A<B>.C>(x);" @3
+reference        "AB>.C"                                    2 plainA   TS1477 An instantiation expression cannot be followed by a property access. | targ | e.g. "f<AB>.C>(x);" @1
+this-type        "this.a"                                   2 plainA   TS1005 ';' expected.                     | alias | e.g. "type X = this.a;" @13
+this-type        "this<>"                                   4 plainA   TS1109 Expression expected.              | as,satisfies | e.g. "let v = x as this<>;" @18
+this-type        "this<A>"                                  4 plainA   TS1109 Expression expected.              | as,satisfies | e.g. "let v = x as this<A>;" @20
+tuple            "[, B | C]"                                2 plainA   TS1110 Type expected.                    | targ | e.g. "f<[, B | C]>(x);" @3
+tuple            "[, B]"                                    2 plainA   TS1110 Type expected.                    | targ | e.g. "f<[, B]>(x);" @3
+tuple            "[,,B]"                                    2 plainA   TS1110 Type expected.                    | targ | e.g. "f<[,,B]>(x);" @3
+tuple            "[,]"                                      2 plainA   TS1110 Type expected.                    | targ | e.g. "f<[,]>(x);" @3
+tuple            "[...infer ]"                              2 plainA   TS1003 Identifier expected.              | targ | e.g. "f<[...infer ]>(x);" @12
+tuple            "[...infer A[]]"                          31 plainA   TS1005 ',' expected.                     | 16 ctxs | e.g. "f<[...infer A[]]>(x);" @13
+tuple            "[{ a A }]"                                2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = [{ a A }];" @12
+tuple            "[a is A]"                                31 plainA   TS1005 ',' expected.                     | 16 ctxs | e.g. "f<[a is A]>(x);" @5
+tuple            "[A,,]"                                    2 plainA   TS1110 Type expected.                    | targ | e.g. "f<[A,,]>(x);" @5
+tuple            "[A,,B]"                                   2 plainA   TS1110 Type expected.                    | targ | e.g. "f<[A,,B]>(x);" @5
+tuple            "[a: { a A }]"                             2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = [a: { a A }];" @15
+tuple            "[a: unique ]"                            31 plainA   TS1110 Type expected.                    | 16 ctxs | e.g. "f<[a: unique ]>(x);" @13
+tuple            "[a.b: A]"                                 2 plainA   TS1005 ',' expected.                     | alias | e.g. "type X = [a.b: A];" @13
+tuple            "[a<>: A]"                                 2 plainR2  TS1005 ',' expected.                     | alias | e.g. "type X = [a<>: A];" @13
+tuple            "[A<B]"                                    2 plainA   TS1005 '>' expected.                     | targ | e.g. "f<[A<B]>(x);" @6
+tuple            "[A<B<C>]"                                 2 plainA   TS1005 '>' expected.                     | targ | e.g. "f<[A<B<C>]>(x);" @9
+tuple            "[a<B> A]"                                 2 plainA   TS1005 ',' expected.                     | targ | e.g. "f<[a<B> A]>(x);" @8
+tuple            "[a<B>: A]"                                2 plainA   TS1005 ',' expected.                     | alias | e.g. "type X = [a<B>: A];" @14
+tuple            "[await A]"                                2 plainA   TS1005 ',' expected.                     | targ | e.g. "f<[await A]>(x);" @9
+tuple            "[class: A[]]"                            29 plainR25 TS1110 Type expected. / TS1005 ',' expected. | 15 ctxs | e.g. "f<[class: A[]]>(x);" @8
+tuple            "[class: A]"                              29 plainR25 TS1110 Type expected. / TS1005 ',' expected. | 15 ctxs | e.g. "f<[class: A]>(x);" @8
+tuple            "[class?: A]"                             29 plainR25 TS1110 Type expected. / TS1005 ',' expected. | 15 ctxs | e.g. "f<[class?: A]>(x);" @8
+tuple            "[class]"                                 29 plainR29 TS1110 Type expected. / TS1005 ',' expected. | 15 ctxs | e.g. "f<[class]>(x);" @8
+tuple            "[const: A[]]"                            29 plainR29 TS1110 Type expected. / TS1005 ',' expected. | 15 ctxs | e.g. "f<[const: A[]]>(x);" @3
+tuple            "[const: A]"                              29 plainR29 TS1110 Type expected. / TS1005 ',' expected. | 15 ctxs | e.g. "f<[const: A]>(x);" @3
+tuple            "[const?: A]"                             31 plainA   TS1110 Type expected. / TS1005 ',' expected. | 16 ctxs | e.g. "f<[const?: A]>(x);" @3
+tuple            "[const]"                                 31 plainA   TS1110 Type expected. / TS1005 ',' expected. | 16 ctxs | e.g. "f<[const]>(x);" @3
+tuple            "[delete: A[]]"                           29 plainR25 TS1110 Type expected. / TS1005 ',' expected. | 15 ctxs | e.g. "f<[delete: A[]]>(x);" @9
+tuple            "[delete: A]"                             29 plainR25 TS1110 Type expected. / TS1005 ',' expected. | 15 ctxs | e.g. "f<[delete: A]>(x);" @9
+tuple            "[delete?: A]"                            29 plainR25 TS1110 Type expected. / TS1005 ',' expected. | 15 ctxs | e.g. "f<[delete?: A]>(x);" @9
+tuple            "[delete]"                                29 plainR29 TS1110 Type expected. / TS1005 ',' expected. | 15 ctxs | e.g. "f<[delete]>(x);" @9
+tuple            "[enum: A[]]"                             29 plainR25 TS1110 Type expected. / TS1005 ',' expected. | 15 ctxs | e.g. "f<[enum: A[]]>(x);" @3
+tuple            "[enum: A]"                               29 plainR25 TS1110 Type expected. / TS1005 ',' expected. | 15 ctxs | e.g. "f<[enum: A]>(x);" @3
+tuple            "[enum?: A]"                              29 plainR25 TS1110 Type expected. / TS1005 ',' expected. | 15 ctxs | e.g. "f<[enum?: A]>(x);" @3
+tuple            "[enum]"                                  29 plainR29 TS1110 Type expected. / TS1005 ',' expected. | 15 ctxs | e.g. "f<[enum]>(x);" @3
+tuple            "[extends: A[]]"                          29 plainR25 TS1110 Type expected. / TS1137 Expression or comma expected. | 15 ctxs | e.g. "f<[extends: A[]]>(x);" @3
+tuple            "[extends: A]"                            29 plainR25 TS1110 Type expected. / TS1137 Expression or comma expected. | 15 ctxs | e.g. "f<[extends: A]>(x);" @3
+tuple            "[extends?: A]"                           29 plainR25 TS1110 Type expected. / TS1137 Expression or comma expected. | 15 ctxs | e.g. "f<[extends?: A]>(x);" @3
+tuple            "[extends]"                               29 plainR29 TS1110 Type expected. / TS1137 Expression or comma expected. | 15 ctxs | e.g. "f<[extends]>(x);" @3
+tuple            "[in: A[]]"                               29 plainR25 TS1110 Type expected. / TS1005 ',' expected. | 15 ctxs | e.g. "f<[in: A[]]>(x);" @3
+tuple            "[in: A]"                                 29 plainR25 TS1110 Type expected. / TS1005 ',' expected. | 15 ctxs | e.g. "f<[in: A]>(x);" @3
+tuple            "[in?: A]"                                29 plainR25 TS1110 Type expected. / TS1005 ',' expected. | 15 ctxs | e.g. "f<[in?: A]>(x);" @3
+tuple            "[in]"                                    29 plainR29 TS1110 Type expected. / TS1005 ',' expected. | 15 ctxs | e.g. "f<[in]>(x);" @3
+tuple            "[infer ]"                                 2 plainA   TS1003 Identifier expected.              | targ | e.g. "f<[infer ]>(x);" @9
+tuple            "[infer]"                                  2 plainA   TS1003 Identifier expected.              | targ | e.g. "f<[infer]>(x);" @8
+tuple            "[keyof ]"                                 2 plainA   TS1110 Type expected.                    | targ | e.g. "f<[keyof ]>(x);" @9
+tuple            "[keyof]"                                  2 plainA   TS1110 Type expected.                    | targ | e.g. "f<[keyof]>(x);" @8
+tuple            "[new A]"                                  2 plainA   TS1005 '(' expected.                     | targ | e.g. "f<[new A]>(x);" @7
+tuple            "[readonly]"                               2 plainA   TS1110 Type expected.                    | targ | e.g. "f<[readonly]>(x);" @11
+tuple            "[unique ]"                               31 plainA   TS1110 Type expected.                    | 16 ctxs | e.g. "f<[unique ]>(x);" @10
+tuple            "[unique]"                                31 plainA   TS1110 Type expected.                    | 16 ctxs | e.g. "f<[unique]>(x);" @9
+tuple            "[var: A[]]"                              29 plainR25 TS1110 Type expected. / TS1005 ',' expected. | 15 ctxs | e.g. "f<[var: A[]]>(x);" @3
+tuple            "[var: A]"                                29 plainR25 TS1110 Type expected. / TS1005 ',' expected. | 15 ctxs | e.g. "f<[var: A]>(x);" @3
+tuple            "[var?: A]"                               29 plainR25 TS1110 Type expected. / TS1005 ',' expected. | 15 ctxs | e.g. "f<[var?: A]>(x);" @3
+tuple            "[var]"                                   29 plainR29 TS1110 Type expected. / TS1005 ',' expected. | 15 ctxs | e.g. "f<[var]>(x);" @3
+tuple            "[void A]"                                 2 plainA   TS1005 ',' expected.                     | targ | e.g. "f<[void A]>(x);" @8
+type-literal     "{\na A,\nb: B,\n}"                        2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = {\na A,\nb: B,\n};" @11
+type-literal     "{\na A;\nb: B;\n}"                        2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = {\na A;\nb: B;\n};" @11
+type-literal     "{\na: A,\nb B,\n}"                        2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = {\na: A,\nb B,\n};" @17
+type-literal     "{\na: A;\nb B;\n}"                        2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = {\na: A;\nb B;\n};" @17
+type-literal     "{ -1 A }"                                 2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { -1 A };" @11
+type-literal     "{ -1: A }"                                2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { -1: A };" @11
+type-literal     "{ 'a' A }"                                2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { 'a' A };" @11
+type-literal     "{ \"a\" A }"                              2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { \"a\" A };" @11
+type-literal     "{ [k: string]: A, a B }"                  2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { [k: string]: A, a B };" @27
+type-literal     "{ [k: string]?: A }"                      2 plainA   TS1005 ';' expected.                     | alias | e.g. "type X = { [k: string]?: A };" @22
+type-literal     "{ [k: string](): A }"                     2 plainA   TS1005 ';' expected.                     | alias | e.g. "type X = { [k: string](): A };" @22
+type-literal     "{ 0x10 A }"                               2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { 0x10 A };" @11
+type-literal     "{ 1 A }"                                  2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { 1 A };" @11
+type-literal     "{ a  1 }"                                 2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { a  1 };" @11
+type-literal     "{ a [A]; b: () => void; c: new () => A }"   2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { a [A]; b: () => void; c: new () => A };" @11
+type-literal     "{ a A\n b: B }"                           2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { a A\n b: B };" @11
+type-literal     "{ a A\n(): void }"                        2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { a A\n(): void };" @11
+type-literal     "{ a A\n[k: string]: B }"                  2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { a A\n[k: string]: B };" @11
+type-literal     "{ a A\n<T>(): void }"                     2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { a A\n<T>(): void };" @11
+type-literal     "{ a A }"                                  2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { a A };" @11
+type-literal     "{ a A b: B }"                             2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { a A b: B };" @11
+type-literal     "{ a A, }"                                 2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { a A, };" @11
+type-literal     "{ a A, b: B }"                            2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { a A, b: B };" @11
+type-literal     "{ a A; }"                                 2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { a A; };" @11
+type-literal     "{ a A; b: B }"                            2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { a A; b: B };" @11
+type-literal     "{ a b }"                                  2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { a b };" @11
+type-literal     "{ a typeof b\n<T>(): void }"              2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { a typeof b\n<T>(): void };" @11
+type-literal     "{ a: () => void\n b B }"                  2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { a: () => void\n b B };" @26
+type-literal     "{ a: { b B } }"                           2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { a: { b B } };" @16
+type-literal     "{ a: { b: { c C } } }"                    2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { a: { b: { c C } } };" @21
+type-literal     "{ a: A\n b B }"                           2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { a: A\n b B };" @17
+type-literal     "{ a: A, b B }"                            2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { a: A, b B };" @17
+type-literal     "{ a: A; b B }"                            2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { a: A; b B };" @17
+type-literal     "{ a!: A }"                                2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { a!: A };" @11
+type-literal     "{ abstract a A }"                         2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { abstract a A };" @11
+type-literal     "{ accessor a A }"                         2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { accessor a A };" @11
+type-literal     "{ as A }"                                 2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { as A };" @11
+type-literal     "{ as a A }"                               2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { as a A };" @11
+type-literal     "{ as a: A }"                              2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { as a: A };" @11
+type-literal     "{ asserts A }"                            2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { asserts A };" @11
+type-literal     "{ asserts a A }"                          2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { asserts a A };" @11
+type-literal     "{ asserts a: A }"                         2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { asserts a: A };" @11
+type-literal     "{ async a A }"                            2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { async a A };" @11
+type-literal     "{ await A }"                              2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { await A };" @11
+type-literal     "{ await a A }"                            2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { await a A };" @11
+type-literal     "{ await a: A }"                           2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { await a: A };" @11
+type-literal     "{ class A }"                              2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { class A };" @11
+type-literal     "{ class a A }"                            2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { class a A };" @11
+type-literal     "{ class a: A }"                           2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { class a: A };" @11
+type-literal     "{ const A }"                              2 plainA   TS1005 ';' expected.                     | alias | e.g. "type X = { const A };" @17
+type-literal     "{ const a A }"                            2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { const a A };" @11
+type-literal     "{ const a: A }"                           2 plainA   TS1005 ';' expected.                     | alias | e.g. "type X = { const a: A };" @17
+type-literal     "{ constructor A }"                        2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { constructor A };" @11
+type-literal     "{ constructor a A }"                      2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { constructor a A };" @11
+type-literal     "{ constructor a: A }"                     2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { constructor a: A };" @11
+type-literal     "{ declare a A }"                          2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { declare a A };" @11
+type-literal     "{ defer A }"                              2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { defer A };" @11
+type-literal     "{ defer a A }"                            2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { defer a A };" @11
+type-literal     "{ defer a: A }"                           2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { defer a: A };" @11
+type-literal     "{ delete A }"                             2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { delete A };" @11
+type-literal     "{ delete a A }"                           2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { delete a A };" @11
+type-literal     "{ delete a: A }"                          2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { delete a: A };" @11
+type-literal     "{ enum A }"                               2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { enum A };" @11
+type-literal     "{ enum a A }"                             2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { enum a A };" @11
+type-literal     "{ enum a: A }"                            2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { enum a: A };" @11
+type-literal     "{ export a A }"                           2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { export a A };" @11
+type-literal     "{ extends A }"                            2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { extends A };" @11
+type-literal     "{ extends a A }"                          2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { extends a A };" @11
+type-literal     "{ extends a: A }"                         2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { extends a: A };" @11
+type-literal     "{ false A }"                              2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { false A };" @11
+type-literal     "{ false a A }"                            2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { false a A };" @11
+type-literal     "{ false a: A }"                           2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { false a: A };" @11
+type-literal     "{ from A }"                               2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { from A };" @11
+type-literal     "{ from a A }"                             2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { from a A };" @11
+type-literal     "{ from a: A }"                            2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { from a: A };" @11
+type-literal     "{ function A }"                           2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { function A };" @11
+type-literal     "{ function a A }"                         2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { function a A };" @11
+type-literal     "{ function a: A }"                        2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { function a: A };" @11
+type-literal     "{ get A }"                                2 plainA   TS1005 '(' expected.                     | alias | e.g. "type X = { get A };" @17
+type-literal     "{ get a A }"                              2 plainA   TS1005 '(' expected.                     | alias | e.g. "type X = { get a A };" @17
+type-literal     "{ get a: A }"                             2 plainA   TS1005 '(' expected.                     | alias | e.g. "type X = { get a: A };" @16
+type-literal     "{ get a?(): A }"                          2 plainA   TS1005 '(' expected.                     | alias | e.g. "type X = { get a?(): A };" @16
+type-literal     "{ get set }"                              2 plainA   TS1005 '(' expected.                     | alias | e.g. "type X = { get set };" @19
+type-literal     "{ global A }"                             2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { global A };" @11
+type-literal     "{ global a A }"                           2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { global a A };" @11
+type-literal     "{ global a: A }"                          2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { global a: A };" @11
+type-literal     "{ import A }"                             2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { import A };" @11
+type-literal     "{ import a A }"                           2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { import a A };" @11
+type-literal     "{ import a: A }"                          2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { import a: A };" @11
+type-literal     "{ in a A }"                               2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { in a A };" @11
+type-literal     "{ infer A }"                              2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { infer A };" @11
+type-literal     "{ infer a A }"                            2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { infer a A };" @11
+type-literal     "{ infer a: A }"                           2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { infer a: A };" @11
+type-literal     "{ intrinsic A }"                          2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { intrinsic A };" @11
+type-literal     "{ intrinsic a A }"                        2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { intrinsic a A };" @11
+type-literal     "{ intrinsic a: A }"                       2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { intrinsic a: A };" @11
+type-literal     "{ is A }"                                 2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { is A };" @11
+type-literal     "{ is a A }"                               2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { is a A };" @11
+type-literal     "{ is a: A }"                              2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { is a: A };" @11
+type-literal     "{ keyof A }"                              2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { keyof A };" @11
+type-literal     "{ keyof a A }"                            2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { keyof a A };" @11
+type-literal     "{ keyof a: A }"                           2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { keyof a: A };" @11
+type-literal     "{ let A }"                                2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { let A };" @11
+type-literal     "{ let a A }"                              2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { let a A };" @11
+type-literal     "{ let a: A }"                             2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { let a: A };" @11
+type-literal     "{ module A }"                             2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { module A };" @11
+type-literal     "{ module a A }"                           2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { module a A };" @11
+type-literal     "{ module a: A }"                          2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { module a: A };" @11
+type-literal     "{ namespace A }"                          2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { namespace A };" @11
+type-literal     "{ namespace a A }"                        2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { namespace a A };" @11
+type-literal     "{ namespace a: A }"                       2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { namespace a: A };" @11
+type-literal     "{ new A }"                                2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { new A };" @11
+type-literal     "{ new a A }"                              2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { new a A };" @11
+type-literal     "{ new a: A }"                             2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { new a: A };" @11
+type-literal     "{ null A }"                               2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { null A };" @11
+type-literal     "{ null a A }"                             2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { null a A };" @11
+type-literal     "{ null a: A }"                            2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { null a: A };" @11
+type-literal     "{ of A }"                                 2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { of A };" @11
+type-literal     "{ of a A }"                               2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { of a A };" @11
+type-literal     "{ of a: A }"                              2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { of a: A };" @11
+type-literal     "{ out a A }"                              2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { out a A };" @11
+type-literal     "{ override a A }"                         2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { override a A };" @11
+type-literal     "{ private a A }"                          2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { private a A };" @11
+type-literal     "{ protected a A }"                        2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { protected a A };" @11
+type-literal     "{ public a A }"                           2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { public a A };" @11
+type-literal     "{ readonly\na A }"                        2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly\na A };" @11
+type-literal     "{ readonly a A }"                         2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly a A };" @11
+type-literal     "{ readonly as A }"                        2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly as A };" @11
+type-literal     "{ readonly asserts A }"                   2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly asserts A };" @11
+type-literal     "{ readonly await A }"                     2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly await A };" @11
+type-literal     "{ readonly class A }"                     2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly class A };" @11
+type-literal     "{ readonly const A }"                     2 plainA   TS1005 ';' expected.                     | alias | e.g. "type X = { readonly const A };" @26
+type-literal     "{ readonly constructor A }"               2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly constructor A };" @11
+type-literal     "{ readonly defer A }"                     2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly defer A };" @11
+type-literal     "{ readonly delete A }"                    2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly delete A };" @11
+type-literal     "{ readonly enum A }"                      2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly enum A };" @11
+type-literal     "{ readonly extends A }"                   2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly extends A };" @11
+type-literal     "{ readonly false A }"                     2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly false A };" @11
+type-literal     "{ readonly from A }"                      2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly from A };" @11
+type-literal     "{ readonly function A }"                  2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly function A };" @11
+type-literal     "{ readonly get A }"                       2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly get A };" @11
+type-literal     "{ readonly get a(): A }"                  2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly get a(): A };" @11
+type-literal     "{ readonly global A }"                    2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly global A };" @11
+type-literal     "{ readonly import A }"                    2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly import A };" @11
+type-literal     "{ readonly infer A }"                     2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly infer A };" @11
+type-literal     "{ readonly intrinsic A }"                 2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly intrinsic A };" @11
+type-literal     "{ readonly is A }"                        2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly is A };" @11
+type-literal     "{ readonly keyof A }"                     2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly keyof A };" @11
+type-literal     "{ readonly let A }"                       2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly let A };" @11
+type-literal     "{ readonly module A }"                    2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly module A };" @11
+type-literal     "{ readonly namespace A }"                 2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly namespace A };" @11
+type-literal     "{ readonly new A }"                       2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly new A };" @11
+type-literal     "{ readonly null A }"                      2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly null A };" @11
+type-literal     "{ readonly of A }"                        2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly of A };" @11
+type-literal     "{ readonly readonly a A }"                2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly readonly a A };" @11
+type-literal     "{ readonly require A }"                   2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly require A };" @11
+type-literal     "{ readonly satisfies A }"                 2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly satisfies A };" @11
+type-literal     "{ readonly set A }"                       2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly set A };" @11
+type-literal     "{ readonly this A }"                      2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly this A };" @11
+type-literal     "{ readonly true A }"                      2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly true A };" @11
+type-literal     "{ readonly type A }"                      2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly type A };" @11
+type-literal     "{ readonly typeof A }"                    2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly typeof A };" @11
+type-literal     "{ readonly unique A }"                    2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly unique A };" @11
+type-literal     "{ readonly using A }"                     2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly using A };" @11
+type-literal     "{ readonly var A }"                       2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly var A };" @11
+type-literal     "{ readonly void A }"                      2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { readonly void A };" @11
+type-literal     "{ require A }"                            2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { require A };" @11
+type-literal     "{ require a A }"                          2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { require a A };" @11
+type-literal     "{ require a: A }"                         2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { require a: A };" @11
+type-literal     "{ satisfies A }"                          2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { satisfies A };" @11
+type-literal     "{ satisfies a A }"                        2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { satisfies a A };" @11
+type-literal     "{ satisfies a: A }"                       2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { satisfies a: A };" @11
+type-literal     "{ set A }"                                2 plainA   TS1005 '(' expected.                     | alias | e.g. "type X = { set A };" @17
+type-literal     "{ set a A }"                              2 plainA   TS1005 '(' expected.                     | alias | e.g. "type X = { set a A };" @17
+type-literal     "{ set a: A }"                             2 plainA   TS1005 '(' expected.                     | alias | e.g. "type X = { set a: A };" @16
+type-literal     "{ static a A }"                           2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { static a A };" @11
+type-literal     "{ this A }"                               2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { this A };" @11
+type-literal     "{ this a A }"                             2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { this a A };" @11
+type-literal     "{ this a: A }"                            2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { this a: A };" @11
+type-literal     "{ true A }"                               2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { true A };" @11
+type-literal     "{ true a A }"                             2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { true a A };" @11
+type-literal     "{ true a: A }"                            2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { true a: A };" @11
+type-literal     "{ type A }"                               2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { type A };" @11
+type-literal     "{ type a A }"                             2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { type a A };" @11
+type-literal     "{ type a: A }"                            2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { type a: A };" @11
+type-literal     "{ typeof A }"                             2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { typeof A };" @11
+type-literal     "{ typeof a A }"                           2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { typeof a A };" @11
+type-literal     "{ typeof a: A }"                          2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { typeof a: A };" @11
+type-literal     "{ unique A }"                             2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { unique A };" @11
+type-literal     "{ unique a A }"                           2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { unique a A };" @11
+type-literal     "{ unique a: A }"                          2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { unique a: A };" @11
+type-literal     "{ using A }"                              2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { using A };" @11
+type-literal     "{ using a A }"                            2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { using a A };" @11
+type-literal     "{ using a: A }"                           2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { using a: A };" @11
+type-literal     "{ var A }"                                2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { var A };" @11
+type-literal     "{ var a A }"                              2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { var a A };" @11
+type-literal     "{ var a: A }"                             2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { var a: A };" @11
+type-literal     "{ void A }"                               2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { void A };" @11
+type-literal     "{ void a A }"                             2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { void a A };" @11
+type-literal     "{ void a: A }"                            2 plainA   TS1131 Property or signature expected.   | alias | e.g. "type X = { void a: A };" @11
+union            " & & B"                                   2 plainA   TS1110 Type expected.                    | alias | e.g. "type X =  & & B;" @12
+union            " | () => void"                            2 plainA   TS1385 Function type notation must be parenthesized when used in a union type. | alias | e.g. "type X =  | () => void;" @11
+union            " | | B"                                   2 plainA   TS1110 Type expected.                    | alias | e.g. "type X =  | | B;" @12
+union            " | new () => B"                           2 plainA   TS1386 Constructor type notation must be parenthesized when used in a union type. | alias | e.g. "type X =  | new () => B;" @11
+union            "&  & B"                                   2 plainA   TS1110 Type expected.                    | alias | e.g. "type X = &  & B;" @12
+union            "&  | B"                                   2 plainA   TS1110 Type expected.                    | alias | e.g. "type X = &  | B;" @12
+union            "|  | B"                                   2 plainA   TS1110 Type expected.                    | alias | e.g. "type X = |  | B;" @12
+union            "A &  & C"                                 2 plainA   TS1110 Type expected.                    | alias | e.g. "type X = A &  & C;" @14
+union            "A &  | C"                                 2 plainA   TS1110 Type expected.                    | alias | e.g. "type X = A &  | C;" @14
+union            "A & & B"                                  2 plainA   TS1110 Type expected.                    | alias | e.g. "type X = A & & B;" @13
+union            "A |  () => B"                             2 plainA   TS1385 Function type notation must be parenthesized when used in a union type. | alias | e.g. "type X = A |  () => B;" @12
+union            "A |  | 1 | -1 | true | null | undefined"   2 plainA   TS1110 Type expected.                    | alias | e.g. "type X = A |  | 1 | -1 | true | null | undefined;" @14
+union            "A |  | C"                                 2 plainA   TS1110 Type expected.                    | alias | e.g. "type X = A |  | C;" @14
+union            "A | 'a' |  | -1 | true | null | undefined"   2 plainA   TS1110 Type expected.                    | alias | e.g. "type X = A | 'a' |  | -1 | true | null | undefined;" @20
+union            "A | 'a' | 1 | -1 |  | null | undefined"   2 plainA   TS1110 Type expected.                    | alias | e.g. "type X = A | 'a' | 1 | -1 |  | null | undefined;" @29
+union            "A | 'a' | 1 | -1 | true |  | undefined"   2 plainA   TS1110 Type expected.                    | alias | e.g. "type X = A | 'a' | 1 | -1 | true |  | undefined;" @36
+union            "A | () => void"                           2 plainA   TS1385 Function type notation must be parenthesized when used in a union type. | alias | e.g. "type X = A | () => void;" @12
+union            "A | | B"                                  2 plainA   TS1110 Type expected.                    | alias | e.g. "type X = A | | B;" @13
+union            "A | infer "                               2 plainA   TS1003 Identifier expected.              | targ | e.g. "f<A | infer >(x);" @12
+union            "A | new () => B"                          2 plainA   TS1386 Constructor type notation must be parenthesized when used in a union type. | alias | e.g. "type X = A | new () => B;" @12

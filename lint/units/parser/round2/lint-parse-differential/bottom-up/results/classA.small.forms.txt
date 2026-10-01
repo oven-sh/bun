@@ -1,0 +1,164 @@
+163 distinct forms outside heritage/iextends
+constructor-type "abstract new <>() => A"           ts  1 tsx  1 G1098    plainR           mut=del 3 T | alias | TS1003 Expected identifier but found ">"
+constructor-type "new <>(a: T) => A"                ts  1 tsx  1 G1098    plainR           mut=del 2 T | alias | TS1003 Expected identifier but found ">"
+contextual       "await<A"                          ts  0 tsx  1 N        plainR+optOnly   mut=del 3 > |  | ---- Syntax Error
+function-type    "(?) => B"                         ts  2 tsx  2 G8020    plainR           mut=del 1 a | arrowret,ternary | TS1005 Expected ";" but found ":" || TS1109 Unexpected ?
+function-type    "(...await: []) => void"           ts 12 tsx 11 N        plainA+optOnly   mut=del 4 A | var,field,ret,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | ---- Cannot use "yield" or "await" here. || TS1005 Expected ";" but found ":" || TS1109 Unexpected :
+function-type    "(...await: A[]) => void"          ts 12 tsx 11 N        plainA+optOnly   mut=null | var,field,ret,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | ---- Cannot use "yield" or "await" here. || TS1005 Expected ";" but found ":" || TS1109 Unexpected :
+function-type    "(a: A) => asserts\n"              ts  2 tsx  2 G1200    plainR           mut=del 7 a | arrowret,ternary | ---- Unexpected newline before "=>"
+function-type    "(abstract A) => void"             ts  1 tsx  1 G1242    plainR           mut=del 2 : | alias | TS1005 Expected ")" but found "A"
+function-type    "(accessor A) => void"             ts  1 tsx  1 G1275    plainR           mut=del 2 : | alias | TS1005 Expected ")" but found "A"
+function-type    "(async A) => void"                ts  1 tsx  1 G1090    plainR           mut=del 2 : | alias | TS1005 Expected ")" but found "A"
+function-type    "(await: A) => void"               ts 12 tsx 11 N        plainA+optOnly   mut=null | var,field,ret,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | ---- Cannot use "yield" or "await" here. || TS1005 Expected ";" but found ":" || TS1109 Unexpected :
+function-type    "(await: A[]) => void"             ts 12 tsx 11 N        plainA+optOnly   mut=del 1 ... | var,field,ret,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | ---- Cannot use "yield" or "await" here. || TS1005 Expected ";" but found ":" || TS1109 Unexpected :
+function-type    "(await?: A) => void"              ts 12 tsx 11 N        plainA+optOnly   mut=null | var,field,ret,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | ---- Cannot use "yield" or "await" here. || TS1005 Expected ";" but found ":" || TS1109 Unexpected ?
+function-type    "(await) => void"                  ts 12 tsx 11 N        plainA+optOnly   mut=null | var,field,ret,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | ---- Cannot use "yield" or "await" here. || TS1005 Expected ";" but found ":" || TS1109 Unexpected )
+function-type    "(declare A) => void"              ts  1 tsx  1 G1090    plainR           mut=del 2 : | alias | TS1005 Expected ")" but found "A"
+function-type    "(in A) => void"                   ts  1 tsx  1 G1274    plainR           mut=del 2 : | alias | TS1005 Expected ")" but found "A"
+function-type    "(out A) => void"                  ts  1 tsx  1 G1274    plainR           mut=del 2 : | alias | TS1005 Expected ")" but found "A"
+function-type    "(static a: A) => void"            ts  1 tsx  1 G1090    plainR           mut=null | alias | TS1005 Expected ")" but found "a"
+function-type    "(static A) => void"               ts  1 tsx  1 G1090    plainR           mut=del 2 : | alias | TS1005 Expected ")" but found "A"
+function-type    "< out T>() => T"                  ts  1 tsx  1 G1274    plainR           mut=del 1 in | alias | ---- The modifier "out" is not valid here
+function-type    "<>\n(a: T) => T"                  ts  1 tsx  1 G1098    plainR           mut=del 1 T | alias | TS1003 Expected identifier but found ">"
+function-type    "<>() => abstract"                 ts  1 tsx  1 G1098    plainR           mut=del 1 abstract | alias | TS1003 Expected identifier but found ">"
+function-type    "<>() => accessor"                 ts  1 tsx  1 G1098    plainR           mut=del 1 accessor | alias | TS1003 Expected identifier but found ">"
+function-type    "<>() => as"                       ts  1 tsx  1 G1098    plainR           mut=del 1 as | alias | TS1003 Expected identifier but found ">"
+function-type    "<>() => asserts"                  ts  1 tsx  1 G1098    plainR           mut=del 1 asserts | alias | TS1003 Expected identifier but found ">"
+function-type    "<>() => async"                    ts  1 tsx  1 G1098    plainR           mut=del 1 async | alias | TS1003 Expected identifier but found ">"
+function-type    "<>() => await"                    ts  1 tsx  1 G1098    plainR           mut=del 1 await | alias | TS1003 Expected identifier but found ">"
+function-type    "<>() => constructor"              ts  1 tsx  1 G1098    plainR           mut=del 1 constructor | alias | TS1003 Expected identifier but found ">"
+function-type    "<>() => declare"                  ts  1 tsx  1 G1098    plainR           mut=del 1 declare | alias | TS1003 Expected identifier but found ">"
+function-type    "<>() => defer"                    ts  1 tsx  1 G1098    plainR           mut=del 1 defer | alias | TS1003 Expected identifier but found ">"
+function-type    "<>() => from"                     ts  1 tsx  1 G1098    plainR           mut=del 1 from | alias | TS1003 Expected identifier but found ">"
+function-type    "<>() => get"                      ts  1 tsx  1 G1098    plainR           mut=del 1 get | alias | TS1003 Expected identifier but found ">"
+function-type    "<>() => global"                   ts  1 tsx  1 G1098    plainR           mut=del 1 global | alias | TS1003 Expected identifier but found ">"
+function-type    "<>() => intrinsic"                ts  1 tsx  1 G1098    plainR           mut=del 1 intrinsic | alias | TS1003 Expected identifier but found ">"
+function-type    "<>() => is"                       ts  1 tsx  1 G1098    plainR           mut=del 1 is | alias | TS1003 Expected identifier but found ">"
+function-type    "<>() => module"                   ts  1 tsx  1 G1098    plainR           mut=del 1 module | alias | TS1003 Expected identifier but found ">"
+function-type    "<>() => namespace"                ts  1 tsx  1 G1098    plainR           mut=del 1 namespace | alias | TS1003 Expected identifier but found ">"
+function-type    "<>() => of"                       ts  1 tsx  1 G1098    plainR           mut=del 1 of | alias | TS1003 Expected identifier but found ">"
+function-type    "<>() => out"                      ts  1 tsx  1 G1098    plainR           mut=del 1 out | alias | TS1003 Expected identifier but found ">"
+function-type    "<>() => override"                 ts  1 tsx  1 G1098    plainR           mut=del 1 override | alias | TS1003 Expected identifier but found ">"
+function-type    "<>() => private"                  ts  1 tsx  1 G1098    plainR           mut=del 1 private | alias | TS1003 Expected identifier but found ">"
+function-type    "<>() => protected"                ts  1 tsx  1 G1098    plainR           mut=del 1 protected | alias | TS1003 Expected identifier but found ">"
+function-type    "<>() => public"                   ts  1 tsx  1 G1098    plainR           mut=del 1 public | alias | TS1003 Expected identifier but found ">"
+function-type    "<>() => require"                  ts  1 tsx  1 G1098    plainR           mut=del 1 require | alias | TS1003 Expected identifier but found ">"
+function-type    "<>() => satisfies"                ts  1 tsx  1 G1098    plainR           mut=del 1 satisfies | alias | TS1003 Expected identifier but found ">"
+function-type    "<>() => set"                      ts  1 tsx  1 G1098    plainR           mut=del 1 set | alias | TS1003 Expected identifier but found ">"
+function-type    "<>() => static"                   ts  1 tsx  1 G1098    plainR           mut=del 1 static | alias | TS1003 Expected identifier but found ">"
+function-type    "<>() => type"                     ts  1 tsx  1 G1098    plainR           mut=del 1 type | alias | TS1003 Expected identifier but found ">"
+function-type    "<>() => using"                    ts  1 tsx  1 G1098    plainR           mut=del 1 using | alias | TS1003 Expected identifier but found ">"
+function-type    "<>() => void"                     ts  1 tsx  1 G1098    plainR           mut=null | alias | TS1003 Expected identifier but found ">"
+function-type    "<>(a: T) => T"                    ts  1 tsx  1 G1098    plainR           mut=del 1 T | alias | TS1003 Expected identifier but found ">"
+function-type    "<in  T>() => T"                   ts  1 tsx  1 G1274    plainR           mut=del 2 out | alias | ---- The modifier "in" is not valid here
+function-type    "<in out >() => T"                 ts  1 tsx  1 G1274    plainR           mut=del 3 T | alias | ---- The modifier "in" is not valid here
+function-type    "<in out T>() => T"                ts  1 tsx  1 G1274    plainR           mut=null | alias | ---- The modifier "in" is not valid here
+function-type    "<in T>() => T"                    ts  1 tsx  1 G1274    plainR           mut=null | alias | ---- The modifier "in" is not valid here
+function-type    "<out T>() => T"                   ts  1 tsx  1 G1274    plainR           mut=null | alias | ---- The modifier "out" is not valid here
+function-type    "out T>() => T"                    ts  1 tsx  0 G1274    plainR           mut=del 0 < | angle | ---- The modifier "out" is not valid here
+import-type      "('x').#a"                         ts  1 tsx  1 N        plainR           mut=del 0 import | targ | TS1003 Expected identifier but found "#a"
+import-type      "import( | 'y')"                   ts  1 tsx  1 N        plainR           mut=del 2 'x' | alias | ---- Expected string but found "|"
+import-type      "import('x' | 'y')"                ts  1 tsx  1 N        plainR           mut=null | alias | TS1005 Expected ")" but found "|"
+import-type      "import('x').#a"                   ts 15 tsx 14 N        plainA,plainR    mut=null | var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | TS1003 Expected identifier but found "#a" || TS1005 Expected ";" but found ":"
+import-type      "import('x').A.<C, D>"             ts 15 tsx 14 N        plainA           mut=del 7 B | var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | TS1003 Expected identifier but found "<" || TS1005 Expected ";" but found ":"
+import-type      "import('x')<>"                    ts 13 tsx 12 N        plainA,plainR    mut=del 5 A | var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,angle,targ,tparam | TS1005 Expected ";" but found "<" || TS1005 Expected ")" but found "<" || TS1005 Expected ";" but found ":"
+import-type      "import('x')<A>"                   ts 12 tsx 11 N        plainA,plainR    mut=null | var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,angle,tparam | TS1005 Expected ";" but found "<" || TS1005 Expected ")" but found "<" || TS1005 Expected ";" but found ":"
+import-type      "import(`x`)"                      ts  1 tsx  1 N        plainR           mut=null | alias | ---- Expected string but found "`x`"
+import-type      "import(A.B)"                      ts  1 tsx  1 N        plainR           mut=null | alias | ---- Expected string but found "A"
+import-type      "import(AB)"                       ts  1 tsx  1 N        plainR           mut=del 3 . | alias | ---- Expected string but found "AB"
+import-type      "import(x)"                        ts  1 tsx  1 N        plainR           mut=null | alias | ---- Expected string but found "x"
+infer            "A extends  extends ? 1 : 2"       ts  1 tsx  1 N        plainR           mut=del 2 infer | alias | TS1110 Unexpected extends
+jsdoc            "!A"                               ts 15 tsx 14 G17020   plainR           mut=null | alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,tparam | TS1110 Unexpected ! || TS1005 Expected ";" but found ":" || TS1005 Expected ";" but found "=>"
+jsdoc            "?"                                ts  7 tsx  6 G8020    plainR           mut=null | param,ctor,fnparam,arrowparam,angle,targ,tparam | TS1110 Unexpected ? || TS1109 Unexpected ?
+jsdoc            "?A"                               ts 16 tsx 15 G17020   plainR           mut=null | alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | TS1110 Unexpected ? || TS1005 Expected ";" but found ":" || TS1109 Unexpected ?
+jsdoc            "?A[]"                             ts 16 tsx 15 G17020   plainR           mut=null | alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | TS1110 Unexpected ? || TS1005 Expected ";" but found ":" || TS1109 Unexpected ?
+jsdoc            "*"                                ts 16 tsx 15 G8020    plainR           mut=null | alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | TS1110 Unexpected * || TS1005 Expected ";" but found ":" || TS1109 Unexpected *
+jsdoc            "A | ?B"                           ts 16 tsx 15 G17020   plainR           mut=null | alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | TS1110 Unexpected ? || TS1005 Expected ";" but found ":" || TS1109 Unexpected ?
+jsdoc            "A?"                               ts 14 tsx 13 G17019   plainR           mut=null | alias,var,field,param,ctor,fnparam,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | TS1005 Expected ";" but found "?" || TS1005 Expected ")" but found "?" || TS1005 Expected ";" but found ":"
+jsdoc            "function(): void"                 ts 16 tsx 15 G8020    plainR           mut=null | alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | TS1005 Expected ";" but found "(" || TS1005 Expected ")" but found "(" || TS1005 Expected ";" but found ":"
+jsdoc            "function(new: A)"                 ts 16 tsx 15 G8020    plainR           mut=null | alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | TS1005 Expected ";" but found "(" || TS1005 Expected ")" but found "(" || TS1005 Expected ";" but found ":"
+junk             "/a/"                              ts  1 tsx  1 G1110    plainR           mut=null | tparam | TS1110 Unexpected /
+junk             "/a/g"                             ts  1 tsx  1 G1110    plainR           mut=null | tparam | TS1110 Unexpected /
+junk             "#a"                               ts  1 tsx  1 G18016   plainR           mut=null | targ | ---- Unexpected #a
+junk             "~A"                               ts  1 tsx  1 G1110    plainR           mut=null | tparam | TS1110 Unexpected ~
+junk             "A//c\n"                           ts  2 tsx  2 G1200    plainR           mut=null | arrowret,ternary | ---- Unexpected newline before "=>"
+junk             "A<!--B"                           ts  1 tsx  1 N        plainR           mut=null | targ | ---- Unsupported syntax: Legacy HTML comments not implemented yet!
+junk             "class {}"                         ts  1 tsx  1 G1110    plainR           mut=null | tparam | TS1005 Expected ">" but found "{"
+junk             "delete A"                         ts  1 tsx  1 G1110    plainR           mut=null | tparam | TS1005 Expected ">" but found "A"
+junk             "function () {}"                   ts  1 tsx  1 G8020    plainR           mut=null | fnret | TS1005 Expected ";" but found "("
+junk             "super.a"                          ts  1 tsx  1 N        plainR           mut=null | targ | ---- Unexpected "super"
+literal          "-a"                               ts  1 tsx  1 G1110    plainR           mut=null | tparam | ---- Expected number but found "a"
+literal          "-true"                            ts  1 tsx  1 G1110    plainR           mut=null | tparam | ---- Expected number but found "true"
+literal          "+1"                               ts  1 tsx  1 G1110    plainR           mut=null | tparam | TS1110 Unexpected +
+mapped           "{\n[ in T]: V\n}"                 ts  1 tsx  1 G1274    plainR           mut=del 2 K | alias | TS1110 Unexpected in
+mapped           "{ [ in T] }"                      ts  1 tsx  1 G1274    plainR           mut=del 2 K | alias | TS1110 Unexpected in
+mapped           "{ [ in T]; }"                     ts  1 tsx  1 G1274    plainR           mut=del 2 K | alias | TS1110 Unexpected in
+mapped           "{ [ in T]: () => void }"          ts  1 tsx  1 G1274    plainR           mut=del 2 K | alias | TS1110 Unexpected in
+mapped           "{ [ in T]: { [L in K]: V } }"     ts  1 tsx  1 G1274    plainR           mut=del 2 K | alias | TS1110 Unexpected in
+mapped           "{ [ in T]: A extends B ? C : D }" ts  1 tsx  1 G1274    plainR           mut=del 2 K | alias | TS1110 Unexpected in
+mapped           "{ [ in T]: V }"                   ts  1 tsx  1 G1274    plainR           mut=del 2 K | alias | TS1110 Unexpected in
+mapped           "{ [ in T]: V } | A"               ts  1 tsx  1 G1274    plainR           mut=del 2 K | alias | TS1110 Unexpected in
+mapped           "{ [ in T]: V }[]"                 ts  1 tsx  1 G1274    plainR           mut=del 2 K | alias | TS1110 Unexpected in
+mapped           "{ [ in T]: V }[K]"                ts  1 tsx  1 G1274    plainR           mut=del 2 K | alias | TS1110 Unexpected in
+mapped           "{ [ in T]: V, }"                  ts  1 tsx  1 G1274    plainR           mut=del 2 K | alias | TS1110 Unexpected in
+mapped           "{ [ in T]: V; [L in U]: W }"      ts  1 tsx  1 G7061    plainR           mut=del 2 K | alias | TS1110 Unexpected in
+mapped           "{ [ in T]: V; }"                  ts  1 tsx  1 G1274    plainR           mut=del 2 K | alias | TS1110 Unexpected in
+mapped           "{ [ in T]: V; a: A }"             ts  1 tsx  1 G1274    plainR           mut=del 2 K | alias | TS1110 Unexpected in
+mapped           "{ [in  T]: V }"                   ts  1 tsx  1 G1274    plainR           mut=del 3 in | alias | TS1110 Unexpected in
+mapped           "{ [K in T]: { [ in K]: V } }"     ts  1 tsx  1 G1274    plainR           mut=del 9 L | alias | TS1110 Unexpected in
+mapped           "{ [K in T]: V; [ in U]: W }"      ts  1 tsx  1 G7061    plainR           mut=del 10 L | alias | TS1110 Unexpected in
+mapped           "{ a: A; [ in T]: V }"             ts  1 tsx  1 G1274    plainR           mut=del 6 K | alias | TS1110 Unexpected in
+mapped           "{ readonly [ in T]: V }"          ts  1 tsx  1 G1274    plainR           mut=del 3 K | alias | TS1110 Unexpected in
+operator         "readonly ([])"                    ts  2 tsx  2 G1354    plainR           mut=del 2 A | arrowret,ternary | TS1005 Expected ";" but found ":" || TS1005 Expected ";" but found "=>"
+operator         "unique A"                         ts 16 tsx 15 G1005    plainR           mut=null | alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | TS1005 Expected ";" but found "A" || TS1005 Expected ")" but found "A" || TS1005 Expected ";" but found ":"
+operator         "unique unique symbol"             ts 16 tsx 15 G1005    plainR           mut=null | alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | TS1005 Expected ";" but found "unique" || TS1005 Expected ")" but found "unique" || TS1005 Expected ";" but found ":"
+parenthesized    "(?)"                              ts 16 tsx 15 G8020    plainR           mut=del 1 A | alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | TS1110 Unexpected ? || TS1005 Expected ";" but found ":" || TS1109 Unexpected ?
+parenthesized    "(asserts a)"                      ts 16 tsx 15 N        plainR           mut=null | alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | TS1005 Expected ")" but found "a" || TS1005 Expected ";" but found ":"
+predicate        "asserts\n"                        ts  2 tsx  2 G1200    plainR           mut=del 1 a | arrowret,ternary | ---- Unexpected newline before "=>"
+predicate        "asserts  A"                       ts 12 tsx 11 N        plainR           mut=del 1 is | alias,var,field,param,ctor,fnparam,arrowparam,as,satisfies,angle,targ,tparam | TS1005 Expected ";" but found "A" || TS1005 Expected ")" but found "A" || TS1005 Expected ">" but found "A"
+predicate        "asserts  is"                      ts 12 tsx 11 N        plainR,plainA    mut=del 1 a | alias,var,field,param,ctor,fnparam,arrowparam,as,satisfies,angle,targ,tparam | TS1110 Unexpected ; || TS1110 Unexpected ) || TS1110 Unexpected >
+predicate        "asserts a"                        ts 12 tsx 11 N        plainR           mut=null | alias,var,field,param,ctor,fnparam,arrowparam,as,satisfies,angle,targ,tparam | TS1005 Expected ";" but found "a" || TS1005 Expected ")" but found "a" || TS1005 Expected ">" but found "a"
+predicate        "asserts a\n A"                    ts  5 tsx  5 N        plainR           mut=del 2 is | alias,var,field,as,satisfies | TS1005 Expected ";" but found "a"
+predicate        "asserts a\nis A"                  ts 12 tsx 11 N        plainR           mut=null | alias,var,field,param,ctor,fnparam,arrowparam,as,satisfies,angle,targ,tparam | TS1005 Expected ";" but found "a" || TS1005 Expected ")" but found "a" || TS1005 Expected ">" but found "a"
+predicate        "asserts a "                       ts 12 tsx 11 N        plainR           mut=del 2 is | alias,var,field,param,ctor,fnparam,arrowparam,as,satisfies,angle,targ,tparam | TS1005 Expected ";" but found "a" || TS1005 Expected ")" but found "a" || TS1005 Expected ">" but found "a"
+predicate        "asserts a is  | B"                ts 12 tsx 11 N        plainR           mut=del 3 A | alias,var,field,param,ctor,fnparam,arrowparam,as,satisfies,angle,targ,tparam | TS1005 Expected ";" but found "a" || TS1005 Expected ")" but found "a" || TS1005 Expected ">" but found "a"
+predicate        "asserts a is A"                   ts 12 tsx 11 N        plainR           mut=null | alias,var,field,param,ctor,fnparam,arrowparam,as,satisfies,angle,targ,tparam | TS1005 Expected ";" but found "a" || TS1005 Expected ")" but found "a" || TS1005 Expected ">" but found "a"
+predicate        "asserts a is A | B"               ts 12 tsx 11 N        plainR           mut=null | alias,var,field,param,ctor,fnparam,arrowparam,as,satisfies,angle,targ,tparam | TS1005 Expected ";" but found "a" || TS1005 Expected ")" but found "a" || TS1005 Expected ">" but found "a"
+predicate        "asserts a[]"                      ts 12 tsx 11 N        plainR           mut=null | alias,var,field,param,ctor,fnparam,arrowparam,as,satisfies,angle,targ,tparam | TS1005 Expected ";" but found "a" || TS1005 Expected ")" but found "a" || TS1005 Expected ">" but found "a"
+predicate        "asserts ab"                       ts 12 tsx 11 N        plainR           mut=del 2 . | alias,var,field,param,ctor,fnparam,arrowparam,as,satisfies,angle,targ,tparam | TS1005 Expected ";" but found "ab" || TS1005 Expected ")" but found "ab" || TS1005 Expected ">" but found "ab"
+predicate        "asserts asserts"                  ts 12 tsx 11 N        plainR           mut=null | alias,var,field,param,ctor,fnparam,arrowparam,as,satisfies,angle,targ,tparam | TS1005 Expected ";" but found "asserts" || TS1005 Expected ")" but found "asserts" || TS1005 Expected ">" but found "asserts"
+predicate        "asserts asserts is A"             ts 12 tsx 11 N        plainR           mut=null | alias,var,field,param,ctor,fnparam,arrowparam,as,satisfies,angle,targ,tparam | TS1005 Expected ";" but found "asserts" || TS1005 Expected ")" but found "asserts" || TS1005 Expected ">" but found "asserts"
+predicate        "asserts is"                       ts 12 tsx 11 N        plainR,plainA    mut=null | alias,var,field,param,ctor,fnparam,arrowparam,as,satisfies,angle,targ,tparam | TS1110 Unexpected ; || TS1110 Unexpected ) || TS1110 Unexpected >
+predicate        "asserts is "                      ts 12 tsx 11 N        plainR,plainA    mut=del 2 A | alias,var,field,param,ctor,fnparam,arrowparam,as,satisfies,angle,targ,tparam | TS1110 Unexpected ; || TS1110 Unexpected ) || TS1110 Unexpected >
+predicate        "asserts is is A"                  ts 12 tsx 11 N        plainR           mut=null | alias,var,field,param,ctor,fnparam,arrowparam,as,satisfies,angle,targ,tparam | TS1005 Expected ";" but found "A" || TS1005 Expected ")" but found "A" || TS1005 Expected ">" but found "A"
+predicate        "asserts this"                     ts 12 tsx 11 N        plainR           mut=null | alias,var,field,param,ctor,fnparam,arrowparam,as,satisfies,angle,targ,tparam | TS1005 Expected ";" but found "this" || TS1005 Expected ")" but found "this" || TS1005 Expected ">" but found "this"
+predicate        "asserts this is A"                ts 12 tsx 11 N        plainR           mut=null | alias,var,field,param,ctor,fnparam,arrowparam,as,satisfies,angle,targ,tparam | TS1005 Expected ";" but found "this" || TS1005 Expected ")" but found "this" || TS1005 Expected ">" but found "this"
+predicate        "asserts x"                        ts 12 tsx 11 N        plainR           mut=null | alias,var,field,param,ctor,fnparam,arrowparam,as,satisfies,angle,targ,tparam | TS1005 Expected ";" but found "x" || TS1005 Expected ")" but found "x" || TS1005 Expected ">" but found "x"
+query            "typeof a.<C>"                     ts 16 tsx 15 N        plainR           mut=del 3 b | alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | TS1003 Expected identifier but found "<" || TS1005 Expected ";" but found ":"
+tuple            "[?, B?]"                          ts 16 tsx 15 G8020    plainR,plainA    mut=del 1 A | alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | TS1110 Unexpected ? || TS1005 Expected ";" but found ":" || TS1109 Unexpected ?
+tuple            "[?, B]"                           ts 16 tsx 15 G8020    plainR,plainA    mut=del 1 A | alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | TS1110 Unexpected ? || TS1005 Expected ";" but found ":" || TS1109 Unexpected ?
+tuple            "[...asserts A[]]"                 ts 16 tsx 15 N        plainR           mut=del 3 : | alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | TS1005 Expected "]" but found "A" || TS1005 Expected ";" but found ":"
+tuple            "[...unique A[]]"                  ts 16 tsx 15 G1005    plainR           mut=del 3 : | alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | TS1005 Expected "]" but found "A" || TS1005 Expected ";" but found ":"
+tuple            "[asserts a]"                      ts 16 tsx 15 N        plainR           mut=null | alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | TS1005 Expected "]" but found "a" || TS1005 Expected ";" but found ":"
+tuple            "[asserts A]"                      ts 16 tsx 15 N        plainR           mut=del 2 : | alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | TS1005 Expected "]" but found "A" || TS1005 Expected ";" but found ":"
+tuple            "[keyof? A]"                       ts 16 tsx 15 G17020   plainR           mut=del 3 : | alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | TS1005 Expected "]" but found "A" || TS1110 Unexpected ? || TS1005 Expected ";" but found ":"
+tuple            "[readonly? A]"                    ts 16 tsx 15 G1354    plainR           mut=del 3 : | alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | TS1005 Expected "]" but found "A" || TS1110 Unexpected ? || TS1005 Expected ";" but found ":"
+tuple            "[unique A]"                       ts 16 tsx 15 G1005    plainR           mut=del 2 : | alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | TS1005 Expected "]" but found "A" || TS1005 Expected ";" but found ":"
+tuple            "[unique? A]"                      ts 16 tsx 15 G1005    plainR           mut=del 3 : | alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | TS1005 Expected "]" but found "A" || TS1005 Expected ";" but found ":" || TS1005 Expected ":" but found "]"
+type-literal     "{ [public k: string]: A }"        ts  1 tsx  1 G1018    plainR           mut=null | alias | TS1005 Expected "]" but found "k"
+type-literal     "{ *a(): A }"                      ts  1 tsx  1 G1005    plainR           mut=null | targ | TS1005 Expected "{" but found "}"
+type-literal     "{ <>(x: T): T }"                  ts  1 tsx  1 G1098    plainR           mut=del 2 T | alias | TS1003 Expected identifier but found ">"
+type-literal     "{ a = 1 }"                        ts  1 tsx  1 G1312    plainR           mut=null | targ | ---- Unexpected "="
+type-literal     "{ a: A\n<>(): void }"             ts  1 tsx  1 G1098    plainR           mut=del 5 T | alias | TS1003 Expected identifier but found ">"
+type-literal     "{ a: typeof b\n<>(): void }"      ts  1 tsx  1 G1098    plainR           mut=del 6 T | alias | TS1003 Expected identifier but found ">"
+type-literal     "{ a!: A }"                        ts  1 tsx  1 G1255    plainA           mut=null | targ | TS1005 Expected "}" but found "!"
+type-literal     "{ a?<>(x: T): T }"                ts  1 tsx  1 G1098    plainR           mut=del 4 T | alias | TS1003 Expected identifier but found ">"
+type-literal     "{ a<>(x: T): T }"                 ts  1 tsx  1 G1098    plainR           mut=del 3 T | alias | TS1003 Expected identifier but found ">"
+type-literal     "{ export a: A }"                  ts 15 tsx 14 G1070    plainA           mut=null | var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam | TS1005 Expected ";" but found "a" || TS1005 Expected ";" but found ":" || TS1005 Expected ":" but found "a"
+type-literal     "{ get a<>(): A }"                 ts  1 tsx  1 G1098    plainR           mut=del 4 T | alias | TS1003 Expected identifier but found ">"
+type-literal     "{ get<>(): T }"                   ts  1 tsx  1 G1098    plainR           mut=del 3 T | alias | TS1003 Expected identifier but found ">"
+type-literal     "{ new <>(x: T): A }"              ts  1 tsx  1 G1098    plainR           mut=del 3 T | alias | TS1003 Expected identifier but found ">"
+type-literal     "{ new<>(): A }"                   ts  1 tsx  1 G1098    plainR           mut=del 3 T | alias | TS1003 Expected identifier but found ">"
+type-literal     "{ readonly get a(): A }"          ts  1 tsx  1 G1024    plainA           mut=null | targ | TS1005 Expected "}" but found "get"
+type-literal     "{ readonly<>(): A }"              ts  1 tsx  1 G1098    plainR           mut=del 3 T | alias | TS1003 Expected identifier but found ">"
+type-literal     "{ set<>(v: T): void }"            ts  1 tsx  1 G1098    plainR           mut=del 3 T | alias | TS1003 Expected identifier but found ">"

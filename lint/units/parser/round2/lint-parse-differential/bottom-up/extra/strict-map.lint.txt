@@ -1,0 +1,207 @@
+B  ts  "type X = { a A };"
+      tsc: TS1131@11+1 Property or signature expected.
+      lint: ok
+B  ts  "interface I { a A }"
+      tsc: TS1131@14+1 Property or signature expected.
+      lint: ok
+B  ts  "interface I { m(): { a A } }"
+      tsc: TS1131@21+1 Property or signature expected.
+      lint: ok
+RR ts  "interface I<T extends { a A }> {}"
+      tsc: TS1131@24+1 Property or signature expected.
+      lint: TS1131@24..25 bun@24+1 Unexpected a
+RR ts  "type X<T = { a A }> = T;"
+      tsc: TS1131@13+1 Property or signature expected.
+      lint: TS1131@13..14 bun@13+1 Unexpected a
+RR ts  "let x: { a A };"
+      tsc: TS1131@9+1 Property or signature expected.
+      lint: TS1131@9..10 bun@9+1 Unexpected a
+RR ts  "declare const x: { a A };"
+      tsc: TS1131@19+1 Property or signature expected.
+      lint: TS1131@19..20 bun@19+1 Unexpected a
+RR ts  "declare function f(a: { a A }): void;"
+      tsc: TS1131@24+1 Property or signature expected.
+      lint: TS1131@24..25 bun@24+1 Unexpected a
+RR ts  "declare function f(): { a A };"
+      tsc: TS1131@24+1 Property or signature expected.
+      lint: TS1131@24..25 bun@24+1 Unexpected a
+RR ts  "function f(a: A): { a A };\nfunction f(a: any): any {}"
+      tsc: TS1131@20+1 Property or signature expected.
+      lint: TS1131@20..21 bun@20+1 Unexpected a
+RR ts  "function f(): { a A } {}"
+      tsc: TS1131@16+1 Property or signature expected.
+      lint: TS1131@16..17 bun@16+1 Unexpected a
+RR ts  "function f<T extends { a A }>() {}"
+      tsc: TS1131@23+1 Property or signature expected.
+      lint: TS1131@23..24 bun@23+1 Unexpected a
+RR ts  "class C { m(a: { a A }): void;\n m(a: any) {} }"
+      tsc: TS1131@17+1 Property or signature expected.
+      lint: TS1131@17..18 bun@17+1 Unexpected a
+RR ts  "abstract class C { abstract m(): { a A }; }"
+      tsc: TS1131@35+1 Property or signature expected.
+      lint: TS1131@35..36 bun@35+1 Unexpected a
+RR ts  "class C { declare x: { a A }; }"
+      tsc: TS1131@23+1 Property or signature expected.
+      lint: TS1131@23..24 bun@23+1 Unexpected a
+B  ts  "class C { [k: string]: { a A }; }"
+      tsc: TS1131@25+1 Property or signature expected.
+      lint: ok
+RR ts  "class C { x: { a A }; }"
+      tsc: TS1131@15+1 Property or signature expected.
+      lint: TS1131@15..16 bun@15+1 Unexpected a
+RR ts  "class C { get y(): { a A } { return 1 } }"
+      tsc: TS1131@21+1 Property or signature expected.
+      lint: TS1131@21..22 bun@21+1 Unexpected a
+RR ts  "class C { set z(v: { a A }) {} }"
+      tsc: TS1131@21+1 Property or signature expected.
+      lint: TS1131@21..22 bun@21+1 Unexpected a
+RR ts  "class C { constructor(public x: { a A }) {} }"
+      tsc: TS1131@34+1 Property or signature expected.
+      lint: TS1131@34..35 bun@34+1 Unexpected a
+RR ts  "class C<T extends { a A }> {}"
+      tsc: TS1131@20+1 Property or signature expected.
+      lint: TS1131@20..21 bun@20+1 Unexpected a
+RR ts  "class C extends B<{ a A }> {}"
+      tsc: TS1131@20+1 Property or signature expected.
+      lint: TS1131@20..21 bun@20+1 Unexpected a
+RR ts  "class C implements B<{ a A }> {}"
+      tsc: TS1131@23+1 Property or signature expected.
+      lint: TS1131@23..24 bun@23+1 Unexpected a
+RR ts  "declare class C { x: { a A }; m(): { a A }; }"
+      tsc: TS1131@23+1 Property or signature expected.
+      lint: TS1131@23..24 bun@23+1 Unexpected a
+B  ts  "namespace N { export type T = { a A } }"
+      tsc: TS1131@32+1 Property or signature expected.
+      lint: ok
+RR ts  "declare module 'm' { let x: { a A }; }"
+      tsc: TS1131@30+1 Property or signature expected.
+      lint: TS1131@30..31 bun@30+1 Unexpected a
+RR ts  "declare namespace N { function f(): { a A }; }"
+      tsc: TS1131@38+1 Property or signature expected.
+      lint: TS1131@38..39 bun@38+1 Unexpected a
+B  ts  "declare global { interface W { w: { a A } } }"
+      tsc: TS1131@36+1 Property or signature expected.
+      lint: ok
+RR ts  "new C<{ a A }>();"
+      tsc: TS1005@10+1 ',' expected.
+      lint: TS1005@10..11 bun@10+1 Expected "}" but found "A"
+RR ts  "a?.b<{ a A }>();"
+      tsc: TS1005@9+1 ',' expected.
+      lint: TS1005@9..10 bun@9+1 Expected "}" but found "A"
+RR ts  "f<{ a A }>`x`;"
+      tsc: TS1005@6+1 ',' expected.
+      lint: TS1005@6..7 bun@6+1 Expected "}" but found "A"
+RR tsx "let v = <C<{ a A }> />;"
+      tsc: TS1131@13+1 Property or signature expected.
+      lint: TS1131@13..14 bun@13+1 Unexpected a
+RR ts  "let x: typeof a<{ a A }>;"
+      tsc: TS1131@18+1 Property or signature expected.
+      lint: TS1131@18..19 bun@18+1 Unexpected a
+RR ts  "try {} catch (e: { a A }) {}"
+      tsc: TS1131@19+1 Property or signature expected.
+      lint: TS1131@19..20 bun@19+1 Unexpected a
+RR ts  "for (let x: { a A } of y) {}"
+      tsc: TS1131@14+1 Property or signature expected.
+      lint: TS1131@14..15 bun@14+1 Unexpected a
+RR ts  "let f = <T extends { a A }>(x: T) => x;"
+      tsc: TS1131@21+1 Property or signature expected.
+      lint: TS1131@21..22 bun@21+1 Unexpected a
+RR ts  "let f = async <T extends { a A }>(x: T) => x;"
+      tsc: TS1005@17+7 ',' expected.
+      lint: TS1131@27..28 bun@27+1 Unexpected a
+RR ts  "let f = function (this: { a A }) {};"
+      tsc: TS1131@26+1 Property or signature expected.
+      lint: TS1131@26..27 bun@26+1 Unexpected a
+RR ts  "({ m(a: { a A }) {} });"
+      tsc: TS1131@10+1 Property or signature expected.
+      lint: TS1131@10..11 bun@10+1 Unexpected a
+RR ts  "({ get a(): { a A } { return 1 } });"
+      tsc: TS1131@14+1 Property or signature expected.
+      lint: TS1131@14..15 bun@14+1 Unexpected a
+RR ts  "let v = x as { a A };"
+      tsc: TS1131@15+1 Property or signature expected.
+      lint: TS1131@15..16 bun@15+1 Unexpected a
+RR ts  "let v = x satisfies { a A };"
+      tsc: TS1131@22+1 Property or signature expected.
+      lint: TS1131@22..23 bun@22+1 Unexpected a
+RR ts  "let v = <{ a A }>x;"
+      tsc: TS1131@11+1 Property or signature expected.
+      lint: TS1131@11..12 bun@11+1 Unexpected a
+RR ts  "let v = a ? (b): { a A } => c : d;"
+      tsc: TS1005@21+1 ',' expected.
+      lint: TS1005@21..22 bun@21+1 Expected "}" but found "A"
+RR ts  "let f = (a): { a A } => a;"
+      tsc: TS1005@11+1 ',' expected.
+      lint: TS1005@11..12 bun@11+1 Expected ";" but found ":"
+RR ts  "let f = (a: { a A }) => a;"
+      tsc: TS1131@14+1 Property or signature expected.
+      lint: TS1131@14..15 bun@14+1 Unexpected a
+RR ts  "enum E { A = (x as { a A }) }"
+      tsc: TS1131@21+1 Property or signature expected.
+      lint: TS1131@21..22 bun@21+1 Unexpected a
+B  ts  "export default interface I { a A }"
+      tsc: TS1131@29+1 Property or signature expected.
+      lint: ok
+B  ts  "export type X = { a A };"
+      tsc: TS1131@18+1 Property or signature expected.
+      lint: ok
+B  ts  "export interface I { a A }"
+      tsc: TS1131@21+1 Property or signature expected.
+      lint: ok
+RR ts  "export declare const x: { a A };"
+      tsc: TS1131@26+1 Property or signature expected.
+      lint: TS1131@26..27 bun@26+1 Unexpected a
+RR ts  "import type { A } from 'a'; export declare function f(a: { a A }): void;"
+      tsc: TS1131@59+1 Property or signature expected.
+      lint: TS1131@59..60 bun@59+1 Unexpected a
+RR ts  "function f(a?: { a A }, ...b: { a A }[]) {}"
+      tsc: TS1131@17+1 Property or signature expected.
+      lint: TS1131@17..18 bun@17+1 Unexpected a
+RR ts  "let [a]: { a A } = x;"
+      tsc: TS1131@11+1 Property or signature expected.
+      lint: TS1131@11..12 bun@11+1 Unexpected a
+RR ts  "let { a }: { a A } = x;"
+      tsc: TS1131@13+1 Property or signature expected.
+      lint: TS1131@13..14 bun@13+1 Unexpected a
+RR ts  "var v: { a A }, w: A;"
+      tsc: TS1131@9+1 Property or signature expected.
+      lint: TS1131@9..10 bun@9+1 Unexpected a
+RR ts  "const c: { a A } = x;"
+      tsc: TS1131@11+1 Property or signature expected.
+      lint: TS1131@11..12 bun@11+1 Unexpected a
+RR ts  "using u: { a A } = x;"
+      tsc: TS1131@11+1 Property or signature expected.
+      lint: TS1131@11..12 bun@11+1 Unexpected a
+RR ts  "class C { static x: { a A }; accessor y: { a A }; readonly z: { a A }; }"
+      tsc: TS1131@22+1 Property or signature expected.
+      lint: TS1131@22..23 bun@22+1 Unexpected a
+RR ts  "class C { m?(): { a A } {} }"
+      tsc: TS1131@18+1 Property or signature expected.
+      lint: TS1131@18..19 bun@18+1 Unexpected a
+RR ts  "class C { x!: { a A }; }"
+      tsc: TS1131@16+1 Property or signature expected.
+      lint: TS1131@16..17 bun@16+1 Unexpected a
+RR ts  "let x!: { a A };"
+      tsc: TS1131@10+1 Property or signature expected.
+      lint: TS1131@10..11 bun@10+1 Unexpected a
+RR ts  "function f(a): asserts a is { a A } {}"
+      tsc: TS1131@30+1 Property or signature expected.
+      lint: TS1131@30..31 bun@30+1 Unexpected a
+RR ts  "function f(a): a is { a A } {}"
+      tsc: TS1131@22+1 Property or signature expected.
+      lint: TS1131@22..23 bun@22+1 Unexpected a
+RR ts  "let g: <T extends { a A }>() => void;"
+      tsc: TS1131@20+1 Property or signature expected.
+      lint: TS1131@20..21 bun@20+1 Unexpected a
+B  ts  "type G = <T extends { a A }>() => void;"
+      tsc: TS1131@22+1 Property or signature expected.
+      lint: ok
+RR dts "export const x: { a A };"
+      tsc: TS1131@18+1 Property or signature expected.
+      lint: TS1131@18..19 bun@18+1 Unexpected a
+RR dts "export function f(a: { a A }): void;"
+      tsc: TS1131@23+1 Property or signature expected.
+      lint: TS1131@23..24 bun@23+1 Unexpected a
+B  dts "interface I { a A }"
+      tsc: TS1131@14+1 Property or signature expected.
+      lint: ok

@@ -220,6 +220,8 @@ pub struct Program {
     /// See `optional_property_kept`.
     optional_properties: ById<TypeId, TypeId>,
     intersected_props: ByKey<(TypeId, Atom), TypeId>,
+    /// `isDiscriminantProperty`, by union and property name.
+    discriminants: ByKey<(TypeId, Atom), bool>,
     never_intersections: ById<TypeId, bool>,
     /// `getMappedTargetWithSymbol` of a mapped type.
     mapped_targets: ById<TypeId, TypeId>,
@@ -411,6 +413,7 @@ impl Program {
             mapped_prop_types: Default::default(),
             optional_properties: Default::default(),
             intersected_props: Default::default(),
+            discriminants: Default::default(),
             never_intersections: Default::default(),
             mapped_targets: Default::default(),
             inferred_constraints: Default::default(),

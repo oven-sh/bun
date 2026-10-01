@@ -34,7 +34,7 @@ use bun_ast::g::{Arg, Decl};
 use bun_ast::part::{SymbolPropertyUseMap, SymbolUseMap};
 use bun_ast::{
     B, Binding, BindingNodeIndex, E, Expr, ExprNodeIndex, ExprNodeList, Flags, G, LocRef, S, Scope,
-    Stmt, StmtNodeList, Symbol,
+    Stmt, Symbol,
 };
 
 // In this AST crate, lists are arena-backed.
@@ -371,7 +371,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) module_exports_rewrite_count: u32,
     pub(crate) commonjs_named_exports_needs_conversion: u32,
     pub(crate) had_commonjs_named_exports_this_visit: bool,
-    pub(crate) commonjs_replacement_stmts: StmtNodeList,
     /// How many `this` expressions the visit pass has seen.
     pub(crate) this_expr_count: u32,
 
@@ -546,7 +545,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // The visit pass binds identifiers to declared symbols, does constant
     // folding, substitutes compile-time variable definitions, and lowers certain
     // syntactic constructs as appropriate.
-    pub(crate) stmt_expr_value: js_ast::ExprData,
     pub(crate) call_target: js_ast::ExprData,
     pub(crate) template_tag: js_ast::ExprData,
     pub(crate) delete_target: js_ast::ExprData,
@@ -9798,7 +9796,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             call_target: null_expr_data(),
             template_tag: null_expr_data(),
             delete_target: null_expr_data(),
-            stmt_expr_value: null_expr_data(),
             loop_body: null_stmt_data(),
             define,
             import_records: ImportRecordList::Owned(BumpVec::new_in(arena)), // overwritten below for !SCAN_ONLY
@@ -9884,7 +9881,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             module_exports_rewrite_count: 0,
             commonjs_named_exports_needs_conversion: u32::MAX,
             had_commonjs_named_exports_this_visit: false,
-            commonjs_replacement_stmts: js_ast::StmtNodeList::EMPTY,
             this_expr_count: 0,
             parse_pass_symbol_uses: None,
             has_commonjs_export_names: false,

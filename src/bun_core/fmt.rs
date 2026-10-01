@@ -794,16 +794,6 @@ pub fn buf_print_infallible<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_
     buf_print(buf, args).expect("buf_print: buffer too small")
 }
 
-/// [`buf_print_z`] that panics on overflow.
-#[inline]
-#[track_caller]
-pub fn buf_print_z_infallible<'a>(
-    buf: &'a mut [u8],
-    args: core::fmt::Arguments<'_>,
-) -> &'a crate::ZStr {
-    buf_print_z(buf, args).expect("buf_print_z: buffer too small")
-}
-
 // ════════════════════════════════════════════════════════════════════════════
 // VecWriter — `core::fmt::Write` over `&mut Vec<u8>`
 // ════════════════════════════════════════════════════════════════════════════

@@ -571,16 +571,14 @@ describe("link: specifier longer than the path buffers", () => {
     "fails to install a linked package when the relative symlink target does not fit",
     async () => {
       const link_name = basename(link_dir).slice("bun-link.".length);
-      const link_root = realpathSync(link_dir);
-      // Deep enough that the `../` levels outgrow what the two paths share.
-      const depth = Math.ceil((link_root.length + 64) / 3);
-      const project = join(realpathSync(package_dir), ...Array(depth).fill("d"));
+      // `<linked>/package.json` still has to fit a path, so the target gets its length from the
+      // levels of the project: each one adds `../`.
+      const linked = mkdirToLength(realpathSync(link_dir), MAX_PATH_BYTES - 128);
+      const root = realpathSync(package_dir);
+      const levels = Math.ceil((MAX_PATH_BYTES - relative(join(root, "node_modules"), linked).length) / 3);
+      const project = join(root, ...Array(levels).fill("d"));
       const node_modules = join(project, "node_modules");
-
-      // Pad the directory of the package until the target is one byte longer than a path.
-      const pad = MAX_PATH_BYTES - relative(node_modules, link_root).length;
-      const linked = mkdirToLength(link_root, link_root.length + pad);
-      expect(relative(node_modules, linked)).toHaveLength(MAX_PATH_BYTES);
+      expect(relative(node_modules, linked).length).toBeGreaterThanOrEqual(MAX_PATH_BYTES);
 
       await mkdir(project, { recursive: true });
       await writeFile(join(linked, "package.json"), JSON.stringify({ name: link_name, version: "0.0.1" }));

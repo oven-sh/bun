@@ -1,0 +1,7 @@
+Scratch tooling for checking the archive extraction change. Not part of the change.
+
+gen.py <dir>      writes one tarball (+ optional setup.sh) per case
+drive.py <cases> <base-bun> <new-bun> [--user nobody]
+                  runs every case in default and glob mode with both binaries, twice
+                  into the same destination, and prints where result or tree differ
+sc.c              ptrace syscall counter: ./sc <bun> count.mjs <tar> <dest> 1   (0 = load only)

@@ -2900,9 +2900,8 @@ fn get_or_put_resolved_package(
                     break 'res FolderResolutionValue::Err(crate::Error::MissingPackageJSON);
                 }
 
-                // The path is relative to the top-level dir when the root or a workspace
-                // declares the dependency, or when a root `overrides`/`resolutions` rule
-                // supplies it. Either way the folder is on disk now, so read it.
+                // Declared by the root or a workspace, or supplied by a root rule: the
+                // path is relative to the top-level dir and the folder is on disk.
                 if declared_by_workspace || this.lockfile.is_overridden_dependency(dependency_id) {
                     // relative to cwd
                     // reshaped for borrowck — `folder_path` borrows
@@ -2937,9 +2936,7 @@ fn get_or_put_resolved_package(
                     );
                 }
 
-                // A remote package declared the path relative to itself and is not on disk
-                // yet, so its dependencies are not resolved. The installer links the folder
-                // relative to the declaring package.
+                // Declared by a remote package that is not on disk yet: stub it.
                 let mut package = Package::default();
 
                 {

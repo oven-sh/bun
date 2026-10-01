@@ -893,9 +893,7 @@ impl Lockfile {
     }
 
     /// Is dependency `id` declared by the root, a workspace, or a `file:` package
-    /// one of them depends on directly or selects through a root rule? Checked,
-    /// not assumed: a migrated lockfile can carry dependencies for a folder that
-    /// a registry package shipped.
+    /// one of them depends on directly or selects through a root rule?
     pub(crate) fn is_dependency_of_local_package(&self, id: DependencyID) -> bool {
         let Some(parent_id) = self.get_parent_pkg_of_dependency(id) else {
             return false;
@@ -947,11 +945,9 @@ impl Lockfile {
                 == ResolutionTag::Folder
     }
 
-    /// Did the resolver apply a root `overrides`/`resolutions` rule (plain or scoped) to this
-    /// dependency? Same lookup as `enqueue_dependency_with_main`: by the real package name of an
-    /// alias, and never for a `workspace:` edge or an `npm:` alias. Rules are written in the
-    /// root package.json, so a `file:` path applied through one is relative to the top-level
-    /// dir whichever package declares the dependency.
+    /// Did the resolver apply a root `overrides`/`resolutions` rule to this dependency?
+    /// Same lookup as `enqueue_dependency_with_main`. A `file:` path from a rule is
+    /// relative to the top-level dir whichever package declares the dependency.
     pub(crate) fn is_overridden_dependency(&self, id: DependencyID) -> bool {
         let dependency = &self.buffers.dependencies[id as usize];
         if dependency.behavior.is_workspace() {

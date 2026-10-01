@@ -6759,6 +6759,9 @@ fn is_dot_slash(path: &[u8]) -> bool {
     }
 }
 
+#[cfg(unix)]
+const NO_UID: libc::uid_t = u32::MAX;
+
 /// Owner of the directory bun was started in, or `NO_UID` when it cannot be read.
 #[cfg(unix)]
 fn top_level_dir_owner() -> libc::uid_t {
@@ -6785,13 +6788,7 @@ fn top_level_dir_owner() -> libc::uid_t {
     owner
 }
 
-#[cfg(unix)]
-const NO_UID: libc::uid_t = u32::MAX;
-
-/// True when a uid's files are this process's own: the invoking user, root, or
-/// the owner of the directory bun was started in. The last one keeps a container
-/// that runs as root over a bind mount owned by the host user reading its own
-/// config.
+/// Whether a uid's files count as this process's own: the invoking user, root, or the owner of the directory bun started in.
 #[cfg(unix)]
 fn owner_is_trusted(owner: libc::uid_t) -> bool {
     if owner == 0 || owner == bun_sys::c::getuid() {
@@ -6801,10 +6798,7 @@ fn owner_is_trusted(owner: libc::uid_t) -> bool {
     top != NO_UID && owner == top
 }
 
-/// Whether an auto-discovered `tsconfig.json` / `jsconfig.json` is one this
-/// process trusts. `lstat`, so a symlink that another user planted is judged by
-/// who planted it, not by what it points at. An owner that cannot be read is not
-/// trusted.
+/// Whether an auto-discovered config has a trusted owner. `lstat`, so a planted symlink is judged by who planted it.
 fn auto_discovered_config_is_trusted(path: &[u8]) -> bool {
     #[cfg(unix)]
     {

@@ -337,3 +337,47 @@ describe("--lockfile-only with remove and update", () => {
     }
   });
 });
+
+// An error logged while resolving fails a full install after the packages are
+// linked. --lockfile-only returned before that check, so it printed the error,
+// saved bun.lock and exited 0. A peer dependency is the case that reaches it:
+// an unresolved regular dependency already fails through verify_resolutions.
+describe.concurrent("--lockfile-only fails on an error logged while resolving", () => {
+  async function packManifest(tarball: string, manifest: object) {
+    using work = tempDir("pack-manifest", { "package/package.json": JSON.stringify(manifest) });
+    await using tar = spawn({
+      cmd: ["tar", "-czf", tarball, "-C", String(work), "package"],
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [tarStderr, tarExitCode] = await Promise.all([tar.stderr.text(), tar.exited]);
+    if (tarExitCode !== 0) {
+      throw new Error(`tar exited with ${tarExitCode}: ${tarStderr}`);
+    }
+  }
+
+  it("does not save bun.lock when a peer dependency is a link: that is not linked", async () => {
+    using dir = tempDir("lockfile-only-peer-link", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { bar: "file:./bar.tgz" } }),
+    });
+    await packManifest(join(String(dir), "bar.tgz"), {
+      name: "bar",
+      version: "1.0.0",
+      peerDependencies: { inside: "link:not-linked-anywhere" },
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--lockfile-only"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('error: Package "inside" is not linked');
+    expect(stderr).not.toContain("Saved lockfile");
+    expect(stdout).not.toContain("Saved bun.lock");
+    expect(existsSync(join(String(dir), "bun.lock"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+});

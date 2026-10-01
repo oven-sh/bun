@@ -839,6 +839,10 @@ pub fn install_with_manager(
     let save_format = load_result.save_format(&manager.options);
 
     if manager.options.lockfile_only {
+        // The same errors fail a full install below, after the packages are linked.
+        if had_errors_before_cleaning_lockfile {
+            Global::crash();
+        }
         // save the lockfile and exit. make sure metahash is generated for binary lockfile
         return save_lockfile_only(
             manager,
@@ -1531,10 +1535,11 @@ fn report_lockfile_load_error(
             manager
                 .log_mut()
                 .print(std::ptr::from_mut(Output::error_writer()))?;
-            manager.log_mut().reset();
         }
         Output::flush();
     }
+    // The lockfile is ignored from here on. Its parse errors must not fail the install.
+    manager.log_mut().reset();
 
     if manager.options.enable.fail_early() {
         Global::crash();

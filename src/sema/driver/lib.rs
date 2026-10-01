@@ -222,10 +222,6 @@ fn located(
     }
 }
 
-fn is_declaration_path(path: &str) -> bool {
-    path.ends_with(".d.ts") || path.ends_with(".d.mts") || path.ends_with(".d.cts")
-}
-
 /// Where each line of `text` starts. `ComputeECMALineStarts`
 fn line_starts(text: &[u8]) -> Vec<u32> {
     let mut starts = vec![0u32];
@@ -352,6 +348,7 @@ pub fn check(request: &Request) -> Report {
         None => config::without_config(&disk, &cwd, default_compiler_options(), Vec::new()),
     };
     report.config_path = project.config_path.clone();
+    let mut named = None;
     if !request.paths.is_empty() {
         let mut roots = roots_of_paths(
             &disk,
@@ -360,24 +357,25 @@ pub fn check(request: &Request) -> Report {
             project.options.allow_js,
             &mut report.diagnostics,
         );
-        // What the declaration files of the project declare is there for every file of it.
-        roots.extend(
-            project
-                .files
-                .iter()
-                .filter(|f| is_declaration_path(f))
-                .cloned(),
-        );
-        let mut seen = std::collections::HashSet::new();
-        roots.retain(|root| seen.insert(root.clone()));
-        project.files = roots;
+        // The program is the whole project all the same. What one file adds to the global scope, or to a module, is there for every
+        // other: a file means the same, and has the same errors, whether it is named or not.
+        let mut seen: std::collections::HashSet<&str> =
+            project.files.iter().map(String::as_str).collect();
+        let more: Vec<String> = roots
+            .iter()
+            .filter(|root| seen.insert(root.as_str()))
+            .cloned()
+            .collect();
+        project.files.extend(more);
         project.options.files = project.files.clone();
         // That the project itself names no files is beside the point.
         project
             .errors
             .retain(|e| e.code != 18003 && e.code != 18002);
+        roots.sort_unstable();
+        named = Some(roots);
     }
-    let report = check_project(&disk, project, request, report, started);
+    let report = check_what_is_named(&disk, project, request, report, started, named);
     if request.ends_the_process {
         std::mem::forget(disk);
     }
@@ -387,10 +385,22 @@ pub fn check(request: &Request) -> Report {
 /// Checks `project`, which is read through `host`. `report` has what has been found wrong on the way to it, since `started`.
 pub fn check_project(
     host: &dyn Host,
+    project: config::Project,
+    request: &Request,
+    report: Report,
+    started: Instant,
+) -> Report {
+    check_what_is_named(host, project, request, report, started, None)
+}
+
+/// `check_project`. `named`: of all that is loaded, only these files, sorted, and what they refer to is checked.
+fn check_what_is_named(
+    host: &dyn Host,
     mut project: config::Project,
     request: &Request,
     mut report: Report,
     started: Instant,
+    named: Option<Vec<String>>,
 ) -> Report {
     let threads = match request.threads {
         0 => std::thread::available_parallelism().map_or(4, usize::from),
@@ -489,6 +499,27 @@ pub fn check_project(
         })
         .map(|i| FileId(i as u32))
         .collect();
+    let is_reached = named.as_ref().map(|named| {
+        let modules = &program.files.modules;
+        let mut is_reached = vec![false; modules.len()];
+        let mut to_follow: Vec<usize> = (0..modules.len())
+            .filter(|&i| named.binary_search(&modules[i].path).is_ok())
+            .collect();
+        for &i in &to_follow {
+            is_reached[i] = true;
+        }
+        while let Some(i) = to_follow.pop() {
+            for edge in &modules[i].edges {
+                if !std::mem::replace(&mut is_reached[edge.idx()], true) {
+                    to_follow.push(edge.idx());
+                }
+            }
+        }
+        is_reached
+    });
+    if let Some(is_reached) = &is_reached {
+        to_check.retain(|file| is_reached[file.idx()]);
+    }
     if let Some(only) = request.only {
         to_check.retain(|&f| program.files.modules[f.idx()].path.contains(only));
     }
@@ -649,7 +680,8 @@ pub fn check_project(
             let suspects: Vec<FileId> = (0..program.files.modules.len())
                 .filter(|&i| {
                     let hir = &program.files.modules[i].hir;
-                    hir.has_parse_diagnostics || !hir.early_errors.is_empty() || hir.is_js
+                    (hir.has_parse_diagnostics || !hir.early_errors.is_empty() || hir.is_js)
+                        && is_reached.as_ref().is_none_or(|reached| reached[i])
                 })
                 .map(|i| FileId(i as u32))
                 .collect();

@@ -286,7 +286,6 @@ fn parse_config(
         // `convertJsonOption`: what is wrong is as good as not said.
         let left_out: Vec<String> = problems
             .iter()
-            .filter(|_| as_typescript_does)
             .map(|problem| problem.name.clone())
             .collect();
         errors.extend(problems.into_iter().map(|problem| ConfigError {

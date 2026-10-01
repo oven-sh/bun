@@ -1687,11 +1687,11 @@ describe("node v26 stream semantics", () => {
       },
     });
     const composed = compose(new PassThrough(), tail);
+    const resumed = new Promise(resolve => composed.once("resume", resolve));
     composed.on("data", chunk => log.push("data:" + chunk));
     const ended = new Promise(resolve => composed.on("end", resolve));
-    // Let the composed stream and the tail start flowing before the first write.
-    await new Promise(resolve => setImmediate(resolve));
-    await new Promise(resolve => setImmediate(resolve));
+    // Until a Readable has resumed, push() buffers the chunk instead of emitting 'data' in the same call.
+    await resumed;
     composed.write("x");
     composed.end("y");
     await ended;
@@ -1707,11 +1707,11 @@ describe("node v26 stream semantics", () => {
       },
     });
     const composed = compose(new PassThrough(), tail);
+    const resumed = new Promise(resolve => composed.once("resume", resolve));
     composed.on("data", chunk => log.push("data:" + chunk));
     composed.on("error", err => log.push("error:" + err.message));
     const closed = new Promise(resolve => composed.on("close", resolve));
-    await new Promise(resolve => setImmediate(resolve));
-    await new Promise(resolve => setImmediate(resolve));
+    await resumed;
     composed.write("ok");
     composed.write("boom");
     await closed;

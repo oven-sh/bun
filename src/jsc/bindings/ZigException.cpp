@@ -148,16 +148,18 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
     if (flags == PopulateStackTraceFlags::OnlyPosition)
         return;
 
-    if (source_lines_count > 1 && source_lines != nullptr) {
-        // Search for the beginning of the line
-        unsigned int lineStart = location.byte_position;
+    if (source_lines_count > 1 && source_lines != nullptr && !sourceString.isEmpty()) {
+        unsigned int maxSearch = sourceString.length();
+
+        // Search for the beginning of the line. The position is the end of the
+        // text when the expression it belongs to ends there.
+        unsigned int lineStart = std::min<unsigned int>(location.byte_position, maxSearch - 1);
         while (lineStart > 0 && sourceString[lineStart] != '\n') {
             lineStart--;
         }
 
         // Search for the end of the line
         unsigned int lineEnd = location.byte_position;
-        unsigned int maxSearch = sourceString.length();
         while (lineEnd < maxSearch && sourceString[lineEnd] != '\n') {
             lineEnd++;
         }

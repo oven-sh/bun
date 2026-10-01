@@ -32,9 +32,12 @@ void adjustPositionBackwards(ZigStackFramePosition& pos, int amount, CodeBlock* 
         }
 
         auto source = provider->source();
+        unsigned length = source.length();
 
         for (int i = 0; i < amount; i++) {
-            if (source[pos.byte_position - i] == '\n') {
+            // The position is the end of the text when the callee ends there.
+            unsigned index = pos.byte_position - i;
+            if (index < length && source[index] == '\n') {
                 pos.line_zero_based = pos.line_zero_based - 1;
             }
         }

@@ -433,10 +433,7 @@ describe.concurrent("Bun REPL", () => {
 
     test(".load of a file with an ill-formed byte in a preserved comment still evaluates it", async () => {
       // The transpiler passes `/*! */` comments through verbatim, so the program
-      // handed to the evaluator can contain ill-formed UTF-8. It has to be decoded
-      // the way module sources are (the bad byte becomes U+FFFD); decoding it with
-      // WTF::String::fromUTF8 turned the whole program into a null string, so
-      // nothing in the file was defined.
+      // handed to the evaluator can contain ill-formed UTF-8.
       using dir = tempDir("repl-load-ill-formed", {
         "bad.js": Buffer.concat([
           Buffer.from("function tagged() {\n  /*! "),

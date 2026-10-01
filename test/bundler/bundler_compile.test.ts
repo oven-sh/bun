@@ -1360,13 +1360,8 @@ error: Hello World`,
       },
     },
   });
-  // A module containing any non-ASCII text (here a preserved comment) is held
-  // by JSC as a 16-bit string. Without a source map the error preview is
-  // rendered from that string, and so is the fix-up that moves a constructor
-  // call's position back to its new keyword when the two are on different
-  // lines. Both used to give up on 16-bit sources: no preview, and a frame
-  // position of 1:1. The ASCII twin of this fixture has always printed the
-  // output asserted here.
+  // The non-ASCII comment makes JSC hold the module as a 16-bit string, and the
+  // argument list below `new` makes the position fix-up read that string.
   itBundled("compile/NoSourceMapNonAsciiSource", {
     target: "bun",
     compile: true,

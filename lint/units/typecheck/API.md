@@ -179,6 +179,70 @@ Seen in files of other packages on 2026-09-30, for whoever owns them:
   `LanguageVariant::Standard`, `ModuleResolutionKind::NodeNext`, `ModuleResolutionKind::Node16`: the constants are
   `ES_NEXT`, `NONE`, `COMMON_JS`, `STANDARD`, `NODE_NEXT`, `NODE16`, as the other files write them.
 
+## Diagnostics: `diagnostics`
+
+Commits `2d9e7ee843` (the files) and `a53def3305` (`pub mod diagnostics;`). The port of `internal/diagnostics`: the
+message table and what formats a message. The three Rust files are those of
+`checker-data-model-contract/bottom-up/crate/src/diagnostics/`, byte for byte. The diagnostic itself (`ast.Diagnostic`,
+its arguments, its chain and related information) is `internal/ast/diagnostic.go` and is not in the tree.
+
+### How a caller writes the calls
+
+- A message is `diagnostics::MessageId`, a `Copy` id whose number is the code of the message.
+  `diagnostics.Type_0_is_not_assignable_to_type_1` is `diagnostics::TYPE_0_IS_NOT_ASSIGNABLE_TO_TYPE_1`: upstream's
+  variable name in upper case, 2,206 constants. `MessageId::NIL` is the nil `*Message`, `is_nil()` the test for it, and
+  `==` the pointer comparison of upstream.
+- `code() -> i32`, `category() -> Category`, `key() -> Vec<u8>`, `reports_unnecessary()`,
+  `elided_in_compatibility_pyramid()`, `reports_deprecated()`; and, not upstream's, `text() -> &'static [u8]` (the
+  English text), `argument_count()` (the highest placeholder plus one), `is_valid()` (the id is a code of the table).
+- `Category::{Warning, Error, Suggestion, Message}` with Go's values 0 to 3, and `name()`.
+- `localize(Locale, message, ad_hoc_text, args: &[&[u8]]) -> (Vec<u8>, Result<(), InvalidPlaceholder>)`, and
+  `format(text, args)` with the same result. An argument is a byte string that the caller has printed;
+  `write_decimal(&mut out, i64)` prints an integer.
+- `NewAdHocMessage(text)` is `MessageId::AD_HOC` (code -1, category error, key `-1`): the holder keeps the text and
+  hands it to `localize` as `ad_hoc_text`.
+
+### Differences from upstream
+
+- English only. `Locale` is a unit (`Locale::DEFAULT`); the localized texts (`loc_generated.go`, `loc/`) and the lookup
+  of a message by its key (`keyToMessage`, for a diagnostic read back from build info) are not ported.
+- `Format` panics on a placeholder that has no argument. `format` returns `Err(InvalidPlaceholder)` beside the text, in
+  which that placeholder stays as written: the caller records the internal diagnostic.
+- An id that is not a code of the table, `NIL` too, has the category `Error`, no flag and an empty text, where upstream
+  dereferences nil.
+- `StringifyArgs` and `Message.String` are not ported.
+
+### The table, its generator and the two copied files
+
+`diagnostics/diagnostics_generated.rs` is written by `bun src/typecheck/scripts/generate-diagnostics.ts` from the two
+files beside the script. Both are copies of upstream files (Apache-2.0), formatted by prettier as the repository formats
+every JSON file under `src/`: `scripts/diagnosticMessages.json` is `src/compiler/diagnosticMessages.json` of
+microsoft/TypeScript 5848bc5 (2,130 messages), `scripts/extraDiagnosticMessages.json` is
+`internal/diagnostics/extraDiagnosticMessages.json` of microsoft/typescript-go 89d5d5b (86 messages). The script pins
+each by the sha256 of its parsed content, so a copy with other messages does not generate. The extras win by code (10
+codes are in both files): 2,206 messages, in the order of their codes. `generate(messagesJson, extraJson)`, `merge` and
+`convertPropertyName` are exported for a test.
+
+### Verified
+
+- The generator, run in the tree, writes the table that is checked in, and that table is the contract's byte for byte.
+- `bun diagnostics-scratch/data/table-against-upstream-go.mjs` (notes): the 2,206 rows equal the 2,206 variables of
+  upstream's `diagnostics_generated.go` in name (upper case), code, category, flags and text, in the same order, and the
+  numbers that `diagnostics/tests.rs` asserts are the ones that the script recomputes from that file.
+- `rustfmt --check` on the three Rust files, prettier `--check` with the repository's configuration on the script and
+  the two JSON files, and the comment check of the repository (no run of two comment lines) on the commit.
+- Not run with these commits: `cargo check`, `cargo clippy`, `cargo test`. The same bytes were compiled by `rustc` alone
+  beside the five leaf packages (the look-ahead of the round-3 survey) and checked, linted and tested by cargo in the
+  contract crate (`checker-data-model-contract/bottom-up/data/run.log`, five tests).
+
+### What waits
+
+- A test that fails when the table and the generator disagree. The scratch has it as a `bun:test` file
+  (`diagnostics-scratch/test/diagnostics-generated.test.ts`, names still in mixed case); its place is
+  `test/cli/lint/typecheck/`. Until then: run the generator, then `git diff --exit-code src/typecheck/diagnostics`.
+- `src/typecheck/UPSTREAM_PORTED` does not exist. The table names both upstream commits in its first line and the
+  generator in `pinned`.
+
 ## Checker: signatures, instantiation, types of symbols, widening (K3 steps 18 to 21)
 
 Commits `1cb4b9c183` and `314fac8c09`. The 176 functions of the layers T-SIGDECL, T-SIGSHAPE, T-SIGINST, T-INSTANTIATE,

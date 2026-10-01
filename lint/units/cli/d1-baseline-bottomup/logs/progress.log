@@ -49,3 +49,5 @@
 ### scratch z9-pristine rc=0 wall=1s 2026-10-01T10:59:46Z
 ### scratch complete 2026-10-01T10:59:46Z
 ### clippy queued 2026-10-01T11:02:34Z
+### clippy probe cancelled while it waited for the lock 2026-10-01T11:11:04Z: w1 and the CI job answer it
+### trace2 queued 2026-10-01T11:18:58Z

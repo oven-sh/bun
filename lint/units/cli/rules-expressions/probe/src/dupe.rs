@@ -17,33 +17,47 @@ fn key_of(expr: &Expr) -> Key {
 }
 
 pub struct Ctx<'p, 'a> {
-    parsed: &'p ParsedForLint<'p, 'a>,
-    source: &'a bun_ast::Source,
+    pub parsed: &'p ParsedForLint<'p, 'a>,
+    pub source: &'a bun_ast::Source,
     arena: &'a bun_alloc::Arena,
     /// The records by their operand; those of one operand keep their order, the inner one first.
     index: Vec<(Key, u32)>,
     has_ts: bool,
-    stack_check: StackCheck,
-    pub reports: Vec<u32>,
+    pub stack_check: StackCheck,
+    /// The names of `six::ES_GLOBALS` that the file declares anywhere, one bit each.
+    pub declared: u128,
+    /// `isConstant` and `isLogicalIdentity` for its own operator of a binary expression, by its address and the flag it was asked with.
+    pub folded: std::collections::BTreeMap<(usize, bool), (bool, bool)>,
+    pub reports: Vec<(&'static str, u32, Vec<u8>)>,
 }
 
 impl<'p, 'a> Ctx<'p, 'a> {
-    fn new(parsed: &'p ParsedForLint<'p, 'a>, source: &'a bun_ast::Source, arena: &'a bun_alloc::Arena) -> Self {
+    pub fn new(parsed: &'p ParsedForLint<'p, 'a>, source: &'a bun_ast::Source, arena: &'a bun_alloc::Arena) -> Self {
         let records = &parsed.sidecar.wrappers.records;
         let mut index: Vec<(Key, u32)> = records.iter().enumerate().map(|(i, record)| (key_of(&record.operand), i as u32)).collect();
         index.sort_unstable();
         let has_ts = records.iter().any(|record| !matches!(record.data, WrapperData::Parenthesized));
-        Ctx { parsed, source, arena, index, has_ts, stack_check: StackCheck::init(), reports: Vec::new() }
+        // A declaration anywhere in the file takes the name: the symbols of the parse pass are the declarations.
+        let mut declared = 0u128;
+        for symbol in parsed.symbols {
+            if symbol.kind == bun_ast::SymbolKind::Unbound {
+                continue;
+            }
+            if let Ok(at) = crate::six::ES_GLOBALS.binary_search(&symbol.original_name.slice()) {
+                declared |= 1u128 << at;
+            }
+        }
+        Ctx { parsed, source, arena, index, has_ts, stack_check: StackCheck::init(), declared, folded: Default::default(), reports: Vec::new() }
     }
 
-    fn wrappers<'s>(&'s self, expr: &Expr) -> impl Iterator<Item = &'s Wrapper> + 's {
+    pub fn wrappers<'s>(&'s self, expr: &Expr) -> impl Iterator<Item = &'s Wrapper> + 's {
         let key = key_of(expr);
         let from = self.index.partition_point(|(k, _)| *k < key);
         self.index[from..].iter().take_while(move |(k, _)| *k == key).map(|(_, i)| &self.parsed.sidecar.wrappers.records[*i as usize])
     }
 
     /// What ESLint has at the place of `expr`: `expr`, or nothing behind `as`, `satisfies`, `!` or `<T>`.
-    fn plain<'e>(&self, expr: &'e Expr) -> Option<&'e Expr> {
+    pub fn plain<'e>(&self, expr: &'e Expr) -> Option<&'e Expr> {
         if self.has_ts && self.wrappers(expr).any(|w| !matches!(w.data, WrapperData::Parenthesized)) {
             return None;
         }
@@ -51,7 +65,7 @@ impl<'p, 'a> Ctx<'p, 'a> {
     }
 
     /// The parentheses around what ESLint has at the place of `expr`.
-    fn parens(&self, expr: &Expr) -> u32 {
+    pub fn parens(&self, expr: &Expr) -> u32 {
         let mut count = 0;
         for w in self.wrappers(expr) {
             count = if matches!(w.data, WrapperData::Parenthesized) { count + 1 } else { 0 };
@@ -60,7 +74,7 @@ impl<'p, 'a> Ctx<'p, 'a> {
     }
 
     /// Where the node `expr` starts for ESLint, its own wrappers aside: at the `(` or the `<` of its first operand.
-    fn start_of_node(&self, expr: &Expr) -> u32 {
+    pub fn start_of_node(&self, expr: &Expr) -> u32 {
         let mut e = expr;
         loop {
             let child = match &e.data {
@@ -86,7 +100,7 @@ impl<'p, 'a> Ctx<'p, 'a> {
     }
 
     /// Where what ESLint has at the place of `expr` starts: the wrappers up to the outermost TypeScript one belong to it.
-    fn start_of_place(&self, expr: &Expr) -> u32 {
+    pub fn start_of_place(&self, expr: &Expr) -> u32 {
         let wrappers: Vec<&Wrapper> = self.wrappers(expr).collect();
         let mut start = self.start_of_node(expr);
         if let Some(last) = wrappers.iter().rposition(|w| !matches!(w.data, WrapperData::Parenthesized)) {
@@ -243,7 +257,7 @@ fn or_operands(ctx: &Ctx<'_, '_>, place: &Expr, root: &Expr, spans: Option<&[Spa
 }
 
 /// The `IfStatement` handler, for the first `if` of a chain: each later test that the tests before it cover is reported.
-fn s_if(ctx: &mut Ctx<'_, '_>, head: &S::If) {
+pub fn s_if(ctx: &mut Ctx<'_, '_>, head: &S::If) {
     let mut tests: Vec<&Expr> = vec![&head.test];
     let mut node = head;
     while let Some(Stmt { data: StmtData::SIf(next), .. }) = &node.no {
@@ -272,7 +286,11 @@ fn s_if(ctx: &mut Ctx<'_, '_>, head: &S::If) {
             }
             if list.iter().any(|or_list| or_list.is_empty()) {
                 let at = ctx.start_of_place(test);
-                ctx.reports.push(at);
+                ctx.reports.push((
+                    "no-dupe-else-if",
+                    at,
+                    b"This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.".to_vec(),
+                ));
                 break;
             }
         }
@@ -340,8 +358,9 @@ pub fn run(path: &str) {
     });
     match reports {
         Err(_) => println!("{path}: PARSE_ERROR"),
-        Ok(mut reports) => {
+        Ok(reports) => {
             println!("{path}: OK");
+            let mut reports: Vec<u32> = reports.into_iter().map(|(_, at, _)| at).collect();
             reports.sort_unstable();
             reports.dedup();
             for at in reports {

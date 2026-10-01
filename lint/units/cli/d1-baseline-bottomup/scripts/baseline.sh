@@ -1,8 +1,8 @@
 #!/bin/bash
-# Runs INSIDE the lock, in the unmodified worktree: the guarded bootstrap, then every gate of the baseline once.
+# Runs INSIDE the lock, in the unmodified worktree: the guarded bootstrap, then every gate of the baseline once. usage: /workspace/tools/lk baseline.sh [log directory]
 W=/workspace/wt/cli
-D=/tmp/cli-d1b/logs
-P=/tmp/cli-d1b/progress.log
+D=${1:-/tmp/cli-d1b/logs}
+P=$D/progress.log
 mkdir -p $D; cd $W || exit 1
 echo "### baseline lock acquired $(date -u +%FT%TZ) HEAD=$(git rev-parse --short=10 HEAD) dirty=$(git status --short | wc -l)" >> $P
 step() {

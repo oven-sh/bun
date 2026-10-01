@@ -18,6 +18,14 @@ const cc = isGlibc ? Bun.which("cc") || Bun.which("gcc") || Bun.which("clang") :
 const { ENOSPC, EDQUOT, EIO, EINTR, EINPROGRESS } = constants.errno;
 const fault = `${ENOSPC}.close-fault`;
 const failed = (...errnos: number[]) => errnos.map(errno => `close-fault: errno ${errno}`);
+const writeApis = [
+  "writeFileSync",
+  "writeFile",
+  "promises.writeFile",
+  "appendFileSync",
+  "appendFile",
+  "promises.appendFile",
+];
 
 // `settle(fn)` is what the call did: "returned", or the code and the syscall of its error.
 const settle = /* js */ `
@@ -77,8 +85,29 @@ const nodeFsFixture = /* js */ `
     abortInIterableAndClose: await writeFile("abort-late.${fault}", () => (late.abort(), data), late.signal),
   };
 
-  // These two close their own descriptor and drop the result of the close.
-  await settle(() => fs.writeFileSync("writeFileSync.${fault}", data));
+  // writeFile and appendFile by path close the file themselves.
+  const withCallback = (fn, path) => new Promise((resolve, reject) => fn(path, data, e => (e ? reject(e) : resolve())));
+  const byPath = {
+    "writeFileSync": path => fs.writeFileSync(path, data),
+    "writeFile": path => withCallback(fs.writeFile, path),
+    "promises.writeFile": path => fs.promises.writeFile(path, data),
+    "appendFileSync": path => fs.appendFileSync(path, data),
+    "appendFile": path => withCallback(fs.appendFile, path),
+    "promises.appendFile": path => fs.promises.appendFile(path, data),
+  };
+  out.byPath = {};
+  for (const [api, write] of Object.entries(byPath)) {
+    const path = api + ".${fault}";
+    let error = "returned";
+    try {
+      await write(path);
+    } catch (e) {
+      error = { code: e.code, syscall: e.syscall, path: e.path, fd: e.fd };
+    }
+    out.byPath[api] = { error, size: fs.statSync(path).size };
+  }
+
+  // Bun.write closes its own descriptor and drops the result of the close.
   await settle(() => Bun.write("bun-write.${fault}", data));
   out.afterInternalCloses = "alive";
 
@@ -265,7 +294,7 @@ describe.skipIf(!cc)("a close(2) that reports an error", () => {
   }
 
   test.concurrent(
-    "fs.closeSync, fs.close, FileHandle.close and fs.createWriteStream report it",
+    "fs.close, FileHandle.close, write streams, writeFile and appendFile report it",
     async () => {
       using dir = tempDir("fs-close-error", { "main.mjs": nodeFsFixture });
       expect(await run(String(dir))).toEqual({
@@ -288,11 +317,15 @@ describe.skipIf(!cc)("a close(2) that reports an error", () => {
             abortAfterOpenAndClose: { code: "ABORT_ERR", errors: ["ABORT_ERR", "ENOSPC"] },
             abortInIterableAndClose: { code: "ABORT_ERR", errors: ["ABORT_ERR", "ENOSPC"] },
           },
+          // As in node, the error names only the syscall, and the file stays.
+          byPath: Object.fromEntries(
+            writeApis.map(api => [api, { error: { code: "ENOSPC", syscall: "close" }, size: 4096 }]),
+          ),
           // A debug build asserts on a close whose result bun drops. The assert is for EBADF, a use after close.
           afterInternalCloses: "alive",
         },
-        // Each descriptor is closed once: 5 for closeSync, then 12 that report ENOSPC.
-        stderr: failed(ENOSPC, EDQUOT, EIO, EINTR, EINPROGRESS, ...Array(12).fill(ENOSPC)),
+        // Each descriptor is closed once: 5 for closeSync, then 17 that report ENOSPC.
+        stderr: failed(ENOSPC, EDQUOT, EIO, EINTR, EINPROGRESS, ...Array(17).fill(ENOSPC)),
         exitCode: 0,
       });
     },

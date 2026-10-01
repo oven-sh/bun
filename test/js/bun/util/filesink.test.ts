@@ -1170,8 +1170,9 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
   }
 
   // read(2) in a poll on the non-blocking read end the test holds: it returns 0 once the
-  // writer is gone, on every POSIX, and needs no readiness notification.
-  async function drain(fd: number) {
+  // writer is gone, on every POSIX, and needs no readiness notification. With a `limit` it
+  // stops once that many bytes have arrived.
+  async function drain(fd: number, limit = Infinity) {
     const buffer = Buffer.alloc(64 * 1024);
     const parts: Buffer[] = [];
     let total = 0;
@@ -1192,6 +1193,7 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
       parts.push(Buffer.from(buffer.subarray(0, n)));
       total += n;
       progressAt = performance.now();
+      if (total >= limit) return Buffer.concat(parts);
     }
   }
 
@@ -1350,8 +1352,9 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
   // heap-use-after-free in PosixStreamingWriter::close).
   //
   // The flush that ends each turn of the child's loop writes too, and a failure there is
-  // reported from another place. So the reader closes while the child waits in its poll: it
-  // leaves each refill in the pipe for a pause, and closes in the step that takes the last.
+  // reported from another place. So the read end has to close while the child waits in its
+  // poll, and no signal says when it does. The reader takes a few refills, which puts the
+  // child past the turn that printed "parked", and then gives it a moment to handle the last.
   it.concurrent.skipIf(!isPosix)(
     "a reader that goes away while pull() awaits flush() rejects the promise",
     async () => {
@@ -1374,30 +1377,14 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
         writeFd = undefined;
 
         const rest = await parked(proc.stderr);
-        const buffer = Buffer.alloc(64 * 1024);
-        let taken = 0;
-        let progressAt = performance.now();
-        while (taken < 4 * buffer.length) {
-          let n: number;
-          try {
-            n = fs.readSync(readFd, buffer);
-          } catch (e: any) {
-            if (e.code !== "EAGAIN") throw e;
-            if (performance.now() - progressAt > 10_000) {
-              throw new Error(`the child holds the FIFO open and wrote nothing for 10 s, after ${taken} bytes`);
-            }
-            await Bun.sleep(10);
-            continue;
-          }
-          if (n === 0) break;
-          taken += n;
-          progressAt = performance.now();
-        }
+        const received = await drain(readFd, 4 * 64 * 1024);
+        await Bun.sleep(10);
         fs.closeSync(readFd);
         readFdOpen = false;
 
         const [stderr, exitCode] = await Promise.all([rest(), proc.exited]);
-        expect({ stderr, exitCode }).toEqual({
+        expect({ intact: expected.subarray(0, received.length).equals(received), stderr, exitCode }).toEqual({
+          intact: true,
           stderr: "parked\n" + JSON.stringify({ settled: "rejected EPIPE: broken pipe, write", code: 0 }) + "\n",
           exitCode: 0,
         });

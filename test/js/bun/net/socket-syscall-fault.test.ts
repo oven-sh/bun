@@ -156,6 +156,37 @@ test.concurrent(
   60_000,
 );
 
+// A TLS client that writes its request and shuts its write side down as soon
+// as its handshake completes leaves its Finished, the request, a close_notify
+// and the FIN in the server's receive queue. On kqueue the read knote of a
+// socket that is parked in the low-priority handshake queue still reports that
+// FIN, and the dispatcher took it as the end of the stream with all of those
+// bytes unread: it failed the handshake and closed the socket, which resets
+// the connection. The fixture holds 32 server sockets paused behind their
+// clients' last flight and resumes them at once, so 27 are parked with the FIN
+// already there and 22 of those are still parked when its event is dispatched.
+// Every client has to get its reply and a clean close.
+test.concurrent(
+  "TLS low-prio queue: a parked socket reads what its peer sent before the FIN",
+  async () => {
+    expect(await runFixture("tls-parked-handshake-fin-fixture.ts")).toEqual({
+      summary: {
+        opened: 32,
+        serverHandshakes: 32,
+        serverHandshakeFailures: 0,
+        serverData: 32,
+        pongs: 32,
+        resets: 0,
+        errors: 0,
+      },
+      signalCode: null,
+      exitCode: 0,
+      stderrTail: "",
+    });
+  },
+  60_000,
+);
+
 // us_poll_start_rc wraps uv_poll_init_socket on Windows and EPOLL_CTL_ADD /
 // kevent on posix. On Windows the return value was ignored, so an ioctlsocket
 // FIONBIO failure left a never-initialized uv_poll_t that uv_unref/uv_poll_start

@@ -11,15 +11,19 @@ expectations.json              the lists with the level that the default check r
     git apply --check sweep-and-index.patch && git apply sweep-and-index.patch
 The test file needs the glue of the corpus besides (runner/corpus.ts, the exports of ../../prototype/index.ts.patch); the hunks do not meet.
 
-What ran, in a scratch clone made with ../../scratch.sh <dir> --prototype and both patches laid over it (observed/):
+What ran, in a scratch clone made with ../../scratch.sh <dir> --prototype and both patches laid over it (observed/).
+The state BEFORE the last three edits of the test file (spawnTimeout 20 s in a release build, the two runs of the plain-format
+test side by side, the fourth test with the binary under test) ran in the test runner:
   installed bun 1.4.3 (no --lint), whole file      124 pass, 3 fail: the three tests "the binary under test" (wanted)
   release build of be1ebe5295 (has --lint), whole  127 pass, 0 fail, 8.5 s (4.3 s in an earlier run)
   debug build of the worktree, the three describes 55 pass, 0 fail
   the same with the leak settings of CI            54 pass, 1 fail: "run > replayed oracles pass ...: group 1" took 9.0 s of the
                                                    default 5 s; the test is unchanged and starts no process
   sweep.ts, debug build, conformance/parser/ecmascript5/ErrorRecovery/ and Statements/: E 0 of 148, C 36 of 37, no crash
-  ../../typecheck.sh from another directory than the tree: no type error below test/cli/lint, with the first patch alone and with both
-  prettier --check with the .prettierrc of the repository: clean
+The final state: ../../typecheck.sh from another directory than the tree (no type error below test/cli/lint, with the first
+patch alone and with both), prettier --check (clean), and outside the test runner probes/corpus-case.ts (the fourth test's two
+instances with the release build, the debug build and the installed bun) and probes/plain-two.ts (the two runs side by side).
+A run of the final state in the test runner was queued behind the lock when this was written: see observed/ for c*.tail.txt.
   Not run: Windows, macOS; the whole file with the debug build.
 
 probes/ (each names its inputs; they read a scratch clone and /tmp/dcc/raw-release.jsonl, the 12,797 raw runs of a release build)
@@ -27,6 +31,8 @@ probes/ (each names its inputs; they read a scratch clone and /tmp/dcc/raw-relea
   plainbest.ts   the oracle replayed with what the plain format holds of it, at both levels
   an.ts          the raw runs by exit code and by the kinds of their lines
   roots.ts       the raw runs by the extensions of their root files
+  corpus-case.ts two instances of the corpus through the default check and a binary, at both levels
+  plain-two.ts   the fixture's TS2322 with a chain line at both levels, side by side
 
 ../../typecheck.sh printed "no type error" whenever the current directory was the tree: tsc prints paths relative to it, without
 the leading slash that the script looked for. The script is corrected (one grep).

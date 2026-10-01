@@ -3015,6 +3015,11 @@ impl<'p> Checker<'p> {
             } else {
                 flags
             };
+            let flags = if prop.kind == PropKind::Method {
+                flags | PropFlags::METHOD
+            } else {
+                flags
+            };
             pending.props.retain(|x| x.name != name);
             pending.props.push(Prop {
                 name,

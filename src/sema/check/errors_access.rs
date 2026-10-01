@@ -1550,9 +1550,39 @@ impl Checker<'_> {
             PropSource::Intersected(_, parts) if !parts.is_empty() => {
                 return self.order_of_property(&parts[0]);
             }
+            PropSource::Type(_) => self
+                .first_declaration_of_overloads(prop)
+                .map(|(file, member)| (file, self.hir(file)[member].pos)),
             _ => None,
         };
         declared.map_or((1, FileId(0), 0), |(file, pos)| (0, file, pos))
+    }
+
+    /// The first declaration of a method of which only the signatures are kept, because its overloads are declared with type
+    /// parameters of their own: that of the first signature.
+    pub(super) fn first_declaration_of_overloads(&self, prop: &Prop) -> Option<(FileId, MemberId)> {
+        let PropSource::Type(ty) = &prop.source else {
+            return None;
+        };
+        if !prop.flags.contains(PropFlags::METHOD) {
+            return None;
+        }
+        // One that may be left out is that or `undefined`.
+        let first = self
+            .parts(*ty)
+            .iter()
+            .find_map(|&part| match self.data(part) {
+                TypeData::Synth(shape) => shape.call.first().copied(),
+                _ => None,
+            })?;
+        let SigData::Decl { file, func, .. } = *self.p.types.sig(self.p.types.sig_origin(first))
+        else {
+            return None;
+        };
+        match self.bound(file).fns[func.idx()].owner {
+            FnOwner::Member(member) => Some((file, member)),
+            _ => None,
+        }
     }
 
     /// `getSuggestionForNonexistentIndexSignature`: it has a `get`, or a `set`, that takes the key.

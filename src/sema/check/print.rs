@@ -2934,6 +2934,12 @@ impl<'p> Printer<'_, 'p> {
                 return self.property_key_text(*file, written.key, written.pos);
             }
             PropSource::Symbol(symbol) => return self.symbol_to_text(*symbol),
+            PropSource::Type(_) => {
+                if let Some((file, member)) = self.c.first_declaration_of_overloads(prop) {
+                    let member = &self.c.hir(file)[member];
+                    return self.property_key_text(file, member.key, member.pos);
+                }
+            }
             PropSource::Assigned(file, list) => {
                 let hir = self.c.hir(*file);
                 if let Some(&first) = list.first()
@@ -3716,7 +3722,11 @@ impl<'p> Printer<'_, 'p> {
                 None => self.parameter_text(parameter),
             });
         }
-        if let Some(this) = self.c.sig_this_type(signature) {
+        let this = match self.c.sig_this_type(signature) {
+            Some(this) => Some(this),
+            None => self.this_type_taken_from_context(signature),
+        };
+        if let Some(this) = this {
             let node = self.type_to_node(this);
             self.approximate_length += "this".len() + 3;
             parameters.insert(0, format!("this: {}", node.text));
@@ -3749,6 +3759,27 @@ impl<'p> Printer<'_, 'p> {
                 format!("{modifier}new {type_parameters}({parameters}) => {returned}")
             }
         }
+    }
+
+    /// `assignContextualParameterTypes`: a context sensitive function that declares no `this` parameter gets that of the signature
+    /// it is expected to have.
+    fn this_type_taken_from_context(&mut self, signature: SigId) -> Option<TypeId> {
+        let (file, func, mapper) = match *self.c.p.types.sig(signature) {
+            SigData::WithReturn { sig: inner, .. } => {
+                return self.this_type_taken_from_context(inner);
+            }
+            SigData::Decl { file, func, mapper } => (file, func, mapper),
+            _ => return None,
+        };
+        let FnOwner::Expr(owner) = self.c.bound(file).fns[func.idx()].owner else {
+            return None;
+        };
+        if !self.c.is_context_sensitive(file, owner) {
+            return None;
+        }
+        let expected = self.c.contextual_signature(file, func)?;
+        let this = self.c.sig_this_type(expected)?;
+        Some(self.c.instantiate(this, mapper))
     }
 
     /// A function type or a constructor type.

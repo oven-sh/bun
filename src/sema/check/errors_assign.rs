@@ -3274,6 +3274,11 @@ impl Checker<'_> {
                         flags.push(ElemFlags::REST);
                     }
                 }
+                // The mode goes down with the elements.
+                ExprKind::Array(inner_items) if !self.in_const_context(file, item) => {
+                    elems.push(self.forced_tuple(file, inner_items, is_spread)?);
+                    flags.push(ElemFlags::REQUIRED);
+                }
                 _ => {
                     // `checkExpressionForMutableLocation`: a literal stays one only where one is expected.
                     let ty = self.type_of_expr(file, item);

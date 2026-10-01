@@ -338,6 +338,8 @@ pub struct Files {
     memo: Memo,
     /// The order in which declarations of one thing in several files count: it decides the order of overloads.
     order: Vec<FileId>,
+    /// Where each file is in `order`, by `FileId`.
+    ranks: Vec<u32>,
     /// What is wrong with what the options name, no file being to blame.
     program_errors: Vec<Problem>,
     /// The `package.json` of each package in a `node_modules` that a file of the program is in, by its directory. Only where declaration
@@ -1382,10 +1384,15 @@ impl Files {
             is_merged: false,
             memo,
             order: Vec::new(),
+            ranks: Vec::new(),
             program_errors,
             package_jsons,
         };
         files.order = files.declaration_order(&starts);
+        files.ranks = vec![u32::MAX; files.modules.len()];
+        for (rank, &file) in files.order.iter().enumerate() {
+            files.ranks[file.idx()] = rank as u32;
+        }
         files.merge();
         files
     }
@@ -1901,6 +1908,12 @@ impl Files {
     }
 
     // ───────────────────────────── merging ─────────────────────────────
+
+    /// `fileIndexMap`: where `file` is among the files of the program, which `compareNodes` goes by.
+    #[inline]
+    pub fn rank_of_file(&self, file: FileId) -> u32 {
+        self.ranks[file.idx()]
+    }
 
     /// Libs first; then from each starting point depth first, a file after everything it refers to.
     fn declaration_order(&self, starts: &[FileId]) -> Vec<FileId> {

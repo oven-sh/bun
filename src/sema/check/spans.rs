@@ -2347,6 +2347,11 @@ impl Checker<'_> {
         self.spans(file).class(class) as u32
     }
 
+    /// `node.End()` of an interface.
+    pub(super) fn end_of_interface(&self, file: FileId, interface: InterfaceId) -> u32 {
+        self.spans(file).interface(interface) as u32
+    }
+
     /// `node.End()` of `Base<Args>` in the `extends` clause of a class (`ExpressionWithTypeArguments`). 0 if there is none.
     pub(super) fn end_of_class_extends(&self, file: FileId, class: ClassId) -> u32 {
         let spans = self.spans(file);

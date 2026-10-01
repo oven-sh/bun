@@ -1427,10 +1427,142 @@ impl<'p> Checker<'p> {
                 readonly: false,
             });
         }
+        let own = b.shape.props.len();
         for base in bases.iter().copied() {
             self.inherit(&mut b, base, Some((sym, this)));
         }
+        // `getNamedMembers`: what is declared here, then what is inherited, each in the order of `compareSymbols`.
+        let ranges = if own < b.shape.props.len() {
+            self.ranges_of_declarations(sym)
+        } else {
+            Vec::new()
+        };
+        let mut keyed: Vec<(bool, (u8, u32, u32), Prop)> = Vec::with_capacity(b.shape.props.len());
+        for (i, prop) in std::mem::take(&mut b.shape.props).into_iter().enumerate() {
+            let is_inherited = i >= own && !self.is_within_ranges_of_declarations(&prop, &ranges);
+            keyed.push((is_inherited, self.place_in_program(&prop), prop));
+        }
+        keyed.sort_by(|x, y| (x.0, x.1).cmp(&(y.0, y.1)));
+        b.shape.props = keyed.into_iter().map(|entry| entry.2).collect();
         b.shape
+    }
+
+    /// `Loc` of each declaration of the class or interface `sym`.
+    fn ranges_of_declarations(&self, sym: Sym) -> Vec<(u32, u32)> {
+        let mut ranges = Vec::new();
+        for (file, decl) in self.files().decls(sym) {
+            let hir = self.hir(file);
+            match decl {
+                Decl::Class(class) => ranges.push((
+                    self.full_start_of_declaration(file, hir[class].pos),
+                    self.end_of_class(file, class),
+                )),
+                Decl::Interface(interface) => ranges.push((
+                    self.full_start_of_declaration(file, hir[interface].name_pos),
+                    self.end_of_interface(file, interface),
+                )),
+                _ => {}
+            }
+        }
+        ranges
+    }
+
+    /// `node.Pos()` of the class or interface whose keyword or name is at `pos`: where the token before its modifiers ends.
+    fn full_start_of_declaration(&self, file: FileId, pos: u32) -> u32 {
+        let text = &self.hir(file).text[..];
+        let mut at = pos;
+        loop {
+            let end = self.end_of_token_before(file, at) as usize;
+            let mut start = end;
+            while start > 0
+                && (text[start - 1].is_ascii_alphanumeric()
+                    || matches!(text[start - 1], b'_' | b'$'))
+            {
+                start -= 1;
+            }
+            if !matches!(
+                &text[start..end],
+                b"interface" | b"class" | b"abstract" | b"declare" | b"default" | b"export"
+            ) {
+                return end as u32;
+            }
+            at = start as u32;
+        }
+    }
+
+    /// `node.Pos()` of a member of a class or an interface: where the member before it ends. Between the first and the brace there
+    /// are only its modifiers.
+    fn full_start_of_member(&self, file: FileId, member: MemberId) -> u32 {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let members = match bound.member_owner[member.idx()] {
+            MemberOwner::Class(class) => hir[class].members,
+            MemberOwner::Interface(interface) => hir[interface].members,
+            _ => return self.end_of_token_before(file, hir[member].pos),
+        };
+        if member.0 > members.start {
+            return self.end_of_member(file, MemberId(member.0 - 1));
+        }
+        let text = &hir.text[..];
+        let mut at = hir[member].pos;
+        loop {
+            let end = self.end_of_token_before(file, at) as usize;
+            // A computed name may be said to be where the expression in the brackets is.
+            if end > 0 && text[end - 1] == b'[' {
+                at = end as u32 - 1;
+                continue;
+            }
+            let mut start = end;
+            while start > 0 && text[start - 1].is_ascii_alphabetic() {
+                start -= 1;
+            }
+            if start == end {
+                return end as u32;
+            }
+            at = start as u32;
+        }
+    }
+
+    /// `isDeclarationContainedBy`: whether `symbol.ValueDeclaration` of `prop` lies within one of `ranges`. Only positions are
+    /// compared, whatever files they are in.
+    fn is_within_ranges_of_declarations(&self, prop: &Prop, ranges: &[(u32, u32)]) -> bool {
+        let is_near = |pos: u32| ranges.iter().any(|&(from, to)| from <= pos && pos < to);
+        let (start, end) = match &prop.source {
+            PropSource::Parameter(file, parameter) => {
+                let pos = self.hir(*file)[*parameter].pos;
+                if !is_near(pos) {
+                    return false;
+                }
+                (
+                    self.end_of_token_before(*file, pos),
+                    self.end_of_param(*file, *parameter),
+                )
+            }
+            source => {
+                let first = match source {
+                    PropSource::Members(list) => list.first().copied(),
+                    _ => self.first_declaration_of_overloads(prop),
+                };
+                let Some((file, member)) = first else {
+                    return false;
+                };
+                if !is_near(self.hir(file)[member].pos) {
+                    return false;
+                }
+                (
+                    self.full_start_of_member(file, member),
+                    self.end_of_member(file, member),
+                )
+            }
+        };
+        ranges.iter().any(|&(from, to)| from <= start && end <= to)
+    }
+
+    /// `compareSymbols`, of properties: by the file the first declaration is in, then by where it is there. What has none comes last.
+    fn place_in_program(&self, prop: &Prop) -> (u8, u32, u32) {
+        match self.order_of_property(prop) {
+            (0, file, pos) => (0, self.files().rank_of_file(file), pos),
+            (nowhere, ..) => (nowhere, 0, 0),
+        }
     }
 
     /// `declareSymbolEx`: a class or an interface that is refused the name is listed with what has it, and is a symbol of its own.
@@ -2858,7 +2990,13 @@ impl<'p> Checker<'p> {
             let anew = prop
                 .flags
                 .intersects(PropFlags::WRITE_ONLY | PropFlags::READONLY);
-            let flags = prop.flags & PropFlags::OPTIONAL | self.name_flag_of_copy(left, prop, anew);
+            // What is not made anew is the symbol itself: a method is still one.
+            let kept = if anew {
+                PropFlags::OPTIONAL
+            } else {
+                PropFlags::OPTIONAL | PropFlags::METHOD
+            };
+            let flags = prop.flags & kept | self.name_flag_of_copy(left, prop, anew);
             b.add(Prop {
                 name: prop.name,
                 flags,
@@ -2920,8 +3058,12 @@ impl<'p> Checker<'p> {
                 };
             } else {
                 let anew = is_write_only || prop.flags.contains(PropFlags::READONLY);
-                flags =
-                    prop.flags & PropFlags::OPTIONAL | self.name_flag_of_copy(right, prop, anew);
+                let kept = if anew {
+                    PropFlags::OPTIONAL
+                } else {
+                    PropFlags::OPTIONAL | PropFlags::METHOD
+                };
+                flags = prop.flags & kept | self.name_flag_of_copy(right, prop, anew);
             }
             // What comes later goes last.
             b.remove(prop.name);
@@ -2931,6 +3073,35 @@ impl<'p> Checker<'p> {
                 source: PropSource::Type(ty),
                 mapper: MapperId::IDENTITY,
             });
+        }
+        // `getNamedMembers`: in the order they are declared in (`compareSymbols`), if that is known of all. What the right may or may
+        // not replace is declared where the left one is.
+        let places: Vec<(u8, FileId, u32)> = b
+            .shape
+            .props
+            .iter()
+            .map(|prop| {
+                let of_right = r
+                    .resolved
+                    .prop(prop.name)
+                    .filter(|right| self.is_spreadable_property(right));
+                match (l.resolved.prop(prop.name), of_right) {
+                    (Some(left), Some(right)) if right.flags.contains(PropFlags::OPTIONAL) => {
+                        self.order_of_property(left)
+                    }
+                    (_, Some(right)) => self.order_of_property(right),
+                    (Some(left), None) => self.order_of_property(left),
+                    (None, None) => (1, FileId(0), 0),
+                }
+            })
+            .collect();
+        if places.iter().all(|place| place.0 == 0) {
+            let mut order: Vec<usize> = (0..places.len()).collect();
+            order.sort_by_key(|&i| places[i]);
+            b.shape.props = order
+                .into_iter()
+                .map(|i| b.shape.props[i].clone())
+                .collect();
         }
         // An index signature holds for the result if it holds for both. (Nothing at all on the left does not count.)
         let left_is_nothing = left == TypeId::EMPTY_OBJECT;
@@ -3410,8 +3581,9 @@ impl<'p> Checker<'p> {
         {
             rightmost = next;
         }
-        let is_empty_array =
-            matches!(hir[rightmost].kind, ExprKind::Array(items) if items.is_empty());
+        let is_empty_array = matches!(hir[rightmost].kind, ExprKind::Array(items) if items.is_empty())
+            || self.hands_on_empty_array_literal(file, rightmost, 0)
+                && ty == self.array_of(TypeId::NEVER);
         // The property is `any[]`, unless its owner initializes a variable that has a type annotation.
         if is_empty_array && !self.is_property_of_annotated_variable(file, target) {
             return self.array_of(TypeId::ANY);
@@ -3423,6 +3595,51 @@ impl<'p> Checker<'p> {
         }
         let expected = self.contextual_type(file, value);
         self.widen_literal_for_context(ty, expected)
+    }
+
+    /// Whether the type of `e` is that of an `[]` written elsewhere. There is no `implicitNeverType`, so this follows the syntax that
+    /// hands such a type on as it is. A variable or a parameter that does not say what it is has the type of its initializer.
+    fn hands_on_empty_array_literal(&self, file: FileId, e: ExprId, depth: u32) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        match hir[e].kind {
+            ExprKind::Array(items) => items.is_empty(),
+            ExprKind::Assign {
+                op: None, value, ..
+            } => self.hands_on_empty_array_literal(file, value, depth),
+            ExprKind::NonNull(inner) => self.hands_on_empty_array_literal(file, inner, depth),
+            ExprKind::Cond { yes, no, .. } => {
+                self.hands_on_empty_array_literal(file, yes, depth)
+                    && self.hands_on_empty_array_literal(file, no, depth)
+            }
+            ExprKind::Binary {
+                op: BinOp::Or | BinOp::Nullish,
+                left,
+                right,
+            } => {
+                self.hands_on_empty_array_literal(file, left, depth)
+                    && self.hands_on_empty_array_literal(file, right, depth)
+            }
+            ExprKind::Ident(_) if depth < 8 => {
+                let symbol = bound.expr_symbol[e.idx()];
+                if symbol.is_none() {
+                    return false;
+                }
+                let initializer = match bound.symbols[symbol.idx()].decls.as_slice() {
+                    [Decl::Var(pat)] => match bound.pat_parent[pat.idx()] {
+                        crate::bind::PatParent::Var(v) if hir[v].ty.is_none() => hir[v].init,
+                        _ => return false,
+                    },
+                    [Decl::Param(pat)] => match bound.pat_parent[pat.idx()] {
+                        crate::bind::PatParent::Param(p) if hir[p].ty.is_none() => hir[p].default,
+                        _ => return false,
+                    },
+                    _ => return false,
+                };
+                initializer.is_some()
+                    && self.hands_on_empty_array_literal(file, initializer, depth + 1)
+            }
+            _ => false,
+        }
     }
 
     /// `hasParentWithTypeAnnotation`: whether `target` is `f.name` or `f[key]` of a variable `f` that says what it is.

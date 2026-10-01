@@ -269,7 +269,12 @@ struct us_bun_verify_error_t {
 };
 
 /* Immutable callback table. ~20 instances total (one per kind), all static
- * const / .rodata. Nullable entries are skipped by dispatch. */
+ * const / .rodata. Nullable entries are skipped by dispatch.
+ *
+ * Whoever holds a socket hears that it is gone exactly once, whoever closed it:
+ * on_close if on_open ran, on_connect_error if the connect never completed,
+ * on_connecting_error for a us_connecting_socket_t. It is already closed then,
+ * and freed after the loop iteration. */
 struct us_socket_vtable_t {
     struct us_socket_t *(*on_open)(us_socket_r, int is_client, char *ip, int ip_length);
     struct us_socket_t *(*on_data)(us_socket_r, char *data, int length);
@@ -315,8 +320,10 @@ void us_socket_group_init(us_socket_group_r group, us_loop_r loop,
  * to free the embedding storage. */
 void us_socket_group_deinit(us_socket_group_r group) nonnull_fn_decl;
 
-/* Close every socket in the group (fires on_close for each). Used by server
- * shutdown. The group itself stays valid. */
+/* Close every socket that is in the group now; each holder hears of it (see
+ * us_socket_vtable_t). What a handler opens into the group meanwhile stays open, so
+ * an owner that frees the group next has made sure none can
+ * (us_socket_group_deinit asserts it). The group itself stays valid. */
 void us_socket_group_close_all(us_socket_group_r group) nonnull_fn_decl;
 /* As above; `also_listeners=0` leaves head_listen_sockets alone (process-exit
  * teardown — listen sockets are owned by a Listener/App that frees them in
@@ -677,7 +684,6 @@ int us_socket_remote_port(us_socket_r s) nonnull_fn_decl;
 void us_socket_remote_address(us_socket_r s, char *nonnull_arg buf, int *nonnull_arg length) nonnull_fn_decl;
 void us_socket_local_address(us_socket_r s, char *nonnull_arg buf, int *nonnull_arg length) nonnull_fn_decl;
 
-struct us_socket_t *us_socket_detach(us_socket_r s) nonnull_fn_decl;
 int us_socket_ipc_write_fd(us_socket_r s, const char *data, int length, int fd) nonnull_fn_decl;
 void us_socket_sendfile_needs_more(us_socket_r s) nonnull_fn_decl;
 void *us_listen_socket_ext(struct us_listen_socket_t *ls) nonnull_fn_decl;

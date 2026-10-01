@@ -2,6 +2,7 @@ import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import {
+  blackholePortSource,
   bunEnv,
   bunExe,
   bunRun,
@@ -9,6 +10,7 @@ import {
   gc,
   isASAN,
   isDebug,
+  isMusl,
   isWindows,
   tempDir,
   tls as tlsCert,
@@ -4074,4 +4076,99 @@ describe.concurrent("uncaughtException from socket listeners", () => {
     expect(stderr).toContain("fatal-boom");
     expect(exitCode).toBe(1);
   });
+});
+
+// There is nothing to half-close yet. shutdown() used to mark the native socket as one that had
+// opened, so closing it raised a connection's events ('end') and the attempt never failed.
+it.skipIf(isWindows || isMusl)("closing a handle that was shut down while connecting fails its attempt", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      ${blackholePortSource}
+      const events = [];
+      const socket = net.connect({
+        port,
+        host: "blackhole.test",
+        autoSelectFamily: true,
+        lookup: (hostname, options, callback) =>
+          process.nextTick(callback, null, [{ address: "127.0.0.1", family: 4 }, { address: "127.0.0.2", family: 4 }]),
+      });
+      for (const name of ["connect", "end", "error"]) socket.on(name, () => events.push(name));
+      socket.on("connectionAttemptFailed", (ip, port, family, error) => events.push("connectionAttemptFailed " + error.code));
+      socket.on("close", () => {
+        console.log(events.join(","));
+        filler.destroy();
+      });
+      socket.once("connectionAttempt", () =>
+        setImmediate(() => {
+          socket._handle.shutdown();
+          socket.destroy();
+        }),
+      );
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "connectionAttemptFailed ECANCELED\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// Closing the connecting handle completes its request with ECANCELED. That belongs to the connect
+// that was given up, not to the one that follows.
+it.skipIf(isWindows || isMusl).each([
+  ["an address", `{ host: "127.0.0.1" }`, "connect,data"],
+  [
+    "several addresses",
+    `{
+      host: "blackhole.test",
+      autoSelectFamily: true,
+      lookup: (hostname, options, callback) =>
+        callback(null, [{ address: "127.0.0.1", family: 4 }, { address: "127.0.0.2", family: 4 }]),
+    }`,
+    "connectionAttemptFailed ECANCELED,connect,data",
+  ],
+])("a socket destroyed while connecting to %s can connect again at once", async (_, options, expected) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      ${blackholePortSource}
+      const events = [];
+      const server = net.createServer(connection => connection.end("hi")).listen(0, "127.0.0.1", () => {
+        const socket = new net.Socket();
+        for (const name of ["connect", "error"]) socket.on(name, () => events.push(name));
+        socket.on("connectionAttemptFailed", (ip, port, family, error) => events.push("connectionAttemptFailed " + error.code));
+        socket.on("data", () => {
+          events.push("data");
+          console.log(events.join(","));
+          socket.destroy();
+          server.close();
+          filler.destroy();
+        });
+        socket.once("connectionAttempt", () =>
+          // From a timer, so that no I/O is polled between this and the next setImmediate.
+          setTimeout(() => {
+            socket.destroy();
+            socket.connect({ ...${options}, port: server.address().port });
+          }, 0),
+        );
+        socket.connect({ ...${options}, port });
+      });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected + "\n", stderr: "", exitCode: 0 });
 });

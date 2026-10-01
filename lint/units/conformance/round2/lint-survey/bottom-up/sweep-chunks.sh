@@ -23,13 +23,18 @@ chunk() {
     echo "chunk $name: report exists"
     return
   fi
+  # materialise.ts ancestorProjectFile: with one of these above the temporary directory every instance is "unsupported".
+  local f
+  for f in /tmp/node_modules /tmp/package.json /tmp/tsconfig.json /tmp/jsconfig.json /node_modules /package.json /tsconfig.json /jsconfig.json; do
+    if [ -e "$f" ]; then echo "chunk $name: $f exists, no instance can be laid out"; fi
+  done
   local start
   start=$(date +%s)
   (cd "$scratch" && bun test/cli/lint/conformance/sweep.ts --bin "$bin" --jobs 4 --timeout 120000 \
     --report "$reports/$name.json.tmp" --expectations "$expectations" "$@") > "$reports/$name.out" 2>&1
   local rc=$?
   if [ -s "$reports/$name.json.tmp" ]; then mv "$reports/$name.json.tmp" "$reports/$name.json"; fi
-  echo "chunk $name: exit $rc, $(($(date +%s) - start)) s, $(head -1 "$reports/$name.out")"
+  echo "chunk $name: exit $rc, $(($(date +%s) - start)) s, $(head -1 "$reports/$name.out"); $(grep '^by outcome' "$reports/$name.out" | tr '\n' ';')"
   if [ -f "$here/merge.ts" ]; then
     bun "$here/merge.ts" "$reports" "$here/observed" > "$work/merge.log" 2>&1 || echo "merge.ts failed: $(tail -1 "$work/merge.log")"
     /workspace/tools/save-notes "conformance: lint-survey bottom-up: sweep chunk $name" > /dev/null 2>&1 || true

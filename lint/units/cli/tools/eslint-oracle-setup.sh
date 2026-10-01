@@ -1,6 +1,7 @@
 #!/bin/sh
 # Makes the oracle of the lint rules runnable under /workspace/ref: ESLint at the pin of src/lint/UPSTREAM_PORTED with
-# its runtime dependencies, the TypeScript parser and plugin of typescript-eslint, and the sources of regexpp.
+# its runtime dependencies (/workspace/ref/eslint), the parser and the plugin of typescript-eslint beside it
+# (/workspace/ref/tseslint, which resolves `eslint` to the pin), and the sources of regexpp (/workspace/ref/regexpp).
 # Safe to run again. One run at a time: a second caller waits for the first and then finds the work done.
 # usage: sh /workspace/notes/lint/units/cli/tools/eslint-oracle-setup.sh
 set -e
@@ -18,21 +19,30 @@ if [ ! -d "$R/eslint/.git" ]; then
   git -C "$R/eslint" checkout -q FETCH_HEAD
 fi
 [ "$(git -C "$R/eslint" rev-parse HEAD)" = "$PIN" ] || { echo "$R/eslint is not at $PIN" >&2; exit 1; }
-cd "$R/eslint"
-if [ ! -f node_modules/.oracle-ready ]; then
-  npm install --omit=dev --ignore-scripts --no-audit --no-fund
-  npm install --omit=dev --no-save --ignore-scripts --no-audit --no-fund \
-    "@typescript-eslint/parser@$TSESLINT" "@typescript-eslint/eslint-plugin@$TSESLINT" "typescript@$TYPESCRIPT"
-  touch node_modules/.oracle-ready
+if [ ! -f "$R/eslint/node_modules/.oracle-ready" ]; then
+  (cd "$R/eslint" && npm install --omit=dev --ignore-scripts --no-audit --no-fund)
+  touch "$R/eslint/node_modules/.oracle-ready"
 fi
-V=$(node -p 'require("@eslint-community/regexpp/package.json").version')
+# typescript-eslint names `eslint` as a peer: it is kept out of the checkout of the pin and given the pin by a link.
+if [ ! -f "$R/tseslint/node_modules/.oracle-ready" ]; then
+  mkdir -p "$R/tseslint"
+  printf '{ "name": "tseslint-oracle", "private": true }\n' > "$R/tseslint/package.json"
+  (cd "$R/tseslint" && npm install --legacy-peer-deps --ignore-scripts --no-audit --no-fund \
+    "@typescript-eslint/parser@$TSESLINT" "@typescript-eslint/eslint-plugin@$TSESLINT" "typescript@$TYPESCRIPT")
+  ln -sfn "$R/eslint" "$R/tseslint/node_modules/eslint"
+  touch "$R/tseslint/node_modules/.oracle-ready"
+fi
+V=$(cd "$R/eslint" && node -p 'require("@eslint-community/regexpp/package.json").version')
 if [ ! -d "$R/regexpp/.git" ]; then
   git clone -q --depth 1 --branch "v$V" https://github.com/eslint-community/regexpp "$R/regexpp"
 fi
-node -e '
-const v = n => require(n + "/package.json").version;
-const names = ["espree", "acorn", "eslint-scope", "eslint-visitor-keys", "@eslint-community/regexpp", "@eslint-community/eslint-utils", "@typescript-eslint/parser", "@typescript-eslint/eslint-plugin", "@typescript-eslint/scope-manager", "typescript"];
-console.log("eslint " + require("./package.json").version + " at '"$PIN"'");
-for (const n of names) console.log(n + " " + v(n));
-' | tee "$R/eslint-oracle-versions.txt"
-echo "regexpp sources: $R/regexpp at $(git -C "$R/regexpp" rev-parse --short HEAD)"
+{
+  echo "eslint $(cd "$R/eslint" && node -p 'require("./package.json").version') at $PIN"
+  for n in espree acorn eslint-scope eslint-visitor-keys @eslint-community/regexpp @eslint-community/eslint-utils; do
+    echo "$n $(cd "$R/eslint" && node -p "require('$n/package.json').version")"
+  done
+  for n in @typescript-eslint/parser @typescript-eslint/eslint-plugin @typescript-eslint/scope-manager typescript; do
+    echo "$n $(cd "$R/tseslint" && node -p "require('$n/package.json').version")"
+  done
+  echo "regexpp sources at $(git -C "$R/regexpp" rev-parse HEAD)"
+} | tee "$R/eslint-oracle-versions.txt"

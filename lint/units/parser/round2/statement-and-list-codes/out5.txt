@@ -1,0 +1,551 @@
+## class members named by a keyword
+"class C { static interface x }" [ts]
+   tsc @27+1 TS2427 Interface name cannot be 'x'.
+   go  @27+1 TS2427 Interface name cannot be 'x'.
+   bun @27+1 Expected ";" but found "x"
+"class C { readonly interface x }" [ts]
+   tsc @29+1 TS2427 Interface name cannot be 'x'.
+   go  @29+1 TS2427 Interface name cannot be 'x'.
+   bun @29+1 Expected ";" but found "x"
+"class C { public type x }" [ts]
+   tsc @22+1 TS2457 Type alias name cannot be 'x'.
+   go  @22+1 TS2457 Type alias name cannot be 'x'.
+   bun @22+1 Expected ";" but found "x"
+"class C { static let x }" [ts]
+   tsc @17+3 TS1440 Variable declaration not allowed at this location.
+   go  @17+3 TS1440 Variable declaration not allowed at this location.
+   bun @21+1 Expected ";" but found "x"
+"class C { static var x }" [ts]
+   tsc @17+3 TS1440 Variable declaration not allowed at this location.
+   go  @17+3 TS1440 Variable declaration not allowed at this location.
+   bun @21+1 Expected ";" but found "x"
+"class C { type? x }" [ts]
+   tsc @16+1 TS2457 Type alias name cannot be 'x'.
+   go  @16+1 TS2457 Type alias name cannot be 'x'.
+   bun @16+1 Expected ";" but found "x"
+"class C { is! x }" [ts]
+   tsc @10+4 TS1228 A type predicate is only allowed in return type position for functions and methods.
+   go  @10+4 TS1228 A type predicate is only allowed in return type position for functions and methods.
+   bun @14+1 Expected ";" but found "x"
+"class C { async interface x }" [ts]
+   tsc @10+5 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @28+1 TS1005 '{' expected.
+   go  @10+5 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @28+1 TS1005 '{' expected.
+   bun @26+1 Expected "(" but found "x"
+   bun @28+1 Expected identifier but found "}"
+   bun @29+0 Expected ")" but found end of file
+"class C { declare type x }" [ts]
+   tsc @10+7 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @25+1 TS1005 '=' expected.
+   go  @10+7 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @25+1 TS1005 '=' expected.
+   bun @23+1 Expected ";" but found "x"
+"class C { get x y }" [ts]
+   tsc @16+1 TS1005 '(' expected.
+   go  @16+1 TS1005 '(' expected.
+   bun @16+1 Expected "(" but found "y"
+   bun @18+1 Expected identifier but found "}"
+   bun @19+0 Expected ")" but found end of file
+"class C { set x y }" [ts]
+   tsc @16+1 TS1005 '(' expected.
+   go  @16+1 TS1005 '(' expected.
+   bun @16+1 Expected "(" but found "y"
+   bun @18+1 Expected identifier but found "}"
+   bun @19+0 Expected ")" but found end of file
+"class C { get y }" [ts]
+   tsc @16+1 TS1005 '(' expected.
+   go  @16+1 TS1005 '(' expected.
+   bun @16+1 Expected "(" but found "}"
+   bun @17+0 Expected identifier but found end of file
+"class C { abstract interface x }" [ts]
+   tsc @10+8 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @31+1 TS1005 '{' expected.
+   go  @10+8 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @31+1 TS1005 '{' expected.
+   bun @29+1 Expected ";" but found "x"
+"class C { override type x }" [ts]
+   tsc @24+1 TS2457 Type alias name cannot be 'x'.
+   go  @24+1 TS2457 Type alias name cannot be 'x'.
+   bun @24+1 Expected ";" but found "x"
+"class C { accessor interface x }" [ts]
+   tsc @29+1 TS2427 Interface name cannot be 'x'.
+   go  @29+1 TS2427 Interface name cannot be 'x'.
+   bun @29+1 Expected ";" but found "x"
+"class C { private interface x }" [ts]
+   tsc @28+1 TS2427 Interface name cannot be 'x'.
+   go  @28+1 TS2427 Interface name cannot be 'x'.
+   bun @28+1 Expected ";" but found "x"
+"class C { protected module x }" [ts]
+   tsc @27+1 TS2819 Namespace name cannot be 'x'.
+   go  @27+1 TS2819 Namespace name cannot be 'x'.
+   bun @27+1 Expected ";" but found "x"
+"class C { static static x }" [ts]
+   tsc @17+6 TS1434 Unexpected keyword or identifier.
+   go  @17+6 TS1434 Unexpected keyword or identifier.
+   bun @24+1 Expected ";" but found "x"
+"class C { static public x }" [ts]
+   tsc parses; checker @17+6 TS1029 'public' modifier must precede 'static' modifier.
+   go  parses
+   bun accepts
+"class C { public static x y }" [ts]
+   tsc @24+1 TS1434 Unexpected keyword or identifier.
+   go  @24+1 TS1434 Unexpected keyword or identifier.
+   bun @26+1 Expected ";" but found "y"
+"class C { if x }" [ts]
+   tsc @10+2 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @13+1 TS1005 '(' expected.
+   tsc @15+1 TS1005 ')' expected.
+   go  @10+2 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @13+1 TS1005 '(' expected.
+   go  @15+1 TS1005 ')' expected.
+   bun @13+1 Expected ";" but found "x"
+"class C { for x }" [ts]
+   tsc @10+3 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @14+1 TS1005 '(' expected.
+   tsc @16+1 TS1005 ';' expected.
+   go  @10+3 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @14+1 TS1005 '(' expected.
+   go  @16+1 TS1005 ';' expected.
+   bun @14+1 Expected ";" but found "x"
+"class C { class x }" [ts]
+   tsc @10+5 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @18+1 TS1005 '{' expected.
+   go  @10+5 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @18+1 TS1005 '{' expected.
+   bun @16+1 Expected ";" but found "x"
+"class C { function x }" [ts]
+   tsc @10+8 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @21+1 TS1005 '(' expected.
+   go  @10+8 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @21+1 TS1005 '(' expected.
+   bun @19+1 Expected ";" but found "x"
+"class C { new x }" [ts]
+   tsc @10+3 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @16+1 TS1128 Declaration or statement expected.
+   go  @10+3 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @16+1 TS1128 Declaration or statement expected.
+   bun @14+1 Expected ";" but found "x"
+"class C { typeof x }" [ts]
+   tsc @10+6 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @19+1 TS1128 Declaration or statement expected.
+   go  @10+6 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @19+1 TS1128 Declaration or statement expected.
+   bun @17+1 Expected ";" but found "x"
+"class C { delete x }" [ts]
+   tsc @10+6 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @19+1 TS1128 Declaration or statement expected.
+   go  @10+6 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @19+1 TS1128 Declaration or statement expected.
+   bun @17+1 Expected ";" but found "x"
+"class C { in x }" [ts]
+   tsc parses; checker @10+2 TS1274 'in' modifier can only appear on a type parameter of a class, interface or type alias
+   go  parses
+   bun @13+1 Expected ";" but found "x"
+"class C { of x }" [ts]
+   tsc @10+2 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @15+1 TS1128 Declaration or statement expected.
+   go  @10+2 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @15+1 TS1128 Declaration or statement expected.
+   bun @13+1 Expected ";" but found "x"
+"class C { as x }" [ts]
+   tsc @10+2 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @15+1 TS1128 Declaration or statement expected.
+   go  @10+2 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @15+1 TS1128 Declaration or statement expected.
+   bun @13+1 Expected ";" but found "x"
+"class C { any x }" [ts]
+   tsc @10+3 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @16+1 TS1128 Declaration or statement expected.
+   go  @10+3 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @16+1 TS1128 Declaration or statement expected.
+   bun @14+1 Expected ";" but found "x"
+"class C { string x }" [ts]
+   tsc @10+6 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @19+1 TS1128 Declaration or statement expected.
+   go  @10+6 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @19+1 TS1128 Declaration or statement expected.
+   bun @17+1 Expected ";" but found "x"
+"class C { async x y }" [ts]
+   tsc @16+1 TS1434 Unexpected keyword or identifier.
+   go  @16+1 TS1434 Unexpected keyword or identifier.
+   bun @18+1 Expected "(" but found "y"
+   bun @20+1 Expected identifier but found "}"
+   bun @21+0 Expected ")" but found end of file
+"class C { await x }" [ts]
+   tsc @10+5 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @18+1 TS1128 Declaration or statement expected.
+   go  @10+5 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @18+1 TS1128 Declaration or statement expected.
+   bun @16+1 Expected ";" but found "x"
+"class C { yield x }" [ts]
+   tsc @10+5 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @18+1 TS1128 Declaration or statement expected.
+   go  @10+5 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @18+1 TS1128 Declaration or statement expected.
+   bun @16+1 Expected ";" but found "x"
+"class C { constructor x }" [ts]
+   tsc @10+11 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @24+1 TS1128 Declaration or statement expected.
+   go  @10+11 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @24+1 TS1128 Declaration or statement expected.
+   bun @10+11 Invalid field name
+   bun @22+1 Expected ";" but found "x"
+"class C { static x }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"class C { static ) }" [ts]
+   tsc @10+6 TS1434 Unexpected keyword or identifier.
+   tsc @17+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @10+6 TS1434 Unexpected keyword or identifier.
+   go  @17+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   bun @17+1 Expected ";" but found ")"
+"class C { interface: 1 y }" [ts]
+   tsc @23+1 TS1442 Expected '=' for property initializer.
+   go  @23+1 TS1442 Expected '=' for property initializer.
+   bun @23+1 Expected ";" but found "y"
+"class C { interface = 1 y }" [ts]
+   tsc @24+1 TS1005 ';' expected.
+   go  @24+1 TS1005 ';' expected.
+   bun @24+1 Expected ";" but found "y"
+"class C { interface() bar }" [ts]
+   tsc @22+3 TS1144 '{' or ';' expected.
+   go  @22+3 TS1144 '{' or ';' expected.
+   bun @22+3 Expected ";" but found "bar"
+"class C { interface }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"class C { interface; }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"class C { interface\nx }" [ts]
+   tsc parses
+   go  parses
+   bun accepts
+"class C { type\nx y }" [ts]
+   tsc @15+1 TS1434 Unexpected keyword or identifier.
+   go  @15+1 TS1434 Unexpected keyword or identifier.
+   bun @17+1 Expected ";" but found "y"
+"class C { interface x; }" [ts]
+   tsc @10+9 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @21+1 TS1005 '{' expected.
+   tsc @23+1 TS1128 Declaration or statement expected.
+   go  @10+9 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @21+1 TS1005 '{' expected.
+   go  @23+1 TS1128 Declaration or statement expected.
+   bun @20+1 Expected ";" but found "x"
+"class C { type x = 1 }" [ts]
+   tsc @10+4 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @21+1 TS1128 Declaration or statement expected.
+   go  @10+4 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @21+1 TS1128 Declaration or statement expected.
+   bun @15+1 Expected ";" but found "x"
+   bun @17+1 Expected identifier but found "="
+"class C { undefined x }" [ts]
+   tsc @10+9 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @22+1 TS1128 Declaration or statement expected.
+   go  @10+9 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @22+1 TS1128 Declaration or statement expected.
+   bun @20+1 Expected ";" but found "x"
+"class C { require x }" [ts]
+   tsc @10+7 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @20+1 TS1128 Declaration or statement expected.
+   go  @10+7 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @20+1 TS1128 Declaration or statement expected.
+   bun @18+1 Expected ";" but found "x"
+"class C { global x }" [ts]
+   tsc @10+6 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @17+1 TS1005 ';' expected.
+   tsc @19+1 TS1128 Declaration or statement expected.
+   go  @10+6 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @17+1 TS1005 ';' expected.
+   go  @19+1 TS1128 Declaration or statement expected.
+   bun @17+1 Expected ";" but found "x"
+"class C { from x }" [ts]
+   tsc @10+4 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @17+1 TS1128 Declaration or statement expected.
+   go  @10+4 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @17+1 TS1128 Declaration or statement expected.
+   bun @15+1 Expected ";" but found "x"
+"class C { using x }" [ts]
+   tsc @10+5 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @18+1 TS1128 Declaration or statement expected.
+   go  @10+5 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @18+1 TS1128 Declaration or statement expected.
+   bun @16+1 Expected ";" but found "x"
+"class C { out x }" [ts]
+   tsc parses; checker @10+3 TS1274 'out' modifier can only appear on a type parameter of a class, interface or type alias
+   go  parses
+   bun @14+1 Expected ";" but found "x"
+"class C { in x y }" [ts]
+   tsc @13+1 TS1434 Unexpected keyword or identifier.
+   go  @13+1 TS1434 Unexpected keyword or identifier.
+   bun @13+1 Expected ";" but found "x"
+"class C { const x y }" [ts]
+   tsc @16+1 TS1434 Unexpected keyword or identifier.
+   go  @16+1 TS1434 Unexpected keyword or identifier.
+   bun @16+1 Expected ";" but found "x"
+"class C { export x }" [ts]
+   tsc parses; checker @10+6 TS1031 'export' modifier cannot appear on class elements of this kind.
+   go  parses
+   bun @17+1 Expected ";" but found "x"
+"class C { default x }" [ts]
+   tsc @10+7 TS1434 Unexpected keyword or identifier.
+   go  @10+7 TS1434 Unexpected keyword or identifier.
+   bun @18+1 Expected ";" but found "x"
+"class C { interface x }" [js]
+   tsc @10+9 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   tsc @22+1 TS1005 '{' expected.
+   go  @10+9 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+   go  @22+1 TS1005 '{' expected.
+   bun @20+1 Expected ";" but found "x"
+"class C { static interface x }" [js]
+   tsc @27+1 TS2427 Interface name cannot be 'x'.
+   go  @27+1 TS2427 Interface name cannot be 'x'.
+   bun @27+1 Expected ";" but found "x"
+"class C { x y }" [js]
+   tsc @10+1 TS1434 Unexpected keyword or identifier.
+   go  @10+1 TS1434 Unexpected keyword or identifier.
+   bun @12+1 Expected ";" but found "y"
+"class C { x: number y }" [js]
+   tsc @20+1 TS1442 Expected '=' for property initializer.
+   go  @20+1 TS1442 Expected '=' for property initializer.
+   bun @11+1 Expected ";" but found ":"
+   bun @20+1 Expected ";" but found "y"
+"class C { x @dec y }" [js]
+   tsc @12+1 TS1436 Decorators must precede the name and all keywords of property declarations.
+   go  @12+1 TS1436 Decorators must precede the name and all keywords of property declarations.
+   bun @12+1 Expected ";" but found "@"
+   bun @17+1 Expected ";" but found "y"
+## statements in a block at the end of the file, and other rows
+"{ )" [ts]
+   tsc @2+1 TS1128 Declaration or statement expected.
+   tsc @3+0 TS1005 '}' expected.
+   go  @2+1 TS1128 Declaration or statement expected.
+   go  @3+0 TS1005 '}' expected.
+   bun @2+1 Unexpected )
+"{ foo; )" [ts]
+   tsc @7+1 TS1128 Declaration or statement expected.
+   tsc @8+0 TS1005 '}' expected.
+   go  @7+1 TS1128 Declaration or statement expected.
+   go  @8+0 TS1005 '}' expected.
+   bun @7+1 Unexpected )
+"function f() { )" [ts]
+   tsc @15+1 TS1128 Declaration or statement expected.
+   tsc @16+0 TS1005 '}' expected.
+   go  @15+1 TS1128 Declaration or statement expected.
+   go  @16+0 TS1005 '}' expected.
+   bun @15+1 Unexpected )
+"if (x) { else" [ts]
+   tsc @9+4 TS1128 Declaration or statement expected.
+   tsc @13+0 TS1005 '}' expected.
+   go  @9+4 TS1128 Declaration or statement expected.
+   go  @13+0 TS1005 '}' expected.
+   bun @9+4 Unexpected else
+"switch (x) { case 1: foo; )" [ts]
+   tsc @26+1 TS1129 Statement expected.
+   tsc @27+0 TS1005 '}' expected.
+   go  @26+1 TS1129 Statement expected.
+   go  @27+0 TS1005 '}' expected.
+   bun @26+1 Unexpected )
+"switch (x) { case 1: { )" [ts]
+   tsc @23+1 TS1128 Declaration or statement expected.
+   tsc @24+0 TS1005 '}' expected.
+   go  @23+1 TS1128 Declaration or statement expected.
+   go  @24+0 TS1005 '}' expected.
+   bun @23+1 Unexpected )
+"class C { m() { ) } }" [ts]
+   tsc @16+1 TS1128 Declaration or statement expected.
+   go  @16+1 TS1128 Declaration or statement expected.
+   bun @16+1 Unexpected )
+"x = () => { )" [ts]
+   tsc @12+1 TS1128 Declaration or statement expected.
+   tsc @13+0 TS1005 '}' expected.
+   go  @12+1 TS1128 Declaration or statement expected.
+   go  @13+0 TS1005 '}' expected.
+   bun @12+1 Unexpected )
+"try { ) } catch {}" [ts]
+   tsc @6+1 TS1128 Declaration or statement expected.
+   go  @6+1 TS1128 Declaration or statement expected.
+   bun @6+1 Unexpected )
+"namespace N { ) }" [ts]
+   tsc @14+1 TS1128 Declaration or statement expected.
+   go  @14+1 TS1128 Declaration or statement expected.
+   bun @14+1 Unexpected )
+"label: { ) }" [ts]
+   tsc @9+1 TS1128 Declaration or statement expected.
+   go  @9+1 TS1128 Declaration or statement expected.
+   bun @9+1 Unexpected )
+"for (;;) { ) }" [ts]
+   tsc @11+1 TS1128 Declaration or statement expected.
+   go  @11+1 TS1128 Declaration or statement expected.
+   bun @11+1 Unexpected )
+"{ { ) } }" [ts]
+   tsc @4+1 TS1128 Declaration or statement expected.
+   go  @4+1 TS1128 Declaration or statement expected.
+   bun @4+1 Unexpected )
+"{ default }" [ts]
+   tsc @2+7 TS1128 Declaration or statement expected.
+   go  @2+7 TS1128 Declaration or statement expected.
+   bun @2+7 Unexpected default
+"{ case 1: }" [ts]
+   tsc @2+4 TS1128 Declaration or statement expected.
+   tsc @8+1 TS1005 ';' expected.
+   go  @2+4 TS1128 Declaration or statement expected.
+   go  @8+1 TS1005 ';' expected.
+   bun @2+4 Unexpected case
+"function f() { default: }" [ts]
+   tsc @15+7 TS1128 Declaration or statement expected.
+   tsc @22+1 TS1128 Declaration or statement expected.
+   go  @15+7 TS1128 Declaration or statement expected.
+   go  @22+1 TS1128 Declaration or statement expected.
+   bun @15+7 Unexpected default
+"namespace N { default }" [ts]
+   tsc @14+7 TS1128 Declaration or statement expected.
+   go  @14+7 TS1128 Declaration or statement expected.
+   bun @14+7 Unexpected default
+"{ catch }" [ts]
+   tsc @2+5 TS1005 'try' expected.
+   tsc @8+1 TS1005 '{' expected.
+   go  @2+5 TS1005 'try' expected.
+   go  @8+1 TS1005 '{' expected.
+   bun @2+5 Unexpected catch
+"{ finally }" [ts]
+   tsc @2+7 TS1005 'try' expected.
+   tsc @10+1 TS1005 '{' expected.
+   go  @2+7 TS1005 'try' expected.
+   go  @10+1 TS1005 '{' expected.
+   bun @2+7 Unexpected finally
+"{ else }" [ts]
+   tsc @2+4 TS1128 Declaration or statement expected.
+   go  @2+4 TS1128 Declaration or statement expected.
+   bun @2+4 Unexpected else
+"{ in }" [ts]
+   tsc @2+2 TS1109 Expression expected.
+   tsc @5+1 TS1109 Expression expected.
+   go  @2+2 TS1109 Expression expected.
+   go  @5+1 TS1109 Expression expected.
+   bun @2+2 Unexpected in
+"{ * }" [ts]
+   tsc @2+1 TS1109 Expression expected.
+   tsc @4+1 TS1109 Expression expected.
+   go  @2+1 TS1109 Expression expected.
+   go  @4+1 TS1109 Expression expected.
+   bun @2+1 Unexpected *
+"{ = }" [ts]
+   tsc @2+1 TS1128 Declaration or statement expected.
+   go  @2+1 TS1128 Declaration or statement expected.
+   bun @2+1 Unexpected =
+"{ , }" [ts]
+   tsc @2+1 TS1128 Declaration or statement expected.
+   go  @2+1 TS1128 Declaration or statement expected.
+   bun @2+1 Unexpected ,
+"{ : }" [ts]
+   tsc @2+1 TS1128 Declaration or statement expected.
+   go  @2+1 TS1128 Declaration or statement expected.
+   bun @2+1 Unexpected :
+"{ . }" [ts]
+   tsc @2+1 TS1128 Declaration or statement expected.
+   go  @2+1 TS1128 Declaration or statement expected.
+   bun @2+1 Unexpected .
+"{ => }" [ts]
+   tsc @2+2 TS1128 Declaration or statement expected.
+   go  @2+2 TS1128 Declaration or statement expected.
+   bun @2+2 Unexpected =>
+"{ ] }" [ts]
+   tsc @2+1 TS1128 Declaration or statement expected.
+   go  @2+1 TS1128 Declaration or statement expected.
+   bun @2+1 Unexpected ]
+"{ ? }" [ts]
+   tsc @2+1 TS1128 Declaration or statement expected.
+   go  @2+1 TS1128 Declaration or statement expected.
+   bun @2+1 Unexpected ?
+"interface I { ) }" [ts]
+   tsc @14+1 TS1131 Property or signature expected.
+   go  @14+1 TS1131 Property or signature expected.
+   bun @14+1 Unexpected )
+"interface I { a: 1 ) }" [ts]
+   tsc @19+1 TS1005 ';' expected.
+   go  @19+1 TS1005 ';' expected.
+   bun @19+1 Unexpected )
+"interface I { a: 1; }  )" [ts]
+   tsc @23+1 TS1128 Declaration or statement expected.
+   go  @23+1 TS1128 Declaration or statement expected.
+   bun @23+1 Unexpected )
+"declare module 'a' { ) }" [ts]
+   tsc @21+1 TS1128 Declaration or statement expected.
+   go  @21+1 TS1128 Declaration or statement expected.
+   bun @21+1 Unexpected )
+"declare global { ) }" [ts]
+   tsc @17+1 TS1128 Declaration or statement expected.
+   go  @17+1 TS1128 Declaration or statement expected.
+   bun @17+1 Unexpected )
+"enum E { A } )" [ts]
+   tsc @13+1 TS1128 Declaration or statement expected.
+   go  @13+1 TS1128 Declaration or statement expected.
+   bun @13+1 Unexpected )
+"class C {} )" [ts]
+   tsc @11+1 TS1128 Declaration or statement expected.
+   go  @11+1 TS1128 Declaration or statement expected.
+   bun @11+1 Unexpected )
+"function f() {} )" [ts]
+   tsc @16+1 TS1128 Declaration or statement expected.
+   go  @16+1 TS1128 Declaration or statement expected.
+   bun @16+1 Unexpected )
+"x = 1 )" [ts]
+   tsc @6+1 TS1005 ';' expected.
+   go  @6+1 TS1005 ';' expected.
+   bun @6+1 Expected ";" but found ")"
+"x = 1; )" [ts]
+   tsc @7+1 TS1128 Declaration or statement expected.
+   go  @7+1 TS1128 Declaration or statement expected.
+   bun @7+1 Unexpected )
+";)" [ts]
+   tsc @1+1 TS1128 Declaration or statement expected.
+   go  @1+1 TS1128 Declaration or statement expected.
+   bun @1+1 Unexpected )
+"import x from 'y' )" [ts]
+   tsc @18+1 TS1005 ';' expected.
+   go  @18+1 TS1005 ';' expected.
+   bun @18+1 Expected ";" but found ")"
+"export {} )" [ts]
+   tsc @10+1 TS1005 ';' expected.
+   go  @10+1 TS1005 ';' expected.
+   bun @10+1 Expected ";" but found ")"
+"type T = 1 )" [ts]
+   tsc @11+1 TS1005 ';' expected.
+   go  @11+1 TS1005 ';' expected.
+   bun @11+1 Expected ";" but found ")"
+"if (x) ; else )" [ts]
+   tsc @14+1 TS1109 Expression expected.
+   go  @14+1 TS1109 Expression expected.
+   bun @14+1 Unexpected )
+"do ; while (x) )" [ts]
+   tsc @15+1 TS1128 Declaration or statement expected.
+   go  @15+1 TS1128 Declaration or statement expected.
+   bun @15+1 Unexpected )
+"var a = 1 )" [ts]
+   tsc @10+1 TS1005 ',' expected.
+   go  @10+1 TS1005 ',' expected.
+   bun @10+1 Expected ";" but found ")"
+"return )" [ts]
+   tsc @7+1 TS1109 Expression expected.
+   go  @7+1 TS1109 Expression expected.
+   bun @7+1 Unexpected )
+"throw x )" [ts]
+   tsc @6+1 TS1434 Unexpected keyword or identifier.
+   tsc @8+1 TS1128 Declaration or statement expected.
+   go  @6+1 TS1434 Unexpected keyword or identifier.
+   go  @8+1 TS1128 Declaration or statement expected.
+   bun @8+1 Expected ";" but found ")"
+"break )" [ts]
+   tsc @6+1 TS1003 Identifier expected.
+   go  @6+1 TS1003 Identifier expected.
+   bun @6+1 Expected ";" but found ")"
+"debugger )" [ts]
+   tsc @9+1 TS1005 ';' expected.
+   go  @9+1 TS1005 ';' expected.
+   bun @9+1 Expected ";" but found ")"

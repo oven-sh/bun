@@ -353,17 +353,29 @@ class Driver {
 	}
 
 	stmts(list) {
-		for (const s of list) this.stmt(s, null);
+		let prev = null;
+		for (const s of list) {
+			if (s.t === "SComment") continue;
+			this.prevOfNext = prev;
+			this.stmt(s, null);
+			prev = s.exportNode || s;
+		}
 	}
 
 	// `label`: the statement is the body of S::Label with that name (`getLabel`).
 	stmt(s, role, label = null) {
 		if (s.t === "SComment") return;
+		const prev = this.prevOfNext || null;
+		this.prevOfNext = null;
 		// `export` before a declaration: ExportNamedDeclaration is a node of ESTree alone.
 		let exportNode = null;
 		if (s.is_export && s.export_src) {
-			exportNode = this.virtual("ExportNamedDeclaration", s.export_src, role);
+			exportNode = { t: "ExportNamedDeclaration", src: s.export_src, virtual: true, inner: s, prevSibling: prev };
+			s.exportNode = exportNode;
+			this.enter(exportNode, role, PLAIN);
 			role = null;
+		} else {
+			s.prevSibling = prev;
 		}
 		this.stmtInner(s, role, label);
 		if (exportNode) this.leave(exportNode, PLAIN);
@@ -470,7 +482,10 @@ class Driver {
 					const node = { t: "SwitchCase", src: c.src, case: c, virtual: true };
 					this.enter(node, null, { k: "SwitchCase", isFirst: i === 0 });
 					if (c.value) this.expr(c.value, null);
-					body.forEach((x, j) => this.stmt(x, j === 0 ? { r: "SwitchCaseFirstConsequent", isDefault } : null));
+					body.forEach((x, j) => {
+						this.prevOfNext = j === 0 ? null : body[j - 1].exportNode || body[j - 1];
+						this.stmt(x, j === 0 ? { r: "SwitchCaseFirstConsequent", isDefault } : null);
+					});
 					this.leave(node, { k: "SwitchCase", consequentIsEmpty: body.length === 0, isDefault });
 				});
 				this.leave(s, { k: "Switch" });
@@ -572,8 +587,8 @@ class Driver {
 				this.leave(node, { k: "StaticBlock" });
 				continue;
 			}
-			const member = this.virtual(p.is_method ? "MethodDefinition" : "PropertyDefinition", p.src, null);
-			member.property = p;
+			const member = { t: p.is_method ? "MethodDefinition" : "PropertyDefinition", src: p.src, virtual: true, property: p, klass: c };
+			this.enter(member, null, PLAIN);
 			this.key(p, false);
 			if (p.is_method) this.expr(p.value, null);
 			else if (p.initializer) this.expr(p.initializer, null, { pdValue: p.kind !== "auto_accessor" });
@@ -824,6 +839,7 @@ class Driver {
 		const isOptional = e.optional_chain === "start";
 		const targetFlags = { inChain: e.optional_chain !== null && isLinkOfSameChain(e.target), jsxName: flags.jsxName };
 		this.enter(e, role, isOptional ? { k: "OptionalCallOrMember" } : PLAIN, pd);
+		if (e.t === "ECall" && e.target.t === "ESuper") e.target.isCallee = true;
 		this.expr(e.target, null, targetFlags);
 		if (e.t === "ECall") {
 			e.args.forEach((arg, i) => this.expr(arg, isOptional && i === 0 ? { r: "OptionalCallFirstArgument" } : null));

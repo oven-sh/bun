@@ -174,7 +174,7 @@ for (const file of process.argv.slice(2)) {
 		const config = ts
 			? [{ files: ["**/*.ts", "**/*.tsx"], plugins: { m: plugin }, languageOptions: { parser: tsParser, parserOptions: { ecmaFeatures: { jsx: c.type === "tsx" } } }, rules: { "m/model": "error", "no-unexpected-multiline": "error" } }]
 			: [{ plugins: { m: plugin }, languageOptions: { ecmaVersion: "latest", sourceType: c.type, parserOptions: { ecmaFeatures: { jsx: !!c.jsx } } }, rules: { "m/model": "error", "no-unexpected-multiline": "error" } }];
-		const messages = linter.verify(c.code, config, ts ? { filename: c.type === "tsx" ? "a.tsx" : "a.ts" } : undefined);
+		const messages = linter.verify(c.code, config, { allowInlineConfig: false, reportUnusedDisableDirectives: false, ...(ts ? { filename: c.type === "tsx" ? "a.tsx" : "a.ts" } : {}) });
 		if (messages.some(m => m.fatal)) { fatal++; continue; }
 		total++;
 		const key = m => `${m.line}:${m.column} ${m.message}`;

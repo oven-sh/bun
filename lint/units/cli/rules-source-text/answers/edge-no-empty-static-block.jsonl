@@ -1,26 +1,26 @@
-{"code":"class A { static {} }","type":"script","reports":["no-unused-vars 1:7 'A' is defined but never used.","no-empty-static-block 1:18 Unexpected empty static block."]}
-{"code":"class A { static { } }","type":"script","reports":["no-unused-vars 1:7 'A' is defined but never used.","no-empty-static-block 1:18 Unexpected empty static block."]}
-{"code":"class A { static {\n} }","type":"script","reports":["no-unused-vars 1:7 'A' is defined but never used.","no-empty-static-block 1:18 Unexpected empty static block."]}
-{"code":"class A { static { ; } }","type":"script","reports":["no-unused-vars 1:7 'A' is defined but never used."]}
-{"code":"class A { static {;} }","type":"script","reports":["no-unused-vars 1:7 'A' is defined but never used."]}
-{"code":"class A { static { /* c */ } }","type":"script","reports":["no-unused-vars 1:7 'A' is defined but never used."]}
-{"code":"class A { static { // c\n } }","type":"script","reports":["no-unused-vars 1:7 'A' is defined but never used."]}
-{"code":"class A { static /* c */ {} }","type":"script","reports":["no-unused-vars 1:7 'A' is defined but never used.","no-empty-static-block 1:26 Unexpected empty static block."]}
-{"code":"class A { static // c\n {} }","type":"script","reports":["no-unused-vars 1:7 'A' is defined but never used.","no-empty-static-block 2:2 Unexpected empty static block."]}
-{"code":"class A { /* c */ static {} /* d */ }","type":"script","reports":["no-unused-vars 1:7 'A' is defined but never used.","no-empty-static-block 1:26 Unexpected empty static block."]}
-{"code":"class A { static {} static {} }","type":"script","reports":["no-unused-vars 1:7 'A' is defined but never used.","no-empty-static-block 1:18 Unexpected empty static block.","no-empty-static-block 1:28 Unexpected empty static block."]}
-{"code":"class A { static { a } static {} }","type":"script","reports":["no-unused-vars 1:7 'A' is defined but never used.","no-undef 1:20 'a' is not defined.","no-empty-static-block 1:31 Unexpected empty static block."]}
-{"code":"class A { static { {} } }","type":"script","reports":["no-unused-vars 1:7 'A' is defined but never used.","no-empty 1:20 Empty block statement."]}
-{"code":"class A { static { 'use strict' } }","type":"script","reports":["no-unused-vars 1:7 'A' is defined but never used."]}
-{"code":"class A { static { /*! legal */ } }","type":"script","reports":["no-unused-vars 1:7 'A' is defined but never used."]}
-{"code":"class A { static { class B { static {} } } }","type":"script","reports":["no-unused-vars 1:7 'A' is defined but never used.","no-unused-vars 1:26 'B' is defined but never used.","no-empty-static-block 1:37 Unexpected empty static block."]}
-{"code":"(class { static {} })","type":"script","reports":["no-empty-static-block 1:17 Unexpected empty static block."]}
-{"code":"export default class { static {} }","type":"module","reports":["no-empty-static-block 1:31 Unexpected empty static block."]}
-{"code":"class A { static\n{} }","type":"script","reports":["no-unused-vars 1:7 'A' is defined but never used.","no-empty-static-block 2:1 Unexpected empty static block."]}
-{"code":"class A { static { } }","type":"script","reports":["no-unused-vars 1:7 'A' is defined but never used.","no-empty-static-block 1:18 Unexpected empty static block.","no-irregular-whitespace 1:19 Irregular whitespace not allowed."]}
-{"code":"class A { static { } }","type":"script","reports":["no-unused-vars 1:7 'A' is defined but never used.","no-empty-static-block 1:18 Unexpected empty static block.","no-irregular-whitespace 1:19 Irregular whitespace not allowed."]}
-{"code":"class A { static { debugger } }","type":"script","reports":["no-unused-vars 1:7 'A' is defined but never used.","no-debugger 1:20 Unexpected 'debugger' statement."]}
-{"code":"class A { static m() {} }","type":"script","reports":["no-unused-vars 1:7 'A' is defined but never used."]}
-{"code":"class A { static = 1; static() {} }","type":"script","reports":["no-unused-vars 1:7 'A' is defined but never used.","no-dupe-class-members 1:23 Duplicate name 'static'."]}
+{"code":"class A { static {} }","type":"script","reports":["1:18-1:20 Unexpected empty static block."]}
+{"code":"class A { static { } }","type":"script","reports":["1:18-1:21 Unexpected empty static block."]}
+{"code":"class A { static {\n} }","type":"script","reports":["1:18-2:2 Unexpected empty static block."]}
+{"code":"class A { static { ; } }","type":"script","reports":[]}
+{"code":"class A { static {;} }","type":"script","reports":[]}
+{"code":"class A { static { /* c */ } }","type":"script","reports":[]}
+{"code":"class A { static { // c\n } }","type":"script","reports":[]}
+{"code":"class A { static /* c */ {} }","type":"script","reports":["1:26-1:28 Unexpected empty static block."]}
+{"code":"class A { static // c\n {} }","type":"script","reports":["2:2-2:4 Unexpected empty static block."]}
+{"code":"class A { /* c */ static {} /* d */ }","type":"script","reports":["1:26-1:28 Unexpected empty static block."]}
+{"code":"class A { static {} static {} }","type":"script","reports":["1:18-1:20 Unexpected empty static block.","1:28-1:30 Unexpected empty static block."]}
+{"code":"class A { static { a } static {} }","type":"script","reports":["1:31-1:33 Unexpected empty static block."]}
+{"code":"class A { static { {} } }","type":"script","reports":[]}
+{"code":"class A { static { 'use strict' } }","type":"script","reports":[]}
+{"code":"class A { static { /*! legal */ } }","type":"script","reports":[]}
+{"code":"class A { static { class B { static {} } } }","type":"script","reports":["1:37-1:39 Unexpected empty static block."]}
+{"code":"(class { static {} })","type":"script","reports":["1:17-1:19 Unexpected empty static block."]}
+{"code":"export default class { static {} }","type":"module","reports":["1:31-1:33 Unexpected empty static block."]}
+{"code":"class A { static\n{} }","type":"script","reports":["2:1-2:3 Unexpected empty static block."]}
+{"code":"class A { static { } }","type":"script","reports":["1:18-1:21 Unexpected empty static block."]}
+{"code":"class A { static { } }","type":"script","reports":["1:18-2:2 Unexpected empty static block."]}
+{"code":"class A { static { debugger } }","type":"script","reports":[]}
+{"code":"class A { static m() {} }","type":"script","reports":[]}
+{"code":"class A { static = 1; static() {} }","type":"script","reports":[]}
 {"code":"class A { static static {} }","type":"script","fatal":"1:25 Parsing error: Unexpected token {","reports":[]}
 {"code":"class A { 'static' {} }","type":"script","fatal":"1:20 Parsing error: Unexpected token {","reports":[]}

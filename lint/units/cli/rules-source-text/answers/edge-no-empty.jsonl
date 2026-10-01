@@ -1,49 +1,49 @@
-{"code":"{}","type":"script","reports":["no-empty 1:1 Empty block statement."]}
-{"code":"{ }","type":"script","reports":["no-empty 1:1 Empty block statement."]}
-{"code":"{\n}","type":"script","reports":["no-empty 1:1 Empty block statement."]}
+{"code":"{}","type":"script","reports":["1:1-1:3 Empty block statement."]}
+{"code":"{ }","type":"script","reports":["1:1-1:4 Empty block statement."]}
+{"code":"{\n}","type":"script","reports":["1:1-2:2 Empty block statement."]}
 {"code":"{ ; }","type":"script","reports":[]}
 {"code":"{;}","type":"script","reports":[]}
-{"code":"if (a) {;}","type":"script","reports":["no-undef 1:5 'a' is not defined."]}
-{"code":"if (a) {} else {}","type":"script","reports":["no-undef 1:5 'a' is not defined.","no-empty 1:8 Empty block statement.","no-empty 1:16 Empty block statement."]}
-{"code":"if (a) { /* c */ } else {}","type":"script","reports":["no-undef 1:5 'a' is not defined.","no-empty 1:25 Empty block statement."]}
-{"code":"if (a) ; else {}","type":"script","reports":["no-undef 1:5 'a' is not defined.","no-empty 1:15 Empty block statement."]}
-{"code":"for (;;) {}","type":"script","reports":["no-empty 1:10 Empty block statement."]}
-{"code":"for (var a in b) {}","type":"script","reports":["no-unused-vars 1:10 'a' is assigned a value but never used.","no-undef 1:15 'b' is not defined.","no-empty 1:18 Empty block statement."]}
-{"code":"for (var a of b) {}","type":"script","reports":["no-unused-vars 1:10 'a' is assigned a value but never used.","no-undef 1:15 'b' is not defined.","no-empty 1:18 Empty block statement."]}
-{"code":"do {} while (a)","type":"script","reports":["no-empty 1:4 Empty block statement.","no-undef 1:14 'a' is not defined."]}
-{"code":"with (a) {}","type":"script","reports":["no-with 1:1 Unexpected use of 'with' statement.","no-undef 1:7 'a' is not defined.","no-empty 1:10 Empty block statement."]}
-{"code":"a: {}","type":"script","reports":["no-unused-labels 1:1 'a:' is defined but never used.","no-empty 1:4 Empty block statement."]}
+{"code":"if (a) {;}","type":"script","reports":[]}
+{"code":"if (a) {} else {}","type":"script","reports":["1:8-1:10 Empty block statement.","1:16-1:18 Empty block statement."]}
+{"code":"if (a) { /* c */ } else {}","type":"script","reports":["1:25-1:27 Empty block statement."]}
+{"code":"if (a) ; else {}","type":"script","reports":["1:15-1:17 Empty block statement."]}
+{"code":"for (;;) {}","type":"script","reports":["1:10-1:12 Empty block statement."]}
+{"code":"for (var a in b) {}","type":"script","reports":["1:18-1:20 Empty block statement."]}
+{"code":"for (var a of b) {}","type":"script","reports":["1:18-1:20 Empty block statement."]}
+{"code":"do {} while (a)","type":"script","reports":["1:4-1:6 Empty block statement."]}
+{"code":"with (a) {}","type":"script","reports":["1:10-1:12 Empty block statement."]}
+{"code":"a: {}","type":"script","reports":["1:4-1:6 Empty block statement."]}
 {"code":"a: { break a; }","type":"script","reports":[]}
-{"code":"{ {} }","type":"script","reports":["no-empty 1:3 Empty block statement."]}
+{"code":"{ {} }","type":"script","reports":["1:3-1:5 Empty block statement."]}
 {"code":"{ { /* c */ } }","type":"script","reports":[]}
-{"code":"function f() { {} }","type":"script","reports":["no-unused-vars 1:10 'f' is defined but never used.","no-empty 1:16 Empty block statement."]}
-{"code":"function f() {}","type":"script","reports":["no-unused-vars 1:10 'f' is defined but never used."]}
+{"code":"function f() { {} }","type":"script","reports":["1:16-1:18 Empty block statement."]}
+{"code":"function f() {}","type":"script","reports":[]}
 {"code":"(function () {})","type":"script","reports":[]}
 {"code":"(() => {})","type":"script","reports":[]}
 {"code":"(async () => {})","type":"script","reports":[]}
-{"code":"({ m() {}, get a() {}, set a(v) {} })","type":"script","reports":["getter-return 1:12 Expected to return a value in getter 'a'."]}
-{"code":"class A { m() {} constructor() {} static s() {} }","type":"script","reports":["no-unused-vars 1:7 'A' is defined but never used."]}
-{"code":"class A { m() { {} } }","type":"script","reports":["no-unused-vars 1:7 'A' is defined but never used.","no-empty 1:17 Empty block statement."]}
-{"code":"try {} finally {}","type":"script","reports":["no-empty 1:5 Empty block statement.","no-empty 1:16 Empty block statement."]}
-{"code":"try { a } finally {}","type":"script","reports":["no-undef 1:7 'a' is not defined.","no-empty 1:19 Empty block statement."]}
-{"code":"try { a } catch {}","type":"script","reports":["no-undef 1:7 'a' is not defined.","no-empty 1:17 Empty block statement."]}
-{"code":"try { a } catch { /* c */ }","type":"script","reports":["no-undef 1:7 'a' is not defined."]}
-{"code":"try { a } catch (e) {} finally { /* c */ }","type":"script","reports":["no-undef 1:7 'a' is not defined.","no-unused-vars 1:18 'e' is defined but never used.","no-empty 1:21 Empty block statement."]}
-{"code":"try {\n} catch (e) {\n} finally {\n}","type":"script","reports":["no-empty 1:5 Empty block statement.","no-unused-vars 2:10 'e' is defined but never used.","no-empty 2:13 Empty block statement.","no-empty 3:11 Empty block statement."]}
-{"code":"try { a } /* c */ finally /* d */ {}","type":"script","reports":["no-undef 1:7 'a' is not defined.","no-empty 1:35 Empty block statement."]}
-{"code":"try { a } finally // d\n {}","type":"script","reports":["no-undef 1:7 'a' is not defined.","no-empty 2:2 Empty block statement."]}
-{"code":"try { a } catch /* c */ (e) /* d */ {}","type":"script","reports":["no-undef 1:7 'a' is not defined.","no-unused-vars 1:26 'e' is defined but never used.","no-empty 1:37 Empty block statement."]}
-{"code":"switch (a) {}","type":"script","reports":["no-undef 1:9 'a' is not defined.","no-empty 1:12 Empty switch statement."]}
-{"code":"switch (a) { }","type":"script","reports":["no-undef 1:9 'a' is not defined.","no-empty 1:12 Empty switch statement."]}
-{"code":"switch (a) {\n}","type":"script","reports":["no-undef 1:9 'a' is not defined.","no-empty 1:12 Empty switch statement."]}
-{"code":"switch (a) { /* c */ }","type":"script","reports":["no-undef 1:9 'a' is not defined."]}
-{"code":"switch (a) { // c\n }","type":"script","reports":["no-undef 1:9 'a' is not defined."]}
-{"code":"switch (a) { default: }","type":"script","reports":["no-undef 1:9 'a' is not defined."]}
-{"code":"switch (a) { case 1: {} }","type":"script","reports":["no-undef 1:9 'a' is not defined.","no-empty 1:22 Empty block statement."]}
-{"code":"switch (a) /* c */ {}","type":"script","reports":["no-undef 1:9 'a' is not defined.","no-empty 1:20 Empty switch statement."]}
-{"code":"switch ((a)) {}","type":"script","reports":["no-undef 1:10 'a' is not defined.","no-empty 1:14 Empty switch statement."]}
-{"code":"switch (a, {}) {}","type":"script","reports":["no-undef 1:9 'a' is not defined.","no-empty 1:16 Empty switch statement."]}
-{"code":"switch (function () { switch (b) {} }) {}","type":"script","reports":["no-undef 1:31 'b' is not defined.","no-empty 1:34 Empty switch statement.","no-empty 1:40 Empty switch statement."]}
+{"code":"({ m() {}, get a() {}, set a(v) {} })","type":"script","reports":[]}
+{"code":"class A { m() {} constructor() {} static s() {} }","type":"script","reports":[]}
+{"code":"class A { m() { {} } }","type":"script","reports":["1:17-1:19 Empty block statement."]}
+{"code":"try {} finally {}","type":"script","reports":["1:5-1:7 Empty block statement.","1:16-1:18 Empty block statement."]}
+{"code":"try { a } finally {}","type":"script","reports":["1:19-1:21 Empty block statement."]}
+{"code":"try { a } catch {}","type":"script","reports":["1:17-1:19 Empty block statement."]}
+{"code":"try { a } catch { /* c */ }","type":"script","reports":[]}
+{"code":"try { a } catch (e) {} finally { /* c */ }","type":"script","reports":["1:21-1:23 Empty block statement."]}
+{"code":"try {\n} catch (e) {\n} finally {\n}","type":"script","reports":["1:5-2:2 Empty block statement.","2:13-3:2 Empty block statement.","3:11-4:2 Empty block statement."]}
+{"code":"try { a } /* c */ finally /* d */ {}","type":"script","reports":["1:35-1:37 Empty block statement."]}
+{"code":"try { a } finally // d\n {}","type":"script","reports":["2:2-2:4 Empty block statement."]}
+{"code":"try { a } catch /* c */ (e) /* d */ {}","type":"script","reports":["1:37-1:39 Empty block statement."]}
+{"code":"switch (a) {}","type":"script","reports":["1:12-1:14 Empty switch statement."]}
+{"code":"switch (a) { }","type":"script","reports":["1:12-1:15 Empty switch statement."]}
+{"code":"switch (a) {\n}","type":"script","reports":["1:12-2:2 Empty switch statement."]}
+{"code":"switch (a) { /* c */ }","type":"script","reports":[]}
+{"code":"switch (a) { // c\n }","type":"script","reports":[]}
+{"code":"switch (a) { default: }","type":"script","reports":[]}
+{"code":"switch (a) { case 1: {} }","type":"script","reports":["1:22-1:24 Empty block statement."]}
+{"code":"switch (a) /* c */ {}","type":"script","reports":["1:20-1:22 Empty switch statement."]}
+{"code":"switch ((a)) {}","type":"script","reports":["1:14-1:16 Empty switch statement."]}
+{"code":"switch (a, {}) {}","type":"script","reports":["1:16-1:18 Empty switch statement."]}
+{"code":"switch (function () { switch (b) {} }) {}","type":"script","reports":["1:34-1:36 Empty switch statement.","1:40-1:42 Empty switch statement."]}
 {"code":"{ \"use strict\" }","type":"script","reports":[]}
 {"code":"{ 'use strict'; }","type":"script","reports":[]}
 {"code":"{ 'use asm' }","type":"script","reports":[]}
@@ -52,33 +52,33 @@
 {"code":"{ /* @license x */ }","type":"script","reports":[]}
 {"code":"{ <!-- c\n }","type":"script","reports":[]}
 {"code":"{\n--> c\n }","type":"script","reports":[]}
-{"code":"{ debugger }","type":"script","reports":["no-debugger 1:3 Unexpected 'debugger' statement."]}
-{"code":"{ }","type":"script","reports":["no-empty 1:1 Empty block statement.","no-irregular-whitespace 1:2 Irregular whitespace not allowed."]}
-{"code":"{ }","type":"script","reports":["no-empty 1:1 Empty block statement.","no-irregular-whitespace 1:2 Irregular whitespace not allowed."]}
-{"code":"{﻿}","type":"script","reports":["no-empty 1:1 Empty block statement.","no-irregular-whitespace 1:2 Irregular whitespace not allowed."]}
-{"code":"{\u000b\f}","type":"script","reports":["no-empty 1:1 Empty block statement.","no-irregular-whitespace 1:2 Irregular whitespace not allowed."]}
-{"code":"label: for (;;) {}","type":"script","reports":["no-unused-labels 1:1 'label:' is defined but never used.","no-empty 1:17 Empty block statement."]}
-{"code":"while (a) {}","type":"script","reports":["no-undef 1:8 'a' is not defined.","no-empty 1:11 Empty block statement."]}
-{"code":"if (a) {} else if (b) {} else {}","type":"script","reports":["no-undef 1:5 'a' is not defined.","no-empty 1:8 Empty block statement.","no-undef 1:20 'b' is not defined.","no-empty 1:23 Empty block statement.","no-empty 1:31 Empty block statement."]}
-{"code":"if (a) { b } else if (c) {}","type":"script","reports":["no-undef 1:5 'a' is not defined.","no-undef 1:10 'b' is not defined.","no-undef 1:23 'c' is not defined.","no-empty 1:26 Empty block statement."]}
-{"code":"class A { static {} }","type":"script","reports":["no-unused-vars 1:7 'A' is defined but never used.","no-empty-static-block 1:18 Unexpected empty static block."]}
-{"code":"class A { static { {} } }","type":"script","reports":["no-unused-vars 1:7 'A' is defined but never used.","no-empty 1:20 Empty block statement."]}
-{"code":"class A { static { if (a) {} } }","type":"script","reports":["no-unused-vars 1:7 'A' is defined but never used.","no-undef 1:24 'a' is not defined.","no-empty 1:27 Empty block statement."]}
+{"code":"{ debugger }","type":"script","reports":[]}
+{"code":"{ }","type":"script","reports":["1:1-1:4 Empty block statement."]}
+{"code":"{ }","type":"script","reports":["1:1-2:2 Empty block statement."]}
+{"code":"{﻿}","type":"script","reports":["1:1-1:4 Empty block statement."]}
+{"code":"{\u000b\f}","type":"script","reports":["1:1-1:5 Empty block statement."]}
+{"code":"label: for (;;) {}","type":"script","reports":["1:17-1:19 Empty block statement."]}
+{"code":"while (a) {}","type":"script","reports":["1:11-1:13 Empty block statement."]}
+{"code":"if (a) {} else if (b) {} else {}","type":"script","reports":["1:8-1:10 Empty block statement.","1:23-1:25 Empty block statement.","1:31-1:33 Empty block statement."]}
+{"code":"if (a) { b } else if (c) {}","type":"script","reports":["1:26-1:28 Empty block statement."]}
+{"code":"class A { static {} }","type":"script","reports":[]}
+{"code":"class A { static { {} } }","type":"script","reports":["1:20-1:22 Empty block statement."]}
+{"code":"class A { static { if (a) {} } }","type":"script","reports":["1:27-1:29 Empty block statement."]}
 {"code":"export default function () {}","type":"module","reports":[]}
 {"code":"export function f() {}","type":"module","reports":[]}
 {"code":"export default class { m() {} }","type":"module","reports":[]}
 {"code":"export {}","type":"module","reports":[]}
 {"code":"import {} from 'a'","type":"module","reports":[]}
-{"code":"var a = {}","type":"script","reports":["no-unused-vars 1:5 'a' is assigned a value but never used."]}
-{"code":"var {} = a","type":"script","reports":["no-empty-pattern 1:5 Unexpected empty object pattern.","no-undef 1:10 'a' is not defined."]}
-{"code":"({}) => {}","type":"script","reports":["no-empty-pattern 1:2 Unexpected empty object pattern."]}
-{"code":"function f({}) {}","type":"script","reports":["no-unused-vars 1:10 'f' is defined but never used.","no-empty-pattern 1:12 Unexpected empty object pattern."]}
+{"code":"var a = {}","type":"script","reports":[]}
+{"code":"var {} = a","type":"script","reports":[]}
+{"code":"({}) => {}","type":"script","reports":[]}
+{"code":"function f({}) {}","type":"script","reports":[]}
 {"code":"new (class {})","type":"script","reports":[]}
-{"code":"x = { a: {} }","type":"script","reports":["no-undef 1:1 'x' is not defined."]}
-{"code":"{ a }","type":"script","reports":["no-undef 1:3 'a' is not defined."]}
-{"code":"{ function f() {} }","type":"script","reports":["no-unused-vars 1:12 'f' is defined but never used."]}
-{"code":"{ class A {} }","type":"script","reports":["no-unused-vars 1:9 'A' is defined but never used."]}
-{"code":"{ var a }","type":"script","reports":["no-unused-vars 1:7 'a' is defined but never used."]}
+{"code":"x = { a: {} }","type":"script","reports":[]}
+{"code":"{ a }","type":"script","reports":[]}
+{"code":"{ function f() {} }","type":"script","reports":[]}
+{"code":"{ class A {} }","type":"script","reports":[]}
+{"code":"{ var a }","type":"script","reports":[]}
 {"code":"for (;;) { continue }","type":"script","reports":[]}
-{"code":"async function f() { for await (const a of b) {} }","type":"script","reports":["no-unused-vars 1:16 'f' is defined but never used.","no-unused-vars 1:39 'a' is assigned a value but never used.","no-undef 1:44 'b' is not defined.","no-empty 1:47 Empty block statement."]}
-{"code":"function* g() { while (yield) {} }","type":"script","reports":["no-unused-vars 1:11 'g' is defined but never used.","no-empty 1:31 Empty block statement."]}
+{"code":"async function f() { for await (const a of b) {} }","type":"script","reports":["1:47-1:49 Empty block statement."]}
+{"code":"function* g() { while (yield) {} }","type":"script","reports":["1:31-1:33 Empty block statement."]}

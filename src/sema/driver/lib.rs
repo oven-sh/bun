@@ -15,7 +15,7 @@ use bun_sema::messages;
 use bun_sema::program::{FileId, Files};
 use bun_sema::resolve::{Host, join, parent_dir};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 /// How much of the stack of a thread of the pool the checker lets itself use. What takes more is answered "unknown". The deepest any file of
@@ -233,6 +233,12 @@ fn roots_of_paths(
     roots
 }
 
+/// From how many bytes on a file is checked before the others.
+const BIG_FILE: u32 = 64 << 10;
+
+/// What is long for a file that is not big.
+const SLOW: Duration = Duration::from_millis(40);
+
 pub fn check(request: &Request) -> Report {
     let started = Instant::now();
     let threads = match request.threads {
@@ -373,12 +379,34 @@ pub fn check(request: &Request) -> Report {
     if let Some(only) = request.only {
         to_check.retain(|&f| program.files.modules[f.idx()].path.contains(only));
     }
-    // The biggest first, so that none of them is what everybody waits for at the end.
-    to_check.sort_by_key(|&f| std::cmp::Reverse(program.files.modules[f.idx()].hir.source_len));
+    // The biggest first, so that none of them is what everybody waits for at the end. Among the rest, how long a file takes has little to do
+    // with how long it is: a few lines can ask a lot of the types they use. In order of size all of those would come last. In no
+    // particular order, which is the same each time, one is as likely to come early.
+    let size = |f: FileId| program.files.modules[f.idx()].hir.source_len;
+    to_check.sort_by_key(|&f| std::cmp::Reverse(size(f)));
+    let big = to_check.partition_point(|&f| size(f) >= BIG_FILE);
+    to_check[big..].sort_by_cached_key(|&f| {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        program.files.modules[f.idx()].path.hash(&mut hasher);
+        hasher.finish()
+    });
     report.files_checked = to_check.len();
     let found: Mutex<Vec<Diagnostic>> = Mutex::new(Vec::new());
     let gave_up: Mutex<Vec<String>> = Mutex::new(Vec::new());
-    for_each_parallel(threads, to_check.len(), &|i| {
+    // Files that ask a lot of the same types tend to be next to each other. When a small file turns out to take long, what else is in its
+    // directory goes first, so that none of it is left for the end.
+    let mut neighbors: std::collections::HashMap<&str, Vec<usize>> = Default::default();
+    for (i, &file) in to_check.iter().enumerate().skip(big) {
+        let path = &program.files.modules[file.idx()].path[..];
+        neighbors
+            .entry(bun_sema::resolve::parent_dir(path))
+            .or_default()
+            .push(i);
+    }
+    let is_taken: Vec<AtomicBool> = to_check.iter().map(|_| AtomicBool::new(false)).collect();
+    let goes_first: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+    let check_one = |i: usize| {
         let file = to_check[i];
         // Dropped last, after all that was found out about the file.
         let _at_hand = program.files.bring_in(&disk, file);
@@ -423,6 +451,37 @@ pub fn check(request: &Request) -> Report {
             })
             .collect();
         found.lock().unwrap().extend(shown);
+    };
+    let take = |i: usize| {
+        if is_taken[i].swap(true, Ordering::Relaxed) {
+            return;
+        }
+        let began = Instant::now();
+        check_one(i);
+        if i >= big && began.elapsed() >= SLOW {
+            let path = &program.files.modules[to_check[i].idx()].path[..];
+            let next_to_it = &neighbors[bun_sema::resolve::parent_dir(path)];
+            goes_first.lock().unwrap().extend(
+                next_to_it
+                    .iter()
+                    .filter(|&&j| !is_taken[j].load(Ordering::Relaxed)),
+            );
+        }
+    };
+    let take_what_goes_first = || {
+        loop {
+            let next = goes_first.lock().unwrap().pop();
+            match next {
+                Some(i) => take(i),
+                None => break,
+            }
+        }
+    };
+    for_each_parallel(threads, to_check.len(), &|i| {
+        take_what_goes_first();
+        take(i);
+        // Whoever finds out at the very end is the only one left to act on it.
+        take_what_goes_first();
     });
     report.diagnostics.extend(found.into_inner().unwrap());
     report.gave_up = gave_up.into_inner().unwrap();

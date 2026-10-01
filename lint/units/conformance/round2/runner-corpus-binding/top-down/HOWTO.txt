@@ -22,10 +22,10 @@ The causes of the failing tests (release build, corpus in place, tree as committ
   A debug build skips "every instance is its line of the list": 37 fail there.
 
 Reproduce
-  bash ../scratch.sh /tmp/x/repo                      a clone with the corpus, tree as committed
+  bash ../../scratch.sh /tmp/x/repo                      a clone with the corpus, tree as committed
   cd /tmp/x/repo && USE_SYSTEM_BUN=1 /workspace/tools/lk bun test test/cli/lint/conformance.test.ts      66 pass, 38 fail, 1 error
   bash compare.sh /tmp/x/repo /tmp/x/cmp              "same 41, different 0"; it leaves the binding in the tree
-  bash ../typecheck.sh /tmp/x/repo                    no type error below test/cli/lint
+  bash ../../typecheck.sh /tmp/x/repo                    no type error below test/cli/lint
   cd /tmp/x/repo && USE_SYSTEM_BUN=1 /workspace/tools/lk bun test test/cli/lint/conformance.test.ts      105 pass, 0 fail
   cd /tmp/x/repo && BUN_DEBUG_QUIET_LOGS=1 /workspace/tools/lk /workspace/wt/conformance/build/debug/bun-debug test test/cli/lint/conformance.test.ts
                                                       104 pass, 1 skip, 0 fail

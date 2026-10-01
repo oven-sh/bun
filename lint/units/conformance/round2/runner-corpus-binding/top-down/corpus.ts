@@ -16,7 +16,7 @@ export interface CorpusInstance extends Instance {
   casePath: string;
   // The settings of the instance: those of the case with the values of its variation; undefined for a case without a setting.
   config: EnumeratedInstance["config"];
-  // The reference skips the emit of the case and still compares its error baseline.
+  // The case is one of skippedEmitTests: the reference skips its "output" subtest and still compares its error baseline.
   emitOnly: boolean;
   // submoduleAccepted.txt names the diff of the error baseline against TypeScript's; submoduleTriaged.txt names it.
   accepted: boolean;
@@ -34,7 +34,7 @@ export interface CorpusFacts extends InstanceFacts {
 
 export interface Corpus {
   paths: CorpusPaths;
-  // The instances of the case at a path below the cases: none for a case that the reference leaves out by name, none for a path of no case.
+  // The instances of the case at a path below the cases: none for a case that the reference leaves out by name or for a path that no suite lists; a case that cannot be read is one instance that the reference fails.
   enumerateCase(casePath: string): CorpusInstance[];
   // The instances of both suites in the order in which the reference starts them.
   enumerateInstances(): CorpusInstance[];

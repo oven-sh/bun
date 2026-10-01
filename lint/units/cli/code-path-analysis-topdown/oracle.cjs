@@ -8,7 +8,7 @@ const { Linter } = require(path.join(R, "lib/linter"));
 const debug = require(path.join(R, "lib/linter/code-path-analysis/debug-helpers"));
 let tsParser = null;
 function getTsParser() {
-	if (!tsParser) tsParser = require("/workspace/ref/tseslint/node_modules/@typescript-eslint/parser");
+	if (!tsParser) tsParser = require("module").createRequire("/workspace/ref/tseslint/package.json")("@typescript-eslint/parser");
 	return tsParser;
 }
 const linter = new Linter();

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # usage: compare.sh <tree> <out directory>
-# In a scratch clone of ../scratch.sh (no --prototype) with expectations.json in place: runs sweep.ts as committed, lays the
+# In a scratch clone of ../../scratch.sh (no --prototype) with expectations.json in place: runs sweep.ts as committed, lays the
 # binding over the tree with apply.sh, runs the same commands again and says for each whether the text and the report
 # are the same. One process at a time; the whole corpus is about 12 seconds a run with the installed release build.
 set -euo pipefail

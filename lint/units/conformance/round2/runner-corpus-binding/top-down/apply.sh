@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # usage: apply.sh <tree>
 # Lays the binding of this directory over a tree that holds the conformance runner as committed at 3110ce85cf: a scratch
-# clone of ../scratch.sh (without --prototype), or the worktree. It writes runner/corpus.ts and expectations.json (the
+# clone of ../../scratch.sh (without --prototype), or the worktree. It writes runner/corpus.ts and expectations.json (the
 # lists that are there stay), and patches runner/index.ts and sweep.ts; a patch that is in the tree already is left.
 # conformance.test.ts is not touched.
 set -euo pipefail

@@ -35,7 +35,7 @@ export interface CorpusFacts extends InstanceFacts {
 
 export interface Corpus {
   paths: CorpusPaths;
-  // Reads at once what is else read when it is first asked for: the cases, the names of the baselines and the three lists. It throws CorpusError.
+  // Reads now what is otherwise read when it is first asked for: the paths of the cases, the names of the baselines and the three lists. It throws CorpusError.
   load(): void;
   // The paths of the cases below the cases of the corpus, with forward slashes, in the order of their code units.
   cases(): readonly string[];
@@ -168,7 +168,7 @@ function factsOf(paths: CorpusPaths, instance: CorpusInstance): CorpusFacts {
   };
 }
 
-// Nothing is read before it is asked for.
+// Nothing is read before it is asked for: what cannot be read then, and two cases of one name, throw CorpusError.
 export function openCorpus(root: string): Corpus {
   const paths = corpusPaths(root);
   const read = <T>(what: () => T): T => {

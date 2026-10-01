@@ -1,0 +1,73 @@
+{"kind":"valid","code":"var foo = /foo/;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = RegExp('foo')","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = / /;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = RegExp(' ')","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = / a b c d /;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /bar {3}baz/g;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = RegExp('bar {3}baz', 'g')","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = new RegExp('bar {3}baz')","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /bar\t\t\tbaz/;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-control-regex 1:11 Unexpected control character(s) in regular expression: \\x09, \\x09, \\x09."]}
+{"kind":"valid","code":"var foo = RegExp('bar\t\t\tbaz');","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-control-regex 1:18 Unexpected control character(s) in regular expression: \\x09, \\x09, \\x09."]}
+{"kind":"valid","code":"var foo = new RegExp('bar\t\t\tbaz');","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-control-regex 1:22 Unexpected control character(s) in regular expression: \\x09, \\x09, \\x09."]}
+{"kind":"valid","code":"var RegExp = function() {}; var foo = new RegExp('bar   baz');","type":"script","reports":["no-redeclare 1:5 'RegExp' is already defined as a built-in global variable.","no-unused-vars 1:33 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var RegExp = function() {}; var foo = RegExp('bar   baz');","type":"script","reports":["no-redeclare 1:5 'RegExp' is already defined as a built-in global variable.","no-unused-vars 1:33 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /  +/;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /  ?/;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /  */;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /  {2}/;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /bar \\ baz/;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:16 Unnecessary escape character: \\ ."]}
+{"kind":"valid","code":"var foo = /bar\\ \\ baz/;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:15 Unnecessary escape character: \\ .","no-useless-escape 1:17 Unnecessary escape character: \\ ."]}
+{"kind":"valid","code":"var foo = /bar \\u0020 baz/;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /bar\\u0020\\u0020baz/;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = new RegExp('bar \\ baz')","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:27 Unnecessary escape character: \\ ."]}
+{"kind":"valid","code":"var foo = new RegExp('bar\\ \\ baz')","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:26 Unnecessary escape character: \\ .","no-useless-escape 1:28 Unnecessary escape character: \\ ."]}
+{"kind":"valid","code":"var foo = new RegExp('bar \\\\ baz')","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = new RegExp('bar \\u0020 baz')","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = new RegExp('bar\\u0020\\u0020baz')","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = new RegExp('bar \\\\u0020 baz')","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /[  ]/;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /[   ]/;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = / [  ] /;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = / [  ] [  ] /;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = new RegExp('[  ]');","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = new RegExp('[   ]');","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = new RegExp(' [  ] ');","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = RegExp(' [  ] [  ] ');","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = new RegExp(' \\[   ');","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-invalid-regexp 1:11 Invalid regular expression: / [   /: Unterminated character class.","no-useless-escape 1:24 Unnecessary escape character: \\[."]}
+{"kind":"valid","code":"var foo = new RegExp(' \\[   \\] ');","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:24 Unnecessary escape character: \\[.","no-useless-escape 1:29 Unnecessary escape character: \\]."]}
+{"kind":"valid","code":"var foo = /  {2}/v;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /[\\q{    }]/v;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = new RegExp('[  ');","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-invalid-regexp 1:11 Invalid regular expression: /[  /: Unterminated character class."]}
+{"kind":"valid","code":"var foo = new RegExp('{  ', 'u');","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-invalid-regexp 1:11 Invalid regular expression: /{  /u: Lone quantifier brackets."]}
+{"kind":"valid","code":"new RegExp('  ', flags)","type":"script","reports":["no-undef 1:18 'flags' is not defined."]}
+{"kind":"valid","code":"new RegExp('[[abc]  ]', flags + 'v')","type":"script","reports":["no-undef 1:25 'flags' is not defined."]}
+{"kind":"valid","code":"new RegExp('[[abc]\\\\q{  }]', flags + 'v')","type":"script","reports":["no-undef 1:30 'flags' is not defined."]}
+{"kind":"invalid","code":"var foo = /bar  baz/;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-regex-spaces 1:11 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = /bar    baz/;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-regex-spaces 1:11 Spaces are hard to count. Use {4}."]}
+{"kind":"invalid","code":"var foo = / a b  c d /;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-regex-spaces 1:11 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = RegExp(' a b c d  ');","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-regex-spaces 1:11 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = RegExp('bar    baz');","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-regex-spaces 1:11 Spaces are hard to count. Use {4}."]}
+{"kind":"invalid","code":"var foo = new RegExp('bar    baz');","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-regex-spaces 1:11 Spaces are hard to count. Use {4}."]}
+{"kind":"invalid","code":"{ let RegExp = function() {}; } var foo = RegExp('bar    baz');","type":"script","reports":["no-unused-vars 1:7 'RegExp' is assigned a value but never used.","no-unused-vars 1:37 'foo' is assigned a value but never used.","no-regex-spaces 1:43 Spaces are hard to count. Use {4}."]}
+{"kind":"invalid","code":"var foo = /bar   {3}baz/;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-regex-spaces 1:11 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = /bar    ?baz/;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-regex-spaces 1:11 Spaces are hard to count. Use {3}."]}
+{"kind":"invalid","code":"var foo = new RegExp('bar   *baz')","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-regex-spaces 1:11 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = RegExp('bar   +baz')","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-regex-spaces 1:11 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = new RegExp('bar    ');","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-regex-spaces 1:11 Spaces are hard to count. Use {4}."]}
+{"kind":"invalid","code":"var foo = /bar\\  baz/;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-regex-spaces 1:11 Spaces are hard to count. Use {2}.","no-useless-escape 1:15 Unnecessary escape character: \\ ."]}
+{"kind":"invalid","code":"var foo = /[   ]  /;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-regex-spaces 1:11 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = /  [   ] /;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-regex-spaces 1:11 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = new RegExp('[   ]  ');","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-regex-spaces 1:11 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = RegExp('  [ ]');","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-regex-spaces 1:11 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = /\\[  /;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-regex-spaces 1:11 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = /\\[  \\]/;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-regex-spaces 1:11 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = /(?:  )/;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-regex-spaces 1:11 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = RegExp('^foo(?=   )');","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-regex-spaces 1:11 Spaces are hard to count. Use {3}."]}
+{"kind":"invalid","code":"var foo = /\\  /","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-regex-spaces 1:11 Spaces are hard to count. Use {2}.","no-useless-escape 1:12 Unnecessary escape character: \\ ."]}
+{"kind":"invalid","code":"var foo = / \\  /","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-regex-spaces 1:11 Spaces are hard to count. Use {2}.","no-useless-escape 1:13 Unnecessary escape character: \\ ."]}
+{"kind":"invalid","code":"var foo = /  foo   /;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-regex-spaces 1:11 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = new RegExp('\\\\d  ')","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-regex-spaces 1:11 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = RegExp('\\u0041   ')","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-regex-spaces 1:11 Spaces are hard to count. Use {3}."]}
+{"kind":"invalid","code":"var foo = new RegExp('\\\\[  \\\\]');","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-regex-spaces 1:11 Spaces are hard to count. Use {2}."]}
+{"kind":"invalid","code":"var foo = /[[    ]    ]    /v;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-regex-spaces 1:11 Spaces are hard to count. Use {4}."]}
+{"kind":"invalid","code":"var foo = new RegExp('[[    ]    ]    ', 'v');","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-regex-spaces 1:11 Spaces are hard to count. Use {4}."]}

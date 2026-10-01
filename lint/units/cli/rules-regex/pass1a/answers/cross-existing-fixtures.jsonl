@@ -1,0 +1,1 @@
+{"rule":"no-regex-spaces","from":"no-duplicate-case","code":"switch (a) { case /a b/: break; case /a  b/: break; }","expect":[{"line":1,"column":38,"message":"Spaces are hard to count. Use {2}."}]}

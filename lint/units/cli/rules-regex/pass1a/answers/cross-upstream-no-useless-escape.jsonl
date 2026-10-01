@@ -1,0 +1,238 @@
+{"kind":"valid","code":"var foo = /\\./","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /\\//g","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /\"\"/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /''/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /([A-Z])\\t+/g","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /([A-Z])\\n+/g","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /([A-Z])\\v+/g","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /\\D/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /\\W/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /\\w/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /\\\\/g","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /\\w\\$\\*\\./","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /\\^\\+\\./","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /\\|\\}\\{\\./","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /]\\[\\(\\)\\//","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = \"\\x123\"","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = \"\\u00a9\"","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = \"\\377\"","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = \"\\\"\"","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = \"xs\\u2111\"","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = \"foo \\\\ bar\";","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = \"\\t\";","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = \"foo \\b bar\";","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = '\\n';","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = 'foo \\r bar';","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = '\\v';","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = '\\f';","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = '\\\n';","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = '\\\r\n';","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"<foo attr=\"\\d\"/>","type":"script","jsx":true,"reports":[]}
+{"kind":"valid","code":"<div> Testing: \\ </div>","type":"script","jsx":true,"reports":[]}
+{"kind":"valid","code":"<div> Testing: &#x5C </div>","type":"script","jsx":true,"reports":[]}
+{"kind":"valid","code":"<foo attr='\\d'></foo>","type":"script","jsx":true,"reports":[]}
+{"kind":"valid","code":"<> Testing: \\ </>","type":"script","jsx":true,"reports":[]}
+{"kind":"valid","code":"<> Testing: &#x5C </>","type":"script","jsx":true,"reports":[]}
+{"kind":"valid","code":"var foo = `\\x123`","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = `\\u00a9`","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = `xs\\u2111`","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = `foo \\\\ bar`;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = `\\t`;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = `foo \\b bar`;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = `\\n`;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = `foo \\r bar`;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = `\\v`;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = `\\f`;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = `\\\n`;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = `\\\r\n`;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = `${foo} \\x123`","type":"script","reports":["no-useless-assignment 1:5 The value assigned to 'foo' is not used in subsequent statements."]}
+{"kind":"valid","code":"var foo = `${foo} \\u00a9`","type":"script","reports":["no-useless-assignment 1:5 The value assigned to 'foo' is not used in subsequent statements."]}
+{"kind":"valid","code":"var foo = `${foo} xs\\u2111`","type":"script","reports":["no-useless-assignment 1:5 The value assigned to 'foo' is not used in subsequent statements."]}
+{"kind":"valid","code":"var foo = `${foo} \\\\ ${bar}`;","type":"script","reports":["no-useless-assignment 1:5 The value assigned to 'foo' is not used in subsequent statements.","no-undef 1:24 'bar' is not defined."]}
+{"kind":"valid","code":"var foo = `${foo} \\b ${bar}`;","type":"script","reports":["no-useless-assignment 1:5 The value assigned to 'foo' is not used in subsequent statements.","no-undef 1:24 'bar' is not defined."]}
+{"kind":"valid","code":"var foo = `${foo}\\t`;","type":"script","reports":["no-useless-assignment 1:5 The value assigned to 'foo' is not used in subsequent statements."]}
+{"kind":"valid","code":"var foo = `${foo}\\n`;","type":"script","reports":["no-useless-assignment 1:5 The value assigned to 'foo' is not used in subsequent statements."]}
+{"kind":"valid","code":"var foo = `${foo}\\r`;","type":"script","reports":["no-useless-assignment 1:5 The value assigned to 'foo' is not used in subsequent statements."]}
+{"kind":"valid","code":"var foo = `${foo}\\v`;","type":"script","reports":["no-useless-assignment 1:5 The value assigned to 'foo' is not used in subsequent statements."]}
+{"kind":"valid","code":"var foo = `${foo}\\f`;","type":"script","reports":["no-useless-assignment 1:5 The value assigned to 'foo' is not used in subsequent statements."]}
+{"kind":"valid","code":"var foo = `${foo}\\\n`;","type":"script","reports":["no-useless-assignment 1:5 The value assigned to 'foo' is not used in subsequent statements."]}
+{"kind":"valid","code":"var foo = `${foo}\\\r\n`;","type":"script","reports":["no-useless-assignment 1:5 The value assigned to 'foo' is not used in subsequent statements."]}
+{"kind":"valid","code":"var foo = `\\``","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = `\\`${foo}\\``","type":"script","reports":["no-useless-assignment 1:5 The value assigned to 'foo' is not used in subsequent statements."]}
+{"kind":"valid","code":"var foo = `\\${{${foo}`;","type":"script","reports":["no-useless-assignment 1:5 The value assigned to 'foo' is not used in subsequent statements."]}
+{"kind":"valid","code":"var foo = `$\\{{${foo}`;","type":"script","reports":["no-useless-assignment 1:5 The value assigned to 'foo' is not used in subsequent statements."]}
+{"kind":"valid","code":"var foo = String.raw`\\.`","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = myFunc`\\.`","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-undef 1:11 'myFunc' is not defined."]}
+{"kind":"valid","code":"var foo = /[\\d]/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /[a\\-b]/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /foo\\?/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /example\\.com/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /foo\\|bar/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /\\^bar/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /[\\^bar]/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /\\(bar\\)/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /[[\\]]/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /[[]\\./","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /[\\]\\]]/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /\\[abc]/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /\\[foo\\.bar]/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /vi/m","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /\\B/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /\\0/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /\\1/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /(a)\\1/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /(a)\\12/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /[\\0]/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = 'foo \\  bar'","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = 'foo \\  bar'","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"/]/","type":"script","reports":[]}
+{"kind":"valid","code":"/\\]/","type":"script","reports":[]}
+{"kind":"valid","code":"/\\]/u","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = /foo\\]/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /[[]\\]/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /\\[foo\\.bar\\]/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /(?<a>)\\k<a>/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /(\\\\?<a>)/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /\\p{ASCII}/u","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /\\P{ASCII}/u","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /[\\p{ASCII}]/u","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"var foo = /[\\P{ASCII}]/u","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used."]}
+{"kind":"valid","code":"/[^^]/","type":"script","reports":[]}
+{"kind":"valid","code":"/[^^]/u","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\q{abc}]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\(]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\)]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\{]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\]]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\}]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\/]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\-]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\|]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\$$]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\&&]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\!!]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\##]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\%%]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\**]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\++]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\,,]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\..]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\::]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\;;]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\<<]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\==]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\>>]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\??]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\@@]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\``]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\~~]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[^\\^^]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[_\\^^]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[$\\$]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[&\\&]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[!\\!]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[#\\#]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[%\\%]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[*\\*]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[+\\+]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[,\\,]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[.\\.]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[:\\:]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[;\\;]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[<\\<]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[=\\=]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[>\\>]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[?\\?]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[@\\@]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[`\\`]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[~\\~]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[^^\\^]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[_^\\^]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\&&&\\&]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[[\\-]\\-]/v","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\^]/v","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = /\\#/;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:12 Unnecessary escape character: \\#."]}
+{"kind":"valid","code":"var foo = /\\;/;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:12 Unnecessary escape character: \\;."]}
+{"kind":"valid","code":"var foo = /\\#\\;/;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:12 Unnecessary escape character: \\#.","no-useless-escape 1:14 Unnecessary escape character: \\;."]}
+{"kind":"valid","code":"var foo = /[ab\\-]/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:15 Unnecessary escape character: \\-."]}
+{"kind":"valid","code":"var foo = /[\\-ab]/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:13 Unnecessary escape character: \\-."]}
+{"kind":"valid","code":"var foo = /[ab\\?]/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:15 Unnecessary escape character: \\?."]}
+{"kind":"valid","code":"var foo = /[ab\\.]/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:15 Unnecessary escape character: \\.."]}
+{"kind":"valid","code":"var foo = /[a\\|b]/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:14 Unnecessary escape character: \\|."]}
+{"kind":"valid","code":"var foo = /\\-/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:12 Unnecessary escape character: \\-."]}
+{"kind":"valid","code":"var foo = /[\\-]/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:13 Unnecessary escape character: \\-."]}
+{"kind":"valid","code":"var foo = /[ab\\$]/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:15 Unnecessary escape character: \\$."]}
+{"kind":"valid","code":"var foo = /[\\(paren]/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:13 Unnecessary escape character: \\(."]}
+{"kind":"valid","code":"var foo = /[\\[]/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:13 Unnecessary escape character: \\[."]}
+{"kind":"valid","code":"var foo = /[\\/]/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:13 Unnecessary escape character: \\/."]}
+{"kind":"valid","code":"var foo = /[\\B]/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:13 Unnecessary escape character: \\B."]}
+{"kind":"valid","code":"var foo = /[a][\\-b]/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:16 Unnecessary escape character: \\-."]}
+{"kind":"valid","code":"var foo = /\\-[]/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-empty-character-class 1:11 Empty class.","no-useless-escape 1:12 Unnecessary escape character: \\-."]}
+{"kind":"valid","code":"var foo = /[a\\^]/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:14 Unnecessary escape character: \\^."]}
+{"kind":"valid","code":"/[^\\^]/","type":"script","reports":["no-useless-escape 1:4 Unnecessary escape character: \\^."]}
+{"kind":"valid","code":"/[^\\^]/u","type":"script","reports":["no-useless-escape 1:4 Unnecessary escape character: \\^."]}
+{"kind":"valid","code":"/[\\$]/v","type":"script","reports":["no-useless-escape 1:3 Unnecessary escape character: \\$."]}
+{"kind":"valid","code":"/[\\&\\&]/v","type":"script","reports":["no-useless-escape 1:3 Unnecessary escape character: \\&."]}
+{"kind":"valid","code":"/[\\*\\*]/v","type":"script","reports":["no-useless-escape 1:3 Unnecessary escape character: \\*."]}
+{"kind":"valid","code":"/[\\+\\+]/v","type":"script","reports":["no-useless-escape 1:3 Unnecessary escape character: \\+."]}
+{"kind":"valid","code":"/[\\:\\:]/v","type":"script","reports":["no-useless-escape 1:3 Unnecessary escape character: \\:."]}
+{"kind":"valid","code":"/[\\;\\;]/v","type":"script","reports":["no-useless-escape 1:3 Unnecessary escape character: \\;."]}
+{"kind":"valid","code":"/[\\<\\<]/v","type":"script","reports":["no-useless-escape 1:3 Unnecessary escape character: \\<."]}
+{"kind":"valid","code":"/[\\=\\=]/v","type":"script","reports":["no-useless-escape 1:3 Unnecessary escape character: \\=."]}
+{"kind":"valid","code":"/[\\>\\>]/v","type":"script","reports":["no-useless-escape 1:3 Unnecessary escape character: \\>."]}
+{"kind":"valid","code":"/[\\?\\?]/v","type":"script","reports":["no-useless-escape 1:3 Unnecessary escape character: \\?."]}
+{"kind":"valid","code":"/[\\@\\@]/v","type":"script","reports":["no-useless-escape 1:3 Unnecessary escape character: \\@."]}
+{"kind":"valid","code":"/[\\~\\~]/v","type":"script","reports":["no-useless-escape 1:3 Unnecessary escape character: \\~."]}
+{"kind":"valid","code":"/[^\\^\\^]/v","type":"script","reports":["no-useless-escape 1:4 Unnecessary escape character: \\^."]}
+{"kind":"valid","code":"/[_\\^\\^]/v","type":"script","reports":["no-useless-escape 1:4 Unnecessary escape character: \\^."]}
+{"kind":"valid","code":"/[\\&\\&&\\&]/v","type":"script","reports":["no-useless-escape 1:3 Unnecessary escape character: \\&."]}
+{"kind":"valid","code":"/[\\p{ASCII}--\\.]/v","type":"script","reports":["no-useless-escape 1:14 Unnecessary escape character: \\.."]}
+{"kind":"valid","code":"/[\\p{ASCII}&&\\.]/v","type":"script","reports":["no-useless-escape 1:14 Unnecessary escape character: \\.."]}
+{"kind":"valid","code":"/[\\.--[.&]]/v","type":"script","reports":["no-useless-escape 1:3 Unnecessary escape character: \\.."]}
+{"kind":"valid","code":"/[\\.&&[.&]]/v","type":"script","reports":["no-useless-escape 1:3 Unnecessary escape character: \\.."]}
+{"kind":"valid","code":"/[\\.--\\.--\\.]/v","type":"script","reports":["no-useless-escape 1:3 Unnecessary escape character: \\..","no-useless-escape 1:7 Unnecessary escape character: \\..","no-useless-escape 1:11 Unnecessary escape character: \\.."]}
+{"kind":"valid","code":"/[\\.&&\\.&&\\.]/v","type":"script","reports":["no-useless-escape 1:3 Unnecessary escape character: \\..","no-useless-escape 1:7 Unnecessary escape character: \\..","no-useless-escape 1:11 Unnecessary escape character: \\.."]}
+{"kind":"valid","code":"/[[\\.&]--[\\.&]]/v","type":"script","reports":["no-useless-escape 1:4 Unnecessary escape character: \\..","no-useless-escape 1:11 Unnecessary escape character: \\.."]}
+{"kind":"valid","code":"/[[\\.&]&&[\\.&]]/v","type":"script","reports":["no-useless-escape 1:4 Unnecessary escape character: \\..","no-useless-escape 1:11 Unnecessary escape character: \\.."]}
+{"kind":"invalid","code":"var foo = \"\\'\";","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:12 Unnecessary escape character: \\'."]}
+{"kind":"invalid","code":"var foo = \"\\#/\";","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:12 Unnecessary escape character: \\#."]}
+{"kind":"invalid","code":"var foo = \"\\a\"","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:12 Unnecessary escape character: \\a."]}
+{"kind":"invalid","code":"var foo = \"\\B\";","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:12 Unnecessary escape character: \\B."]}
+{"kind":"invalid","code":"var foo = \"\\@\";","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:12 Unnecessary escape character: \\@."]}
+{"kind":"invalid","code":"var foo = \"foo \\a bar\";","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:16 Unnecessary escape character: \\a."]}
+{"kind":"invalid","code":"var foo = '\\\"';","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:12 Unnecessary escape character: \\\"."]}
+{"kind":"invalid","code":"var foo = '\\#';","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:12 Unnecessary escape character: \\#."]}
+{"kind":"invalid","code":"var foo = '\\$';","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:12 Unnecessary escape character: \\$."]}
+{"kind":"invalid","code":"var foo = '\\p';","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:12 Unnecessary escape character: \\p."]}
+{"kind":"invalid","code":"var foo = '\\p\\a\\@';","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:12 Unnecessary escape character: \\p.","no-useless-escape 1:14 Unnecessary escape character: \\a.","no-useless-escape 1:16 Unnecessary escape character: \\@."]}
+{"kind":"invalid","code":"<foo attr={\"\\d\"}/>","type":"script","jsx":true,"reports":["no-useless-escape 1:13 Unnecessary escape character: \\d."]}
+{"kind":"invalid","code":"var foo = '\\`';","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:12 Unnecessary escape character: \\`."]}
+{"kind":"invalid","code":"var foo = `\\\"`;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:12 Unnecessary escape character: \\\"."]}
+{"kind":"invalid","code":"var foo = `\\'`;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:12 Unnecessary escape character: \\'."]}
+{"kind":"invalid","code":"var foo = `\\#`;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:12 Unnecessary escape character: \\#."]}
+{"kind":"invalid","code":"var foo = '\\`foo\\`';","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:12 Unnecessary escape character: \\`.","no-useless-escape 1:17 Unnecessary escape character: \\`."]}
+{"kind":"invalid","code":"var foo = `\\\"${foo}\\\"`;","type":"script","reports":["no-useless-assignment 1:5 The value assigned to 'foo' is not used in subsequent statements.","no-useless-escape 1:12 Unnecessary escape character: \\\".","no-useless-escape 1:20 Unnecessary escape character: \\\"."]}
+{"kind":"invalid","code":"var foo = `\\'${foo}\\'`;","type":"script","reports":["no-useless-assignment 1:5 The value assigned to 'foo' is not used in subsequent statements.","no-useless-escape 1:12 Unnecessary escape character: \\'.","no-useless-escape 1:20 Unnecessary escape character: \\'."]}
+{"kind":"invalid","code":"var foo = `\\#${foo}`;","type":"script","reports":["no-useless-assignment 1:5 The value assigned to 'foo' is not used in subsequent statements.","no-useless-escape 1:12 Unnecessary escape character: \\#."]}
+{"kind":"invalid","code":"let foo = '\\ ';","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:12 Unnecessary escape character: \\ ."]}
+{"kind":"invalid","code":"let foo = /\\ /;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:12 Unnecessary escape character: \\ ."]}
+{"kind":"invalid","code":"var foo = `\\$\\{{${foo}`;","type":"script","reports":["no-useless-assignment 1:5 The value assigned to 'foo' is not used in subsequent statements.","no-useless-escape 1:12 Unnecessary escape character: \\$."]}
+{"kind":"invalid","code":"var foo = `\\$a${foo}`;","type":"script","reports":["no-useless-assignment 1:5 The value assigned to 'foo' is not used in subsequent statements.","no-useless-escape 1:12 Unnecessary escape character: \\$."]}
+{"kind":"invalid","code":"var foo = `a\\{{${foo}`;","type":"script","reports":["no-useless-assignment 1:5 The value assigned to 'foo' is not used in subsequent statements.","no-useless-escape 1:13 Unnecessary escape character: \\{."]}
+{"kind":"invalid","code":"`multiline template\nliteral with useless \\escape`","type":"script","reports":["no-useless-escape 2:22 Unnecessary escape character: \\e."]}
+{"kind":"invalid","code":"`multiline template\r\nliteral with useless \\escape`","type":"script","reports":["no-useless-escape 2:22 Unnecessary escape character: \\e."]}
+{"kind":"invalid","code":"`template literal with line continuation \\\nand useless \\escape`","type":"script","reports":["no-useless-escape 2:13 Unnecessary escape character: \\e."]}
+{"kind":"invalid","code":"`template literal with line continuation \\\r\nand useless \\escape`","type":"script","reports":["no-useless-escape 2:13 Unnecessary escape character: \\e."]}
+{"kind":"invalid","code":"`template literal with mixed linebreaks \r\r\n\n\\and useless escape`","type":"script","reports":["no-useless-escape 4:1 Unnecessary escape character: \\a."]}
+{"kind":"invalid","code":"`template literal with mixed linebreaks in line continuations \\\n\\\r\\\r\n\\and useless escape`","type":"script","reports":["no-useless-escape 4:1 Unnecessary escape character: \\a."]}
+{"kind":"invalid","code":"`\\a```","type":"script","reports":["no-useless-escape 1:2 Unnecessary escape character: \\a."]}
+{"kind":"invalid","code":"\"use\\ strict\";","type":"script","reports":["no-useless-escape 1:5 Unnecessary escape character: \\ ."]}
+{"kind":"invalid","code":"({ foo() { \"foo\"; \"bar\"; \"ba\\z\" } })","type":"script","reports":["no-useless-escape 1:29 Unnecessary escape character: \\z."]}
+{"kind":"invalid","code":"/[\\!\\!]/v","type":"script","reports":["no-useless-escape 1:3 Unnecessary escape character: \\!."]}
+{"kind":"invalid","code":"/[\\#\\#]/v","type":"script","reports":["no-useless-escape 1:3 Unnecessary escape character: \\#."]}
+{"kind":"invalid","code":"/[\\%\\%]/v","type":"script","reports":["no-useless-escape 1:3 Unnecessary escape character: \\%."]}
+{"kind":"invalid","code":"/[\\,\\,]/v","type":"script","reports":["no-useless-escape 1:3 Unnecessary escape character: \\,."]}
+{"kind":"invalid","code":"/[\\.\\.]/v","type":"script","reports":["no-useless-escape 1:3 Unnecessary escape character: \\.."]}
+{"kind":"invalid","code":"/[\\`\\`]/v","type":"script","reports":["no-useless-escape 1:3 Unnecessary escape character: \\`."]}
+{"kind":"invalid","code":"var foo = /\\#\\@/;","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:12 Unnecessary escape character: \\#.","no-useless-escape 1:14 Unnecessary escape character: \\@."]}
+{"kind":"invalid","code":"var foo = /[a\\@b]/","type":"script","reports":["no-unused-vars 1:5 'foo' is assigned a value but never used.","no-useless-escape 1:14 Unnecessary escape character: \\@."]}

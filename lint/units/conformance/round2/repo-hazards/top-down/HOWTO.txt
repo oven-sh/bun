@@ -1,0 +1,33 @@
+How the numbers of the pass "repo-hazards, top-down" (2026-10-01) are made again. Nothing here changes the unit's worktree.
+
+S is a scratch clone of the conformance branch with the corpus written by sync.sh (111 MB):
+  bash ../../scratch.sh /tmp/rh/scratch
+
+1. The candidate describe (repository-describe.candidate.ts) as a real test, three ways, behind the lock:
+  /workspace/tools/lk bash run-tests.sh /tmp/rh/scratch /tmp/rh/logs
+  Result at 3110ce85cf: 4 pass, 0 fail in each of: installed release build (1.09 s in all), debug build with ASAN (3.43 s),
+  debug build with the leak check of CI (3.64 s, exit code 0). The machine had a load average of 370 on 16 processors.
+
+2. That it fails for each hazard, as a plain script (no test run, no build):
+  bash mutations.sh /tmp/rh/scratch
+  A file zz.test.ts, a file below js/node/test/parallel, a directory node_modules, a directory that starts with a dot,
+  a file A_Test.ts (bun test only), and a changed rule of the runner each fail a test, in a full and in a debug build.
+  Files that start with a dot (corpus/.gitignore, .DS_Store) fail nothing.
+
+3. The runner's own predicates on a list of paths (one path from the root of the repository per line):
+  git -C <a clone with the corpus committed> ls-tree -r --name-only HEAD -- test/cli/lint/conformance > tree.txt
+  bun names.ts /workspace/wt/conformance/scripts/runner.node.ts tree.txt
+  Result: 22,230 paths, none taken by isTest, isTestStrict, isNodeTest, isClusterTest or isJavaScriptTest in either
+  form (below test/, from the root) with either separator; isHidden only for the two .gitattributes; 12,482 JavaScript or
+  TypeScript names; 44 *.d.ts; longest path 191.
+
+4. What a debug build pays per operation over the 22,230 names (why the describe asks the rule about few paths there):
+  BUN_DEBUG_QUIET_LOGS=1 /workspace/wt/conformance/build/debug/bun-debug ops.ts tree.txt
+  path.replaceAll(sep, "/") alone: 12 s of wall time for 22,230 calls; the runner's isTest calls it twice.
+  The candidate with every path asked of the rule: 20.0 s of processor time in the debug build; with the shortcut 0.86 s.
+
+5. Comment runs and markers in the corpus, with the rule of tools/commentcop.py:
+  python3 comments.py /tmp/rh/scratch/test/cli/lint/conformance/corpus
+
+6. The refusal of sync.sh (its line 263) against the names that a discoverer takes: the awk line of the findings, fed with
+  the paths of step 3 (0 refused) and with probe names (12 of 12 refused, 11 of 11 look-alikes let through).

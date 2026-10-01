@@ -1,0 +1,2 @@
+cases 3341 that ESLint's parser rejects 0
+no-regex-spaces <- no-duplicate-case 1

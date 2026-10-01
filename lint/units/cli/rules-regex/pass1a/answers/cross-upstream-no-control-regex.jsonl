@@ -1,0 +1,49 @@
+{"kind":"valid","code":"var regex = /x1f/","type":"script","reports":["no-unused-vars 1:5 'regex' is assigned a value but never used."]}
+{"kind":"valid","code":"var regex = /\\\\x1f/","type":"script","reports":["no-unused-vars 1:5 'regex' is assigned a value but never used."]}
+{"kind":"valid","code":"var regex = new RegExp('x1f')","type":"script","reports":["no-unused-vars 1:5 'regex' is assigned a value but never used."]}
+{"kind":"valid","code":"var regex = RegExp('x1f')","type":"script","reports":["no-unused-vars 1:5 'regex' is assigned a value but never used."]}
+{"kind":"valid","code":"new RegExp('[')","type":"script","reports":["no-invalid-regexp 1:1 Invalid regular expression: /[/: Unterminated character class."]}
+{"kind":"valid","code":"RegExp('[')","type":"script","reports":["no-invalid-regexp 1:1 Invalid regular expression: /[/: Unterminated character class."]}
+{"kind":"valid","code":"function foo(RegExp) { RegExp(\"\\x1f\"); }","type":"script","reports":["no-unused-vars 1:10 'foo' is defined but never used."]}
+{"kind":"valid","code":"function foo(RegExp) { new RegExp(\"\\x1f\"); }","type":"script","reports":["no-unused-vars 1:10 'foo' is defined but never used."]}
+{"kind":"valid","code":"let RegExp; RegExp(\"\\x1f\");","type":"script","reports":["no-redeclare 1:5 'RegExp' is already defined as a built-in global variable.","no-unassigned-vars 1:5 'RegExp' is always 'undefined' because it's never assigned."]}
+{"kind":"valid","code":"RegExp(\"\\x1f\")","type":"script","reports":["no-control-regex 1:8 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"valid","code":"new (function foo(){})('\\x1f')","type":"script","reports":[]}
+{"kind":"valid","code":"/\\u{20}/u","type":"script","reports":[]}
+{"kind":"valid","code":"/\\u{1F}/","type":"script","reports":[]}
+{"kind":"valid","code":"/\\u{1F}/g","type":"script","reports":[]}
+{"kind":"valid","code":"new RegExp(\"\\\\u{20}\", \"u\")","type":"script","reports":[]}
+{"kind":"valid","code":"new RegExp(\"\\\\u{1F}\")","type":"script","reports":[]}
+{"kind":"valid","code":"new RegExp(\"\\\\u{1F}\", \"g\")","type":"script","reports":[]}
+{"kind":"valid","code":"new RegExp(\"\\\\u{1F}\", flags)","type":"script","reports":["no-undef 1:23 'flags' is not defined."]}
+{"kind":"valid","code":"new RegExp(\"[\\\\q{\\\\u{20}}]\", \"v\")","type":"script","reports":[]}
+{"kind":"valid","code":"/[\\u{20}--B]/v","type":"script","reports":[]}
+{"kind":"valid","code":"var regex = /\\c1/","type":"script","reports":["no-unused-vars 1:5 'regex' is assigned a value but never used."]}
+{"kind":"valid","code":"var regex = /\\c$/","type":"script","reports":["no-unused-vars 1:5 'regex' is assigned a value but never used."]}
+{"kind":"valid","code":"var regex = new RegExp('\\\\c1')","type":"script","reports":["no-unused-vars 1:5 'regex' is assigned a value but never used."]}
+{"kind":"valid","code":"var regex = /\\cA/","type":"script","reports":["no-unused-vars 1:5 'regex' is assigned a value but never used."]}
+{"kind":"valid","code":"var regex = /\\cz/","type":"script","reports":["no-unused-vars 1:5 'regex' is assigned a value but never used."]}
+{"kind":"valid","code":"var regex = new RegExp('\\\\cA')","type":"script","reports":["no-unused-vars 1:5 'regex' is assigned a value but never used."]}
+{"kind":"valid","code":"/\\cA/u","type":"script","reports":[]}
+{"kind":"valid","code":"/\\cA/v","type":"script","reports":[]}
+{"kind":"invalid","code":"var regex = /\\x1f/","type":"script","reports":["no-unused-vars 1:5 'regex' is assigned a value but never used.","no-control-regex 1:13 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"var regex = /\\\\\\x1f\\\\x1e/","type":"script","reports":["no-unused-vars 1:5 'regex' is assigned a value but never used.","no-control-regex 1:13 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"var regex = /\\\\\\x1fFOO\\\\x00/","type":"script","reports":["no-unused-vars 1:5 'regex' is assigned a value but never used.","no-control-regex 1:13 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"var regex = /FOO\\\\\\x1fFOO\\\\x1f/","type":"script","reports":["no-unused-vars 1:5 'regex' is assigned a value but never used.","no-control-regex 1:13 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"var regex = new RegExp('\\x1f\\x1e')","type":"script","reports":["no-unused-vars 1:5 'regex' is assigned a value but never used.","no-control-regex 1:24 Unexpected control character(s) in regular expression: \\x1f, \\x1e."]}
+{"kind":"invalid","code":"var regex = new RegExp('\\x1fFOO\\x00')","type":"script","reports":["no-unused-vars 1:5 'regex' is assigned a value but never used.","no-control-regex 1:24 Unexpected control character(s) in regular expression: \\x1f, \\x00."]}
+{"kind":"invalid","code":"var regex = new RegExp('FOO\\x1fFOO\\x1f')","type":"script","reports":["no-unused-vars 1:5 'regex' is assigned a value but never used.","no-control-regex 1:24 Unexpected control character(s) in regular expression: \\x1f, \\x1f."]}
+{"kind":"invalid","code":"var regex = RegExp('\\x1f')","type":"script","reports":["no-unused-vars 1:5 'regex' is assigned a value but never used.","no-control-regex 1:20 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"var regex = /(?<a>\\x1f)/","type":"script","reports":["no-unused-vars 1:5 'regex' is assigned a value but never used.","no-control-regex 1:13 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"var regex = /(?<\\u{1d49c}>.)\\x1f/","type":"script","reports":["no-unused-vars 1:5 'regex' is assigned a value but never used.","no-control-regex 1:13 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"new RegExp(\"\\\\u001F\", flags)","type":"script","reports":["no-control-regex 1:12 Unexpected control character(s) in regular expression: \\x1f.","no-undef 1:23 'flags' is not defined."]}
+{"kind":"invalid","code":"/\\u{1111}*\\x1F/u","type":"script","reports":["no-control-regex 1:1 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"new RegExp(\"\\\\u{1111}*\\\\x1F\", \"u\")","type":"script","reports":["no-control-regex 1:12 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"/\\u{1F}/u","type":"script","reports":["no-control-regex 1:1 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"/\\u{1F}/gui","type":"script","reports":["no-control-regex 1:1 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"new RegExp(\"\\\\u{1F}\", \"u\")","type":"script","reports":["no-control-regex 1:12 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"new RegExp(\"\\\\u{1F}\", \"gui\")","type":"script","reports":["no-control-regex 1:12 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"new RegExp(\"[\\\\q{\\\\u{1F}}]\", \"v\")","type":"script","reports":["no-control-regex 1:12 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"/[\\u{1F}--B]/v","type":"script","reports":["no-control-regex 1:1 Unexpected control character(s) in regular expression: \\x1f."]}
+{"kind":"invalid","code":"/\\x11/; RegExp(\"foo\", \"uv\");","type":"script","reports":["no-control-regex 1:1 Unexpected control character(s) in regular expression: \\x11.","no-invalid-regexp 1:9 Regex 'u' and 'v' flags cannot be used together."]}
+{"kind":"invalid","code":"var regex = /\\x1f\\cA/","type":"script","reports":["no-unused-vars 1:5 'regex' is assigned a value but never used.","no-control-regex 1:13 Unexpected control character(s) in regular expression: \\x1f."]}

@@ -601,7 +601,7 @@ class Database implements SqliteTypes.Database {
       const maxBytes = Database.MAX_QUERY_CACHE_BYTES;
       // evicted statements stay usable; close() still finalizes them via kOwnedByDatabaseFlag
       while (cache.$size > 0 && (cache.$size >= max || this.#queryCacheBytes + queryLength > maxBytes)) {
-        const oldest = cache.$keys().next().value;
+        const oldest = cache.$keys().next().value!;
         cache.$delete(oldest);
         this.#queryCacheBytes -= oldest.length;
       }

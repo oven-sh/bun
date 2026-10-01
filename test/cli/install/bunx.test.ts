@@ -1205,7 +1205,7 @@ describe("bunx honors the project-local bunfig.toml [install] registry", () => {
     return new Uint8Array(await Bun.file(tgz).arrayBuffer());
   }
 
-  function registry(tgz: Uint8Array, hits: string[]) {
+  function registry(tgz: Uint8Array, hits: string[], published?: Date) {
     const server = Bun.serve({
       port: 0,
       fetch(req) {
@@ -1223,6 +1223,7 @@ describe("bunx honors the project-local bunfig.toml [install] registry", () => {
               dist: { tarball: `http://127.0.0.1:${server.port}/px-probe-1.0.0.tgz` },
             },
           },
+          ...(published ? { time: { "1.0.0": published.toISOString() } } : {}),
         });
       },
     });
@@ -1447,6 +1448,37 @@ describe("bunx honors the project-local bunfig.toml [install] registry", () => {
     expect(out.trim()).toBe("marker=<unset>");
     expect(err).not.toContain("error:");
     expect(exited).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/30748
+  // The release-age gate must cover the command that downloads and runs a
+  // package, not only `bun add`. The registry comes from the global bunfig,
+  // so only the gate depends on the project file.
+  it("applies the project bunfig's minimumReleaseAge to the package it would run", async () => {
+    const hits: string[] = [];
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    await using srv = registry(await makePkgTarball("TOO-YOUNG"), hits, oneHourAgo);
+
+    const { x_dir, env } = setup();
+    const home = tmpdirSync();
+    await writeFile(join(x_dir, "package.json"), JSON.stringify({ name: "proj", version: "1.0.0" }));
+    await writeFile(join(x_dir, "bunfig.toml"), `[install]\nminimumReleaseAge = 86400\n`);
+    await writeFile(join(home, ".bunfig.toml"), `[install]\nregistry = "http://127.0.0.1:${srv.port}/"\n`);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "x", "px-probe"],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env: bunxEnv(env, home),
+    });
+    const [err, out, exited] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+
+    expect(out.trim()).toBe("");
+    expect(err).toContain("blocked by minimum-release-age: 86400 seconds");
+    expect(hits).toEqual(["/px-probe"]);
+    expect(exited).toBe(1);
   });
 });
 

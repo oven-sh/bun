@@ -419,6 +419,9 @@ const scenarios = {
   },
 };
 
+// Winsock takes the whole body in one send() on loopback, so no response is left that drains.
+if (process.platform === "win32") delete scenarios["emitted while the body drains"];
+
 // Not on TLS: the TLSSocket of Node.js has 'close' listeners of its own, which take the event as
 // the end of the TLS session.
 if (!isTLS) {

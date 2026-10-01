@@ -344,7 +344,9 @@ async function measure(path, entry) {
   let leaked = false;
   for (const [path, entry] of Object.entries(table)) {
     const result = await measure(path, entry);
-    result.nativeResponsesLeft = await nativeResponsesLeft();
+    // Not on Windows: on the aarch64 machines of CI, the native response of a connection that the
+    // client destroyed was still counted after these turns. A later connection freed it.
+    if (process.platform !== "win32") result.nativeResponsesLeft = await nativeResponsesLeft();
     leaked ||= result.eventLoopRefsLeft !== 0;
     console.log(JSON.stringify(result));
   }

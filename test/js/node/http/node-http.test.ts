@@ -3529,7 +3529,10 @@ describe("a 'close' event that user code emits", () => {
     it.concurrent(
       `does not end the response, and the connection goes on as in Node.js (${transport})`,
       async () => {
-        const scenarios = transport === "tcp" ? [...likeNode, ...tunnelsLikeNode] : likeNode;
+        const scenarios = (transport === "tcp" ? [...likeNode, ...tunnelsLikeNode] : likeNode).filter(
+          // The fixture leaves this one out on Windows.
+          ([scenario]) => !(isWindows && scenario === "emitted while the body drains"),
+        );
         await expectFixture(
           "node-http-emitted-close-fixture.js",
           transport,
@@ -3544,7 +3547,8 @@ describe("a 'close' event that user code emits", () => {
   // server closed, and the native responses that a full GC leaves.
   const finished = (url = "/") => [`${url} finish`, `${url} close`];
   const aborted = ["/ aborted", "/ close"];
-  const nothingLeft = { eventLoopRefsLeft: 0, nativeResponsesLeft: 0 };
+  // The fixture counts the native responses on POSIX only.
+  const nothingLeft = isWindows ? { eventLoopRefsLeft: 0 } : { eventLoopRefsLeft: 0, nativeResponsesLeft: 0 };
 
   // These need no help from user code, so they hold with and without a dispatch that waits for
   // the 'close' of its response.

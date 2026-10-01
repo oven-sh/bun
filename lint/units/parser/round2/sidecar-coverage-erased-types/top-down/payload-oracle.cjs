@@ -21,7 +21,9 @@ function typeOutline(sf, root, out) {
       if ((ts.isFunctionTypeNode(node) || ts.isConstructorTypeNode(node)) && node.typeParameters) line += `{${range(node.typeParameters)}}`;
       out.push(line);
     }
-    ts.forEachChild(node, visit);
+    // The types inside the expression of a heritage entry are no part of the outline: only its type arguments are.
+    if (node.kind === K.ExpressionWithTypeArguments) (node.typeArguments || []).forEach(visit);
+    else ts.forEachChild(node, visit);
   };
   visit(root);
 }

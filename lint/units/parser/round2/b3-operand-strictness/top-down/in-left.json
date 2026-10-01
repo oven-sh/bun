@@ -1,0 +1,14 @@
+[
+{"g":"slots that the first run left out"},
+"for (let x = a + b = c;;) {}", "for (let x = a + b\n= c;;) {}", "for (let x = a++ ++;;) {}", "for (a + b = c of d) {}", "for (a + b = c in d) {}", "for (const x of a++ ++) {}",
+"class C { x = a++(1); }", "class C { x = a++[0]; }", "class C { x = a++.b; }", "class C { x = a++`x`; }", "class C { x = a + b = c }", "class C { x = a + b\n= c }", "class C { x = a++\n`y`; }", "class C { static { a + b = c; } }", "class C { static { a + b\n= c; } }",
+"class C { m() { a + b = c; } }", "class C { accessor x = a + b = c; }", "class C { [k] = a + b = c; }", "class C { 'x' = a + b = c; }", "class C { x: T = a + b = c; }", "class C { x: T = a + b\n= c; }",
+"switch (x) { default: a + b = c; }", "switch (x) { default: a + b\n= c; }", "switch (x) { case 1: { a + b\n= c; } }", "switch (x) { case 1: f(() => { a + b\n= c; }); }", "switch (x) { case 1: if (y) a + b\n= c; }",
+"function f(x = y ? a + b = c : d) {}", "f(a, ...b + c = d);", "new F;\na + b = c;", "a = b ? c : d + e = f;", "a ? b : c ? d + e = f : g;", "a ? b ? c + d = e : f : g;", "(a, b + c = d);", "(a + b = c, d);", "[a, b + c = d];", "x = [a + b = c];", "x = { y: [a + b = c] };", "f(g(a + b = c));", "f((a + b = c));", "((a) + b = c);", "(a) + b = c;", "x = (a + b = c);", "(a + b = c) + d;", "(f(a + b = c));",
+"var x = function () { return a + b = c; };", "var x = () => a + b = c;", "var x = () => { a + b = c; };", "var x = y => z => a + b = c;", "f(x => y => a + b = c);", "var x = class { y = a + b = c; };", "var x = { y() { a + b = c; } };", "var x = { get y() { return a + b = c; } };",
+"export default (a + b = c);", "export default function () { a + b = c; }", "if (x) a + b = c; else y;", "do a + b = c; while (x);", "while (x) a + b = c;", "for (;;) a + b = c;", "try { a + b = c; } catch {}", "label: { a + b = c; }", "declare namespace N { const x = a + b = c; }", "abstract class C { abstract x = a + b = c; }", "function f(a = b + c = d): void;", "class C { m(a = b + c = d): void; m() {} }", "enum E { A = 1, B = a + b = c, C }", "const enum E { A = a++ ++ }", "declare enum E { A = a + b = c }",
+"a?.b`x`;", "a?.b`x${1}`;",
+"a + b = c; a++ ++;", "f(a + b = c) + d = e;", "a++ ++; a + b = c;", "x = a--.b + (c + d = e);", "a.\nb in c + d = e;",
+["js","for (var x = a + b = c;;) {}"], ["js","class C { x = a + b = c; }"], ["js","class C { x = a++(1); }"], ["js","class C { x = a + b\n= c; }"], ["js","switch (x) { case 1: a + b\n= c; }"],
+["tsx","<a b={c ? d + e = f : g} />;"], ["tsx","<a>{b}{c + d = e}</a>;"], ["tsx","<a b={<c d={e + f = g} />} />;"]
+]

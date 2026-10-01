@@ -1,0 +1,110 @@
+## Attribution in LICENSE.md and docs/project/license.mdx (E1; T1.5 of round 1)
+
+Commit `<ATTRIBUTION COMMIT>`, made after the commit that adds `UPSTREAM`, the corpus and the four licence files
+(`<CORPUS COMMIT>`). Before it `git grep -i typescript -- LICENSE.md docs/project/license.mdx` found nothing.
+
+### What was written
+
+Three entries under "Additional credits", the same bytes in both files, before the credit for the name "Bun"
+(`LICENSE.md:84-86`, `docs/project/license.mdx:90-92`). The text is `round2/license-attribution/top-down/bullets.txt`.
+
+1. Parts of `src/js_parser`, `src/lint` and `test/cli/lint/conformance/runner` are ports of typescript-go and
+   TypeScript (Apache 2.0). The `UPSTREAM_PORTED` file of each directory names the commits.
+2. `test/cli/lint/conformance/corpus` holds cases and error baselines copied from both projects, `UPSTREAM` names the
+   commits, and the licence and notice files of both are in `test/cli/lint/conformance`.
+3. Parts of `src/lint` are ports of rules of ESLint (MIT), `test/cli/lint/rules` has cases of its tests, and
+   `src/lint/LICENSE.eslint` is its licence text.
+
+`LICENSE.md` still ends without a line break. `docs/project/license.mdx` passes the check of `format.yml`:
+`bun --bun ./node_modules/.bin/prettier --plugin=prettier-plugin-organize-imports --config .prettierrc --check docs/project/license.mdx`.
+`LICENSE.md` is in no glob of `bun run prettier` (`package.json:80`). No other job of CI reads either file.
+
+### What each sentence rests on (read at 3110ce85cf)
+
+- `src/js_parser/UPSTREAM_PORTED` (typescript-go 89d5d5b, added by `f1982cf599`): `parse/parse_skip_typescript.rs` has the
+  type productions of `internal/parser/parser.go` under upstream's names, `parse/syntax_errors.rs` the codes and texts
+  of its syntax errors.
+- `src/lint/UPSTREAM_PORTED` (typescript-go 89d5d5b, eslint/eslint 4618052e). The first line of each file names its
+  source: typescript-go for `diagnostic.rs`, `diagnosticwriter.rs`, `program.rs`, `scanner.rs`, `tspath.rs`; ESLint for
+  `ast_utils.rs` and the eleven modules of `rules/`.
+- `test/cli/lint/conformance/runner/UPSTREAM_PORTED` (typescript-go 89d5d5b, TypeScript 5848bc5, golang/go go1.26.0).
+  16 of the 27 modules name a file of typescript-go in their first line. `diagnosticwriter.ts` and `error_baseline.ts`
+  also port `program.ts`, `watch.ts` and `harnessIO.ts` of TypeScript.
+- `src/lint/LICENSE.eslint` is the `LICENSE` of eslint/eslint 4618052e byte for byte (`cmp`).
+  `test/cli/lint/rules/*.json` has 514 cases marked `eslintTest`.
+- `sync.sh` (its `layout`) writes `LICENSE` and `NOTICE.txt` of typescript-go and `LICENSE.txt` and
+  `ThirdPartyNoticeText.txt` of TypeScript into `test/cli/lint/conformance`. `LICENSE` and `LICENSE.txt` are the same
+  9,197 bytes, the text of Apache-2.0.
+- The three links of the entries answered 200 on 2026-10-01.
+
+### Decisions
+
+- ESLint. The cli unit asks for a line (its `API.md`, "State of the tree", list "Open", point 4) and proposes
+  `- Bun's lint rules are a port of rules of [ESLint](https://github.com/eslint/eslint) (MIT, notice in src/lint/LICENSE.eslint).`
+  Granted with other words. "Bun's lint rules" names a feature, and `--lint` is behind
+  `BUN_FEATURE_FLAG_EXPERIMENTAL_LINT`, has no help text and no page in `docs/`: the entry names directories. It also
+  names the copied test cases, which the proposal leaves out.
+- `src/js_parser` is named. The round-2 goal names `src/lint` and the runner only. `src/js_parser/UPSTREAM_PORTED`
+  came with the merge of the parser work, and that code is in every build of `bun`.
+- `src/typecheck` is not named. At 3110ce85cf, and at the head of the pull request branch (d763100482), it is
+  `Cargo.toml` and a `lib.rs` of one line, and has no `UPSTREAM_PORTED`. See point 1 below.
+- Go is not named. `runner/UPSTREAM_PORTED` names `golang/go go1.26.0` for the semantics of Go's library that
+  `gostrings.ts` writes again ("Not a port of upstream code", its first line) and for its two tables, which are the
+  answers of `unicode.ToLower` and `unicode.SimpleFold`.
+- The section is "Additional credits", where the port of esbuild is credited in a sentence. The table "Linked
+  libraries" has two rows for copied code (Tigerbeetle's IO code, and in `LICENSE.md` alone the fallback of
+  libc++abi). It is not used: an entry here names directories, the corpus and the licence files, which a row of that
+  table does not hold, and the table is under the sentence "Bun statically links these libraries".
+- No entry names the flag, the linter or the type checker as something that Bun has.
+- The words follow the "Voice" rules of `docs/project/contributing.mdx`, and the spelling "license" and "Apache 2.0"
+  that of the two files.
+
+### For the integrator
+
+1. At the merge of `robobun/abbc0c92/lint-typecheck`. That branch has the port in `src/typecheck` (264 files at
+   2d9e7ee843) and two copied files, `src/typecheck/scripts/diagnosticMessages.json` (TypeScript 5848bc5) and
+   `src/typecheck/scripts/extraDiagnosticMessages.json` (typescript-go 89d5d5b). It has no
+   `src/typecheck/UPSTREAM_PORTED` (its `API.md` says so under "What waits"), which COMMON.md rule 9 and
+   `typecheck.md:64` ask for. Then the first entry becomes the first line of
+   `round2/license-attribution/top-down/bullets-with-typecheck.txt` in both files: `src/typecheck` joins the list and
+   "are ports of" becomes "are ported or copied from". Its second sentence is true for `src/typecheck` only when that
+   `UPSTREAM_PORTED` exists. `license-attribution-with-typecheck.patch` beside it is the whole change against
+   e3566be889.
+2. A later port needs its own entry in these two files, which only this unit writes. The cli notes hold research on
+   regexpp and on typescript-eslint. Nothing of either is in the tree at 3110ce85cf.
+3. `src/ast/ts_nodes.rs` names its node kinds after those of typescript-go and is written for `bun_ast`. It has no
+   `UPSTREAM_PORTED` and is not named in the entries.
+
+### Open question MQ-2, for the maintainers. Not decided here.
+
+Which file of a Bun release carries the notices of `NOTICE.txt` once ported code is in the binary?
+
+- Apache-2.0, section 4(d): a derivative work that is distributed includes a readable copy of the attribution notices
+  of the work's NOTICE file, "excluding those notices that do not pertain to any part of the Derivative Works", in a
+  NOTICE file, in the source form or documentation, or in a display that the work generates. Section 4(a): every
+  recipient gets a copy of the licence.
+- `NOTICE.txt` of typescript-go 89d5d5b (48,860 bytes) has the sections DefinitelyTyped, Unicode, Document Object
+  Model, Web Background Synchronization and WebGL, and ten dependencies of the Go program: zeebo/xxh3,
+  go-json-experiment/json, golang.org/x/sync, x/sys, x/term, x/text, klauspost/cpuid, Microsoft/go-winio,
+  mackerelio/go-osstat, parcel-bundler/watcher. `ThirdPartyNoticeText.txt` of TypeScript 5848bc5 (37,824 bytes) has
+  the first five.
+- What a release holds, read in the scripts (no release archive was opened): the zip is the executable alone
+  (`scripts/build/ci.ts:257-259`, `:354-355`); the npm packages are the executable and a `package.json` with
+  `license: "MIT"` (`packages/bun-release/scripts/upload-npm.ts:111-136`, `:157-171`). The binary has no command that
+  prints the notices of what it links (`bun pm licenses` is about the packages of a project). So no file of a release
+  carries a third-party notice today. The npm package `bun-types` ships `docs/`, and with it
+  `docs/project/license.mdx` (`packages/bun-types/package.json:22-25`, `scripts/build.ts:30-52`).
+- How the repository credits Apache-2.0 code that the binary links: a row with the name and the licence in
+  `LICENSE.md` and in the page (simdutf, uSockets, highway, the fork of uWebSockets, parts of Tigerbeetle's IO code;
+  `LICENSE.md:33-48`), without a notice text.
+- Ported code of typescript-go in the binary at 3110ce85cf: the type productions and the syntax errors in
+  `src/js_parser`, and the five files of `src/lint`. No section of `NOTICE.txt` is about that code.
+  `src/lint/tspath.rs:572-574` has a case folding table of Unicode 15.0.0 that was made from Go's `unicode` package,
+  not from a file of typescript-go.
+- What makes the question concrete. The merge of `src/typecheck`: its `stringutil` has the tables of
+  `identifier_parts_generated.go` and `js_case_generated.go`, which upstream derives from Unicode 15.1.0 (the section
+  Unicode). A later unit that embeds the library files `lib.*.d.ts` in the binary (by their names, the sections
+  Document Object Model, Web Background Synchronization and WebGL; not verified file by file).
+- In the source tree the notices are `test/cli/lint/conformance/NOTICE.txt` and `ThirdPartyNoticeText.txt`. The React
+  typings of `corpus/lib` name DefinitelyTyped in their first lines.
+- `LICENSE.md` has no entry for the port of the React Compiler either (`src/react_compiler/UPSTREAM_PORTED`).

@@ -1,8 +1,29 @@
 // A candidate for describe("reference") of test/cli/lint/conformance.test.ts, as a file of its own so that it can be run alone:
 // copy it to test/cli/lint/zz-corpus-names.test.ts of a clone that has the corpus, and run `bun test ./test/cli/lint/zz-corpus-names.test.ts`.
+// In conformance.test.ts the constants corpusRoot, small, sampled and the walk of cases() are there already: only the test is new,
+// with basename and sep added to the import of node:path, and the walk keeping every file name beside the map of the cases.
 import { expect, test } from "bun:test";
+import { isASAN, isDebug } from "harness";
 import { readFileSync, readdirSync } from "node:fs";
 import { basename, join, sep } from "node:path";
+
+const corpusRoot = join(import.meta.dir, "conformance", "corpus");
+const small = isDebug || isASAN;
+const sampled = (name: string, n: number) => Bun.hash.crc32(name) % n === 0;
+
+// Every file below the cases and the test library, from the names of the directories alone: the only files of the corpus with a JavaScript-like extension.
+function sourceFiles(): string[] {
+  const out: string[] = [];
+  const walk = (rel: string) => {
+    for (const entry of readdirSync(`${corpusRoot}/${rel}`, { withFileTypes: true })) {
+      if (entry.isDirectory()) walk(`${rel}/${entry.name}`);
+      else out.push(`${rel}/${entry.name}`);
+    }
+  };
+  walk("cases");
+  walk("lib");
+  return out;
+}
 
 // The rule by which the runner of CI takes a file below test/ for a test, cut out of its source the way comment-cop.test.ts cuts the script out of its workflow.
 test("no file of the corpus is a test file for the runner of CI", () => {
@@ -23,21 +44,18 @@ test("no file of the corpus is a test file for the runner of CI", () => {
     "isX64",
     `${code}\nreturn isTest;`,
   )(basename, sep, false, false, false);
+  const below = (path: string) => join("cli", "lint", "conformance", "corpus", ...path.split("/"));
   expect(isTest(join("cli", "lint", "conformance.test.ts"))).toBe(true);
-  expect(isTest(join("cli", "lint", "conformance", "corpus", "cases", "compiler", "a.test.ts"))).toBe(true);
-  const taken: string[] = [];
-  let seen = 0;
-  const walk = (rel: string) => {
-    for (const entry of readdirSync(join(import.meta.dir, rel), { withFileTypes: true })) {
-      const path = join(rel, entry.name);
-      if (entry.isDirectory()) walk(path);
-      else {
-        seen++;
-        if (isTest(join("cli", "lint", path))) taken.push(path);
-      }
-    }
-  };
-  walk(join("conformance", "corpus"));
-  expect(taken).toEqual([]);
-  expect(seen).toBeGreaterThan(20000);
+  expect(isTest(below("cases/compiler/a.test.ts"))).toBe(true);
+  expect(isTest(below("cases/conformance/js/node/test/parallel/a.ts"))).toBe(true);
+  const started = performance.now();
+  const all = sourceFiles();
+  const walked = performance.now();
+  // A debug or sanitizer build takes one name of forty: a release build of another lane takes them all.
+  const files = all.filter(path => !small || sampled(path, 40));
+  expect(files.filter(path => isTest(below(path)))).toEqual([]);
+  expect(all.length).toBeGreaterThan(12000);
+  console.log(
+    `walk of ${all.length} names ${(walked - started).toFixed(0)} ms, rule on ${files.length} names ${(performance.now() - walked).toFixed(0)} ms`,
+  );
 });

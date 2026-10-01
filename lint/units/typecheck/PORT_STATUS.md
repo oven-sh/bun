@@ -145,6 +145,52 @@ which cargo does not compile yet.
 | the stand-in log of typecheck.md K3: a callee that is not ported records its name | `StandIns` (`record`, `is_empty`, `count_of`, `snapshot`) | translated | `is_empty`, `count_of`, `snapshot` |
 | the loops whose end depends on checker state (`checker-data-model-contract/bottom-up/data/loops-with-budget.tsv`; four of them are in the tree) | `LOOP_LIMIT` (1 << 20 turns), `LoopGuard` (`new`, `with_limit`, `turn`) | translated | `with_limit` |
 
+## Scanner (`scanner`)
+
+`scanner/scanner.rs` (3,722 lines) and `scanner/utilities.rs` (232) came in with `4d40783efe`; `941cbf415f` took the
+stand-in call out of `re_scan_slash_token`. `scanner/mod.rs` and the line `pub mod scanner;` of `lib.rs` came in with
+`0aa0a67449`. `mod.rs` declares the two files and re-exports both (`pub use scanner::*;`, `pub use utilities::*;`), as
+the `mod.rs` of every other package does: 25 files of the later layers write `crate::scanner::<name>` (`checker` 19,
+`importer` 2, `printer` 2, `binder` 1, `lowering` 1), none writes `crate::scanner::scanner::<name>`. The two files name
+`crate::ast` (with `crate::ast::Arg`, one argument of a message) and `bun_core::strings`, so they compile only in a
+tree whose `lib.rs` declares `ast`, whose `ast` has `Arg` and whose `Cargo.toml` has `bun_core`: `887629cf2c` is the
+first commit with the three (`Arg` and the dependency are of `a8b48548a6`). No `cargo check` was run with these
+commits: the survey that follows them is the first cargo compile of the three files in the real crate, so the state
+below is `translated` until that run passes. What was checked before: `rustc` alone beside `ast` and the seven modules
+of layers 1 and 2 with the rust lints of the workspace denied, against the real `bun_core` and `bun_collections`, with
+the module written inline as `mod.rs` is now and with stand-ins for `crate::core::List` and for `crate::ast::Arg` (the
+enum that `ast/diagnostic.rs` now has) (the look-ahead of the round-4 survey, a scratch root in `/tmp`);
+`rustfmt --check --edition 2024` on the three files in the tree. Not run on these bytes: clippy. The package has no
+test of its own: `lowering/tests.rs` reads the scanner, and cargo does not compile it yet.
+
+Compared with upstream: each of the 111 functions of `scanner.go` but `cleared`, and each of the 12 of `utilities.go`,
+has a function of its name in snake_case, in upstream's order; each of the 33 messages that `scanner.go` reports is
+reported at as many places, but the three about the flags of a regular expression (row of `ReScanSlashToken`). Read
+side by side with upstream when the module was declared: `utilities.go`, and of `scanner.go` 192-245, 469-700, 972-1525,
+2102-2212 and 2285-2504: no difference was found there besides the ones of the last column. The other lines were
+compared by the names only. A text is a byte string, a position an `i32`, a rune an `i32` inside `scanner.rs` (-1 at
+the end of the text) and a `u32` in `is_identifier_start`, `is_identifier_part` and `is_identifier_part_ex`; a read
+outside the text answers -1 or an empty text where Go panics.
+
+| upstream file, lines | Rust module under `src/typecheck/` | state | not ported |
+| --- | --- | --- | --- |
+| `scanner/scanner.go` 21-34 (`EscapeSequenceScanningFlags`, `ErrorCallback`) | `scanner/scanner.rs` | translated | `args ...any` of the callback is `&[crate::ast::Arg]` |
+| `scanner/scanner.go` 36-190, 2255-2283 (`textToKeyword`, `textToToken`, `tokenToText`, `TokenToString`, `StringToToken`, `GetViableKeywordSuggestions`) | `scanner/scanner.rs` (`text_to_keyword`, `text_to_token`, `token_to_text`: a `match` for each map; `KEYWORD_TEXTS`) | translated | the suggestions come in the order of the source of `textToKeyword`: upstream ranges over a map |
+| `scanner/scanner.go` 192-467 (`ScannerState`, `Scanner`, `NewScanner`, `Reset`, the accessors, `Mark`, `Rewind`, `ResetPos`, `ResetTokenState`, the setters, `scanJSDocCommentForTags`, `hasJSDocTag`, `error`, `errorAt`, `char`, `charAt`, `charAndSize`, `scanASCIIWhile`) | `scanner/scanner.rs` | translated | `numberCache`, `hexNumberCache`, `hexDigitCache` and `cleared`: a cached text is the text that the scan computes; the panic of `ResetPos` is `Err` with its message |
+| `scanner/scanner.go` 469-1011 (`Scan`, `processCommentDirective`) | `scanner/scanner.rs` | translated | |
+| `scanner/scanner.go` 1013-1065, 1225-1247 (`ReScanLessThanToken`, `ReScanGreaterThanToken`, `ReScanTemplateToken`, `ReScanAsteriskEqualsToken`, `ReScanJsxToken`, `ReScanHashToken`, `ReScanQuestionToken`) | `scanner/scanner.rs` | translated | the panics of `ReScanAsteriskEqualsToken` and `ReScanQuestionToken` are `Err` with their messages |
+| `scanner/scanner.go` 1067-1223 (`ReScanSlashToken`) | `scanner/scanner.rs` (`re_scan_slash_token`) | translated without the lines of the last column | 1068, 1074 and 1112-1116 (`namedCaptureGroups`), 1171 and 1177-1189 (the check of the flags), 1192-1213 (`regExpParser.run`): `report_errors` is not read and no message about a flag or a pattern is reported. The scanner has no stand-in log, so nothing records it: the caller that passes `true` (`checker/grammarchecks.go` 91, not in the tree) has to record `regExpParser.run` |
+| `scanner/scanner.go` 1249-1525 (`ScanJsxToken` to `ScanJSDocToken`) | `scanner/scanner.rs` | translated | |
+| `scanner/scanner.go` 1527-2212 (`scanIdentifier` to `scanInvalidCharacter`: identifiers, strings, templates, escapes, numbers) | `scanner/scanner.rs` | translated | the three caches (row of `Scanner`); a binary or octal bigint that `jsnum::parse_pseudo_big_int` refuses keeps the text as scanned, where upstream panics |
+| `scanner/scanner.go` 2214-2253 (`GetIdentifierToken`, `IsValidIdentifier`, `isWordCharacter`, `IsIdentifierStart`, `IsIdentifierPart`, `IsIdentifierPartEx`) | `scanner/scanner.rs` | translated | |
+| `scanner/scanner.go` 2285-2504 (`couldStartTrivia`, `SkipTriviaOptions`, `SkipTrivia`, `SkipTriviaEx`, conflict markers, shebang, `GetShebang`) | `scanner/scanner.rs` | translated | where upstream panics, `isConflictMarkerTrivia` (a negative position) and `isShebangTrivia` (a position other than 0) answer `false`, and `scanConflictMarkerTrivia` (another character than the four) returns the position |
+| `scanner/scanner.go` 2506-2654 (`GetScannerForSourceFile`, `ScanTokenAtPosition`, `GetRangeOfTokenAtPosition`, `GetTokenPosOfNode`, `getErrorRangeForArrowFunction`, `findOriginatingJSDocSatisfiesTag`, `GetErrorRangeForNode`) | `scanner/scanner.rs` (`a: Ast` first, then upstream's parameters, a node as its id) | translated | |
+| `scanner/scanner.go` 2656-2798 (`ComputeLineOfPosition` to `ComputePositionOfLineAndUTF16Character`) | `scanner/scanner.rs` (a line is an `isize`; `line_start_at` answers 0 for a line outside the map) | translated | the panics and asserts of 2733, 2752, 2776, 2778 and 2796 are `Err` with the message without its numbers |
+| `scanner/scanner.go` 2800-2918 (`GetLeadingCommentRanges`, `GetTrailingCommentRanges`, `iterateCommentRanges`) | `scanner/scanner.rs` | translated | the ranges are a `Vec`, not a lazy sequence; no factory parameter (`ast::new_comment_range` makes a range) |
+| `scanner/utilities.go` | `scanner/utilities.rs` (with Go's `strings.TrimLeftFunc`, `strings.TrimRightFunc` and `unicode.IsSpace`) | translated | `debug.FailBadSyntaxKind` is `Ast::unhandled`, and the text as read is the answer |
+| `scanner/regexp.go`, `scanner/unicodeproperties.go` | | not started | the flags and the pattern of a regular expression literal |
+| `scanner/scanner_test.go` | | not started | |
+
 ## Checker: signatures, instantiation, types of symbols, widening (K3 steps 18 to 21)
 
 Commits `1cb4b9c183` and `314fac8c09`. The rows of `c15_calls.rs` and `c47_promised_mapped_template.rs` came in with

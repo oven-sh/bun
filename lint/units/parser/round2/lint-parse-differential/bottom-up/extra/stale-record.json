@@ -1,0 +1,8 @@
+[
+["ts","type X = { []?: A };"],
+["tsx","let v = a ? (b): <T>\n(a: ) => T => c : d;"],
+["tsx","let v = a ? (b): new <T>(a: ) => A => c : d;"],
+["ts","let v = a ? (b): <T>\n(a: ) => T => c : d;"],
+["ts","type X = { []?: A };"],
+["ts","type X = { []?: A };"]
+]

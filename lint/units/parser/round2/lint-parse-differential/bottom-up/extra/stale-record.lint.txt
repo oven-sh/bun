@@ -1,0 +1,18 @@
+RR ts  "type X = { []?: A };"
+      tsc: TS1005@13+1 ';' expected.
+      lint: no code bun@13+1 Unexpected ?
+RR tsx "let v = a ? (b): <T>\n(a: ) => T => c : d;"
+      tsc: TS1110@25+1 Type expected.
+      lint: TS1110@25..26 bun@20+0 Syntax Error
+RR tsx "let v = a ? (b): new <T>(a: ) => A => c : d;"
+      tsc: TS1110@28+1 Type expected.
+      lint: TS1110@28..29 bun@24+0 Syntax Error
+RR ts  "let v = a ? (b): <T>\n(a: ) => T => c : d;"
+      tsc: TS1110@25+1 Type expected.
+      lint: TS1110@25..26 bun@25+1 Unexpected )
+RR ts  "type X = { []?: A };"
+      tsc: TS1005@13+1 ';' expected.
+      lint: no code bun@13+1 Unexpected ?
+RR ts  "type X = { []?: A };"
+      tsc: TS1005@13+1 ';' expected.
+      lint: no code bun@13+1 Unexpected ?

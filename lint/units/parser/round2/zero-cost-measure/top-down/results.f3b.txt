@@ -1,0 +1,51 @@
+f3b = the named-like cast decided at the word of the cast (one jump per cast), nothing before the expression of a statement. Parser symbols (bun_js_parser|bun_ast), 20 passes.
+-- raw (one Bc per executed conditional jump)
+bun-types       rawbase      matched Ir    324,579,267 Bc    48,504,593 Bi   4,923,576
+bun-types       rawhead      matched Ir    357,791,537 Bc    54,750,693 Bi   4,643,696   vs rawbase: Ir   +33,212,270 Bc   +6,246,100 Bi   -279,880
+bun-types       rawf3b       matched Ir    349,799,837 Bc    53,709,473 Bi   4,595,216   vs rawbase: Ir   +25,220,570 Bc   +5,204,880 Bi   -328,360
+typescript-lib  rawbase      matched Ir  1,111,791,187 Bc   173,606,173 Bi  15,647,136
+typescript-lib  rawhead      matched Ir  1,272,467,977 Bc   203,122,273 Bi  15,264,216   vs rawbase: Ir  +160,676,790 Bc  +29,516,100 Bi   -382,920
+typescript-lib  rawf3b       matched Ir  1,228,707,857 Bc   197,160,653 Bi  15,024,276   vs rawbase: Ir  +116,916,670 Bc  +23,554,480 Bi   -622,860
+src-js          rawbase      matched Ir  5,011,054,474 Bc   580,255,840 Bi  57,402,455
+src-js          rawhead      matched Ir  5,029,510,124 Bc   584,754,260 Bi  57,317,855   vs rawbase: Ir   +18,455,650 Bc   +4,498,420 Bi    -84,600
+src-js          rawf3b       matched Ir  5,026,205,584 Bc   583,464,960 Bi  57,134,275   vs rawbase: Ir   +15,151,110 Bc   +3,209,120 Bi   -268,180
+tsx             rawbase      matched Ir  1,353,449,852 Bc   161,932,075 Bi  15,337,035
+tsx             rawhead      matched Ir  1,398,563,842 Bc   171,582,075 Bi  14,837,035   vs rawbase: Ir   +45,113,990 Bc   +9,650,000 Bi   -500,000
+tsx             rawf3b       matched Ir  1,391,717,842 Bc   170,622,075 Bi  14,753,035   vs rawbase: Ir   +38,267,990 Bc   +8,690,000 Bi   -584,000
+js-control      rawbase      matched Ir  3,301,848,109 Bc   351,009,231 Bi  42,778,315
+js-control      rawhead      matched Ir  3,299,485,179 Bc   351,045,631 Bi  42,778,315   vs rawbase: Ir    -2,362,930 Bc      +36,400 Bi         +0
+js-control      rawf3b       matched Ir  3,296,688,199 Bc   351,045,631 Bi  42,778,315   vs rawbase: Ir    -5,159,910 Bc      +36,400 Bi         +0
+-- default
+bun-types       base20b      matched Ir    331,255,477 Bc    46,592,991 Bi   4,923,576
+bun-types       head20b      matched Ir    364,856,107 Bc    52,009,911 Bi   4,643,696   vs base20b: Ir   +33,600,630 Bc   +5,416,920 Bi   -279,880
+bun-types       f3b          matched Ir    356,552,767 Bc    50,990,451 Bi   4,595,216   vs base20b: Ir   +25,297,290 Bc   +4,397,460 Bi   -328,360
+typescript-lib  base20b      matched Ir  1,144,739,177 Bc   166,938,251 Bi  15,647,136
+typescript-lib  head20b      matched Ir  1,307,711,227 Bc   192,992,511 Bi  15,264,216   vs base20b: Ir  +162,972,050 Bc  +26,054,260 Bi   -382,920
+typescript-lib  f3b          matched Ir  1,261,928,507 Bc   187,144,031 Bi  15,024,276   vs base20b: Ir  +117,189,330 Bc  +20,205,780 Bi   -622,860
+src-js          base20b      matched Ir  5,065,657,144 Bc   565,355,079 Bi  57,402,455
+src-js          head20b      matched Ir  5,084,135,834 Bc   569,331,519 Bi  57,317,855   vs base20b: Ir   +18,478,690 Bc   +3,976,440 Bi    -84,600
+src-js          f3b          matched Ir  5,081,185,654 Bc   568,055,019 Bi  57,134,275   vs base20b: Ir   +15,528,510 Bc   +2,699,940 Bi   -268,180
+tsx             base20b      matched Ir  1,366,356,422 Bc   156,418,054 Bi  15,337,035
+tsx             head20b      matched Ir  1,411,692,412 Bc   164,666,054 Bi  14,837,035   vs base20b: Ir   +45,335,990 Bc   +8,248,000 Bi   -500,000
+tsx             f3b          matched Ir  1,404,762,412 Bc   163,750,054 Bi  14,753,035   vs base20b: Ir   +38,405,990 Bc   +7,332,000 Bi   -584,000
+js-control      base20b      matched Ir  3,315,540,179 Bc   343,413,670 Bi  42,778,315
+js-control      head20b      matched Ir  3,312,992,649 Bc   343,577,190 Bi  42,778,315   vs base20b: Ir    -2,547,530 Bc     +163,520 Bi         +0
+js-control      f3b          matched Ir  3,310,377,589 Bc   343,577,190 Bi  42,778,315   vs base20b: Ir    -5,162,590 Bc     +163,520 Bi         +0
+-- A1 harness, head vs f3b (required: 0 records differ)
+== testrows
+4515 records compared, 0 differ, in 0 sources
+== targeted
+59280 records compared, 0 differ, in 0 sources
+== small
+3144420 records compared, 0 differ, in 0 sources
+-- raw Bc by cause, head -> f3b
+cause (Bc)              bun-types typescript-lib         src-js            tsx     js-control
+startup-js                     +0             +0             +0             +0             +0
+backtracker                    +0             +0             +0             +0             +0
+type grammar                   +0             +0             +0             +0             +0
+type statements           -162580        -839260         -92920        -218000             +0
+lexer                     -794520       -4652100        -417580        -626000             +0
+statements                 -67580        -376280        -519780        -104000             +0
+expressions+class         -282620       -1496920      -39591300       -7762000      -22409720
+visit+layout              +266080       +1402940      +39332280       +7750000      +22409720
+parser symbols           -1041220       -5961620       -1289300        -960000             +0

@@ -23,8 +23,8 @@ def load(path):
             parts = line.split(); p = per[fn]
             for i in range(1, min(len(parts), 6)): p[i - 1] += int(parts[i])
     return per
-d = '/tmp/zcm-td/cg'
-T = {t: {g: load(f'{d}/{t}.{g}.cg') for g in G} for t in ['rawbase', 'rawhead', 'rawvold3', 'rawf3']}
+d = '/tmp/zcm-td/cg'; F3 = sys.argv[2] if len(sys.argv) > 2 else 'rawf3b'
+T = {t: {g: load(f'{d}/{t}.{g}.cg') for g in G} for t in ['rawbase', 'rawhead', 'rawvold3', F3]}
 names = set()
 for t in T:
     for g in G: names |= set(T[t][g])
@@ -33,7 +33,7 @@ for n in names:
     v = []
     for g in G:
         b = T['rawbase'][g].get(n, [0]*5)[1]; h = T['rawhead'][g].get(n, [0]*5)[1]
-        o = T['rawvold3'][g].get(n, [0]*5)[1]; f = T['rawf3'][g].get(n, [0]*5)[1]
+        o = T['rawvold3'][g].get(n, [0]*5)[1]; f = T[F3][g].get(n, [0]*5)[1]
         v.append((o - b) + (f - h))
     if any(v): rows.append((v, n)); tot = [tot[i] + v[i] for i in range(5)]
 print('estimate (vold3 - base) + (f3 - head), raw Bc, 20 passes:', tot)

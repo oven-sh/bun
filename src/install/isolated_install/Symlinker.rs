@@ -108,43 +108,65 @@ impl Symlinker {
                             };
                         }
                     };
-                let mut current_link: &[u8] = &current_link_buf[..current_link_len];
-
-                // libuv adds a trailing slash to junctions.
-                current_link = strings::without_trailing_slash(current_link);
-
-                if strings::eql_long(current_link, self.target.slice_z().as_bytes(), true) {
+                if self.is_current(&current_link_buf[..current_link_len]) {
                     return Ok(false);
                 }
 
-                #[cfg(windows)]
-                {
-                    if strings::eql_long(current_link, self.fallback_junction_target.slice(), true)
-                    {
-                        return Ok(false);
-                    }
-
-                    // this existing link is pointing to the wrong package.
-                    // on windows rmdir must be used for symlinks created to point
-                    // at directories, even if the target no longer exists
-                    match bun_sys::rmdir(self.dest.slice_z()) {
-                        Ok(()) => {}
-                        Err(err) => match err.get_errno() {
-                            Errno::EPERM => {
-                                let _ = bun_sys::unlink(self.dest.slice_z());
-                            }
-                            _ => {}
-                        },
-                    }
-                }
-                #[cfg(not(windows))]
-                {
-                    // this existing link is pointing to the wrong package
-                    let _ = bun_sys::unlink(self.dest.slice_z());
-                }
+                // this existing link is pointing to the wrong package
+                self.unlink();
 
                 return self.symlink().map(|()| true);
             }
+        }
+    }
+
+    /// Removes `dest` if it is the link this would write.
+    pub(crate) fn unlink_if_current(&mut self) {
+        let mut current_link_buf = bun_paths::path_buffer_pool::get();
+        let Ok(current_link_len) = bun_sys::readlink(self.dest.slice_z(), &mut current_link_buf)
+        else {
+            return;
+        };
+        if self.is_current(&current_link_buf[..current_link_len]) {
+            self.unlink();
+        }
+    }
+
+    /// Whether `current_link`, as read from `dest`, is the link this would write.
+    fn is_current(&mut self, current_link: &[u8]) -> bool {
+        // libuv adds a trailing slash to junctions.
+        let current_link = strings::without_trailing_slash(current_link);
+
+        if strings::eql_long(current_link, self.target.slice_z().as_bytes(), true) {
+            return true;
+        }
+
+        #[cfg(windows)]
+        if strings::eql_long(current_link, self.fallback_junction_target.slice(), true) {
+            return true;
+        }
+
+        false
+    }
+
+    fn unlink(&mut self) {
+        #[cfg(windows)]
+        {
+            // on windows rmdir must be used for symlinks created to point
+            // at directories, even if the target no longer exists
+            match bun_sys::rmdir(self.dest.slice_z()) {
+                Ok(()) => {}
+                Err(err) => match err.get_errno() {
+                    Errno::EPERM => {
+                        let _ = bun_sys::unlink(self.dest.slice_z());
+                    }
+                    _ => {}
+                },
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = bun_sys::unlink(self.dest.slice_z());
         }
     }
 }

@@ -26,6 +26,9 @@ pub struct Store {
     /// Accessed from multiple threads
     pub(crate) entries: entry::List,
     pub(crate) nodes: node::List,
+    /// `node_modules/.bun/node_modules` names an entry holds through a dependency other than
+    /// the one that created it, sorted by entry id. Accessed from multiple threads.
+    pub(crate) hidden_hoist_keys: Vec<entry::DependenciesItem>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -109,6 +112,14 @@ impl Drop for Store {
 }
 
 impl Store {
+    /// Called from multiple threads.
+    pub(crate) fn hidden_hoist_keys_of(&self, entry_id: entry::Id) -> &[entry::DependenciesItem] {
+        let keys = &self.hidden_hoist_keys;
+        let start = keys.partition_point(|key| key.entry_id.get() < entry_id.get());
+        let len = keys[start..].partition_point(|key| key.entry_id == entry_id);
+        &keys[start..start + len]
+    }
+
     /// Called from multiple threads. `parent_dedupe` should not be shared between threads.
     pub(crate) fn is_cycle(
         &self,
@@ -281,7 +292,8 @@ pub mod entry {
         // no atomic-enum wrapper exists.
         pub step: core::sync::atomic::AtomicU32,
 
-        // if true this entry gets symlinked to `node_modules/.bun/node_modules`
+        // if true this entry gets symlinked to `node_modules/.bun/node_modules` under the
+        // name of the dependency that created it
         pub hoisted: bool,
 
         pub peer_hash: PeerHash,

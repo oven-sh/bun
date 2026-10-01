@@ -169,7 +169,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* node:http: the peer sent its FIN first (HTTP_NODE_RECEIVED_FIN only covers a
          * deferred close). onSocketClosed reports it so the JS socket emits 'end'. */
         HTTP_NODE_PEER_ENDED = 1 << 22,
-        /* node:http socket.end() with outgoing bytes still queued: half-close when they have flushed, also when the response in flight never ends.
+        /* node:http socket.end(): half-close when the queued outgoing bytes have flushed, also when the response in flight never ends. With none queued, the FIN leaves at once.
          * It stays set behind that FIN: the connection still reads. With no response in flight at the flush, the connection closes there. */
         HTTP_NODE_SHUTDOWN_AFTER_DRAIN = 1 << 25,
 

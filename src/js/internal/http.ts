@@ -191,8 +191,13 @@ function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPRespon
       // Like Node's parserOnBody: pause the connection once the buffer fills.
       // Upgrade-with-body routes through its own handle so the socket's flow
       // state stays with the upgrade listener; _read() balances it.
-      if (this.upgrade) this[kHandle]?.pause();
-      else if (socket && !socket.writableEnded) {
+      const finSent = socket?.[kHandle]?.finSent === true;
+      if (finSent && !(this._consuming && socket.server?.listening)) {
+        // Behind the FIN of socket.end() a full buffer stops the reads only for a reader that requestTimeout can end.
+        // uWS drops the rest of any other body, so that the peer's FIN closes the connection.
+        socket[kHandle].stopParsing();
+      } else if (this.upgrade) this[kHandle]?.pause();
+      else if (socket && (finSent || !socket.writableEnded)) {
         socket.pause();
         // For a pipelined request the socket's current response is an earlier one, and an ended response does not pause.
         this[kHandle]?.pause();

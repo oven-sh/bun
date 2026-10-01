@@ -63,6 +63,7 @@ JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterAuthorizationError);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterPeerCertVerified);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterCloseError);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterPeerEnded);
+JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterFinSent);
 
 JSC_DEFINE_CUSTOM_SETTER(noOpSetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName propertyName))
 {
@@ -101,6 +102,7 @@ static const JSC::HashTableValue JSNodeHTTPServerSocketPrototypeTableValues[] = 
     { "peerCertVerified"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterPeerCertVerified, noOpSetter } },
     { "closeError"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterCloseError, noOpSetter } },
     { "peerEnded"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterPeerEnded, noOpSetter } },
+    { "finSent"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterFinSent, noOpSetter } },
 };
 
 void JSNodeHTTPServerSocketPrototype::finishCreation(JSC::VM& vm)
@@ -379,6 +381,16 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterPeerEnded, (JSC::JSGlobalOb
         return JSValue::encode(JSC::jsUndefined());
     }
     return JSValue::encode(JSC::jsBoolean(thisObject->peer_ended));
+}
+
+// The FIN of this side has left: socket.end() with nothing queued, or the end of what it waited for.
+JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterFinSent, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(JSC::JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]] {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+    return JSValue::encode(JSC::jsBoolean(thisObject->ended && !thisObject->isClosed() && us_socket_is_shut_down(thisObject->socket)));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterDuplex, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))

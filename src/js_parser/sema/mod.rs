@@ -587,12 +587,6 @@ impl TypeSyntax {
     }
 }
 
-/// Debug counters: [type lookups by the lowering that found a node, lookups that found none].
-pub static KEPT: [std::sync::atomic::AtomicU64; 2] = [
-    std::sync::atomic::AtomicU64::new(0),
-    std::sync::atomic::AtomicU64::new(0),
-];
-
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> crate::P<'a, TYPESCRIPT, SCAN_ONLY> {
     #[inline(always)]
     pub(crate) fn keeps_type_syntax(&self) -> bool {

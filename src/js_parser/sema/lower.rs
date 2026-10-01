@@ -365,7 +365,6 @@ impl<'p, 'a> Lower<'p, 'a> {
             .types
             .get(&(skip_trivia(self.source, at as usize) as i32))
             .map(|kept| kept.node);
-        super::KEPT[usize::from(kept.is_none())].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         match kept {
             Some(ty) => self.b.clone_type(ty),
             None => self.b.type_at(at),
@@ -394,7 +393,6 @@ impl<'p, 'a> Lower<'p, 'a> {
                 }
             }
         };
-        super::KEPT[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Some(self.b.file.ty(kind, pos_of(param.loc)))
     }
 
@@ -406,7 +404,6 @@ impl<'p, 'a> Lower<'p, 'a> {
             .type_arguments
             .get(&(at as i32))
             .map(|kept| kept.node);
-        super::KEPT[usize::from(kept.is_none())].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         match kept {
             Some(arguments) => self.b.clone_type_list(arguments),
             None => self.b.type_args_at(at),
@@ -421,7 +418,6 @@ impl<'p, 'a> Lower<'p, 'a> {
             .type_parameters
             .get(&(at as i32))
             .map(|kept| kept.node);
-        super::KEPT[usize::from(kept.is_none())].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         match kept {
             Some(parameters) => self.b.clone_type_params(parameters),
             None => self.b.type_params_at(at),
@@ -436,7 +432,6 @@ impl<'p, 'a> Lower<'p, 'a> {
             at
         };
         let kept = self.b.kept.types.get(&(start as i32)).map(|kept| kept.node);
-        super::KEPT[usize::from(kept.is_none())].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         match kept {
             Some(ty) => self.b.clone_type(ty),
             None => self.b.return_type_at(at),

@@ -442,9 +442,6 @@ fn main() {
             for line in &lines {
                 println!("{line}");
             }
-            let [kept, parsed_again] = [0, 1]
-                .map(|i| bun_js_parser::sema::KEPT[i].load(std::sync::atomic::Ordering::Relaxed));
-            eprintln!("type lookups: found {kept}; nothing kept {parsed_again}");
         }
         Some("load") => {
             let start = std::time::Instant::now();

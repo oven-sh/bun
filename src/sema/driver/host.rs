@@ -7,7 +7,6 @@ use bun_sema::hir;
 use bun_sema::resolve::{Host, ModuleDetection, Options};
 use bun_sema::util::ShardedMap;
 use std::borrow::Cow;
-use std::cell::RefCell;
 use std::sync::OnceLock;
 
 /// Where TypeScript's `lib.*.d.ts` are for a project in `dir`: in the `typescript` package it has installed, which is also what its
@@ -134,7 +133,22 @@ pub struct Disk {
     /// On macOS, opening and reading files gets slower the more threads do it at once, by more than they get done: 16 threads take six times
     /// as long over the same files as 4 do. So few are let in at a time, as in the bundler.
     reading: Option<bun_threading::Semaphore>,
+    /// Readers that are not in use, least recently used first.
+    idle_readers: bun_threading::Guarded<Vec<Reader>>,
 }
+
+/// Reusable state for reading files. Owned by the [`Disk`], so every directory handle is closed when it is dropped.
+#[derive(Default)]
+struct Reader {
+    /// The directory of the file read last.
+    directory: String,
+    /// Opened when a second file is read from `directory`.
+    handle: Option<bun_sys::Dir>,
+    buffer: Vec<u8>,
+}
+
+/// How many idle readers, and so open directories, are kept.
+const MAX_IDLE_READERS: usize = 16;
 
 /// One of the few places there are for reading a file.
 /// How many threads read at a time on macOS, where opening a file goes through locks all threads meet at. With 16 threads and 45,000 files, 4 to
@@ -157,28 +171,22 @@ impl Drop for Turn<'_> {
 }
 
 /// All that the file `name` in `directory` says.
-fn read_whole(directory: impl bun_sys::AsFd, name: &[u8]) -> Option<Vec<u8>> {
+fn read_whole(directory: impl bun_sys::AsFd, name: &[u8], buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
     /// Few files are bigger.
     const ROOM: usize = 64 * 1024;
-    thread_local! {
-        static READ_INTO: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
-    }
     let file = bun_sys::File::openat(directory, name, bun_sys::O::RDONLY, 0).ok()?;
-    READ_INTO.with_borrow_mut(|room| {
-        room.resize(ROOM, 0);
-        let count = file.read(&mut room[..]).ok()?;
-        // A file that gives less than there is room for has given all it has: how big it is need not be asked before, nor whether
-        // that was all after.
-        if count < ROOM {
-            return Some(room[..count].to_vec());
-        }
-        let size = file.get_end_pos().ok()?.max(count);
-        let mut all = Vec::new();
-        all.try_reserve_exact(size.saturating_add(16)).ok()?;
-        all.extend_from_slice(&room[..count]);
-        file.read_to_end_into(&mut all).ok()?;
-        Some(all)
-    })
+    buffer.resize(ROOM, 0);
+    let count = file.read(&mut buffer[..]).ok()?;
+    // A short read means end of file, so neither the size nor a second read is needed.
+    if count < ROOM {
+        return Some(buffer[..count].to_vec());
+    }
+    let size = file.get_end_pos().ok()?.max(count);
+    let mut all = Vec::new();
+    all.try_reserve_exact(size.saturating_add(16)).ok()?;
+    all.extend_from_slice(&buffer[..count]);
+    file.read_to_end_into(&mut all).ok()?;
+    Some(all)
 }
 
 /// `decodeBytes`: what a file says, going by the mark at its start.
@@ -233,10 +241,29 @@ impl Disk {
                 }
                 places
             }),
+            idle_readers: bun_threading::Guarded::new(Vec::new()),
         }
     }
 
     /// Whether what is in `path` is asked of the system each time: the roots, which on Windows are no directories.
+    /// An idle reader that read from `directory` last, or else a new one, or the least recently used once enough are kept.
+    fn take_reader(&self, directory: &str) -> Reader {
+        let mut idle = self.idle_readers.lock();
+        match idle.iter().position(|r| r.directory == directory) {
+            Some(i) => idle.remove(i),
+            None if idle.len() >= MAX_IDLE_READERS => idle.remove(0),
+            None => Reader::default(),
+        }
+    }
+
+    fn return_reader(&self, reader: Reader) {
+        let mut idle = self.idle_readers.lock();
+        if idle.len() >= MAX_IDLE_READERS {
+            idle.remove(0);
+        }
+        idle.push(reader);
+    }
+
     fn is_above_listings(path: &str) -> bool {
         path.is_empty() || path == "/" && cfg!(windows)
     }
@@ -451,38 +478,37 @@ fn is_file_system_case_sensitive() -> bool {
 
 impl Host for Disk {
     fn read(&self, path: &str) -> Option<Cow<'static, [u8]>> {
-        // From the second file in a row in one directory on, a file is opened by its name in the directory. By its whole path, every
-        // directory on the way is looked up again, and all threads meet at the ones near the root. For one file alone, opening the
-        // directory takes that walk and more.
-        thread_local! {
-            static LAST: RefCell<(String, Option<bun_sys::Dir>)> = const { RefCell::new((String::new(), None)) };
-        }
         let (parent, name) = split(path);
         if name.is_empty() || Self::is_above_listings(parent) {
             return std::fs::read(to_native(path)).ok().map(decoded);
         }
         let _turn = self.reading.as_ref().map(Turn::wait_for);
-        let by_whole_path = || -> Option<Cow<'static, [u8]>> {
-            let path = to_native(path.trim_end_matches('/'));
-            read_whole(bun_sys::Fd::cwd(), path.as_bytes()).map(decoded)
-        };
-        LAST.with_borrow_mut(|(of, opened)| {
-            if of.as_str() != parent {
-                *opened = None;
-                of.clear();
-                of.push_str(parent);
-                return by_whole_path();
-            }
-            if opened.is_none() {
-                *opened = bun_sys::open_dir_absolute(to_native(parent).as_bytes())
+        let mut reader = self.take_reader(parent);
+        // The second file read from a directory, and those after it, are opened relative to the directory. An absolute path makes
+        // the kernel look up every directory on the way again, and all threads contend on the ones near the root. For a single
+        // file, opening the directory costs that walk and more.
+        let read = if reader.directory != parent {
+            reader.handle = None;
+            reader.directory.clear();
+            reader.directory.push_str(parent);
+            None
+        } else {
+            if reader.handle.is_none() {
+                reader.handle = bun_sys::open_dir_absolute(to_native(parent).as_bytes())
                     .ok()
                     .map(bun_sys::Dir::from_fd);
             }
-            let Some(directory) = opened.as_ref() else {
-                return by_whole_path();
-            };
-            read_whole(directory, name.as_bytes()).map(decoded)
-        })
+            let Reader { handle, buffer, .. } = &mut reader;
+            handle
+                .as_ref()
+                .map(|directory| read_whole(directory, name.as_bytes(), buffer))
+        };
+        let read = read.unwrap_or_else(|| {
+            let path = to_native(path.trim_end_matches('/'));
+            read_whole(bun_sys::Fd::cwd(), path.as_bytes(), &mut reader.buffer)
+        });
+        self.return_reader(reader);
+        read.map(decoded)
     }
     fn is_file(&self, path: &str) -> bool {
         match self.find(path) {

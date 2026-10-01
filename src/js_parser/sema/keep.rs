@@ -842,10 +842,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     extra.kind,
                     MemberKind::Property | MemberKind::Getter | MemberKind::Setter
                 );
-                mapped.extra_member_loc.get_or_insert(if has_name {
-                    extra.loc
-                } else {
-                    loc(member.start)
+                mapped.extra_member_loc.get_or_insert_with(|| {
+                    if has_name {
+                        extra.loc
+                    } else {
+                        loc(member.start)
+                    }
                 });
             }
             (Some(Ok(member)), None) => kept.members.push(member),
@@ -855,7 +857,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Attaches the body that follows the accessor added last.
-    pub(crate) fn add_accessor_body(&mut self, kept: &ObjectTypeBuilder, body: bun_ast::G::FnBody) {
+    pub(crate) fn add_accessor_body(
+        &mut self,
+        kept: &ObjectTypeBuilder,
+        body: &bun_ast::G::FnBody,
+    ) {
         if let Some(accessor) = kept
             .members
             .last()

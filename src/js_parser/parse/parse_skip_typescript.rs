@@ -2857,7 +2857,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // `parseFunctionBlockOrSemicolon`: nothing separates a body from the next member.
                         let body = self.skip_accessor_body_in_type()?;
                         if keeps {
-                            self.add_accessor_body(&kept, body);
+                            self.add_accessor_body(&kept, &body);
                         }
                         continue;
                     }

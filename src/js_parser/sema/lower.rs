@@ -50,9 +50,9 @@ pub(crate) struct Lower<'p, 'a> {
     /// `parsingContexts&(1<<PCObjectLiteralMembers)`: how many object literals what is being lowered is written in.
     pub(super) object_literals_around: u32,
     /// The functions that have a `FullSignature`.
-    pub(super) full_signatures: std::collections::HashSet<u32>,
+    pub(super) full_signatures: bun_collections::HashMap<u32, ()>,
     /// The functions whose `@param` tags were compared with their parameters.
-    pub(super) documented_functions: std::collections::HashSet<u32>,
+    pub(super) documented_functions: bun_collections::HashMap<u32, ()>,
 }
 
 fn pos_of(loc: ast::Loc) -> u32 {
@@ -368,10 +368,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         super::KEPT[usize::from(kept.is_none())].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         match kept {
             Some(ty) => self.b.clone_type(ty),
-            None => {
-                self.trace_fallback(at);
-                self.b.type_at(at)
-            }
+            None => self.b.type_at(at),
         }
     }
 
@@ -399,14 +396,6 @@ impl<'p, 'a> Lower<'p, 'a> {
         };
         super::KEPT[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Some(self.b.file.ty(kind, pos_of(param.loc)))
-    }
-
-    /// BUN_SEMA_KEEP_WHY=1 prints the start of every type the parser kept nothing for.
-    fn trace_fallback(&self, at: u32) {
-        if std::env::var_os("BUN_SEMA_KEEP_WHY").is_some() {
-            let text = &self.source[at as usize..(at as usize + 90).min(self.source.len())];
-            eprintln!("AGAIN {}", String::from_utf8_lossy(text).replace('\n', " "));
-        }
     }
 
     /// The type arguments whose `<` is at `at`.
@@ -450,10 +439,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         super::KEPT[usize::from(kept.is_none())].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         match kept {
             Some(ty) => self.b.clone_type(ty),
-            None => {
-                self.trace_fallback(start);
-                self.b.return_type_at(at)
-            }
+            None => self.b.return_type_at(at),
         }
     }
 
@@ -669,7 +655,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         let pos = if has_decorators {
             start
         } else {
-            export_pos.unwrap_or(pos_of(loc))
+            export_pos.unwrap_or_else(|| pos_of(loc))
         };
         let statement = match data {
             ts::StatementData::Interface(interface) => {

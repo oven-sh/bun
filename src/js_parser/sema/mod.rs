@@ -186,7 +186,7 @@ pub(crate) fn error_argument(text: &[u8]) -> Option<Box<str>> {
                 .unwrap_or(token)
         }
     };
-    Some(String::from_utf8_lossy(token).into())
+    Some(bstr::BStr::new(token).to_string().into_boxed_str())
 }
 
 /// `hir::File::error_ends`, of the error the parser logged as `said`: its start, its code and its end. `None`: where it ends is read
@@ -411,10 +411,7 @@ pub fn summarize(
         options.features.top_level_await = true;
         options.features.standard_decorators = !experimental_decorators;
         options.suppress_warnings_about_weird_code = true;
-        // BUN_SEMA_NOT_TOLERANT=1 runs the parser as ordinary builds do, to check that a change to tolerant mode leaves them alone.
-        // Ordinary builds never parse declaration files, so those stay tolerant.
-        let tolerant = is_declaration_file || std::env::var_os("BUN_SEMA_NOT_TOLERANT").is_none();
-        options.tolerant = tolerant;
+        options.tolerant = true;
         let define = crate::Define::default();
         let mut log = bun_ast::Log::init();
         let (file, awaited) = match crate::Parser::init(options, &mut log, &source, &define, &arena)
@@ -430,7 +427,6 @@ pub fn summarize(
         };
         // `parseSourceFileWorker`: only a file with an `ExternalModuleIndicator` has an [Await] context at its top level.
         let parse_again = awaited
-            && tolerant
             && !await_is_a_name
             && !every_file_is_a_module
             && !file.has_module_syntax
@@ -441,36 +437,6 @@ pub fn summarize(
                 .exprs
                 .iter()
                 .any(|e| matches!(e.kind, bun_sema::hir::ExprKind::ImportMeta));
-        if !parse_again
-            && (file.has_errors
-                || (!log.msgs.is_empty() && std::env::var_os("BUN_SEMA_TRACE_LOG").is_some()))
-            && std::env::var_os("BUN_SEMA_TRACE_PARSE").is_some()
-        {
-            let why: Vec<String> = log
-                .msgs
-                .iter()
-                .map(|m| {
-                    format!(
-                        "{}@{}",
-                        String::from_utf8_lossy(&m.data.text),
-                        m.data.location.as_ref().map_or(-1, |l| l.offset as i64)
-                    )
-                })
-                .collect();
-            // BUN_SEMA_TRACE_LOG=1: every file with a message, whatever becomes of it, for comparing what the parser itself logs.
-            let kind = if std::env::var_os("BUN_SEMA_TRACE_LOG").is_some() {
-                "RAW"
-            } else if file.stmts.is_empty() {
-                "FATAL"
-            } else {
-                "LOGGED"
-            };
-            eprintln!(
-                "REJECTED {}\t{kind}\t{}",
-                String::from_utf8_lossy(path),
-                why.join("\t")
-            );
-        }
         (file, parse_again)
     };
     let (mut file, parse_again) = parse(false);
@@ -599,8 +565,7 @@ impl TypeSyntax {
             specifier_expressions: Vec::new(),
             closing_tags: Vec::new(),
             pending_type_arguments: (0, 0),
-            // BUN_SEMA_KEEP=0 runs the parser in skip mode, as ordinary builds do, to check what it accepts and reports. No types result.
-            keep_types: std::env::var_os("BUN_SEMA_KEEP").is_none_or(|v| v != "0"),
+            keep_types: true,
             ast: ts::Syntax::new(),
             by_offset: Default::default(),
             last_type: ts::TypeId::NONE,

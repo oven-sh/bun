@@ -1175,7 +1175,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         if type_params.is_empty() && ret.is_none() && has_no_typed_params {
             let ty = self.reparse_type(ty);
             self.b.file.jsdoc_types.push((JsDocTypeOwner::Fn(func), ty));
-            self.full_signatures.insert(func.0);
+            self.full_signatures.insert(func.0, ());
         }
     }
 
@@ -1307,7 +1307,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             Host::VariableDeclaration(decl) => self.function_expression(self.b.file[decl].init),
             _ => self.function_like_host(host),
         };
-        if func.is_none() || !self.documented_functions.insert(func.0) {
+        if func.is_none() || self.documented_functions.insert(func.0, ()).is_some() {
             return;
         }
         let tags: Vec<&Property> = doc

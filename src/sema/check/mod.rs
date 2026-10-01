@@ -48,6 +48,7 @@ mod infer;
 mod instantiate;
 mod jsx;
 mod mapped;
+mod order;
 mod print;
 mod relate;
 mod shape;

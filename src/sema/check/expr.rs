@@ -34,6 +34,7 @@ impl<'p> Checker<'p> {
 
     /// `checkExpressionEx`
     pub fn type_of_expr(&mut self, file: FileId, e: ExprId) -> TypeId {
+        self.prepare_question_about_expr(file, e);
         let ty = self.type_of_expr_as_written(file, e);
         // `instantiateTypeWithSingleGenericCallSignature`: a generic function met while type arguments are inferred from it is what
         // it is when called the way that is expected there. That holds for the inference, not for `e`: it is not kept.

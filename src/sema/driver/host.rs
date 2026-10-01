@@ -20,7 +20,11 @@ pub fn find_lib_dir(
             return Some(plain);
         }
         let scope = format!("{node_modules}/@typescript");
-        let (_, packages) = host.entries(&scope);
+        let (_, mut packages) = host.entries(&scope);
+        // The package for the platform goes with `typescript` itself. Others may be older versions under another name.
+        packages.sort_by_key(|name| {
+            !(name.starts_with("typescript-") || name.starts_with("native-preview-"))
+        });
         packages
             .into_iter()
             .map(|package| format!("{scope}/{package}/lib"))

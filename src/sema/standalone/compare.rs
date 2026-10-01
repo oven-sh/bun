@@ -231,8 +231,10 @@ pub fn compare(
             eprintln!("START {}", expected.path);
         }
         let started = std::time::Instant::now();
-        let mut local = compare_file(program, file, expected, &oracle.descriptions);
+        // As it is in use: nothing has been asked about the file before its errors are.
+        let mut local = Comparison::default();
         compare_errors(program, file, expected, &mut local);
+        local.merge(compare_file(program, file, expected, &oracle.descriptions));
         if trace {
             eprintln!("DONE {} {}ms", expected.path, started.elapsed().as_millis());
         }
@@ -299,8 +301,9 @@ pub fn suite(root: &str, oracle: &Oracle, threads: usize, only: Option<&str>) ->
                 .get(&format!("{root}/{}", expected.path))
             {
                 Some(&file) => {
-                    local.merge(compare_file(&program, file, expected, &oracle.descriptions));
+                    // As it is in use: nothing has been asked about the file before its errors are.
                     compare_errors(&program, file, expected, &mut local);
+                    local.merge(compare_file(&program, file, expected, &oracle.descriptions));
                 }
                 None => local.files_not_loaded += 1,
             }

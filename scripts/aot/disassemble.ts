@@ -5,6 +5,9 @@
 //   bun scripts/aot/disassemble.ts <executable> --map <map> <name or index>...               the code of those functions
 //   bun scripts/aot/disassemble.ts <executable> [--map <map>] --offset <offset> --size <n>   the code at an offset
 //
+// --samples <samples of lr-probe.c>: before each instruction, the samples at it, and the samples in the stub whose call returns
+// to it.
+//
 // See map.ts for the map. Offsets are in the image's code, as in the map and in a crash's trace (decode-trace.ts).
 // Needs clang and llvm-objdump.
 import { spawnSync } from "node:child_process";
@@ -12,10 +15,11 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { readSamples } from "./lr-samples.ts";
 import { hex, ImageMap, nameOf } from "./map.ts";
 
 const { values, positionals } = parseArgs({
-  options: { map: { type: "string" }, offset: { type: "string" }, size: { type: "string" } },
+  options: { map: { type: "string" }, offset: { type: "string" }, size: { type: "string" }, samples: { type: "string" } },
   allowPositionals: true,
 });
 const [executable, ...wanted] = positionals;
@@ -24,6 +28,7 @@ if (!executable || (!values.map && !(values.offset && values.size))) {
   process.exit(1);
 }
 const map = values.map ? new ImageMap(values.map) : undefined;
+const samples = values.samples && map ? readSamples(values.samples, map) : undefined;
 
 if (!wanted.length && !values.offset) {
   console.log("index\toffset\tsize\tmodule\tstart\tkind\tname");
@@ -72,7 +77,13 @@ function disassemble(offset: number, size: number) {
       const to = offset + Number(BigInt.asIntN(64, BigInt("0x" + target)));
       return hex(to) + (map && !(to >= offset && to < offset + size) ? ` ; ${map.describe(to)}` : "");
     });
-    console.log(`${hex(offset + parseInt(address, 16))}: ${text}`);
+    const at = offset + parseInt(address, 16);
+    let before = "";
+    if (samples) {
+      const inStub = [...(samples.inStubs.get(at)?.values() ?? [])].reduce((a, b) => a + b, 0);
+      before = `${String(samples.own.get(at) ?? "").padStart(6)} ${(inStub ? `[${inStub}]` : "").padStart(8)}  `;
+    }
+    console.log(`${before}${hex(at)}: ${text}`);
   }
 }
 

@@ -1429,6 +1429,47 @@ describe("bun test", () => {
           "100% 1",
         ]);
       });
+
+      test("reads a $name by code point, so a non-ASCII key resolves", () => {
+        const stderr = runTest({
+          args: [],
+          input: `
+            import { test } from "bun:test";
+            test.each([{ café: "one", 名前: "Alice", 값: 42 }])("unicode $café $名前 $값", () => {});
+            test.each([{ ê: "E-CIRC", é: "E-ACUTE", µ: "MICRO", 𝒳: "ASTRAL" }])("[$ê] [$é] [$µ] [$𝒳]", () => {});
+            test.each([{ temp: 21, a: "x", b: "y" }])("$temp°C $a→$b", () => {});
+            test.each([{ a: { é: 1 }, é: { b: 2 } }])("$a.é $é.b $a.é→", () => {});
+            test.each([{ "caf\\uFFFD": "wrong", café: "right" }])("$café", () => {});
+            test.each([{ a: 1 }])("missing $café and $名前 stay whole, $a", () => {});
+          `,
+        });
+        const titles = stderr
+          .split("\n")
+          .filter(line => line.startsWith("(pass) "))
+          .map(line => line.slice("(pass) ".length).replace(/ \[[\d.]+ms\]$/, ""));
+        expect(titles).toEqual([
+          "unicode one Alice 42",
+          "[E-CIRC] [E-ACUTE] [MICRO] [ASTRAL]",
+          "21°C x→y",
+          "1 2 1→",
+          "right",
+          "missing $café and $名前 stay whole, 1",
+        ]);
+      });
+
+      test("a $name is an identifier path: other keys and longer names stay literal", () => {
+        const stderr = runTest({
+          args: [],
+          input: `
+            import { test } from "bun:test";
+            test.each([{ a: 1, n: 3, name: "x", "÷": "div", "·": "dot", "😀": "emoji" }])(
+              "[$aש] [$n個] [$name을] [$÷] [$·] [$😀]",
+              () => {},
+            );
+          `,
+        });
+        expect(stderr).toContain("(pass) [$aש] [$n個] [$name을] [$÷] [$·] [$😀]");
+      });
     });
   });
 

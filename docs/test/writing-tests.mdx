@@ -363,7 +363,7 @@ Use these specifiers to format the test title:
 | `%$`      | Number of the test case (1-based) |
 | `%%`      | Single percent sign (%)           |
 
-In the `$variable` form, `$#` is the index of the test case.
+In the `$variable` form, `$#` is the index of the test case. A `$name` is a JavaScript identifier path such as `$user.name`, and Unicode letters are allowed (`$café`). Bun leaves the text as written when the row has no such property. That includes a key that is not an identifier (`$has-dash`) and a name directly followed by another identifier character (`$count個`).
 
 #### Examples
 

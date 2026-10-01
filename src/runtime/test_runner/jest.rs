@@ -702,6 +702,36 @@ fn write_placeholder_arg(
     write_title_value(global_this, JSValue::js_number(number), list)
 }
 
+/// Byte width of the identifier code point at `text[at]`, or 0 when it is not one.
+#[inline]
+fn identifier_width_at(text: &[u8], at: usize, is_start: bool) -> usize {
+    let byte = text[at];
+    if byte >= 0x80 {
+        return non_ascii_identifier_width(&text[at..], is_start);
+    }
+    let code_point = i32::from(byte);
+    usize::from(if is_start {
+        bun_js_parser::js_lexer::is_identifier_start(code_point)
+    } else {
+        bun_js_parser::js_lexer::is_identifier_continue(code_point)
+    })
+}
+
+#[cold]
+#[inline(never)]
+fn non_ascii_identifier_width(text: &[u8], is_start: bool) -> usize {
+    let mut cursor = bun_core::strings::Cursor::default();
+    if !bun_core::strings::CodepointIterator::init(text).next(&mut cursor) {
+        return 0;
+    }
+    let is_identifier = if is_start {
+        bun_js_parser::js_lexer::is_identifier_start(cursor.c)
+    } else {
+        bun_js_parser::js_lexer::is_identifier_continue(cursor.c)
+    };
+    if is_identifier { usize::from(cursor.width) } else { 0 }
+}
+
 /// Generate test label by positionally injecting parameters with printf formatting
 pub(crate) fn format_label(
     global_this: &JSGlobalObject,
@@ -729,24 +759,21 @@ pub(crate) fn format_label(
                 continue;
             }
 
-            if bun_js_parser::js_lexer::is_identifier_start(label[var_start] as i32) {
-                let mut var_end = var_start + 1;
+            let start_width = identifier_width_at(label, var_start, true);
+            if start_width != 0 {
+                let mut var_end = var_start + start_width;
 
                 while var_end < label.len() {
-                    let c = label[var_end];
-                    if c == b'.' {
-                        if var_end + 1 < label.len()
-                            && bun_js_parser::js_lexer::is_identifier_continue(label[var_end + 1] as i32)
-                        {
-                            var_end += 1;
-                        } else {
-                            break;
-                        }
-                    } else if bun_js_parser::js_lexer::is_identifier_continue(c as i32) {
-                        var_end += 1;
-                    } else {
+                    // A `.` stays in the path only when an identifier character follows it.
+                    let at = if label[var_end] == b'.' { var_end + 1 } else { var_end };
+                    if at >= label.len() {
                         break;
                     }
+                    let width = identifier_width_at(label, at, false);
+                    if width == 0 {
+                        break;
+                    }
+                    var_end = at + width;
                 }
 
                 let var_path = &label[var_start..var_end];

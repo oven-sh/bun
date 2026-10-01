@@ -1,0 +1,13 @@
+bun test v1.4.3 (3110ce85c)
+
+test/cli/lint/repository-candidate.test.ts:
+(pass) repository > CI and `bun test` find their tests by these rules [226.62ms]
+(pass) repository > the rules take a file for a test by its name, and CI by its directory too [306.16ms]
+(skip) repository > no file below conformance/ is a test, and CI enters every directory
+
+ 2 pass
+ 1 skip
+ 0 fail
+ 1 snapshots, 3 expect() calls
+Ran 3 tests across 1 file. [3.56s]
+exit 0

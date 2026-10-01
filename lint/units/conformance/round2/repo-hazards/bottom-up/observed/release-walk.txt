@@ -1,0 +1,85 @@
+got the lock 19:38:19, loadavg 523.84 416.00 383.53 322/21621 895341
+-- m0-unchanged:  3 pass  0 fail exit 0 
+(pass) repository > CI and `bun test` find their tests by these rules [8.74ms]
+(pass) repository > the rules take a file for a test by its name, and CI by its directory too [1.68ms]
+(pass) repository > no file below conformance/ is a test, and CI enters every directory [2484.80ms]
+-- m1-a-case-named-dot-test:  2 pass  1 fail exit 1 
+error: expect(received).toEqual(expected)
+(fail) repository > no file below conformance/ is a test, and CI enters every directory [484.70ms]
+-- m2-a-directory-of-node-tests:  2 pass  1 fail exit 1 
+error: expect(received).toEqual(expected)
+(fail) repository > no file below conformance/ is a test, and CI enters every directory [368.30ms]
+-- m3-a-case-named-underscore-test:  2 pass  1 fail exit 1 
+error: expect(received).toEqual(expected)
+(fail) repository > no file below conformance/ is a test, and CI enters every directory [751.14ms]
+-- m4-the-runner-takes-more-names:  0 pass  3 fail exit 1 
+error: expect(received).toMatchInlineSnapshot(expected)
+(fail) repository > CI and `bun test` find their tests by these rules [3.06ms]
+error: expect(received).toEqual(expected)
+(fail) repository > the rules take a file for a test by its name, and CI by its directory too [1.83ms]
+error: expect(received).toEqual(expected)
+(fail) repository > no file below conformance/ is a test, and CI enters every directory [677.15ms]
+-- m5-a-function-of-the-runner-is-renamed:  0 pass  3 fail exit 1 
+error: scripts/runner.node.ts has 0 functions named isHidden
+(fail) repository > CI and `bun test` find their tests by these rules [0.85ms]
+error: scripts/runner.node.ts has 0 functions named isHidden
+(fail) repository > the rules take a file for a test by its name, and CI by its directory too [0.39ms]
+error: scripts/runner.node.ts has 0 functions named isHidden
+(fail) repository > no file below conformance/ is a test, and CI enters every directory [0.23ms]
+-- m6-the-cases-are-not-there:  2 pass  1 fail exit 1 
+error: expect(received).toEqual(expected)
+(fail) repository > no file below conformance/ is a test, and CI enters every directory [151.34ms]
+-- m7-a-dot-file-directly-in-corpus:  3 pass  0 fail exit 0 
+-- m8-a-directory-that-the-walk-leaves-out:  2 pass  1 fail exit 1 
+error: expect(received).toEqual(expected)
+(fail) repository > no file below conformance/ is a test, and CI enters every directory [121.21ms]
+-- m9-bun-test-takes-more-names:  0 pass  3 fail exit 1 
+error: expect(received).toBe(expected)
+(fail) repository > CI and `bun test` find their tests by these rules [0.62ms]
+error: expect(received).toEqual(expected)
+(fail) repository > the rules take a file for a test by its name, and CI by its directory too [2.62ms]
+error: expect(received).toEqual(expected)
+(fail) repository > no file below conformance/ is a test, and CI enters every directory [248.64ms]
+== alone, debug build with the leak check of CI, run 1 19:38:45
+real	0m4.824s
+(pass) repository > CI and `bun test` find their tests by these rules [226.62ms]
+(pass) repository > the rules take a file for a test by its name, and CI by its directory too [306.16ms]
+(skip) repository > no file below conformance/ is a test, and CI enters every directory
+ 2 pass
+ 1 skip
+ 0 fail
+Ran 3 tests across 1 file. [3.56s]
+exit 0
+== alone, debug build with the leak check of CI, run 2 19:38:50
+real	0m6.075s
+(pass) repository > CI and `bun test` find their tests by these rules [67.15ms]
+(pass) repository > the rules take a file for a test by its name, and CI by its directory too [161.12ms]
+(skip) repository > no file below conformance/ is a test, and CI enters every directory
+ 2 pass
+ 1 skip
+ 0 fail
+Ran 3 tests across 1 file. [4.71s]
+exit 0
+== whole file with the describe in it
+ 1 file changed, 174 insertions(+), 1 deletion(-)
+== whole file, release build 19:39:00
+real	0m35.218s
+ 0 fail
+ 108 pass
+(pass) repository > CI and `bun test` find their tests by these rules [4.39ms]
+(pass) repository > no file below conformance/ is a test, and CI enters every directory [105.71ms]
+(pass) repository > the rules take a file for a test by its name, and CI by its directory too [2.89ms]
+Ran 108 tests across 1 file. [35.07s]
+exit 0
+== whole file, debug build with the leak check of CI 19:39:36
+real	0m59.991s
+ 0 fail
+ 106 pass
+ 2 skip
+(pass) repository > CI and `bun test` find their tests by these rules [42.26ms]
+(pass) repository > the rules take a file for a test by its name, and CI by its directory too [108.70ms]
+(skip) repository > no file below conformance/ is a test, and CI enters every directory
+Ran 108 tests across 1 file. [58.20s]
+exit 0
+sanitizer reports: 0
+done 19:40:36

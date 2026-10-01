@@ -1,0 +1,28 @@
+got the lock 19:40:37, loadavg 474.58 439.09 397.01 246/22461 898257
+real	0m1.546s
+(pass) repository > CI and `bun test` find their tests by these rules [1.45ms]
+(pass) repository > the rules take a file for a test by its name, and CI by its directory too [3.19ms]
+(pass) repository > no file below conformance/ is a test, and CI enters every directory [317.57ms]
+ 3 pass
+ 0 fail
+Ran 3 tests across 1 file. [1429.00ms]
+exit 0
+== alone, debug build with the leak check of CI, run 1 19:40:40, loadavg 483.42
+real	0m26.875s
+(pass) repository > CI and `bun test` find their tests by these rules [498.27ms]
+(pass) repository > the rules take a file for a test by its name, and CI by its directory too [310.94ms]
+(pass) repository > no file below conformance/ is a test, and CI enters every directory [22485.93ms]
+ 3 pass
+ 0 fail
+Ran 3 tests across 1 file. [25.63s]
+exit 0
+== alone, debug build with the leak check of CI, run 2 19:41:08, loadavg 477.72
+real	0m27.551s
+(pass) repository > CI and `bun test` find their tests by these rules [226.75ms]
+(pass) repository > the rules take a file for a test by its name, and CI by its directory too [187.74ms]
+(pass) repository > no file below conformance/ is a test, and CI enters every directory [23635.88ms]
+ 3 pass
+ 0 fail
+Ran 3 tests across 1 file. [25.87s]
+exit 0
+done 19:41:36

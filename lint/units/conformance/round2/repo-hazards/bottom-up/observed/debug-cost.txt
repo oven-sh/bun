@@ -1,0 +1,77 @@
+got the lock 19:07:47, loadavg 417.51 369.87 374.20 356/20964 871247
+== debug build, run 1
+   3549 ms  walk: readdirSync per directory, withFileTypes, names by join (22232)
+   1774 ms  walk: readdirSync per directory, withFileTypes, names by concatenation (22232)
+    736 ms  walk: one readdirSync recursive, plain names (22628)
+   2267 ms  walk: one readdirSync recursive, withFileTypes (22232)
+        same files: join true, recursive with types true, recursive plain holds files and directories: 22628 = 22232 + 396
+     45 ms  transpile the six functions
+   1199 ms  22k basename of node:path (22232)
+   3233 ms  22k dirname of node:path (22232)
+    957 ms  22k basename by lastIndexOf and slice (22232)
+   1960 ms  22k dirname by lastIndexOf and slice (22232)
+        same answers: basename true, dirname true, on directories true
+  35114 ms  isTest on every file, path functions of node:path (0)
+  21050 ms  isTest on every file, path functions by slice (0)
+   1439 ms  isHidden on every file, path functions of node:path (2)
+   1494 ms  isHidden on every file, path functions by slice (2)
+    118 ms  isHidden on every directory and on a plain name in it, by slice (0)
+  18921 ms  isTest on every file a second time, by slice (0)
+   3032 ms  bun test rule, basename and extname of node:path (0)
+   3418 ms  bun test rule, by slice (0)
+   2106 ms  count of the corpus by a regular expression on the rest of the path (22182)
+
+real	2m4.285s
+user	1m9.116s
+sys	0m0.579s
+== debug build, run 2
+   3972 ms  walk: readdirSync per directory, withFileTypes, names by join (22232)
+    674 ms  walk: readdirSync per directory, withFileTypes, names by concatenation (22232)
+    423 ms  walk: one readdirSync recursive, plain names (22628)
+   1320 ms  walk: one readdirSync recursive, withFileTypes (22232)
+        same files: join true, recursive with types true, recursive plain holds files and directories: 22628 = 22232 + 396
+     26 ms  transpile the six functions
+   1638 ms  22k basename of node:path (22232)
+    750 ms  22k dirname of node:path (22232)
+    770 ms  22k basename by lastIndexOf and slice (22232)
+   2945 ms  22k dirname by lastIndexOf and slice (22232)
+        same answers: basename true, dirname true, on directories true
+  26141 ms  isTest on every file, path functions of node:path (0)
+  33903 ms  isTest on every file, path functions by slice (0)
+   2943 ms  isHidden on every file, path functions of node:path (2)
+   4697 ms  isHidden on every file, path functions by slice (2)
+    392 ms  isHidden on every directory and on a plain name in it, by slice (0)
+  22818 ms  isTest on every file a second time, by slice (0)
+   3650 ms  bun test rule, basename and extname of node:path (0)
+   2874 ms  bun test rule, by slice (0)
+   1320 ms  count of the corpus by a regular expression on the rest of the path (22182)
+
+real	2m8.566s
+user	1m6.903s
+sys	0m0.531s
+== release build
+     47 ms  walk: readdirSync per directory, withFileTypes, names by join (22232)
+     18 ms  walk: readdirSync per directory, withFileTypes, names by concatenation (22232)
+     37 ms  walk: one readdirSync recursive, plain names (22628)
+    218 ms  walk: one readdirSync recursive, withFileTypes (22232)
+        same files: join true, recursive with types true, recursive plain holds files and directories: 22628 = 22232 + 396
+      2 ms  transpile the six functions
+     10 ms  22k basename of node:path (22232)
+      6 ms  22k dirname of node:path (22232)
+      5 ms  22k basename by lastIndexOf and slice (22232)
+      3 ms  22k dirname by lastIndexOf and slice (22232)
+        same answers: basename true, dirname true, on directories true
+     36 ms  isTest on every file, path functions of node:path (0)
+     53 ms  isTest on every file, path functions by slice (0)
+      9 ms  isHidden on every file, path functions of node:path (2)
+     11 ms  isHidden on every file, path functions by slice (2)
+      1 ms  isHidden on every directory and on a plain name in it, by slice (0)
+     23 ms  isTest on every file a second time, by slice (0)
+     17 ms  bun test rule, basename and extname of node:path (0)
+     18 ms  bun test rule, by slice (0)
+      8 ms  count of the corpus by a regular expression on the rest of the path (22182)
+
+real	0m2.279s
+user	0m0.256s
+sys	0m0.120s
+done 19:12:02

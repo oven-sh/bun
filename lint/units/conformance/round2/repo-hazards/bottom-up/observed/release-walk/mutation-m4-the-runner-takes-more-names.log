@@ -1,0 +1,200 @@
+bun test v1.4.3-canary.1 (367d939d9)
+
+test/cli/lint/repository-candidate.test.ts:
+53 |   // A change here changes what CI runs: sync.sh refuses upstream names by these rules, and the last test of this group says whether a name of the corpus is taken now.
+54 |   test("CI and `bun test` find their tests by these rules", () => {
+55 |     expect(suffixLine()).toBe(
+56 |       'pub(crate) const TEST_NAME_SUFFIXES: [&[u8]; 4] = [b".test", b"_test", b".spec", b"_spec"];',
+57 |     );
+58 |     expect(["getTests", ...predicates].map(cut).join("\n\n")).toMatchInlineSnapshot(`
+                                                                   ^
+error: expect(received).toMatchInlineSnapshot(expected)
+
+  
+  "function getTests(cwd: string): string[] {
+    function* getFiles(cwd: string, path: string): Generator<string> {
+      const dirname = join(cwd, path);
+      for (const entry of readdirSync(dirname, { encoding: "utf-8", withFileTypes: true })) {
+        const { name } = entry;
+        const filename = join(path, name);
+        if (isHidden(filename)) {
+          continue;
+        }
+        if (entry.isFile()) {
+          if (isTest(filename)) {
+            yield filename;
+          }
+        } else if (entry.isDirectory()) {
+          yield* getFiles(cwd, filename);
+        }
+      }
+    }
+    return [...getFiles(cwd, "")].sort();
+  }
+  
+  function isHidden(path: string): boolean {
+    return /node_modules|node.js/.test(dirname(path)) || /^\./.test(basename(path));
+  }
+  
+  function isTest(path: string): boolean {
+    return isNodeTest(path) || isClusterTest(path) ? true : isTestStrict(path);
+  }
+  
+  function isNodeTest(path: string): boolean {
+    // Do not run node tests on macOS x64 in CI, those machines are slow and expensive.
+    if (isCI && isMacOS && isX64) {
+      return false;
+    }
+    if (!isJavaScript(path)) {
+      return false;
+    }
+    const unixPath = path.replaceAll(sep, "/");
+    return (
+      unixPath.includes("js/node/test/parallel/") ||
+      unixPath.includes("js/node/test/sequential/") ||
+      unixPath.includes("js/bun/test/parallel/")
+    );
+  }
+  
+  function isClusterTest(path: string): boolean {
+    const unixPath = path.replaceAll(sep, "/");
+    return unixPath.includes("js/node/cluster/test-") && unixPath.endsWith(".ts");
+  }
+  
+  function isTestStrict(path: string): boolean {
+-   return isJavaScript(path) && /\.test|spec\./.test(basename(path));
++   return isJavaScript(path) && /\.test|spec\.|Test/.test(basename(path));
+  }
+  
+  function isJavaScript(path: string): boolean {
+    return /\.(c|m)?(j|t)sx?$/.test(basename(path));
+  }"
+  
+
+- Expected  - 1
++ Received  + 1
+
+      at <anonymous> (/tmp/rh1a/repo/test/cli/lint/repository-candidate.test.ts:58:63)
+(fail) repository > CI and `bun test` find their tests by these rules [3.06ms]
+134 |       hiddenDirectory: isHidden(below("corpus", "cases", "conformance", "node_modules", "a.ts")),
+135 |       plainDirectory: isHidden(below("corpus", "cases", "conformance", "node", "allowJs")),
+136 |       bunTest: ["a.test.ts", "A_Test.TSX", "a.spec.mjs", "a_spec.cts", "a_test.d.ts", "castTest.ts", "a.test.txt"].map(
+137 |         bunTest(),
+138 |       ),
+139 |     }).toEqual({
+             ^
+error: expect(received).toEqual(expected)
+
+  {
+    "bunParallel": true,
+    "bunTest": [
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+    ],
+    "cluster": true,
+    "dotTest": true,
+    "dotTestInside": true,
+    "hiddenDirectory": true,
+    "hiddenName": true,
+-   "noDot": false,
++   "noDot": true,
+    "noJavaScript": false,
+    "nodeParallel": true,
+    "nodeSequential": true,
+    "plainDirectory": false,
+    "spec": true,
+    "thisFile": true,
+    "upperCase": false,
+  }
+
+- Expected  - 1
++ Received  + 1
+
+      at <anonymous> (/tmp/rh1a/repo/test/cli/lint/repository-candidate.test.ts:139:8)
+(fail) repository > the rules take a file for a test by its name, and CI by its directory too [1.83ms]
+175 |       corpusFiles: files.filter(path => path.startsWith(corpusPrefix) && path[corpusPrefix.length] !== ".").length,
+176 |       testsOfCI: files.filter(isTest),
+177 |       testsOfBunTest: files.filter(bunTest()),
+178 |       // A directory that the walk does not enter, or whose files it leaves out whatever their name.
+179 |       directoriesLeftOut: directories.filter(directory => isHidden(directory) || isHidden(directory + sep + "a")),
+180 |     }).toEqual({
+             ^
+error: expect(received).toEqual(expected)
+
+  {
+    "corpusFiles": 22182,
+    "directoriesLeftOut": [],
+    "testsOfBunTest": [],
+-   "testsOfCI": [],
++   "testsOfCI": [
++     "cli/lint/conformance/corpus/cases/conformance/jsx/jsxReactTestSuite.tsx",
++     "cli/lint/conformance/corpus/cases/conformance/jsx/tsxParseTests1.tsx",
++     "cli/lint/conformance/corpus/cases/conformance/jsx/jsxEsprimaFbTestSuite.tsx",
++     "cli/lint/conformance/corpus/cases/conformance/jsx/jsxInvalidEsprimaTestSuite.tsx",
++     "cli/lint/conformance/corpus/cases/conformance/jsx/tsxParseTests2.tsx",
++     "cli/lint/conformance/corpus/cases/compiler/moduleVisibilityTest2.ts",
++     "cli/lint/conformance/corpus/cases/compiler/targetTypeTest1.ts",
++     "cli/lint/conformance/corpus/cases/compiler/optionalParamArgsTest.ts",
++     "cli/lint/conformance/corpus/cases/compiler/es6ClassTest8.ts",
++     "cli/lint/conformance/corpus/cases/compiler/arrayAssignmentTest1.ts",
++     "cli/lint/conformance/corpus/cases/compiler/es6ClassTest4.ts",
++     "cli/lint/conformance/corpus/cases/compiler/moduleCodeGenTest3.ts",
++     "cli/lint/conformance/corpus/cases/compiler/scopeTests.ts",
++     "cli/lint/conformance/corpus/cases/compiler/cloduleTest1.ts",
++     "cli/lint/conformance/corpus/cases/compiler/targetTypeTest2.ts",
++     "cli/lint/conformance/corpus/cases/compiler/cloduleTest2.ts",
++     "cli/lint/conformance/corpus/cases/compiler/moduleCodeGenTest5.ts",
++     "cli/lint/conformance/corpus/cases/compiler/arrayAssignmentTest5.ts",
++     "cli/lint/conformance/corpus/cases/compiler/classUpdateTests.ts",
++     "cli/lint/conformance/corpus/cases/compiler/moduleVisibilityTest1.ts",
++     "cli/lint/conformance/corpus/cases/compiler/es6ClassTest3.ts",
++     "cli/lint/conformance/corpus/cases/compiler/promiseDefinitionTest.ts",
++     "cli/lint/conformance/corpus/cases/compiler/es6ClassTest5.ts",
++     "cli/lint/conformance/corpus/cases/compiler/arrayAssignmentTest4.ts",
++     "cli/lint/conformance/corpus/cases/compiler/optionalPropertiesTest.ts",
++     "cli/lint/conformance/corpus/cases/compiler/moduleCodegenTest4.ts",
++     "cli/lint/conformance/corpus/cases/compiler/arrayAssignmentTest6.ts",
++     "cli/lint/conformance/corpus/cases/compiler/es6ClassTest.ts",
++     "cli/lint/conformance/corpus/cases/compiler/targetTypeCastTest.ts",
++     "cli/lint/conformance/corpus/cases/compiler/overloadCallTest.ts",
++     "cli/lint/conformance/corpus/cases/compiler/crashRegressionTest.ts",
++     "cli/lint/conformance/corpus/cases/compiler/es6ClassTest2.ts",
++     "cli/lint/conformance/corpus/cases/compiler/moduleClassArrayCodeGenTest.ts",
++     "cli/lint/conformance/corpus/cases/compiler/conditionalEqualityTestingNullability.ts",
++     "cli/lint/conformance/corpus/cases/compiler/classExpressionTest2.ts",
++     "cli/lint/conformance/corpus/cases/compiler/recursiveClassReferenceTest.ts",
++     "cli/lint/conformance/corpus/cases/compiler/promiseTest.ts",
++     "cli/lint/conformance/corpus/cases/compiler/declFileRegressionTests.ts",
++     "cli/lint/conformance/corpus/cases/compiler/targetTypeTest3.ts",
++     "cli/lint/conformance/corpus/cases/compiler/castTest.ts",
++     "cli/lint/conformance/corpus/cases/compiler/underscoreTest1.ts",
++     "cli/lint/conformance/corpus/cases/compiler/omitTypeTestErrors01.ts",
++     "cli/lint/conformance/corpus/cases/compiler/overloadResolutionTest1.ts",
++     "cli/lint/conformance/corpus/cases/compiler/es6ClassTest7.ts",
++     "cli/lint/conformance/corpus/cases/compiler/arrayAssignmentTest2.ts",
++     "cli/lint/conformance/corpus/cases/compiler/omitTypeTests01.ts",
++     "cli/lint/conformance/corpus/cases/compiler/moduleVisibilityTest4.ts",
++     "cli/lint/conformance/corpus/cases/compiler/es6ClassTest9.ts",
++     "cli/lint/conformance/corpus/cases/compiler/classExpressionTest1.ts",
++     "cli/lint/conformance/corpus/cases/compiler/arrayAssignmentTest3.ts",
++     "cli/lint/conformance/corpus/cases/compiler/moduleVisibilityTest3.ts",
++   ],
+  }
+
+- Expected  - 1
++ Received  + 53
+
+      at <anonymous> (/tmp/rh1a/repo/test/cli/lint/repository-candidate.test.ts:180:8)
+(fail) repository > no file below conformance/ is a test, and CI enters every directory [677.15ms]
+
+ 0 pass
+ 3 fail
+snapshots: 1 failed
+ 4 expect() calls
+Ran 3 tests across 1 file. [1292.00ms]
+exit 1

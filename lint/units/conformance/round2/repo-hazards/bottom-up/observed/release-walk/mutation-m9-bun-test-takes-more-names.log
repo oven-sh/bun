@@ -1,0 +1,99 @@
+bun test v1.4.3-canary.1 (367d939d9)
+
+test/cli/lint/repository-candidate.test.ts:
+50 |   });
+51 |   const below = (...names: string[]) => ["cli", "lint", "conformance", ...names].join(sep);
+52 | 
+53 |   // A change here changes what CI runs: sync.sh refuses upstream names by these rules, and the last test of this group says whether a name of the corpus is taken now.
+54 |   test("CI and `bun test` find their tests by these rules", () => {
+55 |     expect(suffixLine()).toBe(
+                              ^
+error: expect(received).toBe(expected)
+
+Expected: "pub(crate) const TEST_NAME_SUFFIXES: [&[u8]; 4] = [b".test", b"_test", b".spec", b"_spec"];"
+Received: "pub(crate) const TEST_NAME_SUFFIXES: [&[u8]; 5] = [b".test", b"_test", b".spec", b"_spec", b"test"];"
+
+      at <anonymous> (/tmp/rh1a/repo/test/cli/lint/repository-candidate.test.ts:55:26)
+(fail) repository > CI and `bun test` find their tests by these rules [0.62ms]
+134 |       hiddenDirectory: isHidden(below("corpus", "cases", "conformance", "node_modules", "a.ts")),
+135 |       plainDirectory: isHidden(below("corpus", "cases", "conformance", "node", "allowJs")),
+136 |       bunTest: ["a.test.ts", "A_Test.TSX", "a.spec.mjs", "a_spec.cts", "a_test.d.ts", "castTest.ts", "a.test.txt"].map(
+137 |         bunTest(),
+138 |       ),
+139 |     }).toEqual({
+             ^
+error: expect(received).toEqual(expected)
+
+  {
+    "bunParallel": true,
+    "bunTest": [
+      true,
+      true,
+      true,
+      true,
+      false,
+-     false,
++     true,
+      false,
+    ],
+    "cluster": true,
+    "dotTest": true,
+    "dotTestInside": true,
+    "hiddenDirectory": true,
+    "hiddenName": true,
+    "noDot": false,
+    "noJavaScript": false,
+    "nodeParallel": true,
+    "nodeSequential": true,
+    "plainDirectory": false,
+    "spec": true,
+    "thisFile": true,
+    "upperCase": false,
+  }
+
+- Expected  - 1
++ Received  + 1
+
+      at <anonymous> (/tmp/rh1a/repo/test/cli/lint/repository-candidate.test.ts:139:8)
+(fail) repository > the rules take a file for a test by its name, and CI by its directory too [2.62ms]
+175 |       corpusFiles: files.filter(path => path.startsWith(corpusPrefix) && path[corpusPrefix.length] !== ".").length,
+176 |       testsOfCI: files.filter(isTest),
+177 |       testsOfBunTest: files.filter(bunTest()),
+178 |       // A directory that the walk does not enter, or whose files it leaves out whatever their name.
+179 |       directoriesLeftOut: directories.filter(directory => isHidden(directory) || isHidden(directory + sep + "a")),
+180 |     }).toEqual({
+             ^
+error: expect(received).toEqual(expected)
+
+  {
+    "corpusFiles": 22182,
+    "directoriesLeftOut": [],
+-   "testsOfBunTest": [],
++   "testsOfBunTest": [
++     "cli/lint/conformance/corpus/cases/compiler/optionalParamArgsTest.ts",
++     "cli/lint/conformance/corpus/cases/compiler/promiseDefinitionTest.ts",
++     "cli/lint/conformance/corpus/cases/compiler/optionalPropertiesTest.ts",
++     "cli/lint/conformance/corpus/cases/compiler/es6ClassTest.ts",
++     "cli/lint/conformance/corpus/cases/compiler/targetTypeCastTest.ts",
++     "cli/lint/conformance/corpus/cases/compiler/overloadCallTest.ts",
++     "cli/lint/conformance/corpus/cases/compiler/crashRegressionTest.ts",
++     "cli/lint/conformance/corpus/cases/compiler/moduleClassArrayCodeGenTest.ts",
++     "cli/lint/conformance/corpus/cases/compiler/recursiveClassReferenceTest.ts",
++     "cli/lint/conformance/corpus/cases/compiler/promiseTest.ts",
++     "cli/lint/conformance/corpus/cases/compiler/castTest.ts",
++     "cli/lint/conformance/runner/vfstest.ts",
++   ],
+    "testsOfCI": [],
+  }
+
+- Expected  - 1
++ Received  + 14
+
+      at <anonymous> (/tmp/rh1a/repo/test/cli/lint/repository-candidate.test.ts:180:8)
+(fail) repository > no file below conformance/ is a test, and CI enters every directory [248.64ms]
+
+ 0 pass
+ 3 fail
+ 3 expect() calls
+Ran 3 tests across 1 file. [394.00ms]
+exit 1

@@ -1,0 +1,39 @@
+bun test v1.4.3-canary.1 (367d939d9)
+
+test/cli/lint/repository-candidate.test.ts:
+(pass) repository > CI and `bun test` find their tests by these rules [1.50ms]
+(pass) repository > the rules take a file for a test by its name, and CI by its directory too [2.07ms]
+175 |       corpusFiles: files.filter(path => path.startsWith(corpusPrefix) && path[corpusPrefix.length] !== ".").length,
+176 |       testsOfCI: files.filter(isTest),
+177 |       testsOfBunTest: files.filter(bunTest()),
+178 |       // A directory that the walk does not enter, or whose files it leaves out whatever their name.
+179 |       directoriesLeftOut: directories.filter(directory => isHidden(directory) || isHidden(directory + sep + "a")),
+180 |     }).toEqual({
+             ^
+error: expect(received).toEqual(expected)
+
+  {
+-   "corpusFiles": 22182,
++   "corpusFiles": 22183,
+    "directoriesLeftOut": [],
+-   "testsOfBunTest": [],
+-   "testsOfCI": [],
++   "testsOfBunTest": [
++     "cli/lint/conformance/corpus/cases/compiler/zz.test.ts",
++   ],
++   "testsOfCI": [
++     "cli/lint/conformance/corpus/cases/compiler/zz.test.ts",
++   ],
+  }
+
+- Expected  - 3
++ Received  + 7
+
+      at <anonymous> (/tmp/rh1a/repo/test/cli/lint/repository-candidate.test.ts:180:8)
+(fail) repository > no file below conformance/ is a test, and CI enters every directory [484.70ms]
+
+ 2 pass
+ 1 fail
+ 1 snapshots, 4 expect() calls
+Ran 3 tests across 1 file. [1126.00ms]
+exit 1

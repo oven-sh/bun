@@ -167,20 +167,96 @@ test("onEndTag callbacks are released after the rewrite", () => {
 // LOLHTMLContext.deinit() must destroy those allocations. Previously it only
 // unprotected the held JSValues and leaked the struct memory.
 //
+// The allocator counts the blocks it has handed out and not got back, in
+// release builds too. A leaked struct is one block more for every
+// registration, whatever its size and whatever the OS does with freed pages.
+//
+// Skipped in debug: too slow for this many registrations, and CI has no debug
+// lane.
+test.skipIf(isDebug || isASAN)("HTMLRewriter does not leak element/document handler allocations", async () => {
+  const ROUNDS = 2;
+  const REWRITERS_PER_ROUND = 1000;
+  // Each rewriter gets 32 on() and 32 onDocument() calls.
+  const REGISTRATIONS_PER_ROUND = REWRITERS_PER_ROUND * 64;
+  const code = /* js */ `
+    const { heapStats } = require("bun:jsc");
+    const noop = { element() {}, comments() {}, text() {} };
+    const docNoop = { doctype() {}, comments() {}, text() {}, end() {} };
+
+    function liveBlocks() {
+      return heapStats().mimalloc.malloc_bins.reduce((sum, bin) => sum + bin.current, 0);
+    }
+
+    // Counts while the rewriters of the round are alive, then lets the
+    // collector have them.
+    function round() {
+      const rewriters = [];
+      for (let i = 0; i < ${REWRITERS_PER_ROUND}; i++) {
+        const rewriter = new HTMLRewriter();
+        for (let j = 0; j < 32; j++) rewriter.on("div", noop);
+        for (let j = 0; j < 32; j++) rewriter.onDocument(docNoop);
+        rewriters.push(rewriter);
+      }
+      const held = liveBlocks();
+      rewriters.length = 0;
+      Bun.gc(true);
+      return held;
+    }
+
+    round();
+    const before = liveBlocks();
+    let held;
+    for (let i = 0; i < ${ROUNDS}; i++) held = round();
+    const after = liveBlocks();
+
+    process.stdout.write(JSON.stringify({ before, held, after }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: {
+      ...bunEnv,
+      // The runner's GC_LEVEL=1 adds collections of its own.
+      BUN_GARBAGE_COLLECTOR_LEVEL: "0",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: expect.stringMatching(/^\{"before":-?\d+,"held":-?\d+,"after":-?\d+\}$/),
+    stderr: "",
+    exitCode: 0,
+  });
+  const { before, held, after } = JSON.parse(stdout);
+
+  // The count sees the handler structs: while the rewriters of a round are
+  // alive, it has at least one block for each registration.
+  expect(held - before, stdout).toBeGreaterThanOrEqual(REGISTRATIONS_PER_ROUND);
+  // Unfixed: the struct of every registration of both rounds is still there,
+  // 128,000 blocks. Fixed: within a few hundred of zero.
+  expect(after - before, stdout).toBeLessThan((ROUNDS * REGISTRATIONS_PER_ROUND) / 4);
+});
+
+// ASAN builds cannot read that count: their allocator is ASAN's. They measure
+// resident memory.
+//
 // RSS is a high-water mark — Bun.gc(true) collects every wrapper and its
 // lol-html builder, but the allocators don't promptly hand pages back to the
 // OS. So warmup runs the *same* workload as the measured phase: the allocator
 // footprint is established before the baseline, and any growth past that is
 // what's actually retained.
 //
-// Skipped in debug: at this N a debug pass is ~40s and the extra debug-build
-// allocation tracking adds enough RSS noise to drown the signal. CI has no
-// debug test lane; release + ASAN cover the regression.
+// Skipped in debug: at this N a debug pass is ~8s and the extra debug-build
+// allocation tracking adds enough RSS noise to drown the signal. The
+// LeakSanitizer test below runs there.
 //
-// ASAN builds run a quarter of the registrations. One costs about 7 µs on the
-// ASAN lane, so the full count took 11.8 to 14.5 s of the 15 s limit there.
-test.skipIf(isDebug)(
-  "HTMLRewriter does not leak element/document handler allocations",
+// One registration costs about 7 µs on the ASAN lane: four times this N took
+// 11.8 to 14.5 s of the 15 s limit there.
+test.skipIf(isDebug || !isASAN)(
+  "HTMLRewriter does not leak element/document handler allocations (resident memory)",
   async () => {
     const code = /* js */ `
       const rss = process.memoryUsage.rss;
@@ -193,7 +269,7 @@ test.skipIf(isDebug)(
         for (let i = 0; i < 32; i++) rw.onDocument(docNoop);
       }
 
-      const N = ${isASAN ? 1000 : 4000};
+      const N = 1000;
       function pass() {
         for (let i = 0; i < N; i++) once();
         Bun.gc(true);
@@ -237,13 +313,8 @@ test.skipIf(isDebug)(
 
     const { deltaMB } = JSON.parse(stdout.trim());
 
-    // Unfixed: ~50 MB over 3 measured passes. Fixed: a plateau, but RSS is a
-    // high-water mark and allocator jitter has been observed to reach ~30 MB
-    // on release lanes, so the bound sits between that and the unfixed signal.
-    //
-    // ASAN, at a quarter of the count and with the quarantine off: 11 to 14 MB
-    // unfixed, -1.5 to 2 MB fixed.
-    expect(deltaMB).toBeLessThan(isASAN ? 6 : 35);
+    // With the quarantine off: 11 to 14 MB unfixed, -1.5 to 2 MB fixed.
+    expect(deltaMB).toBeLessThan(6);
     expect(exitCode).toBe(0);
   },
   15_000,

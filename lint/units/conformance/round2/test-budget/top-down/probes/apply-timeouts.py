@@ -37,11 +37,22 @@ plain = [
 lines = s.split('\n')
 for name in plain:
     at = [i for i, l in enumerate(lines) if l.startswith('  test("' + name + '"')]
-    assert len(at) == 1, (name, at)
+    if len(at) == 1:
+        j = at[0] + 1
+        while lines[j] != '  });':
+            j += 1
+        lines[j] = '  }, readTimeout);'
+        continue
+    # The form with one argument to a line: the test has a third argument already, or prettier broke a long first line.
+    at = [i for i, l in enumerate(lines) if l == '    "' + name + '",' and lines[i - 1].startswith('  test')]
+    assert len(at) == 1, ('no test of this name, or more than one', name)
     j = at[0] + 1
-    while lines[j] != '  });':
+    while lines[j] != '  );':
         j += 1
-    lines[j] = '  }, readTimeout);'
+    if lines[j - 1] == '    },':
+        lines.insert(j, '    readTimeout,')
+    else:
+        print('has a third argument already, left as it is: ' + name + ' -> ' + lines[j - 1].strip())
 s = '\n'.join(lines)
 
 # The three tests of groups are in the form with one argument to a line already.
@@ -53,8 +64,10 @@ groups = [
 for title in groups:
     assert s.count(title) == 1, title
     end = s.index('\n  );', s.index(title))
-    assert s[end - 6:end] == '    },', repr(s[end - 10:end])
-    s = s[:end] + '\n    readTimeout,' + s[end:]
+    if s[end - 6:end] == '    },':
+        s = s[:end] + '\n    readTimeout,' + s[end:]
+    else:
+        print('has a third argument already, left as it is: ' + title)
 
 # The check of a test that starts a process has the time of its test: it waits for the probe of its command first.
 old = '''    const options = { input, oracle: oracle ?? (() => new Uint8Array()), directory: join(String(dir), "instances") };

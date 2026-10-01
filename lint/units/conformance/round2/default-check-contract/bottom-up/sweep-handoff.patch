@@ -1,0 +1,220 @@
+diff --git a/test/cli/lint/conformance/sweep.ts b/test/cli/lint/conformance/sweep.ts
+index 13d8caaa1e..f7c3391335 100644
+--- a/test/cli/lint/conformance/sweep.ts
++++ b/test/cli/lint/conformance/sweep.ts
+@@ -15,6 +15,7 @@ import {
+   checkLists,
+   compareWithRevision,
+   expectationsAtRevision,
++  factsOf,
+   formatExpectations,
+   outcomes,
+   parseExpectations,
+@@ -24,7 +25,7 @@ import {
+   updateCommand,
+   verify,
+ } from "./runner";
+-import { createSpawnCheck } from "./runner/check_bun_lint";
++import { createSpawnCheck, probe } from "./runner/check_bun_lint";
+ import { type EnumeratedInstance, enumerateCase } from "./runner/compiler_runner";
+ import { tsgoRules } from "./runner/diagnosticwriter";
+ import {
+@@ -73,7 +74,7 @@ An instance is swept when one selector takes it. Without a selector every instan
+ 
+ Exit code 0: every listed instance of the selection passes and no name left a list that may hold it; with --round-trip,
+ every error baseline is written back with its bytes. 1: not so. 2: the command line is wrong, or the corpus, the lists,
+-the module of the check or the file of the report cannot be used.`;
++the module of the check or the file of the report cannot be used, or the binary of the default check is no linter.`;
+ 
+ const tags = ["accepted", "triaged"] as const;
+ type Tag = (typeof tags)[number];
+@@ -484,7 +485,13 @@ async function checkOf(o: Options): Promise<NamedCheck> {
+   if (o.check === undefined) {
+     const binary = resolve(o.bin ?? process.execPath);
+     if (!existsSync(binary)) throw new FileError(`--bin ${binary}: no such file`);
+-    return { check: createSpawnCheck({ command: [binary], env: process.env }), name: `${binary} --lint`, binary };
++    // A sweep reads what the command says and how it dies: the leak check at its exit is off, whatever the caller has set. The test file runs the listed instances with the leak check of its lane.
++    const sanitizer = [process.env.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":");
++    const options = { command: [binary], env: { ...process.env, ASAN_OPTIONS: sanitizer } };
++    // The probe runs here and not within the time of the first instances.
++    const probed = await probe(options);
++    if (!probed.ok) throw new FileError(`--bin ${binary}: the binary is no linter: ${probed.reason}`);
++    return { check: createSpawnCheck({ ...options, probed }), name: `${binary} --lint`, binary };
+   }
+   const path = resolve(o.check);
+   let module: { default?: unknown };
+@@ -649,6 +656,7 @@ async function main(argv: readonly string[]): Promise<number> {
+         directory,
+         concurrency: o.jobs ?? availableParallelism(),
+         timeoutMs: o.timeoutMs,
++        level: lists.level,
+         onResult() {
+           done++;
+           if (!process.stderr.isTTY) {
+@@ -668,7 +676,13 @@ async function main(argv: readonly string[]): Promise<number> {
+   const cellOf = (all: readonly Fact[]): Cell => [all.filter(passes).length, all.length];
+   const ratio = ([pass, all]: Cell) => `${pass} of ${all}`;
+   // The two classes are never one number: a check that reports nothing passes every instance of C and none of E.
+-  say(`pass: E ${ratio(cellOf(ranE))}, C ${ratio(cellOf(ranC))}`);
++  say(`pass at the level ${lists.level}: E ${ratio(cellOf(ranE))}, C ${ratio(cellOf(ranC))}`);
++  // A pass of an instance with errors by what was equal: a check with the lengths and the related information reaches every byte.
++  const byLevel = countBy(
++    ranE.map(fact => resultOf.get(fact.name)!).filter(r => r.outcome === "pass"),
++    r => r.level ?? lists.level,
++  );
++  if (byLevel.size > 0) say(`pass by level, E: ${[...byLevel].map(([level, n]) => `${level} ${n}`).join(", ")}`);
+   const outcomesOf = (all: readonly Fact[]) => {
+     const counted = countBy(all, fact => resultOf.get(fact.name)!.outcome);
+     return outcomes.filter(outcome => counted.has(outcome)).map(outcome => [outcome, counted.get(outcome)!] as const);
+@@ -678,19 +692,90 @@ async function main(argv: readonly string[]): Promise<number> {
+     const counted = byOutcome[kind].map(([outcome, n]) => `${outcome} ${n}`);
+     if (counted.length > 0) say(`by outcome, ${kind}: ${counted.join(", ")}`);
+   }
+-  // The plain format of a compiler holds the first section of a baseline and no more: such a match is counted apart.
++  // What is no pass by its outcome and the cause that its reason has: "fail: syntax", "crash: signal SIGABRT".
++  const causesOf = (all: readonly Fact[]) => {
++    const others = all.map(fact => resultOf.get(fact.name)!).filter(r => r.outcome !== "pass");
++    return mostFirst(countBy(others, r => `${r.outcome}: ${r.cause ?? r.reason.replace(/\d+/g, "n").slice(0, 100)}`));
++  };
++  const byCause = { E: causesOf(ranE), C: causesOf(ranC) };
++  for (const kind of ["E", "C"] as const) {
++    const counted = byCause[kind].map(([cause, n]) => `${cause} ${n}`);
++    if (counted.length > 0) say(`by cause, ${kind}: ${counted.join(", ")}`);
++  }
++  // At the level "baseline" a first section that is the oracle's is no pass: such a match is counted apart.
+   const headerOnly = results.filter(r => r.headerOnly === true).length;
+   if (headerOnly > 0) say(`first section alone: ${headerOnly} instances, none of which is a pass`);
++  // The guard: the instances without errors for which the command wrote nothing and ended with the exit code 0. What is near it is counted apart.
++  const printed = results.filter(r => r.silent !== undefined);
++  const ofKind = (kind: Kind) => printed.filter(r => r.instance.oracle.class === kind);
++  const silent = { E: ofKind("E").filter(r => r.silent).length, C: ofKind("C").filter(r => r.silent).length };
++  const noError = (r: RunResult) => r.exitCode === 0 && r.silent === false;
++  const near = {
++    rulesLeftOut: ofKind("C").filter(r => r.outcome === "pass" && r.silent === false).length,
++    noError: { E: ofKind("E").filter(noError).length, C: ofKind("C").filter(noError).length },
++  };
++  if (printed.length > 0) {
++    say(`the command wrote nothing and ended with the exit code 0: E ${silent.E}, C ${silent.C} (of C: the guard)`);
++    say(
++      `near the guard: C ${near.rulesLeftOut} pass with reports of rules left out; lines and the exit code 0 (no error among them): E ${near.noError.E}, C ${near.noError.C}`,
++    );
++  }
++  // The lines that no baseline holds, by the category and the name that is their code: lines, and the instances that had them.
++  const names = new Map<string, { lines: number; instances: number }>();
++  for (const r of results) {
++    for (const [name, n] of Object.entries(r.named ?? {})) {
++      const count = names.get(name) ?? { lines: 0, instances: 0 };
++      names.set(name, { lines: count.lines + n, instances: count.instances + 1 });
++    }
++  }
++  const byName = [...names].sort((a, b) => b[1].lines - a[1].lines || (a[0] < b[0] ? -1 : 1));
++  if (byName.length > 0) {
++    const counted = byName.map(([name, count]) => `${name} ${count.lines} in ${count.instances}`);
++    say(`lines with a name for a code, and the instances that had them: ${counted.join(", ")}`);
++  }
++  // The reports of rules are no diagnostics of the reference: the comparison leaves them out, and they are counted here.
++  const rules = new Map<string, { reports: number; instances: number }>();
++  for (const r of results) {
++    for (const [rule, n] of Object.entries(r.rules ?? {})) {
++      const count = rules.get(rule) ?? { reports: 0, instances: 0 };
++      rules.set(rule, { reports: count.reports + n, instances: count.instances + 1 });
++    }
++  }
++  const byRule = [...rules].sort((a, b) => b[1].reports - a[1].reports || (a[0] < b[0] ? -1 : 1));
++  if (byRule.length > 0) {
++    const counted = byRule.map(([rule, count]) => `${rule} ${count.reports} in ${count.instances}`);
++    say(`reports of rules left out of the comparison, and the instances that had them: ${counted.join(", ")}`);
++  }
+   if (results.length <= 20) {
+     for (const r of results) {
+-      say(`  ${r.outcome} ${r.instance.name}${r.reason === "" ? "" : `: ${r.reason}`}`);
++      const leftOut = Object.entries(r.rules ?? {}).map(([rule, n]) => `${rule} ${n}`);
++      const rulesOf = leftOut.length === 0 ? "" : ` (left out: ${leftOut.join(", ")})`;
++      say(`  ${r.outcome} ${r.instance.name}${r.reason === "" ? "" : `: ${r.reason}`}${rulesOf}`);
+       for (const line of r.diff?.split("\n") ?? []) say(`      ${line}`);
+     }
+-  } else {
+-    const others = results.filter(r => r.outcome !== "pass");
+-    const reasons = mostFirst(countBy(others, r => `${r.outcome}: ${r.reason.replace(/\d+/g, "n").slice(0, 100)}`));
+-    for (const [reason, n] of reasons.slice(0, 10)) say(`  ${String(n).padStart(6)}  ${reason}`);
+-    if (reasons.length > 10) say(`  and ${reasons.length - 10} more reasons in the report`);
++  }
++  // A report of a death or of a hang names the files that the check was given: the run keeps them with such an outcome.
++  const ended = (outcome: "crash" | "timeout") =>
++    ran.flatMap(fact => {
++      const r = resultOf.get(fact.name)!;
++      if (r.outcome !== outcome) return [];
++      const { name, kind, casePath } = fact;
++      const program = { operands: r.program?.rootFiles, currentDirectory: r.program?.currentDirectory };
++      return [{ name, kind, casePath, cause: r.cause, reason: r.reason, ...program, death: r.death }];
++    });
++  const crashes = ended("crash");
++  const timeouts = ended("timeout");
++  // A crash without a death is no death of a command: the check function or the runner threw.
++  const deaths = crashes.filter(c => c.death !== undefined).length;
++  if (crashes.length > 0) {
++    say(`crashes: ${crashes.length}, of which the command died in ${deaths}; the report has what each left`);
++    for (const c of crashes.slice(0, 20)) say(`  ${c.kind} ${c.name}: ${c.reason}`);
++    if (crashes.length > 20) say(`  and ${crashes.length - 20} more in the report`);
++  }
++  if (timeouts.length > 0) {
++    say(`timeouts: ${timeouts.length} instances did not end within ${o.timeoutMs} ms`);
++    for (const t of timeouts.slice(0, 20)) say(`  ${t.kind} ${t.name}`);
++    if (timeouts.length > 20) say(`  and ${timeouts.length - 20} more in the report`);
+   }
+   // An instance counts once for a part, however many times its check reached the part.
+   const standIns = countBy(
+@@ -752,9 +837,7 @@ async function main(argv: readonly string[]): Promise<number> {
+ 
+   // The lists: a listed name that does not pass fails the sweep, and a name that passes and is not listed is printed.
+   const resultFacts = new Map<string, ResultFacts>();
+-  for (const { instance, outcome, reason } of results) {
+-    resultFacts.set(instance.name, { name: instance.name, status: outcome, level: "baseline", detail: reason });
+-  }
++  for (const result of results) resultFacts.set(result.instance.name, factsOf(result, lists.level));
+   const notPassing = verify(lists, resultFacts);
+   const listedAndRun = ran.filter(fact => listed.has(fact.name)).length;
+   say();
+@@ -800,9 +883,29 @@ async function main(argv: readonly string[]): Promise<number> {
+       E: cellOf(ranE),
+       C: cellOf(ranC),
+       outcomes: { E: Object.fromEntries(byOutcome.E), C: Object.fromEntries(byOutcome.C) },
++      causes: { E: Object.fromEntries(byCause.E), C: Object.fromEntries(byCause.C) },
+       headerOnly,
++      deaths,
++      level: lists.level,
++      passByLevel: Object.fromEntries(byLevel),
++      silent,
++      near,
+     },
++    rules: Object.fromEntries(byRule),
++    names: Object.fromEntries(byName),
++    crashes,
++    timeouts,
+     directories: Object.fromEntries(directories),
++    directoryOutcomes: Object.fromEntries(
++      [...directories.keys()].map(directory => {
++        const inDirectory = (all: readonly Fact[]) => all.filter(fact => fact.directory === directory);
++        const counts = {
++          E: Object.fromEntries(outcomesOf(inDirectory(ranE))),
++          C: Object.fromEntries(outcomesOf(inDirectory(ranC))),
++        };
++        return [directory, counts];
++      }),
++    ),
+     codes: Object.fromEntries(byCode.map(([code, count]) => [`TS${code}`, count])),
+     codesUnread,
+     standIns: Object.fromEntries(mostFirst(standIns)),
+@@ -822,8 +925,10 @@ async function main(argv: readonly string[]): Promise<number> {
+     instances: Object.fromEntries(
+       ran.map(fact => {
+         const r = resultOf.get(fact.name)!;
+-        const more = { headerOnly: r.headerOnly, standIns: r.standIns, diff: r.diff };
+-        return [fact.name, { kind: fact.kind, casePath: fact.casePath, outcome: r.outcome, reason: r.reason, ...more }];
++        const counted = { rules: r.rules, named: r.named, silent: r.silent, exitCode: r.exitCode };
++        const more = { level: r.level, headerOnly: r.headerOnly, standIns: r.standIns, ...counted, diff: r.diff };
++        const { outcome, cause, reason } = r;
++        return [fact.name, { kind: fact.kind, casePath: fact.casePath, outcome, cause, reason, ...more }];
+       }),
+     ),
+     text,

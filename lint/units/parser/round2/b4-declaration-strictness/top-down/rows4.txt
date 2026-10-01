@@ -1,0 +1,173 @@
+// T1 class members: keyword names with and without modifiers before them
+(b"class C { declare type x }", Loader::Ts, 1068, 10, 17, "Unexpected token. A constructor, method, accessor, or property was expected."),
+(b"class C { abstract + }", Loader::Ts, 1068, 10, 18, "Unexpected token. A constructor, method, accessor, or property was expected."),
+(b"class C { public type x }", Loader::Ts, 2457, 22, 23, "Type alias name cannot be 'x'."),
+(b"class C { async + }", Loader::Ts, 1068, 10, 15, "Unexpected token. A constructor, method, accessor, or property was expected."),
+(b"class C { static type x }", Loader::Ts, 2457, 22, 23, "Type alias name cannot be 'x'."),
+(b"class C { any x }", Loader::Ts, 1068, 10, 13, "Unexpected token. A constructor, method, accessor, or property was expected."),
+(b"class C { of x }", Loader::Ts, 1068, 10, 12, "Unexpected token. A constructor, method, accessor, or property was expected."),
+(b"class C { get x y }", Loader::Ts, 1005, 16, 17, "'(' expected."),
+(b"class C { readonly type x }", Loader::Ts, 2457, 24, 25, "Type alias name cannot be 'x'."),
+(b"class C { declare + }", Loader::Ts, 1068, 10, 17, "Unexpected token. A constructor, method, accessor, or property was expected."),
+b"class C { public const x }", // Loader::Ts: parses
+b"class C { const\n x }", // Loader::Ts: parses
+(b"class C { export default x }", Loader::Ts, 1434, 10, 16, "Unexpected keyword or identifier."),
+(b"class C { export * }", Loader::Ts, 1434, 10, 16, "Unexpected keyword or identifier."),
+(b"class C { accessor + }", Loader::Ts, 1434, 10, 18, "Unexpected keyword or identifier."),
+(b"class C { x?: number y }", Loader::Ts, 1442, 21, 22, "Expected '=' for property initializer."),
+(b"class C { 'a' 'b' }", Loader::Ts, 1005, 14, 17, "';' expected."),
+(b"class C { [a] [b] }", Loader::Ts, 1005, 14, 15, "';' expected."),
+b"class C { static async x }", // Loader::Ts: parses
+b"class C { async\n x }", // Loader::Ts: parses
+(b"class C { public interface x }", Loader::Ts, 2427, 27, 28, "Interface name cannot be 'x'."),
+(b"class C { public interface {} }", Loader::Ts, 1438, 27, 28, "Interface must be given a name."),
+(b"class C { static module x }", Loader::Ts, 2819, 24, 25, "Namespace name cannot be 'x'."),
+(b"class C { static namespace {} }", Loader::Ts, 1437, 27, 28, "Namespace must be given a name."),
+(b"class C { static is x }", Loader::Ts, 1228, 17, 20, "A type predicate is only allowed in return type position for functions and methods."),
+b"class C { static type = 1 }", // Loader::Ts: parses
+(b"class C { static let x }", Loader::Ts, 1440, 17, 20, "Variable declaration not allowed at this location."),
+(b"class C { static var x }", Loader::Ts, 1440, 17, 20, "Variable declaration not allowed at this location."),
+(b"class C { public declare + }", Loader::Ts, 1068, 25, 26, "Unexpected token. A constructor, method, accessor, or property was expected."),
+(b"class C { override x y }", Loader::Ts, 1434, 19, 20, "Unexpected keyword or identifier."),
+(b"class C { accessor x y }", Loader::Ts, 1434, 19, 20, "Unexpected keyword or identifier."),
+(b"class C { static x y }", Loader::Ts, 1434, 17, 18, "Unexpected keyword or identifier."),
+(b"class C { readonly x y }", Loader::Ts, 1434, 19, 20, "Unexpected keyword or identifier."),
+(b"class C { abstract x y }", Loader::Ts, 1434, 19, 20, "Unexpected keyword or identifier."),
+(b"class C { declare x y }", Loader::Ts, 1434, 18, 19, "Unexpected keyword or identifier."),
+(b"class C { async x y }", Loader::Ts, 1434, 16, 17, "Unexpected keyword or identifier."),
+(b"class C { async x() y }", Loader::Ts, 1144, 20, 21, "'{' or ';' expected."),
+(b"class C { get x() y }", Loader::Ts, 1005, 18, 19, "'{' expected."),
+(b"class C { set x(v) y }", Loader::Ts, 1005, 19, 20, "'{' expected."),
+(b"class C { constructor() y }", Loader::Ts, 1144, 24, 25, "'{' or ';' expected."),
+b"class C { static {} y }", // Loader::Ts: parses
+(b"class C { x = 1; y z }", Loader::Ts, 1434, 17, 18, "Unexpected keyword or identifier."),
+(b"class C { string x }", Loader::Ts, 1068, 10, 16, "Unexpected token. A constructor, method, accessor, or property was expected."),
+(b"class C { number: x y }", Loader::Ts, 1442, 20, 21, "Expected '=' for property initializer."),
+(b"class C { yield x }", Loader::Ts, 1068, 10, 15, "Unexpected token. A constructor, method, accessor, or property was expected."),
+(b"class C { await x }", Loader::Ts, 1068, 10, 15, "Unexpected token. A constructor, method, accessor, or property was expected."),
+b"class C { let }", // Loader::Ts: parses
+b"class C { let = 1 }", // Loader::Ts: parses
+b"class C { let() {} }", // Loader::Ts: parses
+b"class C { let\n x }", // Loader::Ts: parses
+b"class C { type\n x }", // Loader::Ts: parses
+b"class C { type; x }", // Loader::Ts: parses
+(b"class C { if x }", Loader::Ts, 1068, 10, 12, "Unexpected token. A constructor, method, accessor, or property was expected."),
+(b"class C { new x }", Loader::Ts, 1068, 10, 13, "Unexpected token. A constructor, method, accessor, or property was expected."),
+b"class C { in }", // Loader::Ts: parses
+b"class C { in = 1 }", // Loader::Ts: parses
+(b"class C { static abstract x y }", Loader::Ts, 1434, 26, 27, "Unexpected keyword or identifier."),
+(b"class C { abstract static x y }", Loader::Ts, 1434, 26, 27, "Unexpected keyword or identifier."),
+(b"class C { declare abstract type x }", Loader::Ts, 1068, 10, 17, "Unexpected token. A constructor, method, accessor, or property was expected."),
+(b"class C { @d type x }", Loader::Ts, 2457, 18, 19, "Type alias name cannot be 'x'."),
+(b"class C { @d x y }", Loader::Ts, 1434, 13, 14, "Unexpected keyword or identifier."),
+b"class C { x: number = 1 (2) }", // Loader::Ts: parses
+(b"class C { x: () => void (1) }", Loader::Ts, 1441, 24, 25, "Cannot start a function call in a type annotation."),
+b"class C { x = y\n(1) }", // Loader::Ts: parses
+(b"class C { x: number\n(1) }", Loader::Ts, 1441, 20, 21, "Cannot start a function call in a type annotation."),
+(b"class C { x\n(1) {} }", Loader::Ts, 1003, 13, 14, "Identifier expected."),
+b"class C { get\n x() { return 1 } }", // Loader::Ts: parses
+(b"class C { public x = 1 y }", Loader::Ts, 1005, 23, 24, "';' expected."),
+(b"class C { x: number @d }", Loader::Ts, 1436, 20, 21, "Decorators must precede the name and all keywords of property declarations."),
+b"class C { x\n @d y }", // Loader::Ts: parses
+(b"class C { accessor x @d y }", Loader::Ts, 1436, 21, 22, "Decorators must precede the name and all keywords of property declarations."),
+(b"class C { m() {} x y }", Loader::Ts, 1434, 17, 18, "Unexpected keyword or identifier."),
+(b"class C { 1 2 }", Loader::Ts, 1005, 12, 13, "';' expected."),
+(b"class C { 1n x }", Loader::Ts, 1005, 13, 14, "';' expected."),
+(b"class C { #a #b }", Loader::Ts, 1005, 13, 15, "';' expected."),
+(b"class C { x: A B }", Loader::Ts, 1442, 15, 16, "Expected '=' for property initializer."),
+(b"class C { x: A<B> C }", Loader::Ts, 1442, 18, 19, "Expected '=' for property initializer."),
+(b"class C { x: A.B C }", Loader::Ts, 1442, 17, 18, "Expected '=' for property initializer."),
+(b"class C { x: typeof a b }", Loader::Ts, 1442, 22, 23, "Expected '=' for property initializer."),
+(b"class C { x: A | B c }", Loader::Ts, 1442, 19, 20, "Expected '=' for property initializer."),
+(b"class C { x?: A b }", Loader::Ts, 1442, 16, 17, "Expected '=' for property initializer."),
+(b"class C { x!: A b }", Loader::Ts, 1442, 16, 17, "Expected '=' for property initializer."),
+(b"class C { x! = 1 b }", Loader::Ts, 1005, 17, 18, "';' expected."),
+(b"class C { readonly x: A b }", Loader::Ts, 1442, 24, 25, "Expected '=' for property initializer."),
+(b"declare class C { x: A b }", Loader::Ts, 1442, 23, 24, "Expected '=' for property initializer."),
+// T2 parameters: what starts none, and modifiers before this
+(b"function f(public readonly this) {}", Loader::Ts, 1433, 11, 17, "Neither decorators nor modifiers may be applied to 'this' parameters."),
+(b"function f(@a @b this) {}", Loader::Ts, 1433, 11, 13, "Neither decorators nor modifiers may be applied to 'this' parameters."),
+(b"function f(@d public this) {}", Loader::Ts, 1433, 11, 13, "Neither decorators nor modifiers may be applied to 'this' parameters."),
+(b"function f(public @d this) {}", Loader::Ts, 1005, 18, 19, "',' expected."),
+b"function f(export x) {}", // Loader::Ts: parses
+b"function f(in x) {}", // Loader::Ts: parses
+(b"function f(export default x) {}", Loader::Ts, 1359, 11, 17, "Identifier expected. 'export' is a reserved word that cannot be used here."),
+(b"function f(void) {}", Loader::Ts, 1359, 11, 15, "Identifier expected. 'void' is a reserved word that cannot be used here."),
+(b"function f(typeof) {}", Loader::Ts, 1359, 11, 17, "Identifier expected. 'typeof' is a reserved word that cannot be used here."),
+(b"function f(new) {}", Loader::Ts, 1359, 11, 14, "Identifier expected. 'new' is a reserved word that cannot be used here."),
+(b"function f(null) {}", Loader::Ts, 1359, 11, 15, "Identifier expected. 'null' is a reserved word that cannot be used here."),
+(b"function f(true) {}", Loader::Ts, 1359, 11, 15, "Identifier expected. 'true' is a reserved word that cannot be used here."),
+(b"function f(import) {}", Loader::Ts, 1359, 11, 17, "Identifier expected. 'import' is a reserved word that cannot be used here."),
+(b"function f(if x) {}", Loader::Ts, 1390, 11, 13, "'if' is not allowed as a parameter name."),
+(b"function f(;) {}", Loader::Ts, 1138, 11, 12, "Parameter declaration expected."),
+(b"function f(=) {}", Loader::Ts, 1138, 11, 12, "Parameter declaration expected."),
+(b"function f(?) {}", Loader::Ts, 1003, 11, 12, "Identifier expected."),
+(b"function f(<T>) {}", Loader::Ts, 1003, 11, 12, "Identifier expected."),
+(b"function f(*) {}", Loader::Ts, 1003, 11, 12, "Identifier expected."),
+(b"function f(|) {}", Loader::Ts, 1003, 11, 12, "Identifier expected."),
+(b"function f(&) {}", Loader::Ts, 1003, 11, 12, "Identifier expected."),
+(b"function f(!) {}", Loader::Ts, 1003, 11, 12, "Identifier expected."),
+(b"function f(~) {}", Loader::Ts, 1138, 11, 12, "Parameter declaration expected."),
+(b"function f(+) {}", Loader::Ts, 1138, 11, 12, "Parameter declaration expected."),
+(b"function f(.) {}", Loader::Ts, 1138, 11, 12, "Parameter declaration expected."),
+(b"function f(:) {}", Loader::Ts, 1138, 11, 12, "Parameter declaration expected."),
+(b"function f(=>) {}", Loader::Ts, 1138, 11, 13, "Parameter declaration expected."),
+(b"function f(`a`) {}", Loader::Ts, 1003, 11, 14, "Identifier expected."),
+(b"function f(1n) {}", Loader::Ts, 1003, 11, 13, "Identifier expected."),
+(b"function f(/) {}", Loader::Ts, 1138, 11, 12, "Parameter declaration expected."),
+b"function f(a, ) {}", // Loader::Ts: parses
+(b"function f(a, ;) {}", Loader::Ts, 1138, 14, 15, "Parameter declaration expected."),
+(b"function f(a, class) {}", Loader::Ts, 1390, 14, 19, "'class' is not allowed as a parameter name."),
+(b"function f(a, #b) {}", Loader::Ts, 18009, 14, 16, "Private identifiers cannot be used as parameters."),
+(b"function f(a, -b) {}", Loader::Ts, 1138, 14, 15, "Parameter declaration expected."),
+(b"function f(a, 1) {}", Loader::Ts, 1003, 14, 15, "Identifier expected."),
+(b"function f(a;) {}", Loader::Ts, 1005, 12, 13, "',' expected."),
+(b"function f(a", Loader::Ts, 1005, 12, 12, "')' expected."),
+(b"function f(a, b", Loader::Ts, 1005, 15, 15, "')' expected."),
+(b"function f(a: number,", Loader::Ts, 1005, 21, 21, "')' expected."),
+(b"function f(...", Loader::Ts, 1003, 14, 14, "Identifier expected."),
+(b"function f(...a", Loader::Ts, 1005, 15, 15, "')' expected."),
+(b"function f(...a,", Loader::Ts, 1005, 16, 16, "')' expected."),
+(b"function f(@d", Loader::Ts, 1003, 13, 13, "Identifier expected."),
+(b"function f(public", Loader::Ts, 1005, 17, 17, "')' expected."),
+(b"function f(public x", Loader::Ts, 1005, 19, 19, "')' expected."),
+(b"function f(this", Loader::Ts, 1005, 15, 15, "')' expected."),
+(b"function f(this,", Loader::Ts, 1005, 16, 16, "')' expected."),
+(b"class C { m(", Loader::Ts, 1005, 12, 12, "')' expected."),
+(b"class C { constructor(public", Loader::Ts, 1005, 28, 28, "')' expected."),
+(b"(function(", Loader::Ts, 1005, 10, 10, "')' expected."),
+(b"({ m(", Loader::Ts, 1005, 5, 5, "')' expected."),
+(b"function f(static this) {}", Loader::Ts, 1433, 11, 17, "Neither decorators nor modifiers may be applied to 'this' parameters."),
+(b"function f(async this) {}", Loader::Ts, 1433, 11, 16, "Neither decorators nor modifiers may be applied to 'this' parameters."),
+(b"function f(...this) {}", Loader::Ts, 1359, 14, 18, "Identifier expected. 'this' is a reserved word that cannot be used here."),
+(b"function f(this this) {}", Loader::Ts, 1005, 16, 20, "',' expected."),
+(b"function f(a, public this) {}", Loader::Ts, 1433, 13, 20, "Neither decorators nor modifiers may be applied to 'this' parameters."),
+b"function f(this: A, public b) {}", // Loader::Ts: parses
+(b"class C { constructor(private readonly this) {} }", Loader::Ts, 1433, 22, 29, "Neither decorators nor modifiers may be applied to 'this' parameters."),
+b"function f(public static x) {}", // Loader::Ts: parses
+b"function f(static public x) {}", // Loader::Ts: parses
+(b"function f(static static x) {}", Loader::Ts, 1005, 25, 26, "',' expected."),
+b"function f(declare async x) {}", // Loader::Ts: parses
+b"function f(public x, public y) {}", // Loader::Ts: parses
+b"function f(accessor accessor x) {}", // Loader::Ts: parses
+(b"function f(public 1n) {}", Loader::Ts, 1003, 18, 20, "Identifier expected."),
+(b"function f(public *) {}", Loader::Ts, 1003, 18, 19, "Identifier expected."),
+(b"function f(public #x) {}", Loader::Ts, 18009, 18, 20, "Private identifiers cannot be used as parameters."),
+b"function f(public public) {}", // Loader::Ts: parses
+b"function f(public static) {}", // Loader::Ts: parses
+b"function f(readonly: number, public) {}", // Loader::Ts: parses
+b"function f(yield) {}", // Loader::Ts: parses
+b"function f(await) {}", // Loader::Ts: parses
+b"function f(let) {}", // Loader::Ts: parses
+b"function f(of, as, type) {}", // Loader::Ts: parses
+(b"function f(enum) {}", Loader::Ts, 1390, 11, 15, "'enum' is not allowed as a parameter name."),
+b"function f(a = 1, ...b = 2) {}", // Loader::Ts: parses
+b"function f(...a: any[], b?: number) {}", // Loader::Ts: parses
+b"function f(...a?, b) {}", // Loader::Ts: parses
+b"function f([a]?, {b}?) {}", // Loader::Ts: parses
+b"function f({a} = {}, [b] = []) {}", // Loader::Ts: parses
+b"function f(public {a} = {}) {}", // Loader::Ts: parses
+b"declare function f(...a, b): void;", // Loader::Ts: parses
+b"declare function f(...a,): void;", // Loader::Ts: parses
+b"class C { m(...a,): void; m(...a: any[]) {} }", // Loader::Ts: parses
+b"function f(...a,): void; function f(...a: any[]) {}", // Loader::Ts: parses

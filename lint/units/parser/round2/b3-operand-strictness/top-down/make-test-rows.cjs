@@ -36,6 +36,8 @@ add("update-of-an-update", "tsx", "a++ ++;", "<a/>++;", "<a></a>++;", "<></>++;"
 add("update-of-an-update", "jsx", "<a/>++;");
 add("prefix-update", "ts", "++ delete a.b;", "++-a;", "--+a;", "++~a;", "++!a;", "++typeof a;", "--void a;", "++ ++a;", "-- --a;", "++ --a;", "++/* c */-a;", "async function f() { ++await a; }", "x = ++-a;", "f(++-a);", "(++-a);", "++-a = b;",
   "++<T>a;", "++<T>(a);", "++ <T>a;", "--<T>a.b;", "++<T>a++;");
+add("type-assertion", "ts", "<T>a = c;", "<T>a += c;", "<T>(a) = c;", "<T>a\n= c;", "f(<T>a = c);", "(<T>a = c);", "-<T>a = b;", "<T>-a = b;", "<T><U>a = b;", "<T>a.b = c;", "<T>a! = c;", "<T>a++ = c;", "<T>a++.b;",
+  "x as T = 1;", "a satisfies T = 1;", "a as T++;");
 add("prefix-update", "js", "++ delete a.b;", "++-a;", "async function f() { ++await a; }");
 add("prefix-update", "tsx", "++<a/>;");
 add("prefix-update", "jsx", "++<a/>;");
@@ -81,7 +83,7 @@ const input = all.map((r, id) => JSON.stringify({ id, name: "input." + r.l, src:
 const p = spawnSync(goBin, [], { input, maxBuffer: 1 << 28 });
 const go = new Map();
 for (const line of String(p.stdout).split("\n")) if (line) { const r = JSON.parse(line); go.set(r.id, r); }
-const rust = s => 'b"' + s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\u2028/g, "\\u{2028}") + '"';
+const rust = s => 'b"' + s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\u2028/g, "\\xe2\\x80\\xa8") + '"';
 let group = null, differ = 0, count = 0;
 all.forEach((r, id) => {
   if (r.g !== group) { group = r.g; console.log("// " + group); }

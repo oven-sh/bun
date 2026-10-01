@@ -1,0 +1,14 @@
+per ONE pass (cgbench runs 20 passes; tsx repeats its file 100 times per pass)      bun-types typescript-lib         src-js            tsx     js-control
+assignment (16 arms, parse_suffix.rs:615-1422)                              0              0           8382              0           8449
+postfix ++ -- (535, 554)                                                    0              0            528              1            467
+prefix ++ -- (parse_prefix.rs:557, 571)                                     0              0             82              0             14
+member . ?. (82, 142)                                                     161            175          26434             58          16606
+index [ (355)                                                               0              0           4538              4           1388
+call ( (401)                                                                0              0          19350             40          12320
+tagged template (294, 325)                                                  0              0              0              0              0
+yield with * (mod.rs:137)                                                   0              0             40              1              0
+yield without operand (mod.rs:147-152)                                      0              0              0              0              0
+non-null ! (510, existing test)                                             0              0            108              2              0
+type assertion <T>x (parse_prefix.rs:1031, existing test)                   0              0              0              0              0
+name on a later line than its dot                                           0              0              0              0              0
+parse diagnostics                                                           0              0              0              0              0

@@ -1,0 +1,32 @@
+packages/bun-types/ts7.1/import-attributes.d.ts(17,20): error TS1005: ';' expected.
+packages/bun-types/ts7.1/import-attributes.d.ts(22,3): error syntax: Unexpected export
+test/bundler/transpiler/react-compiler-fixtures/renaming-jsx-tag-lowercase.tsx(3,14): error no-empty-pattern: Unexpected empty object pattern.
+test/bundler/transpiler/react-compiler-fixtures/repro-invalid-scope-merging-value-blocks.ts(17,20): error no-empty-pattern: Unexpected empty object pattern.
+test/cli/install/bun-install-registry.test.ts(3275,7): error no-sparse-arrays: Unexpected comma in middle of array.
+test/integration/bun-types/fixture/bundle.ts(12,10): error syntax: `feature` from "bun:bundle" may only be imported once
+test/js/bun/bun-object/deep-equals.test.ts(103,28): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/bun-object/deep-equals.test.ts(104,28): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/spawn/spawn.test.ts(1117,52): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/yaml/yaml.test.ts(3099,26): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/yaml/yaml.test.ts(5050,23): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/yaml/yaml.test.ts(5050,25): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/bun/yaml/yaml.test.ts(5096,25): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/deno/url/url.test.ts(147,20): error no-self-assign: 'url.pathname' is assigned to itself.
+test/js/deno/url/url.test.ts(151,20): error no-self-assign: 'url.pathname' is assigned to itself.
+test/js/deno/url/url.test.ts(160,16): error no-self-assign: 'url.hash' is assigned to itself.
+test/js/node/assert/deep-equal.test.ts(219,15): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/node/test/fixtures/typescript/ts/test-invalid-syntax.ts(2,9): error syntax: "await" can only be used inside an "async" function
+test/js/node/test/fixtures/typescript/ts/test-invalid-syntax.ts(2,16): error TS1128: Declaration or statement expected.
+test/js/third_party/express/express.json.test.ts(527,13): error no-self-assign: 'app' is assigned to itself.
+test/js/third_party/express/express.text.test.ts(360,13): error no-self-assign: 'app' is assigned to itself.
+test/js/web/fetch/blob-array-fast-path.test.ts(59,35): error no-sparse-arrays: Unexpected comma in middle of array.
+test/js/web/structured-clone-fastpath.test.ts(198,23): error no-sparse-arrays: Unexpected comma in middle of array.
+test/regression/issue/11677.test.ts(78,11): error no-sparse-arrays: Unexpected comma in middle of array.
+test/regression/issue/11677.test.ts(78,37): error no-sparse-arrays: Unexpected comma in middle of array.
+test/regression/issue/14477/builtin-mismatch.tsx(1,20): error syntax: Expected closing JSX tag to match opening tag "<div>"
+test/regression/issue/14477/component-mismatch.tsx(2,20): error syntax: Expected closing JSX tag to match opening tag "<Foo>"
+test/regression/issue/14477/non-identifier-mismatch.tsx(3,28): error syntax: Expected closing JSX tag to match opening tag "<div-:button>"
+test/snapshots/react-context-value-func.debug.tsx(19,23): error no-empty-pattern: Unexpected empty object pattern.
+test/snapshots/react-context-value-func.hmr.debug.tsx(30,25): error no-empty-pattern: Unexpected empty object pattern.
+test/snapshots/react-context-value-func.hmr.tsx(30,25): error no-empty-pattern: Unexpected empty object pattern.
+test/snapshots/react-context-value-func.tsx(19,23): error no-empty-pattern: Unexpected empty object pattern.

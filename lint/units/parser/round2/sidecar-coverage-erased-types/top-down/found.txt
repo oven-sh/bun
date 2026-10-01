@@ -19,7 +19,7 @@ InterfaceDeclaration[152,191) name[177,178) extends[179,188) TypeReference[187,1
 InterfaceDeclaration[192,225) name[210,211) members[213,223) MethodSignature[214,223) name[214,215) parameters[216,216) VoidKeyword[219,223)
 InterfaceDeclaration[226,283) name[243,244) typeParameters[244,252) members[254,281) CallSignature[255,281) typeParameters[256,257) TypeParameter[256,257) parameters[259,277) Parameter[259,263) TypeReference[262,263) Parameter[265,277) ArrayType[274,277) TypeReference[274,275) TypeReference[280,281)
 # interface-heritage: "interface A extends B, {}\ninterface C extends (D) {}\ninterface E extends F<G>() {}\ninterface H extends I implements J, K<L> {}\ninterface M extends string, N.O<P> {}\ninterface Q extends {} {}\ninterface R extends S\n{}\ninterface as {}\ninterface T extends U extends V {}\n"
-InterfaceDeclaration[0,25) name[10,11) extends[12,21) TypeReference[20,21) members[24,24)
+InterfaceDeclaration[0,25) name[10,11) extends[12,22) TypeReference[20,21) members[24,24)
 InterfaceDeclaration[26,52) name[36,37) extends[38,49) ExpressionWithTypeArguments[46,49) members[51,51)
 InterfaceDeclaration[53,82) name[63,64) extends[65,79) ExpressionWithTypeArguments[73,79) members[81,81)
 InterfaceDeclaration[83,126) name[93,94) extends[95,104) TypeReference[103,104) implements[105,123) ExpressionWithTypeArguments[116,117) ExpressionWithTypeArguments[119,123)<121,122> TypeReference[121,122) members[125,125)
@@ -27,7 +27,7 @@ InterfaceDeclaration[127,164) name[137,138) extends[139,161) TypeReference[147,1
 InterfaceDeclaration[165,190) name[175,176) extends[177,187) ExpressionWithTypeArguments[185,187) members[189,189)
 InterfaceDeclaration[191,215) name[201,202) extends[203,212) TypeReference[211,212) members[214,214)
 InterfaceDeclaration[216,231) name[226,228) members[230,230)
-InterfaceDeclaration[232,266) name[242,243) extends[244,253) ExpressionWithTypeArguments[252,253) extends[254,263) TypeReference[262,263) members[265,265)
+InterfaceDeclaration[232,266) name[242,243) extends[244,253) TypeReference[252,253) extends[254,263) TypeReference[262,263) members[265,265)
 # interface-members: "interface S { a: 1, b: 2; c: 3\n d: 4 }\ninterface T { 'x': 1; 2: 2; [y]: 3; #z: 4; new: 5; get: 6; set?: 7; readonly: 8; static a: 9 }\ninterface U { m<T extends A = B>(this: U, a?: T, ...b: T[]): asserts a is T; get(): void; set(v: 1): void; new?(): U }\ninterface V { a: number = 1; readonly b?: string; c? = 2 }\n"
 InterfaceDeclaration[0,38) name[10,11) members[13,36) PropertySignature[14,19) name[14,15) LiteralType[17,18) PropertySignature[20,25) name[20,21) LiteralType[23,24) PropertySignature[26,30) name[26,27) LiteralType[29,30) PropertySignature[32,36) name[32,33) LiteralType[35,36)
 InterfaceDeclaration[39,133) name[49,50) members[52,131) PropertySignature[53,60) name[53,56) LiteralType[58,59) PropertySignature[61,66) name[61,62) LiteralType[64,65) PropertySignature[67,74) name[67,70) LiteralType[72,73) PropertySignature[75,81) name[75,77) LiteralType[79,80) PropertySignature[82,89) name[82,85) LiteralType[87,88) PropertySignature[90,97) name[90,93) LiteralType[95,96) PropertySignature[98,106) name[98,101) ?[101,102) LiteralType[104,105) PropertySignature[107,119) name[107,115) LiteralType[117,118) PropertySignature[120,131) Static[120,126) name[127,128) LiteralType[130,131)
@@ -51,10 +51,10 @@ IndexSignature[423,437) parameters[424,433) Parameter[424,433) StringKeyword[427
 IndexSignature[458,482) Accessor[458,466) parameters[468,477) Parameter[468,477) StringKeyword[471,477) LiteralType[480,481)
 IndexSignature[483,503) Async[483,488) parameters[490,499) Parameter[490,499) StringKeyword[493,499) LiteralType[502,503)
 # class-index-signature-decorators: "class C { @d [k: string]: any; @e.static readonly [j: number]: 1; @(f) static [i: string]: 2; @readonly\n static [h: string]: 3 }\n"
-IndexSignature[10,30) parameters[14,23) Parameter[14,23) StringKeyword[17,23) AnyKeyword[26,29)
-IndexSignature[31,65) Readonly[41,49) parameters[51,60) Parameter[51,60) NumberKeyword[54,60) LiteralType[63,64)
-IndexSignature[66,93) Static[71,77) parameters[79,88) Parameter[79,88) StringKeyword[82,88) LiteralType[91,92)
-IndexSignature[94,126) Static[105,111) parameters[113,122) Parameter[113,122) StringKeyword[116,122) LiteralType[125,126)
+IndexSignature[10,30) Decorator[10,12) parameters[14,23) Parameter[14,23) StringKeyword[17,23) AnyKeyword[26,29)
+IndexSignature[31,65) Decorator[31,40) Readonly[41,49) parameters[51,60) Parameter[51,60) NumberKeyword[54,60) LiteralType[63,64)
+IndexSignature[66,93) Decorator[66,70) Static[71,77) parameters[79,88) Parameter[79,88) StringKeyword[82,88) LiteralType[91,92)
+IndexSignature[94,126) Decorator[94,103) Static[105,111) parameters[113,122) Parameter[113,122) StringKeyword[116,122) LiteralType[125,126)
 # speculation: "const r = a ? (b): c => { type T = A | B; interface I extends J { a: 1 } class K { static [k: string]: T } return K } : e;\nconst s = a ? (b) : c => { type U = 1; interface V<W> { w: W } return c };\n"
 TypeAliasDeclaration[26,41) name[31,32) UnionType[35,40) TypeReference[35,36) TypeReference[39,40)
 InterfaceDeclaration[42,72) name[52,53) extends[54,63) TypeReference[62,63) members[65,70) PropertySignature[66,70) name[66,67) LiteralType[69,70)

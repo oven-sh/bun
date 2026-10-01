@@ -1,0 +1,53 @@
+The five starts of describe("sweep.ts") of the patch, one at a time, debug build 1.4.3-debug+3110ce85c with the leak check of CI (2026-10-01 19:38 UTC, load 300 to 400):
+1 --each replay, five instances: exit 0 in 16 s
+pass 2dArrays.ts
+pass abstractPropertyNegative(target=es2015).ts
+skip abstractPropertyNegative(target=es5).ts unsupported target ES5
+pass emptyTuplesTypeAssertion01.ts
+pass emptyTuplesTypeAssertion02.ts
+2 --each wrong, five instances: exit 1 in 15 s
+fail 2dArrays.ts 1 diagnostics where the oracle has none, the first is TS1: Made up.
+fail ArrowFunctionExpression1.ts line 1: - "ArrowFunctionExpression1.ts(1,10): error TS2369: A parameter property is only allowed in a constructor implementation."
+pass ClassDeclaration10.ts
+skip abstractPropertyNegative(target=es5).ts unsupported target ES5
+fail castingTuple.ts line 1: - "castingTuple.ts(3,24): error TS7008: Member 'c' implicitly has an 'any' type." + "castingTuple.ts(3,24): error TS7008: Changed."
+3a --each --shard 1/2 --resume: exit 1 in 10 s
+pass 2dArrays.ts
+skip abstractPropertyNegative(target=es5).ts unsupported target ES5
+fail emptyTuplesTypeAssertion02.ts line 1: - "emptyTuplesTypeAssertion02.ts(2,11): error TS2493: Tuple type '[]' of length '0' has no element at index '0'."
+3b --resume --report: exit 0 in 10 s
+instances 5: run 4 (E 3, C 1), skipped 1
+       1  skipped: unsupported target ES5
+check /tmp/st1b/glue/test/cli/lint/conformance/fixtures/empty-check-fixture.ts
+resume /tmp/st1b/d.jsonl: 2 outcomes kept, 2 instances to run
+pass: E 0 of 3, C 1 of 1
+by outcome, E: fail 3
+by outcome, C: pass 1
+  pass 2dArrays.ts
+  fail abstractPropertyNegative(target=es2015).ts: no diagnostic where the oracle has a baseline
+  fail emptyTuplesTypeAssertion01.ts: no diagnostic where the oracle has a baseline
+  fail emptyTuplesTypeAssertion02.ts: no diagnostic where the oracle has a baseline
+
+by directory: of the instances whose oracle has errors (E) and of those whose oracle has none (C), those that ran and those of each outcome
+                                       E run  E fail  C run  C pass
+  compiler                                 1       1      1       1
+  conformance/types/tuple/emptyTuples      2       2      0       0
+  total                                    3       3      1       1
+
+by diagnostic code: 7 codes; the instances whose oracle has the code and those of each outcome
+          E run  E fail
+  TS2493      2       2
+  TS1005      1       1
+  TS1253      1       1
+  TS2416      1       1
+  TS2540      1       1
+  TS2654      1       1
+  TS2676      1       1
+
+listed: E 0, C 0; of them run 0, not passing 0
+1 instances pass and may not enter a list: quota 1
+report /tmp/st1b/d.json
+4 --each --update: exit 2 in 4 s
+sweep: --each holds no instance against a list: --update cannot go with it
+
+probes/check-test.ts (the same expectations with node:assert, installed bun): ok 1, ok 2, ok 3, ok 4

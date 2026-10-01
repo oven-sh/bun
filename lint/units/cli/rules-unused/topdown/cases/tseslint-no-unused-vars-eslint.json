@@ -1,0 +1,2940 @@
+[
+	{
+		"kind": "valid",
+		"code": "\nvar foo = 5;\n\nlabel: while (true) {\n  console.log(foo);\n  break label;\n}\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar foo = 5;\n\nwhile (true) {\n  console.log(foo);\n  break;\n}\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nfor (let prop in box) {\n  box[prop] = parseInt(box[prop]);\n}\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar box = { a: 2 };\nfor (var prop in box) {\n  box[prop] = parseInt(box[prop]);\n}\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nf({\n  set foo(a) {\n    return;\n  },\n});\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\na;\nvar a;\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			"all"
+		],
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar a = 10;\nalert(a);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			"all"
+		],
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar a = 10;\n(function () {\n  alert(a);\n})();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			"all"
+		],
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar a = 10;\n(function () {\n  setTimeout(function () {\n    alert(a);\n  }, 0);\n})();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			"all"
+		],
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar a = 10;\nd[a] = 0;\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			"all"
+		],
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\n(function () {\n  var a = 10;\n  return a;\n})();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			"all"
+		],
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "(function g() {})();",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			"all"
+		],
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nfunction f(a) {\n  alert(a);\n}\nf();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			"all"
+		],
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar c = 0;\nfunction f(a) {\n  var b = a;\n  return b;\n}\nf(c);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			"all"
+		],
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nfunction a(x, y) {\n  return y;\n}\na();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			"all"
+		],
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar arr1 = [1, 2];\nvar arr2 = [3, 4];\nfor (var i in arr1) {\n  arr1[i] = 5;\n}\nfor (var i in arr2) {\n  arr2[i] = 10;\n}\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			"all"
+		],
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar min = 'min';\nMath[min];\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			"all"
+		],
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nFoo.bar = function (baz) {\n  return baz;\n};\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			"all"
+		],
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "myFunc(function foo() {}.bind(this));",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "myFunc(function foo() {}.toString());",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nfunction foo(first, second) {\n  doStuff(function () {\n    console.log(second);\n  });\n}\nfoo();\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\n(function () {\n  var doSomething = function doSomething() {};\n  doSomething();\n})();\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "/*global a */ a;",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar a = 10;\n(function () {\n  alert(a);\n})();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			{
+				"vars": "all"
+			}
+		],
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nfunction g(bar, baz) {\n  return baz;\n}\ng();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			{
+				"vars": "all"
+			}
+		],
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nfunction g(bar, baz) {\n  return baz;\n}\ng();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			{
+				"args": "after-used",
+				"vars": "all"
+			}
+		],
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\n(function z() {\n  z();\n})();\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar who = 'Paul';\nmodule.exports = `Hello ${who}!`;\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "export var foo = 123;",
+		"ext": "ts",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "export function foo() {}",
+		"ext": "ts",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nlet toUpper = partial => partial.toUpperCase;\nexport { toUpper };\n      ",
+		"ext": "ts",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "export class foo {}",
+		"ext": "ts",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nclass Foo {}\nvar x = new Foo();\nx.foo();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nconst foo = 'hello!';\nfunction bar(foobar = foo) {\n  foobar.replace(/!$/, ' world!');\n}\nbar();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nfunction Foo() {}\nvar x = new Foo();\nx.foo();\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nfunction foo() {\n  var foo = 1;\n  return foo;\n}\nfoo();\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nfunction foo(foo) {\n  return foo;\n}\nfoo(1);\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nfunction foo() {\n  function foo() {\n    return 1;\n  }\n  return foo();\n}\nfoo();\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nfunction foo() {\n  var foo = 1;\n  return foo;\n}\nfoo();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nfunction foo(foo) {\n  return foo;\n}\nfoo(1);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nfunction foo() {\n  function foo() {\n    return 1;\n  }\n  return foo();\n}\nfoo();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nconst x = 1;\nconst [y = x] = [];\nfoo(y);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nconst x = 1;\nconst { y = x } = {};\nfoo(y);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nconst x = 1;\nconst {\n  z: [y = x],\n} = {};\nfoo(y);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nconst x = [];\nconst { z: [y] = x } = {};\nfoo(y);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nconst x = 1;\nlet y;\n[y = x] = [];\nfoo(y);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nconst x = 1;\nlet y;\n({\n  z: [y = x],\n} = {});\nfoo(y);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nconst x = [];\nlet y;\n({ z: [y] = x } = {});\nfoo(y);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nconst x = 1;\nfunction foo(y = x) {\n  bar(y);\n}\nfoo();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nconst x = 1;\nfunction foo({ y = x } = {}) {\n  bar(y);\n}\nfoo();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nconst x = 1;\nfunction foo(\n  y = function (z = x) {\n    bar(z);\n  },\n) {\n  y();\n}\nfoo();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nconst x = 1;\nfunction foo(\n  y = function () {\n    bar(x);\n  },\n) {\n  y();\n}\nfoo();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar x = 1;\nvar [y = x] = [];\nfoo(y);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar x = 1;\nvar { y = x } = {};\nfoo(y);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar x = 1;\nvar {\n  z: [y = x],\n} = {};\nfoo(y);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar x = [];\nvar { z: [y] = x } = {};\nfoo(y);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar x = 1,\n  y;\n[y = x] = [];\nfoo(y);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar x = 1,\n  y;\n({\n  z: [y = x],\n} = {});\nfoo(y);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar x = [],\n  y;\n({ z: [y] = x } = {});\nfoo(y);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar x = 1;\nfunction foo(y = x) {\n  bar(y);\n}\nfoo();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar x = 1;\nfunction foo({ y = x } = {}) {\n  bar(y);\n}\nfoo();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar x = 1;\nfunction foo(\n  y = function (z = x) {\n    bar(z);\n  },\n) {\n  y();\n}\nfoo();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar x = 1;\nfunction foo(\n  y = function () {\n    bar(x);\n  },\n) {\n  y();\n}\nfoo();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "/*exported toaster*/ var toaster = 'great';",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\n/*exported toaster, poster*/ var toaster = 1;\nposter = 0;\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "/*exported x*/ var { x } = y;",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "/*exported x, y*/ var { x, y } = z;",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "/*eslint @rule-tester/use-every-a:1*/ var a;",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\n/*eslint @rule-tester/use-every-a:1*/ !function (a) {\n  return 1;\n};\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\n/*eslint @rule-tester/use-every-a:1*/ !function () {\n  var a;\n  return 1;\n};\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\n(function (obj) {\n  var name;\n  for (name in obj) return;\n})({});\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\n(function (obj) {\n  var name;\n  for (name in obj) {\n    return;\n  }\n})({});\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\n(function (obj) {\n  for (var name in obj) {\n    return true;\n  }\n})({});\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\n(function (obj) {\n  for (var name in obj) return true;\n})({});\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\n(function (obj) {\n  let name;\n  for (name in obj) return;\n})({});\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\n(function (obj) {\n  let name;\n  for (name in obj) {\n    return;\n  }\n})({});\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\n(function (obj) {\n  for (let name in obj) {\n    return true;\n  }\n})({});\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\n(function (obj) {\n  for (let name in obj) return true;\n})({});\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\n(function (obj) {\n  for (const name in obj) {\n    return true;\n  }\n})({});\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\n(function (obj) {\n  for (const name in obj) return true;\n})({});\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\n(function (iter) {\n  let name;\n  for (name of iter) return;\n})({});\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\n(function (iter) {\n  let name;\n  for (name of iter) {\n    return;\n  }\n})({});\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\n(function (iter) {\n  for (let name of iter) {\n    return true;\n  }\n})({});\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\n(function (iter) {\n  for (let name of iter) return true;\n})({});\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\n(function (iter) {\n  for (const name of iter) {\n    return true;\n  }\n})({});\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\n(function (iter) {\n  for (const name of iter) return true;\n})({});\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nlet x = 0;\nfoo = (0, x++);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nlet x = 0;\nfoo = (0, (x += 1));\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nlet x = 0;\nfoo = (0, (x = x + 1));\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\ntry {\n} catch (err) {\n  console.error(err);\n}\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			{
+				"caughtErrors": "all"
+			}
+		],
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar a = 0,\n  b;\nb = a = a + 1;\nfoo(b);\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar a = 0,\n  b;\nb = a += a + 1;\nfoo(b);\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar a = 0,\n  b;\nb = a++;\nfoo(b);\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nfunction foo(a) {\n  var b = (a = a + 1);\n  bar(b);\n}\nfoo();\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nfunction foo(a) {\n  var b = (a += a + 1);\n  bar(b);\n}\nfoo();\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nfunction foo(a) {\n  var b = a++;\n  bar(b);\n}\nfoo();\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar unregisterFooWatcher;\n// ...\nunregisterFooWatcher = $scope.$watch('foo', function () {\n  // ...some code..\n  unregisterFooWatcher();\n});\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar ref;\nref = setInterval(function () {\n  clearInterval(ref);\n}, 10);\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar _timer;\nfunction f() {\n  _timer = setTimeout(function () {}, _timer ? 100 : 0);\n}\nf();\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nfunction foo(cb) {\n  cb = (function () {\n    function something(a) {\n      cb(1 + a);\n    }\n    register(something);\n  })();\n}\nfoo();\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nfunction* foo(cb) {\n  cb = yield function (a) {\n    cb(1 + a);\n  };\n}\nfoo();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nfunction foo(cb) {\n  cb = tag`hello${function (a) {\n    cb(1 + a);\n  }}`;\n}\nfoo();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nfunction foo(cb) {\n  var b;\n  cb = b = function (a) {\n    cb(1 + a);\n  };\n  b();\n}\nfoo();\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nfunction someFunction() {\n  var a = 0,\n    i;\n  for (i = 0; i < 2; i++) {\n    a = myFunction(a);\n  }\n}\nsomeFunction();\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\n(class {\n  set foo(UNUSED) {}\n});\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nclass Foo {\n  set bar(UNUSED) {}\n}\nconsole.log(Foo);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\n/*eslint @rule-tester/use-every-a:1*/ !function (b, a) {\n  return 1;\n};\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar a = function () {\n  a();\n};\na();\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar a = function () {\n  return function () {\n    a();\n  };\n};\na();\n    ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nconst a = () => {\n  a();\n};\na();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nconst a = () => () => {\n  a();\n};\na();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "export * as ns from 'source';",
+		"ext": "ts",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "import.meta;",
+		"ext": "ts",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar a;\na ||= 1;\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar a;\na &&= 1;\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "valid",
+		"code": "\nvar a;\na ??= 1;\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": []
+	},
+	{
+		"kind": "invalid",
+		"code": "\nfunction foox() {\n  return foox();\n}\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "foox"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n(function () {\n  function foox() {\n    if (true) {\n      return foox();\n    }\n  }\n})();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "foox"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var a = 10;",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "a"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nfunction f() {\n  var a = 1;\n  return function () {\n    f((a *= 2));\n  };\n}\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "f"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nfunction f() {\n  var a = 1;\n  return function () {\n    f(++a);\n  };\n}\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "f"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/*global a */",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "a"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nfunction foo(first, second) {\n  doStuff(function () {\n    console.log(second);\n  });\n}\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "foo"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var a = 10;",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			"all"
+		],
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "a"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nvar a = 10;\na = 20;\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			"all"
+		],
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "a"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nvar a = 10;\n(function () {\n  var a = 1;\n  alert(a);\n})();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			"all"
+		],
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "a"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nvar a = 10,\n  b = 0,\n  c = null;\nalert(a + b);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			"all"
+		],
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "c"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nvar a = 10,\n  b = 0,\n  c = null;\nsetTimeout(function () {\n  var b = 2;\n  alert(a + b + c);\n}, 0);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			"all"
+		],
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "b"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nvar a = 10,\n  b = 0,\n  c = null;\nsetTimeout(function () {\n  var b = 2;\n  var c = 2;\n  alert(a + b + c);\n}, 0);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			"all"
+		],
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "b"
+				}
+			},
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "c"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nfunction f() {\n  var a = [];\n  return a.map(function () {});\n}\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			"all"
+		],
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "f"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nfunction f() {\n  var a = [];\n  return a.map(function g() {});\n}\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			"all"
+		],
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "f"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nfunction foo() {\n  function foo(x) {\n    return x;\n  }\n  return function () {\n    return foo;\n  };\n}\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 2,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "foo"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nfunction f() {\n  var x;\n  function a() {\n    x = 42;\n  }\n  function b() {\n    alert(x);\n  }\n}\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			"all"
+		],
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "f"
+				}
+			},
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "a"
+				}
+			},
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "b"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nfunction f(a) {}\nf();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			"all"
+		],
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "a"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nfunction a(x, y, z) {\n  return y;\n}\na();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			"all"
+		],
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "z"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var min = Math.min;",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			"all"
+		],
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "min"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var min = { min: 1 };",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			"all"
+		],
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "min"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nFoo.bar = function (baz) {\n  return 1;\n};\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			"all"
+		],
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "baz"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "var min = { min: 1 };",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			{
+				"vars": "all"
+			}
+		],
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "min"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nfunction gg(baz, bar) {\n  return baz;\n}\ngg();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			{
+				"vars": "all"
+			}
+		],
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "bar"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n(function (foo, baz, bar) {\n  return baz;\n})();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			{
+				"args": "after-used",
+				"vars": "all"
+			}
+		],
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "bar"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n(function z(foo) {\n  z();\n})();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			{}
+		],
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "foo"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nfunction f() {\n  var a = 1;\n  return function () {\n    f((a = 2));\n  };\n}\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			{}
+		],
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "f"
+				}
+			},
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "a"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "import x from 'y';",
+		"ext": "ts",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "x"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nexport function fn2({ x, y }) {\n  console.log(x);\n}\n      ",
+		"ext": "ts",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "y"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nexport function fn2(x, y) {\n  console.log(x);\n}\n      ",
+		"ext": "ts",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "y"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n/*exported max*/ var max = 1,\n  min = { min: 1 };\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "min"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/*exported x*/ var { x, y } = z;",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "y"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n(function (obj) {\n  var name;\n  for (name in obj) {\n    i();\n    return;\n  }\n})({});\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 4,
+				"column": 8,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "name"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n(function (obj) {\n  var name;\n  for (name in obj) {\n  }\n})({});\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 4,
+				"column": 8,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "name"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n(function (obj) {\n  for (var name in obj) {\n  }\n})({});\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 3,
+				"column": 12,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "name"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n(function (iter) {\n  var name;\n  for (name of iter) {\n    i();\n    return;\n  }\n})({});\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 4,
+				"column": 8,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "name"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n(function (iter) {\n  var name;\n  for (name of iter) {\n  }\n})({});\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 4,
+				"column": 8,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "name"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n(function (iter) {\n  for (var name of iter) {\n  }\n})({});\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 3,
+				"column": 12,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "name"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n/* global foobar, foo, bar */\nfoobar;\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 2,
+				"column": 19,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "foo"
+				}
+			},
+			{
+				"line": 2,
+				"column": 24,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "bar"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n/* global foobar,\n   foo,\n   bar\n */\nfoobar;\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 3,
+				"column": 4,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "foo"
+				}
+			},
+			{
+				"line": 4,
+				"column": 4,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "bar"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nconst data = { type: 'coords', x: 1, y: 2 };\nconst { type, ...coords } = data;\nconsole.log(coords);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 3,
+				"column": 9,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "type"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nconst data = { type: 'coords', x: 3, y: 2 };\nconst { type, ...coords } = data;\nconsole.log(type);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 3,
+				"column": 18,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "coords"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nconst data = { vars: ['x', 'y'], x: 1, y: 2 };\nconst {\n  vars: [x],\n  ...coords\n} = data;\nconsole.log(coords);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 4,
+				"column": 10,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "x"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nconst data = { defaults: { x: 0 }, x: 1, y: 2 };\nconst {\n  defaults: { x },\n  ...coords\n} = data;\nconsole.log(coords);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 4,
+				"column": 15,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "x"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n/* global a$fooz,$foo */\na$fooz;\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 2,
+				"column": 18,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "$foo"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n/* globals a$fooz, $ */\na$fooz;\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 2,
+				"column": 20,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "$"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/*globals $foo*/",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 1,
+				"column": 11,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "$foo"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/* global global*/",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 1,
+				"column": 11,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "global"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "/*global foo:true*/",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 1,
+				"column": 10,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "foo"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n/*global 変数, 数*/\n\n変数;\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 2,
+				"column": 14,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "数"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n/*global 𠮷𩸽, 𠮷*/\n𠮷𩸽;\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 2,
+				"column": 16,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "𠮷"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "export default function (a) {}",
+		"ext": "ts",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "a"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nexport default function (a, b) {\n  console.log(a);\n}\n      ",
+		"ext": "ts",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "b"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "export default (function (a) {});",
+		"ext": "ts",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "a"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nexport default (function (a, b) {\n  console.log(a);\n});\n      ",
+		"ext": "ts",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "b"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "export default a => {};",
+		"ext": "ts",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "a"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nexport default (a, b) => {\n  console.log(a);\n};\n      ",
+		"ext": "ts",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "b"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\ntry {\n} catch (err) {}\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "err"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\ntry {\n} catch (err) {}\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			{
+				"caughtErrors": "all"
+			}
+		],
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "err"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nvar a = 0;\na = a + 1;\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "a"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nvar a = 0;\na = a + a;\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "a"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nvar a = 0;\na += a + 1;\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "a"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nvar a = 0;\na++;\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "a"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nfunction foo(a) {\n  a = a + 1;\n}\nfoo();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "a"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nfunction foo(a) {\n  a += a + 1;\n}\nfoo();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "a"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nfunction foo(a) {\n  a++;\n}\nfoo();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "a"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nvar a = 3;\na = a * 5 + 6;\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "a"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nvar a = 2,\n  b = 4;\na = a * 2 + b;\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "a"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nfunction foo(cb) {\n  cb = function (a) {\n    cb(1 + a);\n  };\n  bar(not_cb);\n}\nfoo();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "cb"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nfunction foo(cb) {\n  cb = (function (a) {\n    return cb(1 + a);\n  })();\n}\nfoo();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "cb"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nfunction foo(cb) {\n  cb =\n    (function (a) {\n      cb(1 + a);\n    },\n    cb);\n}\nfoo();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "cb"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nfunction foo(cb) {\n  cb =\n    (0,\n    function (a) {\n      cb(1 + a);\n    });\n}\nfoo();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "cb"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nwhile (a) {\n  function foo(b) {\n    b = b + 1;\n  }\n  foo();\n}\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "b"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n/*global\nfoo*/\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 3,
+				"column": 1,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "foo"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n(function ({ a }, b) {\n  return b;\n})();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "a"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n(function ({ a }, { b, c }) {\n  return b;\n})();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "a"
+				}
+			},
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "c"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nlet x = 0;\n(x++, (x = 0));\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 3,
+				"column": 8,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "x"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nlet x = 0;\n(x++, (x = 0));\nx = 3;\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 4,
+				"column": 1,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "x"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nlet x = 0;\n(x++, 0);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 3,
+				"column": 2,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "x"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nlet x = 0;\n(0, x++);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 3,
+				"column": 5,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "x"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nlet x = 0;\n(0, (1, x++));\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 3,
+				"column": 9,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "x"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nlet x = 0;\nfoo = (x++, 0);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 3,
+				"column": 8,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "x"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nlet x = 0;\nfoo = ((0, x++), 0);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 3,
+				"column": 12,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "x"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nlet x = 0;\n((x += 1), 0);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 3,
+				"column": 3,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "x"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nlet x = 0;\n(0, (x += 1));\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 3,
+				"column": 6,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "x"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nlet x = 0;\n(0, (1, (x += 1)));\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 3,
+				"column": 10,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "x"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nlet x = 0;\nfoo = ((x += 1), 0);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 3,
+				"column": 9,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "x"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nlet x = 0;\nfoo = ((0, (x += 1)), 0);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 3,
+				"column": 13,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "x"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nlet z = 0;\n((z = z + 1), (z = 2));\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 3,
+				"column": 16,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "z"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nlet z = 0;\n((z = z + 1), (z = 2));\nz = 3;\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 4,
+				"column": 1,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "z"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nlet z = 0;\n((z = z + 1), (z = 2));\nz = z + 3;\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 4,
+				"column": 1,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "z"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nlet x = 0;\n(0, (x = x + 1));\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 3,
+				"column": 6,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "x"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nlet x = 0;\n((x = x + 1), 0);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 3,
+				"column": 3,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "x"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nlet x = 0;\nfoo = ((0, (x = x + 1)), 0);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 3,
+				"column": 13,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "x"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nlet x = 0;\nfoo = ((x = x + 1), 0);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 3,
+				"column": 9,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "x"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nlet x = 0;\n(0, (1, (x = x + 1)));\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 3,
+				"column": 10,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "x"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n(function ({ a, b }, { c }) {\n  return b;\n})();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "a"
+				}
+			},
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "c"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n(function ([a], b) {\n  return b;\n})();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "a"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n(function ([a], [b, c]) {\n  return b;\n})();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "a"
+				}
+			},
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "c"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\n(function ([a, b], [c]) {\n  return b;\n})();\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "a"
+				}
+			},
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "c"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nvar a = function () {\n  a();\n};\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "a"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nvar a = function () {\n  return function () {\n    a();\n  };\n};\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 2,
+				"column": 5,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "a"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nconst a = () => () => {\n  a();\n};\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 2,
+				"column": 7,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "a"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nlet myArray = [1, 2, 3, 4].filter(x => x == 0);\nmyArray = myArray.filter(x => x == 1);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 3,
+				"column": 1,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "myArray"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nconst a = 1;\na += 1;\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 3,
+				"column": 1,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "a"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nconst a = () => {\n  a();\n};\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 2,
+				"column": 7,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "a"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nlet x = [];\nx = x.concat(x);\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 3,
+				"column": 1,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "x"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nlet a = 'a';\na = 10;\nfunction foo() {\n  a = 11;\n  a = () => {\n    a = 13;\n  };\n}\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 3,
+				"column": 1,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "a"
+				}
+			},
+			{
+				"line": 4,
+				"column": 10,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "foo"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nlet foo;\ninit();\nfoo = foo + 2;\nfunction init() {\n  foo = 1;\n}\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 4,
+				"column": 1,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "foo"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nfunction foo(n) {\n  if (n < 2) return 1;\n  return n * foo(n - 1);\n}\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 2,
+				"column": 10,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "foo"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nlet c = 'c';\nc = 10;\nfunction foo1() {\n  c = 11;\n  c = () => {\n    c = 13;\n  };\n}\n\nc = foo1;\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 11,
+				"column": 1,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "assigned a value",
+					"additional": "",
+					"varName": "c"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nclass Foo {\n  static {}\n}\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"options": [
+			{
+				"ignoreClassWithStaticInitBlock": false
+			}
+		],
+		"errors": [
+			{
+				"line": 2,
+				"column": 7,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "Foo"
+				}
+			}
+		]
+	},
+	{
+		"kind": "invalid",
+		"code": "\nclass Foo {\n  static {}\n}\n      ",
+		"ext": "ts",
+		"sourceType": "script",
+		"errors": [
+			{
+				"line": 2,
+				"column": 7,
+				"messageId": "unusedVar",
+				"data": {
+					"action": "defined",
+					"additional": "",
+					"varName": "Foo"
+				}
+			}
+		]
+	}
+]

@@ -66,6 +66,9 @@ What ran
     debug build, -t "sweep.ts"                                            4 pass; 6.6 s, 49.7 s, 59.1 s, 90.0 s side by side
     debug build with the leak check of CI, -t "sweep.ts"                  4 pass; 10.2 s, 41.1 s, 46.3 s, 67.0 s side by side
     observed/test-first-prototype.txt, observed/test-with-selection-looked-up.txt (nine instances, timeouts 60 s and 120 s);
-    observed/test-final.txt where it is there: the describe of the patch (five instances, timeouts 120 s and 240 s under a debug build)
+    the describe of the patch (five instances, timeouts 120 s and 240 s under a debug build): its five starts one at a time under the
+    debug build with the leak check of CI, and its expectations with node:assert under the installed bun (probes/check-test.ts):
+    observed/test-final-by-hand.txt. Under bun test: observed/test-final.txt where it is there (the lock was held for 40 minutes
+    by a measurement of another unit when this was written).
   one start of the script under the debug build, processor time: --help 2.6 s, --no-run of one case 6.2 s, --each of nine instances 11.4 s
 Not run: anything on Windows (no such machine in the session); src/errno/windows_errno.rs:735 maps BROKEN_PIPE to EPIPE.

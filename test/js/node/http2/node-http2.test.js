@@ -6416,8 +6416,8 @@ describe.concurrent("write() after end()", () => {
     });
 
     // The native side drops a reset stream on the read after the RST_STREAM, and JS hears about
-    // the reset a tick later. With both reads in one turn, the write completes in between, when
-    // the native stream is already gone. That must not throw.
+    // the reset a tick later. With the writes and both reads in one turn, the first write
+    // completes in between, when the native stream is already gone. That must not throw.
     it("peer reset that drops the native stream before the write completes", async () => {
       function frame(type, flags, streamId, payload = Buffer.alloc(0)) {
         const header = Buffer.alloc(9);
@@ -6480,6 +6480,7 @@ describe.concurrent("write() after end()", () => {
         // socket deliver its reads back to back in one turn.
         let held = null;
         let heldLength = 0;
+        let req, late;
         const proxy = new Duplex({
           read() {},
           write(chunk, encoding, callback) {
@@ -6493,6 +6494,9 @@ describe.concurrent("write() after end()", () => {
           held.push(chunk);
           heldLength += chunk.length;
           if (heldLength >= burst.length) {
+            req.write("body");
+            req.end();
+            req.write("late", late);
             proxy.push(Buffer.concat(held));
             held = null;
           }
@@ -6504,14 +6508,8 @@ describe.concurrent("write() after end()", () => {
         for (const emitter of [raw, proxy, socket, session]) emitter.on("error", closed.reject);
 
         held = [];
-        const req = session.request({ ":method": "POST", ":path": "/" }, { endStream: false });
-        const late = record(req, closed);
-        // 'response' is emitted inside the read that also carries the RST_STREAM.
-        req.on("response", () => {
-          req.write("body");
-          req.end();
-          req.write("late", late);
-        });
+        req = session.request({ ":method": "POST", ":path": "/" }, { endStream: false });
+        late = record(req, closed);
         expect(await closed.promise).toEqual(lateWriteEvents);
       } finally {
         session?.destroy();

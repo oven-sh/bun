@@ -2100,8 +2100,17 @@ function onEndStreamSettled(stream: Http2Stream) {
   }
 }
 
+const kWriteCallback = Symbol("writeCallback");
+const kOnWriteDone = Symbol("onWriteDone");
+// Writable has one _write/_writev in flight at a time: one slot and one bound function serve them all.
+function writeCompletion(stream: Http2Stream, callback: (err?: Error | null) => void) {
+  stream[kWriteCallback] = callback;
+  return (stream[kOnWriteDone] ??= onStreamWriteDone.bind(stream));
+}
 // Writable never calls _final on an errored stream (a write() after end()): send its END_STREAM here.
-function onStreamWriteDone(this: Http2Stream, callback: (err?: Error | null) => void, err?: Error | null) {
+function onStreamWriteDone(this: Http2Stream, err?: Error | null) {
+  const callback = this[kWriteCallback]!;
+  this[kWriteCallback] = undefined;
   callback(err);
   const state = this._writableState;
   // A chunk still queued behind this one carries END_STREAM itself (isFinalWrite).
@@ -2332,6 +2341,10 @@ interface Http2StreamReadableState {
 interface Http2StreamWritableState {
   ending: boolean;
   destroyed: boolean;
+  errored: Error | null;
+  errorEmitted: boolean;
+  finalCalled: boolean;
+  length: number;
 }
 type DuplexStream = import("node:stream").Duplex;
 interface DuplexStateAccessors {
@@ -2346,6 +2359,8 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
   #id: number;
   [bunHTTP2Session]: ClientHttp2Session | ServerHttp2Session | null = null;
   [bunHTTP2StreamFinal]: (() => void) | null = null;
+  [kWriteCallback]: ((err?: Error | null) => void) | undefined = undefined;
+  [kOnWriteDone]: ((err?: Error | null) => void) | undefined = undefined;
   [bunHTTP2StreamStatus]: number = 0;
   // Async-context frame captured at construction so native-driven callbacks
   // (response/data/end/…) on client streams observe the AsyncLocalStorage
@@ -2934,7 +2949,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         const chunk = Buffer.concat(chunks || []);
         if (session[kTimeout]) session[kTimeout].refresh();
         const endStream = isFinalWrite(this, batchLength);
-        if (!endStream) callback = onStreamWriteDone.bind(this, callback);
+        if (!endStream) callback = writeCompletion(this, callback);
         const status = native.writeStream(this.#id, chunk, undefined, endStream, callback, true);
         if (status & kWriteFlushedWithoutCallback) session[kDeferWriteCallback](callback);
         if (endStream) {
@@ -2976,7 +2991,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         }
         if (session[kTimeout]) session[kTimeout].refresh();
         const endStream = isFinalWrite(this, chunk.length);
-        if (!endStream) callback = onStreamWriteDone.bind(this, callback);
+        if (!endStream) callback = writeCompletion(this, callback);
         const status = native.writeStream(this.#id, wireChunk, wireEncoding, endStream, callback, true);
         if (status & kWriteFlushedWithoutCallback) session[kDeferWriteCallback](callback);
         if (endStream) {

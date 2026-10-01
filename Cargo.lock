@@ -1647,6 +1647,7 @@ dependencies = [
 name = "bun_typecheck"
 version = "0.0.0"
 dependencies = [
+ "bun_ast",
  "bun_collections",
  "bun_core",
 ]

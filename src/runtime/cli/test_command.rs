@@ -1730,6 +1730,17 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
     true
 }
 
+/// What `TestCommand::report_run` reads that the reporter does not hold.
+#[derive(Copy, Clone)]
+struct ReportInputs<'a> {
+    ctx: &'a Command::ContextData,
+    /// The files of the run, after `--changed` and `--shard`.
+    test_files: &'a [Interned],
+    pass_with_no_tests_from_filter: bool,
+    search_count: usize,
+    ran_parallel: bool,
+}
+
 pub(crate) struct TestCommand;
 
 impl TestCommand {
@@ -1872,6 +1883,7 @@ impl TestCommand {
                 unhandled_errors_between_tests: 0,
                 summary: Summary::default(),
                 node_test_used: false,
+                serial_run: None,
             },
             repeat_count: 1,
             last_printed_dot: core::cell::Cell::new(false),
@@ -2380,6 +2392,38 @@ impl TestCommand {
             }
         }
 
+        let failed = Self::report_run(
+            &mut reporter,
+            vm,
+            &mut coverage_options,
+            &ReportInputs {
+                ctx: &*ctx,
+                test_files,
+                pass_with_no_tests_from_filter,
+                search_count,
+                ran_parallel,
+            },
+        )?;
+        Self::exit_after_report(reporter, vm, failed)
+    }
+
+    /// The report at the end of a run: snapshot files, the coverage table, the summary, the
+    /// JUnit and timings files. Returns whether the run failed. `on_requested_exit` calls it
+    /// too, when a `process.exit()` ends the run before `exec` gets here.
+    fn report_run(
+        reporter: &mut CommandLineReporter,
+        vm: &mut VirtualMachine,
+        coverage_options: &mut CodeCoverageOptions,
+        inputs: &ReportInputs<'_>,
+    ) -> crate::Result<bool> {
+        let ReportInputs {
+            ctx,
+            test_files,
+            pass_with_no_tests_from_filter,
+            search_count,
+            ran_parallel,
+        } = *inputs;
+
         let write_snapshots_success = jest::Jest::runner()
             .unwrap()
             .snapshots
@@ -2503,7 +2547,7 @@ impl TestCommand {
             pretty_error!("\n");
 
             if coverage_options.enabled && !ran_parallel {
-                reporter.generate_code_coverage(vm, &mut coverage_options);
+                reporter.generate_code_coverage(vm, coverage_options);
             }
 
             // `Summary` is `Copy`; take a value snapshot so the `&mut` from
@@ -2535,7 +2579,7 @@ impl TestCommand {
                 }
 
                 // Display the random seed if tests were randomized
-                if random_instance.is_some() {
+                if let Some(seed) = reporter.jest.randomize_seed {
                     pretty_error!("{}<r>--seed={}<r>\n", &indenter, seed);
                 }
 
@@ -2653,6 +2697,25 @@ impl TestCommand {
             reporter.write_timings_if_needed();
         }
 
+        let summary = reporter.summary();
+
+        let should_fail_on_no_tests = !ctx.test_options.pass_with_no_tests
+            && (failed_to_find_any_tests || summary.did_label_filter_out_all_tests());
+        Ok(should_fail_on_no_tests
+            || summary.fail > 0
+            || (coverage_options.enabled
+                && coverage_options.fractions.failing
+                && coverage_options.fail_on_low_coverage)
+            || !write_snapshots_success
+            || reporter.jest.unhandled_errors_between_tests > 0)
+    }
+
+    /// The end of `exec`, after `report_run`.
+    fn exit_after_report(
+        mut reporter: Box<CommandLineReporter>,
+        vm: &mut VirtualMachine,
+        failed: bool,
+    ) -> crate::Result<()> {
         if vm.hot_reload == jsc::virtual_machine::HotReload::Watch {
             let vm_ptr: *mut VirtualMachine = vm;
             // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
@@ -2660,19 +2723,9 @@ impl TestCommand {
             // unique mutable access on this single-threaded path.
             vm.run_with_api_lock(|| Self::run_event_loop_for_watch(unsafe { &mut *vm_ptr }));
         }
-        let summary = reporter.summary();
-
-        let should_fail_on_no_tests = !ctx.test_options.pass_with_no_tests
-            && (failed_to_find_any_tests || summary.did_label_filter_out_all_tests());
-        if should_fail_on_no_tests
-            || summary.fail > 0
-            || (coverage_options.enabled
-                && coverage_options.fractions.failing
-                && coverage_options.fail_on_low_coverage)
-            || !write_snapshots_success
-            || reporter.jest.unhandled_errors_between_tests > 0
-        {
+        if failed {
             vm.exit_handler.exit_code = 1;
+            vm.exit_handler.min_exit_code = 1;
         }
         vm.exit_handler.skip_exit_listeners = skip_exit_listeners(&reporter);
         vm.exit_handler.requested = exit_is_requested();
@@ -2795,14 +2848,24 @@ impl TestCommand {
         // SAFETY: run_with_api_lock(&self) only acquires the JSC API lock around the
         // closure; ctx holds the unique &mut to the same VM and is the sole mutator.
         let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm_);
+        // `on_requested_exit` reaches the reporter through `serial_run` from inside the run, so
+        // the run borrows the reporter from that same pointer.
+        let reporter_ptr = core::ptr::NonNull::from(reporter_);
+        // SAFETY: `reporter_ptr` is the caller's exclusive borrow, which lasts for this call.
+        let reporter = unsafe { &mut *reporter_ptr.as_ptr() };
+        reporter.jest.serial_run = Some(jest::SerialRun {
+            reporter: reporter_ptr,
+            files: core::ptr::NonNull::from(files_),
+        });
         let mut ctx = Context {
-            reporter: reporter_,
+            reporter,
             vm: vm_,
             files: files_,
         };
         // SAFETY: `vm_ptr` was derived from `vm_` above; `ctx` holds the unique
         // `&mut VirtualMachine` and `run_with_api_lock(&self)` only acquires the JSC lock.
         unsafe { (*vm_ptr).run_with_api_lock(|| ctx.begin()) };
+        ctx.reporter.jest.serial_run = None;
     }
 
     pub(crate) fn run(
@@ -2920,11 +2983,12 @@ impl TestCommand {
             }
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
-            let promise = vm.load_entry_point_for_test_runner(file_path)?;
-            // Only count the file once, not once per repeat
+            // Only count the file once, not once per repeat. Counted before the load, so that
+            // a `process.exit()` at the top level of the file reports it as started.
             if repeat_index == 0 {
                 reporter.summary().files += 1;
             }
+            let promise = vm.load_entry_point_for_test_runner(file_path)?;
 
             // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
             match jsc::JSInternalPromise::opaque_mut(promise).status() {
@@ -3053,6 +3117,173 @@ impl TestCommand {
             let _ = junit.end_file(None);
         }
         Ok(())
+    }
+}
+
+/// `process.exit()`, `process.reallyExit()` or a fatal exception while `run_all_tests` is on
+/// the stack. The caller ends the process when this returns, so the tail of `exec` never runs.
+/// This reports the run in its place, and keeps a run that failed, or that the exit cut
+/// short, from exiting 0.
+pub(crate) fn on_requested_exit(vm: &mut VirtualMachine, code: u8) {
+    let Some(runner) = jest::Jest::runner_ptr() else {
+        return;
+    };
+    // SAFETY: `RUNNER` is only read and written on the JS thread.
+    let Some(run) = (unsafe { (*runner.as_ptr()).serial_run.take() }) else {
+        return;
+    };
+    // SAFETY: `run_all_tests` is on the stack, so its reporter and files are alive. Its frame
+    // and the frames above it borrow both, and none of them runs again: the caller exits.
+    let (reporter, files) = unsafe { (&mut *run.reporter.as_ptr(), run.files.as_ref()) };
+
+    if should_drain_event_loop() {
+        // The file is the whole run and ends it with its own status, as under node. Only a
+        // failure that is already counted outranks that status.
+        if reporter.jest.summary.fail > 0 || reporter.jest.unhandled_errors_between_tests > 0 {
+            vm.exit_handler.min_exit_code = 1;
+        }
+        return;
+    }
+
+    let running = reporter
+        .jest
+        .bun_test_root
+        .active_file
+        .as_deref()
+        .map(|file| (file.file_id, file.unfinished()));
+    let unfinished = running
+        .map(|(_, unfinished)| unfinished)
+        .unwrap_or_default();
+    let nothing_unfinished = unfinished.tests == 0 && unfinished.describes == 0;
+    let summary = reporter.jest.summary;
+    let nothing_reported =
+        summary.pass + summary.fail + summary.skip + summary.todo + summary.skipped_because_label
+            == 0
+            && reporter.jest.unhandled_errors_between_tests == 0;
+
+    // A file that is the whole run and exits before it registers a test is a script: its
+    // status is its result. Node's test harness does this to skip a file (`common.skip()`)
+    // and to re-spawn it with its `// Flags:`.
+    if files.len() == 1 && !vm.is_in_preload && nothing_reported && nothing_unfinished {
+        return;
+    }
+
+    // In a run of several files the exit is one failure wherever it happens, like a
+    // `--parallel` worker that exits mid-file: the result must not depend on the file order.
+    // In a run of one file it is one failure when it leaves registered tests without a result.
+    let is_failure = files.len() > 1 || vm.is_in_preload || !nothing_unfinished;
+
+    let top_level_dir = FileSystem::instance().top_level_dir;
+    let running_path = running.map(|(file_id, _)| {
+        reporter.jest.files.items_source()[file_id as usize]
+            .path
+            .text
+    });
+    // A preload runs inside the load of a file that is already counted and that does not run.
+    let started = (summary.files as usize)
+        .saturating_sub(usize::from(vm.is_in_preload))
+        .min(files.len());
+    let not_started = &files[started..];
+
+    if reporter.reporters.dots && reporter.last_printed_dot.replace(false) {
+        pretty_error!("<r>\n");
+    }
+    if running.is_some() {
+        reporter.jest.current_file.print_if_needed();
+        if Output::is_github_action() {
+            pretty_errorln!("<r>\n::endgroup::\n");
+        }
+    }
+    let mut place: Vec<u8> = Vec::new();
+    if vm.is_in_preload {
+        place.extend_from_slice(b"in a preload script");
+    } else if let Some(path) = running_path {
+        let _ = write!(
+            &mut place,
+            "while {} was running",
+            bstr::BStr::new(resolve_path::relative(top_level_dir, path))
+        );
+    } else {
+        place.extend_from_slice(b"between test files");
+    }
+    if is_failure {
+        pretty_error!(
+            "<r><red>error<r><d>:<r> <b>process.exit({})<r> was called {}\n",
+            code,
+            bstr::BStr::new(&place)
+        );
+        if unfinished.tests > 0 {
+            pretty_error!(
+                "<d>       {} test{} in this file did not finish<r>\n",
+                unfinished.tests,
+                if unfinished.tests == 1 { "" } else { "s" }
+            );
+        }
+        if !not_started.is_empty() {
+            pretty_error!(
+                "<d>       {} test file{} did not run:<r>\n",
+                not_started.len(),
+                if not_started.len() == 1 { "" } else { "s" }
+            );
+            for file in not_started {
+                pretty_error!(
+                    "<d>         {}<r>\n",
+                    bstr::BStr::new(resolve_path::relative(top_level_dir, file.as_bytes()))
+                );
+            }
+        }
+
+        reporter.jest.summary.fail += 1;
+        let junit_path =
+            running_path.or_else(|| started.checked_sub(1).map(|last| files[last].as_bytes()));
+        if let Some(junit) = reporter.reporters.junit.as_mut()
+            && let Some(path) = junit_path
+        {
+            let mut message: Vec<u8> = Vec::new();
+            let _ = write!(
+                &mut message,
+                "process.exit({code}) was called before the test run finished"
+            );
+            junit
+                .record_test_case(&TestCaseReport {
+                    file: junit_file_name(path),
+                    scopes: Vec::new(),
+                    name: b"(process.exit called)",
+                    status: bun_test::Execution::Result::Fail,
+                    assertions: 0,
+                    elapsed_ns: 0,
+                    line_number: 0,
+                    failure: Some(TestFailure {
+                        message,
+                        ..Default::default()
+                    }),
+                })
+                .expect("oom");
+        }
+    } else {
+        pretty_error!(
+            "<r><blue>note<r><d>:<r> process.exit({}) was called {}\n",
+            code,
+            bstr::BStr::new(&place)
+        );
+    }
+
+    let ctx: &Command::ContextData = Command::get();
+    let mut coverage_options = ctx.test_options.coverage.clone();
+    let inputs = ReportInputs {
+        ctx,
+        test_files: files,
+        pass_with_no_tests_from_filter: false,
+        search_count: 0,
+        ran_parallel: false,
+    };
+    let failed = TestCommand::report_run(reporter, vm, &mut coverage_options, &inputs)
+        .unwrap_or_else(|err| {
+            Output::err(err, "Failed to write snapshots", ());
+            true
+        });
+    if failed {
+        vm.exit_handler.min_exit_code = 1;
     }
 }
 

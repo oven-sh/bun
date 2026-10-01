@@ -617,6 +617,15 @@ pub enum Phase {
     Done,
 }
 
+/// What a test file registered that has no result yet.
+#[derive(Default, Copy, Clone)]
+pub(crate) struct Unfinished {
+    /// Tests without a reported result.
+    pub(crate) tests: usize,
+    /// `describe` callbacks that have not run, so their tests are not registered yet.
+    pub(crate) describes: usize,
+}
+
 pub(crate) struct BunTest {
     pub(crate) bun_test_root: bun_ptr::BackRef<BunTestRoot>,
     pub(crate) in_run_loop: bool,
@@ -677,6 +686,26 @@ impl BunTest {
             // `next = EPOCH, state = PENDING`.
             timer: EventLoopTimer::init_paused(EventLoopTimerTag::BunTest),
             wants_wakeup: false,
+        }
+    }
+
+    pub(crate) fn unfinished(&self) -> Unfinished {
+        match self.phase {
+            Phase::Collection => Unfinished {
+                tests: self.collection.root_scope.test_count(),
+                describes: self.collection.describe_callback_queue.len()
+                    + self.collection.current_scope_callback_queue.len(),
+            },
+            Phase::Execution => Unfinished {
+                tests: self
+                    .execution
+                    .sequences
+                    .iter()
+                    .filter(|sequence| sequence.test_entry.is_some() && sequence.active_entry.is_some())
+                    .count(),
+                describes: 0,
+            },
+            Phase::Done => Unfinished::default(),
         }
     }
 
@@ -1756,6 +1785,17 @@ impl DescribeScope {
         })
     }
     // destroy → Drop on Box<DescribeScope>; all fields own their contents.
+
+    /// Tests registered in this scope and in the scopes inside it.
+    pub(crate) fn test_count(&self) -> usize {
+        self.entries
+            .iter()
+            .map(|entry| match entry {
+                TestScheduleEntry::Describe(describe) => describe.test_count(),
+                TestScheduleEntry::TestCallback(_) => 1,
+            })
+            .sum()
+    }
 
     fn mark_contains_only(&mut self) {
         let mut target: Option<*mut DescribeScope> = Some(std::ptr::from_mut(self));

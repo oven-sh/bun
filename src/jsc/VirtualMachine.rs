@@ -744,6 +744,8 @@ pub fn is_smol_mode() -> bool {
 #[derive(Default)]
 pub struct ExitHandler {
     pub exit_code: u8,
+    /// `global_exit` never exits with a lower status than this. `bun test` sets it to 1 once the run has failed: `exit_code` is also what `process.exit(0)` and `process.exitCode = 0` write.
+    pub min_exit_code: u8,
     /// `bun test` sets this at the end of a run unless `node:test` APIs were used: jest and vitest never fire a test file's `process.on('exit')` listeners.
     pub skip_exit_listeners: bool,
     /// `process.exit()`, a fatal error or the end of a `bun test` run, as opposed to the event loop running dry.
@@ -2338,7 +2340,10 @@ impl VirtualMachine {
         } else {
             self.close_sqlite_databases_for_exit();
         }
-        bun_core::Global::exit(u32::from(self.exit_handler.exit_code))
+        let exit_handler = &self.exit_handler;
+        bun_core::Global::exit(u32::from(
+            exit_handler.exit_code.max(exit_handler.min_exit_code),
+        ))
     }
 
     /// Checkpoint + close the sqlite connections *this* VM opened, while it is

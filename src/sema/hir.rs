@@ -187,6 +187,8 @@ bitflags::bitflags! {
         /// A function whose `{` is missing. tsgo gives it a zero-width block (`NodeIsMissing(body)`, but `body != nil`): `body` is
         /// `None` here, it returns `any` and is no implementation, yet no missing implementation is reported (2391, 2390).
         const MISSING_BODY = 1 << 24;
+        /// `NodeFlagsReparsed`: a declaration, or the `?` of a parameter, that is made from a tag of a JSDoc comment in JavaScript.
+        const REPARSED = 1 << 25;
     }
 }
 
@@ -908,6 +910,19 @@ pub enum TypeNodeKind {
     },
 }
 
+/// What a JSDoc `@type` tag gives a type to, where the tree has no place for one.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub enum JsDocTypeOwner {
+    /// `FullSignature`: the type is that of the function as a whole.
+    Fn(FnId),
+    /// A property of an object literal: `name: value`, or `name` by itself.
+    Prop(PropId),
+    /// An assignment that declares something (`GetAssignmentDeclarationKind`).
+    Assign(ExprId),
+    /// `export default e`, `export = e`
+    Export(StmtId),
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum ReferenceKind {
     Path,
@@ -1064,6 +1079,18 @@ pub struct File {
     pub parens: Vec<(ExprId, u32)>,
     /// What comments at the top say about JSX in this file.
     pub jsx_pragmas: JsxPragmas,
+    /// The JSDoc comments of a JavaScript file, from where to where. Sorted. A node whose position is in one is made from a tag.
+    pub jsdoc_comments: Vec<(u32, u32)>,
+    /// `JSDocDiagnostics`: what the parser objects to in the JSDoc comments that belong to a node, start and code. Only reported if
+    /// the file is checked (`IsCheckJSEnabledForFile`), and no parse diagnostics as far as `hasParseDiagnostics` goes.
+    pub jsdoc_errors: Vec<(u32, u32)>,
+    /// The types of `@type` tags on what has no place for a type. Sorted by owner.
+    pub jsdoc_types: Vec<(JsDocTypeOwner, TypeNodeId)>,
+    /// `@public`, `@private`, `@protected`, `@readonly` and `@override` on an assignment: the assignment and the modifiers. Sorted.
+    pub jsdoc_modifiers: Vec<(ExprId, Flags)>,
+    /// `checkUnmatchedJSDocParameters`, as far as the syntax tells: the function, where the name in the `@param` tag is, and the
+    /// code. 8024 and 8032 hold unless the function refers to `arguments`, 8029 holds if it does.
+    pub jsdoc_param_errors: Vec<(FnId, u32, u32)>,
 
     pub ids: Vec<u32>,
     pub numbers: Vec<f64>,
@@ -1194,6 +1221,28 @@ impl File {
             .any(|&(start, end)| (start..end).contains(&pos))
     }
 
+    /// `NodeFlagsJSDoc`, `NodeFlagsReparsed`, of what is written at `pos`: it is in a JSDoc comment of a JavaScript file.
+    pub fn is_in_jsdoc(&self, pos: u32) -> bool {
+        let after = self.jsdoc_comments.partition_point(|c| c.0 <= pos);
+        after > 0 && pos < self.jsdoc_comments[after - 1].1
+    }
+
+    /// The type a `@type` tag gives `owner`. `NONE` if there is none.
+    pub fn jsdoc_type(&self, owner: JsDocTypeOwner) -> TypeNodeId {
+        match self.jsdoc_types.binary_search_by_key(&owner, |t| t.0) {
+            Ok(index) => self.jsdoc_types[index].1,
+            Err(_) => TypeNodeId::NONE,
+        }
+    }
+
+    /// The modifiers JSDoc tags give the assignment `e`.
+    pub fn jsdoc_modifiers_of(&self, e: ExprId) -> Flags {
+        match self.jsdoc_modifiers.binary_search_by_key(&e, |m| m.0) {
+            Ok(index) => self.jsdoc_modifiers[index].1,
+            Err(_) => Flags::empty(),
+        }
+    }
+
     pub fn list<T: Copy + Into<u32>>(&mut self, items: &[T]) -> IdList<T> {
         let start = self.ids.len() as u32;
         self.ids.extend(items.iter().map(|&i| i.into()));
@@ -1296,7 +1345,12 @@ impl File {
             import_attributes,
             checker_errors,
             after_skipped,
-            stray_decorators
+            stray_decorators,
+            jsdoc_comments,
+            jsdoc_errors,
+            jsdoc_types,
+            jsdoc_modifiers,
+            jsdoc_param_errors
         );
     }
 }

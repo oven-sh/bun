@@ -1403,12 +1403,18 @@ impl<'f> Binder<'f> {
                 if matches!(b.member_owner[m.idx()], MemberOwner::Interface(_) | MemberOwner::TypeLiteral(_))),
             _ => false,
         };
-        // `Err`: the arguments object of a function.
-        let resolve = |b: &Bound, mut scope: ScopeId, name: Atom| -> Result<SymbolId, ()> {
+        // `Err`: the arguments object of a function. With the innermost function the name is written in, be it an arrow function.
+        let resolve = |b: &Bound, mut scope: ScopeId, name: Atom| -> Result<SymbolId, FnId> {
             // `lastLocation`: the kind of the scope the search has just left.
             let mut from = ScopeKind::Block;
+            let mut innermost = FnId::NONE;
             while scope.is_some() {
                 let s = &b.scopes[scope.idx()];
+                if let ScopeKind::Fn(f) = s.kind
+                    && innermost.is_none()
+                {
+                    innermost = f;
+                }
                 if let Some(&symbol) = tables[s.locals.idx()].get(&name)
                     && b.symbols[symbol.idx()]
                         .flags
@@ -1437,13 +1443,15 @@ impl<'f> Binder<'f> {
                     && let ScopeKind::Fn(f) = s.kind
                     && has_arguments(b, f)
                 {
-                    return Err(());
+                    return Err(innermost);
                 }
                 from = s.kind;
                 scope = s.parent;
             }
             Ok(SymbolId::NONE)
         };
+        // `containsArgumentsReference`
+        let mut refer_to_arguments = Vec::new();
         for (expr, scope) in idents {
             let ExprKind::Ident(name) = self.f[expr].kind else {
                 continue;
@@ -1452,9 +1460,15 @@ impl<'f> Binder<'f> {
             if name == known::empty {
                 continue;
             }
-            let Ok(symbol) = resolve(&self.b, scope, name) else {
-                self.b.arguments_objects.push(expr);
-                continue;
+            let symbol = match resolve(&self.b, scope, name) {
+                Ok(symbol) => symbol,
+                Err(innermost) => {
+                    self.b.arguments_objects.push(expr);
+                    if !self.f.jsdoc_param_errors.is_empty() {
+                        refer_to_arguments.push(innermost);
+                    }
+                    continue;
+                }
             };
             self.b.expr_symbol[expr.idx()] = symbol;
             if symbol.is_none() {
@@ -1478,6 +1492,12 @@ impl<'f> Binder<'f> {
         self.b.free_idents.sort_unstable_by_key(|f| f.0);
         self.b.alias_idents.sort_unstable_by_key(|a| a.0);
         self.b.arguments_objects.sort_unstable();
+        // `checkUnmatchedJSDocParameters`: a function that refers to `arguments` is held to less.
+        for &(func, pos, code) in &self.f.jsdoc_param_errors {
+            if (code == 8029) == refer_to_arguments.contains(&func) {
+                self.b.jsdoc_param_errors.push((pos, code));
+            }
+        }
         self.b.infer_positions.sort_unstable_by_key(|p| p.0);
         self.collect_expandos();
         self.collect_this_properties();
@@ -1529,6 +1549,21 @@ impl<'f> Binder<'f> {
             if !matches!(self.f[s].kind, StmtKind::Fn(_)) {
                 self.stmt(s, parent, all_exported);
             }
+        }
+    }
+
+    /// `IsImplicitlyExportedJSDocDeclaration`: what a `@typedef` or a `@callback` declares at the top of a module. Whether the file
+    /// is one `declare` knows.
+    fn is_implicitly_exported(&self, flags: Flags) -> bool {
+        flags.contains(Flags::REPARSED)
+            && matches!(self.b.scopes[self.scope.idx()].kind, ScopeKind::File)
+    }
+
+    /// Binds the type a `@type` tag gives `owner`, if there is one.
+    fn jsdoc_type(&mut self, owner: JsDocTypeOwner) {
+        let ty = self.f.jsdoc_type(owner);
+        if ty.is_some() {
+            self.ty(ty);
         }
     }
 
@@ -1649,7 +1684,7 @@ impl<'f> Binder<'f> {
                     a.name,
                     SymFlags::TYPE_ALIAS,
                     Decl::Alias(alias),
-                    is_exported(a.flags),
+                    is_exported(a.flags) || self.is_implicitly_exported(a.flags),
                 );
                 self.b.alias_symbol[alias.idx()] = symbol;
                 self.b.alias_scope[alias.idx()] =
@@ -1948,6 +1983,7 @@ impl<'f> Binder<'f> {
                 }
             }
             StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => {
+                self.jsdoc_type(JsDocTypeOwner::Export(id));
                 self.expr(e, me);
                 let name = if matches!(self.f[id].kind, StmtKind::ExportDefault(_)) {
                     known::default
@@ -2284,7 +2320,9 @@ impl<'f> Binder<'f> {
                 name,
                 flags,
                 Decl::Module(m),
-                all_exported || decl.flags.contains(Flags::EXPORT),
+                all_exported
+                    || decl.flags.contains(Flags::EXPORT)
+                    || self.is_implicitly_exported(decl.flags),
             ),
             // `declareModuleMember`: a local of what it is written in, under a name nothing can refer to. 2435
             ModuleName::String(name) if !is_global && !is_augmentation => {
@@ -2815,6 +2853,16 @@ impl<'f> Binder<'f> {
                 self.push_scope(ScopeKind::ReturnType(id), SymbolId::NONE);
             }
             self.ty(f.ret);
+            if has_body_locals {
+                self.pop_scope();
+            }
+        }
+        // `FullSignature`
+        if self.f.jsdoc_type(JsDocTypeOwner::Fn(id)).is_some() {
+            if has_body_locals {
+                self.push_scope(ScopeKind::ReturnType(id), SymbolId::NONE);
+            }
+            self.jsdoc_type(JsDocTypeOwner::Fn(id));
             if has_body_locals {
                 self.pop_scope();
             }
@@ -3614,6 +3662,7 @@ impl<'f> Binder<'f> {
                 {
                     self.expando_assignments.push((id, self.scope));
                 }
+                self.jsdoc_type(JsDocTypeOwner::Assign(id));
                 self.expr(target, me);
                 self.expr(value, me);
                 // `bindModuleExportsAssignment`, `bindExportsOrObjectDefineProperty`: wherever it is written, it is the file that exports.
@@ -3925,6 +3974,7 @@ impl<'f> Binder<'f> {
         let is_literal = matches!(self.f[owner].kind, ExprKind::Object(_));
         for p in props.iter() {
             self.b.prop_owner[p.idx()] = owner;
+            self.jsdoc_type(JsDocTypeOwner::Prop(p));
             let prop = &self.f[p];
             if let PropKey::Computed(key) = prop.key {
                 self.in_assignment_pattern = false;

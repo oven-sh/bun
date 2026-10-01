@@ -6,10 +6,16 @@
 //! After the parse pass, where ordinary builds start the visit pass, [`lower`] walks the statements and clones them and the type syntax
 //! ([`clone_types`]) into the type checker's tree.
 //! Statements and class members that the parser drops are still read from the source text by [`type_syntax::Builder`].
+//!
+//! In JavaScript the types are in JSDoc comments. Before the lowering, [`jsdoc`] reads the tags of the comments the lexer recorded, and
+//! has the parser read the types in them. During the lowering, [`reparse`] makes ordinary annotations, casts and declarations of the
+//! tags of each comment that belongs to a node.
 
 pub(crate) mod clone_types;
+pub(crate) mod jsdoc;
 pub(crate) mod keep;
 pub(crate) mod lower;
+pub(crate) mod reparse;
 pub(crate) mod type_syntax;
 
 use bun_ast::ts_syntax as ts;

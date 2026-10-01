@@ -623,6 +623,8 @@ pub struct Bound {
     pub alias_idents: Vec<(ExprId, ScopeId)>,
     /// The identifiers `arguments` that mean the arguments of a function around them. Sorted.
     pub arguments_objects: Vec<ExprId>,
+    /// `checkUnmatchedJSDocParameters`: the `@param` tags that match no parameter, as start and code.
+    pub jsdoc_param_errors: Vec<(u32, u32)>,
 
     pub flow: Vec<Flow>,
     pub flow_edges: Vec<FlowId>,

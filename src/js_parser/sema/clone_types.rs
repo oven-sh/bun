@@ -109,9 +109,12 @@ impl Builder<'_> {
             // `parseTypeReference` with a missing name resolves to the error type, which behaves and prints like `any`.
             ts::TypeData::Missing => TypeNodeKind::Keyword(Keyword::Any),
             ts::TypeData::Keyword(k) => TypeNodeKind::Keyword(keyword(k)),
-            ts::TypeData::Reference { name, args } => TypeNodeKind::Ref {
-                name: self.clone_names(name),
-                args: self.clone_type_list(args),
+            ts::TypeData::Reference { name, args } => match self.jsdoc_intended_type(name, args) {
+                Some(kind) => kind,
+                None => TypeNodeKind::Ref {
+                    name: self.clone_names(name),
+                    args: self.clone_type_list(args),
+                },
             },
             ts::TypeData::StringLiteral(text) => TypeNodeKind::StringLit(self.atoms.intern(&text)),
             ts::TypeData::NumberLiteral(number) => {
@@ -273,25 +276,21 @@ impl Builder<'_> {
                 operand,
                 is_postfix,
             } => {
-                // `checkJSDocTypeIsInJsFile`
-                self.file
-                    .early_errors
-                    .push((pos(loc), if is_postfix { 17019 } else { 17020 }));
+                let code = if is_postfix { 17019 } else { 17020 };
+                self.check_jsdoc_type_is_in_js_file(pos(loc), code);
                 self.clone_union_with_keyword(operand, Keyword::Null, pos(loc))
             }
             ts::TypeData::JsDocNonNullable {
                 operand,
                 is_postfix,
             } => {
-                // `checkJSDocTypeIsInJsFile`
-                self.file
-                    .early_errors
-                    .push((pos(loc), if is_postfix { 17019 } else { 17020 }));
+                let code = if is_postfix { 17019 } else { 17020 };
+                self.check_jsdoc_type_is_in_js_file(pos(loc), code);
                 return self.clone_type(operand);
             }
             ts::TypeData::JsDocAll => {
-                // `checkJSDocTypeIsInJsFile`: JSDoc types can only be used inside documentation comments.
-                self.file.early_errors.push((pos(loc), 8020));
+                // JSDoc types can only be used inside documentation comments.
+                self.check_jsdoc_type_is_in_js_file(pos(loc), 8020);
                 TypeNodeKind::Keyword(Keyword::Any)
             }
             ts::TypeData::Optional(operand) => {
@@ -309,6 +308,53 @@ impl Builder<'_> {
             ts::TypeData::HeritageExpression => TypeNodeKind::Error,
         };
         self.file.ty(kind, pos(loc))
+    }
+
+    /// `checkJSDocTypeIsInJsFile`
+    fn check_jsdoc_type_is_in_js_file(&mut self, at: u32, code: u32) {
+        if !self.is_js {
+            self.file.early_errors.push((at, code));
+        }
+    }
+
+    /// `getIntendedTypeFromJSDocTypeReference`, as far as no compiler option has a say: what some names stand for in a JSDoc comment.
+    fn jsdoc_intended_type(
+        &mut self,
+        name: ts::Span<ts::Name>,
+        args: ts::IdList<ts::Type>,
+    ) -> Option<TypeNodeKind> {
+        if !self.in_jsdoc {
+            return None;
+        }
+        let &[ts::Name { text, .. }] = &self.ts[name] else {
+            return None;
+        };
+        // `Object<K, V>` is `Record<K, V>`.
+        if args.len() == 2 && &*text == b"Object" {
+            return Some(TypeNodeKind::Ref {
+                name: self.file.list(&[known::Record]),
+                args: self.clone_type_list(args),
+            });
+        }
+        if !args.is_empty() {
+            return None;
+        }
+        Some(TypeNodeKind::Keyword(match &*text {
+            b"String" => Keyword::String,
+            b"Number" => Keyword::Number,
+            b"BigInt" => Keyword::BigInt,
+            b"Boolean" => Keyword::Boolean,
+            b"Void" => Keyword::Void,
+            b"Undefined" => Keyword::Undefined,
+            b"Null" => Keyword::Null,
+            b"function" => {
+                return Some(TypeNodeKind::Ref {
+                    name: self.file.list(&[known::Function]),
+                    args: IdList::EMPTY,
+                });
+            }
+            _ => return None,
+        }))
     }
 
     /// `operand | keyword`

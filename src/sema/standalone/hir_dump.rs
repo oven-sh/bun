@@ -93,6 +93,11 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         checker_errors,
         parens,
         jsx_pragmas,
+        jsdoc_comments,
+        jsdoc_errors,
+        jsdoc_types,
+        jsdoc_modifiers,
+        jsdoc_param_errors,
         ids: _,
         numbers: _,
         exprs: _,
@@ -245,6 +250,58 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         d.q(fragment_factory),
         d.q(import_source)
     );
+
+    // Only in JavaScript.
+    if !jsdoc_comments.is_empty() {
+        put!(
+            d,
+            0,
+            "",
+            "jsdoc_comments[{}]: {jsdoc_comments:?}",
+            jsdoc_comments.len()
+        );
+    }
+    if !jsdoc_errors.is_empty() {
+        let mut errors = jsdoc_errors.clone();
+        errors.sort_unstable();
+        put!(d, 0, "", "jsdoc_errors[{}]: {errors:?}", errors.len());
+    }
+    for &(owner, ty) in jsdoc_types {
+        let (kind, pos) = match owner {
+            JsDocTypeOwner::Fn(id) => ("Fn", file.fns.get(id.idx()).map(|func| func.pos)),
+            JsDocTypeOwner::Prop(id) => ("Prop", file.props.get(id.idx()).map(|prop| prop.pos)),
+            JsDocTypeOwner::Assign(id) => ("Assign", file.exprs.get(id.idx()).map(|expr| expr.pos)),
+            JsDocTypeOwner::Export(id) => ("Export", file.stmts.get(id.idx()).map(|stmt| stmt.pos)),
+        };
+        match pos {
+            Some(pos) => put!(d, 0, "", "jsdoc_type of {kind} pos={pos}:"),
+            None => put!(d, 0, "", "jsdoc_type of {kind} {NO_SUCH_NODE}:"),
+        }
+        d.ty(1, "ty", ty);
+    }
+    for &(expr, flags) in jsdoc_modifiers {
+        match file.exprs.get(expr.idx()) {
+            Some(expr) => put!(d, 0, "", "jsdoc_modifiers pos={} {flags:?}", expr.pos),
+            None => put!(d, 0, "", "jsdoc_modifiers {NO_SUCH_NODE} {flags:?}"),
+        }
+    }
+    for &(func, pos, code) in jsdoc_param_errors {
+        match file.fns.get(func.idx()) {
+            Some(func) => put!(
+                d,
+                0,
+                "",
+                "jsdoc_param_error of Fn pos={} pos={pos} code={code}",
+                func.pos
+            ),
+            None => put!(
+                d,
+                0,
+                "",
+                "jsdoc_param_error of Fn {NO_SUCH_NODE} pos={pos} code={code}"
+            ),
+        }
+    }
 
     // An expression goes by where it starts and what it is.
     let mut around: Vec<(u32, &str, u32)> = parens

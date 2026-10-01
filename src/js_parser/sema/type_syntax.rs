@@ -51,6 +51,10 @@ pub(crate) struct Builder<'a> {
     pub(crate) pending_statements: Vec<(StmtId, bun_ast::Stmt)>,
     /// Variables whose initializer the lowering still has to fill in.
     pub(crate) pending_initializers: Vec<(VarDeclId, bun_ast::Expr)>,
+    /// `IsInJSFile`
+    pub(crate) is_js: bool,
+    /// `NodeFlagsJSDoc`: the type being cloned is written in a JSDoc comment.
+    pub(crate) in_jsdoc: bool,
 }
 
 /// What modifiers are written on, as far as it matters to which are allowed.
@@ -85,6 +89,9 @@ pub(crate) fn modifier_error(
     );
     for &(modifier, at) in modifiers {
         let error = |code: u32| Some((at, code));
+        // One that is made from a JSDoc tag comes last wherever the tag is: nothing is said of the order.
+        let is_written = !modifier.contains(Flags::REPARSED);
+        let modifier = modifier.difference(Flags::REPARSED);
         if modifier != Flags::READONLY {
             if on == Modified::TypeMember {
                 return error(1070);
@@ -115,23 +122,31 @@ pub(crate) fn modifier_error(
                 return error(1030);
             } else if seen.contains(Flags::AMBIENT) {
                 return error(1243);
-            } else if seen.intersects(Flags::READONLY | Flags::ACCESSOR | Flags::ASYNC) {
+            } else if is_written
+                && seen.intersects(Flags::READONLY | Flags::ACCESSOR | Flags::ASYNC)
+            {
                 return error(1029);
             }
             last_override = at;
         } else if ACCESSIBILITY.contains(modifier) {
             if seen.intersects(ACCESSIBILITY) {
                 return error(1028);
-            } else if seen.intersects(
-                Flags::OVERRIDE | Flags::STATIC | Flags::ACCESSOR | Flags::READONLY | Flags::ASYNC,
-            ) {
+            } else if is_written
+                && seen.intersects(
+                    Flags::OVERRIDE
+                        | Flags::STATIC
+                        | Flags::ACCESSOR
+                        | Flags::READONLY
+                        | Flags::ASYNC,
+                )
+            {
                 return error(1029);
             } else if seen.contains(Flags::ABSTRACT) {
-                return error(if modifier == Flags::PRIVATE {
-                    1243
-                } else {
-                    1029
-                });
+                if modifier == Flags::PRIVATE {
+                    return error(1243);
+                } else if is_written {
+                    return error(1029);
+                }
             } else if has_private_name {
                 return error(18010);
             }
@@ -255,6 +270,7 @@ impl<'a> Builder<'a> {
         lexer.is_log_disabled = true;
         // Scans malformed tokens the way the parser's lexer did.
         lexer.tolerant = true;
+        let is_js = lexer.is_javascript_file();
         Builder {
             file: hir::File::default(),
             atoms,
@@ -276,6 +292,8 @@ impl<'a> Builder<'a> {
             ambient_initializers: Vec::new(),
             pending_statements: Vec::new(),
             pending_initializers: Vec::new(),
+            is_js,
+            in_jsdoc: false,
         }
     }
 

@@ -380,7 +380,12 @@ impl Checker<'_> {
             return;
         }
         let text = &hir.text[..];
-        let mut say = |start: u32, code: u32| out.push(Diagnostic { start, code });
+        // What is made from a tag of a comment is not written in the file.
+        let mut say = |start: u32, code: u32| {
+            if !hir.is_in_jsdoc(start) {
+                out.push(Diagnostic { start, code });
+            }
+        };
         let ends = |start: u32, end: u32, code: u32| self.note(start, end, code, Vec::new());
         let is_modifier =
             |at: u32| self.note(at, 0, 8009, vec![text_of(word_at(text, at as usize))]);

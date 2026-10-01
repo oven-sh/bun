@@ -260,6 +260,11 @@ pub struct Lexer<'a> {
     /// `@name`, an intrinsic in the source of one of JavaScriptCore's builtins, is a name like any other.
     pub(crate) jsc_builtin_syntax: bool,
     pub(crate) all_comments: Vec<Range>,
+    /// `skipJSDocLeadingAsterisks`: a type in a JSDoc comment is being scanned, where the first `*` of a line is trivia. Set for the
+    /// type checker only.
+    pub(crate) skips_jsdoc_asterisks: bool,
+    /// Where the `*` that was last skipped as trivia ends.
+    jsdoc_asterisk_end: usize,
 }
 
 impl<'a> LexerLog<'a> for Lexer<'a> {
@@ -1157,6 +1162,37 @@ impl<'a> Lexer<'a> {
             at = 0;
         }
         bun_ast::usize2loc(at)
+    }
+
+    /// The comments between the token that starts at `pos` and the token before it, as a range of `all_comments`, and where the
+    /// token before ends (`full_start_of`). Tolerant mode only.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn comments_before(&self, pos: usize) -> (core::ops::Range<usize>, usize) {
+        debug_assert!(self.tolerant);
+        let text = self.contents;
+        let mut at = pos.min(text.len());
+        // In source order.
+        let end = self
+            .all_comments
+            .partition_point(|comment| comment.loc.to_usize() < at);
+        let mut first = end;
+        loop {
+            at -= trailing_whitespace_len(&text[..at]);
+            match first.checked_sub(1).map(|index| &self.all_comments[index]) {
+                // Past `at` if the comment ends with whitespace.
+                Some(comment) if comment.end_i() >= at => {
+                    at = comment.loc.to_usize();
+                    first -= 1;
+                }
+                _ => break,
+            }
+        }
+        // `Scan`: a shebang is trivia.
+        if text.starts_with(b"#!") && !(0..at).any(|i| starts_with_line_break(&text[i..])) {
+            at = 0;
+        }
+        (first..end, at)
     }
 
     /// Whether the scan may go on after something TypeScript's scanner only reports: notes `code` at `at`.
@@ -2115,6 +2151,9 @@ impl<'a> Lexer<'a> {
                             }
                         }
                         _ => {
+                            if self.skips_jsdoc_asterisks && self.skip_jsdoc_asterisk() {
+                                continue;
+                            }
                             self.token = T::TAsterisk;
                         }
                     }
@@ -2436,6 +2475,29 @@ impl<'a> Lexer<'a> {
             len: (end - pos) as i32,
         });
         self.move_to(end);
+        true
+    }
+
+    /// `Scan`, the `*` case with `skipJSDocLeadingAsterisks`: the first `*` after a line break is trivia, once on the way to each
+    /// token (`TokenFlagsPrecedingJSDocLeadingAsterisks`). Called with the `*` scanned.
+    #[cold]
+    #[inline(never)]
+    fn skip_jsdoc_asterisk(&mut self) -> bool {
+        if !self.has_newline_before {
+            return false;
+        }
+        // Nothing but whitespace since the last one: that was on the way to the same token.
+        if self.jsdoc_asterisk_end != 0
+            && self
+                .contents
+                .get(self.jsdoc_asterisk_end..self.start)
+                .is_some_and(|between| trailing_whitespace_len(between) == between.len())
+        {
+            return false;
+        }
+        self.jsdoc_asterisk_end = self.end;
+        // It is trivia: `full_start_of` walks back over it.
+        self.all_comments.push(self.range());
         true
     }
 
@@ -2917,6 +2979,8 @@ impl<'a> Lexer<'a> {
             track_react_suppressions: false,
             jsc_builtin_syntax: false,
             all_comments: Vec::new(),
+            skips_jsdoc_asterisks: false,
+            jsdoc_asterisk_end: 0,
         }
     }
 

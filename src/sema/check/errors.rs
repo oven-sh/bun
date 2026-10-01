@@ -83,6 +83,13 @@ impl Checker<'_> {
                 .iter()
                 .map(|&(start, code)| Diagnostic { start, code }),
         );
+        // `checkUnmatchedJSDocParameters`
+        out.extend(
+            self.bound(file)
+                .jsdoc_param_errors
+                .iter()
+                .map(|&(start, code)| Diagnostic { start, code }),
+        );
         self.check_js_syntax(file, &mut syntactic);
         if !self.reports_semantic_errors(file) {
             syntactic.sort_unstable();
@@ -178,6 +185,12 @@ impl Checker<'_> {
         if self.is_plain_js(file) {
             out.retain(|d| errors_js::PLAIN_JS_ERRORS.binary_search(&d.code).is_ok());
         } else {
+            // `JSDocDiagnostics`
+            out.extend(
+                hir.jsdoc_errors
+                    .iter()
+                    .map(|&(start, code)| Diagnostic { start, code }),
+            );
             // Last: it goes by all that is left. `getDiagnosticsWithPrecedingDirectives`: not by what the parser says.
             self.check_x_comment_directives(file, &mut out);
         }

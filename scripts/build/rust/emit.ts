@@ -7,7 +7,6 @@
  *   proc-macro        rust_rustc → lib<name>-<hash>.so
  *   build-script      rust_rustc → build_script_build-<hash>
  *   build-script-run  rust_build_script → output.json (restat)
- *   staticlib (root)  rust_rustc → libbun_runtime.a
  *   bin (root)        rust_rustc → <crate>.exe + its copy under the target's name (the Windows shim)
  *
  * Every edge's command is `run.ts <mode> <unit.json>`; the unit manifest
@@ -23,14 +22,7 @@ import type { Ninja } from "../ninja.ts";
 import { quote } from "../shell.ts";
 import { streamPath } from "../stream.ts";
 import { type PlanInput, planInputPath, planPath } from "./plan.ts";
-import {
-  type ManifestContext,
-  externDeps,
-  externPaths,
-  isRootKind,
-  transitiveLinkInputs,
-  unitManifest,
-} from "./units.ts";
+import { type ManifestContext, externDeps, externPaths, transitiveLinkInputs, unitManifest } from "./units.ts";
 
 const here = import.meta.dirname;
 const runScript = resolve(here, "run.ts");
@@ -189,14 +181,13 @@ export function emitRustUnits(n: Ninja, ctx: ManifestContext, inputs: RustEdgeIn
         break;
       case "proc-macro":
       case "build-script":
-      case "staticlib":
       case "bin": {
         // These link, so beyond the direct `--extern`ed rlibs they read every transitive rlib (and its `.rmeta`,
         // where the metadata is) through `-L`
         // (cargo: a linking unit gets Artifact::All edges to all of them). A direct dependency's rlib being done
         // says nothing about *its* dependencies' rlibs: it was compiled against their `.rmeta`s.
         const all = transitiveLinkInputs(unit).flatMap(u => (u.rmeta !== undefined ? [u.output, u.rmeta] : [u.output]));
-        const what = isRootKind(manifest.kind) ? `→ ${basename(unit.output)}` : "";
+        const what = manifest.kind === "bin" ? `→ ${basename(unit.output)}` : "";
         n.build({
           outputs: [unit.output, ...(manifest.binDestination !== undefined ? [manifest.binDestination] : [])],
           rule: "rust_rustc",

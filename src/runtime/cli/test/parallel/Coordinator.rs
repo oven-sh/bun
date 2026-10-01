@@ -23,7 +23,7 @@ use crate::test_command::CommandLineReporter;
 // (not the lower-tier `bun_spawn` crate). Worker.exit_status is this type.
 use crate::api::bun::process::Status as SpawnStatus;
 
-pub struct Coordinator<'a> {
+pub(crate) struct Coordinator<'a> {
     pub(crate) vm: &'a VirtualMachine,
     /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).

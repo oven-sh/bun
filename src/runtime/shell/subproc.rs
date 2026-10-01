@@ -20,7 +20,9 @@ use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{BufferedReader, ReadState};
 use bun_jsc::{self as jsc, EventLoopHandle};
 use bun_ptr::RefPtr;
-use bun_sys::{self, Fd, FdExt, SystemError};
+#[cfg(not(windows))]
+use bun_sys::FdExt;
+use bun_sys::{self, Fd, SystemError};
 use enumset::EnumSet;
 
 use crate::api::bun_spawn::stdio::{self, Stdio};
@@ -113,20 +115,20 @@ fn read_state_str(s: ReadState) -> &'static str {
     }
 }
 
-pub use JscSubprocess::StdioKind;
+pub(crate) use JscSubprocess::StdioKind;
 
 use crate::shell::ShellErr;
 
 #[cfg(windows)]
-pub type StdioResult = WindowsStdioResult;
+pub(crate) type StdioResult = WindowsStdioResult;
 #[cfg(not(windows))]
-pub type StdioResult = Option<Fd>;
+pub(crate) type StdioResult = Option<Fd>;
 
 bun_output::define_scoped_log!(log, SHELL_SUBPROC, visible);
 
 /// Used for captured writer
 #[derive(Default)]
-pub struct ShellIO {
+pub(crate) struct ShellIO {
     pub(crate) stdout: Option<Arc<IOWriter>>,
     pub(crate) stderr: Option<Arc<IOWriter>>,
 }
@@ -153,7 +155,7 @@ pub(crate) const DEFAULT_MAX_BUFFER_SIZE: u32 = 1024 * 1024 * 4;
 /// epoll). Store `(interp, NodeId)` instead and resolve through the arena at
 /// each use site.
 #[derive(Clone, Copy)]
-pub struct CmdHandle {
+pub(crate) struct CmdHandle {
     pub(crate) interp: bun_ptr::ParentRef<Interpreter, bun_ptr::Mut>,
     pub(crate) id: NodeId,
 }
@@ -231,7 +233,7 @@ impl Drop for ShellSubprocess {
 //     },
 // };
 
-pub type StaticPipeWriter = JscSubprocess::NewStaticPipeWriter<ShellSubprocess>;
+pub(crate) type StaticPipeWriter = JscSubprocess::NewStaticPipeWriter<ShellSubprocess>;
 
 impl JscSubprocess::static_pipe_writer::StaticPipeWriterProcess for ShellSubprocess {
     const POLL_OWNER_TAG: bun_io::PollTag =
@@ -258,7 +260,6 @@ impl ShellSubprocess {
     /// The shell is single-threaded; `process` is set for the lifetime of
     /// `ShellSubprocess` until `close_process`.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub(crate) fn proc(&self) -> &mut Process {
         self.process.as_ref().expect("process closed").process_mut()
     }
@@ -394,11 +395,11 @@ impl ShellSubprocess {
                     None
                 }
             };
-            if let Some(buf) = buf {
-                *out = Readable::Buffer(buf);
+            *out = if buf.is_some() {
+                Readable::Buffer
             } else {
-                *out = Readable::Ignore;
-            }
+                Readable::Ignore
+            };
             drop(pipe); // deref
         }
     }
@@ -979,6 +980,7 @@ pub enum Writable {
     Pipe(RefPtr<FileSink>),
     Fd(Fd),
     Buffer(RefPtr<StaticPipeWriter>),
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     Memfd(Fd),
     Inherit,
     Ignore,
@@ -1064,7 +1066,7 @@ impl Writable {
                 Stdio::Inherit => {
                     return Ok(Writable::Inherit);
                 }
-                Stdio::Memfd(_) | Stdio::Path(_) | Stdio::Ignore => {
+                Stdio::Path(_) | Stdio::Ignore => {
                     return Ok(Writable::Ignore);
                 }
                 Stdio::Ipc | Stdio::Capture(_) => {
@@ -1108,6 +1110,7 @@ impl Writable {
                         JscSubprocess::source_from_blob(blob),
                     )))
                 }
+                #[cfg(any(target_os = "linux", target_os = "android"))]
                 Stdio::Memfd(memfd) => {
                     debug_assert!(memfd.is_valid());
                     let fd = *memfd;
@@ -1154,6 +1157,7 @@ impl Writable {
                 // `buffer` drops here with the variant already `Ignore`, so a
                 // re-entrant `on_stdin_writer_close` from the writer's drop is a no-op.
             }
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             Writable::Memfd(fd) => {
                 fd.close();
                 *self = Writable::Ignore;
@@ -1168,14 +1172,15 @@ impl Writable {
 // Readable
 // ───────────────────────────────────────────────────────────────────────────
 
-pub enum Readable {
-    Fd(Fd),
+pub(crate) enum Readable {
+    Fd,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     Memfd(Fd),
     Pipe(Arc<PipeReader>),
     Inherit,
     Ignore,
     Closed,
-    Buffer(Box<[u8]>),
+    Buffer,
 }
 
 impl Readable {
@@ -1262,11 +1267,10 @@ impl Readable {
                 Stdio::Inherit => Readable::Inherit,
                 Stdio::Ipc | Stdio::Dup2(_) | Stdio::Ignore => Readable::Ignore,
                 Stdio::Path(_) => Readable::Ignore,
-                Stdio::Fd(fd) => Readable::Fd(*fd),
+                Stdio::Fd(_) => Readable::Fd,
                 // blobs are immutable, so we should only ever get the case
                 // where the user passed in a Blob with an fd
                 Stdio::Blob(_) => Readable::Ignore,
-                Stdio::Memfd(_) => Readable::Ignore,
                 Stdio::Pipe => Readable::Pipe(PipeReader::create(
                     event_loop,
                     process,
@@ -1297,10 +1301,11 @@ impl Readable {
                 Stdio::Inherit => Readable::Inherit,
                 Stdio::Ipc | Stdio::Dup2(_) | Stdio::Ignore => Readable::Ignore,
                 Stdio::Path(_) => Readable::Ignore,
-                Stdio::Fd(_) => Readable::Fd(result.unwrap()),
+                Stdio::Fd(_) => Readable::Fd,
                 // blobs are immutable, so we should only ever get the case
                 // where the user passed in a Blob with an fd
                 Stdio::Blob(_) => Readable::Ignore,
+                #[cfg(any(target_os = "linux", target_os = "android"))]
                 Stdio::Memfd(memfd) => {
                     let fd = *memfd;
                     // Ownership of the fd transfers to `Readable::Memfd`. Swap in
@@ -1335,15 +1340,16 @@ impl Readable {
         }
     }
 
-    pub fn finalize(&mut self) {
+    pub(crate) fn finalize(&mut self) {
         match core::mem::replace(self, Readable::Closed) {
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             Readable::Memfd(fd) => {
                 *self = Readable::Closed;
                 fd.close();
             }
             // .fd is borrowed from the shell's IOWriter (see IO.OutKind.to_subproc_stdio) or
             // a CowFd redirect; the owner closes it.
-            Readable::Fd(_) => {
+            Readable::Fd => {
                 *self = Readable::Closed;
             }
             Readable::Pipe(pipe) => {
@@ -1361,7 +1367,7 @@ impl Readable {
 // SpawnArgs
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct SpawnArgs<'a> {
+pub(crate) struct SpawnArgs<'a> {
     /// Shared borrow: arena alloc methods take `&self`, and a `&'a Arena`
     /// (being `Copy`) lets `fill_env` hand back `&'a [u8]` slices without
     /// the unsafe pointer round-trip the `&'a mut Arena` reborrow forced.
@@ -1483,7 +1489,7 @@ impl<'a> SpawnArgs<'a> {
 // PipeReader
 // ───────────────────────────────────────────────────────────────────────────
 
-pub type IOReader = BufferedReader;
+pub(crate) type IOReader = BufferedReader;
 
 pub enum PipeReaderState {
     Pending,
@@ -1491,12 +1497,12 @@ pub enum PipeReaderState {
     Err(Option<Box<SystemError>>),
 }
 
-pub struct PipeReader {
+pub(crate) struct PipeReader {
     pub(crate) reader: IOReader,
     pub(crate) process: Option<*mut ShellSubprocess>,
     pub(crate) event_loop: EventLoopHandle,
     pub(crate) state: PipeReaderState,
-    #[cfg_attr(windows, allow(dead_code))]
+    #[cfg(not(windows))]
     pub(crate) stdio_result: StdioResult,
     pub(crate) out_type: OutKind,
     pub(crate) captured_writer: CapturedWriter,
@@ -1509,7 +1515,7 @@ pub struct PipeReader {
     // goes via the `arc_as_mut_ptr` interior-mutability helper below.
 }
 
-pub enum BufferedOutput {
+pub(crate) enum BufferedOutput {
     Bytelist(Vec<u8>),
     ArrayBuffer { buf: jsc::PinnedArrayBuffer, i: u32 },
 }
@@ -1556,7 +1562,7 @@ impl BufferedOutput {
     }
 }
 
-pub struct CapturedWriter {
+pub(crate) struct CapturedWriter {
     pub(crate) dead: bool,
     /// `None` iff `dead == true`.
     pub(crate) writer: Option<Arc<IOWriter>>,
@@ -1733,24 +1739,21 @@ impl PipeReader {
             captured_writer.dead = false;
         }
 
-        #[allow(unused_mut)]
-        let mut reader = IOReader::init::<PipeReader>();
         #[cfg(not(windows))]
-        let stdio_result = result;
+        let reader = IOReader::init::<PipeReader>();
+        // With `Box<uv::Pipe>` the pipe cannot be aliased, so ownership transfers to
+        // `reader.source`; `start()` goes through `start_with_current_pipe`.
         #[cfg(windows)]
-        // With `Box<uv::Pipe>` the pipe cannot be aliased, so ownership
-        // transfers to `reader.source` (`stdio_result` is never read again
-        // on Windows — `start()` goes through `start_with_current_pipe`).
-        let stdio_result = match result {
-            StdioResult::Buffer(buf) => {
-                reader.set_source(bun_io::Source::Pipe(buf));
-                StdioResult::Unavailable
+        let reader = {
+            let mut reader = IOReader::init::<PipeReader>();
+            match result {
+                StdioResult::Buffer(buf) => reader.set_source(bun_io::Source::Pipe(buf)),
+                StdioResult::BufferFd(fd) => {
+                    reader.set_source(bun_io::Source::File(bun_io::Source::open_file(fd)))
+                }
+                StdioResult::UnownedFd(_) | StdioResult::Unavailable => panic!("Shouldn't happen."),
             }
-            StdioResult::BufferFd(fd) => {
-                reader.set_source(bun_io::Source::File(bun_io::Source::open_file(fd)));
-                StdioResult::BufferFd(fd)
-            }
-            StdioResult::UnownedFd(_) | StdioResult::Unavailable => panic!("Shouldn't happen."),
+            reader
         };
 
         // Allocate directly into the Arc so the address is stable BEFORE we
@@ -1768,7 +1771,8 @@ impl PipeReader {
             process: Some(process),
             reader,
             event_loop,
-            stdio_result,
+            #[cfg(not(windows))]
+            stdio_result: result,
             out_type,
             state: PipeReaderState::Pending,
             captured_writer,
@@ -2214,7 +2218,7 @@ pub(crate) use assert_stdio_result;
 unsafe extern "C" {
     // `_PATH_DEFPATH` string literal emitted from C; immutable, load-time
     // initialized, never null. Reading the pointer value has no precondition.
-    pub safe static BUN_DEFAULT_PATH_FOR_SPAWN: *const c_char;
+    pub(crate) safe static BUN_DEFAULT_PATH_FOR_SPAWN: *const c_char;
 }
 
 // IntoStaticStr for PipeReaderState (used in logs as the variant name).

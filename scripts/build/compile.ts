@@ -11,10 +11,11 @@ import { availableParallelism } from "node:os";
 import { basename, dirname, extname, relative, resolve, sep } from "node:path";
 import type { Config } from "./config.ts";
 import { assert } from "./error.ts";
+import { linksWithLld } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja, PoolName, Rule } from "./ninja.ts";
 import { quote } from "./shell.ts";
-import { elfDebugCompressPostlinkCommand, machoPostlinkCommand } from "./shims.ts";
+import { machoPostlinkCommand } from "./shims.ts";
 import { toolIdentityFile } from "./tools.ts";
 
 // ---------------------------------------------------------------------------
@@ -169,12 +170,16 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   //
   // /clang:-B<dir of cfg.ld> pins WHICH lld-link `-fuse-ld=lld` resolves:
   // -B program-prefix dirs are searched before the driver's own InstalledDir
-  // and PATH. Normally that's the same host-LLVM lld-link the driver would
-  // pick anyway; under cross-language LTO resolveConfig() swaps cfg.ld to
-  // rustc's gcc-ld/lld-link (newer LLVM, able to read rustc's bitcode), and
-  // this is what makes the link actually use it — clang-cl has no working
-  // --ld-path= spelling, and `-fuse-ld=<abs path>` mangles the path with the
-  // target triple.
+  // and PATH, so the link runs the lld-link configure resolved. clang-cl has
+  // no working --ld-path= spelling, and `-fuse-ld=<abs path>` mangles the
+  // path with the target triple.
+  //
+  // $lazy: LinkOpts.lazyObjects as `-Wl,@<rsp>` (`/clang:-Wl,@<rsp>` through
+  // clang-cl). The rsp holds `--start-lib <objects> --end-lib`, which must reach
+  // the linker as one positional group: as a -Wl, value it is a linker *input*,
+  // rendered in order after the object inputs and left for lld to expand in
+  // place. (Behind clang-cl's /link the driver would expand the file itself and
+  // keep only its first token there.)
   //
   // Darwin cross links append `&& macho-postlink $out ...` (the suffix is
   // empty everywhere else): ninja runs the whole command through `sh -c`,
@@ -182,8 +187,8 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // already the final, patched, re-signed artifact. See shims.ts.
   n.rule("link", {
     command: cfg.windows
-      ? `${cxx} /nologo -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp /Fe$out /link $ldflags`
-      : `${cxx} @$out.rsp $ldflags -o $out${elfDebugCompressPostlinkCommand(cfg)}${machoPostlinkCommand(cfg)}`,
+      ? `${cxx} /nologo -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp $lazy /Fe$out /link $ldflags`
+      : `${cxx} @$out.rsp $lazy $ldflags -o $out${machoPostlinkCommand(cfg)}`,
     description: "link $out",
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",
@@ -448,11 +453,19 @@ export function pch(
 export interface LinkOpts {
   /** Static libraries to link (absolute paths). Included in $in. */
   libs: string[];
+  /**
+   * Objects the link may take or leave: each is pulled in only if it defines
+   * a symbol something else references — a static library's semantics, minus
+   * the archive (lld's `--start-lib … --end-lib` / `/start-lib … /end-lib`).
+   * bun.ts passes dependency objects here (lazyDepObjects). Apple's ld has no
+   * such group, so a native macOS link takes them as plain objects.
+   */
+  lazyObjects?: string[];
   /** Linker flags. */
   flags: string[];
   /**
    * Files the link reads that aren't in $in — symbol lists (symbols.def,
-   * symbols.txt, symbols.dyn), linker scripts (linker.lds), manifests.
+   * symbols.txt, the ELF export list), linker scripts (linker.lds), manifests.
    * Editing these should trigger relink (cmake's LINK_DEPENDS equivalent).
    */
   implicitInputs?: string[];
@@ -472,13 +485,30 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
   // Linker maps are implicit outputs (ninja tracks them but they're not in $out)
   const implicitOutputs = (opts.linkerMapOutputs ?? []).map(map => resolve(cfg.buildDir, map));
 
+  const lazy = opts.lazyObjects ?? [];
+  const lazyInputs: string[] = [];
+  const vars = { ldflags: opts.flags.join(" "), lazy: "" };
+  let inputs = [...objects, ...lazy, ...opts.libs];
+  if (lazy.length > 0 && linksWithLld(cfg)) {
+    // The group rides in a response file of its own (written now — the list
+    // is a configure-time constant); its objects stay ninja inputs of the
+    // edge as implicit inputs. See the link rule for why -Wl.
+    const rsp = absOut + ".lazy.rsp";
+    const [start, end] = cfg.windows ? ["/start-lib", "/end-lib"] : ["--start-lib", "--end-lib"];
+    writeIfChanged(rsp, [start, ...lazy.map(o => quote(n.rel(o), true)), end].join("\n") + "\n");
+    const arg = `-Wl,@${n.rel(rsp)}`;
+    vars.lazy = quote(cfg.windows ? `/clang:${arg}` : arg, cfg.host.os === "windows");
+    inputs = [...objects, ...opts.libs];
+    // The rsp itself too: a member dropped from the group changes neither $in
+    // nor $lazy, only this file (writeIfChanged keeps its mtime otherwise).
+    lazyInputs.push(rsp, ...lazy);
+  }
+
   const node: BuildNode = {
     outputs: [absOut],
     rule: "link",
-    inputs: [...objects, ...opts.libs],
-    vars: {
-      ldflags: opts.flags.join(" "),
-    },
+    inputs,
+    vars,
   };
   if (implicitOutputs.length > 0) node.implicitOutputs = implicitOutputs;
   // clang++ drives the link; `ld` is "" on macOS, where it finds the linker itself.
@@ -486,10 +516,10 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
     toolIdentityFile(cfg, "cxx"),
     ...(cfg.ld !== "" ? [toolIdentityFile(cfg, "ld")] : []),
     ...(opts.implicitInputs ?? []),
+    ...lazyInputs,
   ];
   // lld-link writes the exe's import library under obj/ (flags.ts /IMPLIB)
-  // and does not create the directory; link-only and rust-and-link compile
-  // no objects, so nothing else would have made it.
+  // and does not create the directory.
   if (cfg.windows) node.orderOnlyInputs = [objectDirStamp(cfg)];
   if (opts.validations !== undefined && opts.validations.length > 0) node.validations = opts.validations;
   n.build(node);

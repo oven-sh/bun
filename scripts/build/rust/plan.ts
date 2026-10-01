@@ -35,7 +35,7 @@ import { parseToml, type TomlTable, type TomlValue } from "./toml.ts";
 export interface UnitGraph {
   version: number;
   units: UnitGraphUnit[];
-  /** Indices of the requested units (here: the one `bun_runtime` staticlib). */
+  /** Indices of the requested units (here: the one `bun_runtime` library). */
   roots: number[];
 }
 
@@ -114,7 +114,7 @@ export interface RustcTargetInfo {
   /** `rustc --print cfg` lines, with the target rustflags applied (what cargo hands build scripts as `CARGO_CFG_*`). */
   cfg: string[];
   /** `[prefix, suffix]` per crate type from `rustc --print file-names`, e.g. rlib → ["lib", ".rlib"], bin → ["", ".exe"]. */
-  fileNames: Record<"rlib" | "proc-macro" | "staticlib" | "bin", [string, string]>;
+  fileNames: Record<"rlib" | "proc-macro" | "bin", [string, string]>;
   /** `rustc --print split-debuginfo`: the `-C split-debuginfo` values this target accepts (cargo drops the profile's setting otherwise). */
   splitDebuginfo: string[];
 }
@@ -173,7 +173,7 @@ export interface RustPlan {
   target: RustcTargetInfo;
 }
 
-export const PLAN_VERSION = 4;
+export const PLAN_VERSION = 5;
 
 /** `dir`: the graph's directory under the build directory — `rust-target/` for bun_runtime, `rust-target/shim/` for the Windows shim. */
 export function planPath(dir: string): string {
@@ -236,7 +236,7 @@ function run(
  * order; the sysroot line (known in advance) separates the file names from the rest.
  */
 function targetInfo(rustc: string, triple: string, rustflags: string[], sysroot: string): RustcTargetInfo {
-  const crateTypes = ["rlib", "proc-macro", "staticlib", "bin"] as const;
+  const crateTypes = ["rlib", "proc-macro", "bin"] as const;
   const probe = (types: readonly string[], prints: string[]) =>
     run(rustc, [
       "-",

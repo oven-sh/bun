@@ -25,9 +25,21 @@ extern "C" uint64_t us_internal_monotonic_ns(void);
 // it as an atomic rather than through a plain `int`.
 extern "C" std::atomic<int32_t> Bun__defaultRemainingRunsUntilSkipReleaseAccess;
 
+extern "C" void Bun__JSC_acquireHeapAccessAfterWait(JSC::VM* _Nonnull vm)
+{
+    vm->heap.acquireAccess();
+}
+
 // Returns in how many milliseconds the caller is to call this again even if nothing else
 // wakes it (0: no need). Only the libuv loop gets anything but 0.
-extern "C" unsigned int Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, uint64_t nowNs)
+//
+// `releasedHeapAccess` (null where the loop cannot take access back before it dispatches: libuv): set when this gave up
+// heap access for the wait, in which case Bun__JSC_acquireHeapAccessAfterWait must run before anything touches the JS
+// heap. It does that while an idle collection GarbageCollectionController requested is unfinished
+// (JSVMClientData::idleCollectionsPending): a requested collection only advances at this thread's safepoints while this
+// thread holds the collector's conn, and a parked thread has none; without access, the conn goes to the collector thread,
+// which finishes the collection while this one sleeps.
+extern "C" unsigned int Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, uint64_t nowNs, int* _Nullable releasedHeapAccess)
 {
     ASSERT(vm);
     unsigned int runAgainInMs = 0;
@@ -119,6 +131,13 @@ extern "C" unsigned int Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, uint64_t now
             }
 #endif
         }
+    }
+    if (releasedHeapAccess && previouslyHadAccess && WebCore::clientData(*vm)->idleCollectionsPending.load()) {
+        // If the collector handed the conn back for a stop-the-world phase while this thread was awake, run that phase
+        // now rather than at the next time JS happens to run; then park without access so the rest goes on without us.
+        vm->heap.stopIfNecessary();
+        vm->heap.releaseAccess();
+        *releasedHeapAccess = 1;
     }
     return runAgainInMs;
 }

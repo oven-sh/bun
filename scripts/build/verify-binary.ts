@@ -415,6 +415,12 @@ function verifyElf(spec: VerifySpec): void {
       );
     const bindNow = /BIND_NOW|\bNOW\b/.test(info.match(/DynamicSection \[[\s\S]*?\n\]/)?.[0] ?? "");
     if (bindNow !== expect.elf.bindNow) violations.push(`BIND_NOW ${bindNow}, expected ${expect.elf.bindNow}`);
+    const tlsSegment = phdrs.some(b => /PT_TLS/.test(field(b, "Type") ?? ""));
+    if (tlsSegment !== expect.elf.tlsSegment)
+      violations.push(
+        `PT_TLS ${tlsSegment ? "present" : "absent"}, expected ${expect.elf.tlsSegment ? "present" : "absent"}` +
+          (tlsSegment ? ": some thread-locals are not emulated TLS" : ""),
+      );
     const props = [type, "nx-stack", "no-rwx", ...(relro ? ["relro"] : []), ...(bindNow ? ["bind-now"] : [])];
     report("hardening", `${props.length} hardening properties`, violations, props);
   }
@@ -812,10 +818,6 @@ function verifyDuplicates(nm: string, objdump: string | undefined, rspfile: stri
     console.log(`${errors.length} link inputs could not be scanned:`);
     for (const e of errors.slice(0, 20)) console.log(`  ${e}`);
     if (errors.length > 20) console.log(`  … ${errors.length - 20} more`);
-    console.log(
-      `  (an "Unknown attribute kind" / "Invalid record" here means the objects hold LLVM bitcode newer than ${nm};\n` +
-        `   the build passes rustc's own llvm-nm for that case — rustup component llvm-tools must be installed)`,
-    );
     return 1;
   }
   console.log(

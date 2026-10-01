@@ -101,8 +101,7 @@ function codegenTarget(cfg: CodegenFields): { platform: string; arch: string } {
 }
 
 export function registerCodegenRules(n: Ninja, cfg: CodegenFields): void {
-  // Shell syntax: HOST platform, not target. rust-only cross-compiles on
-  // a linux box for other linux/freebsd targets; these rules run on the host.
+  // Shell syntax: HOST platform, not target; these rules run on the host.
   const hostWin = cfg.host.os === "windows";
   const q = (p: string) => quote(p, hostWin);
   const bun = q(cfg.bun);
@@ -249,10 +248,7 @@ export interface CodegenOutputs {
    * ALL cpp-relevant codegen outputs — the union of cppHeaders, cppSources,
    * bindgenV2Cpp. cxx compilation order-depends on THIS (not `all`): cxx
    * doesn't need bake.*.js, runtime.out.js, or any other rust-side embedded
-   * outputs. Using `all` would pull bake-codegen in cpp-only CI mode, which
-   * fails on old CI bun versions (bake-codegen shells out to `bun build`
-   * whose CSS url() handling changed between versions). cmake only wired
-   * bake outputs into BUN_ZIG_GENERATED_SOURCES, never C++ deps — same here.
+   * outputs: those are inputs of the Rust crates, not of any C++ object.
    *
    * The "undeclared .h files" issue (some scripts emit .h alongside their
    * declared outputs): those steps also emit a .cpp or .h that IS declared
@@ -1015,9 +1011,7 @@ function emitJsSink({ n, cfg, o, dirStamp }: Ctx): void {
   o.cppHeaders.push(outputs[1]!, outputs[2]!); // .h + .lut.h
   // bun_runtime `include!`s generated_jssink.rs, so the workspace crate edges
   // must order after this codegen step — `rustInputs` is the list they wait
-  // on (same as generated_host_exports). Without this, `mode: "rust-only"`
-  // (CI's build-rust job, which compiles no C++ so nothing else pulls
-  // JSSink.cpp/.h) never runs this edge and rustc hits the missing file.
+  // on (same as generated_host_exports).
   o.rustInputs.push(jssinkRs);
 }
 

@@ -2,7 +2,7 @@
  * This test must also pass in Node.js.
  */
 import { describe, expect, test } from "bun:test";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import type { Server } from "node:http";
@@ -14,6 +14,7 @@ import path from "node:path";
 import { duplexPair } from "node:stream";
 import { connect as tlsConnect } from "node:tls";
 import { promisify } from "node:util";
+import { Worker } from "node:worker_threads";
 
 test("aborted request body emits 'error' ECONNRESET and res 'close' before req 'close'", async () => {
   // Like Node.js's socketOnClose → abortIncoming: the aborted request is
@@ -1437,4 +1438,405 @@ describe("req.socket reports how the client closed the connection", () => {
       },
     );
   }
+});
+
+// Node writes a 1xx response to the socket inside the call that produces it: _writeRaw() calls socket.write().
+// https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L400-L425
+// So the client has it whatever the handler does next: close the connection, or block the event loop.
+describe("a 1xx response is sent by the call that writes it", () => {
+  type Transport = "http" | "https";
+  type Callback = (...args: unknown[]) => void;
+  type Handler = (req: IncomingMessage, res: ServerResponse, server: Server) => void;
+  interface Writer {
+    name: string;
+    /** The bytes of the 1xx. */
+    wire: string;
+    request: string;
+    event: "request" | "checkContinue";
+    /** Absent when the server writes the 1xx itself. */
+    write?: (res: ServerResponse, callback?: Callback) => unknown;
+  }
+
+  const keys = path.join(import.meta.dirname, "..", "test", "fixtures", "keys");
+  const keyPath = path.join(keys, "agent1-key.pem");
+  const certPath = path.join(keys, "agent1-cert.pem");
+  const tlsOptions = { key: readFileSync(keyPath), cert: readFileSync(certPath) };
+  // A child process needs more than the default on a debug build.
+  const childTimeout = 30_000;
+
+  const hints = { link: "</style.css>; rel=preload; as=style" };
+  const plainRequest = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+  // The body is never sent: the server has read every byte when it closes, so the close is a FIN and not a reset.
+  const expectContinueRequest =
+    "POST / HTTP/1.1\r\nHost: localhost\r\nExpect: 100-continue\r\nContent-Length: 5\r\nConnection: close\r\n\r\n";
+  const continueWire = "HTTP/1.1 100 Continue\r\n\r\n";
+  const processingWire = "HTTP/1.1 102 Processing\r\n\r\n";
+  const earlyHintsWire = `HTTP/1.1 103 Early Hints\r\nLink: ${hints.link}\r\n\r\n`;
+
+  const writers: Writer[] = [
+    {
+      name: "writeContinue()",
+      wire: continueWire,
+      request: plainRequest,
+      event: "request",
+      write: (res, callback) => res.writeContinue(callback),
+    },
+    {
+      name: "writeProcessing()",
+      wire: processingWire,
+      request: plainRequest,
+      event: "request",
+      write: (res, callback) => res.writeProcessing(callback),
+    },
+    {
+      name: "writeEarlyHints()",
+      wire: earlyHintsWire,
+      request: plainRequest,
+      event: "request",
+      write: (res, callback) => res.writeEarlyHints(hints, callback),
+    },
+    {
+      name: "writeInformation()",
+      wire: "HTTP/1.1 110 unknown\r\nx-a: b\r\n\r\n",
+      request: plainRequest,
+      event: "request",
+      write: (res, callback) => (res as any).writeInformation(110, { "x-a": "b" }, callback),
+    },
+    {
+      name: "_writeRaw()",
+      wire: processingWire,
+      request: plainRequest,
+      event: "request",
+      write: (res, callback) => (res as any)._writeRaw(processingWire, "ascii", callback),
+    },
+    { name: "the automatic 100 Continue", wire: continueWire, request: expectContinueRequest, event: "request" },
+    {
+      name: "writeContinue() in 'checkContinue'",
+      wire: continueWire,
+      request: expectContinueRequest,
+      event: "checkContinue",
+      write: (res, callback) => res.writeContinue(callback),
+    },
+  ];
+  const writersWithCallback = writers.filter(writer => writer.write !== undefined && writer.event === "request");
+
+  // resetAndDestroy() is not here: what a client reads ahead of a reset depends on the OS.
+  const closes: [name: string, close: Handler][] = [
+    ["req.socket.destroy()", req => void req.socket.destroy()],
+    ["res.destroy()", (_req, res) => void res.destroy()],
+    ["req.destroy()", req => void req.destroy()],
+    ["req.socket.destroy() in a nextTick", req => process.nextTick(() => req.socket.destroy())],
+    ["req.socket.destroy() in a microtask", req => queueMicrotask(() => req.socket.destroy())],
+    ["server.closeAllConnections()", (_req, _res, server) => server.closeAllConnections()],
+  ];
+
+  async function listening(transport: Transport, event: Writer["event"], handler: Handler) {
+    const server: Server = transport === "https" ? createHttpsServer(tlsOptions) : createServer();
+    server.on(event, (req, res) => handler(req, res, server));
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    return server;
+  }
+
+  /** Sends `request` and resolves with every byte the server sent before the connection closed. */
+  async function exchange(transport: Transport, port: number, request: string) {
+    const socket =
+      transport === "https"
+        ? tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+        : connect(port, "127.0.0.1");
+    const closed = Promise.withResolvers<void>();
+    let wire = "";
+    socket.setEncoding("latin1");
+    socket.on("data", chunk => (wire += chunk));
+    // A close without a TLS close_notify reaches the client as an error. The bytes ahead of it are what counts.
+    socket.on("error", () => {});
+    socket.on("close", () => closed.resolve());
+    socket.once(transport === "https" ? "secureConnect" : "connect", () => socket.write(request));
+    await closed.promise;
+    return wire;
+  }
+
+  async function wireOf(transport: Transport, writer: Pick<Writer, "request" | "event">, handler: Handler) {
+    const server = await listening(transport, writer.event, handler);
+    try {
+      return await exchange(transport, (server.address() as AddressInfo).port, writer.request);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }
+
+  describe.each(["http", "https"] as const)("%s", transport => {
+    for (const writer of writers) {
+      for (const [name, close] of closes) {
+        test.concurrent(`${writer.name}, then ${name}`, async () => {
+          const wire = await wireOf(transport, writer, (req, res, server) => {
+            writer.write?.(res);
+            close(req, res, server);
+          });
+          expect(wire).toBe(writer.wire);
+        });
+      }
+      const { write } = writer;
+      if (write === undefined) continue;
+      test.concurrent(`${writer.name}, then req.socket.destroy() in its callback`, async () => {
+        const wire = await wireOf(transport, writer, (req, res) => void write(res, () => req.socket.destroy()));
+        expect(wire).toBe(writer.wire);
+      });
+    }
+
+    // On Windows the exit resets the connection, and the reset can discard what the client has not read yet.
+    test.skipIf(process.platform === "win32").concurrent(
+      "writeEarlyHints(), then process.exit()",
+      async () => {
+        const fixture = `
+          const listener = (req, res) => {
+            res.writeEarlyHints(${JSON.stringify(hints)});
+            process.exit(0);
+          };
+          const { readFileSync } = require("node:fs");
+          const tlsOptions = { key: readFileSync(${JSON.stringify(keyPath)}), cert: readFileSync(${JSON.stringify(certPath)}) };
+          const server = ${JSON.stringify(transport)} === "https"
+            ? require("node:https").createServer(tlsOptions, listener)
+            : require("node:http").createServer(listener);
+          server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+        `;
+        const child = spawn(process.execPath, ["-e", fixture], {
+          env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" },
+          stdio: ["ignore", "pipe", "inherit"],
+        });
+        try {
+          const exited = once(child, "exit");
+          let stdout = "";
+          child.stdout.setEncoding("utf8");
+          for await (const chunk of child.stdout) {
+            stdout += chunk;
+            if (stdout.includes("\n")) break;
+          }
+          expect(await exchange(transport, Number(stdout), plainRequest)).toBe(earlyHintsWire);
+          expect((await exited)[0]).toBe(0);
+        } finally {
+          child.kill();
+        }
+      },
+      childTimeout,
+    );
+  });
+
+  test.concurrent("calls back with null after the call returns, and returns what Node returns", async () => {
+    const events: unknown[][] = [];
+    const wire = await wireOf("http", { request: plainRequest, event: "request" }, (_req, res) => {
+      for (const { name, write } of writersWithCallback) {
+        events.push([name, "returned", write!(res, (...args) => events.push([name, "called back", args]))]);
+      }
+      // _writeRaw() takes the callback in the place of the encoding too.
+      const withoutEncoding = "_writeRaw(chunk, callback)";
+      const called = (...args: unknown[]) => events.push([withoutEncoding, "called back", args]);
+      events.push([withoutEncoding, "returned", (res as any)._writeRaw(processingWire, called)]);
+      setImmediate(() => res.end("done"));
+    });
+    expect(events).toEqual([
+      ["writeContinue()", "returned", undefined],
+      ["writeProcessing()", "returned", undefined],
+      ["writeEarlyHints()", "returned", undefined],
+      ["writeInformation()", "returned", true],
+      ["_writeRaw()", "returned", true],
+      ["_writeRaw(chunk, callback)", "returned", true],
+      ["writeContinue()", "called back", [null]],
+      ["writeProcessing()", "called back", [null]],
+      ["writeEarlyHints()", "called back", [null]],
+      ["writeInformation()", "called back", [null]],
+      ["_writeRaw()", "called back", [null]],
+      ["_writeRaw(chunk, callback)", "called back", [null]],
+    ]);
+    const all1xx = writersWithCallback.map(writer => writer.wire).join("") + processingWire;
+    expect(wire).toStartWith(all1xx + "HTTP/1.1 200 OK\r\n");
+    expect(wire).toEndWith("\r\n\r\ndone");
+  });
+
+  // Node's _writeRaw() returns false for a destroyed socket. For an ended one it keeps the 1xx in outputData for good.
+  test.concurrent.each([
+    ["destroyed", (req: IncomingMessage) => void req.socket.destroy(), false],
+    ["ended", (req: IncomingMessage) => void req.socket.end(), true],
+  ] as const)("a socket that is %s gets no 1xx and no callback", async (_state, close, accepted) => {
+    const returned: unknown[] = [];
+    let callbacks = 0;
+    const wire = await wireOf("http", { request: plainRequest, event: "request" }, (req, res) => {
+      close(req);
+      for (const { write } of writersWithCallback) returned.push(write!(res, () => void callbacks++));
+    });
+    expect({ wire, returned, callbacks }).toEqual({
+      wire: "",
+      returned: [undefined, undefined, undefined, accepted, accepted],
+      callbacks: 0,
+    });
+  });
+
+  test.concurrent("is not held back by a cork that is released before the close", async () => {
+    const wire = await wireOf("http", { request: plainRequest, event: "request" }, (req, res) => {
+      res.cork();
+      res.writeProcessing();
+      res.uncork();
+      req.socket.destroy();
+    });
+    expect(wire).toBe(processingWire);
+  });
+
+  test.concurrent("writeContinue() of a response that lost the connection writes nothing", async () => {
+    let displaced: ServerResponse;
+    const firstSeen = Promise.withResolvers<void>();
+    const server = await listening("http", "request", (req, res) => {
+      if (req.url === "/first") {
+        // The socket has no response now, so the next request of this connection gets it.
+        (req.socket as any)._httpMessage = null;
+        displaced = res;
+        firstSeen.resolve();
+        return;
+      }
+      // A turn later the second response has the connection.
+      setImmediate(() => {
+        displaced.writeContinue();
+        res.writeProcessing();
+        req.socket.destroy();
+      });
+    });
+    const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      const closed = Promise.withResolvers<void>();
+      let wire = "";
+      socket.setEncoding("latin1");
+      socket.on("data", chunk => (wire += chunk));
+      socket.on("error", () => {});
+      socket.on("close", () => closed.resolve());
+      socket.write("GET /first HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      await firstSeen.promise;
+      socket.write("GET /second HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      await closed.promise;
+      expect(wire).toBe(processingWire);
+    } finally {
+      socket.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  // The handler keeps its thread after the 103, as a synchronous render does, until the client has bytes.
+  // The client runs on another thread. The wait only times out when the 103 did not leave.
+  test("reaches the client before synchronous work that follows it", async () => {
+    const clientHasBytes = new Int32Array(new SharedArrayBuffer(4));
+    const server = await listening("http", "request", (_req, res) => {
+      res.writeEarlyHints(hints);
+      res.end(Atomics.wait(clientHasBytes, 0, 0, 10_000) === "timed-out" ? "late" : "early");
+    });
+    const worker = new Worker(
+      `
+        const { parentPort, workerData } = require("node:worker_threads");
+        const socket = require("node:net").connect(workerData.port, "127.0.0.1", () => socket.write(workerData.request));
+        let wire = "";
+        socket.setEncoding("latin1");
+        socket.on("data", chunk => {
+          wire += chunk;
+          Atomics.store(workerData.clientHasBytes, 0, 1);
+          Atomics.notify(workerData.clientHasBytes, 0);
+        });
+        socket.on("error", () => {});
+        socket.on("close", () => parentPort.postMessage(wire));
+      `,
+      {
+        eval: true,
+        workerData: { port: (server.address() as AddressInfo).port, request: plainRequest, clientHasBytes },
+      },
+    );
+    try {
+      const [wire] = await once(worker, "message");
+      expect(wire).toStartWith(earlyHintsWire + "HTTP/1.1 200 OK\r\n");
+      expect(wire).toEndWith("\r\n\r\nearly");
+    } finally {
+      await worker.terminate();
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 30_000);
+
+  // Each send() is one TCP segment on loopback (TCP_NODELAY), and TCP_INFO counts the segments the client got.
+  // The 1xx is one send, as in Node. What the handler writes after it in the same turn still shares one send.
+  // The client needs bun:ffi for getsockopt().
+  test.skipIf(process.platform !== "linux" || !process.versions.bun)(
+    "costs one send, and the response after it still goes out in one",
+    async () => {
+      const fixture = `
+        const { dlopen, ptr } = require("bun:ffi");
+        const http = require("node:http");
+        let libc;
+        for (const name of ["libc.so.6", "/usr/lib/libc.so"]) {
+          try {
+            libc = dlopen(name, { getsockopt: { args: ["int", "int", "int", "ptr", "ptr"], returns: "int" } });
+            break;
+          } catch {}
+        }
+        // struct tcp_info: tcpi_data_segs_in is a u32 at byte 152 (linux/tcp.h, since 4.6).
+        function dataSegmentsIn(fd) {
+          const info = new Uint8Array(280);
+          const len = new Uint32Array([info.length]);
+          if (libc.symbols.getsockopt(fd, 6 /* IPPROTO_TCP */, 11 /* TCP_INFO */, ptr(info), ptr(len)) !== 0) {
+            throw new Error("getsockopt(TCP_INFO) failed");
+          }
+          if (len[0] < 156) throw new Error("tcp_info has no tcpi_data_segs_in: " + len[0] + " bytes");
+          return new DataView(info.buffer).getUint32(152, true);
+        }
+        const handlers = {
+          "/end": res => res.end("done"),
+          "/102-end": res => {
+            res.writeProcessing();
+            res.end("done");
+          },
+          "/102-writes-end": res => {
+            res.writeProcessing();
+            res.write("a");
+            res.write("b");
+            res.write("c");
+            res.end("done");
+          },
+        };
+        const server = http.createServer((req, res) => handlers[req.url](res));
+        server.listen(0, "127.0.0.1", async () => {
+          const segments = {};
+          for (const path of Object.keys(handlers)) {
+            const done = Promise.withResolvers();
+            let reply = "";
+            const socket = await Bun.connect({
+              hostname: "127.0.0.1",
+              port: server.address().port,
+              socket: {
+                open(socket) {
+                  socket.write("GET " + path + " HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\n");
+                },
+                data(socket, chunk) {
+                  reply += chunk.toString("latin1");
+                  // The end of a body with a Content-Length, or of a chunked one.
+                  if (reply.endsWith("\\r\\n\\r\\ndone") || reply.endsWith("\\r\\n0\\r\\n\\r\\n")) done.resolve();
+                },
+                error(socket, error) {
+                  done.reject(error);
+                },
+                close() {
+                  done.resolve();
+                },
+              },
+            });
+            await done.promise;
+            segments[path] = dataSegmentsIn(socket.fd);
+            socket.end();
+          }
+          server.close();
+          console.log(JSON.stringify(segments));
+        });
+      `;
+      const { stdout } = await promisify(execFile)(process.execPath, ["-e", fixture], {
+        env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" },
+      });
+      expect(JSON.parse(stdout)).toEqual({ "/end": 1, "/102-end": 2, "/102-writes-end": 2 });
+    },
+    childTimeout,
+  );
 });

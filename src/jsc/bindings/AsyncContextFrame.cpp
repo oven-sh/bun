@@ -125,7 +125,10 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__callbackOf(JSC::EncodedJSValue
     if (!functionObject.isCell())                                                                                          \
         return jsUndefined();                                                                                              \
     auto& vm = global->vm();                                                                                               \
-    if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]                                                     \
+    auto* clientData = WebCore::clientData(vm);                                                                            \
+    if (clientData->isStoppingOrStopped(vm)) [[unlikely]]                                                                  \
+        return jsUndefined();                                                                                              \
+    if (Bun::isOfRetiredTestIsolationRealm(*clientData, functionObject)) [[unlikely]]                                      \
         return jsUndefined();                                                                                              \
     JSValue restoreAsyncContext;                                                                                           \
     InternalFieldTuple* asyncContextData = nullptr;                                                                        \
@@ -150,7 +153,8 @@ JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, 
 #endif
 
     if (!global->isAsyncContextTrackingEnabled()) [[likely]] {
-        if (WebCore::clientData(global->vm())->isStoppingOrStopped(global->vm())) [[unlikely]]
+        auto* clientData = WebCore::clientData(global->vm());
+        if (clientData->isStoppingOrStopped(global->vm()) || Bun::isOfRetiredTestIsolationRealm(*clientData, functionObject)) [[unlikely]]
             return jsUndefined();
         return JSC::profiledCall(global, ProfilingReason::API, functionObject, JSC::getCallData(functionObject), thisValue, args);
     }

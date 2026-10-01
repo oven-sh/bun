@@ -4728,13 +4728,7 @@ extern "C" void Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(Zig::Glo
 extern "C" void Zig__GlobalObject__retireForTestIsolation(Zig::GlobalObject* globalObject)
 {
     globalObject->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
-}
-
-// Whether `value` is an object of a realm retired above; native code does not call into one.
-extern "C" bool Bun__JSValue__isFromRetiredTestIsolationRealm(JSC::EncodedJSValue encodedValue)
-{
-    JSC::JSObject* object = JSC::JSValue::decode(encodedValue).getObject();
-    return object && Bun::isRetiredTestIsolationRealm(object->globalObject());
+    WebCore::clientData(globalObject->vm())->hasRetiredTestIsolationRealm = true;
 }
 
 extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)

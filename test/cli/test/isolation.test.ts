@@ -580,29 +580,27 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
-  // The second dial is still connecting when the swap closes it. Its owner keeps a pointer to the
-  // native socket until it hears that the dial failed.
+  // The dial is still connecting when the swap closes it. Its owner keeps a pointer to the native
+  // socket, and a connection timeout armed, until it hears that the dial failed.
+  const redialWithBunConnect = (hostname: string) => `
+    const dial = (socket: any) => Bun.connect({ hostname: "${hostname}", port, socket: { data() {}, ...socket } });
+    // Every failed dial dials again, and the swap still ends.
+    const redial = () =>
+      dial({ open() { entered("open"); }, connectError() { entered("connectError"); redial(); } }).catch(() => {});
+    await dial({ close: redial });
+  `;
   test.each([
-    {
-      client: "Bun.connect",
-      greeting: undefined,
-      told: "connectError",
-      leak: `
-        const dial = (socket: any) => Bun.connect({ hostname: "127.0.0.1", port, socket: { data() {}, ...socket } });
-        // Every failed dial dials again, and the swap still ends.
-        const redial = () => dial({ connectError() { told("connectError"); redial(); } }).catch(() => {});
-        await dial({ close: redial });
-      `,
-    },
+    { client: "Bun.connect to an address", greeting: undefined, leak: redialWithBunConnect("127.0.0.1") },
+    { client: "Bun.connect to a name", greeting: undefined, leak: redialWithBunConnect("localhost") },
     {
       client: "RedisClient",
       greeting: Buffer.from("+OK\r\n"),
-      told: "ERR_REDIS_CONNECTION_CLOSED",
       leak: `
-        const dial = () => new Bun.RedisClient("redis://127.0.0.1:" + port, { autoReconnect: false });
+        const dial = () =>
+          new Bun.RedisClient("redis://127.0.0.1:" + port, { autoReconnect: false, connectionTimeout: timeout });
         const first = dial();
         first.onclose = () => {
-          dial().connect().catch(err => told(err.code));
+          dial().connect().catch(() => {});
         };
         await first.connect();
       `,
@@ -610,36 +608,48 @@ describe.concurrent("bun test --isolate", () => {
     {
       client: "SQL",
       greeting: Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]),
-      told: "ERR_POSTGRES_CONNECTION_REFUSED",
-      // connectionTimeout: 0 so the pool reports a failed dial instead of retrying it on a timer.
       leak: `
-        const sql = new Bun.SQL({ url: "postgres://u@127.0.0.1:" + port + "/db", max: 1, connectionTimeout: 0 });
+        const sql = new Bun.SQL({
+          url: "postgres://u@127.0.0.1:" + port + "/db",
+          max: 1,
+          connectionTimeout: timeout / 1000,
+        });
         await sql.connect();
-        sql\`select 1\`.catch(() => sql\`select 2\`.catch(err => told(err.code)));
+        const poll = () => void sql\`select 1\`.then(poll, poll);
+        poll();
       `,
     },
   ])(
-    "with --isolate, the dial a leaked $client's close handler makes is closed, and its owner told, before next file",
-    async ({ greeting, told, leak }) => {
+    "with --isolate, what a leaked $client's close handler dials is gone before next file",
+    async ({ greeting, leak }) => {
+      const shared = `
+      const port = Number(process.env.PORT!);
+      const timeout = 200;
+    `;
       using dir = tempDir("isolate-redial", {
         "a-redial.test.ts": `
-          import { test } from "bun:test";
-          import fs from "node:fs";
-
-          test("leak a client that dials again when it is closed", async () => {
-            const port = Number(process.env.PORT!);
-            const told = (what: string) => fs.writeFileSync(process.env.TOLD_FILE!, what);
-            ${leak}
-          });
-        `,
+        import { test } from "bun:test";
+        import fs from "node:fs";
+        ${shared}
+        test("leak a client that dials again when it is closed", async () => {
+          const entered = (handler: string) => fs.appendFileSync(process.env.ENTERED_FILE!, handler + "\\n");
+          ${leak}
+        });
+      `,
         "b-check.test.ts": `
-          import { test, expect } from "bun:test";
-          import fs from "node:fs";
-
-          test("the second dial's owner heard that it failed", () => {
-            expect(fs.readFileSync(process.env.TOLD_FILE!, "utf8")).toBe(${JSON.stringify(told)});
-          });
-        `,
+        import { test, expect } from "bun:test";
+        import fs from "node:fs";
+        ${shared}
+        test("nothing of the previous file acts on this one", async () => {
+          // One of these takes the memory of a native socket the swap freed, so closing that
+          // socket again does not go unnoticed.
+          const junk = Array.from({ length: 1 << 14 }, (_, i) => Buffer.alloc(80, String(i)).toString());
+          // Armed after the leaked client's connection timeout with the same delay, so it fires later.
+          await new Promise(resolve => setTimeout(resolve, timeout));
+          expect(junk).toHaveLength(1 << 14);
+          expect(fs.existsSync(process.env.ENTERED_FILE!)).toBe(false);
+        });
+      `,
       });
 
       const server = net.createServer(sock => {
@@ -656,7 +666,9 @@ describe.concurrent("bun test --isolate", () => {
           {
             ...bunEnv,
             PORT: String((server.address() as net.AddressInfo).port),
-            TOLD_FILE: join(String(dir), "told.txt"),
+            ENTERED_FILE: join(String(dir), "entered.txt"),
+            // A Bun.connect socket has no timer: its finalizer is what closes the native socket again.
+            ...(isASAN && { BUN_DESTRUCT_VM_ON_EXIT: "1" }),
           },
         );
         expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");

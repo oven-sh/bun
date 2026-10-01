@@ -5684,6 +5684,52 @@ impl VirtualMachine {
         Ok(())
     }
 
+    /// Whether `group` outlives a test file under `--isolate`: the spawn-IPC pool (this process's
+    /// own inbound IPC included) and the test-parallel channel.
+    fn is_test_runner_socket_group(&self, group: *const uws::SocketGroup) -> bool {
+        self.rare_data.as_deref().is_some_and(|rare| {
+            core::ptr::eq(group, &rare.spawn_ipc_group)
+                || core::ptr::eq(group, &rare.test_parallel_ipc_group)
+        })
+    }
+
+    /// One sweep over the sockets a test file opened. What a close handler opens meanwhile stays open.
+    fn close_test_file_sockets(&self) {
+        // SAFETY: process-global usockets loop is live.
+        let loop_ = unsafe { &mut *uws::Loop::get() };
+        let mut maybe_group = loop_.internal_loop_data.head;
+        while let Some(group) = NonNull::new(maybe_group) {
+            // SAFETY: `group` is a live `us_socket_group_t` linked in the loop.
+            let next = unsafe { (*group.as_ptr()).next };
+            let g = group.as_ptr();
+            if !self.is_test_runner_socket_group(g) {
+                // SAFETY: see above.
+                unsafe { (*g).close_all() };
+            }
+            // SAFETY: `next` may have been unlinked by an on_close JS
+            // callback; restart from head if so (mirrors loop.c).
+            maybe_group = if !next.is_null() && unsafe { (*next).linked } == 0 {
+                loop_.internal_loop_data.head
+            } else {
+                next
+            };
+        }
+    }
+
+    /// A group is linked into the loop while it has a socket.
+    fn has_test_file_sockets(&self) -> bool {
+        // SAFETY: process-global usockets loop is live.
+        let mut maybe_group = unsafe { (*uws::Loop::get()).internal_loop_data.head };
+        while let Some(group) = NonNull::new(maybe_group) {
+            if !self.is_test_runner_socket_group(group.as_ptr()) {
+                return true;
+            }
+            // SAFETY: `group` is a live `us_socket_group_t` linked in the loop.
+            maybe_group = unsafe { (*group.as_ptr()).next };
+        }
+        false
+    }
+
     /// Replaces the global object between test files so each file runs in a fresh realm.
     ///
     /// Callers must run `bun_runtime::jsc_hooks::stop_active_handles_for_test_isolation(vm)`
@@ -5707,49 +5753,8 @@ impl VirtualMachine {
 
         let _ = self.event_loop_mut().drain_microtasks();
 
-        {
-            // Groups that must survive the per-file isolation swap: this
-            // process's own inbound IPC, the spawn-IPC pool, and the
-            // test-parallel channel.
-            let (skip_spawn_ipc, skip_test_parallel_ipc): (
-                *mut uws::SocketGroup,
-                *mut uws::SocketGroup,
-            ) = match self.rare_data.as_deref_mut() {
-                Some(rare) => (
-                    core::ptr::from_mut(&mut rare.spawn_ipc_group),
-                    core::ptr::from_mut(&mut rare.test_parallel_ipc_group),
-                ),
-                None => (core::ptr::null_mut(), core::ptr::null_mut()),
-            };
-            // SAFETY: process-global usockets loop is live.
-            let loop_ = unsafe { &mut *uws::Loop::get() };
-            // What a close handler dials (a pool that reconnects) is closed by
-            // the next round; bounded, as in `close_all_socket_groups`.
-            for _ in 0..8 {
-                let mut closed_any = false;
-                let mut maybe_group = loop_.internal_loop_data.head;
-                while let Some(group) = NonNull::new(maybe_group) {
-                    // SAFETY: `group` is a live `us_socket_group_t` linked in the loop.
-                    let next = unsafe { (*group.as_ptr()).next };
-                    let g = group.as_ptr();
-                    if g != skip_spawn_ipc && g != skip_test_parallel_ipc {
-                        // SAFETY: see above.
-                        unsafe { (*g).close_all() };
-                        closed_any = true;
-                    }
-                    // SAFETY: `next` may have been unlinked by an on_close JS
-                    // callback; restart from head if so (mirrors loop.c).
-                    maybe_group = if !next.is_null() && unsafe { (*next).linked } == 0 {
-                        loop_.internal_loop_data.head
-                    } else {
-                        next
-                    };
-                }
-                if !closed_any {
-                    break;
-                }
-            }
-        }
+        // The finished file's close handlers run, and may dial again.
+        self.close_test_file_sockets();
         if let Some(rare) = self.rare_data.as_deref_mut() {
             rare.listening_sockets_for_watch_mode.lock().clear();
             // `setCallbacks` is once-only (node/src/quic/bindingdata.cc
@@ -5769,6 +5774,9 @@ impl VirtualMachine {
         // What the outgoing file's close handlers and last microtasks opened
         // since the caller's sweep.
         let _ = self.stop_context_handles(crate::StopReason::Disposed);
+        // Nothing enters its script now, so nothing dials again: this sweep leaves no socket.
+        self.close_test_file_sockets();
+        debug_assert!(!self.has_test_file_sockets());
         self.test_isolation_generation = self.test_isolation_generation.wrapping_add(1);
 
         // The outgoing file's JS timers would otherwise release their pins only

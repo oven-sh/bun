@@ -352,11 +352,6 @@ impl JSValue {
         }
         JSC__JSValue__isAnyError(self)
     }
-    /// Whether this object's realm was retired by `bun test --isolate` (its file finished).
-    #[inline]
-    pub fn is_from_retired_test_isolation_realm(self) -> bool {
-        self.is_cell() && Bun__JSValue__isFromRetiredTestIsolationRealm(self)
-    }
     /// `JSValue.isError()` — true iff this is an
     /// `ErrorInstance` cell (does NOT match `Exception`).
     #[inline]
@@ -2164,7 +2159,6 @@ unsafe extern "C" {
     ) -> JSValue;
     safe fn Bun__JSValue__protect(this: JSValue);
     safe fn Bun__JSValue__unprotect(this: JSValue);
-    safe fn Bun__JSValue__isFromRetiredTestIsolationRealm(this: JSValue) -> bool;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -885,6 +885,15 @@ ALWAYS_INLINE bool isRetiredTestIsolationRealm(const JSC::JSGlobalObject* global
     return globalObject->microtaskRunnability() == JSC::QueuedTaskResult::Discard;
 }
 
+// `callee`: what native code is about to call.
+ALWAYS_INLINE bool isOfRetiredTestIsolationRealm(const WebCore::JSVMClientData& clientData, JSC::JSValue callee)
+{
+    if (!clientData.hasRetiredTestIsolationRealm) [[likely]]
+        return false;
+    JSC::JSObject* object = callee.getObject();
+    return object && isRetiredTestIsolationRealm(object->globalObject());
+}
+
 }
 
 #ifndef RENAMED_JSDOM_GLOBAL_OBJECT

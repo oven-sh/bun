@@ -3283,13 +3283,17 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     // WebCore: JSEventListener's isJSExecutionForbidden): once the VM's stop was requested or
     // teardown has forbidden script, a callback from any event source is a silent no-op rather
     // than each source checking.
-    if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]] {
+    auto* clientData = WebCore::clientData(vm);
+    if (clientData->isStoppingOrStopped(vm)) [[unlikely]] {
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsUndefined());
     }
 
     JSC::JSValue jsObject = JSValue::decode(object);
     ASSERT_WITH_MESSAGE(jsObject, "Cannot call function with JSValue zero.");
+
+    if (Bun::isOfRetiredTestIsolationRealm(*clientData, jsObject)) [[unlikely]]
+        return JSValue::encode(jsUndefined());
 
     JSC::JSValue jsThisObject = JSValue::decode(thisObject);
 

@@ -590,6 +590,14 @@ describe.concurrent("global flag before subcommand", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("bun --cwd= create resolves the empty value to the current directory", async () => {
+    using dir = tempDir("which-empty-cwd", files);
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--cwd=", "create"]);
+    expect(stderr).not.toContain("Could not change directory");
+    expect(stdout).toContain("bun create");
+    expect(exitCode).toBe(0);
+  });
+
   test("bun --help create prints the create help and exits 0", async () => {
     using dir = tempDir("which-help-create", files);
     const { stdout, exitCode } = await run(String(dir), ["--help", "create"]);
@@ -813,7 +821,15 @@ describe.concurrent("global flag before subcommand", () => {
   // A filter flag in front of `test` names the package script.
   const workspace = {
     "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
-    "packages/pkga/package.json": JSON.stringify({ name: "pkga", scripts: { test: "echo test-from-pkga" } }),
+    "packages/pkga/package.json": JSON.stringify({
+      name: "pkga",
+      scripts: {
+        test: "echo test-from-pkga",
+        deploy: "echo deploy-from-pkga",
+        install: "echo install-from-pkga",
+        publish: "echo publish-from-pkga",
+      },
+    }),
   };
   for (const pre of [["--filter", "pkga"], ["-F", "pkga"], ["--filter=pkga"], ["-Fpkga"]]) {
     test(`bun ${pre.join(" ")} test runs the package test script`, async () => {
@@ -822,5 +838,21 @@ describe.concurrent("global flag before subcommand", () => {
       expect(stdout).toContain("test-from-pkga");
       expect(exitCode).toBe(0);
     });
+  }
+
+  // `bun --filter <pattern> <word>` runs `<word>` as a script, also when the
+  // word spells a subcommand (docs/pm/filter.mdx).
+  for (const pre of [
+    ["--filter", "pkga"],
+    ["-F", "pkga"],
+  ]) {
+    for (const word of ["deploy", "install", "publish"]) {
+      test(`bun ${pre.join(" ")} ${word} runs the package ${word} script`, async () => {
+        using dir = tempDir("which-filter-word", workspace);
+        const { stdout, exitCode } = await run(String(dir), [...pre, word]);
+        expect(stdout).toContain(`${word}-from-pkga`);
+        expect(exitCode).toBe(0);
+      });
+    }
   }
 });

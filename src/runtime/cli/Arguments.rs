@@ -896,6 +896,31 @@ impl LeadingFlag {
     }
 }
 
+/// Resolve a `--cwd` value against the current directory and `chdir` into it.
+pub(crate) fn chdir_to_cwd_arg(cwd_arg: &[u8]) -> crate::Result<bun_core::ZBox> {
+    let mut outbuf = bun_paths::path_buffer_pool::get();
+    // An absolute --cwd needs no base; a relative one still requires a
+    // live cwd (an exe-dir base would silently chdir somewhere else).
+    let base: &[u8] = if bun_paths::is_absolute(cwd_arg) {
+        b"/"
+    } else {
+        bun_core::getcwd(&mut outbuf)?.as_bytes()
+    };
+    let mut spill = Vec::new();
+    let out = resolve_path::join_abs_string_spill::<platform::Loose>(base, &mut spill, &[cwd_arg]);
+    // `chdir` wants a NUL-terminated path.
+    let out_z = bun_core::ZBox::from_bytes(out);
+    if let bun_sys::Result::Err(err) = bun_sys::chdir(&out_z) {
+        Output::err(
+            err,
+            "Could not change directory to \"{}\"\n",
+            format_args!("{}", BStr::new(cwd_arg)),
+        );
+        Global::exit(1);
+    }
+    Ok(out_z)
+}
+
 /// Parse `argv` into `api::TransformOptions` for the given subcommand.
 ///
 /// `command::tag_params(cmd)` does a runtime lookup of the per-subcommand
@@ -949,28 +974,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     // `api::TransformOptions.absolute_working_dir` is `Option<Box<[u8]>>`,
     // so we dupe into a plain `Box<[u8]>`.
     let cwd: Box<[u8]> = if let Some(cwd_arg) = args.option(b"--cwd") {
-        let mut outbuf = bun_paths::path_buffer_pool::get();
-        // An absolute --cwd needs no base; a relative one still requires a
-        // live cwd (an exe-dir base would silently chdir somewhere else).
-        let base: &[u8] = if bun_paths::is_absolute(cwd_arg) {
-            b"/"
-        } else {
-            bun_core::getcwd(&mut outbuf)?.as_bytes()
-        };
-        let mut spill = Vec::new();
-        let out =
-            resolve_path::join_abs_string_spill::<platform::Loose>(base, &mut spill, &[cwd_arg]);
-        // `chdir` wants a NUL-terminated path, so dupe-Z once and reuse for both
-        // the `chdir` arg and the stored `absolute_working_dir`.
-        let out_z = bun_core::ZBox::from_bytes(out);
-        if let bun_sys::Result::Err(err) = bun_sys::chdir(&out_z) {
-            Output::err(
-                err,
-                "Could not change directory to \"{}\"\n",
-                format_args!("{}", BStr::new(cwd_arg)),
-            );
-            Global::exit(1);
-        }
+        let out_z = chdir_to_cwd_arg(cwd_arg)?;
         // Store the post-chdir physical path (mirrors process.chdir) so
         // process.cwd(), path.resolve, and the resolver agree on one form.
         let mut phys = bun_paths::path_buffer_pool::get();

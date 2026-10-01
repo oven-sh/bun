@@ -828,7 +828,7 @@ pub(crate) mod command {
     /// Apply a `--cwd` that preceded the keyword, for handlers that do not
     /// run a clap parse. The last occurrence wins, as in clap.
     #[cold]
-    pub(crate) fn apply_leading_cwd() {
+    pub(crate) fn apply_leading_cwd() -> crate::Result<()> {
         let mut last: Option<&[u8]> = None;
         for (flag, value) in leading_flags() {
             if flag == b"--cwd" {
@@ -838,16 +838,9 @@ pub(crate) mod command {
             }
         }
         if let Some(dir) = last {
-            let dir_z = bun_core::ZBox::from_bytes(dir);
-            if let bun_sys::Result::Err(err) = bun_sys::chdir(&dir_z) {
-                Output::err(
-                    err,
-                    "Could not change directory to \"{}\"\n",
-                    format_args!("{}", bstr::BStr::new(dir)),
-                );
-                Global::exit(1);
-            }
+            arguments::chdir_to_cwd_arg(dir)?;
         }
+        Ok(())
     }
 
     pub(crate) use bun_options_types::command_tag::Tag;
@@ -995,8 +988,8 @@ pub(crate) mod command {
         }
 
         let mut idx: usize = 1;
-        // `--filter`/`--workspaces` before `test` or `build` name a script.
         let mut saw_filter_flag = false;
+        let mut saw_filter_value = false;
         let first_arg_name = loop {
             let Some(arg) = argv.get(idx) else {
                 return Tag::AutoCommand;
@@ -1011,13 +1004,21 @@ pub(crate) mod command {
                 (arguments::LeadingFlag::Program, _) => return Tag::AutoCommand,
                 (arguments::LeadingFlag::Flag { filter, .. }, consumed) => {
                     saw_filter_flag |= filter;
+                    saw_filter_value |= filter && consumed;
                     idx += 1 + consumed as usize;
                 }
             }
         };
         SUBCOMMAND_ARGV_INDEX.store(idx, core::sync::atomic::Ordering::Relaxed);
 
+        // `bun --filter <pattern> <word>` runs `<word>` as a script, whatever
+        // the word is (docs/pm/filter.mdx).
+        if saw_filter_value {
+            return Tag::AutoCommand;
+        }
         let keyword = RootCommandMatcher::r#match(first_arg_name);
+        // `--filter=<pattern>` and `--workspaces` keep the subcommand, except
+        // for the two that cannot honor them.
         if saw_filter_flag
             && (keyword == RootCommandMatcher::case(b"test")
                 || keyword == RootCommandMatcher::case(b"build"))
@@ -1583,7 +1584,7 @@ pub(crate) mod command {
             tag_print_help(Tag::InitCommand, true);
             Global::exit(0);
         }
-        apply_leading_cwd();
+        apply_leading_cwd()?;
         let argv = argv_zslice();
         let start = (subcommand_argv_index() + 1).min(argv.len());
         super::init_command::InitCommand::exec(&argv[start..])
@@ -1618,7 +1619,7 @@ pub(crate) mod command {
     #[cold]
     #[inline(never)]
     fn exec_bunx(log: &mut bun_ast::Log) -> CmdResult {
-        apply_leading_cwd();
+        apply_leading_cwd()?;
         let ctx = init(Tag::BunxCommand, log)?;
         // bunx reads each flag in front of `x` as one token, so a value that
         // a flag consumed is joined to it (`--cwd dir` is `--cwd=dir`).
@@ -1875,7 +1876,7 @@ pub(crate) mod command {
         }
 
         // Create command wraps bunx
-        apply_leading_cwd();
+        apply_leading_cwd()?;
         let ctx = init(Tag::CreateCommand, log)?;
         let args = argv_zslice();
         let cmd_idx = subcommand_argv_index();

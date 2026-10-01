@@ -26,6 +26,7 @@ use bun_sha_hmac as Crypto;
 use bun_sys::{self as sys, Fd, File};
 
 use crate::config_version::ConfigVersion;
+use crate::dependency::DependencyExt as _;
 use crate::migration;
 use crate::package_manager::WorkspaceFilter;
 use crate::package_manager_real::{
@@ -37,8 +38,8 @@ use crate::update_request::UpdateRequest;
 use crate::{
     self as Install, DependencyID, ExternalSlice, Features, PackageID, PackageManager,
     PackageNameAndVersionHash, PackageNameHash, TruncatedPackageNameHash, dependency,
-    dependency::Dependency, dependency::DependencyExt as _, initialize_store,
-    invalid_dependency_id, invalid_package_id, npm as Npm,
+    dependency::Dependency, initialize_store, invalid_dependency_id, invalid_package_id,
+    npm as Npm,
 };
 use bun_install_types::NodeLinker::NodeLinker;
 

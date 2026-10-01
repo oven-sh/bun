@@ -99,7 +99,7 @@ bun "$here/crashes-md.ts" "$out/observed" "$work/raw.jsonl" "$here/class-c-cause
   echo
   echo "Crashes and hangs (CRASHES.md has each one):"
   sed -n '1,/^$/p' "$out/observed/died.txt" | sed 's/^/  /'
-  grep -m1 '^raw runs that died' "$out/observed/died.txt" | sed 's/^/  /'
+  grep -a -m1 '^raw runs that died' "$out/observed/died.txt" | sed 's/^/  /'
   if [ -s "$out/observed/raw-leak.txt" ]; then head -1 "$out/observed/raw-leak.txt" | sed 's/^/  /'; fi
   echo
   echo "Class C instances where Bun prints a diagnostic and TypeScript none (CRASHES.md, last section, for the parser unit):"

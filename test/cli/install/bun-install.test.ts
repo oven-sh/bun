@@ -10108,6 +10108,38 @@ describe.concurrent("bun-install", () => {
         expect(slots).toEqual([expect.stringMatching(slotPattern), expect.stringMatching(slotPattern)]);
         expect(slots).toContain(pinnedSlot);
       });
+
+      // A registry whose URL is under the configured registry's URL is still
+      // another registry: its tarball must not count as the configured one's.
+      it("keeps a tarball the lockfile pins to a nested registry out of the configured registry's slot", async () => {
+        const registries = await startRegistries({ "/nested/": "nested", "/": "root" });
+        await using _server = registries.server;
+        const { nested, root } = registries;
+
+        using dir = tempDir("registry-nested-lockfile-url", {
+          ...project("a", nested.url),
+          ...project("b", root.url),
+        });
+        const cacheDir = join(String(dir), ".bun-cache");
+
+        // a's lockfile is written against the nested registry, then a moves to
+        // the root registry. The install still downloads the pinned tarball.
+        await install(join(String(dir), "a"), cacheDir);
+        await rm(cacheDir, { recursive: true });
+        await rm(join(String(dir), "a", "node_modules"), { recursive: true });
+        await writeFile(join(String(dir), "a", "bunfig.toml"), `[install]\nregistry = "${root.url}"\n`);
+        await install(join(String(dir), "a"), cacheDir);
+        expect(await installedVariant(join(String(dir), "a"))).toBe("nested");
+
+        // b, configured for the root registry, fetches the root tarball.
+        await install(join(String(dir), "b"), cacheDir);
+        expect(root.requests).toContain("/no-deps/-/no-deps-1.0.0.tgz");
+        expect(await installedVariant(join(String(dir), "b"))).toBe("root");
+        expect(await cacheSlots(cacheDir)).toEqual([
+          expect.stringMatching(slotPattern),
+          expect.stringMatching(slotPattern),
+        ]);
+      });
     });
   });
 

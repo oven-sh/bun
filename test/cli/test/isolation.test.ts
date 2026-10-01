@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isASAN, normalizeBunSnapshot, tempDir, tls } from "harn
 import fs from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
-import { pgAuthenticationOk, pgReadyForQuery } from "../../js/sql/wire-frames";
+import { mysqlHandshakeV10, mysqlOkPacket, pgAuthenticationOk, pgReadyForQuery } from "../../js/sql/wire-frames";
 
 // Every case spawns at least one full `bun test --isolate` child; the heavy
 // ones (8-file leak fixtures, 500-2000-export module_info modules) exceed the
@@ -589,12 +589,20 @@ describe.concurrent("bun test --isolate", () => {
       dial({ open() { entered("open"); }, connectError() { entered("connectError"); redial(); } }).catch(() => {});
     await dial({ close: redial });
   `;
+  const redialWithSQL = (scheme: string) => `
+    const pool = (options = {}) => new Bun.SQL({ url: "${scheme}://u@127.0.0.1:" + port + "/db", max: 1, ...options });
+    const first = pool();
+    await first.connect();
+    // Never answered: rejected when the swap closes its connection.
+    first\`select 1\`.catch(() => pool({ connectionTimeout: timeout / 1000 })\`select 1\`.catch(() => {}));
+  `;
+  // `serve` gets a client as far as connected, and answers nothing after that.
   test.each([
-    { client: "Bun.connect to an address", greeting: undefined, leak: redialWithBunConnect("127.0.0.1") },
-    { client: "Bun.connect to a name", greeting: undefined, leak: redialWithBunConnect("localhost") },
+    { client: "Bun.connect to an address", serve: undefined, leak: redialWithBunConnect("127.0.0.1") },
+    { client: "Bun.connect to a name", serve: undefined, leak: redialWithBunConnect("localhost") },
     {
       client: "RedisClient",
-      greeting: Buffer.from("+OK\r\n"),
+      serve: (sock: net.Socket) => void sock.once("data", () => sock.write("+OK\r\n")),
       leak: `
         const dial = (options = {}) =>
           new Bun.RedisClient("redis://127.0.0.1:" + port, { autoReconnect: false, ...options });
@@ -606,19 +614,23 @@ describe.concurrent("bun test --isolate", () => {
       `,
     },
     {
-      client: "SQL",
-      greeting: Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]),
-      leak: `
-        const pool = (options = {}) => new Bun.SQL({ url: "postgres://u@127.0.0.1:" + port + "/db", max: 1, ...options });
-        const first = pool();
-        await first.connect();
-        // Never answered: rejected when the swap closes its connection.
-        first\`select 1\`.catch(() => pool({ connectionTimeout: timeout / 1000 })\`select 1\`.catch(() => {}));
-      `,
+      client: "Postgres SQL",
+      serve: (sock: net.Socket) =>
+        void sock.once("data", () => sock.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]))),
+      leak: redialWithSQL("postgres"),
+    },
+    {
+      client: "MySQL SQL",
+      serve: (sock: net.Socket) => {
+        sock.write(mysqlHandshakeV10());
+        // Byte 3 of a packet is its sequence number.
+        sock.on("data", packet => !packet.includes("select 1") && sock.write(mysqlOkPacket(packet[3] + 1)));
+      },
+      leak: redialWithSQL("mysql"),
     },
   ])(
     "with --isolate, what a leaked $client's close handler dials is gone before next file",
-    async ({ greeting, leak }) => {
+    async ({ serve, leak }) => {
       const shared = `
       const port = Number(process.env.PORT!);
       // Of the dial the close handler makes only: nothing that has to succeed is timed.
@@ -652,7 +664,7 @@ describe.concurrent("bun test --isolate", () => {
 
       const server = net.createServer(sock => {
         sock.on("error", () => {});
-        sock.once("data", () => greeting && sock.write(greeting));
+        serve?.(sock);
       });
       await new Promise<void>(r => server.listen(0, "127.0.0.1", () => r()));
 

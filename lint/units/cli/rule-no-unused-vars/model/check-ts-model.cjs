@@ -44,6 +44,7 @@ const one = (code, ext, label) => {
 		const trulyMore = more.filter((x, i) => !lessNames.includes(moreNames[i]));
 		missing += less.length - (more.length - trulyMore.length); moved += more.length - trulyMore.length; extra += trulyMore.length;
 		if (trulyMore.length) console.log(`EXTRA ${label}\n   model only: ${JSON.stringify(trulyMore)}`);
+		if (process.env.SHOW_MISSING) for (const x of less) if (!more.length) console.log(`MISSING ${label} ${x}`);
 		if (process.env.SHOW_MOVED && more.length - trulyMore.length) console.log(`MOVED ${label}\n   tseslint: ${JSON.stringify(less)}\n   model:    ${JSON.stringify(more)}`);
 		return;
 	}

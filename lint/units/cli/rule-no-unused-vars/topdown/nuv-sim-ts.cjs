@@ -155,6 +155,8 @@ function unusedVars(scopeManager, ast, facts, filename, tokens) {
 		const from = params[0].range[0], to = params.at(-1).range[1];
 		const start = scopeOf(params[0]);
 		for (const token of tokens) if (token.range[0] >= from && token.range[1] <= to && token.type === "Identifier") { const v = lookup(start, token.value); if (v) marked.add(v); }
+		// A name that is declared inside the list (a parameter or a type parameter of a type in it, an `infer`, the key of a mapped type) is found from where it stands: it is marked itself.
+		for (const scope of scopeManager.scopes) for (const v of scope.variables) if (v.defs.some(d => d.name.range[0] >= from && d.name.range[1] <= to)) marked.add(v);
 	}
 	for (const g of globals) { const v = lookup(scopeOf(g.parent), "global"); if (v) marked.add(v); } // M8
 	for (const m of forMarks) { // M10

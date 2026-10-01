@@ -1,0 +1,23 @@
+### lock acquired 19:03:48 load 403.46 365.88 377.10
+### release, whole file: exit 0 in 38 s;  109 pass  0 fail  Ran 109 tests across 1 file. [38.12s]
+(pass) sweep.ts > a command line that is wrong is the exit code 2 [181.21ms]
+(pass) sweep.ts > --each: the first line that differs or the reason, and the exit code 1 when an instance that runs does not pass [327.35ms]
+(pass) sweep.ts > --each: a line for each instance in the order of the names, and the exit code 0 when every instance that runs passes [336.54ms]
+(pass) sweep.ts > --shard and --resume: a second run keeps the outcomes of the first, and counts every outcome by directory and by code [1256.50ms]
+### debug, sweep.ts: exit 0 in 110 s; load 320.85 346.36 368.03
+(pass) sweep.ts > a command line that is wrong is the exit code 2 [6570.60ms]
+(pass) sweep.ts > --each: a line for each instance in the order of the names, and the exit code 0 when every instance that runs passes [49718.49ms]
+(pass) sweep.ts > --each: the first line that differs or the reason, and the exit code 1 when an instance that runs does not pass [59050.01ms]
+(pass) sweep.ts > --shard and --resume: a second run keeps the outcomes of the first, and counts every outcome by directory and by code [89968.63ms]
+ 4 pass
+ 0 fail
+Ran 4 tests across 1 file. [108.83s]
+### debug with the leak check, sweep.ts: exit 0 in 91 s; load 417.51 369.87 374.20
+(pass) sweep.ts > a command line that is wrong is the exit code 2 [10198.89ms]
+(pass) sweep.ts > --each: a line for each instance in the order of the names, and the exit code 0 when every instance that runs passes [41061.55ms]
+(pass) sweep.ts > --each: the first line that differs or the reason, and the exit code 1 when an instance that runs does not pass [46343.89ms]
+(pass) sweep.ts > --shard and --resume: a second run keeps the outcomes of the first, and counts every outcome by directory and by code [67041.23ms]
+ 4 pass
+ 0 fail
+Ran 4 tests across 1 file. [87.86s]
+### finished 19:07:47

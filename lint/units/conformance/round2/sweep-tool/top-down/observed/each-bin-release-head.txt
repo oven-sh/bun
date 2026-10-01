@@ -1,0 +1,12 @@
+fail arityAndOrderCompatibility01.ts line 1: - "arityAndOrderCompatibility01.ts(15,12): error TS2493: Tuple type '[string, number]' of length '2' has no element at index '2'."
+fail castingTuple.ts line 1: - "castingTuple.ts(3,24): error TS7008: Member 'c' implicitly has an 'any' type."
+fail contextualTypeTupleEnd.ts line 1: - "contextualTypeTupleEnd.ts(8,1): error TS2345: Argument of type '[]' is not assignable to parameter of type '[...((arg: number) => void)[], (arg: string) => void]'."
+fail contextualTypeWithTuple.ts line 1: - "contextualTypeWithTuple.ts(3,5): error TS2322: Type '[number, string, boolean]' is not assignable to type '[number, string]'."
+fail emptyTuplesTypeAssertion01.ts line 1: - "emptyTuplesTypeAssertion01.ts(2,11): error TS2493: Tuple type '[]' of length '0' has no element at index '0'."
+fail emptyTuplesTypeAssertion02.ts line 1: - "emptyTuplesTypeAssertion02.ts(2,11): error TS2493: Tuple type '[]' of length '0' has no element at index '0'."
+fail indexerWithTuple.ts line 1: - "indexerWithTuple.ts(11,25): error TS2493: Tuple type '[string, number]' of length '2' has no element at index '2'."
+pass namedTupleMembers.ts
+fail namedTupleMembersErrors.ts line 1: - "namedTupleMembersErrors.ts(10,29): error TS5086: A labeled tuple element is declared as optional with a question mark after the name and before the colon, rather than after the type."
+fail optionalTupleElements1.ts line 1: - "optionalTupleElements1.ts(11,29): error TS1257: A required element cannot follow an optional element."
+fail parserBlockStatement1.d.ts line 1: - "parserBlockStatement1.d.ts(1,1): error TS1036: Statements are not allowed in ambient contexts."
+fail parserBreakStatement1.d.ts line 1: - "parserBreakStatement1.d.ts(1,1): error TS1036: Statements are not allowed in ambient contexts."

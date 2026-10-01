@@ -1,0 +1,12 @@
+[package]
+name = "bun_sema"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+bitflags.workspace = true
+
+[lints]

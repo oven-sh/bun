@@ -4,10 +4,12 @@ use bun_collections::VecExt;
 use crate::js_lexer;
 use crate::js_lexer::T;
 use crate::p::P;
+use crate::parse::lists::{ListKind, ListStep};
 use crate::parser::{
     ARGUMENTS_STR as arguments_str, AwaitOrYield, FnOrArrowDataParse, LexicalDecl,
-    ParseStatementOptions, TypeParameterFlag,
+    ParseBindingOptions, ParseStatementOptions, TypeParameterFlag,
 };
+use crate::sema::Mark;
 use bun_ast as js_ast;
 use bun_ast::op::Level;
 use bun_ast::{E, Expr, Flags, G, S, Stmt};
@@ -52,9 +54,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // The name is optional for "export default function() {}" pseudo-statements
         if !opts.is_name_optional || p.lexer.token == T::TIdentifier {
-            let name_loc = p.lexer.loc();
+            let mut name_loc = p.lexer.loc();
             name_text = p.lexer.identifier;
-            p.lexer.expect(T::TIdentifier)?;
+            if p.lexer.token == T::TPrivateIdentifier && p.lexer.tolerant {
+                // `createIdentifierWithDiagnostic`: a private name is objected to and is the name all the same.
+                let range = p.lexer.range();
+                p.lexer.ts_error(range, 18016);
+                p.lexer.next()?;
+            } else if p.lexer.token != T::TIdentifier
+                && p.lexer.tolerant
+                && !p.lexer.is_log_disabled
+            {
+                name_loc = p.report_missing_fn_name()?;
+                name_text = b"";
+            } else {
+                p.lexer.expect(T::TIdentifier)?;
+            }
+            // The name is read in the [Await] context around the function.
+            if p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent
+                && p.lexer.tolerant
+                && name_text == b"await"
+            {
+                p.report_fn_named_await(name_loc);
+            }
             // Difference
             let ref_ = p.new_symbol(js_ast::symbol::Kind::Other, name_text);
             name = Some(js_ast::LocRef {
@@ -96,6 +118,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 // Only allow omitting the body if we're parsing TypeScript
                 allow_missing_body_for_type_script: Self::IS_TYPESCRIPT_ENABLED,
+                brace_or_semicolon: true,
                 ..Default::default()
             },
         )?;
@@ -106,6 +129,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if opts.is_typescript_declare
                 || func.flags.contains(Flags::Function::IsForwardDeclaration)
             {
+                // A declaration with syntax errors cannot be read again from the source text, so it stays in the tree.
+                if p.lexer.prev_error_loc.start > loc.start
+                    && p.lexer.tolerant
+                    && !opts.is_typescript_declare
+                {
+                    p.pop_scope();
+                    if has_if_scope {
+                        p.pop_scope();
+                    }
+                    func.name = name;
+                    if opts.is_export {
+                        func.flags.insert(Flags::Function::IsExport);
+                    }
+                    return Ok(p.s(S::Function { func }, loc));
+                }
+
                 p.pop_and_discard_scope(scope_index);
 
                 // Discard the fake block scope introduced above. A forward declaration
@@ -121,7 +160,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.has_non_local_export_declare_inside_namespace = true;
                 }
 
-                return Ok(p.s(S::TypeScript {}, loc));
+                return Ok(p.s(S::TypeScript::default(), loc));
             }
         }
 
@@ -160,6 +199,47 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.s(S::Function { func }, loc))
     }
 
+    /// `createIdentifierWithDiagnostic`, where the name of a function declaration is missing. Nothing is consumed.
+    /// Returns where the empty name is (`createMissingIdentifier`).
+    #[cold]
+    #[inline(never)]
+    fn report_missing_fn_name(&mut self) -> Result<bun_ast::Loc, Error> {
+        let full_start = self.lexer.full_start();
+        let before = self.lexer.prev_error_loc;
+        let range = if self.lexer.token == T::TEndOfFile {
+            bun_ast::Range {
+                loc: full_start,
+                len: 0,
+            }
+        } else {
+            self.lexer.range()
+        };
+        let is_reserved_word =
+            self.lexer.token.is_reserved_word() || self.lexer.token == T::TEscapedKeyword;
+        self.lexer
+            .ts_error(range, if is_reserved_word { 1359 } else { 1003 });
+        self.lexer.put_up_with(before)?;
+        Ok(full_start)
+    }
+
+    /// `checkContextualIdentifier`: a function is named "await" in an [Await] context (1359). Reported with the message of
+    /// `parse_binding`. At the top level of a file, the checker decides.
+    #[cold]
+    #[inline(never)]
+    fn report_fn_named_await(&mut self, name_loc: bun_ast::Loc) {
+        if self.fn_or_arrow_data_parse.is_top_level || self.lexer.is_log_disabled {
+            return;
+        }
+        self.log().add_range_error(
+            Some(self.source),
+            bun_ast::Range {
+                loc: name_loc,
+                len: 5,
+            },
+            b"Cannot use \"yield\" or \"await\" here.",
+        );
+    }
+
     pub(crate) fn parse_fn(
         &mut self,
         name: Option<js_ast::LocRef>,
@@ -182,6 +262,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             open_parens_loc: p.lexer.loc(),
             ..Default::default()
         };
+        // `parseParameters`: without the "(" there are no parameters, and no ")" is expected.
+        let has_parens = p.lexer.token == T::TOpenParen || !p.lexer.tolerant;
         p.lexer.expect(T::TOpenParen)?;
 
         // Await and yield are not allowed in function arguments
@@ -207,18 +289,65 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.fn_or_arrow_data_parse.allow_super_call = opts.allow_super_call;
         p.fn_or_arrow_data_parse.allow_super_property = opts.allow_super_property;
 
+        // A private name in the place of a parameter's name has an error of its own. `parseNameOfParameter`
+        let name_of_parameter = ParseBindingOptions {
+            private_name_code: 18009,
+            ..Default::default()
+        };
+
         let mut rest_arg: bool = false;
         let mut arg_has_decorators: bool = false;
+        // `parseParameterEx` takes decorators and modifiers before any parameter of any function. The checker objects.
+        let takes_any_modifiers = Self::IS_TYPESCRIPT_ENABLED && p.lexer.tolerant;
+        let mut has_this_parameter = false;
         let mut args = bun_alloc::ArenaVec::<G::Arg>::new_in(p.arena);
-        while p.lexer.token != T::TCloseParen {
+        let saved_contexts = p.enter_list(ListKind::Parameters);
+        while has_parens && p.lexer.token != T::TCloseParen {
+            match p.classify_list_token(ListKind::Parameters)? {
+                ListStep::Element => {}
+                ListStep::Skipped => continue,
+                ListStep::Over => break,
+            }
+            let parameter_start = p.lexer.loc();
+            let mut ts_decorators = bun_alloc::AstAlloc::vec();
+            // Where the first decorator or modifier starts, and whether a modifier keyword is among them.
+            let mut modifiers: Option<(bun_ast::Loc, bool)> = None;
+            if takes_any_modifiers {
+                modifiers = p.parse_parameter_modifiers(
+                    old_fn_or_arrow_data.allow_await,
+                    &mut ts_decorators,
+                )?;
+            }
             // Skip over "this" type annotations
             if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TThis {
-                p.lexer.next()?;
-                if p.lexer.token == T::TColon {
+                if takes_any_modifiers {
+                    let is_first = args.is_empty() && !has_this_parameter;
+                    has_this_parameter = true;
+                    let first_modifier = modifiers.map(|(start, _)| start);
+                    if let Some(arg) = p.parse_this_parameter(
+                        func.open_parens_loc,
+                        is_first,
+                        ts_decorators,
+                        first_modifier,
+                    )? {
+                        args.push(arg);
+                    }
+                } else {
                     p.lexer.next()?;
-                    p.skip_type_script_type(Level::Lowest)?;
+                    if p.lexer.token == T::TColon {
+                        p.lexer.next()?;
+                        p.mark_type_syntax(
+                            func.open_parens_loc,
+                            Mark::ThisParameter,
+                            p.lexer.loc(),
+                        );
+                        p.skip_type_script_type(Level::Lowest)?;
+                    }
                 }
                 if p.lexer.token != T::TComma {
+                    if p.recover_missing_comma(ListKind::Parameters, parameter_start)? {
+                        continue;
+                    }
                     break;
                 }
 
@@ -226,29 +355,41 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 continue;
             }
 
-            let mut ts_decorators = bun_alloc::AstAlloc::vec();
-            if opts.allow_ts_decorators {
+            if opts.allow_ts_decorators && !takes_any_modifiers {
                 ts_decorators = p.parse_type_script_decorators()?;
-                if ts_decorators.len_u32() > 0 {
-                    arg_has_decorators = true;
-                }
+            }
+            if ts_decorators.len_u32() > 0 {
+                arg_has_decorators = true;
             }
 
-            if !func.flags.contains(Flags::Function::HasRestArg) && p.lexer.token == T::TDotDotDot {
+            // TypeScript's parser takes the dots before any parameter. `checkGrammarParameterList` objects.
+            if p.lexer.token == T::TDotDotDot
+                && (!func.flags.contains(Flags::Function::HasRestArg) || p.lexer.tolerant)
+            {
                 // p.markSyntaxFeature
                 p.lexer.next()?;
                 rest_arg = true;
                 func.flags.insert(Flags::Function::HasRestArg);
             }
 
-            let mut is_typescript_ctor_field = false;
+            let mut is_typescript_ctor_field = matches!(modifiers, Some((_, true)));
             let is_identifier = p.lexer.token == T::TIdentifier;
             let mut text = p.lexer.identifier;
-            let mut arg = p.parse_binding(Default::default())?;
+            let name_start = p.lexer.loc();
+            let mut arg = p.parse_binding(name_of_parameter)?;
             let mut ts_metadata = bun_ast::ts::Metadata::default();
 
+            // `parseNameOfParameter`: a modifier keyword that is neither a modifier nor a name is skipped.
+            if matches!(p.lexer.token, T::TConst | T::TDefault | T::TExport | T::TIn)
+                && p.lexer.tolerant
+                && modifiers.is_none()
+                && p.lexer.loc() == name_start
+            {
+                p.lexer.next()?;
+            }
+
             if Self::IS_TYPESCRIPT_ENABLED {
-                if is_identifier && opts.is_constructor {
+                if is_identifier && opts.is_constructor && !takes_any_modifiers {
                     // Skip over TypeScript accessibility modifiers, which turn this argument
                     // into a class field when used inside a class constructor. This is known
                     // as a "parameter property" in TypeScript.
@@ -268,7 +409,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 text = p.lexer.identifier;
 
                                 // Re-parse the binding (the current binding is the TypeScript keyword)
-                                arg = p.parse_binding(Default::default())?;
+                                arg = p.parse_binding(name_of_parameter)?;
                             }
                             _ => {
                                 break;
@@ -280,11 +421,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "function foo(a?) {}"
                 if p.lexer.token == T::TQuestion {
                     p.lexer.next()?;
+                    p.mark_type_syntax(arg.loc, Mark::Optional, arg.loc);
                 }
 
                 // "function foo(a: any) {}"
                 if p.lexer.token == T::TColon {
                     p.lexer.next()?;
+                    p.mark_type_syntax(arg.loc, Mark::Annotation, p.lexer.loc());
                     if !rest_arg {
                         if p.options.features.emit_decorator_metadata
                             && opts.allow_ts_decorators
@@ -308,7 +451,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .expect("unreachable");
 
             let mut default_value: Option<Expr> = None;
-            if !func.flags.contains(Flags::Function::HasRestArg) && p.lexer.token == T::TEquals {
+            if p.lexer.token == T::TEquals
+                && (!func.flags.contains(Flags::Function::HasRestArg) || p.lexer.tolerant)
+            {
                 // p.markSyntaxFeature
                 p.lexer.next()?;
                 default_value = Some(p.parse_expr(Level::Comma)?);
@@ -325,10 +470,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             });
 
             if p.lexer.token != T::TComma {
+                if p.recover_missing_comma(ListKind::Parameters, parameter_start)? {
+                    rest_arg = false;
+                    continue;
+                }
                 break;
             }
 
-            if func.flags.contains(Flags::Function::HasRestArg) {
+            if func.flags.contains(Flags::Function::HasRestArg) && !p.lexer.tolerant {
                 // JavaScript does not allow a comma after a rest argument
                 if opts.is_typescript_declare {
                     // TypeScript does allow a comma after a rest argument in a "declare" context
@@ -343,6 +492,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.next()?;
             rest_arg = false;
         }
+        p.lexer.list_contexts = saved_contexts;
         if !args.is_empty() {
             func.args = bun_ast::StoreSlice::new_mut(args.into_bump_slice_mut());
         }
@@ -362,7 +512,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.symbols[func.arguments_ref.inner_index() as usize].set_must_not_be_renamed(true);
         }
 
-        p.lexer.expect(T::TCloseParen)?;
+        if has_parens {
+            p.lexer.expect(T::TCloseParen)?;
+        }
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
 
         p.fn_or_arrow_data_parse.has_argument_decorators = arg_has_decorators;
@@ -371,6 +523,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if Self::IS_TYPESCRIPT_ENABLED {
             if p.lexer.token == T::TColon {
                 p.lexer.next()?;
+                p.mark_type_syntax(func.open_parens_loc, Mark::ReturnType, p.lexer.loc());
 
                 if p.options.features.emit_decorator_metadata
                     && opts.allow_ts_decorators
@@ -392,6 +545,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        if p.lexer.token != T::TOpenBrace && p.lexer.tolerant && !p.lexer.is_log_disabled {
+            p.recover_missing_fn_body(&mut func, &opts)?;
+            return Ok(func);
+        }
+
         // "function foo(): any;"
         if opts.allow_missing_body_for_type_script && p.lexer.token != T::TOpenBrace {
             p.lexer.expect_or_insert_semicolon()?;
@@ -410,6 +568,197 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         Ok(func)
+    }
+
+    /// `parseModifiersEx` at the start of a parameter: decorators, which are added to `decorators`, and modifier keywords.
+    /// `None` if there are none. Otherwise where the first one starts (`nodePos`), and whether any of them is a keyword.
+    #[cold]
+    #[inline(never)]
+    fn parse_parameter_modifiers(
+        &mut self,
+        outer_await: AwaitOrYield,
+        decorators: &mut js_ast::ExprNodeList,
+    ) -> Result<Option<(bun_ast::Loc, bool)>, Error> {
+        let p = self;
+        if p.lexer.token != T::TAt && !p.is_modifier_kind() {
+            return Ok(None);
+        }
+        let full_start = p.lexer.full_start();
+        let mut has_any = false;
+        let mut has_keyword = false;
+        let mut has_trailing_decorator = false;
+        let mut has_trailing_modifier = false;
+        let mut has_static = false;
+        loop {
+            if p.lexer.token == T::TAt && !has_trailing_modifier {
+                // Decorators are parsed in the [Await] context around the function.
+                let inner_await = p.fn_or_arrow_data_parse.allow_await;
+                p.fn_or_arrow_data_parse.allow_await = outer_await;
+                let parsed = p.parse_type_script_decorators();
+                p.fn_or_arrow_data_parse.allow_await = inner_await;
+                decorators.append(&mut parsed?);
+                has_trailing_decorator |= has_keyword;
+            } else {
+                if !p.is_at_modifier(has_static) {
+                    break;
+                }
+                has_static |= p.lexer.is_contextual_keyword(b"static");
+                p.lexer.next()?;
+                has_trailing_modifier |= has_trailing_decorator;
+                has_keyword = true;
+            }
+            has_any = true;
+        }
+        Ok(has_any.then_some((full_start, has_keyword)))
+    }
+
+    /// `parseAnyContextualModifier`, without consuming anything: whether the current token is a modifier keyword followed by
+    /// something a modifier can apply to. `has_static`: a second "static" is a name (`tryParseModifier`).
+    #[cold]
+    #[inline(never)]
+    fn is_at_modifier(&mut self, has_static: bool) -> bool {
+        if !self.is_modifier_kind() || (has_static && self.lexer.is_contextual_keyword(b"static")) {
+            return false;
+        }
+        let here = self.lexer.snapshot();
+        self.lexer.is_log_disabled = true;
+        let found = self.next_token_can_follow_modifier();
+        self.lexer.restore(&here);
+        found
+    }
+
+    /// `nextTokenCanFollowModifier`, at a modifier keyword. Moves the lexer: the caller restores it.
+    fn next_token_can_follow_modifier(&mut self) -> bool {
+        let p = self;
+        let keyword = p.lexer.token;
+        let mut is_after_default = keyword == T::TDefault;
+        let is_static = p.lexer.is_contextual_keyword(b"static");
+        if p.lexer.next().is_err() {
+            return false;
+        }
+        match keyword {
+            T::TConst => return p.lexer.token == T::TEnum,
+            T::TExport if p.lexer.token == T::TDefault => {
+                is_after_default = true;
+                if p.lexer.next().is_err() {
+                    return false;
+                }
+            }
+            T::TExport => {
+                if p.lexer.is_contextual_keyword(b"type") && p.lexer.next().is_err() {
+                    return false;
+                }
+                // `canFollowExportModifier`
+                if p.lexer.token == T::TAt {
+                    return true;
+                }
+                if matches!(p.lexer.token, T::TAsterisk | T::TOpenBrace)
+                    || p.lexer.is_contextual_keyword(b"as")
+                {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+        if is_after_default {
+            // `nextTokenCanFollowDefaultKeyword`
+            let wanted = match p.lexer.token {
+                T::TClass | T::TFunction | T::TAt => return true,
+                T::TIdentifier => match p.lexer.raw() {
+                    b"interface" => return true,
+                    b"abstract" => T::TClass,
+                    b"async" => T::TFunction,
+                    _ => return false,
+                },
+                _ => return false,
+            };
+            return p.lexer.next().is_ok()
+                && p.lexer.token == wanted
+                && !p.lexer.has_newline_before;
+        }
+        // `canFollowModifier`. Only "static" and "export" may be followed by a line break.
+        (is_static || keyword == T::TExport || !p.lexer.has_newline_before)
+            && (p.lexer.is_identifier_or_keyword()
+                || matches!(
+                    p.lexer.token,
+                    T::TPrivateIdentifier
+                        | T::TOpenBracket
+                        | T::TOpenBrace
+                        | T::TAsterisk
+                        | T::TDotDotDot
+                        | T::TStringLiteral
+                        | T::TNumericLiteral
+                        | T::TBigIntegerLiteral
+                ))
+    }
+
+    /// `parseParameterEx` at "this": the name and an optional type, nothing else. `open_parens_loc` is the key of the function's marks.
+    /// Only the first parameter is the "this" parameter (`getSignatureFromDeclaration`). Any other is returned as a parameter
+    /// named "this", which the checker objects to (2680).
+    #[cold]
+    #[inline(never)]
+    fn parse_this_parameter(
+        &mut self,
+        open_parens_loc: bun_ast::Loc,
+        is_first: bool,
+        decorators: js_ast::ExprNodeList,
+        first_modifier: Option<bun_ast::Loc>,
+    ) -> Result<Option<G::Arg>, Error> {
+        let p = self;
+        let loc = p.lexer.loc();
+        p.lexer.next()?;
+        if p.lexer.token == T::TColon {
+            p.lexer.next()?;
+            if is_first {
+                p.mark_type_syntax(open_parens_loc, Mark::ThisParameter, p.lexer.loc());
+            } else {
+                p.mark_type_syntax(loc, Mark::Annotation, p.lexer.loc());
+            }
+            p.skip_type_script_type(Level::Lowest)?;
+        }
+        if let Some(start) = first_modifier {
+            // Neither decorators nor modifiers may be applied to "this" parameters.
+            p.lexer
+                .ts_error(bun_ast::Range { loc: start, len: 0 }, 1433);
+        }
+        if is_first {
+            return Ok(None);
+        }
+        let r#ref = p.store_name_in_ref(b"this");
+        Ok(Some(G::Arg {
+            ts_decorators: decorators,
+            binding: p.b(js_ast::B::Identifier { r#ref }, loc),
+            ..Default::default()
+        }))
+    }
+
+    /// `parseFunctionBlockOrSemicolon` and `parseFunctionBlock`, where the "{" of the body is missing.
+    #[cold]
+    #[inline(never)]
+    fn recover_missing_fn_body(
+        &mut self,
+        func: &mut G::Fn,
+        opts: &FnOrArrowDataParse,
+    ) -> Result<(), Error> {
+        let p = self;
+        func.flags.insert(Flags::Function::IsForwardDeclaration);
+        // There is no body at all. Only a function expression must have a block.
+        if opts.allow_missing_body_for_type_script && p.can_parse_semicolon() {
+            if p.lexer.token == T::TSemicolon {
+                p.lexer.next()?;
+            }
+            return Ok(());
+        }
+        // `parseBlock`: the body is a missing block. Nothing is consumed.
+        let before = p.lexer.prev_error_loc;
+        let range = p.lexer.range();
+        p.lexer
+            .ts_error(range, if opts.brace_or_semicolon { 1144 } else { 1005 });
+        p.lexer.put_up_with(before)?;
+        p.mark_type_syntax(func.open_parens_loc, Mark::MissingBody, range.loc);
+        // Tells a missing block from no body, whose `loc` stays empty.
+        func.body.loc = range.loc;
+        Ok(())
     }
 
     pub(crate) fn parse_fn_expr(
@@ -439,6 +788,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Don't declare the name "arguments" since it's shadowed and inaccessible
             let name_loc = p.lexer.loc();
+            // `parseFunctionExpression`: unless the function is async, which `validate_function_name` covers, the name is read in
+            // the [Await] context around it.
+            if p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent
+                && p.lexer.tolerant
+                && !is_async
+                && text == b"await"
+            {
+                p.report_fn_named_await(name_loc);
+            }
             let ref_ = if !text.is_empty() && text != arguments_str {
                 p.declare_symbol(js_ast::symbol::Kind::HoistedFunction, name_loc, text)?
             } else {
@@ -501,9 +859,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         p.lexer.expect(T::TOpenBrace)?;
+        // `parseBlock`: without the "{" the block has no statements, and nothing more is consumed.
+        if !pushed_scope_for_function_body && p.lexer.tolerant {
+            p.allow_in = old_allow_in;
+            p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
+            return Ok(G::FnBody {
+                loc,
+                stmts: bun_ast::StoreSlice::EMPTY,
+            });
+        }
         let mut opts = ParseStatementOptions::default();
         let stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut opts)?;
-        p.lexer.next()?;
+        p.end_of_block()?;
 
         if pushed_scope_for_function_body {
             p.pop_scope();
@@ -525,8 +892,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let p = self;
         let arrow_loc = p.lexer.loc();
 
-        // Newlines are not allowed before "=>"
-        if p.lexer.has_newline_before {
+        // Newlines are not allowed before "=>". TypeScript's parser takes the arrow wherever it is:
+        // `checkGrammarArrowFunction` objects to the line break.
+        if p.lexer.has_newline_before && !p.lexer.tolerant {
             p.log().add_range_error(
                 Some(p.source),
                 p.lexer.range(),
@@ -535,6 +903,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Err(crate::Error::SyntaxError);
         }
 
+        let has_arrow = p.lexer.token == T::TEqualsGreaterThan;
         p.lexer.expect(T::TEqualsGreaterThan)?;
 
         for arg in args.iter_mut() {
@@ -549,8 +918,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let args_slice = bun_ast::StoreSlice::<G::Arg>::new_mut(args);
 
-        if p.lexer.token == T::TOpenBrace {
-            let body = p.parse_fn_body(data)?;
+        let is_missing_open_brace = p.lexer.token != T::TOpenBrace
+            && p.lexer.tolerant
+            && !p.lexer.is_log_disabled
+            && has_arrow
+            && p.is_arrow_body_missing_open_brace();
+        if p.lexer.token == T::TOpenBrace || is_missing_open_brace {
+            let body = if is_missing_open_brace {
+                p.parse_fn_body_without_open_brace(data)?
+            } else {
+                p.parse_fn_body(data)?
+            };
+            p.mark_type_syntax(body.loc, Mark::ArrowToken, arrow_loc);
             p.after_arrow_body_loc = p.lexer.loc();
             let has_react_hooks_suppression = p.lexer.has_react_hooks_suppression_before
                 || p.lexer.has_react_hooks_block_suppression;
@@ -576,7 +955,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
 
         p.fn_or_arrow_data_parse = data.clone();
-        let expr = match p.parse_expr(Level::Comma) {
+        let parsed = if has_arrow || !p.lexer.tolerant {
+            p.parse_expr(Level::Comma)
+        } else {
+            p.parse_arrow_body_without_arrow()
+        };
+        let expr = match parsed {
             Ok(e) => e,
             Err(err) => {
                 // The error path returns without restoring fn_or_arrow_data_parse;
@@ -606,5 +990,63 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_react_hooks_suppression,
             ..Default::default()
         })
+    }
+
+    /// `parseArrowFunctionExpressionBody`: whether a statement that is no expression statement follows the "=>". Then the "{" of a
+    /// block was forgotten.
+    #[cold]
+    #[inline(never)]
+    fn is_arrow_body_missing_open_brace(&mut self) -> bool {
+        !matches!(
+            self.lexer.token,
+            T::TSemicolon | T::TFunction | T::TClass | T::TOpenBrace
+        ) && self.is_start_of_statement()
+            // `isStartOfExpressionStatement`
+            && (self.lexer.token == T::TAt || !self.is_start_of_expression_or_shift_assign())
+    }
+
+    /// `parseFunctionBlock(ParseFlagsIgnoreMissingOpenBrace)`: the "{" is reported as missing, and the statements up to the "}" are
+    /// the body.
+    #[cold]
+    #[inline(never)]
+    fn parse_fn_body_without_open_brace(
+        &mut self,
+        data: &mut FnOrArrowDataParse,
+    ) -> Result<G::FnBody, Error> {
+        let p = self;
+        let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
+        let old_allow_in = p.allow_in;
+        p.fn_or_arrow_data_parse = data.clone();
+        p.allow_in = true;
+
+        let loc = p.lexer.loc();
+        let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::FunctionBody, loc)?;
+        p.lexer.expect(T::TOpenBrace)?;
+        let mut opts = ParseStatementOptions::default();
+        let stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut opts)?;
+        p.end_of_block()?;
+        p.pop_scope();
+
+        p.allow_in = old_allow_in;
+        p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
+        Ok(G::FnBody {
+            loc,
+            stmts: bun_ast::StoreSlice::new_mut(stmts.into_bump_slice_mut()),
+        })
+    }
+
+    /// `parseParenthesizedArrowFunctionExpression`: with neither "=>" nor "{", the body is `parseIdentifier()`. What that says of a
+    /// missing identifier is dropped: the "=>" was reported as missing at the same place.
+    #[cold]
+    #[inline(never)]
+    fn parse_arrow_body_without_arrow(&mut self) -> Result<Expr, Error> {
+        let p = self;
+        let loc = p.lexer.loc();
+        if !p.is_identifier_in_context() {
+            return Ok(p.new_expr(E::Missing {}, loc));
+        }
+        let ref_ = p.store_name_in_ref(p.lexer.identifier);
+        p.lexer.next()?;
+        Ok(Expr::init_identifier(ref_, loc))
     }
 }

@@ -818,6 +818,7 @@ dependencies = [
  "bun_paths",
  "bun_ptr",
  "bun_react_compiler",
+ "bun_sema",
  "bun_url",
  "bun_wyhash",
  "bytemuck",
@@ -1345,6 +1346,22 @@ name = "bun_safety"
 version = "0.0.0"
 dependencies = [
  "bun_core",
+]
+
+[[package]]
+name = "bun_sema"
+version = "0.0.0"
+dependencies = [
+ "bitflags",
+]
+
+[[package]]
+name = "bun_sema_standalone"
+version = "0.0.0"
+dependencies = [
+ "bun_js_parser",
+ "bun_sema",
+ "libc",
 ]
 
 [[package]]

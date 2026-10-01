@@ -20,6 +20,8 @@ members = [
   "src/paths",
   "src/resolver",
   "src/safety",
+  "src/sema",
+  "src/sema/standalone",
   "src/semver",
   "src/sourcemap",
   "src/sql",
@@ -365,6 +367,8 @@ bun_md = { path = "src/md" }
 bun_paths = { path = "src/paths" }
 bun_resolver = { path = "src/resolver" }
 bun_safety = { path = "src/safety" }
+bun_sema = { path = "src/sema" }
+bun_sema_standalone = { path = "src/sema/standalone" }
 bun_semver = { path = "src/semver" }
 bun_sourcemap = { path = "src/sourcemap" }
 bun_sql = { path = "src/sql" }

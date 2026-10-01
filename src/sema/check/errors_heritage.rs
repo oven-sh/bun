@@ -1,0 +1,867 @@
+//! A class or an interface against what it extends and implements, and members against index signatures:
+//! 2415 2416 2417 2420 2720 2430 2320; 2515 2653 2654 2655 2656 2650, 2610 2611, 2423 2425 2426; 2411 2413 2374.
+//!
+//! Follows `checkClassLikeDeclaration`, `issueMemberSpecificError`, `checkKindsOfPropertyMemberOverrides`,
+//! `checkInterfaceDeclaration`, `checkInheritedPropertiesAreIdentical` and `checkIndexConstraints` of TypeScript 7.0.2's checker.go.
+
+use super::errors::Diagnostic;
+use super::*;
+use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent};
+
+impl Checker<'_> {
+    pub(super) fn check_heritage(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        for c in 0..hir.classes.len() {
+            let is_bound = match bound.class_owner[c] {
+                ClassOwner::Expr(x) => {
+                    x.is_some() && !matches!(bound.expr_parent[x.idx()], Parent::None)
+                }
+                ClassOwner::Stmt(s) => s.is_some(),
+            };
+            if is_bound && bound.class_symbol[c].is_some() {
+                self.check_class_heritage(file, ClassId(c as u32), out);
+            }
+        }
+        for i in 0..hir.interfaces.len() {
+            if bound.interface_symbol[i].is_some() {
+                self.check_interface_heritage(file, InterfaceId(i as u32), out);
+            }
+        }
+        for t in 0..hir.types.len() {
+            if let TypeNodeKind::Object(members) = hir.types[t].kind
+                && bound.type_scope[t].is_some()
+                && members
+                    .iter()
+                    .any(|m| hir[m].kind == MemberKind::IndexSignature)
+            {
+                let ty = self.type_from_node(file, TypeNodeId(t as u32));
+                self.check_index_constraints(file, ty, &[(file, members)], false, None, out);
+            }
+        }
+    }
+
+    fn check_class_heritage(&mut self, file: FileId, c: ClassId, out: &mut Vec<Diagnostic>) {
+        let hir = self.hir(file);
+        let class = &hir[c];
+        let sym = self
+            .files()
+            .sym(file, self.bound(file).class_symbol[c.idx()]);
+        let class_type = self.declared_type(sym);
+        if !self.is_known(class_type) {
+            return;
+        }
+        let name_or_node = if class.name.is_some() {
+            class.name_pos
+        } else {
+            class.pos
+        };
+        let this = self.intern(TypeData::ThisParam(sym));
+        if class.extends.is_some()
+            && let Some(&base) = self.base_types(sym).first()
+            && self.is_known(base)
+        {
+            match self.heir_against_base(class_type, base, this) {
+                Some(with_this) => self.issue_member_specific_error(
+                    file,
+                    c,
+                    (class_type, base),
+                    with_this,
+                    2415,
+                    out,
+                ),
+                // The static side is looked at only if the instances are in order.
+                None => {
+                    let static_type = self.type_of_symbol(sym);
+                    let base_constructor = self.type_of_expr(file, class.extends);
+                    let static_base = self.apparent_type(base_constructor);
+                    if self.is_known(static_type)
+                        && self.is_known(static_base)
+                        && let Some(properties) = self.type_without_signatures(static_base)
+                        && !self.is_assignable(static_type, properties)
+                    {
+                        self.report_not_assignable(
+                            static_type,
+                            properties,
+                            name_or_node,
+                            2417,
+                            out,
+                        );
+                    }
+                }
+            }
+            self.check_kinds_of_property_member_overrides(file, c, sym, class_type, base, out);
+        }
+        for node in hir.ids(class.implements) {
+            // Not the primitive type: a name that nothing goes by.
+            if matches!(hir[node].kind, TypeNodeKind::Keyword(_)) {
+                continue;
+            }
+            let implemented = self.type_from_node(file, node);
+            let implemented = self.reduced(implemented);
+            if !self.is_known(implemented) || self.is_any(implemented) {
+                continue;
+            }
+            // `isValidBaseType`: what cannot be implemented is not compared with. That it cannot is said with the other checks of classes.
+            if !self.is_valid_base_type(implemented) {
+                continue;
+            }
+            let is_class = matches!(*self.data(implemented), TypeData::Ref { target, .. } if self.files().flags(target).contains(SymFlags::CLASS));
+            if let Some(with_this) = self.heir_against_base(class_type, implemented, this) {
+                self.issue_member_specific_error(
+                    file,
+                    c,
+                    (class_type, implemented),
+                    with_this,
+                    if is_class { 2720 } else { 2420 },
+                    out,
+                );
+            }
+        }
+        let locals = [(file, class.members)];
+        self.check_index_constraints(file, class_type, &locals, false, None, out);
+        let static_type = self.type_of_symbol(sym);
+        self.check_index_constraints(file, static_type, &locals, true, None, out);
+    }
+
+    /// `getTypeWithoutSignatures`, of what a class extends. `None`: that cannot be extended, which is an error of its own
+    /// (`getBaseConstructorTypeOfClass`).
+    fn type_without_signatures(&mut self, ty: TypeId) -> Option<TypeId> {
+        // Of what is no object only `null` can be extended, and it is left as it is.
+        let Some(members) = self.members(ty) else {
+            return (ty == TypeId::NULL).then_some(ty);
+        };
+        let mut shape = Shape::default();
+        for prop in &members.shape().props {
+            // `propertiesRelatedTo` passes over `prototype`. A static `#name` is neither inherited nor asked for
+            // (`isStaticPrivateIdentifierProperty`).
+            if prop.name == known::prototype
+                || self.files().atoms.bytes(prop.name).first() == Some(&b'#')
+            {
+                continue;
+            }
+            // As it is declared: where a private or protected one comes from tells whether it is the same.
+            let mut own = prop.clone();
+            match own.source {
+                PropSource::Type(t) => {
+                    own.source = PropSource::Type(self.instantiate(t, members.mapper))
+                }
+                _ => own.mapper = self.compose(own.mapper, members.mapper),
+            }
+            shape.props.push(own);
+        }
+        Some(self.synth(shape))
+    }
+
+    /// `getTypeWithThisArgument`: what `ty` has, with `this_argument` for `this`. A reference has no place for that, so the type is
+    /// made up.
+    fn with_this_argument(&mut self, ty: TypeId, this_argument: TypeId) -> TypeId {
+        let ty = self.force(ty);
+        match self.data(ty) {
+            TypeData::Ref { target, .. } => {
+                let own_this = self.intern(TypeData::ThisParam(*target));
+                let Some(members) = self.members(ty) else {
+                    return ty;
+                };
+                let mut pairs = self.p.types.mapping(members.mapper).to_vec();
+                for pair in &mut pairs {
+                    if pair.0 == own_this {
+                        pair.1 = this_argument;
+                    }
+                }
+                // With nothing to put for anything, what is inherited as it is stays the very same on both sides.
+                let mapper = if pairs.iter().all(|pair| pair.0 == pair.1) {
+                    MapperId::IDENTITY
+                } else {
+                    self.p.types.mapper(pairs)
+                };
+                let mut shape = Shape::default();
+                for prop in &members.shape().props {
+                    let mut prop = prop.clone();
+                    match prop.source {
+                        PropSource::Type(t) => {
+                            prop.source = PropSource::Type(self.instantiate(t, mapper))
+                        }
+                        _ => prop.mapper = self.compose(prop.mapper, mapper),
+                    }
+                    shape.props.push(prop);
+                }
+                for &sig in &members.shape().call {
+                    let sig = self.instantiate_sig(sig, mapper);
+                    shape.call.push(sig);
+                }
+                for &sig in &members.shape().construct {
+                    let sig = self.instantiate_sig(sig, mapper);
+                    shape.construct.push(sig);
+                }
+                for info in &members.shape().index {
+                    let value = self.instantiate(info.value, mapper);
+                    shape.index.push(IndexInfo { value, ..*info });
+                }
+                self.synth(shape)
+            }
+            TypeData::Intersection(parts) => {
+                let parts: Vec<TypeId> = parts
+                    .iter()
+                    .map(|&part| self.with_this_argument(part, this_argument))
+                    .collect();
+                self.intersection(&parts)
+            }
+            _ => ty,
+        }
+    }
+
+    /// `checkTypeAssignableTo(typeWithThis, baseWithThis)`: whether `heir` fits `base` with `this`, the `this` type of the heir, for
+    /// `this` in both. `None` if it does, else the two as they were compared.
+    fn heir_against_base(
+        &mut self,
+        heir: TypeId,
+        base: TypeId,
+        this: TypeId,
+    ) -> Option<(TypeId, TypeId)> {
+        // As the two stand each is `this` to itself. What fits so is taken to fit.
+        if self.is_assignable(heir, base) {
+            return None;
+        }
+        let with_this = (
+            self.with_this_argument(heir, this),
+            self.with_this_argument(base, this),
+        );
+        if !self.is_assignable(with_this.0, with_this.1) {
+            return Some(with_this);
+        }
+        // `isObjectTypeWithInferableIndex`: what a class or an interface declares is not taken for an index signature it lacks.
+        // The two that were compared are nobody's declaration, so that is asked of the types themselves.
+        let (Some(sm), Some(tm)) = (self.members(heir), self.members(base)) else {
+            return None;
+        };
+        let has_string_index = tm
+            .shape()
+            .index
+            .iter()
+            .any(|info| info.key == TypeId::STRING);
+        for info in &tm.shape().index {
+            let wanted = self.instantiate(info.value, tm.mapper);
+            if !(has_string_index && self.is_any(wanted))
+                && self.applicable_index_info(&sm, info.key, None).is_none()
+            {
+                return Some(with_this);
+            }
+        }
+        None
+    }
+
+    /// `issueMemberSpecificError`: it is said of each member that is to blame, and of the class if none can be told. `plain`: the
+    /// class and what it does not fit. `with_this`: what `heir_against_base` made of the two. As there, what fits either way fits.
+    fn issue_member_specific_error(
+        &mut self,
+        file: FileId,
+        c: ClassId,
+        plain: (TypeId, TypeId),
+        with_this: (TypeId, TypeId),
+        broad: u32,
+        out: &mut Vec<Diagnostic>,
+    ) {
+        let hir = self.hir(file);
+        let mut issued = false;
+        for m in hir[c].members.iter() {
+            let member = &hir[m];
+            if member.flags.contains(Flags::STATIC)
+                || !matches!(
+                    member.kind,
+                    MemberKind::Property
+                        | MemberKind::Method
+                        | MemberKind::Getter
+                        | MemberKind::Setter
+                )
+            {
+                continue;
+            }
+            let Some(name) = self.member_name(file, member.key) else {
+                continue;
+            };
+            if !self.is_member_assignable(with_this, name)
+                && !self.is_member_assignable(plain, name)
+            {
+                out.push(Diagnostic {
+                    start: member.pos,
+                    code: 2416,
+                });
+                issued = true;
+            }
+        }
+        if !issued {
+            let at = if hir[c].name.is_some() {
+                hir[c].name_pos
+            } else {
+                hir[c].pos
+            };
+            self.report_not_assignable(plain.0, plain.1, at, broad, out);
+        }
+    }
+
+    /// Whether the property `name` of the first of `pair` fits that of the second. It does where one of them has none, and where it
+    /// cannot be told.
+    fn is_member_assignable(&mut self, pair: (TypeId, TypeId), name: Atom) -> bool {
+        let (Some((own, own_mapper)), Some((inherited, base_mapper))) =
+            (self.prop_of(pair.0, name), self.prop_of(pair.1, name))
+        else {
+            return true;
+        };
+        let (given, wanted) = (
+            self.type_of_prop(&own, own_mapper),
+            self.type_of_prop(&inherited, base_mapper),
+        );
+        !self.is_known(given) || !self.is_known(wanted) || self.is_assignable(given, wanted)
+    }
+
+    /// The members that declare `prop`, if members of classes or interfaces do.
+    fn declarations_of_prop<'a>(&self, prop: &'a Prop) -> &'a [(FileId, MemberId)] {
+        match &prop.source {
+            PropSource::Members(members) => members,
+            _ => &[],
+        }
+    }
+
+    /// What `checkKindsOfPropertyMemberOverrides` asks of the symbol of a property: whether it is a property, has a getter, has a
+    /// setter, is a method. `None`: what declares it does not tell.
+    fn kinds_of_prop(&self, prop: &Prop) -> Option<(bool, bool, bool, bool)> {
+        match &prop.source {
+            PropSource::Members(decls) if !decls.is_empty() => {
+                let (mut property, mut getter, mut setter, mut method) =
+                    (false, false, false, false);
+                for &(f, m) in decls.iter() {
+                    let member = &self.hir(f)[m];
+                    match member.kind {
+                        MemberKind::Property if member.flags.contains(Flags::ACCESSOR) => {
+                            (getter, setter) = (true, true)
+                        }
+                        MemberKind::Property => property = true,
+                        MemberKind::Getter => getter = true,
+                        MemberKind::Setter => setter = true,
+                        MemberKind::Method => method = true,
+                        _ => {}
+                    }
+                }
+                Some((property, getter, setter, method))
+            }
+            // A parameter that declares a property.
+            PropSource::Parameter(..) => Some((true, false, false, false)),
+            // `createUnionOrIntersectionProperty`: accessors if all the members of the intersection have the same ones, else a property.
+            // A method besides (`CheckFlagsSyntheticMethod`) if it is one in all of them.
+            PropSource::Intersected(_, parts) => {
+                let mut all: Option<(bool, bool, bool, bool)> = None;
+                for part in parts.iter() {
+                    let (_, getter, setter, method) = self.kinds_of_prop(part)?;
+                    all = Some(match all {
+                        None => (!(getter || setter), getter, setter, method),
+                        Some((false, g, s, m)) if (g, s) == (getter, setter) => {
+                            (false, g, s, m && method)
+                        }
+                        Some((_, _, _, m)) => (true, false, false, m && method),
+                    });
+                }
+                all
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether an interface declares `prop`, or one of the properties an intersection makes it of.
+    fn is_declared_in_interface(&self, prop: &Prop) -> bool {
+        match &prop.source {
+            PropSource::Members(decls) => decls.iter().any(|&(f, m)| {
+                matches!(
+                    self.bound(f).member_owner[m.idx()],
+                    MemberOwner::Interface(_)
+                )
+            }),
+            PropSource::Intersected(_, parts) => {
+                parts.iter().any(|part| self.is_declared_in_interface(part))
+            }
+            _ => false,
+        }
+    }
+
+    /// `checkKindsOfPropertyMemberOverrides`
+    fn check_kinds_of_property_member_overrides(
+        &mut self,
+        file: FileId,
+        c: ClassId,
+        sym: Sym,
+        class_type: TypeId,
+        base: TypeId,
+        out: &mut Vec<Diagnostic>,
+    ) {
+        let hir = self.hir(file);
+        let (Some(base_members), Some(own_members)) =
+            (self.members(base), self.members(class_type))
+        else {
+            return;
+        };
+        let is_abstract_class = hir[c].flags.contains(Flags::ABSTRACT);
+        let mut not_implemented = 0;
+        for inherited in &base_members.shape().props {
+            let Some(derived) = own_members.resolved.prop(inherited.name) else {
+                continue;
+            };
+            let base_decls = self.declarations_of_prop(inherited);
+            let is_abstract = base_decls
+                .iter()
+                .any(|&(f, m)| self.hir(f)[m].flags.contains(Flags::ABSTRACT));
+            if derived.source == inherited.source {
+                // Taken over as it is. What is abstract has to be filled in, unless the class is abstract as well.
+                if is_abstract && !is_abstract_class {
+                    let elsewhere = self.base_types(sym).iter().any(|&other| {
+                        other != base
+                            && self
+                                .prop_of(other, inherited.name)
+                                .is_some_and(|(p, _)| p.source != inherited.source)
+                    });
+                    if !elsewhere {
+                        not_implemented += 1;
+                    }
+                }
+                continue;
+            }
+            // `getDeclarationModifierFlagsFromSymbol`: what several members of an intersection have is private if it is in one of them.
+            let is_private_somewhere = matches!(&inherited.source, PropSource::Intersected(_, parts) if parts.iter().any(|part| part.flags.contains(PropFlags::PRIVATE)));
+            if (inherited.flags | derived.flags).contains(PropFlags::PRIVATE)
+                || is_private_somewhere
+            {
+                continue;
+            }
+            // The name of `derived.ValueDeclaration`.
+            let (derived_file, start) = match &derived.source {
+                PropSource::Members(decls) => {
+                    let Some(&(f, first)) = decls.first() else {
+                        continue;
+                    };
+                    (f, self.hir(f)[first].pos)
+                }
+                PropSource::Parameter(f, p) => (*f, self.hir(*f)[self.hir(*f)[*p].pat].pos),
+                _ => continue,
+            };
+            if derived_file != file {
+                continue;
+            }
+            let (Some(base_kinds), Some(derived_kinds)) =
+                (self.kinds_of_prop(inherited), self.kinds_of_prop(derived))
+            else {
+                continue;
+            };
+            let (base_property, base_getter, base_setter, base_method) = base_kinds;
+            let (derived_property, derived_getter, derived_setter, derived_method) = derived_kinds;
+            let (base_accessor, derived_accessor) =
+                (base_getter || base_setter, derived_getter || derived_setter);
+            if (base_property || base_accessor) && (derived_property || derived_accessor) {
+                // `arePropertiesAbstractOrInterface`: all the declarations, or one of those an intersection puts together.
+                let is_abstract_or_interface = match &inherited.source {
+                    PropSource::Intersected(..) => self.is_declared_in_interface(inherited),
+                    _ => {
+                        !base_decls.is_empty()
+                            && base_decls.iter().all(|&(f, m)| {
+                                matches!(
+                                    self.bound(f).member_owner[m.idx()],
+                                    MemberOwner::Interface(_)
+                                ) || is_abstract
+                                    && (self.hir(f)[m].kind != MemberKind::Property
+                                        || self.hir(f)[m].init.is_none())
+                            })
+                    }
+                };
+                if is_abstract_or_interface {
+                    continue;
+                }
+                if base_accessor && !base_property && derived_property && !derived_accessor {
+                    out.push(Diagnostic { start, code: 2610 });
+                } else if base_property && !base_accessor && derived_accessor {
+                    out.push(Diagnostic { start, code: 2611 });
+                }
+            } else if base_method {
+                if !(derived_method || derived_property) {
+                    out.push(Diagnostic { start, code: 2423 });
+                }
+            } else if base_accessor {
+                out.push(Diagnostic { start, code: 2426 });
+            } else {
+                out.push(Diagnostic { start, code: 2425 });
+            }
+        }
+        if not_implemented > 0 {
+            let is_expression =
+                matches!(self.bound(file).class_owner[c.idx()], ClassOwner::Expr(_));
+            let code = match (not_implemented, is_expression) {
+                (1, false) => 2515,
+                (1, true) => 2653,
+                (2..=5, false) => 2654,
+                (2..=5, true) => 2656,
+                (_, false) => 2655,
+                (_, true) => 2650,
+            };
+            out.push(Diagnostic {
+                start: if hir[c].name.is_some() {
+                    hir[c].name_pos
+                } else {
+                    hir[c].pos
+                },
+                code,
+            });
+        }
+    }
+
+    fn check_interface_heritage(
+        &mut self,
+        file: FileId,
+        i: InterfaceId,
+        out: &mut Vec<Diagnostic>,
+    ) {
+        let sym = self
+            .files()
+            .sym(file, self.bound(file).interface_symbol[i.idx()]);
+        let decls = self.files().decls(sym);
+        // Once for the interface: where it is first declared.
+        let first = decls.iter().find_map(|&(f, d)| match d {
+            Decl::Interface(id) => Some((f, id)),
+            _ => None,
+        });
+        let is_first = first == Some((file, i));
+        let ty = self.declared_type(sym);
+        if !self.is_known(ty) {
+            return;
+        }
+        let name_pos = self.hir(file)[i].name_pos;
+        let bases = self.base_types(sym);
+        if is_first {
+            if !self.inherited_properties_are_identical(sym, ty, &bases) {
+                out.push(Diagnostic {
+                    start: name_pos,
+                    code: 2320,
+                });
+                return;
+            }
+            let this = self.intern(TypeData::ThisParam(sym));
+            for &base in bases.iter() {
+                // `resolveBaseTypesOfInterface`: what cannot be extended is no base type.
+                if self.is_known(base)
+                    && self.is_valid_base_type(base)
+                    && self.heir_against_base(ty, base, this).is_some()
+                {
+                    self.report_not_assignable(ty, base, name_pos, 2430, out);
+                }
+            }
+        } else if !self.inherited_properties_are_identical(sym, ty, &bases) {
+            return;
+        }
+        let mut locals = Vec::new();
+        for &(f, d) in &decls {
+            match d {
+                Decl::Interface(id) => locals.push((f, self.hir(f)[id].members)),
+                Decl::Class(c) => locals.push((f, self.hir(f)[c].members)),
+                _ => {}
+            }
+        }
+        // What is said where the interface is named is said once. Nothing is where a class goes by the name as well: the type is
+        // that of the class then (`ObjectFlagsInterface`).
+        let is_class = self.files().flags(sym).contains(SymFlags::CLASS);
+        let fallback = first
+            .filter(|&(f, _)| f == file && is_first && !is_class)
+            .map(|_| (name_pos, sym));
+        if is_first || first.is_some_and(|(f, _)| f != file) {
+            self.check_index_constraints(file, ty, &locals, false, fallback, out);
+        }
+    }
+
+    /// `checkInheritedPropertiesAreIdentical`
+    fn inherited_properties_are_identical(
+        &mut self,
+        sym: Sym,
+        ty: TypeId,
+        bases: &[TypeId],
+    ) -> bool {
+        if bases.len() < 2 {
+            return true;
+        }
+        let _ = ty;
+        // What it declares itself settles the matter.
+        let mut own: Vec<Atom> = Vec::new();
+        for (f, d) in self.files().decls(sym) {
+            let members = match d {
+                Decl::Interface(id) => self.hir(f)[id].members,
+                Decl::Class(c) => self.hir(f)[c].members,
+                _ => continue,
+            };
+            for m in members.iter() {
+                let key = self.hir(f)[m].key;
+                if let Some(name) = self.member_name(f, key) {
+                    own.push(name);
+                }
+            }
+        }
+        let this = self.intern(TypeData::ThisParam(sym));
+        let access = PropFlags::PRIVATE | PropFlags::PROTECTED;
+        // Of what is private or protected, where it is declared as well.
+        let mut seen: Vec<(Atom, TypeId, PropFlags, Option<PropSource>)> = Vec::new();
+        for &base in bases {
+            // `this` is in each what it is in the heir.
+            let base = self.with_this_argument(base, this);
+            let Some(members) = self.members(base) else {
+                continue;
+            };
+            for prop in &members.shape().props {
+                if own.contains(&prop.name) {
+                    continue;
+                }
+                let ty = self.type_of_prop_as_read(prop, members.mapper);
+                match seen.iter().find(|s| s.0 == prop.name) {
+                    None => seen.push((
+                        prop.name,
+                        ty,
+                        prop.flags,
+                        prop.flags.intersects(access).then(|| prop.source.clone()),
+                    )),
+                    // `compareProperties`
+                    Some((_, other, flags, source)) => {
+                        let (other, flags) = (*other, *flags);
+                        if flags & access != prop.flags & access {
+                            return false;
+                        }
+                        // What is not for all to see is the same only if it is declared in one place. Of the rest, whether it can be
+                        // left out counts.
+                        let same = if flags.intersects(access) {
+                            if source.as_ref() != Some(&prop.source) {
+                                return false;
+                            }
+                            PropFlags::READONLY
+                        } else {
+                            PropFlags::OPTIONAL | PropFlags::READONLY
+                        };
+                        if flags & same != prop.flags & same
+                            || self.is_known(ty)
+                                && self.is_known(other)
+                                && !self.is_identical(other, ty)
+                        {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    /// `checkIndexConstraints`. `locals`: the members that the declarations of `ty` itself list. `fallback`: for an interface,
+    /// where it is named, for a property and an index signature that come from different interfaces it extends.
+    fn check_index_constraints(
+        &mut self,
+        file: FileId,
+        ty: TypeId,
+        locals: &[(FileId, Span<MemberId>)],
+        is_static: bool,
+        fallback: Option<(u32, Sym)>,
+        out: &mut Vec<Diagnostic>,
+    ) {
+        let Some(members) = self.members(ty) else {
+            return;
+        };
+        if members.shape().index.is_empty() {
+            return;
+        }
+        let infos: Vec<IndexInfo> = members
+            .shape()
+            .index
+            .iter()
+            .map(|i| IndexInfo {
+                value: self.instantiate(i.value, members.mapper),
+                ..*i
+            })
+            .collect();
+        // Where the index signature for `key` is written, if the type itself declares it.
+        let local_index = |c: &mut Self, key: TypeId| -> Option<(FileId, u32)> {
+            for &(f, span) in locals {
+                for m in span.iter() {
+                    let member = c.hir(f)[m];
+                    if member.kind != MemberKind::IndexSignature
+                        || member.flags.contains(Flags::STATIC) != is_static
+                    {
+                        continue;
+                    }
+                    let Some(p) = c.hir(f)[member.func].params.iter().next() else {
+                        continue;
+                    };
+                    let node = c.hir(f)[p].ty;
+                    let declared = if node.is_some() {
+                        c.type_from_node(f, node)
+                    } else {
+                        TypeId::STRING
+                    };
+                    if c.parts(declared).contains(&key) {
+                        return Some((f, member.pos));
+                    }
+                }
+            }
+            None
+        };
+        for prop in &members.shape().props {
+            let text = self.files().atoms.bytes(prop.name);
+            if text.first() == Some(&b'#') || is_static && prop.name == known::prototype {
+                continue;
+            }
+            let is_local = |f: FileId, m: MemberId| {
+                locals
+                    .iter()
+                    .any(|&(lf, span)| lf == f && span.range().contains(&m.idx()))
+            };
+            let local_prop = match &prop.source {
+                // An error about a parameter goes to where it starts, modifiers included (`GetErrorRangeForNode`).
+                PropSource::Parameter(f, p) => {
+                    let bound = self.bound(*f);
+                    matches!(bound.fns[bound.param_fn[p.idx()].idx()].owner, FnOwner::Member(m) if is_local(*f, m)).then(|| (*f, self.hir(*f)[*p].pos))
+                }
+                _ => self
+                    .declarations_of_prop(prop)
+                    .iter()
+                    .find(|&&(f, m)| is_local(f, m))
+                    .map(|&(f, m)| (f, self.hir(f)[m].pos)),
+            };
+            let prop_type = self.type_of_prop_as_read(prop, members.mapper);
+            if !self.is_known(prop_type) {
+                continue;
+            }
+            for info in &infos {
+                if !self.is_name_applicable_to_index(prop.name, info.key)
+                    || !self.is_known(info.value)
+                {
+                    continue;
+                }
+                let mut at = local_prop.or_else(|| local_index(self, info.key));
+                if at.is_none()
+                    && let Some((name_pos, sym)) = fallback
+                {
+                    let has_both = self.base_types(sym).iter().any(|&base| {
+                        self.prop_of(base, prop.name).is_some()
+                            && self
+                                .members(base)
+                                .is_some_and(|m| m.shape().index.iter().any(|i| i.key == info.key))
+                    });
+                    if !has_both {
+                        at = Some((file, name_pos));
+                    }
+                }
+                if let Some((f, start)) = at
+                    && f == file
+                    && !self.is_assignable(prop_type, info.value)
+                {
+                    out.push(Diagnostic { start, code: 2411 });
+                }
+            }
+        }
+        // The members of a class whose names are only known when it runs (`hasBindableName`): each is a property of its own.
+        for &(f, span) in locals {
+            if f != file {
+                continue;
+            }
+            for m in span.iter() {
+                let member = self.hir(f)[m];
+                let PropKey::Computed(key) = member.key else {
+                    continue;
+                };
+                if !matches!(self.bound(f).member_owner[m.idx()], MemberOwner::Class(_))
+                    || member.flags.contains(Flags::STATIC) != is_static
+                    || !matches!(
+                        member.kind,
+                        MemberKind::Property
+                            | MemberKind::Method
+                            | MemberKind::Getter
+                            | MemberKind::Setter
+                    )
+                    || self.member_name(f, member.key).is_some()
+                {
+                    continue;
+                }
+                let name_type = self.type_of_expr(f, key);
+                let flags = if member.flags.contains(Flags::OPTIONAL) {
+                    PropFlags::OPTIONAL
+                } else {
+                    PropFlags::empty()
+                };
+                let prop = Prop {
+                    name: Atom::NONE,
+                    flags,
+                    source: PropSource::Members(Box::new([(f, m)])),
+                    mapper: MapperId::IDENTITY,
+                };
+                let prop_type = self.type_of_prop_as_read(&prop, members.mapper);
+                if !self.is_known(name_type) || !self.is_known(prop_type) {
+                    continue;
+                }
+                for info in &infos {
+                    if self.is_known(info.value)
+                        && self.is_index_key_applicable(name_type, info.key)
+                        && !self.is_assignable(prop_type, info.value)
+                    {
+                        out.push(Diagnostic {
+                            start: member.pos,
+                            code: 2411,
+                        });
+                    }
+                }
+            }
+        }
+        // `checkIndexConstraintForIndexSignature`
+        if infos.len() > 1 {
+            for check in &infos {
+                for info in &infos {
+                    if info.key == check.key || !self.is_index_key_applicable(check.key, info.key) {
+                        continue;
+                    }
+                    let mut at =
+                        local_index(self, check.key).or_else(|| local_index(self, info.key));
+                    if at.is_none()
+                        && let Some((name_pos, sym)) = fallback
+                    {
+                        let has_both = self.base_types(sym).iter().any(|&base| {
+                            self.members(base).is_some_and(|m| {
+                                let index = &m.shape().index;
+                                index.iter().any(|i| i.key == check.key)
+                                    && index.iter().any(|i| i.key == info.key)
+                            })
+                        });
+                        if !has_both {
+                            at = Some((file, name_pos));
+                        }
+                    }
+                    if let Some((f, start)) = at
+                        && f == file
+                        && self.is_known(check.value)
+                        && self.is_known(info.value)
+                        && !self.is_assignable(check.value, info.value)
+                    {
+                        out.push(Diagnostic { start, code: 2413 });
+                    }
+                }
+            }
+        }
+    }
+
+    /// `isApplicableIndexType`
+    fn is_index_key_applicable(&mut self, source: TypeId, target: TypeId) -> bool {
+        self.is_assignable(source, target)
+            || target == TypeId::STRING && self.is_assignable(source, TypeId::NUMBER)
+            || target == TypeId::NUMBER
+                && match self.data(source) {
+                    // `${number}`
+                    TypeData::Template { texts, types } => {
+                        types[..] == [TypeId::NUMBER]
+                            && texts
+                                .iter()
+                                .all(|&text| self.files().atoms.bytes(text).is_empty())
+                    }
+                    TypeData::StringLit { value, .. }
+                    | TypeData::EnumLit {
+                        value: EnumValue::String(value),
+                        ..
+                    } => self.is_numeric_name(*value),
+                    _ => false,
+                }
+    }
+}

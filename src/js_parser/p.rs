@@ -180,6 +180,7 @@ pub(crate) struct ParserSnapshot<'a> {
     latest_arrow_arg_loc: bun_ast::Loc,
     forbid_suffix_after_as_loc: bun_ast::Loc,
     after_arrow_body_loc: bun_ast::Loc,
+    after_update_expr: bool,
     esm_import_keyword: bun_ast::Range,
     esm_export_keyword: bun_ast::Range,
     enclosing_class_keyword: bun_ast::Range,
@@ -383,6 +384,12 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) stack_check: bun_core::StackCheck,
     /// `Parser::parse_only`: where what does not say so itself starts.
     pub(crate) starts_for_parse_only: Option<StartsForParseOnly>,
+    /// Where the type syntax that gets skipped is, when something wants to know. See `crate::sema`.
+    pub(crate) type_syntax: Option<Box<crate::sema::TypeSyntax>>,
+    /// Tolerant mode only. The tag name of the JSX element whose child is about to be parsed (`openingTag` of `parseJsxChildren`).
+    pub(crate) jsx_parent_tag: Option<&'a [u8]>,
+    /// Tolerant mode only. In `<div><span></div>`, the closing tag that the child read and its parent takes.
+    pub(crate) jsx_adopted_close: Option<crate::parser::JSXTag<'a>>,
 
     pub(crate) reported_stack_overflow: core::cell::Cell<bool>,
 
@@ -678,6 +685,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     //     Expression , AssignmentExpression
     //
     pub(crate) after_arrow_body_loc: bun_ast::Loc,
+    /// Tolerant mode only: the token at `after_arrow_body_loc` follows `x++` or `x--`, not the body of an arrow function.
+    pub(crate) after_update_expr: bool,
 
     pub(crate) const_values: bun_ast::ast_result::ConstValuesMap,
 
@@ -4198,7 +4207,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub(crate) fn log_expr_errors(&mut self, errors: &mut DeferredErrors) {
-        if let Some(r) = errors.invalid_expr_default_value {
+        // `parseObjectLiteralElement` accepts `{ a = 1 }`. The checker reports 1312.
+        if let Some(r) = errors.invalid_expr_default_value
+            && !self.lexer.tolerant
+        {
             self.log()
                 .add_range_error(Some(self.source), r, b"Unexpected \"=\"");
         }
@@ -4343,6 +4355,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             // Return empty statement - the import is completely removed
+            if self.keeps_type_syntax() {
+                return Ok(self.s(S::TypeScript::default(), loc));
+            }
             return Ok(self.s(S::Empty {}, loc));
         }
 
@@ -4869,6 +4884,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // return;/
                     }
                     _ => {
+                        // `checkGrammarVariableDeclaration`: a pattern after `using` gets 1492 and nothing else.
+                        if self.lexer.tolerant && !matches!(KIND, js_ast::s::Kind::KConst) {
+                            continue;
+                        }
                         self.log().add_error_fmt(
                             Some(self.source),
                             decl.binding.loc,
@@ -8353,6 +8372,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             latest_arrow_arg_loc: self.latest_arrow_arg_loc,
             forbid_suffix_after_as_loc: self.forbid_suffix_after_as_loc,
             after_arrow_body_loc: self.after_arrow_body_loc,
+            after_update_expr: self.after_update_expr,
             esm_import_keyword: self.esm_import_keyword,
             esm_export_keyword: self.esm_export_keyword,
             enclosing_class_keyword: self.enclosing_class_keyword,
@@ -8387,6 +8407,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.latest_arrow_arg_loc = snapshot.latest_arrow_arg_loc;
         self.forbid_suffix_after_as_loc = snapshot.forbid_suffix_after_as_loc;
         self.after_arrow_body_loc = snapshot.after_arrow_body_loc;
+        self.after_update_expr = snapshot.after_update_expr;
         self.esm_import_keyword = snapshot.esm_import_keyword;
         self.esm_export_keyword = snapshot.esm_export_keyword;
         self.enclosing_class_keyword = snapshot.enclosing_class_keyword;
@@ -9807,6 +9828,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             log,
             stack_check: bun_core::StackCheck::init(),
             starts_for_parse_only: None,
+            type_syntax: None,
+            jsx_parent_tag: None,
+            jsx_adopted_close: None,
             reported_stack_overflow: core::cell::Cell::new(false),
             ts_infer_constraint_backtracks: Vec::new(),
             ts_conditional_arrow_attempts: Vec::new(),
@@ -9929,6 +9953,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             temp_ref_count: 0,
             relocated_top_level_vars: BumpVec::new_in(arena),
             after_arrow_body_loc: bun_ast::Loc::EMPTY,
+            after_update_expr: false,
             const_values: Default::default(),
             binary_expression_stack: BumpVec::new_in(arena),
             binary_expression_simplify_stack: BumpVec::new_in(arena),

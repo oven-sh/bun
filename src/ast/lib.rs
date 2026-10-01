@@ -2868,6 +2868,7 @@ pub mod server_component_boundary;
 pub mod stmt;
 pub mod symbol;
 pub mod ts;
+pub mod ts_syntax;
 pub mod use_directive;
 
 pub mod lexer_log;

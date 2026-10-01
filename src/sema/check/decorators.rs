@@ -1,0 +1,802 @@
+//! Decorators: what one is called with, and whether it can be: 1206 1207 1249 1497, 1329, 1238 1239 1240 1241, 1270 1271.
+//!
+//! Follows `getLegacyDecoratorCallSignature`, `getESDecoratorCallSignature`, `resolveDecorator`, `resolveCall` as far as it
+//! concerns a decorator, `checkDecorator` and what `checkGrammarModifiers` says of decorators, of TypeScript 7.0.2's checker.go
+//! and grammarchecks.go.
+
+use super::call::Arg;
+use super::errors::Diagnostic;
+use super::*;
+use crate::bind::{MemberOwner, Parent};
+
+/// Where a decorator is written.
+#[derive(Copy, Clone)]
+struct Written {
+    /// Its `@`.
+    at_sign: u32,
+    /// Its expression, from the parenthesis on if it is in parentheses.
+    start: u32,
+    is_parenthesized: bool,
+}
+
+/// Whether a signature takes what a decorator is called with.
+enum Applicable {
+    Yes,
+    /// That rests on something that is not known.
+    Unknown,
+    /// It does not, which is said there.
+    No(u32),
+}
+
+impl Checker<'_> {
+    fn class_of_decorated(
+        &self,
+        file: FileId,
+        owner: DecoratorOwner,
+    ) -> Option<(ClassId, Option<MemberId>)> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let of_member = |m: MemberId| match bound.member_owner[m.idx()] {
+            MemberOwner::Class(c) => Some((c, Some(m))),
+            _ => None,
+        };
+        match owner {
+            DecoratorOwner::Class(c) => Some((c, None)),
+            DecoratorOwner::Member(m) => of_member(m),
+            DecoratorOwner::Param(p) => match bound.fns[bound.param_fn[p.idx()].idx()].owner {
+                crate::bind::FnOwner::Member(m) => of_member(m),
+                _ => {
+                    let _ = hir;
+                    None
+                }
+            },
+        }
+    }
+
+    /// `newCallSignature`
+    fn synthetic_signature(
+        &mut self,
+        this: Option<TypeId>,
+        params: &[(&[u8], TypeId)],
+        ret: TypeId,
+    ) -> SigId {
+        let params: Vec<SigParam> = params
+            .iter()
+            .map(|&(name, ty)| SigParam {
+                name: self.files().atoms.intern(name),
+                ty,
+                optional: false,
+                rest: false,
+            })
+            .collect();
+        self.p.types.intern_sig(SigData::Synth {
+            type_params: Box::new([]),
+            params: params.into(),
+            ret,
+            this,
+            of: Box::new([]),
+        })
+    }
+
+    /// `newFunctionType`
+    fn function_type(
+        &mut self,
+        this: Option<TypeId>,
+        params: &[(&[u8], TypeId)],
+        ret: TypeId,
+    ) -> TypeId {
+        let sig = self.synthetic_signature(this, params, ret);
+        self.synth(Shape {
+            call: vec![sig],
+            ..Shape::default()
+        })
+    }
+
+    fn global_type(&mut self, name: &[u8], args: &[TypeId]) -> Option<TypeId> {
+        let name = self.files().atoms.lookup(name)?;
+        let sym = self.files().global(name, SymFlags::TYPE)?;
+        Some(self.type_reference(sym, args))
+    }
+
+    /// What the member is, as a value: the function a method is, what a property or an accessor holds.
+    fn type_of_decorated_member(&mut self, file: FileId, class: ClassId, m: MemberId) -> TypeId {
+        let member = self.hir(file)[m];
+        let sym = self.class_sym(file, class);
+        let holder = if member.flags.contains(Flags::STATIC) {
+            self.type_of_symbol(sym)
+        } else {
+            self.declared_type(sym)
+        };
+        match self
+            .member_name(file, member.key)
+            .and_then(|name| self.type_of_property(holder, name))
+        {
+            Some(ty) => ty,
+            None => self.type_of_member_declaration(file, m),
+        }
+    }
+
+    /// The function this one declaration of a method is, whatever others there are of it:
+    /// `getOrCreateTypeFromSignature(getSignatureFromDeclaration(node))`.
+    fn type_of_method_declaration(&mut self, file: FileId, m: MemberId) -> TypeId {
+        let bound = self.bound(file);
+        let func = self.hir(file)[m].func;
+        let around = bound.scopes[bound.fns[func.idx()].scope.idx()].parent;
+        let mapper = self.identity_mapper_for_fns(file, around, &[(file, func)]);
+        self.intern(TypeData::Fns {
+            decls: Box::new([(file, func)]),
+            mapper,
+        })
+    }
+
+    /// `getDecoratorCallSignature`. `None`: what is decorated cannot be.
+    pub(super) fn decorator_call_signature(
+        &mut self,
+        file: FileId,
+        owner: DecoratorOwner,
+    ) -> Option<SigId> {
+        let (class, member) = self.class_of_decorated(file, owner)?;
+        let hir = self.hir(file);
+        let sym = self.class_sym(file, class);
+        let statics = self.type_of_symbol(sym);
+        let holder = |c: &mut Self, m: MemberId| {
+            if hir[m].flags.contains(Flags::STATIC) {
+                statics
+            } else {
+                c.declared_type(sym)
+            }
+        };
+        if hir.legacy_decorators {
+            // `getClassElementPropertyKeyType`
+            let key_of = |c: &mut Self, m: MemberId| match hir[m].key {
+                PropKey::Name(name) => c.string_literal(name, false),
+                // What can be taken for a symbol stays what it is (`isTypeAssignableToKind`).
+                PropKey::Computed(e) => {
+                    let ty = c.type_of_expr(file, e);
+                    if c.is_symbol_like(ty) || c.is_assignable(ty, TypeId::SYMBOL) {
+                        ty
+                    } else {
+                        TypeId::STRING
+                    }
+                }
+                // `#x` is no key: the error type.
+                PropKey::Private(_) => TypeId::ANY,
+                PropKey::None => TypeId::STRING,
+            };
+            return Some(match (owner, member) {
+                (DecoratorOwner::Class(_), _) => {
+                    let ret = self.union(&[statics, TypeId::VOID]);
+                    self.synthetic_signature(None, &[(b"target", statics)], ret)
+                }
+                (DecoratorOwner::Param(p), Some(m))
+                    if matches!(
+                        hir[m].kind,
+                        MemberKind::Constructor | MemberKind::Method | MemberKind::Setter
+                    ) =>
+                {
+                    // A `this` parameter does not count, and is not among the parameters here.
+                    let index =
+                        self.number_literal((p.0 - hir[hir[m].func].params.start) as f64, false);
+                    let (target, key) = if hir[m].kind == MemberKind::Constructor {
+                        (statics, TypeId::UNDEFINED)
+                    } else {
+                        (holder(self, m), key_of(self, m))
+                    };
+                    self.synthetic_signature(
+                        None,
+                        &[
+                            (b"target", target),
+                            (b"propertyKey", key),
+                            (b"parameterIndex", index),
+                        ],
+                        TypeId::VOID,
+                    )
+                }
+                (DecoratorOwner::Member(_), Some(m))
+                    if matches!(
+                        hir[m].kind,
+                        MemberKind::Method
+                            | MemberKind::Getter
+                            | MemberKind::Setter
+                            | MemberKind::Property
+                    ) =>
+                {
+                    let (target, key) = (holder(self, m), key_of(self, m));
+                    if hir[m].kind == MemberKind::Property
+                        && !hir[m].flags.contains(Flags::ACCESSOR)
+                    {
+                        self.synthetic_signature(
+                            None,
+                            &[(b"target", target), (b"propertyKey", key)],
+                            TypeId::VOID,
+                        )
+                    } else {
+                        let value = self.type_of_decorated_member(file, class, m);
+                        let descriptor = self.global_type(b"TypedPropertyDescriptor", &[value])?;
+                        let ret = if hir[m].kind == MemberKind::Property {
+                            TypeId::VOID
+                        } else {
+                            self.union(&[descriptor, TypeId::VOID])
+                        };
+                        self.synthetic_signature(
+                            None,
+                            &[
+                                (b"target", target),
+                                (b"propertyKey", key),
+                                (b"descriptor", descriptor),
+                            ],
+                            ret,
+                        )
+                    }
+                }
+                _ => return None,
+            });
+        }
+        let (target, context, result) = match (owner, member) {
+            (DecoratorOwner::Class(_), _) => (
+                statics,
+                self.global_type(b"ClassDecoratorContext", &[statics])?,
+                statics,
+            ),
+            (DecoratorOwner::Member(_), Some(m)) => {
+                let this = holder(self, m);
+                let value = if hir[m].kind == MemberKind::Method {
+                    self.type_of_method_declaration(file, m)
+                } else {
+                    self.type_of_decorated_member(file, class, m)
+                };
+                let is_accessor_field =
+                    hir[m].kind == MemberKind::Property && hir[m].flags.contains(Flags::ACCESSOR);
+                let (target, result, context) = match hir[m].kind {
+                    MemberKind::Method => (value, value, &b"ClassMethodDecoratorContext"[..]),
+                    MemberKind::Getter => {
+                        let getter = self.function_type(None, &[], value);
+                        (getter, getter, &b"ClassGetterDecoratorContext"[..])
+                    }
+                    MemberKind::Setter => {
+                        let setter = self.function_type(None, &[(b"value", value)], TypeId::VOID);
+                        (setter, setter, &b"ClassSetterDecoratorContext"[..])
+                    }
+                    MemberKind::Property if is_accessor_field => (
+                        self.global_type(b"ClassAccessorDecoratorTarget", &[this, value])?,
+                        self.global_type(b"ClassAccessorDecoratorResult", &[this, value])?,
+                        &b"ClassAccessorDecoratorContext"[..],
+                    ),
+                    // `newClassFieldDecoratorInitializerMutatorType`
+                    MemberKind::Property => (
+                        TypeId::UNDEFINED,
+                        self.function_type(Some(this), &[(b"value", value)], value),
+                        &b"ClassFieldDecoratorContext"[..],
+                    ),
+                    _ => return None,
+                };
+                let context = self.global_type(context, &[this, value])?;
+                // `newClassMemberDecoratorContextTypeForNode`, `getClassMemberDecoratorContextOverrideType`
+                let is_private = matches!(hir[m].key, PropKey::Private(_));
+                let name = match hir[m].key {
+                    // `#x` as it is written, without what tells it from the `#x` of other classes.
+                    PropKey::Private(name) => {
+                        let written = self.files().atoms.intern(self.written_name(name));
+                        self.string_literal(written, false)
+                    }
+                    // `getLiteralTypeFromPropertyName`: a number only where a number is written.
+                    PropKey::Name(name)
+                        if matches!(
+                            hir.text.get(hir[m].pos as usize),
+                            Some(b'0'..=b'9' | b'.')
+                        ) =>
+                    {
+                        let n: f64 = self.files().atoms.text(name).parse().unwrap_or(0.0);
+                        self.number_literal(n, false)
+                    }
+                    PropKey::Name(name) => self.string_literal(name, false),
+                    PropKey::Computed(e) => {
+                        let ty = self.type_of_expr(file, e);
+                        self.regular(ty)
+                    }
+                    PropKey::None => TypeId::STRING,
+                };
+                let boolean = |b: bool| if b { TypeId::TRUE } else { TypeId::FALSE };
+                let props = [
+                    (&b"name"[..], name),
+                    (b"private", boolean(is_private)),
+                    (b"static", boolean(hir[m].flags.contains(Flags::STATIC))),
+                ]
+                .into_iter()
+                .map(|(name, ty)| Prop {
+                    name: self.files().atoms.intern(name),
+                    flags: PropFlags::empty(),
+                    source: PropSource::Type(ty),
+                    mapper: MapperId::IDENTITY,
+                })
+                .collect();
+                let overrides = self.synth(Shape {
+                    props,
+                    ..Shape::default()
+                });
+                (target, self.intersection(&[context, overrides]), result)
+            }
+            _ => return None,
+        };
+        let ret = self.union(&[result, TypeId::VOID]);
+        Some(self.synthetic_signature(None, &[(b"target", target), (b"context", context)], ret))
+    }
+
+    /// `getDecoratorArgumentCount`
+    fn decorator_argument_count(
+        &self,
+        file: FileId,
+        owner: DecoratorOwner,
+        params: &[SigParam],
+    ) -> usize {
+        let hir = self.hir(file);
+        if !hir.legacy_decorators {
+            return self.parameter_count(params).clamp(1, 2);
+        }
+        match owner {
+            DecoratorOwner::Class(_) => 1,
+            DecoratorOwner::Param(_) => 3,
+            DecoratorOwner::Member(m) if hir[m].kind == MemberKind::Property => {
+                if hir[m].flags.contains(Flags::ACCESSOR) {
+                    3
+                } else {
+                    2
+                }
+            }
+            DecoratorOwner::Member(_) => {
+                if params.len() <= 2 {
+                    2
+                } else {
+                    3
+                }
+            }
+        }
+    }
+
+    /// `hasCorrectArity`
+    fn has_correct_decorator_arity(
+        &mut self,
+        file: FileId,
+        owner: DecoratorOwner,
+        params: &[SigParam],
+    ) -> bool {
+        let count = self.decorator_argument_count(file, owner, params);
+        (self.has_effective_rest_parameter(params) || count <= self.parameter_count(params))
+            && count >= self.min_argument_count(params)
+    }
+
+    /// Where the decorator with the expression `e` is written. The parentheses of a standard `@(x)` are only in the text.
+    fn where_decorator_is(&self, file: FileId, e: ExprId) -> Written {
+        let start = self.start_of(file, e);
+        let before = self
+            .hir(file)
+            .text
+            .get(..start as usize)
+            .unwrap_or_default()
+            .trim_ascii_end();
+        if let Some(rest) = before.strip_suffix(b"(").map(<[u8]>::trim_ascii_end)
+            && rest.ends_with(b"@")
+        {
+            return Written {
+                at_sign: rest.len() as u32 - 1,
+                start: before.len() as u32 - 1,
+                is_parenthesized: true,
+            };
+        }
+        Written {
+            at_sign: start.saturating_sub(1),
+            start,
+            is_parenthesized: start != self.start_inside_parentheses(file, e),
+        }
+    }
+
+    /// `getThisArgumentOfCall`: the `a` of `@a.b` and `@(a[b])`, and how the chain goes on from it. The decorators of old are
+    /// called on nothing.
+    fn this_argument_of_decorator(&self, file: FileId, mut e: ExprId) -> Option<(ExprId, Chain)> {
+        let hir = self.hir(file);
+        if hir.legacy_decorators {
+            return None;
+        }
+        loop {
+            e = match hir[e].kind {
+                ExprKind::As { expr, .. }
+                | ExprKind::Satisfies { expr, .. }
+                | ExprKind::Instantiation { expr, .. } => expr,
+                ExprKind::AsConst(inner) | ExprKind::NonNull(inner) => inner,
+                ExprKind::Dot { obj, chain, .. } | ExprKind::Index { obj, chain, .. } => {
+                    return Some((obj, chain));
+                }
+                _ => return None,
+            };
+        }
+    }
+
+    pub(super) fn check_decorators(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut refused: Vec<DecoratorOwner> = Vec::new();
+        for i in 0..hir.decorators.len() {
+            let (owner, e) = hir.decorators[i];
+            if matches!(bound.expr_parent[e.idx()], Parent::None) {
+                continue;
+            }
+            let written = self.where_decorator_is(file, e);
+            let at_sign = written.at_sign;
+            // Where it cannot be: said once for what is decorated, and nothing else is said from there to what is decorated.
+            if bound.refused_decorators.contains(&e) {
+                let end = match owner {
+                    DecoratorOwner::Class(c) => hir[c].pos.max(hir[c].name_pos),
+                    DecoratorOwner::Member(m) => hir[m].pos,
+                    DecoratorOwner::Param(p) => hir[hir[p].pat].pos,
+                };
+                out.retain(|d| d.start <= at_sign || d.start >= end);
+                if !refused.contains(&owner) {
+                    refused.push(owner);
+                    let is_overload = matches!(owner, DecoratorOwner::Member(m) if hir[m].kind == MemberKind::Method && matches!(hir[hir[m].func].body, FnBody::None));
+                    // `grammarErrorOnFirstToken`
+                    if !hir.has_parse_diagnostics {
+                        out.push(Diagnostic {
+                            start: at_sign,
+                            code: if is_overload { 1249 } else { 1206 },
+                        });
+                    }
+                }
+                continue;
+            }
+            // The two accessors of a property are one thing to decorate.
+            if hir.legacy_decorators
+                && let DecoratorOwner::Member(m) = owner
+                && matches!(hir[m].kind, MemberKind::Getter | MemberKind::Setter)
+                && let Some((class, _)) = self.class_of_decorated(file, owner)
+                && let Some(name) = self.member_name(file, hir[m].key)
+                && !refused.contains(&owner)
+            {
+                let is_static = hir[m].flags.contains(Flags::STATIC);
+                let first = hir[class].members.iter().find(|&o| {
+                    matches!(hir[o].kind, MemberKind::Getter | MemberKind::Setter)
+                        && hir[o].flags.contains(Flags::STATIC) == is_static
+                        && self.member_name(file, hir[o].key) == Some(name)
+                });
+                if let Some(first) = first
+                    && first != m
+                    && hir
+                        .decorators
+                        .iter()
+                        .any(|d| d.0 == DecoratorOwner::Member(first))
+                {
+                    refused.push(owner);
+                    if !hir.has_parse_diagnostics {
+                        out.push(Diagnostic {
+                            start: at_sign,
+                            code: 1207,
+                        });
+                    }
+                }
+            }
+            if !hir.has_parse_diagnostics
+                && !written.is_parenthesized
+                && !self.is_decorator_member_or_call(file, e)
+            {
+                out.push(Diagnostic {
+                    start: written.start,
+                    code: 1497,
+                });
+            }
+            self.check_decorator(file, owner, e, written, out);
+        }
+    }
+
+    /// `checkGrammarDecorator`: whether `e`, which is not in parentheses, is a name, `a.b.c`, or a call of either.
+    fn is_decorator_member_or_call(&self, file: FileId, e: ExprId) -> bool {
+        let hir = self.hir(file);
+        let (mut node, mut can_have_call) = (e, true);
+        loop {
+            // A parenthesized expression further in is not an identifier.
+            if node != e && hir.parens.binary_search_by_key(&node.0, |p| p.0.0).is_ok() {
+                return false;
+            }
+            match hir[node].kind {
+                ExprKind::Instantiation { expr: inner, .. } | ExprKind::NonNull(inner) => {
+                    node = inner
+                }
+                ExprKind::Call(c) => {
+                    if !can_have_call || hir[c].chain == Chain::Start {
+                        return false;
+                    }
+                    (node, can_have_call) = (hir[c].callee, false);
+                }
+                ExprKind::Dot { obj, chain, .. } => {
+                    if chain == Chain::Start {
+                        return false;
+                    }
+                    (node, can_have_call) = (obj, false);
+                }
+                ExprKind::Ident(_) => return true,
+                _ => return false,
+            }
+        }
+    }
+
+    /// `isSignatureApplicable`: whether `sig` can be called on `this_arg` with all of `given`, however many of them counted for
+    /// the arity.
+    fn is_decorator_signature_applicable(
+        &mut self,
+        file: FileId,
+        sig: SigId,
+        given: &[SigParam],
+        this_arg: Option<(ExprId, Chain)>,
+        by_subtype: bool,
+        written: Written,
+    ) -> Applicable {
+        let related = |c: &mut Self, source: TypeId, target: TypeId| {
+            if by_subtype {
+                c.is_subtype(source, target)
+            } else {
+                c.is_assignable(source, target)
+            }
+        };
+        if let Some(wanted) = self.sig_this_type(sig)
+            && wanted != TypeId::VOID
+        {
+            // `getThisArgumentType`
+            let (this, at) = match this_arg {
+                Some((obj, chain)) => (
+                    self.chain_receiver(file, obj, chain).0,
+                    self.start_of(file, obj),
+                ),
+                None => (TypeId::VOID, written.at_sign),
+            };
+            if !self.is_known(this) || !self.is_known(wanted) {
+                return Applicable::Unknown;
+            }
+            if !related(self, this, wanted) {
+                return Applicable::No(at);
+            }
+        }
+        let params = self.sig_params(sig);
+        let rest = self.non_array_rest_type(&params);
+        let count = if rest.is_some() {
+            (self.parameter_count(&params) - 1).min(given.len())
+        } else {
+            given.len()
+        };
+        for (i, arg) in given[..count].iter().enumerate() {
+            // Past the last parameter anything goes (`getTypeAtPosition`).
+            let Some(wanted) = self.param_type_at(&params, i) else {
+                break;
+            };
+            if !self.is_known(wanted) {
+                return Applicable::Unknown;
+            }
+            if !related(self, arg.ty, wanted) {
+                return Applicable::No(written.start);
+            }
+        }
+        if let Some(rest) = rest {
+            if !self.is_known(rest) {
+                return Applicable::Unknown;
+            }
+            // `getSpreadArgumentType`
+            let mut elems = Vec::with_capacity(given.len() - count);
+            for (i, arg) in given[count..].iter().enumerate() {
+                let context = self.rest_element_type(rest, i);
+                elems.push(self.widen_literal_for_context(arg.ty, Some(context)));
+            }
+            let spread = self.tuple(&elems, &vec![ElemFlags::REQUIRED; elems.len()], false);
+            if !related(self, spread, rest) {
+                return Applicable::No(if elems.is_empty() {
+                    written.at_sign
+                } else {
+                    written.start
+                });
+            }
+        }
+        Applicable::Yes
+    }
+
+    /// `resolveDecorator`, `resolveCall`, `checkDecorator`
+    fn check_decorator(
+        &mut self,
+        file: FileId,
+        owner: DecoratorOwner,
+        e: ExprId,
+        written: Written,
+        out: &mut Vec<Diagnostic>,
+    ) {
+        let hir = self.hir(file);
+        let Written {
+            at_sign,
+            start,
+            is_parenthesized,
+        } = written;
+        let function = self.type_of_expr(file, e);
+        if !self.is_known(function) || self.is_any(function) || self.is_uncertain(file, e) {
+            return;
+        }
+        let apparent = self.apparent_type(function);
+        if !self.is_known(apparent) {
+            return;
+        }
+        let sigs = self.signatures(apparent, false);
+        // `isUntypedFunctionCall`
+        if self.is_any(apparent)
+            && matches!(
+                self.data(function),
+                TypeData::TypeParam(..) | TypeData::ThisParam(_)
+            )
+        {
+            return;
+        }
+        if sigs.is_empty()
+            && self.signatures(apparent, true).is_empty()
+            && !self.is_union(apparent)
+            && self.reduced(apparent) != TypeId::NEVER
+        {
+            let function_type = self.global_ref(known::Function, &[]);
+            if self.is_assignable(function, function_type) {
+                return;
+            }
+        }
+        let head = match owner {
+            DecoratorOwner::Class(_) => 1238,
+            DecoratorOwner::Param(_) => 1239,
+            DecoratorOwner::Member(m) if hir[m].kind == MemberKind::Property => 1240,
+            DecoratorOwner::Member(_) => 1241,
+        };
+        let sigs = self.reorder_candidates(&sigs);
+        let lists: Vec<Vec<SigParam>> = sigs.iter().map(|&s| self.sig_params(s)).collect();
+        // `isPotentiallyUncalledDecorator`, which goes by the parameters as declared: one that takes `void` is required.
+        if !sigs.is_empty()
+            && !is_parenthesized
+            && lists.iter().all(|params| {
+                Self::min_args(params) == 0
+                    && !params.last().is_some_and(|p| p.rest)
+                    && params.len() < self.decorator_argument_count(file, owner, params)
+            })
+        {
+            out.push(Diagnostic {
+                start: at_sign,
+                code: 1329,
+            });
+            return;
+        }
+        if sigs.is_empty() {
+            out.push(Diagnostic { start, code: head });
+            return;
+        }
+        let Some(expected) = self.decorator_call_signature(file, owner) else {
+            return;
+        };
+        let given = self.sig_params(expected);
+        if given.iter().any(|p| !self.is_known(p.ty)) {
+            return;
+        }
+        // `getEffectiveDecoratorArguments`
+        let args: Vec<Arg> = given.iter().map(|p| Arg::Type(p.ty)).collect();
+        let this_arg = self.this_argument_of_decorator(file, e);
+        let this_expr = this_arg.map(|(obj, _)| obj);
+        // `chooseOverload`: the first whose parameters the arguments are subtypes of, else the first they can be assigned to.
+        let mut instantiated: Vec<Option<SigId>> = vec![None; sigs.len()];
+        let mut chosen = None;
+        // Of the last of `candidatesForArgumentError`, where it does not fit; of `candidateForArgumentArityError`, how many it takes.
+        let (mut argument_error, mut arity_error) = (None, None);
+        let passes: &[bool] = if sigs.len() > 1 {
+            &[true, false]
+        } else {
+            &[false]
+        };
+        'passes: for &by_subtype in passes {
+            for (k, params) in lists.iter().enumerate() {
+                if !self.has_correct_decorator_arity(file, owner, params) {
+                    continue;
+                }
+                let candidate = match instantiated[k] {
+                    Some(candidate) => candidate,
+                    None => {
+                        let candidate = self.instantiate_for_call(
+                            file,
+                            e,
+                            sigs[k],
+                            &[],
+                            &args,
+                            this_expr,
+                            false,
+                        );
+                        instantiated[k] = Some(candidate);
+                        candidate
+                    }
+                };
+                // With a rest parameter that is a type parameter, how many it takes is only known now.
+                if self.non_array_rest_type(params).is_some() {
+                    let params = self.sig_params(candidate);
+                    if !self.has_correct_decorator_arity(file, owner, &params) {
+                        arity_error = Some(self.parameter_count(&params));
+                        continue;
+                    }
+                }
+                match self.is_decorator_signature_applicable(
+                    file, candidate, &given, this_arg, by_subtype, written,
+                ) {
+                    Applicable::Yes => {
+                        chosen = Some(candidate);
+                        break 'passes;
+                    }
+                    Applicable::Unknown => return,
+                    Applicable::No(at) => argument_error = Some(at),
+                }
+            }
+        }
+        let returned = match chosen {
+            Some(chosen) => self.sig_return(chosen),
+            None => {
+                // `reportCallResolutionErrors`. `getArgumentArityError`: more than any of them takes is said where the arguments are
+                // taken to be, at the expression; whatever else is wrong with their number, of the decorator.
+                let at = argument_error.unwrap_or_else(|| {
+                    let most = arity_error.unwrap_or_else(|| {
+                        lists
+                            .iter()
+                            .map(|params| self.parameter_count(params))
+                            .max()
+                            .unwrap_or(0)
+                    });
+                    if most < given.len() { start } else { at_sign }
+                });
+                out.push(Diagnostic {
+                    start: at,
+                    code: head,
+                });
+                // `getCandidateForOverloadFailure`
+                if sigs.len() == 1
+                    || sigs
+                        .iter()
+                        .any(|&sig| !self.sig_type_params(sig).is_empty())
+                {
+                    // `getLongestCandidateIndex`
+                    let best = lists
+                        .iter()
+                        .position(|params| {
+                            self.has_effective_rest_parameter(params)
+                                || self.parameter_count(params) >= given.len()
+                        })
+                        .or_else(|| {
+                            (0..lists.len())
+                                .rev()
+                                .max_by_key(|&k| self.parameter_count(&lists[k]))
+                        })
+                        .unwrap_or(0);
+                    let candidate = self.instantiate_for_call(
+                        file,
+                        e,
+                        sigs[best],
+                        &[],
+                        &args,
+                        this_expr,
+                        false,
+                    );
+                    self.sig_return(candidate)
+                } else {
+                    // `createUnionOfSignaturesForOverloadFailure`
+                    let returns: Vec<TypeId> =
+                        sigs.iter().map(|&sig| self.sig_return(sig)).collect();
+                    self.intersection(&returns)
+                }
+            }
+        };
+        let wanted = self.sig_return(expected);
+        if !self.is_known(returned)
+            || self.is_any(returned)
+            || !self.is_known(wanted)
+            || self.is_assignable(returned, wanted)
+        {
+            return;
+        }
+        let code = match owner {
+            DecoratorOwner::Param(_) => 1271,
+            DecoratorOwner::Member(m)
+                if hir[m].kind == MemberKind::Property && hir.legacy_decorators =>
+            {
+                1271
+            }
+            _ => 1270,
+        };
+        out.push(Diagnostic { start, code });
+    }
+}

@@ -157,6 +157,8 @@ pub struct Options<'a> {
     /// A bundle entry point: its own output is needed, so a `module.exports = require(...)`-only file stays a real
     /// module rather than becoming a redirect to what it re-exports.
     pub is_entry_point: bool,
+    /// Report syntax errors the way TypeScript's parser does and keep going. Only the type checker turns this on.
+    pub tolerant: bool,
 }
 
 impl<'a> Default for Options<'a> {
@@ -191,6 +193,7 @@ impl<'a> Default for Options<'a> {
             repl_mode: false,
             lower_toml_datetimes: false,
             is_entry_point: false,
+            tolerant: false,
         }
     }
 }
@@ -278,6 +281,7 @@ impl<'a> Options<'a> {
             repl_mode: self.repl_mode,
             lower_toml_datetimes: self.lower_toml_datetimes,
             is_entry_point: self.is_entry_point,
+            tolerant: self.tolerant,
         }
     }
 
@@ -352,6 +356,7 @@ impl<'a> Options<'a> {
             repl_mode: false,
             lower_toml_datetimes: loader == options::Loader::Toml,
             is_entry_point: false,
+            tolerant: false,
         };
         opts.jsx.parse = loader.is_jsx();
         opts
@@ -377,6 +382,7 @@ impl<'a> Parser<'a> {
         lexer.track_comments = options.features.minify_identifiers;
         lexer.track_react_suppressions = options.features.react_compiler.is_enabled();
         lexer.jsc_builtin_syntax = options.jsc_builtin_syntax;
+        lexer.tolerant = options.tolerant;
         lexer.step();
         lexer.next()?;
         // Copy the lexer's `NonNull<Log>` so both handles share one provenance
@@ -462,6 +468,173 @@ impl<'a> Parser<'a> {
             stmts: stmts.as_slice(),
             p,
         }))
+    }
+
+    /// Parses a TypeScript module, visits nothing, and returns what `bun_sema` resolves types from.
+    /// A file that does not parse gives what could be made of it, marked `has_errors`.
+    /// `await_is_a_name`: the top level has no await context, as in a script (`parseSourceFileWorker`).
+    /// Also returns whether `await` was parsed as a keyword at the top level.
+    #[cold]
+    pub(crate) fn parse_for_sema(
+        mut self,
+        atoms: &'a bun_sema::atom::Interner,
+        is_declaration_file: bool,
+        await_is_a_name: bool,
+    ) -> (bun_sema::hir::File, bool) {
+        type Pi<'a> = P<'a, true, false>;
+        let scratch_lexer = |this: &Self| {
+            js_lexer::Lexer::init_without_reading(
+                this.bump.alloc(bun_ast::Log::default()),
+                this.source,
+                this.bump,
+            )
+        };
+        let failed = || bun_sema::hir::File {
+            has_errors: true,
+            has_parse_diagnostics: true,
+            ..Default::default()
+        };
+        let placeholder = scratch_lexer(&self);
+        let lexer = core::mem::replace(&mut self.lexer, placeholder);
+        let options = core::mem::take(&mut self.options);
+        let mut slot = MaybeUninit::<Pi<'_>>::uninit();
+        if Pi::init(
+            &mut slot,
+            self.bump,
+            self.log,
+            self.source,
+            self.define,
+            lexer,
+            options,
+        )
+        .is_err()
+        {
+            return (failed(), false);
+        }
+        // SAFETY: `init` returned `Ok`, so the slot is initialized, and the guard is its only owner.
+        let mut __p = scopeguard::guard(slot, |mut s| unsafe { s.assume_init_drop() });
+        // SAFETY: as above.
+        let p: &mut Pi<'_> = unsafe { __p.assume_init_mut() };
+        let mut type_syntax = Box::new(crate::sema::TypeSyntax::new());
+        type_syntax.keep_types |= is_declaration_file;
+        p.type_syntax = Some(type_syntax);
+        if await_is_a_name {
+            p.fn_or_arrow_data_parse.allow_await = crate::AwaitOrYield::AllowIdent;
+        }
+        if p.lexer.token == js_lexer::T::THashbang && p.lexer.next().is_err() {
+            return (failed(), false);
+        }
+        let mut opts = ParseStatementOptions {
+            scope: StatementScope::Module,
+            // Everything in a declaration file is ambient.
+            is_typescript_declare: is_declaration_file,
+            ..Default::default()
+        };
+        let stmts = p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts);
+        let awaited = p.top_level_await_keyword.len > 0;
+        if is_declaration_file {
+            // For now this parser only provides the type nodes. `type_syntax::Builder` still reads the statements around them.
+            if stmts.is_err() {
+                return (
+                    bun_sema::hir::File {
+                        kind: bun_sema::hir::FileKind::Declaration,
+                        ..failed()
+                    },
+                    false,
+                );
+            }
+            let syntax = *p.type_syntax.take().unwrap();
+            return (
+                crate::sema::lower::Lower::run_declaration_file(
+                    p,
+                    syntax,
+                    atoms,
+                    scratch_lexer(&self),
+                ),
+                false,
+            );
+        }
+        let Ok(stmts) = stmts else {
+            return (failed(), awaited);
+        };
+        // What is objected to without the tree suffering is for the checker to say, in its own words.
+        // Sorted by which part of TypeScript reports it.
+        let (mut syntactic, mut grammar, mut checker) = (Vec::new(), Vec::new(), Vec::new());
+        let mut has_errors = false;
+        for msg in p.log().msgs.iter().filter(|m| m.kind == bun_ast::Kind::Err) {
+            let offset = msg.data.location.as_ref().map(|l| l.offset);
+            let at = offset
+                .and_then(|o| self.source.contents().get(o..))
+                .unwrap_or_default();
+            match (crate::sema::early_error(&msg.data.text, at), offset) {
+                (Some((0, _)), _) => {}
+                (Some((code, delta)), Some(offset)) => {
+                    let list = if msg.data.text.starts_with(b"TC") {
+                        &mut checker
+                    } else if Self::is_syntactic_error(&msg.data.text, code) {
+                        &mut syntactic
+                    } else {
+                        &mut grammar
+                    };
+                    list.push(((offset as i64 + i64::from(delta)).max(0) as u32, code));
+                }
+                _ => has_errors = true,
+            }
+        }
+        let syntax = *p.type_syntax.take().unwrap();
+        let mut file = crate::sema::lower::Lower::run(
+            p,
+            syntax,
+            stmts.as_slice(),
+            atoms,
+            scratch_lexer(&self),
+        );
+        file.has_errors = has_errors;
+        // `hasParseDiagnostics`. The lowering does not say who reports what it pushed, so `check_file` sorts that by code.
+        file.has_parse_diagnostics = has_errors
+            || !syntactic.is_empty()
+            || file
+                .early_errors
+                .iter()
+                .any(|&(_, code)| Self::is_parser_code(code));
+        if has_errors {
+            file.early_errors.clear();
+        } else {
+            file.early_errors.extend(syntactic);
+            if !file.has_parse_diagnostics {
+                file.early_errors.extend(grammar);
+            }
+            file.checker_errors.extend(checker);
+        }
+        (file, awaited)
+    }
+
+    /// Whether TypeScript's parser or scanner reports the logged error `text`, which `early_error` translated to `code`.
+    /// If not, its checker does through `grammarErrorOnNode`, or its binder through `checkContextualIdentifier`.
+    fn is_syntactic_error(text: &[u8], code: u32) -> bool {
+        if text.starts_with(b"TG") || text.starts_with(b"TC") {
+            return false;
+        }
+        if text.starts_with(b"TS") {
+            // Some grammar errors are still logged through `Lexer::ts_error`.
+            return Self::is_parser_code(code);
+        }
+        // `Lexer::expected` and `Lexer::unexpected`. 1359 at a reserved word: `createIdentifierWithDiagnostic`.
+        matches!(code, 1003 | 1005 | 1109)
+            || code == 1359 && text.starts_with(b"Expected identifier ")
+    }
+
+    /// The codes that parser.go and scanner.go report while parsing a TypeScript file. Leaves out what they only report in
+    /// JavaScript files (`jsErrorAtRange`: 1206 8038 ..) and in regular expressions, which the checker scans.
+    fn is_parser_code(code: u32) -> bool {
+        matches!(
+            code,
+            1002 | 1003 | 1005 | 1007 | 1010..=1012 | 1034 | 1068 | 1084 | 1109 | 1110 | 1121 | 1124..=1132 | 1134..=1140 | 1142
+                | 1144..=1146 | 1160 | 1161 | 1177..=1181 | 1185 | 1198 | 1199 | 1209 | 1228 | 1260 | 1327 | 1328 | 1351..=1353
+                | 1357 | 1359 | 1381 | 1382 | 1385..=1390 | 1433..=1443 | 1453 | 1472 | 1477 | 1478 | 1486..=1490 | 2427 | 2457
+                | 2657 | 2754 | 2809 | 2819 | 2880 | 6188 | 6189 | 17002 | 17006..=17008 | 17014 | 17015 | 17021 | 18009 | 18016
+                | 18026 | 18029 | 18030
+        )
     }
 
     /// Bundler-only scan pass (see `bundler/cache.rs`). Never reached from

@@ -255,7 +255,15 @@ test(
 // table, the entry count (`len`) and the positions a full walk reads (`walkPositions`).
 
 const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1");
-const FRAME = { DATA: 0x0, HEADERS: 0x1, RST_STREAM: 0x3, SETTINGS: 0x4, PUSH_PROMISE: 0x5, PING: 0x6 };
+const FRAME = {
+  DATA: 0x0,
+  HEADERS: 0x1,
+  RST_STREAM: 0x3,
+  SETTINGS: 0x4,
+  PUSH_PROMISE: 0x5,
+  PING: 0x6,
+  WINDOW_UPDATE: 0x8,
+};
 const FLAG = { END_STREAM: 0x1, ACK: 0x1, END_HEADERS: 0x4 };
 // :method GET, :scheme http, :path / from the HPACK static table, then a literal :authority.
 const GET_BLOCK = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01, 9]), Buffer.from("localhost")]);
@@ -282,6 +290,8 @@ function uint32(value: number): Buffer {
 /** The other end of one session's transport. The test sends frames and reads what the session writes. */
 class Peer {
   frames: Frame[] = [];
+  /** The DATA payload bytes the session wrote. */
+  dataBytes = 0;
   socket: Duplex;
   #unparsed = Buffer.alloc(0);
   #waiters: { matches: (f: Frame) => boolean; resolve: (f: Frame) => void }[] = [];
@@ -315,6 +325,7 @@ class Peer {
       };
       this.#unparsed = this.#unparsed.subarray(9 + length);
       this.frames.push(written);
+      if (written.type === FRAME.DATA) this.dataBytes += length;
       this.#waiters = this.#waiters.filter(waiter => {
         if (!waiter.matches(written)) return true;
         waiter.resolve(written);
@@ -517,4 +528,99 @@ test("a client session's stream tables stay dense after a flood of pushed stream
   } finally {
     client.destroy();
   }
+});
+
+// The walks that send queued data and that end a session visit the streams in the order they
+// opened, as node does. A table in hash order, or one that moves its newest entry into the
+// position of a removed one, serves a newer stream before an older one.
+
+test("a session whose connection window is the limit finishes its responses in request order", async () => {
+  const OPEN = 8;
+  const TOTAL = 24;
+  const BODY = 32 * 1024;
+  const GRANT = 16 * 1024;
+  const peer = new Peer(0);
+  const session = http2.performServerHandshake(peer.socket);
+  const orFail = failWith(session);
+  try {
+    const body = Buffer.alloc(BODY, "x");
+    session.on("stream", stream => {
+      stream.on("error", () => {});
+      stream.respond({ ":status": 200 });
+      stream.end(body);
+    });
+    // SETTINGS_INITIAL_WINDOW_SIZE (0x4) of 16 MiB: only the connection window limits the session.
+    peer.send(PREFACE, frame(FRAME.SETTINGS, 0, 0, Buffer.from([0, 4, 1, 0, 0, 0])));
+    let opened = 0;
+    let granted = 65535;
+    const open = () => {
+      peer.send(frame(FRAME.HEADERS, FLAG.END_HEADERS | FLAG.END_STREAM, 2 * opened++ + 1, GET_BLOCK));
+    };
+    const finished = () =>
+      peer.frames.filter(f => f.type === FRAME.DATA && (f.flags & FLAG.END_STREAM) !== 0).map(f => f.streamId);
+
+    // OPEN requests are open at all times. Each window grant is smaller than one response.
+    for (let i = 0; i < OPEN; i++) open();
+    for (;;) {
+      const writable = Math.min(granted, opened * BODY);
+      while (peer.dataBytes < writable) await orFail(peer.next(f => f.type === FRAME.DATA));
+      const done = finished().length;
+      if (done === TOTAL) break;
+      while (opened < TOTAL && opened - done < OPEN) open();
+      if (peer.dataBytes === granted) {
+        granted += GRANT;
+        peer.send(frame(FRAME.WINDOW_UPDATE, 0, 0, uint32(GRANT)));
+      }
+    }
+    expect(finished()).toEqual(Array.from({ length: TOTAL }, (_, i) => 2 * i + 1));
+  } finally {
+    session.destroy();
+  }
+});
+
+test("destroy() closes the streams of a session in the order they opened", async () => {
+  const OPEN = 16;
+  const FINISH = [3, 9, 17, 27];
+  const peer = new Peer(0);
+  const session = http2.performServerHandshake(peer.socket);
+  const orFail = failWith(session);
+  const streams = new Map<number, http2.ServerHttp2Stream>();
+  const allOpen = Promise.withResolvers<void>();
+  session.on("stream", stream => {
+    streams.set(stream.id, stream);
+    stream.on("error", () => {});
+    stream.respond({ ":status": 200 });
+    if (streams.size === OPEN) allOpen.resolve();
+  });
+  const closeOf = (id: number) => new Promise<number>(resolve => streams.get(id)!.on("close", () => resolve(id)));
+  try {
+    const ids = Array.from({ length: OPEN }, (_, i) => 2 * i + 1);
+    peer.send(
+      PREFACE,
+      frame(FRAME.SETTINGS, 0, 0),
+      ...ids.map(id => frame(FRAME.HEADERS, FLAG.END_HEADERS, id, GET_BLOCK)),
+    );
+    await orFail(allOpen.promise);
+
+    // Four streams finish first. That removes their entries from the tables.
+    const finishedFirst = Promise.all(FINISH.map(closeOf));
+    for (const id of FINISH) {
+      peer.send(frame(FRAME.DATA, FLAG.END_STREAM, id));
+      streams.get(id)!.end();
+    }
+    await orFail(finishedFirst);
+    // A read releases the table entries of the streams that closed before it.
+    do await orFail(peer.roundTrip());
+    while (tablesOf(session).streams.len > OPEN - FINISH.length);
+  } catch (error) {
+    session.destroy();
+    throw error;
+  }
+
+  const left = [...streams.keys()].filter(id => !FINISH.includes(id));
+  const closed: number[] = [];
+  const allClosed = Promise.all(left.map(id => closeOf(id).then(id => closed.push(id))));
+  session.destroy();
+  await allClosed;
+  expect(closed).toEqual(left);
 });

@@ -1,0 +1,41 @@
+Files of the research "test-budget", pass 1b (top-down), 2026-10-01, worktree at 3110ce85cf. H is test/cli/lint/conformance.
+Nothing here is committed to the worktree: everything ran in scratch clones below /tmp/tb1b.
+
+The trees
+  glue     bash ../../scratch.sh /tmp/tb1b/glue
+           bash ../../corpus-glue/bottom-up/apply.sh /tmp/tb1b/glue          (corpus.ts, expectations.json, index, run, sweep: the
+                                                                              same bytes as ../../corpus-glue/top-down/verified)
+           git -C /tmp/tb1b/glue apply ../../corpus-glue/top-down/verified/conformance.test.ts.patch
+           = the file as it is once corpus-commit and corpus-glue have landed: 106 tests
+  budget   a copy of glue, then prototype/test-budget.on-the-glue.patch: 107 tests
+
+prototype/
+  test-budget.on-the-glue.patch     glue -> budget, three files: conformance.test.ts (the whole enumeration leaves the file as
+                                    ../../release-time-budget/top-down/prototype/release-time-budget.patch has it, and the timeouts
+                                    below), H/AFTER-SYNC.txt, H/sweep.ts (a sweep of every case holds it against the list)
+  timeouts-only.on-the-glue.patch   glue -> the timeouts alone, one file: for the case that the whole enumeration stays
+probes/
+  apply-timeouts.py   python3 apply-timeouts.py <conformance.test.ts>, then prettier --write: the timeouts by the names of the
+                      tests. It works on the file of glue, on that file with the patch of release-time-budget, and on either with
+                      the test hunks of ../../default-check-classification (bottom-up/default-check.patch, top-down/amend).
+                      The patch of default-check rewrites the helper that this script also touches: lay default-check first.
+  modes.sh            run_mode <mode> <tree> <log>: release, release-ci, release-ci-exact, debug, debug-leak, debug-ci,
+                      debug-local; summary and slowest read a log. The environments are copied from scripts/runner.node.ts.
+  batch1.sh           /workspace/tools/lk bash batch1.sh <tree> <out> <label>: one hold of the lock, release cold and warm twice,
+                      release with the environment of CI, debug, debug with the leak check, debug as the ASAN lane
+  batch2.sh           batch1.sh, then sweep.ts --no-run, ../../typecheck.sh, lint-leak.sh
+  lint-leak.sh        `bun --lint` itself under the leak check and the exception checks on three small files
+  table.ts            bun table.ts <min ms> <log> ...: the tests of several logs side by side
+  evict.py            python3 evict.py <directory> ...: puts the data pages of the files out of the page cache
+observed/
+  batch1.txt, batch1/                the tree glue: what batch1.sh printed, and the logs
+  batch1-debug-table.txt             the tests of glue above 0.9 s in the three debug runs
+  batch1-release-table.txt           the tests of glue above 0.3 s in the four release runs
+  batch2.txt, batch2/, batch2-*      the same for the tree budget
+
+The acceptance, once corpus-commit and corpus-glue are in the worktree (each line one call, timeout 3600000 ms)
+  /workspace/tools/lk bun bd test test/cli/lint/conformance.test.ts
+  /workspace/tools/lk bash probes/batch1.sh /workspace/wt/conformance /tmp/<out> final
+  and once more in a clone of the pushed commit that sync.sh has not touched (git clone --shared --no-checkout, the sparse
+  set of ../../scratch.sh, git checkout): the worktree holds the file that .gitignore:139 (*.generated.ts) keeps out of a
+  commit, so only a clone shows whether the commit has all 12,444 cases.

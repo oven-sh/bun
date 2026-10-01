@@ -1020,40 +1020,96 @@ it("escapes quotes and newlines in requested version literals when writing yarn.
   expect(lines.filter(line => line.trimStart().startsWith('resolved "http://injected.example'))).toEqual([]);
 });
 
-it("--yarn does not write yarn.lock during --dry-run", async () => {
-  const { packageDir, packageJson } = await registry.createTestDir();
+describe.concurrent("yarn.lock and --dry-run", () => {
+  async function setup() {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "yarn-lock-dry-run",
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+      }),
+    );
 
-  await write(
-    packageJson,
-    JSON.stringify({
-      name: "yarn-lock-dry-run",
-      dependencies: {
-        "no-deps": "1.0.0",
-      },
-    }),
+    async function run(args: string[], extraEnv: Record<string, string> = {}) {
+      const { exited, stderr } = spawn({
+        cmd: [bunExe(), ...args],
+        cwd: packageDir,
+        env: { ...env, ...extraEnv },
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [err, exitCode] = await Promise.all([stderr.text(), exited]);
+      return { err, exitCode };
+    }
+
+    return { packageDir, yarnLock: join(packageDir, "yarn.lock"), run };
+  }
+
+  // The three ways to ask for a yarn.lock.
+  it.each([
+    ["--yarn before --dry-run", { flags: ["--yarn", "--dry-run"] }],
+    ["--yarn after --dry-run", { flags: ["--dry-run", "--yarn"] }],
+    ["BUN_CONFIG_YARN_LOCKFILE", { flags: ["--dry-run"], env: { BUN_CONFIG_YARN_LOCKFILE: "1" } }],
+    ['bunfig print = "yarn"', { flags: ["--dry-run"], bunfig: '\n[install.lockfile]\nprint = "yarn"\n' }],
+  ] as [string, { flags: string[]; env?: Record<string, string>; bunfig?: string }][])(
+    "a dry run does not write it: %s",
+    async (_, route) => {
+      const { packageDir, yarnLock, run } = await setup();
+      if (route.bunfig) {
+        const bunfig = join(packageDir, "bunfig.toml");
+        await write(bunfig, (await file(bunfig).text()) + route.bunfig);
+      }
+
+      for (const command of [["install"], ["add", "a-dep"], ["update"]]) {
+        const args = [...command, ...route.flags];
+        const { err, exitCode } = await run(args, route.env);
+        expect(err).not.toContain("error:");
+        expect({ args, wrote: await exists(yarnLock), exitCode }).toEqual({ args, wrote: false, exitCode: 0 });
+      }
+
+      // The same request without --dry-run writes it.
+      const args = ["install", ...route.flags.filter(flag => flag !== "--dry-run")];
+      const { err, exitCode } = await run(args, route.env);
+      expect(err).toContain("Saved yarn.lock");
+      expect({ args, wrote: await exists(yarnLock), exitCode }).toEqual({ args, wrote: true, exitCode: 0 });
+    },
   );
 
-  const { exited, stdout, stderr } = spawn({
-    cmd: [bunExe(), "install", "--yarn", "--dry-run"],
-    cwd: packageDir,
-    env,
-    stdout: "pipe",
-    stderr: "pipe",
+  it("a dry run leaves an existing yarn.lock unchanged", async () => {
+    const { yarnLock, run } = await setup();
+    expect((await run(["install", "--yarn"])).err).toContain("Saved yarn.lock");
+    const before = await file(yarnLock).text();
+    expect(before).toContain("no-deps@1.0.0");
+
+    for (const args of [
+      ["add", "a-dep", "--yarn", "--dry-run"],
+      ["remove", "no-deps", "--yarn", "--dry-run"],
+    ]) {
+      const { err, exitCode } = await run(args);
+      expect(err).not.toContain("error:");
+      expect({ args, unchanged: (await file(yarnLock).text()) === before, exitCode }).toEqual({
+        args,
+        unchanged: true,
+        exitCode: 0,
+      });
+    }
   });
 
-  const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
-  expect(err).not.toContain("yarn.lock");
-  expect(err).not.toContain("error:");
-  expect(out).toContain("no-deps@1.0.0");
-  expect(exitCode).toBe(0);
+  it("--no-save and --frozen-lockfile still write it", async () => {
+    const { yarnLock, run } = await setup();
+    expect((await run(["install", "--yarn"])).err).toContain("Saved yarn.lock");
 
-  expect(
-    await Promise.all([
-      exists(join(packageDir, "yarn.lock")),
-      exists(join(packageDir, "bun.lock")),
-      exists(join(packageDir, "node_modules")),
-    ]),
-  ).toEqual([false, false, false]);
+    for (const flag of ["--no-save", "--frozen-lockfile"]) {
+      await rm(yarnLock);
+      const args = ["install", flag, "--yarn"];
+      const { err, exitCode } = await run(args);
+      expect(err).toContain("Saved yarn.lock");
+      expect({ args, wrote: await exists(yarnLock), exitCode }).toEqual({ args, wrote: true, exitCode: 0 });
+    }
+  });
 });
 
 it("prints an actionable error for a lockfile version newer than this build supports", async () => {

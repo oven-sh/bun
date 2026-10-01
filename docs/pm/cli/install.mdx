@@ -176,7 +176,7 @@ Bun does not enable `--frozen-lockfile` automatically in CI; pass the flag or us
 
 `--frozen-lockfile` works on a pruned monorepo checkout (e.g. `turbo prune` output, or a Docker context with only some workspace folders copied in). If a workspace listed in `bun.lock` is missing its `package.json` on disk, Bun skips it with a `note:` and does not install its exclusive dependencies. If a remaining workspace depends on a skipped one, the install fails.
 
-To validate the lockfile without installing, use `bun install --frozen-lockfile --dry-run`.
+To validate the lockfile without installing, use `bun install --frozen-lockfile --dry-run`. The command exits with an error if `package.json` disagrees with `bun.lock`, and it does not run lifecycle scripts.
 
 ### Offline installs
 
@@ -225,8 +225,11 @@ bun install --dry-run
 Bun resolves the dependency tree and prints the summary. During a dry run, Bun does not:
 
 - install packages into `node_modules`
-- write `bun.lock` (or `yarn.lock` with `--yarn`)
+- update `package.json` or an existing `bun.lock`
+- write `yarn.lock`
 - run your project's lifecycle scripts
+
+To write `yarn.lock`, run `bun install --yarn` without `--dry-run`.
 
 ---
 

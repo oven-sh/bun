@@ -734,6 +734,136 @@ test.concurrent(
 );
 
 // waiter thread is only a thing on Linux.
+describe.concurrent("--dry-run and root lifecycle scripts", () => {
+  const none = [false, false, false];
+  const all = [true, true, true];
+
+  // Writes a project with one dependency and three root scripts. Each script leaves a marker file.
+  async function writeProject(ctx: TestCtx, preinstall = "echo preinstall > preinstall.txt") {
+    await writeFile(
+      ctx.packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+        scripts: {
+          preinstall,
+          postinstall: "echo postinstall > postinstall.txt",
+          prepare: "echo prepare > prepare.txt",
+        },
+      }),
+    );
+    const markers = ["preinstall.txt", "postinstall.txt", "prepare.txt"].map(name => join(ctx.packageDir, name));
+
+    // Reports which markers the command left, then removes them so that the next command starts clean.
+    return async function run(args: string[], env: Record<string, string> = {}) {
+      const { stderr, exited } = spawn({
+        cmd: [bunExe(), ...args],
+        cwd: ctx.packageDir,
+        stdout: "ignore",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: { ...ctx.env, ...env },
+      });
+
+      const [err, exitCode] = await Promise.all([stderr.text(), exited]);
+      const scriptsRan = await Promise.all(markers.map(marker => exists(marker)));
+      await Promise.all(markers.map(marker => rm(marker, { force: true })));
+      return { err, result: { args, scriptsRan, exitCode } };
+    };
+  }
+
+  test("a dry run without a lockfile runs none", async () => {
+    using ctx = await setupTest();
+    const run = await writeProject(ctx);
+
+    for (const args of [
+      ["install", "--dry-run"],
+      ["install", "--frozen-lockfile", "--dry-run"],
+    ]) {
+      const { err, result } = await run(args);
+      expect(err).not.toContain("error:");
+      expect(result).toEqual({ args, scriptsRan: none, exitCode: 0 });
+    }
+    expect(await exists(join(ctx.packageDir, "bun.lock"))).toBe(false);
+  });
+
+  test("a dry run of each install command runs none", async () => {
+    using ctx = await setupTest();
+    const run = await writeProject(ctx);
+
+    // The real install writes the lockfile that the dry runs load.
+    expect((await run(["install"])).result).toEqual({ args: ["install"], scriptsRan: all, exitCode: 0 });
+    const lockfile = await file(join(ctx.packageDir, "bun.lock")).text();
+    const manifest = await file(ctx.packageJson).text();
+
+    for (const args of [
+      ["install", "--dry-run"],
+      ["install", "--dry-run", "--silent"],
+      ["install", "--frozen-lockfile", "--dry-run"],
+      ["install", "--filter", "foo", "--dry-run"],
+      ["ci", "--dry-run"],
+      ["update", "--dry-run"],
+      ["add", "a-dep", "--dry-run"],
+      ["remove", "no-deps", "--dry-run"],
+    ]) {
+      const { err, result } = await run(args);
+      expect(err).not.toContain("error:");
+      expect(result).toEqual({ args, scriptsRan: none, exitCode: 0 });
+      expect(await file(join(ctx.packageDir, "bun.lock")).text()).toBe(lockfile);
+      expect(await file(ctx.packageJson).text()).toBe(manifest);
+    }
+  });
+
+  test("--frozen-lockfile --dry-run still fails when package.json and bun.lock disagree", async () => {
+    using ctx = await setupTest();
+    const run = await writeProject(ctx);
+    expect((await run(["install"])).result).toEqual({ args: ["install"], scriptsRan: all, exitCode: 0 });
+
+    const manifest = await file(ctx.packageJson).json();
+    manifest.dependencies["a-dep"] = "1.0.1";
+    await writeFile(ctx.packageJson, JSON.stringify(manifest));
+
+    const args = ["install", "--frozen-lockfile", "--dry-run"];
+    const { err, result } = await run(args);
+    expect(err).toContain("lockfile had changes, but lockfile is frozen");
+    expect(result).toEqual({ args, scriptsRan: none, exitCode: 1 });
+  });
+
+  test("a root script that fails does not fail a dry run", async () => {
+    using ctx = await setupTest();
+    const run = await writeProject(ctx, "exit 3");
+
+    const dryRun = await run(["install", "--dry-run"]);
+    expect(dryRun.err).not.toContain("error:");
+    expect(dryRun.result).toEqual({ args: ["install", "--dry-run"], scriptsRan: none, exitCode: 0 });
+
+    const install = await run(["install"]);
+    expect(install.err).toContain('error: preinstall script from "foo" exited with 3');
+    expect(install.result).toEqual({ args: ["install"], scriptsRan: none, exitCode: 3 });
+  });
+
+  test("an install that is not a dry run still runs all of them", async () => {
+    using ctx = await setupTest();
+    const run = await writeProject(ctx);
+
+    for (const [args, env] of [
+      [["install"], {}],
+      [["install", "--no-save"], {}],
+      [["install", "--frozen-lockfile"], {}],
+      [["install", "--production"], {}],
+      [["ci"], {}],
+      [["install"], { BUN_CONFIG_SKIP_INSTALL_PACKAGES: "1" }],
+    ] as [string[], Record<string, string>][]) {
+      const { err, result } = await run(args, env);
+      expect(err).not.toContain("error:");
+      expect({ ...result, env }).toEqual({ args, scriptsRan: all, exitCode: 0, env });
+    }
+  });
+});
+
 for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
   describe.concurrent("lifecycle scripts" + (forceWaiterThread ? " (waiter thread)" : ""), async () => {
     test("root package with all lifecycle scripts", async () => {
@@ -1615,65 +1745,6 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       ]);
       expect(await exited).toBe(0);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
-    });
-
-    test("--dry-run should not run root lifecycle scripts", async () => {
-      using ctx = await setupTest();
-      const { packageDir, packageJson, env } = ctx;
-      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
-
-      await writeFile(
-        packageJson,
-        JSON.stringify({
-          name: "foo",
-          version: "1.0.0",
-          scripts: {
-            preinstall: "echo preinstall > preinstall.txt",
-            postinstall: "echo postinstall > postinstall.txt",
-            prepare: "echo prepare > prepare.txt",
-          },
-        }),
-      );
-
-      const scriptsRan = () =>
-        Promise.all([
-          exists(join(packageDir, "preinstall.txt")),
-          exists(join(packageDir, "postinstall.txt")),
-          exists(join(packageDir, "prepare.txt")),
-        ]);
-
-      for (const args of [["--dry-run"], ["--frozen-lockfile", "--dry-run"]]) {
-        const { stdout, stderr, exited } = spawn({
-          cmd: [bunExe(), "install", ...args],
-          cwd: packageDir,
-          stdout: "pipe",
-          stdin: "ignore",
-          stderr: "pipe",
-          env: testEnv,
-        });
-
-        const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
-        expect(err).not.toContain("$ echo");
-        expect(err).not.toContain("error:");
-        expect(out).toContain("bun install v1.");
-        expect(exitCode).toBe(0);
-        expect(await scriptsRan()).toEqual([false, false, false]);
-      }
-
-      // The same package.json runs all three scripts on a real install.
-      const { stderr, exited } = spawn({
-        cmd: [bunExe(), "install"],
-        cwd: packageDir,
-        stdout: "ignore",
-        stdin: "ignore",
-        stderr: "pipe",
-        env: testEnv,
-      });
-
-      const [err, exitCode] = await Promise.all([stderr.text(), exited]);
-      expect(err).not.toContain("error:");
-      expect(exitCode).toBe(0);
-      expect(await scriptsRan()).toEqual([true, true, true]);
     });
 
     test("it should add `node-gyp rebuild` as the `install` script when `install` and `postinstall` don't exist and `binding.gyp` exists in the root of the package", async () => {

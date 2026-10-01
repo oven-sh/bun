@@ -748,10 +748,7 @@ impl Options {
             }
 
             if cli.dry_run {
-                self.do_.set(Do::INSTALL_PACKAGES, false);
                 self.dry_run = true;
-                self.do_.set(Do::WRITE_PACKAGE_JSON, false);
-                self.do_.set(Do::SAVE_LOCKFILE, false);
             }
             self.check = cli.check;
 
@@ -933,6 +930,17 @@ impl Options {
         if self.enable.contains(Enable::FROZEN_LOCKFILE) {
             self.do_.set(Do::SAVE_LOCKFILE, false);
             self.enable.set(Enable::FORCE_SAVE_LOCKFILE, false);
+        }
+
+        // What a dry run turns off. This sits after the CLI block because `--yarn` sets
+        // `SAVE_YARN_LOCK` there.
+        if self.dry_run {
+            self.do_.remove(
+                Do::INSTALL_PACKAGES
+                    | Do::WRITE_PACKAGE_JSON
+                    | Do::SAVE_LOCKFILE
+                    | Do::SAVE_YARN_LOCK,
+            );
         }
 
         // moved from `defer { ... }` after scope assignment (see note above).

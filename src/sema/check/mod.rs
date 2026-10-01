@@ -1303,9 +1303,79 @@ impl<'p> Checker<'p> {
             && frames
                 .windows(2)
                 .all(|pair| pair[1].entry_depth <= pair[0].entry_depth + 1)
-            && frames
-                .last()
-                .is_some_and(|last| self.instantiation_depth <= last.entry_depth + 1)
+            && frames.last().is_some_and(|last| {
+                self.instantiation_depth <= last.entry_depth + 1
+                    || self.is_reentered_from_own_branch(cycle, last.entry_depth)
+            })
+    }
+
+    /// Whether `cycle` is one conditional type that the instantiation of one of its branches has come back to through nothing but what
+    /// `instantiateTypeWorker` instantiates at once: the constituents of a union or an intersection, the operands of `keyof T` and
+    /// `T[K]`, the type arguments of an anonymous object type (`getObjectTypeInstantiation`). `entry_depth`: `instantiation_depth`
+    /// when the conditional type was entered.
+    fn is_reentered_from_own_branch(&self, cycle: &[Query], entry_depth: u32) -> bool {
+        let &[Query::Cond(file, node, _)] = cycle else {
+            return false;
+        };
+        let nesting = self.instantiation_depth.saturating_sub(entry_depth);
+        // `getConditionalType` resolves a conditional type that is a whole branch in the same loop.
+        let mut roots = vec![(file, node)];
+        // The types under the branches, each with the number of `instantiate` calls open when it is instantiated.
+        let mut pending: Vec<(TypeId, u32)> = Vec::new();
+        let mut next = 0;
+        while next < roots.len() {
+            let (root_file, root) = roots[next];
+            next += 1;
+            let TypeNodeKind::Cond { yes, no, .. } = self.hir(root_file)[root].kind else {
+                continue;
+            };
+            for branch in [yes, no] {
+                if branch.is_none() {
+                    continue;
+                }
+                let Some(declared) = self.p.type_node_types.get(root_file, branch.idx()) else {
+                    continue;
+                };
+                match *self.data(declared) {
+                    TypeData::Cond {
+                        file: f, node: n, ..
+                    } => {
+                        if !roots.contains(&(f, n)) {
+                            roots.push((f, n));
+                        }
+                    }
+                    _ => pending.push((declared, 1)),
+                }
+            }
+        }
+        let mut seen = crate::util::FxHashSet::default();
+        while let Some((ty, level)) = pending.pop() {
+            if level > nesting || !seen.insert((ty, level)) {
+                continue;
+            }
+            match self.data(ty) {
+                TypeData::Cond {
+                    file: f, node: n, ..
+                } => {
+                    if level == nesting && (*f, *n) == (file, node) {
+                        return true;
+                    }
+                }
+                TypeData::Union(parts) | TypeData::Intersection(parts) => {
+                    pending.extend(parts.iter().map(|&part| (part, level + 1)));
+                }
+                TypeData::IndexedAccess { obj, index, .. } => {
+                    pending.extend([(*obj, level + 1), (*index, level + 1)]);
+                }
+                TypeData::Keyof(operand) => pending.push((*operand, level + 1)),
+                TypeData::Anon { mapper, .. } => {
+                    let arguments = self.p.types.mapping(*mapper);
+                    pending.extend(arguments.iter().map(|argument| (argument.1, level + 1)));
+                }
+                _ => {}
+            }
+        }
+        false
     }
 
     /// `pushTypeResolution` finding what is asked for under way at `i`: everything from there up that is a resolution is in the

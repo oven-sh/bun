@@ -868,12 +868,15 @@ impl<'p> Checker<'p> {
                 {
                     return None;
                 }
-                // What is assigned has the say, even next to an annotation that names nothing. Without one the type of the constant
-                // is that of what is assigned, and makes the unique symbol of `Symbol()`.
+                // `getTypeOfExpression` of the initializer, even next to an annotation that names nothing. It pushes no resolution of
+                // the constant and is not widened. The declaration makes the unique symbol of `Symbol()`, from the syntax alone
+                // (`getESSymbolLikeTypeForNode`).
                 let ty = if annotation.is_some() {
                     self.type_of_expr(of, init)
-                } else {
+                } else if self.is_symbol_or_symbol_for_call(of, init) {
                     self.type_of_symbol(sym)
+                } else {
+                    self.type_of_declaration_initializer(of, init)
                 };
                 self.property_name_of_type(ty)
             }
@@ -1146,18 +1149,19 @@ impl<'p> Checker<'p> {
         if matches!(reference.root, Root::Pattern(_) | Root::Params(_)) {
             return None;
         }
-        let (obj, name, chain) = match hir[e].kind {
-            ExprKind::Dot {
-                obj, name, chain, ..
-            } => (obj, name, chain),
-            ExprKind::Index { obj, index, chain } => {
-                (obj, self.literal_key(reference.file, index)?, chain)
-            }
+        let (obj, chain) = match hir[e].kind {
+            ExprKind::Dot { obj, chain, .. } | ExprKind::Index { obj, chain, .. } => (obj, chain),
             _ => return None,
         };
         if !self.matches(reference, obj) {
             return None;
         }
+        // `getDiscriminantPropertyAccess` asks `getAccessedPropertyName` of a candidate only: naming a constant key resolves a type.
+        let name = match hir[e].kind {
+            ExprKind::Dot { name, .. } => name,
+            ExprKind::Index { index, .. } => self.literal_key(reference.file, index)?,
+            _ => return None,
+        };
         Some(Access {
             name,
             optional: chain != Chain::No,

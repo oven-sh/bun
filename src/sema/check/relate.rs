@@ -3698,6 +3698,7 @@ impl<'p> Checker<'p> {
         let maybe_start = r.maybe_keys.len();
         // What is found out from here on holds for others as long as the resolver does not run into itself meanwhile.
         let cycles_before = self.cycles;
+        let events_before = self.deep_events;
         r.maybe_keys.push(key);
         let save_expanding = r.expanding;
         if recursion & REC_SOURCE != 0 {
@@ -3751,6 +3752,9 @@ impl<'p> Checker<'p> {
             }
             return result;
         }
+        // tsgo reports an instantiation limit at the node that is current when the comparison is first made. A comparison that hit one
+        // that could not be reported is made again, so that `check_excessive_depth` comes to the limit.
+        let is_cacheable = self.cycles == cycles_before && self.unreported_event <= events_before;
         if result.holds() {
             if result == Ternary::TRUE || r.source_stack.is_empty() && r.target_stack.is_empty() {
                 // What held on assumptions holds now that there are none left. What is not known stays so.
@@ -3759,16 +3763,16 @@ impl<'p> Checker<'p> {
                     maybe_start,
                     propagating,
                     result == Ternary::TRUE || result == Ternary::MAYBE,
-                    cycles_before,
+                    is_cacheable,
                 );
             }
         } else {
             // What is false on assumptions is false without. A failure that follows from a comparison that was cut short is not kept.
-            if self.cycles == cycles_before && !r.overflow && !r.hit_cached_overflow {
+            if is_cacheable && !r.overflow && !r.hit_cached_overflow {
                 self.p.relations.insert(key, FAILED | propagating);
             }
             r.relation_count -= 1;
-            self.reset_maybe_stack(r, maybe_start, propagating, false, cycles_before);
+            self.reset_maybe_stack(r, maybe_start, propagating, false, is_cacheable);
         }
         result
     }
@@ -3780,7 +3784,7 @@ impl<'p> Checker<'p> {
         maybe_start: usize,
         propagating: u8,
         mark_all_as_succeeded: bool,
-        cycles_before: u64,
+        is_cacheable: bool,
     ) {
         while r.maybe_keys.len() > maybe_start {
             let Some(key) = r.maybe_keys.pop() else {
@@ -3788,7 +3792,7 @@ impl<'p> Checker<'p> {
             };
             r.maybe_keys_set.remove(&key);
             if mark_all_as_succeeded {
-                if self.cycles == cycles_before {
+                if is_cacheable {
                     self.p.relations.insert(key, SUCCEEDED | propagating);
                 }
                 r.relation_count -= 1;

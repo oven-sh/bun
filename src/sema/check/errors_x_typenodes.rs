@@ -1268,7 +1268,9 @@ impl Checker<'_> {
             if is_type_node {
                 self.type_from_node(file, TypeNodeId(rank));
             } else {
-                self.type_of_expr(file, ExprId(u32::MAX - rank));
+                let e = ExprId(u32::MAX - rank);
+                self.type_of_expr(file, e);
+                self.relate_assignment_operands(file, e);
             }
         }
         self.reports_depth = false;
@@ -1278,6 +1280,45 @@ impl Checker<'_> {
                 out.push(Diagnostic { start, code: 2589 });
                 self.note(start, end, 2589, Vec::new());
             }
+        }
+    }
+
+    /// `checkAssignmentOperator`: compares the operands of the assignment `e` with `e` for `currentNode`. The comparison resolves
+    /// members that `type_of_expr` leaves alone.
+    fn relate_assignment_operands(&mut self, file: FileId, e: ExprId) {
+        let hir = self.hir(file);
+        let ExprKind::Assign {
+            op: None,
+            target,
+            value,
+        } = hir[e].kind
+        else {
+            return;
+        };
+        // `checkReferenceExpression`. What is no variable, or is a constant, has the error type.
+        let is_reference = match hir[target].kind {
+            ExprKind::Ident(name) => {
+                self.symbol_of_identifier(file, target, name)
+                    .is_some_and(|sym| {
+                        let flags = self.files().flags(sym);
+                        flags.intersects(SymFlags::VARIABLE) && !flags.contains(SymFlags::CONST)
+                    })
+            }
+            ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => chain == Chain::No,
+            _ => false,
+        };
+        // `[a = 1] = x`: a default, not an assignment.
+        if !is_reference || self.is_assignment_target(file, e) {
+            return;
+        }
+        let target_type = self.declared_type_of_reference(file, target);
+        let source_type = self.type_of_expr(file, value);
+        if self.is_known(source_type)
+            && self.is_known(target_type)
+            && self.enter(Query::Expr(file, e))
+        {
+            self.answer_if_sure(|c| c.is_assignable(source_type, target_type));
+            self.leave();
         }
     }
 

@@ -199,6 +199,89 @@ pub struct Program {
 }
 
 impl Program {
+    /// Where the memory of what has been worked out is: what, how many, how many bytes.
+    pub fn sizes(&self) -> Vec<(String, usize, usize)> {
+        let mut out = self.types.sizes();
+        let (mut count, mut bytes) = (0, 0);
+        for resolved in self.shapes.kept() {
+            count += 1;
+            bytes += resolved.bytes();
+        }
+        out.push(("shapes".to_owned(), count, bytes));
+        let boxes = |name: &str, lens: &mut dyn Iterator<Item = usize>, size: usize| {
+            let (mut count, mut bytes) = (0, 0);
+            for len in lens {
+                count += 1;
+                bytes += 16 + len * size + if len > 0 { 16 } else { 0 };
+            }
+            (name.to_owned(), count, bytes)
+        };
+        out.push(boxes(
+            "kept: parameters of signatures",
+            &mut self.sig_params.kept().map(|b| b.len()),
+            size_of::<SigParam>(),
+        ));
+        out.push(boxes(
+            "kept: type parameters of signatures",
+            &mut self.sig_type_params.kept().map(|b| b.len()),
+            4,
+        ));
+        out.push(boxes(
+            "kept: call signatures of types",
+            &mut self.call_signatures.kept().map(|b| b.len()),
+            4,
+        ));
+        out.push(boxes(
+            "kept: construct signatures of types",
+            &mut self.construct_signatures.kept().map(|b| b.len()),
+            4,
+        ));
+        out.push(boxes(
+            "kept: union origins",
+            &mut self.union_origins.kept().map(|b| b.len()),
+            4,
+        ));
+        out.push(boxes(
+            "kept: aliases of types",
+            &mut self.alias_of.kept().map(|b| b.1.len() + 4),
+            4,
+        ));
+        let map = |name: &str, len: usize, entry: usize| (name.to_owned(), len, len * (entry + 11));
+        out.push(map("map: instantiations", self.instantiations.len(), 12));
+        out.push(map("map: relations", self.relations.len(), 12));
+        out.push(map("map: conditionals", self.conditionals.len(), 16));
+        out.push(map(
+            "map: mapped property types",
+            self.mapped_prop_types.len(),
+            12,
+        ));
+        out.push(map(
+            "map: intersected properties",
+            self.intersected_props.len(),
+            12,
+        ));
+        let mut by_node = |name: &str, (cells, used, size): (usize, usize, usize)| {
+            out.push((
+                format!("by node: {name} ({used} of {cells} cells in use)"),
+                cells,
+                cells * size,
+            ));
+        };
+        by_node("expression types", self.expr_types.0.fill());
+        by_node("type node types", self.type_node_types.0.fill());
+        by_node("return types", self.fn_return_types.0.fill());
+        by_node("binding types", self.pat_types.0.fill());
+        by_node("literal property types", self.literal_prop_types.0.fill());
+        by_node("symbol types", self.symbol_types.fill());
+        by_node("declared types", self.declared_types.fill());
+        by_node("calls", self.calls.fill());
+        by_node("failure signatures", self.failure_sigs.fill());
+        by_node("argument contexts", self.arg_contexts.fill());
+        by_node("assigned property types", self.assigned_prop_types.fill());
+        by_node("member types", self.member_types.fill());
+        out
+    }
+
     pub fn new(files: Files) -> Program {
         let bases =
             |len: fn(&crate::program::Module) -> usize| Bases::new(files.modules.iter().map(len));

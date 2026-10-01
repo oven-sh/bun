@@ -23,6 +23,25 @@ impl Resolved {
     }
 
     #[inline]
+    pub(super) fn bytes(&self) -> usize {
+        size_of::<Resolved>()
+            + self.shape.props.capacity() * size_of::<Prop>()
+            + (self.shape.call.capacity() + self.shape.construct.capacity()) * 4
+            + self.shape.index.capacity() * size_of::<IndexInfo>()
+            + self.by_name.capacity() * 9
+            + self
+                .shape
+                .props
+                .iter()
+                .map(|p| match &p.source {
+                    PropSource::Members(m) => 16 + m.len() * 8,
+                    PropSource::Assigned(_, e) => 16 + e.len() * 4,
+                    PropSource::Intersected(_, props) => 16 + props.len() * size_of::<Prop>(),
+                    _ => 0,
+                })
+                .sum::<usize>()
+    }
+
     pub fn prop(&self, name: Atom) -> Option<&Prop> {
         if self.shape.props.len() > 8 {
             return self

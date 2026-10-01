@@ -545,6 +545,85 @@ impl TypeStore {
         store
     }
 
+    /// For each kind of thing that is kept: what it is, how many there are, and how many bytes they take, what they point to included.
+    pub fn sizes(&self) -> Vec<(String, usize, usize)> {
+        fn shape_bytes(shape: &Shape) -> usize {
+            shape.props.capacity() * size_of::<Prop>()
+                + shape.props.iter().map(prop_bytes).sum::<usize>()
+                + (shape.call.capacity() + shape.construct.capacity()) * 4
+                + shape.index.capacity() * size_of::<IndexInfo>()
+        }
+        fn prop_bytes(prop: &Prop) -> usize {
+            match &prop.source {
+                PropSource::Members(m) => m.len() * 8,
+                PropSource::Assigned(_, e) => e.len() * 4,
+                PropSource::Intersected(_, props) => {
+                    props.len() * size_of::<Prop>() + props.iter().map(prop_bytes).sum::<usize>()
+                }
+                _ => 0,
+            }
+        }
+        let mut kinds: std::collections::BTreeMap<&'static str, (usize, usize)> =
+            Default::default();
+        for i in 0..self.types.items.len() {
+            let (name, payload) = match &self.types.items.get(i).data {
+                TypeData::Union(t) => ("type: union", t.len() * 4),
+                TypeData::Intersection(t) => ("type: intersection", t.len() * 4),
+                TypeData::Ref { args, .. } => ("type: reference", args.len() * 4),
+                TypeData::LazyAlias { args, .. } => ("type: lazy alias", args.len() * 4),
+                TypeData::Tuple { elems, flags, .. } => (
+                    "type: tuple",
+                    elems.len() * 4 + flags.len() * size_of::<ElemFlags>(),
+                ),
+                TypeData::Anon { .. } => ("type: anonymous object", 0),
+                TypeData::Fns { decls, .. } => ("type: functions", decls.len() * 8),
+                TypeData::Synth(shape) => (
+                    "type: made-up object",
+                    size_of::<Shape>() + shape_bytes(shape),
+                ),
+                TypeData::Template { texts, types } => {
+                    ("type: template", texts.len() * 4 + types.len() * 4)
+                }
+                TypeData::Cond { .. } => ("type: conditional", 0),
+                TypeData::IndexedAccess { .. } => ("type: indexed access", 0),
+                TypeData::TypeParam(..) => ("type: type parameter", 0),
+                _ => ("type: other", 0),
+            };
+            let row = kinds.entry(name).or_default();
+            row.0 += 1;
+            row.1 += size_of::<TypeRecord>() + payload + 8;
+        }
+        let mut out: Vec<(String, usize, usize)> = kinds
+            .into_iter()
+            .map(|(name, (count, bytes))| (name.to_owned(), count, bytes))
+            .collect();
+        let (mut count, mut bytes) = (0, 0);
+        for i in 0..self.sigs.items.len() {
+            count += 1;
+            bytes += size_of::<SigData>()
+                + 8
+                + match self.sigs.items.get(i) {
+                    SigData::Synth {
+                        type_params,
+                        params,
+                        of,
+                        ..
+                    } => {
+                        type_params.len() * 4 + params.len() * size_of::<SigParam>() + of.len() * 4
+                    }
+                    _ => 0,
+                };
+        }
+        out.push(("signatures".to_owned(), count, bytes));
+        let (mut count, mut bytes) = (0, 0);
+        for i in 0..self.mappers.items.len() {
+            count += 1;
+            bytes += size_of::<(Mapping, TypeFlags)>() + 8 + self.mappers.items.get(i).0.len() * 8;
+        }
+        out.push(("mappers".to_owned(), count, bytes));
+        out
+    }
+
     #[inline]
     pub fn get(&self, id: TypeId) -> &TypeData {
         &self.types.items.get(id.0).data

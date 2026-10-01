@@ -287,6 +287,25 @@ fn print_loaded_sizes(program: &bun_sema::check::Program) {
     }
 }
 
+fn print_checked_sizes(program: &bun_sema::check::Program) {
+    let mut rows = program.sizes();
+    rows.sort_by_key(|r| std::cmp::Reverse(r.2));
+    let total: usize = rows.iter().map(|r| r.2).sum();
+    eprintln!(
+        "after checking: peak {:.2} GB; accounted for below {:.0} MB",
+        bun_sema_standalone::peak_rss() as f64 / (1u64 << 30) as f64,
+        total as f64 / (1 << 20) as f64
+    );
+    for (name, count, bytes) in rows {
+        eprintln!(
+            "  {:>7.0} MB  {:>10}  {:>5} bytes each  {name}",
+            bytes as f64 / (1 << 20) as f64,
+            count,
+            if count == 0 { 0 } else { bytes / count }
+        );
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
@@ -514,23 +533,26 @@ fn main() {
                 .to_string_lossy()
                 .into_owned();
             let lib_dir = std::env::var("BUN_SEMA_TS_LIB").ok();
-            let report = bun_sema_driver::check(&bun_sema_driver::Request {
-                cwd: &cwd,
-                project: project.as_deref(),
-                paths: &paths,
-                threads: args
-                    .iter()
-                    .find_map(|a| a.strip_prefix("--threads="))
-                    .and_then(|t| t.parse().ok())
-                    .unwrap_or(0),
-                lib_dir: lib_dir.as_deref(),
-                global_node_modules: None,
-                file_time_limit: std::time::Duration::from_secs(10),
-                loaded: args
-                    .iter()
-                    .any(|a| a == "--memory")
-                    .then_some(&print_loaded_sizes as &(dyn Fn(&bun_sema::check::Program) + Sync)),
-            });
+            let report =
+                bun_sema_driver::check(&bun_sema_driver::Request {
+                    cwd: &cwd,
+                    project: project.as_deref(),
+                    paths: &paths,
+                    threads: args
+                        .iter()
+                        .find_map(|a| a.strip_prefix("--threads="))
+                        .and_then(|t| t.parse().ok())
+                        .unwrap_or(0),
+                    lib_dir: lib_dir.as_deref(),
+                    global_node_modules: None,
+                    file_time_limit: std::time::Duration::from_secs(10),
+                    loaded: args.iter().any(|a| a == "--memory").then_some(
+                        &print_loaded_sizes as &(dyn Fn(&bun_sema::check::Program) + Sync),
+                    ),
+                    checked: args.iter().any(|a| a == "--memory").then_some(
+                        &print_checked_sizes as &(dyn Fn(&bun_sema::check::Program) + Sync),
+                    ),
+                });
             let cwd = bun_sema_driver::host::from_native(&cwd);
             let style = Style {
                 layout: if has("--plain") {

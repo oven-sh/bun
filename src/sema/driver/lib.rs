@@ -72,6 +72,8 @@ pub struct Request<'a> {
     pub file_time_limit: Duration,
     /// Called with everything that was loaded, before any of it is checked.
     pub loaded: Option<&'a (dyn Fn(&Program) + Sync)>,
+    /// Called with it again when all of it is checked.
+    pub checked: Option<&'a (dyn Fn(&Program) + Sync)>,
 }
 
 /// Something that is wrong, ready to be shown.
@@ -418,5 +420,8 @@ pub fn check(request: &Request) -> Report {
         (&a.path, a.start, a.end, a.code, &a.text).cmp(&(&b.path, b.start, b.end, b.code, &b.text))
     });
     report.check_time = checking.elapsed();
+    if let Some(checked) = request.checked {
+        checked(&program);
+    }
     report
 }

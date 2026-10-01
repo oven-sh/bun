@@ -361,6 +361,14 @@ pub struct ByNode<K, V: Packed> {
 }
 
 impl<K: NodeKey, V: Packed> ByNode<K, V> {
+    /// How many cells there are and how many hold something, and the size of one.
+    pub fn fill(&self) -> (usize, usize, usize) {
+        let used = (0..self.cells.len)
+            .filter(|&i| self.cells.cell(i).load() != Default::default())
+            .count();
+        (self.cells.len, used, size_of::<V::Cell>())
+    }
+
     pub fn new(bases: &Bases) -> Self {
         ByNode {
             cells: Flat::new(bases.total()),
@@ -472,6 +480,14 @@ pub struct ByNodeKept<K, T> {
 }
 
 impl<K: NodeKey, T> ByNodeKept<K, T> {
+    pub fn fill(&self) -> (usize, usize, usize) {
+        self.handles.fill()
+    }
+
+    pub fn kept(&self) -> impl Iterator<Item = &T> {
+        (0..self.kept.len()).map(|i| self.kept.get(i))
+    }
+
     pub fn new(bases: &Bases) -> Self {
         ByNodeKept {
             handles: ByNode::new(bases),
@@ -585,6 +601,10 @@ impl<I: Id, T> Default for ByIdKept<I, T> {
 }
 
 impl<I: Id, T> ByIdKept<I, T> {
+    pub fn kept(&self) -> impl Iterator<Item = &T> {
+        (0..self.kept.len()).map(|i| self.kept.get(i))
+    }
+
     #[inline]
     pub fn get_ref(&self, key: &I) -> Option<&T> {
         self.handles.get(key).map(|handle| self.kept.get(handle.0))

@@ -141,6 +141,7 @@ fn run(cwd: &str, project: Option<&str>, paths: &[String], threads: usize) -> Re
         global_node_modules: global.as_deref(),
         file_time_limit: core::time::Duration::from_secs(10),
         loaded: None,
+        checked: None,
     })
 }
 

@@ -20,13 +20,12 @@ const turn = (i: number) => new Promise<void>(resolve => (i % 2 ? setImmediate(r
 
 // A released cell is only unprotected; it still has to be collected, so
 // alternate turns with collections. This converges within a few rounds when
-// the cells are released. Returns the number of cells that are still rooted
-// afterwards: protected, or reached from a GC root in a heap snapshot. A cell
-// that no root reaches does not count: on Windows, one such cell (no incoming
-// edge in the snapshot either) survives every collection in some runs, and
-// what the fix guarantees is that nothing roots the cell, not that a given
-// collection frees it. The rooted survivors go to stderr with the per-round
-// counts and the shortest path from a root to each.
+// the cells are released. Returns the number of cells left: the cells still
+// alive, except on Windows, where only a cell that a heap snapshot reaches
+// from a GC root (or that is protected, which is its own root) counts. There,
+// a cell with no incoming edge and no root survives every collection in some
+// runs; what the fix guarantees is that nothing roots the cell. The leaked
+// cells go to stderr with the per-round counts and what reaches each.
 export async function collectCells(phase: string) {
   const survivors: { what: string; rounds: number }[] = [];
   for (let i = 0; i < 25 && liveCells() > 0; i++) {
@@ -40,15 +39,15 @@ export async function collectCells(phase: string) {
     else survivors.push({ what, rounds: 1 });
   }
   if (liveCells() === 0) return 0;
-  const rooted = retainersOfCells().filter(cell => cell.rooted);
-  if (rooted.length > 0) {
+  const leaked = retainersOfCells().filter(cell => cell.rooted || process.platform !== "win32");
+  if (leaked.length > 0) {
     const trace = survivors.map(({ what, rounds }) => `${what} x${rounds}`).join("\n");
     console.error(
-      `${phase}: ${rooted.length} still rooted (${protectedCells()} protected); alive after each collection round:\n${trace}\n` +
-        `what reaches them:\n${rooted.map(cell => cell.path).join("\n")}`,
+      `${phase}: ${leaked.length} leaked (${protectedCells()} protected); alive after each collection round:\n${trace}\n` +
+        `what reaches them:\n${leaked.map(cell => cell.path).join("\n")}`,
     );
   }
-  return rooted.length;
+  return leaked.length;
 }
 
 // For every live BundlerPlugin cell: whether a GC root reaches it in a heap
@@ -127,9 +126,11 @@ export function serveHtml(html: HTMLBundle, development: boolean) {
 
 // Starts `count` servers, requests the route of each (which loads the plugins
 // and bundles the route), checks the plugin took part in the bundle, counts
-// the cells while every server is still alive, then stops them all. Lives in
-// its own function so the servers are unreachable once it returns.
+// the cells the servers added while every server is still alive, then stops
+// them all. Lives in its own function so the servers are unreachable once it
+// returns.
 export async function serveAndStop(html: HTMLBundle, development: boolean, count: number) {
+  const cellsBefore = liveCells();
   const servers: Server[] = [];
   let usedPlugin = 0;
   for (let i = 0; i < count; i++) {
@@ -141,7 +142,7 @@ export async function serveAndStop(html: HTMLBundle, development: boolean, count
     const chunk = await fetch(new URL(script, server.url));
     if ((await chunk.text()).includes(MARKER)) usedPlugin++;
   }
-  const cellsWhileServing = liveCells();
+  const cellsWhileServing = liveCells() - cellsBefore;
   await Promise.all(servers.map(server => server.stop(true)));
   return { usedPlugin, cellsWhileServing };
 }

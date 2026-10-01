@@ -240,6 +240,97 @@ test.skipIf(isDebug || isASAN)("HTMLRewriter does not leak element/document hand
   expect(after - before, stdout).toBeLessThan((ROUNDS * REGISTRATIONS_PER_ROUND) / 4);
 });
 
+// TEMPORARY, removed before this PR leaves draft: prints the numbers of this
+// lane (the block counts of the test above, and the resident memory that the
+// test below used to assert on release builds), so that the bounds can be
+// checked against every platform CI runs.
+test.skipIf(isDebug || isASAN)(
+  "diagnostic: handler allocation numbers of this lane",
+  async () => {
+    const run = async (args: string[], env: Record<string, string> = {}) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0", ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return exitCode === 0 && stderr === "" ? stdout.trim() : JSON.stringify({ exitCode, stderr, stdout });
+    };
+    const lane = `${process.platform}-${process.arch}`;
+    const prelude = /* js */ `
+      const { heapStats } = require("bun:jsc");
+      const noop = { element() {}, comments() {}, text() {} };
+      const docNoop = { doctype() {}, comments() {}, text() {}, end() {} };
+      function rewriter() {
+        const rw = new HTMLRewriter();
+        for (let j = 0; j < 32; j++) rw.on("div", noop);
+        for (let j = 0; j < 32; j++) rw.onDocument(docNoop);
+        return rw;
+      }
+    `;
+
+    // 1. The block counts of the test above, per round, several runs.
+    const blocks = /* js */ `${prelude}
+      const liveBlocks = () => heapStats().mimalloc.malloc_bins.reduce((sum, bin) => sum + bin.current, 0);
+      function round() {
+        const rewriters = [];
+        for (let i = 0; i < 1000; i++) rewriters.push(rewriter());
+        const held = liveBlocks();
+        rewriters.length = 0;
+        Bun.gc(true);
+        return held;
+      }
+      const started = performance.now();
+      round();
+      const before = liveBlocks();
+      const held = [], after = [];
+      for (let i = 0; i < 6; i++) { held.push(round() - before); after.push(liveBlocks() - before); }
+      process.stdout.write(JSON.stringify({ before, held, after, ms: Math.round(performance.now() - started) }));
+    `;
+    for (let i = 0; i < 6; i++) console.log(`HRDIAG ${lane} blocks ${await run(["-e", blocks])}`);
+
+    // 2. The same by size class, one run.
+    const bins = /* js */ `${prelude}
+      const sizes = () => Object.fromEntries(heapStats().mimalloc.malloc_bins.filter(b => b.block_size).map(b => [b.block_size, b.current]));
+      const diff = (a, b) => Object.fromEntries(Object.keys({ ...a, ...b }).map(k => [k, (a[k] ?? 0) - (b[k] ?? 0)]).filter(([, v]) => Math.abs(v) >= 20));
+      function round() {
+        const rewriters = [];
+        for (let i = 0; i < 1000; i++) rewriters.push(rewriter());
+        const held = sizes();
+        rewriters.length = 0;
+        Bun.gc(true);
+        return held;
+      }
+      round();
+      const before = sizes();
+      const held = round();
+      round();
+      const after = sizes();
+      const total = Object.values(before).reduce((a, b) => a + b, 0);
+      process.stdout.write(JSON.stringify({ total, held: diff(held, before), after: diff(after, before), negative: Object.entries(after).filter(([, v]) => v < 0) }));
+    `;
+    console.log(`HRDIAG ${lane} bins ${await run(["-e", bins])}`);
+
+    // 3. Resident memory after each pass of the old release workload (N 4000),
+    //    and the kernel's peak, with 3 and with 6 measured passes in one run.
+    const rss = /* js */ `${prelude}
+      const mb = bytes => +(bytes / 1024 / 1024).toFixed(1);
+      const samples = [], peaks = [];
+      const started = performance.now();
+      for (let pass = 0; pass < 10; pass++) {
+        for (let i = 0; i < 4000; i++) rewriter();
+        Bun.gc(true);
+        samples.push(mb(process.memoryUsage.rss()));
+        peaks.push(process.resourceUsage().maxRSS);
+      }
+      process.stdout.write(JSON.stringify({ samples, peaks, ms: Math.round(performance.now() - started) }));
+    `;
+    for (let i = 0; i < 4; i++) console.log(`HRDIAG ${lane} rss ${await run(["--smol", "-e", rss])}`);
+  },
+  120_000,
+);
+
 // ASAN builds cannot read that count: their allocator is ASAN's. They measure
 // resident memory.
 //

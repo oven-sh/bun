@@ -70,6 +70,8 @@ pub struct Request<'a> {
     pub global_node_modules: Option<&'a str>,
     /// How long a single file may take. One that takes longer has run into a bug, and nothing is said about it but that.
     pub file_time_limit: Duration,
+    /// Of all that is loaded, only the files with this in their path are checked. For looking into one file of a big project.
+    pub only: Option<&'a str>,
     /// The process ends once the errors have been shown.
     pub ends_the_process: bool,
     /// Nothing is forgotten once it is checked: for whoever goes on to ask about the program. It takes several times the memory.
@@ -368,6 +370,9 @@ pub fn check(request: &Request) -> Report {
         })
         .map(|i| FileId(i as u32))
         .collect();
+    if let Some(only) = request.only {
+        to_check.retain(|&f| program.files.modules[f.idx()].path.contains(only));
+    }
     // The biggest first, so that none of them is what everybody waits for at the end.
     to_check.sort_by_key(|&f| std::cmp::Reverse(program.files.modules[f.idx()].hir.source_len));
     report.files_checked = to_check.len();

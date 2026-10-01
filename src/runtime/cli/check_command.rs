@@ -146,6 +146,7 @@ fn run(
         lib_dir: None,
         global_node_modules: global.as_deref(),
         file_time_limit: core::time::Duration::from_secs(10),
+        only: None,
         ends_the_process,
         keeps_everything: false,
         loaded: None,

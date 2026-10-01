@@ -51,6 +51,7 @@ mod expr;
 mod fix_t7;
 mod fix_t8;
 mod flow;
+mod in_order;
 mod infer;
 mod instantiate;
 mod jsx;
@@ -605,6 +606,7 @@ impl Program {
             contextual_properties: FxHashMap::default(),
             candidate_holes: Vec::new(),
             trace_cycles: std::env::var_os("BUN_SEMA_TRACE_CYCLES").is_some(),
+            looked_at: Default::default(),
             trace_relations: std::env::var_os("BUN_SEMA_TRACE_RELATIONS").is_some(),
             trace_slow_relations: std::env::var_os("BUN_SEMA_TRACE_SLOW_RELATIONS").is_some(),
             resolving: Vec::new(),
@@ -878,6 +880,8 @@ pub struct Checker<'p> {
     /// What narrowing has worked out once and for all.
     flow_memo: flow::FlowMemo,
     trace_cycles: bool,
+    /// With `trace_cycles`: the expressions that have been looked at.
+    looked_at: crate::util::FxHashSet<(FileId, ExprId)>,
     /// Say which property or signature a relation between two object types fails on.
     pub(super) trace_relations: bool,
     trace_slow_relations: bool,

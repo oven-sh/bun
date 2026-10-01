@@ -546,6 +546,7 @@ impl<'p> Checker<'p> {
             } = hir[c];
             let callee = self.type_of_expr(file, tag);
             if self.is_any(callee) {
+                self.look_at_arguments_of_untyped_call(file, exprs);
                 return ResolvedCall {
                     sig: None,
                     ret: callee,
@@ -599,6 +600,16 @@ impl<'p> Checker<'p> {
         self.resolve_call_or_new(file, call, id, is_new)
     }
 
+    /// `resolveUntypedCall`: nothing is expected of the arguments, and they are looked at all the same. What leads back from there to
+    /// something that is being worked out is a circle.
+    fn look_at_arguments_of_untyped_call(&mut self, file: FileId, args: IdList<ExprId>) {
+        let uncertain = self.uncertain;
+        for arg in self.hir(file).ids(args) {
+            self.type_of_expr(file, arg);
+        }
+        self.uncertain = uncertain;
+    }
+
     /// `resolveCallExpression`, of `super(..)`: what is called is one of the constructors of what the class extends, with the type
     /// arguments given there.
     fn resolve_super_call(&mut self, file: FileId, call: ExprId, id: CallId) -> ResolvedCall {
@@ -639,6 +650,7 @@ impl<'p> Checker<'p> {
         }
         callee = self.receiver_that_is_there(callee);
         if self.is_any(callee) {
+            self.look_at_arguments_of_untyped_call(file, data.args);
             return ResolvedCall {
                 sig: None,
                 ret: callee,

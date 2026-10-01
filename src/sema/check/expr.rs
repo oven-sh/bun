@@ -59,6 +59,9 @@ impl<'p> Checker<'p> {
 
     /// `checkExpressionEx`
     pub fn type_of_expr(&mut self, file: FileId, e: ExprId) -> TypeId {
+        if self.trace_cycles {
+            self.looked_at.insert((file, e));
+        }
         let ty = self.type_of_expr_as_written(file, e);
         // `instantiateTypeWithSingleGenericCallSignature`: a generic function met while type arguments are inferred from it is what
         // it is when called the way that is expected there. That holds for the inference, not for `e`: it is not kept.
@@ -114,7 +117,7 @@ impl<'p> Checker<'p> {
 
     /// The type that is kept for `e`, and whether it rests on something that could not be found out.
     #[inline]
-    fn kept_type_of_expr(&self, file: FileId, e: ExprId) -> Option<(TypeId, bool)> {
+    pub(super) fn kept_type_of_expr(&self, file: FileId, e: ExprId) -> Option<(TypeId, bool)> {
         if file == self.file_at_hand
             && let Some(slot) = self.exprs_at_hand.get(e.idx())
         {
@@ -1498,7 +1501,14 @@ impl<'p> Checker<'p> {
                 let ty = self.type_of_expr(file, x);
                 self.awaited(ty)
             }
-            ExprKind::Yield { value, star } => self.type_of_yield(file, e, value, star),
+            ExprKind::Yield { value, star } => {
+                let ty = self.type_of_yield(file, e, value, star);
+                // `checkYieldExpression` looks at what is yielded whatever comes of it.
+                if value.is_some() {
+                    self.look_at(file, value);
+                }
+                ty
+            }
             ExprKind::As { expr, ty } => {
                 // `checkAssertion` looks at the operand first. `getQuickTypeOfExpression`: not where the assertion is all there is
                 // to an initializer, or to what is assigned, which the flow of control asks the type of.

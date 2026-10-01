@@ -131,6 +131,10 @@ impl Checker<'_> {
             return syntactic;
         }
         self.checking = Some(file);
+        static IN_ORDER: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *IN_ORDER.get_or_init(|| std::env::var_os("BUN_SEMA_IN_ORDER").is_some()) {
+            self.look_at_file_in_order(file);
+        }
         // `BUN_SEMA_TRACE_PASSES=1`: which pass added or removed each error.
         static TRACE_PASSES: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         let trace_passes =

@@ -14,6 +14,7 @@
 #include "JSReadableStreamDefaultReader.h"
 #include "JSStreamTeeState.h"
 #include "JSStreamsRuntime.h"
+#include "VectorSizeLimit.h"
 #include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInspectCustom.h"
 #include "WebStreamsInternals.h"
@@ -40,6 +41,12 @@ namespace Bun {
 namespace WebStreams {
 
 using namespace JSC;
+
+// Checked before a buffer transfer or the cell lock, so the caller can still throw.
+static bool pendingPullIntosFull(const JSReadableByteStreamController* controller)
+{
+    return controller->m_pendingPullIntos.size() >= Bun::maxDequeSize<WriteBarrier<JSPullIntoDescriptor>>();
+}
 
 // CloneArrayBuffer(buffer, byteOffset, byteLength, %ArrayBuffer%): null ⇒ exception pending.
 static RefPtr<JSC::ArrayBuffer> cloneArrayBuffer(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ArrayBuffer& buffer, size_t byteOffset, size_t byteLength)
@@ -378,7 +385,12 @@ void JSReadableByteStreamController::pullSteps(JSGlobalObject* globalObject, JSR
         ASSERT(!readableStreamGetNumReadRequests(stream));
         RELEASE_AND_RETURN(scope, readableByteStreamControllerFillReadRequestFromQueue(globalObject, this, readRequest));
     }
+    JSPullIntoDescriptor* pullIntoDescriptor = nullptr;
     if (m_autoAllocateChunkSize) {
+        if (pendingPullIntosFull(this)) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return;
+        }
         // "Let buffer be Construct(%ArrayBuffer%, « autoAllocateChunkSize »)" is interpreted
         // as a completion record: an allocation failure goes to the error steps. The impl is
         // allocated directly (no JSArrayBuffer wrapper cell); user-visible views over it wrap
@@ -389,7 +401,7 @@ void JSReadableByteStreamController::pullSteps(JSGlobalObject* globalObject, JSR
             RELEASE_AND_RETURN(scope, readRequest->errorSteps(globalObject, error));
         }
         auto* zigGlobalObject = defaultGlobalObject(globalObject);
-        JSPullIntoDescriptor* pullIntoDescriptor = JSPullIntoDescriptor::create(vm, JSStreamsRuntime::from(globalObject)->pullIntoDescriptorStructure(zigGlobalObject));
+        pullIntoDescriptor = JSPullIntoDescriptor::create(vm, JSStreamsRuntime::from(globalObject)->pullIntoDescriptorStructure(zigGlobalObject));
         RETURN_IF_EXCEPTION(scope, void());
         pullIntoDescriptor->m_buffer = WTF::move(buffer);
         pullIntoDescriptor->m_bufferByteLength = static_cast<size_t>(m_autoAllocateChunkSize);
@@ -399,12 +411,14 @@ void JSReadableByteStreamController::pullSteps(JSGlobalObject* globalObject, JSR
         pullIntoDescriptor->m_minimumFill = 1;
         pullIntoDescriptor->m_viewConstructor = JSC::TypeUint8;
         pullIntoDescriptor->m_readerType = ReaderType::Default;
-        {
-            WTF::Locker locker { cellLock() };
-            m_pendingPullIntos.append(WriteBarrier<JSPullIntoDescriptor>(vm, this, pullIntoDescriptor));
-        }
     }
-    readableStreamAddReadRequest(vm, stream, readRequest);
+    // The request goes first, so a refused read leaves no descriptor behind.
+    readableStreamAddReadRequest(globalObject, stream, readRequest);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (pullIntoDescriptor) {
+        WTF::Locker locker { cellLock() };
+        m_pendingPullIntos.append(WriteBarrier<JSPullIntoDescriptor>(vm, this, pullIntoDescriptor));
+    }
     RELEASE_AND_RETURN(scope, readableByteStreamControllerCallPullIfNeeded(globalObject, this));
 }
 
@@ -732,7 +746,8 @@ void readableByteStreamControllerEnqueue(JSGlobalObject* globalObject, JSReadabl
         RETURN_IF_EXCEPTION(scope, void());
         if (!readableStreamGetNumReadRequests(stream)) {
             ASSERT(controller->m_pendingPullIntos.isEmpty());
-            readableByteStreamControllerEnqueueChunkToQueue(controller, WTF::move(transferredBuffer), byteOffset, byteLength);
+            readableByteStreamControllerEnqueueChunkToQueue(globalObject, controller, WTF::move(transferredBuffer), byteOffset, byteLength);
+            RETURN_IF_EXCEPTION(scope, void());
         } else {
             ASSERT(controller->m_queue.isEmpty());
             if (!controller->m_pendingPullIntos.isEmpty()) {
@@ -745,7 +760,8 @@ void readableByteStreamControllerEnqueue(JSGlobalObject* globalObject, JSReadabl
             RETURN_IF_EXCEPTION(scope, void());
         }
     } else if (readableStreamHasBYOBReader(stream)) {
-        readableByteStreamControllerEnqueueChunkToQueue(controller, WTF::move(transferredBuffer), byteOffset, byteLength);
+        readableByteStreamControllerEnqueueChunkToQueue(globalObject, controller, WTF::move(transferredBuffer), byteOffset, byteLength);
+        RETURN_IF_EXCEPTION(scope, void());
         MarkedArgumentBuffer filledPullIntos;
         readableByteStreamControllerProcessPullIntoDescriptorsUsingQueue(controller, filledPullIntos);
         if (filledPullIntos.hasOverflowed()) [[unlikely]] {
@@ -758,13 +774,24 @@ void readableByteStreamControllerEnqueue(JSGlobalObject* globalObject, JSReadabl
         }
     } else {
         ASSERT(!isReadableStreamLocked(stream));
-        readableByteStreamControllerEnqueueChunkToQueue(controller, WTF::move(transferredBuffer), byteOffset, byteLength);
+        readableByteStreamControllerEnqueueChunkToQueue(globalObject, controller, WTF::move(transferredBuffer), byteOffset, byteLength);
+        RETURN_IF_EXCEPTION(scope, void());
     }
     RELEASE_AND_RETURN(scope, readableByteStreamControllerCallPullIfNeeded(globalObject, controller));
 }
 
-void readableByteStreamControllerEnqueueChunkToQueue(JSReadableByteStreamController* controller, RefPtr<JSC::ArrayBuffer>&& buffer, size_t byteOffset, size_t byteLength)
+void readableByteStreamControllerEnqueueChunkToQueue(JSGlobalObject* globalObject, JSReadableByteStreamController* controller, RefPtr<JSC::ArrayBuffer>&& buffer, size_t byteOffset, size_t byteLength)
 {
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (controller->m_queue.isFull()) [[unlikely]] {
+        // The buffer is already transferred, so the chunk is lost: error the stream as a failed clone does.
+        JSObject* error = createOutOfMemoryError(globalObject);
+        readableByteStreamControllerError(globalObject, controller, error);
+        RETURN_IF_EXCEPTION(scope, void());
+        throwException(globalObject, scope, error);
+        return;
+    }
     {
         WTF::Locker locker { controller->cellLock() };
         controller->m_queue.append(locker, ByteQueueEntry { WTF::move(buffer), byteOffset, byteLength });
@@ -786,7 +813,7 @@ void readableByteStreamControllerEnqueueClonedChunkToQueue(JSGlobalObject* globa
         throwException(globalObject, scope, exception);
         return;
     }
-    readableByteStreamControllerEnqueueChunkToQueue(controller, WTF::move(cloneResult), 0, byteLength);
+    RELEASE_AND_RETURN(scope, readableByteStreamControllerEnqueueChunkToQueue(globalObject, controller, WTF::move(cloneResult), 0, byteLength));
 }
 
 void readableByteStreamControllerEnqueueDetachedPullIntoToQueue(JSGlobalObject* globalObject, JSReadableByteStreamController* controller, JSPullIntoDescriptor* pullIntoDescriptor)
@@ -994,6 +1021,11 @@ void readableByteStreamControllerPullInto(JSGlobalObject* globalObject, JSReadab
     ASSERT(!(minimumFill % elementSize));
     size_t byteOffset = view->byteOffset();
     size_t byteLength = view->byteLength();
+    // Refuse before the transfer, so the caller keeps its view.
+    if (pendingPullIntosFull(controller)) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
     RefPtr<JSC::ArrayBuffer> viewedBuffer = view->possiblySharedBuffer();
     RefPtr<JSC::ArrayBuffer> buffer = transferArrayBufferImpl(globalObject, *viewedBuffer);
     if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
@@ -1013,11 +1045,11 @@ void readableByteStreamControllerPullInto(JSGlobalObject* globalObject, JSReadab
     pullIntoDescriptor->m_viewConstructor = ctor;
     pullIntoDescriptor->m_readerType = ReaderType::Byob;
     if (!controller->m_pendingPullIntos.isEmpty()) {
-        {
-            WTF::Locker locker { controller->cellLock() };
-            controller->m_pendingPullIntos.append(WriteBarrier<JSPullIntoDescriptor>(vm, controller, pullIntoDescriptor));
-        }
-        readableStreamAddReadIntoRequest(vm, stream, readIntoRequest);
+        // The request goes first, so a refused read leaves no descriptor behind.
+        readableStreamAddReadIntoRequest(globalObject, stream, readIntoRequest);
+        RETURN_IF_EXCEPTION(scope, void());
+        WTF::Locker locker { controller->cellLock() };
+        controller->m_pendingPullIntos.append(WriteBarrier<JSPullIntoDescriptor>(vm, controller, pullIntoDescriptor));
         return;
     }
     if (stream->m_state == ReadableStreamState::Closed) {
@@ -1040,11 +1072,12 @@ void readableByteStreamControllerPullInto(JSGlobalObject* globalObject, JSReadab
             RELEASE_AND_RETURN(scope, readIntoRequest->errorSteps(globalObject, error));
         }
     }
+    readableStreamAddReadIntoRequest(globalObject, stream, readIntoRequest);
+    RETURN_IF_EXCEPTION(scope, void());
     {
         WTF::Locker locker { controller->cellLock() };
         controller->m_pendingPullIntos.append(WriteBarrier<JSPullIntoDescriptor>(vm, controller, pullIntoDescriptor));
     }
-    readableStreamAddReadIntoRequest(vm, stream, readIntoRequest);
     RELEASE_AND_RETURN(scope, readableByteStreamControllerCallPullIfNeeded(globalObject, controller));
 }
 

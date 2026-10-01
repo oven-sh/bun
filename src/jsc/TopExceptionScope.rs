@@ -242,7 +242,6 @@ impl TopExceptionScope {
     #[cold]
     fn assertion_failure(&mut self, proof: NonNull<Exception>) -> ! {
         let _ = proof;
-        #[cfg(any(debug_assertions, bun_asan))]
         debug_assert!(core::ptr::eq(self.location, &raw const self.bytes[0]));
         TopExceptionScope__assertNoException(&mut self.bytes);
         unreachable!("assertionFailure called without a pending exception");
@@ -257,12 +256,6 @@ impl TopExceptionScope {
         #[cfg(any(debug_assertions, bun_asan))]
         debug_assert!(core::ptr::eq(self.location, &raw const self.bytes[0]));
         NonNull::new(TopExceptionScope__pureException(&mut self.bytes))
-    }
-
-    pub fn clear_exception(&mut self) {
-        #[cfg(any(debug_assertions, bun_asan))]
-        debug_assert!(core::ptr::eq(self.location, &raw const self.bytes[0]));
-        TopExceptionScope__clearException(&mut self.bytes)
     }
 
     /// As `clear_exception`, but a TerminationException stays pending (JSC's
@@ -424,8 +417,6 @@ macro_rules! validation_scope {
 pub struct ExceptionValidationScope {
     #[cfg(any(debug_assertions, bun_asan))]
     scope: TopExceptionScope,
-    #[cfg(not(any(debug_assertions, bun_asan)))]
-    _scope: (),
 }
 
 /// RAII guard for an [`ExceptionValidationScope`]. See [`TopExceptionScopeGuard`].
@@ -491,7 +482,7 @@ impl ExceptionValidationScope {
         #[cfg(not(any(debug_assertions, bun_asan)))]
         {
             let _ = (global, src);
-            storage.write(Self { _scope: () })
+            storage.write(Self {})
         }
     }
 
@@ -741,7 +732,6 @@ unsafe extern "C" {
     /// only returns exceptions that have already been thrown. does not check traps
     safe fn TopExceptionScope__pureException(ptr: &mut [u8; SIZE]) -> *mut Exception;
     safe fn TopExceptionScope__takeTerminationOutsideScript(ptr: &mut [u8; SIZE]) -> bool;
-    safe fn TopExceptionScope__clearException(ptr: &mut [u8; SIZE]);
     safe fn TopExceptionScope__clearExceptionExceptTermination(ptr: &mut [u8; SIZE]);
     /// returns if an exception was already thrown, or if a trap (like another thread requesting
     /// termination) causes an exception to be thrown

@@ -651,18 +651,13 @@ pub(crate) fn filter_dependency_or_workspace(
     }
 
     let filtered = 'filtered: {
-        if dep.behavior.is_bundled() {
-            break 'filtered true;
-        }
-
-        let dep_features = match parent_res.tag {
-            crate::resolution::Tag::Root
-            | crate::resolution::Tag::Workspace
-            | crate::resolution::Tag::Folder => manager.options.local_package_features,
-            _ => manager.options.remote_package_features,
+        let dep_features = if parent_res.tag.is_local_package() {
+            manager.options.local_package_features
+        } else {
+            manager.options.remote_package_features
         };
 
-        if !dep.behavior.is_enabled(dep_features) {
+        if !dep.behavior.is_placed(dep_features) {
             break 'filtered true;
         }
 

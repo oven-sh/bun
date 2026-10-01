@@ -32,6 +32,7 @@ describe.skipIf(skip)("Bun.serve under injected syscall faults", () => {
       const s = Bun.serve({ port: 0, hostname: "127.0.0.1",
         fetch: () => new Response(Buffer.alloc(16384, 0x61)) });
       fault.set({ syscall: "send", action: "short", bytes: 1, repeat: -1 });
+      fault.set({ syscall: "writev", action: "short", bytes: 1, repeat: -1 });
       console.log(s.port);
       process.on("SIGTERM", () => { fault.clear(); s.stop(true); process.exit(0); });
     `);
@@ -55,6 +56,7 @@ describe.skipIf(skip)("Bun.serve under injected syscall faults", () => {
           start(c) { for (let i = 0; i < 8; i++) c.enqueue(Buffer.alloc(1024, i)); c.close(); }
         })) });
       fault.set({ syscall: "send", action: "short", bytes: 7, repeat: -1 });
+      fault.set({ syscall: "writev", action: "short", bytes: 7, repeat: -1 });
       console.log(s.port);
       process.on("SIGTERM", () => { fault.clear(); s.stop(true); process.exit(0); });
     `);
@@ -100,6 +102,7 @@ describe.skipIf(skip)("Bun.serve under injected syscall faults", () => {
         tls: { key: process.env.KEY, cert: process.env.CERT },
         fetch: () => new Response(Buffer.alloc(8192, 0x54)) });
       fault.set({ syscall: "send", action: "short", bytes: 3, repeat: -1 });
+      fault.set({ syscall: "writev", action: "short", bytes: 3, repeat: -1 });
       console.log(s.port);
       process.on("SIGTERM", () => { fault.clear(); s.stop(true); process.exit(0); });
     `,
@@ -125,6 +128,7 @@ describe.skipIf(skip)("Bun.serve under injected syscall faults", () => {
           start(c) { c.enqueue(Buffer.alloc(32768, 0x42)); c.close(); }
         })) });
       fault.set({ syscall: "send", action: "short", bytes: 1, repeat: -1 });
+      fault.set({ syscall: "writev", action: "short", bytes: 1, repeat: -1 });
       console.log(s.port);
       // Graceful stop() resolves only once every in-flight response has
       // reached a terminal state, so a leaked/hung response = test timeout.

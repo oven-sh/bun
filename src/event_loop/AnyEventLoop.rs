@@ -164,7 +164,6 @@ impl AnyEventLoop {
     pub fn tick_once(&mut self, context: *mut core::ffi::c_void) {
         match self {
             AnyEventLoop::Js { owner } => {
-                let _ = context;
                 owner.tick();
                 owner.auto_tick_active();
             }

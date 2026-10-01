@@ -174,11 +174,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `ReactRefresh::hook_ctx_mut` centralises the raw-pointer deref and returns a
             // borrow detached from `self` (the storage is on the caller's stack frame), so
             // it can be held across the `&mut self` method call below.
-            let hook_ctx = self
+            // There is no storage for a method, which takes no signature.
+            if let Some(hook) = self
                 .react_refresh
                 .hook_ctx_mut()
-                .expect("caller did not init hook storage. any function can have react hooks!");
-            if let Some(hook) = hook_ctx.as_ref() {
+                .and_then(|hook_ctx| hook_ctx.as_ref())
+            {
                 // `handle_react_refresh_post_visit_function_body` does not re-enter
                 // `hook_ctx_storage` (it only touches `stmts` and unrelated `P` fields).
                 self.handle_react_refresh_post_visit_function_body(&mut stmts, hook);
@@ -1178,7 +1179,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             Some(self.maybe_keep_expr_symbol_name(visited, name, was_anon));
                         self.decorator_class_name = prev_dcn;
                     } else {
-                        self.visit_expr(property.value.as_mut().unwrap());
+                        self.visit_expr_in_out(
+                            property.value.as_mut().unwrap(),
+                            ExprIn {
+                                is_method_value: property.flags.contains(flags::Property::IsMethod),
+                                ..Default::default()
+                            },
+                        );
                     }
 
                     if Self::IS_TYPESCRIPT_ENABLED {

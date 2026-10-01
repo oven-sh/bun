@@ -872,3 +872,59 @@ it("holds the promise of the entry point itself, which it looks at on every tick
   writeFileSync(join(String(dir), "main.js"), source("second"));
   expect(await line("load 2:")).toBe("load 2: 1 held");
 });
+
+// The cell of a collected promise goes to the next promise that is made.
+it.each([
+  ["pending", `new Promise(() => {})`],
+  ["rejected and handled", `Promise.reject(new Error("not the entry point's"))`],
+])("does not take a promise of the program's, %s, for that of the entry point", async (_, promise) => {
+  using dir = tempDir("hot-entry-promise-reused", { "main.js": `console.log("first load");` });
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const reader = runner.stdout.getReader();
+  let stdout = "";
+  const line = async (expected: string) => {
+    while (!stdout.split("\n").slice(0, -1).includes(expected)) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stdout += Buffer.from(value).toString();
+    }
+  };
+  await line("first load");
+  // What is left on the stack can keep it alive, and differs with where a collection starts from.
+  writeFileSync(
+    join(String(dir), "main.js"),
+    `
+      globalThis.kept = [];
+      require("fs").readFile(__filename, () => {
+        Bun.gc(true);
+        setImmediate(() => {
+          Bun.gc(true);
+          require("crypto").randomBytes(8, () => {
+            Bun.gc(true);
+            for (let i = 0; i < 20000; i++) {
+              const promise = ${promise};
+              promise.catch(() => {});
+              kept.push(promise);
+            }
+            console.log("collected");
+          });
+        });
+      });
+    `,
+  );
+  await line("collected");
+  writeFileSync(join(String(dir), "main.js"), `console.log("third load"); process.exit(0);`);
+  await line("third load");
+  const stderr = (await runner.stderr.text()).split("\n").filter(line => line && !line.startsWith("DEBUG: "));
+  expect({ stdout: stdout.split("\n"), stderr }).toEqual({
+    stdout: ["first load", "collected", "third load", ""],
+    stderr: [],
+  });
+});

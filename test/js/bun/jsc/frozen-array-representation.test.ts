@@ -60,6 +60,18 @@ describe("frozen arrays keep their elements in the vector", () => {
       }).toThrow(TypeError);
       expect(() => a.push(1)).toThrow(TypeError);
       expect(a.length).toBe(expected.length);
+      // The structure answers isFrozen / isSealed only for the lock that earned it.
+      expect(Object.isFrozen(a)).toBe(name === "Object.freeze");
+      expect(Object.isSealed(a)).toBe(name === "Object.freeze" || name === "Object.seal");
+    });
+
+    test("an empty array stays blank", () => {
+      const a = lock([]) as unknown[];
+      expect(describeObject(a)).toContain("ArrayClass");
+      expect(Object.isSealed(a)).toBe(name !== "non-writable length");
+      expect(Object.isFrozen(a)).toBe(name === "Object.freeze");
+      expect(() => a.push(1)).toThrow(TypeError);
+      expect(a.length).toBe(0);
     });
 
     test("an array that already owns a sparse map entry", () => {
@@ -226,6 +238,20 @@ describe("frozen arrays keep their elements in the vector", () => {
     });
     expect(vectorLength(a)).toBe(0);
     expect(() => Object.defineProperty(a, 1, { configurable: true })).toThrow(TypeError);
+    expect(Object.isSealed(a)).toBe(true);
+    expect(Object.isFrozen(a)).toBe(false);
+    // Frozen through the element-wise route: the generic walk, not the structure, answers.
+    Object.defineProperty(a, 1, { writable: false });
+    Object.defineProperty(a, 2, { writable: false });
+    expect(Object.isFrozen(a)).toBe(false);
+    Object.defineProperty(a, "length", { writable: false });
+    expect(Object.isFrozen(a)).toBe(true);
+    const b = Object.preventExtensions([1, 2]);
+    expect(Object.isSealed(b)).toBe(false);
+    Object.defineProperty(b, 0, { configurable: false });
+    Object.defineProperty(b, 1, { configurable: false });
+    expect(Object.isSealed(b)).toBe(true);
+    expect(Object.isFrozen(b)).toBe(false);
   });
 
   test.concurrent("freezing one literal leaves the next literal from the same site writable", async () => {

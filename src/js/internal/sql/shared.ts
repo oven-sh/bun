@@ -1677,7 +1677,7 @@ function getConnectionDetailsFromEnvironment(
 /** The environment connection URLs only apply when nothing names a target. */
 function hasConnectionTarget(options: Bun.SQL.Options): boolean {
   const o = options as Record<string, unknown>;
-  return !!(o.url || o.filename || o.hostname || o.host || o.path);
+  return !!(o.url || o.hostname || o.host || o.path);
 }
 
 function ensureUrlHasProtocol<T extends string | URL>(

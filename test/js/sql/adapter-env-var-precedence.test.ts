@@ -128,16 +128,12 @@ describe("SQL adapter environment variable precedence", () => {
       process.env.TLS_DATABASE_URL = "postgres://x:y@127.0.0.1:9/x?sslmode=require";
 
       expect(new SQL({ url: process.env.TLS_DATABASE_URL }).options.sslMode).toBe(2);
+
+      // Without it, the options form now matches the string form, which never took sslmode from the variable name.
       process.env.TLS_DATABASE_URL = "postgres://x:y@127.0.0.1:9/x";
+      expect(new SQL(process.env.TLS_DATABASE_URL).options.sslMode).toBe(0);
       expect(new SQL({ url: process.env.TLS_DATABASE_URL }).options.sslMode).toBe(0);
-    });
-
-    test("a filename is a connection target", () => {
-      process.env.DATABASE_URL = "postgres://x:y@127.0.0.1:9/x";
-
-      const sql = new SQL({ filename: ":memory:" });
-      expect(sql.options.adapter).toBe("sqlite");
-      expect(sql.options.filename).toBe(":memory:");
+      expect(new SQL({ url: process.env.TLS_DATABASE_URL, tls: true }).options.sslMode).toBe(2);
     });
 
     test('a url is a connection target for adapter: "sqlite" too', async () => {

@@ -23,4 +23,26 @@ for profile in dev release; do
   } > "$out/sizes.$tag.$profile.txt" || rc=1
   rm -f "$out/sizes.$tag.$profile.json"
 done
+# Types that are private to bun_js_parser (ParserSnapshot, SidecarMark): rustc prints the layouts it computed.
+mkdir -p "$work/ts/src"
+{
+  echo 'cargo-features = ["profile-rustflags"]'
+  sed "s|@TREE@|$tree|g; s|name = \"sizeprobe\"|name = \"sizeprobe_ts\"|" "$here/Cargo.toml.in"
+  printf '\n[profile.dev.package.bun_js_parser]\nrustflags = ["-Zprint-type-sizes"]\n\n[profile.release.package.bun_js_parser]\nrustflags = ["-Zprint-type-sizes"]\n'
+} > "$work/ts/Cargo.toml.new"
+awk '/^\[workspace\]/{ws=1; next} {print} END{print "\n[workspace]"}' "$work/ts/Cargo.toml.new" > "$work/ts/Cargo.toml"; rm -f "$work/ts/Cargo.toml.new"
+echo '// Empty: the build of the dependency prints the sizes.' > "$work/ts/src/lib.rs"
+cp "$tree/Cargo.lock" "$work/ts/Cargo.lock"
+for profile in dev release; do
+  flag=""; [ "$profile" = release ] && flag="--release"
+  (cd "$tree" && BUN_CODEGEN_DIR="$codegen" cargo check --offline $flag --manifest-path "$work/ts/Cargo.toml" \
+     --target-dir "$work/target") > "$work/ts/$profile.stdout" 2> "$out/typesizes.$tag.$profile.stderr.txt"
+  echo "cargo check $profile exit=$?" >> "$out/typesizes.$tag.$profile.stderr.txt"
+  {
+    echo "# tree=$tree rev=$(git -C "$tree" rev-parse --short=10 HEAD) profile=$profile: layouts rustc computed while checking bun_js_parser"
+    grep -a '^print-type-size type: ' "$work/ts/$profile.stdout" | grep -aE 'ParserSnapshot|SidecarMark|LexerSnapshot|lexer::Lexer<|`p::P<|StartsForParseOnly|FnOrArrowDataParse|ErasedMark|AttachedMark|parse_entry::Options|ParsedForLint' | sort -u
+    echo "# lines in all: $(grep -ac '^print-type-size type: ' "$work/ts/$profile.stdout")"
+  } > "$out/typesizes.$tag.$profile.txt"
+  rm -f "$work/ts/$profile.stdout"
+done
 exit $rc

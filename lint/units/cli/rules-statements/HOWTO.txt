@@ -1,0 +1,34 @@
+RESEARCH OF D3, "rules-statements": twelve rules on statements and simple nodes. Nothing here is in the tree.
+for-direction, no-async-promise-executor, no-case-declarations, no-delete-var, no-prototype-builtins, no-setter-return,
+no-unsafe-finally, no-unused-labels, no-useless-catch, no-with, require-yield, no-unused-private-class-members.
+
+The oracle is ESLint at the pin of src/lint/UPSTREAM_PORTED (/workspace/ref/eslint, espree) and the parser of typescript-eslint
+(/workspace/ref/tseslint); sh ../tools/eslint-oracle-setup.sh restores both. No build of Bun ran for this research: the worktree
+had no build/debug/bun-debug. What the rules do on Bun's tree is from reading src/ast and src/js_parser/parse.
+
+oracle/oracle.cjs    node oracle.cjs <rule> [cases.json] [--all-recommended]
+                     one JSON line per case: { kind, code, type (script|module|commonjs), jsx?, skip?, fatal?, reports }.
+                     Default cases: ../cases/upstream-<rule>.json. A case is run as a script, else as a module, then with JSX.
+                     skip: the case sets globals or an edition before 2015, so it is no case of the defaults.
+                     reports: "line:column-endLine:endColumn message"; with --all-recommended "rule line:column message" for
+                     every rule of eslint:recommended (what else reports on the case).
+oracle/ts.cjs        node ts.cjs <rule[,rule]> <cases.json | code...>   the same rules with @typescript-eslint/parser, as a.ts
+                     (a code that starts with "//tsx\n": a.tsx). Prints the code and "rule line:column message".
+oracle/cross.cjs     node cross.cjs [--json]   the cases of test/cli/lint/rules/*.json of the worktree on which one of the twelve
+                     rules reports: rules.test.ts takes a line of another rule only when the fixture of that rule has the case.
+oracle/show.cjs      node oracle.cjs <rule> | node show.cjs [width]   two lines per case, to read.
+oracle/parsecheck.js bun parsecheck.js   which of ESLint's own cases the installed bun rejects (none; the full parse, not the parse pass).
+
+cases/upstream-<rule>.json   ESLint's own cases of the rule: ../rule-support-unification-bottomup/oracle/extract.cjs <rule>.
+                             None of the twelve rules has an option, and each test file has one run, with ESLint's parser.
+cases/edge-<rule>.json       JavaScript cases written for this research: the places where Bun's tree differs from ESTree.
+cases/ts-<rule>.json         TypeScript cases: a wrapper (as, !, <T>, satisfies) where ESLint asks for a node type, and
+                             declarations that leave no node.
+answers/upstream-<rule>.jsonl, answers/edge-<rule>.jsonl   oracle.cjs over those lists.
+answers/ts-<rule>.txt        ts.cjs over those lists.
+answers/cross-existing-fixtures.txt, .jsonl   cross.cjs at be1ebe5295: 39 cases of the eleven fixtures to add to five new fixtures.
+
+Counts of ESLint's own cases (valid + invalid, without the skipped ones): for-direction 68+32, no-async-promise-executor 7+3,
+no-case-declarations 6+13, no-delete-var 1+1, no-prototype-builtins 27+19, no-setter-return 106+56 (one code twice),
+no-unsafe-finally 14+16, no-unused-labels 7+28, no-useless-catch 11+5, no-with 1+1, require-yield 9+6,
+no-unused-private-class-members 20+41. The installed bun parses every one of them.

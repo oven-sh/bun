@@ -1,0 +1,12 @@
+eslint 10.11.0 at 4618052eed6bb3ef420cf0db0490bbda2fd835a5
+espree 11.2.0
+acorn 8.18.0
+eslint-scope 9.1.2
+eslint-visitor-keys 5.0.1
+@eslint-community/regexpp 4.12.2
+@eslint-community/eslint-utils 4.10.1
+@typescript-eslint/parser 8.58.2
+@typescript-eslint/eslint-plugin 8.58.2
+@typescript-eslint/scope-manager 8.58.2
+typescript 6.0.3
+regexpp sources at 11f93e01a21638fc2b95dfcd750ff1385ed9c5f1

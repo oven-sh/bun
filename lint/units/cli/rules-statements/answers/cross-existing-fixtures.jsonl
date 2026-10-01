@@ -1,0 +1,39 @@
+{"rule":"no-unused-labels","from":"no-debugger","code":"x: debugger;","expect":[{"line":1,"column":1,"message":"'x:' is defined but never used."}]}
+{"rule":"no-with","from":"no-debugger","code":"with (a) debugger","expect":[{"line":1,"column":1,"message":"Unexpected use of 'with' statement."}]}
+{"rule":"no-unused-labels","from":"no-debugger","code":"label: { debugger }","expect":[{"line":1,"column":1,"message":"'label:' is defined but never used."}]}
+{"rule":"no-unused-labels","from":"no-debugger","code":"label: debugger;","expect":[{"line":1,"column":1,"message":"'label:' is defined but never used."}]}
+{"rule":"no-unused-private-class-members","from":"no-dupe-class-members","code":"class A { foo; #foo; }","expect":[{"line":1,"column":16,"message":"'#foo' is defined but never used."}]}
+{"rule":"no-unused-private-class-members","from":"no-dupe-class-members","code":"class A { '#foo'; #foo; }","expect":[{"line":1,"column":19,"message":"'#foo' is defined but never used."}]}
+{"rule":"no-unused-private-class-members","from":"no-dupe-class-members","code":"class A { #a(){} a(){} }","expect":[{"line":1,"column":11,"message":"'#a' is defined but never used."}]}
+{"rule":"no-unused-private-class-members","from":"no-dupe-class-members","code":"class A { get #a(){} set #a(v){} }","expect":[{"line":1,"column":26,"message":"'#a' is defined but never used."}]}
+{"rule":"no-unused-private-class-members","from":"no-dupe-class-members","code":"class A { #a; a; static a; }","expect":[{"line":1,"column":11,"message":"'#a' is defined but never used."}]}
+{"rule":"no-unused-private-class-members","from":"no-dupe-class-members","code":"class A { static #a(){} static a(){} static a(){} }","expect":[{"line":1,"column":18,"message":"'#a' is defined but never used."}]}
+{"rule":"no-unused-private-class-members","from":"no-dupe-class-members","code":"class A { #foo; foo; }","expect":[{"line":1,"column":11,"message":"'#foo' is defined but never used."}]}
+{"rule":"no-unused-private-class-members","from":"no-dupe-class-members","code":"class A { #foo() {} foo() {} }","expect":[{"line":1,"column":11,"message":"'#foo' is defined but never used."}]}
+{"rule":"no-unused-private-class-members","from":"no-dupe-class-members","code":"class A { get #a() {} set #a(v) {} }","expect":[{"line":1,"column":27,"message":"'#a' is defined but never used."}]}
+{"rule":"no-unused-private-class-members","from":"no-dupe-class-members","code":"class A { static #foo; foo; static foo; }","expect":[{"line":1,"column":18,"message":"'#foo' is defined but never used."}]}
+{"rule":"no-unused-private-class-members","from":"no-dupe-class-members","code":"class A { #a; a; }","expect":[{"line":1,"column":11,"message":"'#a' is defined but never used."}]}
+{"rule":"no-unused-private-class-members","from":"no-dupe-class-members","code":"class A { get #a() {} set #a(v) {} a() {} }","expect":[{"line":1,"column":27,"message":"'#a' is defined but never used."}]}
+{"rule":"no-unused-labels","from":"no-dupe-class-members","code":"label: { class A { a; a; } }","expect":[{"line":1,"column":1,"message":"'label:' is defined but never used."}]}
+{"rule":"no-unused-private-class-members","from":"no-dupe-class-members","code":"class A { #a = class { a; a }; b(x = class { c; c }) {} }","expect":[{"line":1,"column":11,"message":"'#a' is defined but never used."}]}
+{"rule":"no-unused-labels","from":"no-dupe-keys","code":"label: { ({ a: 1, a: 2 }); }","expect":[{"line":1,"column":1,"message":"'label:' is defined but never used."}]}
+{"rule":"no-unused-labels","from":"no-duplicate-case","code":"switch (a) { case x: label: break; case x: }","expect":[{"line":1,"column":22,"message":"'label:' is defined but never used."}]}
+{"rule":"no-unused-labels","from":"no-duplicate-case","code":"switch (a) { case () => { x: 1 }: break; case ()=>{x:1}: break; }","expect":[{"line":1,"column":27,"message":"'x:' is defined but never used."},{"line":1,"column":52,"message":"'x:' is defined but never used."}]}
+{"rule":"no-unused-labels","from":"no-empty-pattern","code":"label: ({} = a)","expect":[{"line":1,"column":1,"message":"'label:' is defined but never used."}]}
+{"rule":"no-unused-private-class-members","from":"no-empty-pattern","code":"class A { constructor({}) {} static m([]) {} #p({}) {} }","expect":[{"line":1,"column":46,"message":"'#p' is defined but never used."}]}
+{"rule":"no-unused-private-class-members","from":"no-self-assign","code":"class C { #field; foo() { this.#field = this['#field']; } }","expect":[{"line":1,"column":11,"message":"'#field' is defined but never used."}]}
+{"rule":"no-unused-private-class-members","from":"no-self-assign","code":"class C { #f; #g; foo() { this.#f = this.#g; } }","expect":[{"line":1,"column":11,"message":"'#f' is defined but never used."}]}
+{"rule":"no-unused-private-class-members","from":"no-self-assign","code":"class C { #f; foo() { this.#f = this.f; } }","expect":[{"line":1,"column":11,"message":"'#f' is defined but never used."}]}
+{"rule":"no-unused-labels","from":"no-self-assign","code":"label: a = a","expect":[{"line":1,"column":1,"message":"'label:' is defined but never used."}]}
+{"rule":"no-unused-private-class-members","from":"no-self-assign","code":"class A { m() { this.#a = this.a; } #a }","expect":[{"line":1,"column":37,"message":"'#a' is defined but never used."}]}
+{"rule":"no-unused-labels","from":"no-sparse-arrays","code":"label: [,]","expect":[{"line":1,"column":1,"message":"'label:' is defined but never used."}]}
+{"rule":"no-with","from":"use-isnan","code":"with (o) { x === NaN }","expect":[{"line":1,"column":1,"message":"Unexpected use of 'with' statement."}]}
+{"rule":"no-with","from":"use-isnan","code":"with (o) { typeof x === undefined }","expect":[{"line":1,"column":1,"message":"Unexpected use of 'with' statement."}]}
+{"rule":"no-with","from":"use-isnan","code":"function f(undefined) { with (o) { typeof x === undefined } }","expect":[{"line":1,"column":25,"message":"Unexpected use of 'with' statement."}]}
+{"rule":"no-unused-labels","from":"use-isnan","code":"foo: switch (NaN) {}","expect":[{"line":1,"column":1,"message":"'foo:' is defined but never used."}]}
+{"rule":"no-with","from":"valid-typeof","code":"with (o) { typeof x === undefined }","expect":[{"line":1,"column":1,"message":"Unexpected use of 'with' statement."}]}
+{"rule":"no-with","from":"valid-typeof","code":"function f(undefined) { with (o) { typeof x === undefined } }","expect":[{"line":1,"column":25,"message":"Unexpected use of 'with' statement."}]}
+{"rule":"no-delete-var","from":"valid-typeof","code":"delete a === \"strnig\"","expect":[{"line":1,"column":1,"message":"Variables should not be deleted."}]}
+{"rule":"no-case-declarations","from":"valid-typeof","code":"switch (a) { case 1: let undefined; typeof x === undefined }","expect":[{"line":1,"column":22,"message":"Unexpected lexical declaration in case block."}]}
+{"rule":"no-case-declarations","from":"valid-typeof","code":"switch (a) { case 1: let undefined; } typeof x === undefined","expect":[{"line":1,"column":22,"message":"Unexpected lexical declaration in case block."}]}
+{"rule":"no-unused-private-class-members","from":"valid-typeof","code":"class C { #undefined; m() { return typeof x === undefined } }","expect":[{"line":1,"column":11,"message":"'#undefined' is defined but never used."}]}

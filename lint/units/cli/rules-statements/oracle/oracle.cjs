@@ -9,7 +9,7 @@ const rec = require(path.join(eslintDir, "packages/js/src/configs/eslint-recomme
 const linter = new Linter({ configType: "flat" });
 const rule = process.argv[2];
 const allRec = process.argv.includes("--all-recommended");
-const file = process.argv.find(a => a.endsWith(".json")) || `${rule}.cases.json`;
+const file = process.argv.find(a => a.endsWith(".json")) || require("path").join(__dirname, "..", "cases", `upstream-${rule}.json`);
 const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
 const flat = Array.isArray(parsed) ? parsed : [...parsed.valid.map(c => ({ ...c, kind: "valid" })), ...parsed.invalid.map(c => ({ ...c, kind: "invalid" }))];
 function run(code, sourceType, jsx, rules) {

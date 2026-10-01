@@ -1144,6 +1144,23 @@ impl<'p> Checker<'p> {
         if args.iter().any(|a| matches!(a, Arg::Spread(..))) {
             return None;
         }
+        // A call that the first round defers is left out, and is not resolved before a candidate has passed that round.
+        if type_args.is_empty() {
+            for &candidate in candidates {
+                if self.sig_type_params(candidate).is_empty() {
+                    continue;
+                }
+                let params = self.sig_params(candidate);
+                for (i, &arg) in args.iter().enumerate() {
+                    if let Arg::Expr(e) = arg
+                        && let Some(param) = self.context_of_arg_at(&params, i, Some(args.len()))
+                        && self.is_deferred_generic_call(file, e, param)
+                    {
+                        return None;
+                    }
+                }
+            }
+        }
         // A generic function may be left out as well. An argument that has not been told what is expected of it goes by the first
         // candidate, which is the first that `chooseOverload` holds it against.
         if type_args.is_empty()

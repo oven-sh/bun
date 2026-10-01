@@ -1,0 +1,17 @@
+[
+["ts","'abc"],
+["ts","/*"],
+["ts","\\"],
+["ts","`a"],
+["ts","#!shebang\n'abc"],
+["ts","1_"],
+["ts","@"],
+["ts","\u0001"],
+["ts",""],
+["ts","// only a comment"],
+["dts","let x = 1;"],
+["dts","export const x: number; declare module 'm' {}"],
+["js","let x: number;"],
+["js","x = <T>y;"],
+["jsx","x = <a>b</a>;"]
+]

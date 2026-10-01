@@ -18,30 +18,24 @@ cp "$WT/Cargo.lock" "$HERE/lintprobe/Cargo.lock"
 (cd "$WT" && /workspace/tools/lk cargo build --manifest-path "$HERE/lintprobe/Cargo.toml" --offline --target-dir "$S/target")
 PROBE=$S/target/debug/lintprobe
 # 2. the inputs: two lines per source (ts, tsx)
-node "$HERE/mk09.cjs" "$XGD/targeted/09-checker-grammar.txt" "$S/ext/oracle.targeted.jsonl.gz" "$S/corpus.targeted09.json" "$S/oracle.targeted09.jsonl.gz" 2>/dev/null || true
-node "$HERE/mkhex.cjs" "$GD/corpus.small.json" "$S/small.hex"
-node "$HERE/mkhex.cjs" "$GD/corpus.targeted.json" "$S/targeted.hex"
-# 3. the oracles that grammar-diff/ does not hold yet: tsc with the grammar errors of its checker, and a parse without lint
-#    (the A1 run makes the same files; they were taken from it here)
-if [ ! -s "$S/ext/oracle.small.jsonl.gz" ]; then
-  mkdir -p "$S/gd" && cp -r "$GD"/. "$S/gd/" && cp -r "$XGD"/. "$S/gd/"
-  (cd "$S/gd" && bun targeted.mjs >/dev/null 2>&1; true)
-  (cd "$S/gd" && bun oracle.mjs corpus.small.json "$S/ext/oracle.small.jsonl.gz" && bun oracle.mjs corpus.targeted.json "$S/ext/oracle.targeted.jsonl.gz")
-  (cd "$S/gd" && "$HEAD_BIN" harness.mjs corpus.small.json "$S/ext/head.small.jsonl.gz" --jobs=4 && "$HEAD_BIN" harness.mjs corpus.targeted.json "$S/ext/head.targeted.jsonl.gz" --jobs=4)
-fi
-node "$HERE/mk09.cjs" "$XGD/targeted/09-checker-grammar.txt" "$S/ext/oracle.targeted.jsonl.gz" "$S/corpus.targeted09.json" "$S/oracle.targeted09.jsonl.gz"
-node "$HERE/mkhex.cjs" "$S/corpus.targeted09.json" "$S/targeted09.hex"
+node "$HERE/mk09.cjs" "$XGD/targeted/09-checker-grammar.txt" "$S/corpus.targeted09.json"
+cp "$GD/corpus.small.json" "$GD/corpus.targeted.json" "$S/"
+for c in small targeted targeted09; do node "$HERE/mkhex.cjs" "$S/corpus.$c.json" "$S/$c.hex"; done
+# 3. the oracles that grammar-diff/ does not hold yet: tsc with the grammar errors of its checker (oracle.mjs of
+#    grammar-diff-oracle-and-causes/for-grammar-diff), and a parse without lint (harness.mjs with the release binary of the commit).
+#    The tables of results/ were made with the files of the A1 run for small and targeted, which are made the same way.
+mkdir -p "$S/gd" && cp "$GD/harness.mjs" "$XGD/oracle.mjs" "$S/gd/"
+for c in small targeted targeted09; do
+  [ -s "$S/ext/oracle.$c.jsonl.gz" ] || (cd "$S/gd" && bun oracle.mjs "$S/corpus.$c.json" "$S/ext/oracle.$c.jsonl.gz")
+  [ -s "$S/ext/head.$c.jsonl.gz" ] || (cd "$S/gd" && "$HEAD_BIN" harness.mjs "$S/corpus.$c.json" "$S/ext/head.$c.jsonl.gz" --jobs=4)
+done
 # 4. the lint parses: 427,160 for each set of options, about a minute each (one process)
 for c in small targeted targeted09; do for o in lint plain; do "$PROBE" "$S/$c.hex" "$S/new.$c.$o.tsv" "$o"; done; done
 # 5. typescript-go over the same sources
-node "$HERE/mkgo.cjs" "$GD/corpus.small.json" "$S/go.small.in.jsonl"
-node "$HERE/mkgo.cjs" "$GD/corpus.targeted.json" "$S/go.targeted.in.jsonl"
-node "$HERE/mkgo.cjs" "$S/corpus.targeted09.json" "$S/go.targeted09.in.jsonl"
+for c in small targeted targeted09; do node "$HERE/mkgo.cjs" "$S/corpus.$c.json" "$S/go.$c.in.jsonl"; done
 for c in small targeted targeted09; do /tmp/rr/parsediag-bu < "$S/go.$c.in.jsonl" > "$S/go.$c.out.jsonl"; done
 # 6. the joins (j2: tsc, its checker, the parse without lint; j3: typescript-go too)
-node --max-old-space-size=8000 "$HERE/join2.cjs" "$GD/corpus.small.json" "$S/ext/oracle.small.jsonl.gz" "$S/ext/head.small.jsonl.gz" "$S/new.small.lint.tsv" "$S/new.small.plain.tsv" "$S/j2.small.jsonl"
-node "$HERE/join2.cjs" "$GD/corpus.targeted.json" "$S/ext/oracle.targeted.jsonl.gz" "$S/ext/head.targeted.jsonl.gz" "$S/new.targeted.lint.tsv" "$S/new.targeted.plain.tsv" "$S/j2.targeted.jsonl"
-node "$HERE/join2.cjs" "$S/corpus.targeted09.json" "$S/ext/oracle.targeted.jsonl.gz" "$S/ext/head.targeted.jsonl.gz" "$S/new.targeted09.lint.tsv" "$S/new.targeted09.plain.tsv" "$S/j2.targeted09.jsonl"
+for c in small targeted targeted09; do node --max-old-space-size=8000 "$HERE/join2.cjs" "$S/corpus.$c.json" "$S/ext/oracle.$c.jsonl.gz" "$S/ext/head.$c.jsonl.gz" "$S/new.$c.lint.tsv" "$S/new.$c.plain.tsv" "$S/j2.$c.jsonl"; done
 for c in small targeted targeted09; do node "$HERE/addgo.cjs" "$S/j2.$c.jsonl" "$S/go.$c.out.jsonl" "$S/j3.$c.jsonl" > "$S/addgo.$c.txt"; done
 # 7. the tables
 J="$S/j2.small.jsonl $S/j2.targeted.jsonl $S/j2.targeted09.jsonl"

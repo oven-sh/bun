@@ -1,0 +1,45 @@
+RR ts  "'abc"
+      tsc: TS1002@4+0 Unterminated string literal.
+      lint: init no code bun@0+0 Unterminated string literal
+RR ts  "/*"
+      tsc: TS1010@2+0 '*/' expected.
+      lint: init no code bun@2+0 Expected "*/" to terminate multi-line comment
+RR ts  "\\"
+      tsc: TS1127@0+0 Invalid character.
+      lint: init no code bun@0+0 Unexpected escape sequence
+RR ts  "`a"
+      tsc: TS1160@2+0 Unterminated template literal.
+      lint: init no code bun@0+0 Unterminated string literal
+RR ts  "#!shebang\n'abc"
+      tsc: TS1002@14+0 Unterminated string literal.
+      lint: TS1002@14..14 bun@10+0 Unterminated string literal
+RR ts  "1_"
+      tsc: TS6188@1+1 Numeric separators are not allowed here.
+      lint: init no code bun@0+0 Syntax Error
+RR ts  "@"
+      tsc: TS1109@1+0 Expression expected.
+      lint: TS1003@1..1 bun@1+0 Expected identifier but found end of file
+RR ts  "\u0001"
+      tsc: TS1127@0+1 Invalid character.
+      lint: TS1128@0..1 bun@0+1 Unexpected 
+AA ts  ""
+      tsc: ok
+      lint: ok
+AA ts  "// only a comment"
+      tsc: ok
+      lint: ok
+AA dts "let x = 1;"
+      tsc: ok
+      lint: ok
+AA dts "export const x: number; declare module 'm' {}"
+      tsc: ok
+      lint: ok
+A  js  "let x: number;"
+      tsc: ok
+      lint: TS1005@5..6 bun@5+1 Expected ";" but found ":"
+RR js  "x = <T>y;"
+      tsc: TS17008@5+1 JSX element 'T' has no corresponding closing tag.
+      lint: no code bun@4+1 Unexpected <
+AA jsx "x = <a>b</a>;"
+      tsc: ok
+      lint: ok

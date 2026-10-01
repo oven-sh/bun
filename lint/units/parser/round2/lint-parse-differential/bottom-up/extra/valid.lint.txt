@@ -1,0 +1,72 @@
+A  ts  "async function g() { let x: (await: number) => void; }"
+      tsc: ok
+      lint: no code bun@29+5 Cannot use "yield" or "await" here.
+A  ts  "export {}; async function g(f: (await: number) => void) {}"
+      tsc: ok
+      lint: no code bun@32+5 Cannot use "yield" or "await" here.
+A  ts  "async function g(): Promise<(await: number) => void> { return null!; }"
+      tsc: ok
+      lint: no code bun@29+5 Cannot use "yield" or "await" here.
+A  ts  "const h = async (f: (await: number) => void) => {};"
+      tsc: ok
+      lint: no code bun@21+5 Cannot use "yield" or "await" here.
+A  ts  "class C { async m(f: (await: number) => void) {} }"
+      tsc: ok
+      lint: no code bun@22+5 Cannot use "yield" or "await" here.
+A  ts  "let f = (a: (...await: []) => void) => a;"
+      tsc: ok
+      lint: no code bun@16+5 Cannot use "yield" or "await" here.
+A  ts  "function f<U extends (...await: []) => void>() {}"
+      tsc: ok
+      lint: no code bun@25+5 Cannot use "yield" or "await" here.
+AA ts  "async function g() { type F = (await: number) => void; }"
+      tsc: ok
+      lint: ok
+AA ts  "async function g() { interface I { m(await: number): void } }"
+      tsc: ok
+      lint: ok
+A  ts  "async function g() { let x: { m(await: number): void }; }"
+      tsc: ok
+      lint: no code bun@32+5 Cannot use "yield" or "await" here.
+A  ts  "async function g() { let x: new (await: number) => void; }"
+      tsc: ok
+      lint: no code bun@33+5 Cannot use "yield" or "await" here.
+A  ts  "async function g() { let x = y as (await: number) => void; }"
+      tsc: ok
+      lint: no code bun@35+5 Cannot use "yield" or "await" here.
+AA ts  "async function g() { let x: typeof await; }"
+      tsc: ok
+      lint: ok
+AA ts  "async function g() { let x: await; }"
+      tsc: ok
+      lint: ok
+AA ts  "async function g() { let x: A<await>; }"
+      tsc: ok
+      lint: ok
+AA ts  "async function g() { let x: await.b; }"
+      tsc: ok
+      lint: ok
+AA ts  "async function g() { let x: { await: 1 }; }"
+      tsc: ok
+      lint: ok
+AA ts  "async function g() { let x: [await: 1]; }"
+      tsc: ok
+      lint: ok
+AA ts  "async function g() { let x: (a: await) => void; }"
+      tsc: ok
+      lint: ok
+A  ts  "function* g() { let x: (yield: number) => void; }"
+      tsc: ok
+      lint: no code bun@24+5 Cannot use "yield" or "await" here.
+AA ts  "function* g() { let x: yield; }"
+      tsc: ok
+      lint: ok
+A  ts  "try {} catch (e: any = 1) {}"
+      tsc: ok
+      lint: TS1005@21..22 bun@21+1 Expected ")" but found "="
+A  ts  "try {} catch (e = 1) {}"
+      tsc: ok
+      lint: TS1005@16..17 bun@16+1 Expected ")" but found "="
+A  ts  "try {} catch (e: unknown = 1) {}"
+      tsc: ok
+      lint: TS1005@25..26 bun@25+1 Expected ")" but found "="

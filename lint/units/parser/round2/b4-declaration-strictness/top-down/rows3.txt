@@ -1,0 +1,146 @@
+// K3 an escaped reserved word where the word itself is an error or stands after an expression
+(b"\\u0064efault", Loader::Ts, 1005, 0, 12, "'export' expected."),
+(b"\\u0064efault: x;", Loader::Ts, 1005, 0, 12, "'export' expected."),
+(b"\\u0063atch (e) {}", Loader::Ts, 1005, 0, 10, "'try' expected."),
+(b"\\u0066inally {}", Loader::Ts, 1005, 0, 12, "'try' expected."),
+(b"\\u0063ase 1:", Loader::Ts, 1128, 0, 9, "Declaration or statement expected."),
+(b"\\u0065xtends A", Loader::Ts, 1128, 0, 12, "Declaration or statement expected."),
+(b"\\u0069n x", Loader::Ts, 1109, 0, 7, "Expression expected."),
+(b"\\u0069nstanceof x", Loader::Ts, 1109, 0, 15, "Expression expected."),
+(b"x \\u0065xtends y;", Loader::Ts, 1434, 0, 1, "Unexpected keyword or identifier."),
+(b"x \\u0069f y;", Loader::Ts, 1434, 0, 1, "Unexpected keyword or identifier."),
+(b"x \\u0076ar y;", Loader::Ts, 1434, 0, 1, "Unexpected keyword or identifier."),
+(b"x \\u0065lse y;", Loader::Ts, 1434, 0, 1, "Unexpected keyword or identifier."),
+(b"x \\u0074ypeof y;", Loader::Ts, 1434, 0, 1, "Unexpected keyword or identifier."),
+(b"x \\u006eew y;", Loader::Ts, 1434, 0, 1, "Unexpected keyword or identifier."),
+(b"x \\u0074his;", Loader::Ts, 1434, 0, 1, "Unexpected keyword or identifier."),
+(b"x \\u0063lass {}", Loader::Ts, 1434, 0, 1, "Unexpected keyword or identifier."),
+(b"var x \\u0069n y;", Loader::Ts, 1005, 6, 13, "';' expected."),
+(b"for (var x \\u0069n y) {}", Loader::Ts, 1260, 11, 18, "Keywords cannot contain escape characters."),
+(b"for (x \\u0069n y) {}", Loader::Ts, 1260, 7, 14, "Keywords cannot contain escape characters."),
+(b"for (var x = 1 \\u0069n y;;) {}", Loader::Ts, 1260, 15, 22, "Keywords cannot contain escape characters."),
+(b"[x \\u0069n y];", Loader::Ts, 1260, 3, 10, "Keywords cannot contain escape characters."),
+(b"f(x \\u0069n y);", Loader::Ts, 1260, 4, 11, "Keywords cannot contain escape characters."),
+(b"f(x \\u0069nstanceof y);", Loader::Ts, 1260, 4, 19, "Keywords cannot contain escape characters."),
+(b"x ? a \\u0069n b : c;", Loader::Ts, 1260, 6, 13, "Keywords cannot contain escape characters."),
+(b"({ a: x \\u0069n y });", Loader::Ts, 1260, 8, 15, "Keywords cannot contain escape characters."),
+(b"(x \\u0069n y);", Loader::Ts, 1260, 3, 10, "Keywords cannot contain escape characters."),
+(b"x = y \\u0069n z;", Loader::Ts, 1260, 6, 13, "Keywords cannot contain escape characters."),
+(b"if (x \\u0069n y) {}", Loader::Ts, 1260, 6, 13, "Keywords cannot contain escape characters."),
+b"let x: \\u0076ar;", // Loader::Ts: parses
+b"let x: \\u0069f;", // Loader::Ts: parses
+b"let x: \\u0063lass;", // Loader::Ts: parses
+b"let x: \\u0066unction;", // Loader::Ts: parses
+(b"let x: \\u006eew () => void;", Loader::Ts, 1260, 7, 15, "Keywords cannot contain escape characters."),
+(b"let x: \\u0069mport(\"a\");", Loader::Ts, 1260, 7, 18, "Keywords cannot contain escape characters."),
+(b"let x: \\u0074rue;", Loader::Ts, 1260, 7, 16, "Keywords cannot contain escape characters."),
+(b"let x: A \\u0065xtends B ? 1 : 2;", Loader::Ts, 1260, 9, 21, "Keywords cannot contain escape characters."),
+(b"let x: A \\u0069n B;", Loader::Ts, 1005, 9, 16, "';' expected."),
+(b"let x: [A \\u0069n B];", Loader::Ts, 1005, 10, 17, "',' expected."),
+(b"function f(): \\u0076oid {}", Loader::Ts, 1260, 14, 23, "Keywords cannot contain escape characters."),
+(b"class C { m(): \\u0074his { return this } }", Loader::Ts, 1260, 15, 24, "Keywords cannot contain escape characters."),
+(b"x as \\u006eull;", Loader::Ts, 1260, 5, 14, "Keywords cannot contain escape characters."),
+(b"if (x) \\u0072eturn;", Loader::Ts, 1260, 7, 18, "Keywords cannot contain escape characters."),
+(b"if (x) \\u0076ar y;", Loader::Ts, 1260, 7, 15, "Keywords cannot contain escape characters."),
+(b"l: \\u0062reak l;", Loader::Ts, 1260, 3, 13, "Keywords cannot contain escape characters."),
+(b"function f() { \\u0065xport {} }", Loader::Ts, 1260, 15, 26, "Keywords cannot contain escape characters."),
+(b"x = \\u0076oid 0;", Loader::Ts, 1260, 4, 13, "Keywords cannot contain escape characters."),
+(b"x = !\\u0064elete a.b;", Loader::Ts, 1260, 5, 16, "Keywords cannot contain escape characters."),
+(b"x = a + \\u0074ypeof b;", Loader::Ts, 1260, 8, 19, "Keywords cannot contain escape characters."),
+(b"x = (\\u0074his);", Loader::Ts, 1260, 5, 14, "Keywords cannot contain escape characters."),
+(b"x = [\\u006eull];", Loader::Ts, 1260, 5, 14, "Keywords cannot contain escape characters."),
+(b"x = { a: \\u0074rue };", Loader::Ts, 1260, 9, 18, "Keywords cannot contain escape characters."),
+(b"f(\\u0074his);", Loader::Ts, 1260, 2, 11, "Keywords cannot contain escape characters."),
+(b"f(\\u006eew A);", Loader::Ts, 1260, 2, 10, "Keywords cannot contain escape characters."),
+(b"x = a ? \\u0074his : b;", Loader::Ts, 1260, 8, 17, "Keywords cannot contain escape characters."),
+(b"return \\u0074his;", Loader::Ts, 1260, 7, 16, "Keywords cannot contain escape characters."),
+(b"() => \\u0074his;", Loader::Ts, 1260, 6, 15, "Keywords cannot contain escape characters."),
+(b"`${\\u0074his}`;", Loader::Ts, 1260, 3, 12, "Keywords cannot contain escape characters."),
+(b"x = \\u0069f;", Loader::Ts, 1109, 4, 11, "Expression expected."),
+(b"x = \\u0065lse;", Loader::Ts, 1109, 4, 13, "Expression expected."),
+(b"x = \\u0069n;", Loader::Ts, 1109, 4, 11, "Expression expected."),
+(b"x = \\u0063ase;", Loader::Ts, 1109, 4, 13, "Expression expected."),
+(b"(\\u0076ar);", Loader::Ts, 1109, 1, 9, "Expression expected."),
+(b"\\u0076ar \\u0076ar;", Loader::Ts, 1260, 0, 8, "Keywords cannot contain escape characters."),
+(b"\\u0069f (\\u0074rue) \\u0072eturn;", Loader::Ts, 1260, 0, 7, "Keywords cannot contain escape characters."),
+(b"class \\u0065xtends {}", Loader::Ts, 1260, 6, 18, "Keywords cannot contain escape characters."),
+b"class C { \\u0076ar }", // Loader::Ts: parses
+(b"class C { \\u0076ar x }", Loader::Ts, 1068, 10, 18, "Unexpected token. A constructor, method, accessor, or property was expected."),
+(b"enum E { \\u0069f b }", Loader::Ts, 1357, 17, 18, "An enum member name must be followed by a ',', '=', or '}'."),
+(b"import \\u0064efault from \"a\";", Loader::Ts, 1109, 7, 19, "Expression expected."),
+(b"import { \\u0064efault } from \"a\";", Loader::Ts, 1003, 9, 21, "Identifier expected."),
+b"export { \\u0064efault };", // Loader::Ts: parses
+(b"export \\u0064efault class {}", Loader::Ts, 1260, 7, 19, "Keywords cannot contain escape characters."),
+(b"export \\u0064efault", Loader::Ts, 1260, 7, 19, "Keywords cannot contain escape characters."),
+(b"export \\u0076ar x = 1;", Loader::Ts, 1260, 7, 15, "Keywords cannot contain escape characters."),
+(b"export \\u0063onst x = 1;", Loader::Ts, 1260, 7, 17, "Keywords cannot contain escape characters."),
+(b"export \\u0063lass C {}", Loader::Ts, 1260, 7, 17, "Keywords cannot contain escape characters."),
+(b"export \\u0066unction f() {}", Loader::Ts, 1260, 7, 20, "Keywords cannot contain escape characters."),
+(b"declare \\u0076ar x;", Loader::Ts, 1260, 8, 16, "Keywords cannot contain escape characters."),
+(b"declare \\u0063lass C {}", Loader::Ts, 1260, 8, 18, "Keywords cannot contain escape characters."),
+(b"async \\u0066unction f() {}", Loader::Ts, 1260, 6, 19, "Keywords cannot contain escape characters."),
+(b"abstract \\u0063lass C {}", Loader::Ts, 1260, 9, 19, "Keywords cannot contain escape characters."),
+(b"const \\u0065num E {}", Loader::Ts, 1260, 6, 15, "Keywords cannot contain escape characters."),
+(b"@d \\u0063lass C {}", Loader::Ts, 1260, 3, 13, "Keywords cannot contain escape characters."),
+(b"try {} \\u0063atch (e) {} \\u0066inally {}", Loader::Ts, 1260, 7, 17, "Keywords cannot contain escape characters."),
+(b"do x; \\u0077hile (y);", Loader::Ts, 1260, 6, 16, "Keywords cannot contain escape characters."),
+(b"if (x) y; \\u0065lse z;", Loader::Ts, 1260, 10, 19, "Keywords cannot contain escape characters."),
+(b"switch (x) { case 1: \\u0064efault: }", Loader::Ts, 1260, 21, 33, "Keywords cannot contain escape characters."),
+(b"switch (x) { \\u0064efault: \\u0063ase 1: }", Loader::Ts, 1260, 13, 25, "Keywords cannot contain escape characters."),
+(b"new \\u0063lass {};", Loader::Ts, 1260, 4, 14, "Keywords cannot contain escape characters."),
+(b"typeof \\u0074his;", Loader::Ts, 1260, 7, 16, "Keywords cannot contain escape characters."),
+(b"x = \\u0066unction*() {};", Loader::Ts, 1260, 4, 17, "Keywords cannot contain escape characters."),
+(b"(\\u0066unction() {})();", Loader::Ts, 1260, 1, 14, "Keywords cannot contain escape characters."),
+(b"x.y = \\u006eull;", Loader::Ts, 1260, 6, 15, "Keywords cannot contain escape characters."),
+(b"for (\\u0076ar i = 0;;) {}", Loader::Ts, 1260, 5, 13, "Keywords cannot contain escape characters."),
+(b"for (\\u0063onst x of y) {}", Loader::Ts, 1260, 5, 15, "Keywords cannot contain escape characters."),
+(b"for (;;) \\u0062reak;", Loader::Ts, 1260, 9, 19, "Keywords cannot contain escape characters."),
+(b"label: for (;;) \\u0063ontinue label;", Loader::Ts, 1260, 16, 29, "Keywords cannot contain escape characters."),
+(b"\\u0074hrow new Error();", Loader::Ts, 1260, 0, 10, "Keywords cannot contain escape characters."),
+(b"x = \\u0073uper;", Loader::Ts, 1260, 4, 14, "Keywords cannot contain escape characters."),
+(b"\\u0076ar x = 1;", Loader::Tsx, 1260, 0, 8, "Keywords cannot contain escape characters."),
+(b"\\u0076ar x = 1;", Loader::Ts /* a.d.ts */, 1260, 0, 8, "Keywords cannot contain escape characters."),
+// X leftovers: import attributes, enum names, class names
+b"import a from \"a\" with { type: 1 };", // Loader::Ts: parses
+(b"import a from \"a\" with { type: \"json\" \"b\": \"c\" };", Loader::Ts, 1005, 38, 41, "',' expected."),
+(b"import a from \"a\" with { type: \"json\"; };", Loader::Ts, 1005, 37, 38, "',' expected."),
+(b"import a from \"a\" with { type };", Loader::Ts, 1005, 30, 31, "':' expected."),
+b"import a from \"a\" with { \"a b\": \"c\" };", // Loader::Ts: parses
+b"import a from \"a\" with { if: \"c\" };", // Loader::Ts: parses
+(b"import a from \"a\" with { , };", Loader::Ts, 1478, 25, 26, "Identifier or string literal expected."),
+(b"import a from \"a\" with { type: \"json\",, };", Loader::Ts, 1478, 38, 39, "Identifier or string literal expected."),
+b"import a from \"a\" with { type: f() };", // Loader::Ts: parses
+b"export * from \"a\" with { type: \"json\" }\nwith (x) {}", // Loader::Ts: parses
+(b"import a from \"a\"\nwith (x) {}", Loader::Ts, 1005, 23, 24, "'{' expected."),
+b"export * from \"a\"\nwith (x) {}", // Loader::Ts: parses
+b"class {}", // Loader::Ts: parses
+(b"class 1 {}", Loader::Ts, 1005, 6, 7, "'{' expected."),
+(b"class enum {}", Loader::Ts, 1005, 6, 10, "'{' expected."),
+b"class extends A {}", // Loader::Ts: parses
+b"class implements I {}", // Loader::Ts: parses
+b"class implements {}", // Loader::Ts: parses
+(b"class if {}", Loader::Ts, 1005, 6, 8, "'{' expected."),
+b"class { x }", // Loader::Ts: parses
+(b"class ;", Loader::Ts, 1005, 6, 7, "'{' expected."),
+(b"class C", Loader::Ts, 1005, 7, 7, "'{' expected."),
+(b"class C ;", Loader::Ts, 1005, 8, 9, "'{' expected."),
+(b"class C 1 {}", Loader::Ts, 1005, 8, 9, "'{' expected."),
+(b"class C D {}", Loader::Ts, 1005, 8, 9, "'{' expected."),
+(b"class C<T> D {}", Loader::Ts, 1005, 11, 12, "'{' expected."),
+(b"class C {", Loader::Ts, 1005, 9, 9, "'}' expected."),
+(b"class C { x", Loader::Ts, 1005, 11, 11, "'}' expected."),
+(b"class C { m() {", Loader::Ts, 1005, 15, 15, "'}' expected."),
+b"export default class {}", // Loader::Ts: parses
+b"export default class implements I {}", // Loader::Ts: parses
+b"(class {});", // Loader::Ts: parses
+b"(class implements I {});", // Loader::Ts: parses
+b"(class implements {});", // Loader::Ts: parses
+(b"(class 1 {});", Loader::Ts, 1005, 7, 8, "'{' expected."),
+b"x = class extends A {};", // Loader::Ts: parses
+b"class await {}", // Loader::Ts: parses
+b"class yield {}", // Loader::Ts: parses
+b"class let {}", // Loader::Ts: parses
+b"class static {}", // Loader::Ts: parses
+b"class implements implements I {}", // Loader::Ts: parses
+b"class {}", // Loader::Js: parses
+(b"class 1 {}", Loader::Js, 1005, 6, 7, "'{' expected."),

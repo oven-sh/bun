@@ -3,7 +3,8 @@
 #   run_mode <mode> <tree> <log> [more arguments of `bun test`]
 # It runs the file of <tree> (a scratch clone of ../../scratch.sh, or the worktree) and appends to <log> the lines
 # "TIME wall .. user .. sys .." and "exit <code>". The binary of the debug modes is DBG (default: the build of the worktree).
-#   release          USE_SYSTEM_BUN=1 bun test <file>                       the installed release build, as CLAUDE.md says
+#   release          USE_SYSTEM_BUN=1 bun test <file>                       the installed release build, as CLAUDE.md says;
+#                    REL names another release build, one that has --lint
 #   release-ci       the environment that scripts/runner.node.ts gives a file in a release lane of CI (spawnBun, 1966 to
 #                    1990; spawnBunTest, 2171): --timeout=90000, collector level 1, integrity audit, no transpiler cache
 #   release-ci-exact release-ci with GITHUB_ACTIONS=true and --reporter=dots, the very command line of spawnBunTest
@@ -14,6 +15,8 @@
 #   debug-local      what `bun run test` (runner.node.ts with --exec-path bun-debug, not in CI) gives: as debug-ci,
 #                    but --timeout=90000, because the name of the binary has no "asan" in it
 DBG=${DBG:-/workspace/wt/conformance/build/debug/bun-debug}
+# The release build: the installed bun has no --lint, which only a test that starts the binary under test itself needs.
+REL=${REL:-bun}
 FILE=${FILE:-test/cli/lint/conformance.test.ts}
 TIMEFORMAT='TIME wall %R s user %U s sys %S s'
 
@@ -32,9 +35,9 @@ run_mode() {
   (
     cd "$tree" || exit 1
     case $mode in
-      release) { time env USE_SYSTEM_BUN=1 bun test "$@" "$FILE"; } ;;
-      release-ci) { time env "${ci[@]}" bun test --timeout=90000 "$@" "$FILE"; } ;;
-      release-ci-exact) { time env "${ci[@]}" GITHUB_ACTIONS=true bun test --timeout=90000 --reporter=dots "$@" "$FILE"; } ;;
+      release) { time env USE_SYSTEM_BUN=1 "$REL" test "$@" "$FILE"; } ;;
+      release-ci) { time env "${ci[@]}" "$REL" test --timeout=90000 "$@" "$FILE"; } ;;
+      release-ci-exact) { time env "${ci[@]}" GITHUB_ACTIONS=true "$REL" test --timeout=90000 --reporter=dots "$@" "$FILE"; } ;;
       debug) { time env BUN_DEBUG_QUIET_LOGS=1 "$DBG" test "$@" "$FILE"; } ;;
       debug-leak) { time env BUN_DEBUG_QUIET_LOGS=1 "${leak[@]}" "$DBG" test "$@" "$FILE"; } ;;
       debug-ci) { time env "${ci[@]}" "${leak[@]}" "${validate[@]}" BUN_FEATURE_FLAG_NO_ORPHANS=1 "$DBG" test --timeout=270000 "$@" "$FILE"; } ;;

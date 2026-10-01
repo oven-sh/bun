@@ -302,6 +302,9 @@ describe.concurrent("bun install masks secrets in the registry-supplied URL it p
   }
 
   const masked = (server: Registry) => `http://carol:******@${server.hostname}:${server.port}`;
+  // bun sends the credentials of a tarball URL as an Authorization header, so
+  // the URL it requests and prints has none.
+  const withoutCredentials = (server: Registry) => `http://${server.hostname}:${server.port}`;
 
   test("manifest request redirected to a URL with secrets (required dependency)", async () => {
     await using server = startRegistry();
@@ -326,7 +329,7 @@ describe.concurrent("bun install masks secrets in the registry-supplied URL it p
     const { err, exitCode } = await install(server, [], {
       "package.json": JSON.stringify({ name: "app", dependencies: { "tarball-pkg": "1.0.0" } }),
     });
-    expect(err).toContain(`error: GET ${masked(server)}/cdn/tarball-pkg-1.0.0.tgz?token=*** - 404`);
+    expect(err).toContain(`error: GET ${withoutCredentials(server)}/cdn/tarball-pkg-1.0.0.tgz?token=*** - 404`);
     expect(exitCode).toBe(1);
   });
 
@@ -335,7 +338,7 @@ describe.concurrent("bun install masks secrets in the registry-supplied URL it p
     const { err, exitCode } = await install(server, [], {
       "package.json": JSON.stringify({ name: "app", optionalDependencies: { "tarball-pkg": "1.0.0" } }),
     });
-    expect(err).toContain(`warn: GET ${masked(server)}/cdn/tarball-pkg-1.0.0.tgz?token=*** - 404`);
+    expect(err).toContain(`warn: GET ${withoutCredentials(server)}/cdn/tarball-pkg-1.0.0.tgz?token=*** - 404`);
     expect(exitCode).toBe(0);
   });
 
@@ -353,7 +356,7 @@ describe.concurrent("bun install masks secrets in the registry-supplied URL it p
       }),
     });
     expect(err).toContain(
-      `error: failed to download tarball-pkg@1.0.0: 404 Not Found\n  ${masked(server)}/cdn/tarball-pkg-1.0.0.tgz?token=***`,
+      `error: failed to download tarball-pkg@1.0.0: 404 Not Found\n  ${withoutCredentials(server)}/cdn/tarball-pkg-1.0.0.tgz?token=***`,
     );
     expect(exitCode).toBe(1);
   });

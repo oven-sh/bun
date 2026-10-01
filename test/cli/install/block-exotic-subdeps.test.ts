@@ -764,7 +764,9 @@ blockExoticSubdeps = true
       using dir = await project(`[install]\nblockExoticSubdeps = true\n`);
 
       const { stderr, exitCode } = await install(String(dir));
-      expect(stderr).toContain(`${tarballParent("evil")} depends on loot@${url} via git source (package name: private-thing)`);
+      expect(stderr).toContain(
+        `${tarballParent("evil")} depends on loot@${url} via git source (package name: private-thing)`,
+      );
       expect(exitCode).toBe(1);
     });
 
